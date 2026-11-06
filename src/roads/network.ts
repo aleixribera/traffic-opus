@@ -366,6 +366,10 @@ export class RoadNetwork {
     return ha + (hb - ha) * smoothstep(clamp(t, 0, 1));
   }
 
+  heightOnSegRaw(ha: number, hb: number, t: number): number {
+    return ha + (hb - ha) * smoothstep(clamp(t, 0, 1));
+  }
+
   /** Height along a seg by centre arc-length. */
   heightAtS(id: number, s: number): number {
     const g = this.segGeom.get(id)!;
@@ -780,7 +784,10 @@ export class RoadNetwork {
         let laneIdx: number[];
         const isU = e.arm === A;
         const turn: Connector["turn"] = isU ? "U" : ei === main ? "S" : e.ang > 0 ? "R" : "L";
+        const real = exits.filter((x) => x.arm !== A).length;
         if (n === 1) laneIdx = [0];
+        else if (real <= 1 && !isU) laneIdx = ins.map((_, i) => i); // only one way out: every lane feeds it
+        else if (isU) laneIdx = [n - 1];
         else if (main >= 0) {
           if (ei === main) laneIdx = ins.map((_, i) => i);
           else if (ei < main) laneIdx = [0];
