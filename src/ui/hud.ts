@@ -65,6 +65,7 @@ export class Hud {
   private panelPhase = 0;
   private tutHidden = new Set<number>();
   private lastObj = "";
+  private objCollapsed = typeof matchMedia === "function" && matchMedia("(max-width: 560px)").matches; // phones start folded
   private sfx = new Sfx();
 
   constructor(private app: App, parent: HTMLElement) {
@@ -121,6 +122,15 @@ export class Hud {
     const bc = h("div", "corner bc");
     this.buildToolbar();
     bc.append(this.subbar, this.toolbar);
+    // narrow screens: the toolbar scrolls sideways; fade the edge that has more tools behind it
+    const edges = () => {
+      const t = this.toolbar;
+      t.classList.toggle("more-l", t.scrollLeft > 2);
+      t.classList.toggle("more-r", t.scrollLeft + t.clientWidth < t.scrollWidth - 2);
+    };
+    this.toolbar.addEventListener("scroll", edges, { passive: true });
+    addEventListener("resize", edges);
+    requestAnimationFrame(edges);
 
     this.panel.hidden = true;
     this.modal.hidden = true;
@@ -219,7 +229,7 @@ export class Hud {
     // overlays
     for (const el of this.overlayList.querySelectorAll<HTMLButtonElement>(".overlay-item")) el.classList.toggle("on", el.dataset.id === app.overlay);
     this.overlayBtn.classList.toggle("on", app.overlay !== "none");
-    this.overlayBtn.innerHTML = `${app.overlay === "none" ? "Overlays" : OVERLAYS.find((o) => o.id === app.overlay)!.label} ${ICON.caret}`;
+    this.overlayBtn.innerHTML = `<span class="ov-label">${app.overlay === "none" ? "Overlays" : OVERLAYS.find((o) => o.id === app.overlay)!.label}</span> ${ICON.caret}`;
     this.legend.innerHTML = app.overlay === "none" ? "" : app.overlay === "flow"
       ? `<span class="lg lg-flow"></span><span>Free flowing</span><span>Jammed</span>`
       : `<span class="lg lg-sat"></span><span>Poor</span><span>Good</span>`;
@@ -290,7 +300,7 @@ export class Hud {
     this.money.classList.toggle("low", g.money < 500);
     const L = levelDef(g.level);
     const app = this.app;
-    const key = JSON.stringify([g.level, g.objectives, app.focus]);
+    const key = JSON.stringify([g.level, g.objectives, app.focus, this.objCollapsed]);
     if (force || key !== this.lastObj) {
       this.lastObj = key;
       const rows = g.objectives.map((o) => {
@@ -298,7 +308,10 @@ export class Hud {
         const sub = o.sub && !o.done ? `<div class="obj-sub"><span>${o.sub.label}</span><span class="bad">−${o.sub.value}</span></div>` : "";
         return `<div class="obj ${o.done ? "done" : ""}">${o.done ? ICON.check : ICON.open}<span class="obj-label">${o.label}</span><span class="obj-val ${o.good ? "good" : "bad"}">${o.value}</span>${mag}</div>${sub}`;
       }).join("");
-      this.objCard.innerHTML = `<header>City Level ${g.level}</header>${rows}`;
+      const done = g.objectives.filter((o) => o.done).length;
+      this.objCard.classList.toggle("folded", this.objCollapsed);
+      this.objCard.innerHTML = `<header><button class="obj-head" aria-expanded="${!this.objCollapsed}" title="${this.objCollapsed ? "Show" : "Hide"} goals">City Level ${g.level}<span class="obj-count">${done}/${g.objectives.length}</span>${ICON.caret}</button></header>${this.objCollapsed ? "" : rows}`;
+      (this.objCard.querySelector(".obj-head") as HTMLButtonElement).onclick = () => { this.objCollapsed = !this.objCollapsed; this.tick(true); };
       for (const b of this.objCard.querySelectorAll<HTMLButtonElement>(".mag")) b.onclick = () => app.setFocus(b.dataset.f as "trips" | "sat" | "flow");
     }
     // tutorial / level note

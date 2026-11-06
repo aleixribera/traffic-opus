@@ -41,7 +41,7 @@ export class Saves {
     const data = JSON.stringify(game.serialize());
     const meta: SaveMeta = {
       id, name, level: game.level, playtime: game.playtime, residents: game.residents.length, savedAt: Date.now(), auto,
-      thumb: auto ? undefined : this.thumb?.(),
+      thumb: this.thumb?.(), // ~192x120 jpeg: a few ms, worth it so autosaves are recognisable
     };
     try {
       localStorage.setItem(PREFIX + "tmp", data);
