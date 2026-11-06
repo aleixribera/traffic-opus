@@ -45,6 +45,8 @@ export interface Vehicle {
   /** Time the trip would have taken without other traffic: real time while unimpeded, distance at free speed while held up. */
   ideal: number;
   born: number; // sim time it entered the road
+  block?: string; // why the junction last refused entry (debug + inspector)
+  crossing?: { lane: Lane; s: number }[]; // far lanes this car is still pulling out across
   v0e: number; // free-road desired speed this step (limits, curves, driveway approach)
   constrained: boolean; // held up by another vehicle, a stop line or a signal this step
 }
@@ -60,6 +62,7 @@ export interface PendingSpawn {
   wait: number;
   why?: string; // last reason the spawn had to wait (debug + inspector)
   blocker?: number;
+  clear?: { lane: Lane; s: number }[]; // spots a queue should leave free so this car can pull out
 }
 
 const CAR_COLORS = [0xe8534a, 0x3c8de0, 0xf2b632, 0x55b85b, 0x9b6ce0, 0xef7fb6, 0x40c2c9, 0xf08a3a, 0x4a5568, 0xf5f5f0];
@@ -86,6 +89,10 @@ export class Traffic {
   private nextId = 1;
   private lcTimer = 0;
   private statTimer = 0;
+  private turnBlockedByQueue = false; // set by canTurnIn: the car in the way is standing still
+  private keepClear = new Map<Lane, number[]>(); // lane -> driveway spots queues leave free (this step)
+  private crossers = new Map<Lane, number[]>(); // lane -> spots where a car is pulling out across it (this step)
+  private ringLoads = new Map<number, number>(); // ring id -> share of its capacity in use (this step)
   flow = new Map<number, FlowStat>(); // by directed seg key
   trips: { ff: number; actual: number; t: number }[] = [];
   jams = new Map<number, number>(); // node id -> seconds of blockage recently
@@ -123,21 +130,28 @@ export class Traffic {
     // gap acceptance like a real driver: ~4 s to oncoming traffic, shrinking as they get impatient,
     // so through traffic rarely has to brake for someone pulling out
     const headway = p.wait > 12 ? 2 : p.wait > 5 ? 2.5 : 3.2;
+    p.clear = [{ lane, s: ls }];
     for (const o of lane.occ as Vehicle[]) {
       if (o.s > ls - 2 && o.s - o.len < ls + len + 3) { p.why = "occupied"; return "wait"; }
-      if (o.s <= ls && ls - o.s < Math.max(10, o.v * headway)) { p.why = "oncoming"; p.blocker = o.id; return "wait"; }
+      // slow or queued traffic lets you in when it can stop comfortably behind you
+      const courtesy = o.v < 4 && ls - len - o.s > 1.5 + (o.v * o.v) / (2 * SIM.idm.b) + o.v * 0.8;
+      if (o.s <= ls && ls - o.s < Math.max(10, o.v * headway) && !courtesy) { p.why = "oncoming"; p.blocker = o.id; return "wait"; }
     }
     // incoming vehicles from the connector feeding this lane near the start
     if (ls < 12) for (const c of lane.ins) if ((c.occ as Vehicle[]).length) { p.why = "junction"; return "wait"; }
     const crossing = (best.dir === 1 ? 1 : -1) !== p.fromSide;
-    if (crossing && p.wait < 10) {
+    if (crossing) {
       // must cross the near lanes: wait for a gap there too
       const near = this.lanesOf(dkey(p.from.seg, best.dir === 1 ? -1 : 1));
       for (const nl of near) {
         const ns = polyClosest(nl.pl, p.from.p).s;
+        p.clear.push({ lane: nl, s: ns });
         for (const o of nl.occ as Vehicle[]) {
-          if (Math.abs(o.s - ns) < 8) { p.why = "cross-occupied"; return "wait"; }
-          if (o.s < ns && (ns - o.s) / Math.max(o.v, 0.5) < 2.5) { p.why = "cross-oncoming"; return "wait"; }
+          if (o.s > ns - 3 && o.s - o.len < ns + 3) { p.why = "cross-occupied"; return "wait"; }
+          // the far lane needs a real gap (crossing it takes a couple of seconds); slow traffic can stop for us
+          const need = p.wait > 20 ? 1.6 : p.wait > 8 ? 2.2 : 3;
+          const yields = o.v < 4 && ns - 3 - o.s > 1.5 + (o.v * o.v) / (2 * SIM.idm.b) + o.v * 0.8;
+          if (o.s < ns && (ns - o.s) / Math.max(o.v, 0.5) < need && !yields) { p.why = "cross-oncoming"; return "wait"; }
         }
       }
     }
@@ -152,6 +166,7 @@ export class Traffic {
     // slide out of the driveway: start offset towards the building
     const side = (lane.dir === 1 ? 1 : -1) * p.fromSide; // +1 = building on the right of travel
     v.lat = side * (LANE_W * 0.9) * (crossing ? 2 : 1);
+    if (crossing) v.crossing = this.lanesOf(dkey(p.from.seg, best.dir === 1 ? -1 : 1)).map((nl) => ({ lane: nl, s: polyClosest(nl.pl, p.from.p).s }));
     insertOcc(lane, v);
     this.vehicles.push(v);
     if (this.isFinal(v)) this.computeDestS(v);
@@ -170,6 +185,7 @@ export class Traffic {
 
   step(dt: number) {
     this.time += dt;
+    this.ringLoads.clear();
     // spawns
     if (this.pending.length) {
       const keep: PendingSpawn[] = [];
@@ -182,6 +198,7 @@ export class Traffic {
     }
 
     const vs = this.vehicles;
+    this.collectKeepClear();
     // junction permissions (only the front vehicle of each lane asks)
     for (const v of vs) this.planJunction(v);
     // accelerations
@@ -244,6 +261,9 @@ export class Traffic {
             }
             v.s = Math.min(v.s, v.destS - 0.8);
             v.v = 0;
+            // a stopped queue sits across the driveway: rather than wait it out (and maybe lock the
+            // junction behind us), drive on and come back round to turn in from the near side
+            if (v.wait > 8 && this.turnBlockedByQueue) this.reroute(v);
             return false;
           }
           if (lane.idx !== 0 && v.s > v.destS + 1) {
@@ -311,12 +331,13 @@ export class Traffic {
     // crossing the opposite carriageway: wait for a gap, with growing impatience
     const opp = this.lanesOf(dkey(lane.seg, lane.dir === 1 ? -1 : 1));
     const need = v.wait > 12 ? 0.8 : v.wait > 5 ? 1.6 : 2.6;
+    this.turnBlockedByQueue = false;
     for (const ol of opp) {
       const os = polyClosest(ol.pl, v.dest.p).s;
       for (const o of ol.occ as Vehicle[]) {
         // two cars turning across each other into facing driveways: the older one goes first
         if (o.v < 0.5 && o.id > v.id && o.destS >= 0 && this.isFinal(o) && Math.abs(o.destS - 0.8 - o.s) < 1.5) continue;
-        if (Math.abs(o.s - os) < 6) return false;
+        if (o.s > os - 3 && o.s - o.len < os + 3) { this.turnBlockedByQueue = o.v < 0.5; return false; }
         if (o.s < os && (os - o.s) / Math.max(o.v, 0.5) < need) return false;
       }
     }
@@ -406,28 +427,51 @@ export class Traffic {
     if (ng.kind === "cont") return true;
     // signals
     const sig = this.signalState(c.node, c.armIn);
-    if (sig === "red") return false;
-    if (sig === "yellow" && toEnd > (v.v * v.v) / (2 * SIM.idm.b) + 1) return false;
-    // don't block the box: room on the exit lane
+    if (sig === "red") { v.block = "red"; return false; }
+    if (sig === "yellow" && toEnd > (v.v * v.v) / (2 * SIM.idm.b) + 1) { v.block = "red"; return false; }
+    // don't block the box: room on the exit lane. Not between arcs of the same roundabout:
+    // circulating cars just follow each other (requiring a free arc ahead gridlocks a full ring)
     const out = c.to;
+    const ringIn = this.net.segs.get((c.from as Lane).seg)?.ring ?? 0;
+    if (ringIn && this.net.segs.get(out.seg)?.ring === ringIn) return this.conflictsClear(v, c, sig);
     let free = out.pl.length;
     const first = (out.occ as Vehicle[])[0];
     if (first) free = first.s - first.len;
-    for (const h of this.holdersInto(out)) if (h !== v) free -= h.len + 2;
+    // joining a roundabout with room on the ring: moving circulating traffic is something to fall in
+    // behind, not a full box. A crowded ring gets the strict rule so entries can't fill it into gridlock.
+    const ringId = this.net.segs.get(out.seg)?.ring ?? 0;
+    const ringOut = !!ringId && this.ringLoad(ringId) < 0.5;
+    const myRem = (c.from.pl.length - v.s) + c.pl.length;
+    for (const h of this.holdersInto(out)) {
+      if (h === v) continue;
+      if (ringOut && (this.remTo(h, out) > myRem || h.v > 1)) continue;
+      free -= h.len + 2;
+    }
+    if (ringOut && first && first.v > 1) free = Infinity;
     const moving = first && first.v > 3;
     if (free < v.len + 1.5 && !(moving && free > 0.5)) {
       // a short link lane can't hold a car: allow if the lane after it is clear (chain of cont nodes)
-      if (!(out.pl.length < v.len + 2 && !first)) return false;
+      if (!(out.pl.length < v.len + 2 && !first)) { v.block = "box"; return false; }
     }
-    // conflicts
+    return this.conflictsClear(v, c, sig);
+  }
+
+  private conflictsClear(v: Vehicle, c: Connector, sig: ReturnType<Traffic["signalState"]>): boolean {
+    const ringMerge = !!this.net.segs.get(c.to.seg)?.ring;
     for (const cf of c.conflicts) {
       const o = cf.c;
+      if (ringMerge && cf.merge) {
+        if (!this.mergeOk(v, c, o)) { v.block = "yield"; return false; }
+        continue;
+      }
       for (const h of o.holders as Vehicle[]) {
         if (h === v) continue;
-        if (h.edge === o) {
-          if (h.s - h.len < cf.sOther + 1.2) return false;
+        if (h.edge === o || h.edge === o.to) {
+          // on the connector, or already out on its exit lane with the tail still in the box
+          const rear = (h.edge === o ? h.s : o.pl.length + h.s) - h.len;
+          if (rear < cf.sOther + 1.2) { v.block = "crossing"; return false; }
         } else if (h.edge === o.from || h.edge.kind === "lane") {
-          return false; // reserved and still approaching
+          v.block = "reserved"; return false; // reserved and still approaching
         }
       }
       // yield to higher-priority traffic that is about to arrive
@@ -441,10 +485,87 @@ export class Traffic {
           const tArr = d / Math.max(w.v, 0.5);
           const patience = v.wait > 20 ? 0.45 : v.wait > 8 ? 0.7 : 1;
           if (tArr < SIM.yieldGap * patience && (w.v > 1 || d < 6)) {
-            if (!(w.next === null && w.v < 0.5 && d > 3)) return false;
+            if (!(w.next === null && w.v < 0.5 && d > 3)) { v.block = "yield"; return false; }
           }
         }
       }
+    }
+    return true;
+  }
+
+  /** Driveway spots that queues should leave free this step: cars waiting to turn in across a lane, and cars waiting to pull out. */
+  private collectKeepClear() {
+    this.keepClear.clear();
+    const add = (l: Lane, s: number) => { const a = this.keepClear.get(l); if (a) a.push(s); else this.keepClear.set(l, [s]); };
+    for (const v of this.vehicles) {
+      if (v.edge.kind !== "lane" || v.v > 0.5 || v.destS < 0 || !this.isFinal(v)) continue;
+      const lane = v.edge as Lane;
+      if (lane.idx !== 0 || v.s < v.destS - 2) continue;
+      if ((lane.dir === 1 ? 1 : -1) * v.destSide > 0) continue; // turning in on its own side: crosses nothing
+      for (const ol of this.lanesOf(dkey(lane.seg, lane.dir === 1 ? -1 : 1))) add(ol, polyClosest(ol.pl, v.dest.p).s);
+    }
+    for (const p of this.pending) if (p.wait > 1.5 && p.clear) for (const c of p.clear) add(c.lane, c.s);
+    // cars pulling out across a far lane are obstacles on it until they're clear of it
+    this.crossers.clear();
+    for (const v of this.vehicles) {
+      if (!v.crossing) continue;
+      if (Math.abs(v.lat) < LANE_W * 0.45) { v.crossing = undefined; continue; }
+      for (const c of v.crossing) { const a = this.crossers.get(c.lane); if (a) a.push(c.s); else this.crossers.set(c.lane, [c.s]); }
+    }
+  }
+
+  /** Vehicles on a roundabout (its arcs and junction connectors) as a share of what it can hold. */
+  private ringLoad(id: number): number {
+    const cached = this.ringLoads.get(id);
+    if (cached !== undefined) return cached;
+    let n = 0, len = 0;
+    const nodes = new Set<number>();
+    for (const sg of this.net.segs.values()) {
+      if (sg.ring !== id) continue;
+      nodes.add(sg.a);
+      const g = this.net.segGeom.get(sg.id);
+      if (!g) continue;
+      for (const l of g.lanes) { n += l.occ.length; len += l.pl.length; }
+    }
+    for (const nid of nodes) {
+      const ng = this.net.nodeGeom.get(nid);
+      if (!ng) continue;
+      for (const c of ng.conns) {
+        const fromRing = this.net.segs.get(c.from.seg)?.ring === id;
+        if (fromRing) n += c.occ.length;
+        if (fromRing && this.net.segs.get(c.to.seg)?.ring === id) len += c.pl.length;
+      }
+    }
+    const load = n / Math.max(1, len / (SIM.carLen + SIM.idm.s0 + 1));
+    this.ringLoads.set(id, load);
+    return load;
+  }
+
+  /** Distance a vehicle still has to go to reach the start of lane `out` along its granted path (Infinity if not headed there). */
+  private remTo(h: Vehicle, out: Lane): number {
+    const c = h.edge.kind === "conn" ? (h.edge as Connector) : h.next;
+    if (!c || c.to !== out) return Infinity;
+    return h.edge.kind === "conn" ? c.pl.length - h.s : h.edge.pl.length - h.s + c.pl.length;
+  }
+
+  /**
+   * Joining a roundabout like a driver: fall in behind a circulating car that gets to the merge
+   * first (car-following keeps the spacing), or go ahead of one only with a clear time margin.
+   */
+  private mergeOk(v: Vehicle, c: Connector, o: Connector): boolean {
+    const myRem = (c.from.pl.length - v.s) + c.pl.length;
+    const a = SIM.idm.a;
+    const tMe = (-v.v + Math.sqrt(v.v * v.v + 2 * a * myRem)) / a;
+    const cands = [...(o.occ as Vehicle[]), ...(o.from.occ as Vehicle[]).filter((w) => w.next === o || (w.next === null && !this.isFinal(w)))];
+    for (const h of cands) {
+      if (h === v) continue;
+      const hRem = h.edge === o ? o.pl.length - h.s : o.from.pl.length - h.s + o.pl.length;
+      if (hRem < 0) continue;
+      const tH = hRem / Math.max(h.v, 1);
+      if (tH <= tMe - 0.3 && hRem < myRem) continue; // it's through first: follow it in
+      if (tH - tMe >= 1.5) continue; // we're in well ahead of it
+      if (hRem > 60) continue;
+      return false;
     }
     return true;
   }
@@ -519,6 +640,55 @@ export class Traffic {
         d += next.pl.length;
         if (next.kind === "conn") next = (next as Connector).to;
         else break;
+      }
+    }
+    // merging: a car already on another connector into the same lane, nearer the merge, is a leader
+    const mc = e.kind === "conn" ? (e as Connector) : v.granted ? v.next : null;
+    if (mc) {
+      const vRem = e.kind === "conn" ? mc.pl.length - v.s : e.pl.length - v.s + mc.pl.length;
+      if (vRem < 40) for (const cf of mc.conflicts) {
+        if (!cf.merge) continue;
+        for (const u of cf.c.occ as Vehicle[]) {
+          const uRem = cf.c.pl.length - u.s;
+          if (uRem >= vRem) continue;
+          const g2 = vRem - uRem - u.len;
+          if (g2 < gap) { gap = g2; dv = v.v - u.v; soft = false; }
+        }
+      }
+    }
+    // brake for a car pulling out across this lane
+    if (e.kind === "lane") {
+      const X = this.crossers.get(e as Lane);
+      if (X) for (const k of X) {
+        if (v.s > k - 1.5) continue;
+        const g2 = k - 2 - v.s;
+        if (g2 < gap) { gap = Math.max(0.1, g2); dv = v.v; soft = false; }
+      }
+    }
+    // keep driveways clear: don't come to rest across a spot where someone waits to turn in or pull out
+    if (e.kind === "lane" && gap !== Infinity) {
+      const K = this.keepClear.get(e as Lane);
+      const mine = v.destS >= 0 && this.isFinal(v) ? v.destS : -1e9;
+      if (K) for (const k of K) {
+        if (v.s > k - 3) continue; // already at or past it
+        if (Math.abs(k - mine) < 6) continue; // that's our own driveway: we're turning in there
+        const stopFront = v.s + gap;
+        if (stopFront > k - 3 && stopFront - v.len < k + 3) { gap = Math.min(gap, Math.max(0.1, k - 3 - v.s)); soft = false; }
+      }
+    }
+    // diverging: a car that just left the same lane on a sibling connector is still right ahead
+    // until the paths separate
+    {
+      const src = (e.kind === "conn" ? (e as Connector).from : e) as Lane;
+      const myPos = e.kind === "conn" ? v.s : v.s - e.pl.length;
+      if (myPos > -30 && src.outs) for (const sib of src.outs) {
+        if (sib === e) continue;
+        for (const u of sib.occ as Vehicle[]) {
+          const rear = u.s - u.len;
+          if (rear > 7) continue;
+          const g2 = rear - myPos;
+          if (g2 > -0.5 && g2 < gap) { gap = Math.max(g2, 0.1); dv = v.v - u.v; soft = false; }
+        }
       }
     }
     const free = 1 - Math.pow(v.v / Math.max(v0, 0.1), 4);

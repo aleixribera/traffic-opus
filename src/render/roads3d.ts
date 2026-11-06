@@ -11,7 +11,7 @@ const LIFT = 0.06;
 const DECK = 0.9;
 
 /** Shared road surface material: Lambert (so it takes shadows) with markings drawn in the fragment shader. */
-export function makeRoadMaterial(opts: { color?: number; opacity?: number; markings?: boolean } = {}) {
+export function makeRoadMaterial(opts: { color?: number; opacity?: number; markings?: boolean; arrows?: boolean } = {}) {
   const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: (opts.opacity ?? 1) < 1, opacity: opts.opacity ?? 1 });
   const uniforms = {
     uRoad: { value: new THREE.Color(opts.color ?? PAL.road) },
@@ -20,6 +20,7 @@ export function makeRoadMaterial(opts: { color?: number; opacity?: number; marki
     uCentre: { value: new THREE.Color(PAL.centre) },
     uFlowMode: { value: 0 },
     uMarkings: { value: opts.markings === false ? 0 : 1 },
+    uArrows: { value: opts.arrows === false ? 0 : 1 },
   };
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
@@ -31,7 +32,7 @@ export function makeRoadMaterial(opts: { color?: number; opacity?: number; marki
         "#include <common>",
         `#include <common>
 uniform vec3 uRoad; uniform vec3 uEdge; uniform vec3 uLane; uniform vec3 uCentre;
-uniform float uFlowMode; uniform float uMarkings;
+uniform float uFlowMode; uniform float uMarkings; uniform float uArrows;
 varying vec4 vRoad; varying vec2 vFlow;
 float band(float x, float w) { float f = fwidth(x) * 0.8 + 1e-4; return 1.0 - smoothstep(w - f, w + f, abs(x)); }
 vec3 flowTint(float r) {
@@ -63,6 +64,17 @@ vec3 flowTint(float r) {
         float fk = float(k);
         if (fk < f) lanes = max(lanes, band(u - (-f * 0.5 * LW + fk * LW), 0.08) * dash);
       }
+      // one-way: chevrons down each lane, pointing the way traffic goes
+      float y = mod(v, 22.0) - 11.0;
+      for (int k = 0; k < 4; k++) {
+        float fk = float(k);
+        if (fk >= f || uArrows < 0.5) break;
+        float x = u - (-f * 0.5 * LW + (fk + 0.5) * LW);
+        float ax = abs(x);
+        float m = (1.0 - smoothstep(0.95, 1.05, ax));
+        lanes = max(lanes, band(y + ax * 0.9 - 0.6, 0.22) * m);
+        lanes = max(lanes, band(y + ax * 0.9 + 0.5, 0.22) * m);
+      }
     }
     c = mix(c, uLane, lanes);
     if (uFlowMode > 0.5) {
@@ -89,6 +101,7 @@ export class Roads3D {
   private segs = new Map<number, SegMeshes>();
   private nodes = new Map<number, THREE.Object3D[]>();
   readonly surface = makeRoadMaterial();
+  private ringSurface = makeRoadMaterial({ arrows: false }); // roundabout arcs: direction is obvious, chevrons only clip at the mouths
   private plain = makeRoadMaterial({ markings: false });
   private edgeMat = new THREE.MeshLambertMaterial({ color: PAL.roadEdge });
   private deckMat = new THREE.MeshLambertMaterial({ color: PAL.deckSide });
@@ -111,6 +124,7 @@ export class Roads3D {
 
   set flowMode(on: boolean) {
     this.surface.uniforms.uFlowMode.value = on ? 1 : 0;
+    this.ringSurface.uniforms.uFlowMode.value = on ? 1 : 0;
   }
 
   rebuildAll() {
@@ -156,7 +170,7 @@ export class Roads3D {
     const halfW = g.width / 2;
     const geo = ribbon(pts, hs, ss, halfW, LIFT, [T.fwd, T.bwd]);
     const flow = geo.getAttribute("aFlow") as THREE.BufferAttribute;
-    const surface = new THREE.Mesh(geo, this.surface.mat);
+    const surface = new THREE.Mesh(geo, s.ring ? this.ringSurface.mat : this.surface.mat);
     surface.receiveShadow = true;
     const extra: THREE.Object3D[] = [];
     const maxH = Math.max(...hs);

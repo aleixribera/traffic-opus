@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Game } from "../src/game/city";
-import { planRoad } from "../src/roads/planner";
+import { planGrid, planRoad, planRoundabout, snap } from "../src/roads/planner";
 import { v2, type V2 } from "../src/core/math";
 import type { BuildingKind } from "../src/config";
 
@@ -69,6 +69,62 @@ describe("Game", () => {
     expect(g.net.segs.size).toBe(0);
     g.redo();
     expect(g.net.segs.size).toBe(1);
+  });
+
+  it("keeps traffic moving through a roundabout (no ring gridlock)", () => {
+    const g = new Game(7);
+    const c = v2(1200, 1200);
+    expect(g.build(planRoundabout(g.net, g.world, c, 1, 0))).toBe(true);
+    for (const [x, y] of [[1200, 1120], [1270, 1200], [1200, 1255], [1130, 1200]]) {
+      const from = { p: v2(x, y), h: 0, guides: [] };
+      const end = snap(g.net, c, { mpp: 0.3, level: 0, type: "street", from });
+      const plan = planRoad(g.net, g.world, { start: from, end, mode: "straight", type: "street" });
+      expect(plan.errors).toEqual([]);
+      expect(g.build(plan)).toBe(true);
+    }
+    const at = (k: BuildingKind, x: number, y: number) => { const pl = g.placement(k, v2(x, y)); expect(pl?.ok).toBe(true); g.place(k, pl!); };
+    for (const x of [1135, 1150, 1165]) { at("house", x, 1191); at("house", x, 1209); }
+    for (const y of [1140, 1150]) at("house", 1191, y);
+    at("shop", 1240, 1191);
+    at("office", 1209, 1240);
+    for (let t = 0; t < 600; t += 1 / 30) g.step(1 / 30);
+    expect(g.failedTrips).toBe(0);
+    expect(g.traffic.flowScore()).toBeGreaterThan(0.9);
+  });
+
+  it("never deadlocks a busy street at driveways (turn-ins, pull-outs, keep-clear)", () => {
+    for (const seed of [2, 7]) {
+      const g = new Game(seed);
+      const y = 1060;
+      road(g, v2(1090, y), v2(1310, y));
+      const at = (k: BuildingKind, x: number, yy: number) => { const pl = g.placement(k, v2(x, yy)); if (pl?.ok) g.place(k, pl); };
+      for (const x of [1105, 1125, 1145, 1165, 1185]) at("house", x, 1045);
+      for (const x of [1105, 1130, 1155, 1205, 1235, 1265, 1295, 1180, 1205, 1180]) at("house", x, 1077);
+      at("shop", 1235, 1043);
+      at("office", 1280, 1040);
+      for (let t = 0; t < 600; t += 1 / 30) g.step(1 / 30);
+      expect(g.failedTrips, `seed ${seed}`).toBe(0);
+      expect(g.traffic.flowScore(), `seed ${seed}`).toBeGreaterThan(0.9);
+    }
+  });
+
+  it("keeps a busy street grid flowing without gridlock", () => {
+    const g = new Game(3);
+    (g as any).inventory = { house: 200, shop: 20, office: 20 };
+    expect(g.build(planGrid(g.net, g.world, v2(1090, 1090), v2(1310, 1310), v2(1, 0), "street", 0))).toBe(true);
+    const ys = [...new Set([...g.net.nodes.values()].map((nd) => Math.round(nd.p.y)))];
+    let h = 0, s = 0, o = 0, i = 0;
+    const tryAt = (k: BuildingKind, x: number, yy: number) => { const pl = g.placement(k, v2(x, yy)); return pl?.ok && g.place(k, pl) ? 1 : 0; };
+    for (let x = 1095; x < 1310; x += 12) for (const yy of ys) for (const dy of [-13, 13]) {
+      i++;
+      if (i % 9 === 0 && s < 6) s += tryAt("shop", x, yy + dy);
+      else if (i % 11 === 0 && o < 6) o += tryAt("office", x, yy + dy);
+      else if (h < 55) h += tryAt("house", x, yy + dy);
+    }
+    expect(h).toBe(55);
+    for (let t = 0; t < 900; t += 1 / 30) g.step(1 / 30);
+    expect(g.failedTrips).toBe(0);
+    expect(g.traffic.flowScore()).toBeGreaterThan(0.85);
   });
 
   it("round-trips a save", () => {
