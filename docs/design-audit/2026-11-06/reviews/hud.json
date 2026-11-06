@@ -1,0 +1,137 @@
+{
+  "lens": "hud",
+  "findings": [
+    {
+      "screen": "city",
+      "viewport": "phone",
+      "rule": "ONB-01",
+      "severity": "high",
+      "title": "On phone the house, shop and office buttons are off-screen while the tip asks the player to use them",
+      "detail": "The bottom toolbar is a single row wider than the 390 px screen, so only the road types, street grid and half of the roundabout fit. The tip says 'Choose a building in the toolbar', but none of the building buttons are visible, and the only hint that the row scrolls is a faint fade on the right edge. A new player can't find the way forward. The same happens on fresh-city, drawing-road, overlay-flow, building-panel, signal-panel, saves and level-up at phone width.",
+      "evidence": "city@phone.dom.json: the last visible control is 'Roundabout (O)' at [360,791,40,40], which is already cut by the 390 px edge. 'Small Commercial', 'Small Office', the house button, bulldozer and undo have no box on screen. Tip text: 'Place your buildings. Choose a building in the toolbar and click beside a street.'",
+      "fix": "On phone, split the toolbar into two rows or two tabs (Roads | Build), with the building group shown by default once the 'Place your buildings' step is active. At minimum, put the building group first and show a visible scroll affordance (a chevron button), not just a fade.",
+      "box": [8, 786, 374, 50]
+    },
+    {
+      "screen": "overlay-flow",
+      "viewport": "phone",
+      "rule": "NEW",
+      "severity": "high",
+      "title": "On phone the Overlays menu opens underneath the money, speed controls and tip card",
+      "detail": "NEW: a dropdown opened from the HUD must stack above the other HUD panels. On phone the overlay list drops into the second HUD row, so the money pill and pause/speed bar cover its first item ('Traffic flow'), and the purple tip card cuts off the right half of the next three items ('Overall building satisfacti', 'Access to nearby commer', 'Access to nearby workpla'). The player can't read, or reliably tap, the overlay they just chose.",
+      "evidence": "overlay-flow@phone.dom.json: menu items run from [13,47,226,25] to [13,222,226,25]. Money is at [18,50,45,15], the speed buttons at [80..186,45,24], and the tip text box starts at x=203, y=53. In the screenshot, 'Traffic flow' is hidden behind '$13,960' and the pause/play buttons.",
+      "fix": "Give the overlay dropdown a higher z-index than the money/speed bar and the tip card, and hide the tip while a HUD menu is open. Better still, on phone open it as a full-width sheet under the top row.",
+      "box": [8, 42, 236, 100]
+    },
+    {
+      "screen": "level-up",
+      "viewport": "phone",
+      "rule": "COL-01",
+      "severity": "medium",
+      "title": "On phone the level banner is see-through and overlaps the money, speed controls and tip",
+      "detail": "The level-up card is drawn on top of the second HUD row and the purple tip, and its background is translucent, so 'Place your buildings…' and the speed buttons show through behind the reward lines. The reward line is the hardest to read. The pause/speed controls stay partly covered until the banner is dismissed.",
+      "evidence": "contrast.md level-up@phone: '+$8,000 road budget · 1 area unlock' p10 1.93:1, and 'Place your buildings.' measures 1.08:1 where the card covers it. Banner spans roughly [55,52,280,172] and overlaps money [18,50,45,15] and the speed buttons [80..186,45,24].",
+      "fix": "Make the banner plate opaque and place it below the HUD rows (y ≥ 80 on phone), or hide the tip and dim the HUD behind it while it is up.",
+      "box": [55, 52, 280, 172]
+    },
+    {
+      "screen": "city",
+      "viewport": "desktop",
+      "rule": "HUD-05",
+      "severity": "medium",
+      "title": "Goal values use alarm red for normal progress and a pale green that fails contrast",
+      "detail": "'6 to go' on the unmet buildings goal is shown in the alarm red, the same red as 'Remove lights' and the 'Jammed' end of the flow legend, although it is just normal progress. The met values '100.0%' are a light green that is hard to read at 11 px. On fresh-city, the unmet trip goal shows 'no residents' in that same green, so the colour no longer tells met from unmet. The four goals are the main thing the player is working towards.",
+      "evidence": "'6 to go' rgb(217,68,63) 11 px, 4.25:1; '100.0%' rgb(46,158,74) 11 px, 3.38:1 (contrast.md, fails 4.5:1). fresh-city@desktop: 'no residents' 3.41:1 in green next to an empty (unmet) circle.",
+      "fix": "Show progress values in the neutral dark text colour (rgb 38,40,44) and let the check/empty circle carry met/unmet. Keep red for a goal that is actually slipping (e.g. flow dropping under 95%), and darken the green to at least 4.5:1 if it stays.",
+      "box": [1334, 37, 65, 78]
+    },
+    {
+      "screen": "city",
+      "viewport": "phone",
+      "rule": "HUD-04",
+      "severity": "medium",
+      "title": "On phone the goal card is always collapsed, so the player can't see which goal is unmet",
+      "detail": "On phone the four level goals shrink to 'City Level 1 3/4' and stay that way in every capture. The player knows one goal is missing but not which one, or that it needs '6 to go' more buildings, without tapping a 15 px tall row. On desktop the same information is always visible.",
+      "evidence": "city@phone.dom.json: only 'City Level 1' [201,15,69,15] and '3/4' [276,16,18,14] are shown. The control 'City Level 1 3/4' is 172x15. None of the goal rows ('All buildings placed', '6 to go', …) are in the phone DOM.",
+      "fix": "On phone, show the first unmet goal inline under the title (e.g. 'Place buildings · 6 to go') and make the whole card a ≥44 px tap target that expands the full list.",
+      "box": [193, 9, 188, 28]
+    },
+    {
+      "screen": "drawing-road",
+      "viewport": "desktop",
+      "rule": "COL-01",
+      "severity": "medium",
+      "title": "Elevation level numbers are white on pastel chips and can't be read",
+      "detail": "While drawing a road, the elevation picker shows 0–3 as white digits on light green, blue and lilac chips. Levels 1–3 nearly disappear, so the player can't confirm which height they are about to build at. The same happens on phone.",
+      "evidence": "contrast.md drawing-road@desktop: '1' 1.66:1, '2' 2.0:1, '3' 2.21:1, '0' 1.94:1 (white, 12 px). The chips are 24x24 at about [798,803,104,27]. drawing-road@phone gives the same values.",
+      "fix": "Use dark text (rgb 38,40,44) on the pastel chips, or deepen the chip colours until white text reaches 4.5:1. Mark the selected level with the outline plus a filled state, not by colour alone.",
+      "box": [798, 803, 104, 27]
+    },
+    {
+      "screen": "signal-panel",
+      "viewport": "desktop",
+      "rule": "COL-01",
+      "severity": "medium",
+      "title": "Traffic-light phase directions are 10 px letters, with white on green at 2.33:1",
+      "detail": "The W/E/S toggles that say which approach gets a green light in each phase are the core of the editor. Lit directions show 10 px white letters on green that are hard to read, and each toggle is only 16–20 px wide, so it is easy to tap the wrong direction. The same happens on phone, where the targets are still 16x17.",
+      "evidence": "signal-panel@desktop.dom.json: W [1243,370,20,17], E [1265,370,16,17], S [1283,370,16,17]; text 10 px. contrast.md: active letters declared 2.33:1, measured 1.01–1.07 p10.",
+      "fix": "Make the direction toggles at least 24x24 on desktop and 44x44 on phone, with 12 px+ bold letters in dark green on light green (or white on a darker green ≥4.5:1). Consider labelling them with arrows that match the junction diagram above.",
+      "box": [1243, 370, 56, 51]
+    },
+    {
+      "screen": "level-up",
+      "viewport": "desktop",
+      "rule": "FB-01",
+      "severity": "medium",
+      "title": "Level-up banner never says the level is complete, and the HUD beside it still shows Level 1",
+      "detail": "The banner's only heading is 'City Level 2', followed by two unlabelled grey lists, so it is unclear whether '10 × Small Residential · 1 × Copper Mine…' is what the player just earned or what they now have to place. Meanwhile the goal card next to it still reads 'City Level 1 3/4' with '6 to go', and the tip still says 'Place your buildings', so the screen contradicts itself at the moment that should feel like a win.",
+      "evidence": "level-up@desktop.dom.json: 'City Level 2' [677,65,87,19]; '10 × Small Residential · 1 × Copper Mine · 1 × Copper Works · 1 × Small Commercial' [485,88,471,15]; '+$8,000 road budget · 1 area unlock' [615,105,209,15] in grey rgb(93,97,104). The goal card still shows 'City Level 1' and '3/4'.",
+      "fix": "Lead with 'Level 1 complete' and label the lines ('New buildings: …', 'Reward: +$8,000 · 1 area'). Update or hide the goal card and tip while the banner is up, and switch them to Level 2 on Continue.",
+      "box": [468, 52, 504, 142]
+    },
+    {
+      "screen": "city",
+      "viewport": "phone",
+      "rule": "HUD-03",
+      "severity": "medium",
+      "title": "On phone the HUD sits inside the notch and home-bar zones",
+      "detail": "The menu, Overlays and goal card start 8 px from the top, inside the 47 px notch/status-bar zone. The build toolbar ends 8 px above the bottom edge, where the iOS home indicator sits, so a swipe across the toolbar can trigger the system home gesture. The same applies on every phone capture.",
+      "evidence": "city@phone.dom.json: 'Game menu' [8,8,30,26], 'Overlays' [44,8,85,26], goal title at y=15. Toolbar buttons [13..400,791,40,40], with the toolbar plate ending at y≈836 of 844.",
+      "fix": "Pad the top HUD row with max(env(safe-area-inset-top), 12px) and the toolbar with env(safe-area-inset-bottom) plus 8 px, with viewport-fit=cover so the insets are reported.",
+      "box": [8, 8, 375, 61]
+    },
+    {
+      "screen": "city",
+      "viewport": "desktop",
+      "rule": "TYP-01",
+      "severity": "low",
+      "title": "Building stock counts are 10 px superscripts, and used-up buildings just fade out",
+      "detail": "How many houses, shops and offices remain is exactly what the 'All buildings placed · 6 to go' goal depends on, but the count is a tiny 10 px grey number tucked against the icon. Once the shop and office are used up, their buttons just turn pale, with no '0' or reason, so they read as disabled for no clear cause.",
+      "evidence": "city@desktop.dom.json: '6' [816,851,6,13] 10 px rgb(93,97,104). In fresh-city, '14', '1' and '1' are also 10 px (p10 2.71 and 1.66:1 over the icons). The 'Small Commercial' [827,849,38,38] and 'Small Office' [867,849,38,38] buttons have no count once used up.",
+      "fix": "Show the count as a 12 px+ number in a small solid badge on the button corner, and show '0' on exhausted buildings (with a 'none left' tooltip) instead of only fading the icon.",
+      "box": [787, 849, 118, 38]
+    },
+    {
+      "screen": "building-panel",
+      "viewport": "desktop",
+      "rule": "COL-03",
+      "severity": "low",
+      "title": "Air pollution 'none' is drawn with a red bar stub",
+      "detail": "In the building inspector, the Air pollution row reads 'none' but still shows a small red cap at the start of its bar. A glance suggests a pollution problem when there is none, which weakens the alarm red for real problems. The same happens on phone.",
+      "evidence": "building-panel@desktop: 'Air pollution' [1179,348,65,14], 'none' [1395,348,26,14], with a red sliver at the left end of the bar around x≈1313, y≈355. building-panel@phone shows the same red sliver at about (263,656).",
+      "fix": "Draw zero-value bars as an empty grey track, and colour pollution red only above a threshold that actually hurts satisfaction.",
+      "box": [1311, 348, 110, 14]
+    },
+    {
+      "screen": "fresh-city",
+      "viewport": "desktop",
+      "rule": "TYP-04",
+      "severity": "low",
+      "title": "A goal label is cut off on the first screen of a new city",
+      "detail": "On the first screen of a new city, the second goal reads 'Trip taken by every n…' because the green 'no residents' value takes the width. The player's first look at the level goals has a truncated one. The label fits in later screens, where the value is shorter.",
+      "evidence": "fresh-city@desktop: goal row text 'Trip taken by every n…' next to 'no residents' [1334,57,65,14]. In city@desktop the full label 'Trip taken by every new resident' [1197,57,189,15] fits.",
+      "fix": "Shorten the label (e.g. 'Every resident makes a trip'), or wrap it to a second line instead of using an ellipsis, and show '—' rather than 'no residents' as the value before anyone lives there.",
+      "box": [1197, 57, 202, 15]
+    }
+  ]
+}

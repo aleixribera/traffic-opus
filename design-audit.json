@@ -1,0 +1,24 @@
+{
+  "name": "traffic-opus",
+  "url": "http://localhost:5317/?new",
+  "browser": { "channel": "chrome" },
+  "viewports": { "desktop": { "width": 1440, "height": 900, "deviceScaleFactor": 1 } },
+  "defaultViewports": ["desktop", "phone"],
+  "settleMs": 900,
+  "screens": [
+    { "id": "fresh-city", "title": "New city, first tip", "steps": [{ "waitForJs": "window.app && window.app.game", "timeoutMs": 60000 }, { "wait": 1200 }] },
+    { "id": "city", "title": "In play: street with homes, shop, office", "from": "fresh-city", "steps": [
+      { "eval": "(async () => { const P = await import('/src/roads/planner.ts'); const a = window.app, g = a.game; const road = (x0,y0,x1,y1,type='street') => g.build(P.planRoad(g.net, g.world, { start: { p: {x:x0,y:y0}, h: 0, guides: [] }, end: { p: {x:x1,y:y1}, h: 0, guides: [] }, mode: 'straight', type })); road(1090,1060,1310,1060); road(1200,1060,1200,1180); const at = (k,x,y) => { const pl = g.placement(k,{x,y}); if (pl && pl.ok) g.place(k, pl); }; for (const x of [1105,1125,1145,1165,1185]) at('house',x,1045); for (const x of [1105,1130,1155]) at('house',x,1077); at('shop',1235,1043); at('office',1280,1040); for (let t=0;t<90;t+=1/30) g.step(1/30); a.view.cx=1200; a.view.cy=1075; a.view.halfH=95; a.dirtyPreview = true; })()" },
+      { "wait": 1200 }] },
+    { "id": "drawing-road", "title": "Drawing a road: preview + cursor chips", "from": "city", "steps": [
+      { "eval": "(() => { const a = window.app; a.setTool({ tool: 'road', roadType: 'avenue' }); const s = (x,y) => a.view.toScreen({x,y}); a.updateCursor(s(1240,1150)); a.onClick(false); a.updateCursor(s(1300,1110)); a.dirtyPreview = true; })()" },
+      { "wait": 600 }] },
+    { "id": "overlay-flow", "title": "Overlays menu open, traffic flow on", "from": "city", "steps": [{ "clickText": "Overlays" }, { "wait": 300 }, { "clickText": "Traffic flow" }, { "wait": 500 }] },
+    { "id": "building-panel", "title": "Inspecting a house", "from": "city", "steps": [
+      { "eval": "(() => { const a = window.app; const b = a.game.buildings.list.find(b => b.kind === 'shop'); a.selected = b; a.hud.openBuilding(b); })()" }, { "wait": 500 }] },
+    { "id": "signal-panel", "title": "Traffic light editor", "from": "city", "steps": [
+      { "eval": "(() => { const a = window.app, g = a.game; const n = [...g.net.nodeGeom.entries()].find(([,ng]) => ng.kind === 'junction' && ng.arms.length >= 3)[0]; g.setSignal(n, g.defaultSignal(n)); a.hud.openSignal(n); })()" }, { "wait": 600 }] },
+    { "id": "saves", "title": "Saves dialog", "from": "city", "steps": [{ "eval": "window.app.saves.save(window.app.game, 'Riverside')" }, { "click": "[aria-label='Game menu']" }, { "wait": 500 }] },
+    { "id": "level-up", "title": "Level complete banner", "from": "city", "steps": [{ "eval": "window.app.hud.levelUp(2, 'Copper ore goes from the mine to the works by truck. Shops need the goods.')" }, { "wait": 700 }] }
+  ]
+}

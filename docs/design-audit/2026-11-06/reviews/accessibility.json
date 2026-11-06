@@ -1,0 +1,137 @@
+{
+  "lens": "accessibility",
+  "findings": [
+    {
+      "screen": "drawing-road",
+      "viewport": "desktop",
+      "rule": "COL-01",
+      "severity": "high",
+      "title": "Elevation level numbers 0-3 are close to invisible: white text on pastel fills",
+      "detail": "While drawing a road, the player picks the deck level from four buttons whose only readable mark is a white digit on a light cyan, green, blue or lilac fill. The three unselected buttons are also faded to 55% opacity, so the digits almost disappear and the colour is left as the only cue. Players who don't distinguish those colours can't tell levels 1, 2 and 3 apart when they build bridges. Same buttons on drawing-road@phone (identical ratios).",
+      "evidence": "contrast.md drawing-road@desktop: \"0\" 1.94:1, \"1\" 1.66:1, \"2\" 2.00:1, \"3\" 2.21:1 declared (p10 1.01) at 12px against a 4.5:1 requirement. hud.css .seg-btn.lvl { color:#fff; opacity:0.55 } on .lvl0 #58c8e6, .lvl1 #74b83e, .lvl2 #4f8fe8, .lvl3 #9a6ae0. Buttons are 24x24.",
+      "fix": "Make each level button white (#fff) with #26282c digits (about 15:1) and mark its level with a 4px bottom bar in the level colour (border-bottom:4px solid #58c8e6 / #74b83e / #4f8fe8 / #9a6ae0). Drop opacity:0.55, mark the selected level with the existing 2px ring plus a #d5eefa fill, and raise the buttons to at least 28x28.",
+      "box": [800, 804, 105, 24]
+    },
+    {
+      "screen": "signal-panel",
+      "viewport": "phone",
+      "rule": "MENU-03",
+      "severity": "high",
+      "title": "Traffic-light editor controls are 14-20 px touch targets packed 2 px apart",
+      "detail": "On a phone, each phase row puts W/E/S approach toggles, the shorter and longer buttons and a remove-phase X into a strip where every target is smaller than a fingertip. Tapping 'E' easily toggles 'W' or 'S', and tapping '+' can hit the delete X right next to it, which removes the whole phase.",
+      "evidence": "signal-panel@phone.dom.json: W 20x17, E 16x17, S 16x17 at x 83/105/123 (2px gaps); minus 18x18; plus 18x18 at x 327; Remove phase 16x14 at x 349 (4px from plus). All are under the 44x44 phone minimum. Desktop has the same sizes (contrast.md lists 26 small targets).",
+      "fix": "Under @media (pointer: coarse), make .arm, .dur and .ph-del at least 44x44 with 8px gaps. Split each phase onto two lines: name and duration stepper on top, approach toggles below. Move the remove-phase X to the row's far left, or put it behind a long-press, so it can't sit next to '+'.",
+      "box": [83, 633, 282, 52]
+    },
+    {
+      "screen": "city",
+      "viewport": "phone",
+      "rule": "NEW",
+      "severity": "high",
+      "title": "The tip says to pick a building from the toolbar, but no building tool is on screen",
+      "detail": "On a phone the toolbar scrolls sideways, and the first nine visible slots are all road tools. The tip in the top right reads 'Choose a building in the toolbar', yet the building tools are off-screen to the right, and the only hint is a 28px fade over a half-cut roundabout icon. A new player looks at the toolbar, sees only roads and gets stuck on the step that unlocks the rest of the level. (New rule idea: on small screens, every tool a tip refers to must be visible when the tip shows.)",
+      "evidence": "city@phone.dom.json controls stop at 'Roundabout (O)' [360,791,40,40], which runs past the 390px viewport. No building tool is in the visible controls, while desktop shows them at x 787-905. The tutorial text reads \"Place your buildings. Choose a building in the toolbar and click beside a street.\" hud.css .toolbar.more-r mask fades only the last 28px.",
+      "fix": "On phones, scroll the toolbar to the buildings group whenever the active tip mentions buildings (group.scrollIntoView({inline:'start'})). Add a visible 44px '›' scroll button in place of the mask-only fade, or split the toolbar into Roads / Buildings / Tools tabs below 720px.",
+      "box": [9, 786, 372, 49]
+    },
+    {
+      "screen": "signal-panel",
+      "viewport": "desktop",
+      "rule": "COL-01",
+      "severity": "medium",
+      "title": "Active approach letters are 10px white on light green and fail contrast",
+      "detail": "The W/E/S chips tell the player which approaches get green in each phase, which is the core of the light editor. The active ones put tiny white letters on a bright green fill that is hard to read, so players have to rely on fill alone to see which approaches are on. Same on signal-panel@phone.",
+      "evidence": "contrast.md signal-panel@desktop: W, E and S on the green chip measure 2.33:1 at 10px (size fail and contrast fail). The inactive chips are #5d6168 on white, 6.22:1 but also 10px. hud.css .arm { font-size:10px } .arm.on { background:#34c25a; color:#fff }.",
+      "fix": "Set .arm to font-size:12px, weight 600, and .arm.on to background:#1f7a36; border-color:#17602a; color:#fff (about 5.4:1). Alternatively keep #34c25a and use #10331b text. Add a check glyph or underline to the 'on' state so it doesn't depend on fill alone.",
+      "box": [1243, 370, 56, 51]
+    },
+    {
+      "screen": "signal-panel",
+      "viewport": "desktop",
+      "rule": "COL-02",
+      "severity": "medium",
+      "title": "Junction diagram and in-world signal dots show go/stop by red vs green only",
+      "detail": "The phase diagram draws each arm green (moves this phase) or red (waits), and the junction on the map shows the same states as plain green and red dots. For a red-green colour-blind player (about 1 in 12 men), the two arms differ only slightly in brightness, so they can't check which approach a phase releases without reading the W/E/S chips.",
+      "evidence": "hud.ts diagram stroke = on ? #34c25a : plan ? #e5484d : #b6bbc1. roads3d.ts signal colours 0x34c25a / 0xf5b82e / 0xe5484d. Relative luminance is 0.40 vs 0.22 (about 1.8:1 between them), with the same shape and width. Visible in signal-panel@desktop at the T-shaped diagram and the dots at about (678,386) and (728,420).",
+      "fix": "Give the states a shape as well as a colour. In the diagram, draw 'go' arms solid with an arrowhead pointing out of the junction, and 'stop' arms as a short stub ending in a perpendicular bar (or dashed). Label each arm end with W/E/S to match the chips. On the map, draw the stop dot as a square or a dot with a dark ring, and keep go as a plain circle.",
+      "box": [1252, 258, 96, 96]
+    },
+    {
+      "screen": "fresh-city",
+      "viewport": "desktop",
+      "rule": "COL-01",
+      "severity": "medium",
+      "title": "Goal progress values are 11px in green or red that fail contrast",
+      "detail": "The right-hand values in the goals card ('16 to go', 'no residents', '100.0%') are the numbers a player checks to see how close the level is. They are the smallest, lowest-contrast text in the HUD, so they read as faint coloured smudges next to bolder labels. This repeats on every in-play desktop shot. The same red token makes 'Remove lights' fail at 4.33:1 in signal-panel.",
+      "evidence": "contrast.md fresh-city@desktop: \"100.0%\" 3.38:1 at 11px, \"no residents\" 3.38:1 at 11px, \"16 to go\" 4.25:1 at 11px (all fail on size and contrast). building-panel \"100%\" in green bold 12px measures 3.38:1. hud.css --good:#2e9e4a, --bad:#d9443f, .obj-val { font-size:11px }.",
+      "fix": "Darken the tokens to --good:#1f7a36 (about 5.2:1 on the card) and --bad:#c0332e (about 5.4:1), and set .obj-val to 12px, weight 500. The green tick and empty circle already carry the done/not-done state, so the darker colours lose no meaning.",
+      "box": [1334, 37, 65, 78]
+    },
+    {
+      "screen": "level-up",
+      "viewport": "desktop",
+      "rule": "COL-01",
+      "severity": "medium",
+      "title": "Primary buttons (Continue, Save) and zone tags use white on a mid blue that fails 4.5:1",
+      "detail": "The one button that moves the player on after a level ('Continue'), the Save button and the 'Commercial' zone tag in the building inspector all use white text on #2f86e0. At 11-12px that is below the AA requirement, so the most important button label is also among the least crisp. The other zone tags are worse: white on residential green #4fae36 works out to about 2.8:1.",
+      "evidence": "contrast.md: level-up \"Continue\" 3.75:1 declared at 12px; saves \"Save\" 3.75:1; building-panel \"Commercial\" 3.75:1 at 11px (size fail). hud.css .btn.primary { background:#2f86e0; color:#fff }, .z-com #2f86e0, .z-res #4fae36, .z-ind #7d828a (about 3.9:1).",
+      "fix": "Use .btn.primary { background:#2373c4; border-color:#1a5fa6 } (about 4.9:1; #2373c4 is already its border colour) with a hover of #2a7fd4. Zone tags: .z-com #2373c4, .z-res #2f7d22 (about 5.2:1), .z-ind #5f646b (about 6.0:1), .z-work #6f52bd. Set .zone-tag to 12px.",
+      "box": [684, 155, 73, 26]
+    },
+    {
+      "screen": "level-up",
+      "viewport": "phone",
+      "rule": "COL-01",
+      "severity": "medium",
+      "title": "Level banner is see-through and lies on top of the tip and speed controls, with ghost text behind its lines",
+      "detail": "On a phone the 'City Level 2' banner opens over the money, speed buttons and purple tip. Because the card is 94% opaque, the old tip's white text ('Place your buildings...') shows through behind the reward lines, so the player reads two layers of text at once. The saves dialog has the same translucency, with the road visible through it on saves@desktop.",
+      "evidence": "contrast.md level-up@phone: \"+$8,000 road budget · 1 area unlock\" p10 1.93:1 (declared 6.11); tip text under the banner p50 1.08:1. The banner [~55,52,280,172] overlaps the tutorial [192,44,190,98] and the speed group [80,45,106,24]. hud.css --card: rgba(255,255,255,0.94) is used for .banner and .dialog.",
+      "fix": "Give .banner and .dialog a solid background:#fff. While the level banner is open, hide the tutorial card, since its tip belongs to the finished level. Below 720px, place the banner under the HUD rows (top:150px) so it doesn't cover the speed control.",
+      "box": [192, 52, 143, 90]
+    },
+    {
+      "screen": "fresh-city",
+      "viewport": "phone",
+      "rule": "TYP-01",
+      "severity": "medium",
+      "title": "The tutorial tip, the main instruction text, shrinks to 11px on phones",
+      "detail": "The purple tip is the only place that tells a new player what to do next, and the phone layout makes it smaller than on desktop and squeezes it into a 150px column. Players have to hold the phone close to read a five-line paragraph of 11px text. The same applies to every phone shot with the tip.",
+      "evidence": "contrast.md fresh-city@phone: tip paragraph at 11px, box 203,53,150,78 (size fail; contrast 4.86:1 passes). hud.css @media (max-width:720px) { .tutorial { font-size:11px } .tr { width:min(264px, calc(100vw - 200px)) } } gives a 190px card on a 390px phone. Phone body text should be at least 14px.",
+      "fix": "Delete the .tutorial font-size:11px override and set it to 14px/1.4 on phones. Below 720px, move the tip out of the narrow right column to a full-width card under the top rows (left:8px; right:8px; top:80px), with the bold lead sentence on its own line.",
+      "box": [203, 53, 150, 78]
+    },
+    {
+      "screen": "city",
+      "viewport": "phone",
+      "rule": "MENU-03",
+      "severity": "medium",
+      "title": "Core HUD controls on phone (speed, menu, close X) are 18-30 px targets",
+      "detail": "The speed buttons a player taps constantly (pause, play, fast, fastest) are 26px wide and touch each other, so a tap meant for pause often lands on play or fast. The tip's close X and panel close Xs are 18x18 at the screen edge, and the goals header is a 15px-tall strip.",
+      "evidence": "contrast.md city@phone small targets (need 44x44): Pause 26x24, Normal speed 26x24, Fast 26x24, Fastest 28x24 (no gaps), Game menu 30x26, Overlays 85x26, Hide tips 18x18, City Level 1 header 172x15. building-panel and saves add Close 18x18, Pick up 62x26, Delete save 28x24 next to Load. Toolbar tools are 40x40.",
+      "fix": "Add @media (pointer: coarse) { .speed-btn { min-width:44px; min-height:44px } .btn, .icon-btn { min-height:44px } .close, .ph-del, .mag { min-width:44px; min-height:44px } .tool { width:44px; height:44px } .obj-head { min-height:44px } }. Where the layout can't grow, add an invisible ::after hit area with inset:-10px.",
+      "box": [80, 45, 106, 24]
+    },
+    {
+      "screen": "fresh-city",
+      "viewport": "desktop",
+      "rule": "TYP-01",
+      "severity": "low",
+      "title": "Building-count badges are 10px and sit on top of the building icons",
+      "detail": "The small numbers on the building tools show how many of each building are left to place (for example 14 homes). They are 10px grey digits drawn directly over the coloured icons, so they blur into the green house and blue shop artwork.",
+      "evidence": "contrast.md fresh-city@desktop: \"14\" 10px, p10 2.71:1; \"1\" 10px, p10 1.66:1 (size fail on all three badges). hud.css .tool .count { font-size:10px; color:#5d6168; position:absolute; top:1px; right:2px } with no backing.",
+      "fix": "Give the badge its own plate: .tool .count { font-size:11px; font-weight:600; color:#26282c; background:#fff; border:1px solid #c9cac3; border-radius:7px; padding:0 4px; top:-4px; right:-4px; line-height:13px }, so it sits on the corner instead of on the icon.",
+      "box": [805, 849, 100, 16]
+    },
+    {
+      "screen": "saves",
+      "viewport": "desktop",
+      "rule": "MENU-04",
+      "severity": "low",
+      "title": "Focus ring is a light blue that fails 3:1 and looks the same as the 'selected' style",
+      "detail": "Keyboard users (the game has shortcuts for every tool) get a 2px #45b0e5 outline as their focus mark. On the white cards it is faint, and it is the same colour as the border used for the selected tool, the selected speed and the active phase, so a focused control can't be told apart from a selected one. The level-up banner also opens without moving focus to Continue (level-up dom focused: null), while the saves dialog correctly focuses the name field.",
+      "evidence": "hud.css button:focus-visible, input:focus-visible { outline:2px solid var(--sel-line) } where --sel-line is #45b0e5, about 2.4:1 against #fff (non-text minimum is 3:1). The same #45b0e5 is the border of .tool.on, .btn.on, .seg-btn.on and .phase.on. saves@desktop shows the focused input [513,393,359,27] with this ring.",
+      "fix": "Change the focus style to outline:2px solid #1677b3; outline-offset:2px (about 4.9:1 on white). Keep #45b0e5 for selected state only. When the level banner appears, call focus() on its Continue button.",
+      "box": [513, 393, 359, 27]
+    }
+  ]
+}

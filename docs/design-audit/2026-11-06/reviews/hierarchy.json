@@ -1,0 +1,137 @@
+{
+  "lens": "hierarchy",
+  "findings": [
+    {
+      "screen": "overlay-flow",
+      "viewport": "phone",
+      "rule": "NEW",
+      "severity": "high",
+      "title": "Overlays menu opens underneath the money chip, speed control and tip card",
+      "detail": "New idea (layering): an opened menu must sit above every HUD element. On phone the dropdown is drawn behind the HUD. The selected row ('Traffic flow') is hidden behind the $ chip and speed buttons, and the purple tip cuts off the right half of three rows, so the player can't see which overlay is on or read the options.",
+      "evidence": "Menu items span x 13-239, y 47-247 (dom). Money chip [18,50,45,15] and speed buttons [80-186,45,24] sit on the 'Traffic flow' row at y 47-72. The tip card (x>=192, y 44-142) truncates the visible labels to 'Overall building satisfacti', 'Access to nearby commer' and 'Access to nearby workpla'.",
+      "fix": "Give the open dropdown a z-index above the HUD chips and tip card, or hide the money/speed row and tip while the menu is open. On phone, a full-width sheet under the top bar would also work.",
+      "box": [8, 42, 236, 241]
+    },
+    {
+      "screen": "city",
+      "viewport": "phone",
+      "rule": "ONB-01",
+      "severity": "high",
+      "title": "Tip says to pick a building, but no building tool is on screen",
+      "detail": "On phone the bottom toolbar shows only the seven road tools and the grid tool. House, shop and office are scrolled off the right edge, with only a faint fade and a half-cut roundabout icon hinting there is more. The tip reads 'Choose a building in the toolbar', so the player has nothing to tap. The same happens on fresh-city, drawing-road and every other phone shot.",
+      "evidence": "Visible controls end at 'Roundabout (O)' [360,791,40,40], which runs past the 390 px viewport. No building control is listed in city@phone.dom.json. The tip text is 'Place your buildings. Choose a building in the toolbar and click beside a street.'",
+      "fix": "On phone, split the toolbar into a Roads group and a Buildings group (two tabs, or a second row), or auto-scroll it to the building group when the 'Place your buildings' tip shows. Make the scroll affordance obvious, not just a fade.",
+      "box": [9, 786, 372, 49]
+    },
+    {
+      "screen": "level-up",
+      "viewport": "phone",
+      "rule": "COL-01",
+      "severity": "medium",
+      "title": "Level-complete banner is see-through over the tip card and HUD, so its text sits on other text",
+      "detail": "On phone the banner overlaps the money chip, the speed buttons and the purple tip, and its translucent panel lets them show through. The white tip copy ('Place your buildings', 'a building in the') ghosts behind the reward lines, which makes the most important message of the level hard to read. The saves dialog has the same translucency over the map (road band and cars faintly visible through it), but there the background is calmer.",
+      "evidence": "Banner [55,52,280,172] covers tip text runs [203,53,138,78] and $13,960 [18,50,45,15]. The '$13,960' chip is cut to '$13,96' and the tip's purple and white text show through behind '1 x Copper Mine · 1' and 'x Copper Works'.",
+      "fix": "Make the banner panel fully opaque and dim or hide the tip card while it is up, or anchor the banner below the HUD rows (y >= 150) on phone.",
+      "box": [55, 52, 280, 172]
+    },
+    {
+      "screen": "level-up",
+      "viewport": "desktop",
+      "rule": "HUD-05",
+      "severity": "medium",
+      "title": "The stale purple tip card is the loudest thing on every screen, louder than goals, panels and the level banner",
+      "detail": "The only saturated filled block in the HUD is the tip, and it keeps showing 'Place your buildings.' in every state: while drawing a road, inspecting a shop, editing a traffic light, in the saves dialog, and here under the level-complete banner. The eye goes to old advice before the goals card or the white banner announcing the new level. On desktop it also pushes the inspector and junction panels down to y 228.",
+      "evidence": "Tip bg rgb(123,93,208) with white 12 px text at [1168,133,264,88], against a white #FDFDFC goal card and a white level banner. The same 'Place your buildings.' text appears in city, drawing-road, overlay-flow, building-panel, signal-panel, saves and level-up.",
+      "fix": "Calm the tip: white card with a purple left rule or purple heading, the same weight as the goals card. Auto-dismiss or advance it once its step is done, and hide it while a modal, inspector or level banner is open.",
+      "box": [1168, 133, 264, 88]
+    },
+    {
+      "screen": "level-up",
+      "viewport": "desktop",
+      "rule": "NEW",
+      "severity": "medium",
+      "title": "Level-complete banner never says the level is complete; the reward list is one grey run-on line",
+      "detail": "New idea (moment of achievement): the headline is just 'City Level 2' at 15 px, 3 px above the body, so it reads like a label, not a win. The unlocks are packed into a 12 px grey line joined by '·', and on phone it wraps mid-item ('1 x Copper Mine · 1 / x Copper Works'). The player finishes a level without a clear 'you did it' moment and has to work to see what was unlocked.",
+      "evidence": "'City Level 2' 15 px/600 [677,65,87,19]. '10 x Small Residential · 1 x Copper Mine · 1 x Copper Works · 1 x Small Commercial' 12 px grey rgb(93,97,104) [485,88,471,15]. Phone wraps to [73,88,243,30].",
+      "fix": "Lead with a short eyebrow like 'Level 1 complete' above a larger 'City Level 2' (about 20-22 px). Put each unlock on its own line (icon + count + name), and the budget line apart in the money colour.",
+      "box": [468, 52, 504, 142]
+    },
+    {
+      "screen": "city",
+      "viewport": "desktop",
+      "rule": "TYP-02",
+      "severity": "medium",
+      "title": "Goal card has no type hierarchy: title, goals and values are all 11-12 px",
+      "detail": "The whole HUD uses 10, 11 and 12 px only. In the goals card the level title, the four goal names and their values differ by at most 1 px, so the eye can't jump from 'which level' to 'what's left'. The same flatness is in the inspector ('Small Commercial' 12/600 against 'Satisfaction' 12/400) and the junction panel ('Junction' 12/600 against 'Phase 1' 12/500).",
+      "evidence": "'City Level 1' 12 px/600, '3/4' 11/500, goal labels 12/400, '6 to go' and '100.0%' 11/400. contrast.md lists font sizes 10, 11, 12 for every in-play desktop shot.",
+      "fix": "Keep the small flat look but add one clear step: card title about 14 px/600 with the 3/4 counter in the same size, goal labels at 12-13, and values at 12/600 in tabular figures so the status column reads first.",
+      "box": [1168, 8, 264, 118]
+    },
+    {
+      "screen": "fresh-city",
+      "viewport": "desktop",
+      "rule": "COL-03",
+      "severity": "medium",
+      "title": "Unmet goal shows 'no residents' in success green, and its own name is truncated",
+      "detail": "On the very first screen the 'Trip taken by every new resident' goal has an empty circle (not met), but its status is written in the same green as the met '100.0%' goals, so it reads as fine. Its label is also cut to 'Trip taken by every n...' because the status text takes the space.",
+      "evidence": "'no residents' rgb(46,158,74), the same as '100.0%' [1362,79]. The label box [1197,57,189,15] runs into the value at x 1334, and the screenshot shows 'Trip taken by every n...'.",
+      "fix": "Show not-yet-measurable status in the neutral grey (or a dash), keep green for met only, and shorten the goal label (for example 'Every resident makes a trip') or let it wrap.",
+      "box": [1176, 55, 226, 18]
+    },
+    {
+      "screen": "fresh-city",
+      "viewport": "phone",
+      "rule": "ONB-02",
+      "severity": "medium",
+      "title": "On phone the four level goals are collapsed to 'City Level 1 2/4' and the tip takes their place",
+      "detail": "The goals are the main thing the player is working toward, but on phone they start hidden behind a chevron. The tip card takes the top-right space instead, so a new player sees the instructions but not what they are for or which goals are missing. The same holds on every phone shot.",
+      "evidence": "Only 'City Level 1' [201,15,69,15] and '2/4' [276,16,19,14] are visible. No goal rows exist in fresh-city@phone.dom.json, while the tip occupies [192,44,190,98].",
+      "fix": "Show the goal list expanded on phone at level start (it fits in 4 short rows) and collapse it once the first tip is dismissed. Alternatively, show the next unmet goal as one line under the header.",
+      "box": [192, 8, 189, 29]
+    },
+    {
+      "screen": "fresh-city",
+      "viewport": "desktop",
+      "rule": "ONB-01",
+      "severity": "medium",
+      "title": "First tip points to 'the two-way street below', but nothing in the toolbar is marked",
+      "detail": "The tip is in the top-right corner, and the toolbar it refers to is about 640 px away at the bottom centre, made of seven near-identical unlabeled lane-diagram icons. None is highlighted, so the player has to hover through them to find the two-way street.",
+      "evidence": "Tip at [1179,143,224,67]: 'Draw a street. Pick the two-way street below...'. Road tools [365-643,849,38,38] have no visible labels, and the Street (2) tool [405,849,38,38] has no highlight in fresh-city@desktop.png.",
+      "fix": "While this tip is active, pulse or outline the Street (2) tool and show its name under it. Or preselect the street tool so the first click on the map starts a road.",
+      "box": [365, 849, 278, 38]
+    },
+    {
+      "screen": "building-panel",
+      "viewport": "desktop",
+      "rule": "NEW",
+      "severity": "low",
+      "title": "Inspector rows wrap into two-line grey labels, and the filled 'Commercial' badge outweighs the building name",
+      "detail": "New idea (row integrity): each factor row should read as one line. The 11 px grey labels are squeezed into a ~103 px column, so 'Access to / workers/customers' and 'Access to input / resources' wrap and their values float mid-row. That makes the rows ragged next to the one-line 'Air pollution'. The filled blue 'Commercial' tag is the strongest mark in the panel, ahead of the name and the satisfaction verdict, and it is a pill badge, which the art direction avoids.",
+      "evidence": "'Access to workers/customers' box [1179,284,103,28] (2 lines), value '100%' at y 291. 'Access to input resources' [1179,316,81,28]. 'Commercial' white on rgb(47,134,224) [1185,238,65,14]. On phone the rows fit on one line ([19,613,156,14]).",
+      "fix": "Narrow the bars (or drop them under the label) so labels stay on one line in the 264 px panel. Replace the blue badge with a small coloured square or text in the zone colour before 'Small Commercial', and keep the name as the strongest text.",
+      "box": [1179, 236, 242, 128]
+    },
+    {
+      "screen": "signal-panel",
+      "viewport": "desktop",
+      "rule": "MENU-01",
+      "severity": "low",
+      "title": "'Remove lights' (destructive) is the most prominent button in the junction panel",
+      "detail": "The red outlined 'Remove lights' is the only coloured control in the panel and sits bottom-right, where the primary action usually goes. '+ Add phase' is plain grey. The eye lands on the action that deletes the setup rather than the one that builds it.",
+      "evidence": "'Remove lights' text rgb(217,68,63) with red border [1319,436,102,26]. '+ Add phase' dark text with grey border [1179,436,92,26].",
+      "fix": "Make 'Remove lights' a quiet text link (grey, red on hover) or move it under a divider at the bottom-left, and let '+ Add phase' carry the accent.",
+      "box": [1319, 436, 102, 26]
+    },
+    {
+      "screen": "drawing-road",
+      "viewport": "desktop",
+      "rule": "NEW",
+      "severity": "low",
+      "title": "Cursor chips give cost, angle and length equal weight, so the price doesn't stand out",
+      "detail": "New idea (decision value first): the number that decides whether to commit the road is its cost, but the three chips are identical white boxes with 12 px regular text. '$937' reads no louder than '33.7°'. The player has to read all three to find the price.",
+      "evidence": "'$937' [1219,639,27,15], '33.7°' [1279,639,28,15] and '0.07 km' [1325,639,45,15], all 12 px/400 rgb(38,40,44) on white.",
+      "fix": "Make the cost chip 600 weight (and red when it exceeds the budget). Merge angle and length into one quieter grey chip.",
+      "box": [1213, 636, 164, 21]
+    }
+  ]
+}

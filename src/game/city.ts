@@ -37,7 +37,7 @@ export interface Objective {
   label: string;
   done: boolean;
   value: string; // "14 to go" / "93.4%"
-  good: boolean;
+  good: boolean | null; // null: can't be measured yet (shown neutral)
   sub?: { label: string; value: string }; // biggest satisfaction drag
 }
 
@@ -704,7 +704,7 @@ export class Game {
     const pct = (x: number) => (x * 100).toFixed(1) + "%";
     this.objectives = [
       { id: "placed", label: "All buildings placed", done: left === 0, value: left ? `${left} to go` : "", good: left === 0 },
-      { id: "trips", label: "Trip taken by every new resident", done: noTrip === 0 && this.residents.length > 0, value: noTrip ? `${noTrip} to go` : this.residents.length ? "" : "no residents", good: noTrip === 0 },
+      { id: "trips", label: "Trip taken by every new resident", done: noTrip === 0 && this.residents.length > 0, value: noTrip ? `${noTrip} to go` : this.residents.length ? "" : "none yet", good: this.residents.length ? noTrip === 0 : null },
       {
         id: "sat", label: `${Math.round(L.satisfaction * 100)}% building satisfaction`, done: sat.avg >= L.satisfaction - 1e-9, value: pct(sat.avg), good: sat.avg >= L.satisfaction,
         sub: sat.drag ? { label: FACTOR_LABEL[sat.drag.key] ?? sat.drag.key, value: pct(sat.drag.loss) } : undefined,

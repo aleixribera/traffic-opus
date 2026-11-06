@@ -4,3 +4,5 @@ dist
 *.log
 .playwright-cli
 tools/blender/previews/
+docs/design-audit/*/captures/
+docs/design-audit/*/after/

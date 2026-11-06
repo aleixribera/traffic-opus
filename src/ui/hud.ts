@@ -65,6 +65,7 @@ export class Hud {
   private panelPhase = 0;
   private tutHidden = new Set<number>();
   private lastObj = "";
+  private lastHint = "";
   private objCollapsed = typeof matchMedia === "function" && matchMedia("(max-width: 560px)").matches; // phones start folded
   private sfx = new Sfx();
 
@@ -216,6 +217,9 @@ export class Hud {
       b.hidden = n <= 0 && !g.buildings.list.some((x) => x.kind === k);
       b.disabled = n <= 0;
       b.querySelector(".count")!.textContent = n > 0 ? String(n) : "";
+      const T = BUILDING_TYPES[k];
+      b.title = `${T.name} · ${n > 0 ? `${n} left` : "none left"} · ${T.blurb}`;
+      b.setAttribute("aria-label", `${T.name}, ${n} left`);
     }
     const un = this.toolBtns.get("unlock")!;
     un.hidden = g.tileTokens <= 0 && st.tool !== "unlock";
@@ -256,12 +260,12 @@ export class Hud {
       return w;
     };
     const elevation = () => [
-      label("Elevation"),
-      seg([0, 1, 2, 3].map((l) => ({ html: String(l), on: st.level === l, title: `Elevation ${l} (R / F)`, fn: () => app.setLevel(l), cls: "lvl lvl" + l }))),
+      label("Height"),
+      seg([0, 1, 2, 3].map((l) => ({ html: String(l), on: st.level === l, title: l === 0 ? "Ground level (F)" : `Bridge level ${l}: passes over roads below (R / F)`, fn: () => app.setLevel(l), cls: "lvl lvl" + l }))),
     ];
     const items: HTMLElement[] = [];
     if (st.tool === "road") {
-      items.push(label("Curve mode"), seg([
+      items.push(h("span", "sb-name", `${ROAD_TYPES[st.roadType].name} <span class="muted">${ROAD_TYPES[st.roadType].short}</span>`), label("Curve"), seg([
         { html: ICON.straight, on: st.curve === "straight", title: "Straight (Tab)", fn: () => app.setTool({ curve: "straight" }) },
         { html: ICON.arc, on: st.curve === "arc", title: "Arc: follows the road you start from, or click a bend point", fn: () => app.setTool({ curve: "arc" }) },
         { html: ICON.smooth, on: st.curve === "smooth", title: "Smooth: S-curves that meet roads at right angles", fn: () => app.setTool({ curve: "smooth" }) },
@@ -306,11 +310,13 @@ export class Hud {
       const rows = g.objectives.map((o) => {
         const mag = o.id === "placed" ? "" : `<button class="mag ${app.focus === o.id ? "on" : ""}" data-f="${o.id}" title="Show what holds this back" aria-label="Highlight ${o.label}">${ICON.magnifier}</button>`;
         const sub = o.sub && !o.done ? `<div class="obj-sub"><span>${o.sub.label}</span><span class="bad">−${o.sub.value}</span></div>` : "";
-        return `<div class="obj ${o.done ? "done" : ""}">${o.done ? ICON.check : ICON.open}<span class="obj-label">${o.label}</span><span class="obj-val ${o.good ? "good" : "bad"}">${o.value}</span>${mag}</div>${sub}`;
+        return `<div class="obj ${o.done ? "done" : ""}">${o.done ? ICON.check : ICON.open}<span class="obj-label">${o.label}</span><span class="obj-val ${o.good === null ? "" : o.good ? "good" : "bad"}">${o.value}</span>${mag}</div>${sub}`;
       }).join("");
       const done = g.objectives.filter((o) => o.done).length;
+      const nx = g.objectives.find((o) => !o.done);
+      const next = nx ? `<div class="obj-next"><span class="obj-label">${nx.label}</span><span class="obj-val ${nx.good === null ? "" : nx.good ? "good" : "bad"}">${nx.value}</span></div>` : "";
       this.objCard.classList.toggle("folded", this.objCollapsed);
-      this.objCard.innerHTML = `<header><button class="obj-head" aria-expanded="${!this.objCollapsed}" title="${this.objCollapsed ? "Show" : "Hide"} goals">City Level ${g.level}<span class="obj-count">${done}/${g.objectives.length}</span>${ICON.caret}</button></header>${this.objCollapsed ? "" : rows}`;
+      this.objCard.innerHTML = `<header><button class="obj-head" aria-expanded="${!this.objCollapsed}" title="${this.objCollapsed ? "Show" : "Hide"} goals">City Level ${g.level}<span class="obj-count">${done}/${g.objectives.length}</span>${ICON.caret}</button></header>${this.objCollapsed ? next : rows}`;
       (this.objCard.querySelector(".obj-head") as HTMLButtonElement).onclick = () => { this.objCollapsed = !this.objCollapsed; this.tick(true); };
       for (const b of this.objCard.querySelectorAll<HTMLButtonElement>(".mag")) b.onclick = () => app.setFocus(b.dataset.f as "trips" | "sat" | "flow");
     }
@@ -324,6 +330,19 @@ export class Hud {
         (this.tut.querySelector(".close") as HTMLButtonElement).onclick = () => { this.tutHidden.add(g.level); this.tut.hidden = true; };
       }
     } else this.tut.hidden = true;
+    // the tool the tip talks about pulses until it is picked; on narrow screens scroll it into view
+    const hint = this.tut.hidden ? "" : tips?.key === "1a" ? "road:street" : tips?.key === "1b" ? "kind:" : "";
+    let first: HTMLButtonElement | null = null;
+    for (const [k, b] of this.toolBtns) {
+      const on = !!hint && (hint.endsWith(":") ? k.startsWith(hint) && !b.hidden && !b.disabled : k === hint);
+      b.classList.toggle("hint", on);
+      if (on && !first) first = b;
+    }
+    if (first && this.lastHint !== hint) {
+      const t = this.toolbar, bl = first.offsetLeft, br = bl + first.offsetWidth;
+      if (bl < t.scrollLeft || br > t.scrollLeft + t.clientWidth) t.scrollTo({ left: bl - 12, behavior: "smooth" });
+    }
+    this.lastHint = hint;
     void L;
     if (this.panelKind === "building" && this.app.selected) this.fillBuilding(this.app.selected);
   }
@@ -332,7 +351,7 @@ export class Hud {
     const g = this.app.game;
     const L = levelDef(g.level);
     if (g.level === 1) {
-      if (g.net.segs.size === 0) return { key: "1a", html: "<b>Draw a street.</b> Pick the two-way street below, click to start and click again to finish. Keep clicking to continue the road." };
+      if (g.net.segs.size === 0) return { key: "1a", html: "<b>Draw a street.</b> Pick <b>Street</b> in the toolbar (key 2), click to start and click again to finish. Keep clicking to continue the road." };
       if (g.remainingToPlace() > 0) return { key: "1b", html: "<b>Place your buildings.</b> Choose a building in the toolbar and click beside a street. Each one gets its own driveway." };
       return { key: "1c", html: "<b>Keep traffic moving.</b> Residents drive to shops and work. Hold all four goals for a few seconds to reach the next level." };
     }
@@ -383,7 +402,8 @@ export class Hud {
   levelUp(level: number, note?: string) {
     const L = levelDef(level);
     const gifts = Object.entries(L.give).filter(([, n]) => n).map(([k, n]) => `${n} × ${BUILDING_TYPES[k as BuildingKind].name}`);
-    this.banner.innerHTML = `<header>City Level ${level}</header>
+    this.banner.innerHTML = `<header>Level ${level - 1} complete</header>
+      <p class="sub">City Level ${level} unlocks</p>
       <p class="gifts">${gifts.join(" · ")}</p>
       <p class="gifts">+${formatMoney(L.money)} road budget${L.tiles ? ` · ${L.tiles} area unlock` : ""}</p>
       ${note ? `<p class="note">${note}</p>` : ""}
@@ -392,7 +412,10 @@ export class Hud {
     this.banner.classList.remove("in");
     void this.banner.offsetWidth;
     this.banner.classList.add("in");
-    (this.banner.querySelector("button") as HTMLButtonElement).onclick = () => { this.banner.hidden = true; };
+    this.root.classList.add("banner-up");
+    const ok = this.banner.querySelector("button") as HTMLButtonElement;
+    ok.onclick = () => { this.banner.hidden = true; this.root.classList.remove("banner-up"); };
+    requestAnimationFrame(() => ok.focus({ preventScroll: true }));
     this.sfx.play("level");
     this.refresh();
   }
@@ -421,7 +444,7 @@ export class Hud {
       const bad = k === "pollution" || k === "noise";
       const val = bad ? v : Math.min(1, v);
       const pct = Math.round(val * 100);
-      return `<div class="fac"><span>${FACTOR_LABEL[k] ?? k}</span><span class="bar ${bad ? "neg" : ""}"><i style="width:${Math.max(3, pct)}%"></i></span><span class="num">${bad ? (pct ? "−" + pct + "%" : "none") : pct + "%"}</span></div>`;
+      return `<div class="fac"><span>${FACTOR_LABEL[k] ?? k}</span><span class="bar ${bad ? "neg" : ""}"><i style="width:${bad && !pct ? 0 : Math.max(3, pct)}%"></i></span><span class="num">${bad ? (pct ? "−" + pct + "%" : "none") : pct + "%"}</span></div>`;
     }).join("");
     const residents = g.residents.filter((r) => r.home === b.id).length;
     const workers = g.residents.filter((r) => r.job === b.id).length;
@@ -463,9 +486,11 @@ export class Hud {
     const spokes = arms.map((a) => {
       const on = ph?.arms.includes(a.seg);
       const x = 50 + a.dir.x * 40, y = 50 + a.dir.y * 40;
-      return `<line x1="50" y1="50" x2="${x}" y2="${y}" stroke="${on ? "#34c25a" : plan ? "#e5484d" : "#b6bbc1"}" stroke-width="10" stroke-linecap="round"/>`;
+      const lx = 50 + a.dir.x * 47 + (Math.abs(a.dir.y) > 0.7 ? 9 : 0), ly = 50 + a.dir.y * 47 + (Math.abs(a.dir.x) > 0.7 ? -8 : 4);
+      return `<line x1="50" y1="50" x2="${x}" y2="${y}" stroke="${on ? "#2a9e49" : plan ? "#e5484d" : "#b6bbc1"}" stroke-width="10" stroke-linecap="round" ${on || !plan ? "" : 'stroke-dasharray="2 5"'}/>` +
+        `<text x="${lx}" y="${ly}" font-size="10" font-weight="600" fill="#5d6168" text-anchor="middle">${compass(a.dir)}</text>`;
     }).join("");
-    const diagram = `<svg viewBox="0 0 100 100" class="diagram" aria-hidden="true">${spokes}<circle cx="50" cy="50" r="9" fill="#fff" stroke="#8d939a" stroke-width="2"/></svg>`;
+    const diagram = `<svg viewBox="-8 -8 116 116" class="diagram" aria-hidden="true">${spokes}<circle cx="50" cy="50" r="9" fill="#fff" stroke="#8d939a" stroke-width="2"/></svg>`;
     let body = "";
     if (!plan) {
       body = `<p class="muted">Unsignalled: cars give way by road priority. Lights stop traffic in turns and help busy crossings.</p>
@@ -476,7 +501,7 @@ export class Hud {
           <span class="ph-arms">${arms.map((a, k) => `<button class="arm ${p.arms.includes(a.seg) ? "on" : ""}" data-i="${i}" data-seg="${a.seg}" title="Toggle this approach">${compass(a.dir)}${k >= 0 ? "" : ""}</button>`).join("")}</span>
           <span class="ph-dur"><button class="dur" data-i="${i}" data-d="-2" aria-label="Shorter">−</button><b>${p.dur}s</b><button class="dur" data-i="${i}" data-d="2" aria-label="Longer">+</button></span>
           ${plan.phases.length > 1 ? `<button class="ph-del" data-i="${i}" aria-label="Remove phase">${ICON.close}</button>` : ""}
-        </div>`).join("") + `<div class="row"><button class="btn add-ph">+ Add phase</button><button class="btn danger rm-sig">Remove lights</button></div>`;
+        </div>`).join("") + `<div class="row"><button class="btn add-ph">+ Add phase</button><button class="btn quiet danger rm-sig">Remove lights</button></div>`;
     }
     this.panel.innerHTML = `<button class="close" aria-label="Close">${ICON.close}</button><header>Junction</header>${diagram}${body}`;
     const q = <T extends Element>(s: string) => [...this.panel.querySelectorAll<T & HTMLElement>(s)];
@@ -516,7 +541,7 @@ export class Hud {
       <ul class="save-list">${list.map((m) => `<li data-id="${m.id}">
           ${m.thumb ? `<img src="${m.thumb}" alt="" width="96" height="60">` : `<span class="thumb-empty"></span>`}
           <span class="save-meta"><b>${escapeHtml(m.name)}</b><span>City Level ${m.level} · ${fmtTime(m.playtime)} playtime · ${m.residents} residents</span></span>
-          <button class="btn load">Load</button>${m.auto ? "" : `<button class="btn icon-btn del" aria-label="Delete save">${ICON.close}</button>`}
+          <button class="btn load">Load</button>${m.auto ? "" : `<button class="btn icon-btn del" aria-label="Delete save" title="Delete save">${ICON.bulldoze}</button>`}
         </li>`).join("") || `<li class="muted">No saves yet. The game autosaves every minute.</li>`}</ul>
       <div class="row"><button class="btn new">New city</button></div>
     </div>`;
@@ -539,7 +564,13 @@ export class Hud {
         this.toast("Loaded");
       };
       const del = li.querySelector(".del") as HTMLButtonElement | null;
-      if (del) del.onclick = () => { app.saves.remove(li.dataset.id!); this.openSaves(); };
+      if (del) del.onclick = () => {
+        if (del.dataset.armed) { app.saves.remove(li.dataset.id!); this.openSaves(); return; }
+        del.dataset.armed = "1";
+        del.classList.add("danger");
+        del.innerHTML = "Delete?";
+        setTimeout(() => { if (del.isConnected) { delete del.dataset.armed; del.classList.remove("danger"); del.innerHTML = ICON.bulldoze; } }, 2500);
+      };
     }
     (dlg.querySelector(".new") as HTMLButtonElement).onclick = () => {
       app.saves.autosave(g);

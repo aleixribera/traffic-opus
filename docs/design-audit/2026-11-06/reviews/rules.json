@@ -1,0 +1,161 @@
+{
+  "lens": "rules",
+  "findings": [
+    {
+      "screen": "signal-panel",
+      "viewport": "phone",
+      "rule": "MENU-03",
+      "severity": "high",
+      "title": "Traffic-light phase toggles and steppers are far too small to tap",
+      "detail": "On a phone the W/E/S direction toggles, the -/+ duration steppers and the remove-phase x sit 2 px apart and are a third of a fingertip wide, so editing a phase means repeated mis-taps on the wrong direction. The same rule fails throughout the phone HUD: speed buttons 26x24, Hide tips / Close 18x18, toolbar tools 40x40; on desktop the goal highlight buttons are 18x18.",
+      "evidence": "dom: W [83,634,20,17], E [105,634,16,17], S [123,634,16,17] (2 px gaps); '-' [284,633,18,18]; '+' [327,633,18,18]; Remove phase [349,635,16,14]. Rule needs 44x44 on touch with 8 px spacing.",
+      "fix": "On touch, make each direction toggle and stepper at least 44x44 (or one 44 px tall segmented control per phase), with 8 px gaps; move remove-phase into a 44 px target at the row end.",
+      "box": [83, 633, 282, 53]
+    },
+    {
+      "screen": "city",
+      "viewport": "phone",
+      "rule": "ONB-01",
+      "severity": "high",
+      "title": "Tip points to building tools that are not on screen, and says 'click' on a touch device",
+      "detail": "The tip tells the player to 'Choose a building in the toolbar and click beside a street', but on phone the toolbar is cut off after the grid tool and the house/shop/office buttons are off-screen to the right, with only a faint fade as a scroll cue. A new phone player cannot find the control the tip names. Same on fresh-city, drawing-road, overlay-flow, building-panel, signal-panel and saves at phone width.",
+      "evidence": "Phone toolbar controls end at Roundabout [360,791,40,40], which already overflows the 390 px viewport; no building button appears in the phone DOM controls. Tip text: 'Place your buildings. Choose a building in the toolbar and click beside a street.' Fresh-city tip also says 'click to start and click again to finish'.",
+      "fix": "On phone, put buildings in view (e.g. a second toolbar row or a Roads/Buildings switch), or auto-scroll the toolbar to the buildings group when this tip shows; switch tip verbs to 'tap' on touch input.",
+      "box": [318, 786, 63, 49]
+    },
+    {
+      "screen": "overlay-flow",
+      "viewport": "phone",
+      "rule": "MENU-02",
+      "severity": "high",
+      "title": "Open Overlays menu is buried under the money chip, speed buttons and tip card",
+      "detail": "On phone the overlays list opens underneath the HUD: the highlighted active row 'Traffic flow' is hidden behind '$13,960' and the speed controls, and the right half of the next three options is covered by the purple tip, so the player cannot see which overlay is on or read the choices.",
+      "evidence": "Menu rows start at [13,47,226,25] while '$13,960' [18,50,45,15] and the speed buttons [80-186,45,h24] draw on top of it; screenshot shows 'Overall building satisfacti', 'Access to nearby commer', 'Access to nearby workpla' cut by the tip card (x ~193). Measured p10 contrast 3.04 on the first two rows.",
+      "fix": "Give the open dropdown a z-index above the HUD chips and tip, or open it as a full-width sheet below the top bar on phone; hide the tip while a menu is open.",
+      "box": [13, 44, 230, 80]
+    },
+    {
+      "screen": "drawing-road",
+      "viewport": "desktop",
+      "rule": "COL-01",
+      "severity": "medium",
+      "title": "Elevation level numbers 1-3 are nearly invisible",
+      "detail": "While drawing a road, the unselected elevation levels show a white digit on a pastel chip at 55% opacity, so the player sees coloured squares but cannot read which number is which. Same on phone.",
+      "evidence": "'1','2','3' white on (116,184,62) / (79,143,232) / (154,106,224) with opacity 0.55: 1.66 / 2.00 / 2.21 declared, p10 1.01; rule needs 4.5:1.",
+      "fix": "Show unselected levels as a dark digit on a light tint of the level colour (or full-opacity colour with dark text), keeping the selected level filled.",
+      "box": [799, 804, 102, 24]
+    },
+    {
+      "screen": "city",
+      "viewport": "desktop",
+      "rule": "COL-01",
+      "severity": "medium",
+      "title": "Goal progress values are low-contrast 11 px coloured text",
+      "detail": "The numbers that say whether each level goal is met ('6 to go', '100.0%') are the most important readout in the goal card but the faintest text in it. White-on-blue buttons and tags ('Continue', 'Save', the 'Commercial' tag, 3.75:1) and active W/E/S toggles (white on green, 2.33:1) fail the same rule.",
+      "evidence": "'100.0%' green (46,158,74) on #fdfdfc = 3.38:1 at 11 px; '6 to go' red (217,68,63) = 4.25:1 at 11 px; need 4.5:1. Present on every desktop shot.",
+      "fix": "Darken the good/bad text tokens (green to ~#1f7a3a, red to ~#b8322d) and set values at 12 px medium; darken the button blue to ~#1f6fc4 for white text.",
+      "box": [1356, 37, 43, 78]
+    },
+    {
+      "screen": "signal-panel",
+      "viewport": "desktop",
+      "rule": "COL-02",
+      "severity": "medium",
+      "title": "Junction diagram shows go/stop only as green vs red arms",
+      "detail": "The phase preview in the traffic-light editor and the signal dots on the map tell released from stopped approaches purely by hue, the classic pair lost to red-green colour blindness, so those players cannot tell which approach a phase lets through.",
+      "evidence": "Diagram arms: W and E green, S red, same width and shape, no label or pattern; map dots at the junction are plain green/red circles.",
+      "fix": "Add a non-colour mark: arrows on released arms and a stop bar or hollow end on stopped arms, or W/E/S labels with a go/stop glyph.",
+      "box": [1255, 298, 90, 54]
+    },
+    {
+      "screen": "fresh-city",
+      "viewport": "phone",
+      "rule": "ONB-02",
+      "severity": "medium",
+      "title": "On phone the level goals are collapsed to '2/4' at the start",
+      "detail": "A new phone player sees 'City Level 1 2/4' but not what the four goals are or which two are unmet; they have to discover that the header expands. Desktop shows the full list.",
+      "evidence": "Phone goal card is only the header button [201,15,172,15] with a '>' chevron; none of the four goal labels appear in the phone DOM.",
+      "fix": "Start the goal card expanded on phone (collapse after the first goal is met or on tap), or show the first unmet goal as a one-line subtitle under the header.",
+      "box": [193, 8, 190, 30]
+    },
+    {
+      "screen": "city",
+      "viewport": "phone",
+      "rule": "HUD-03",
+      "severity": "medium",
+      "title": "HUD hugs the screen edges, inside the notch and home-bar zones",
+      "detail": "The toolbar ends 13 px above the bottom edge where the home bar and swipe gesture live, and the menu, Overlays and goal card start 8 px from the top under the status bar/notch, so taps can trigger system gestures or land under the notch. Desktop is also tight (8 px from edges vs ~43 px).",
+      "evidence": "Toolbar tools [13-400,791,h40] end at y=831 (844-831 = 13 px, need 34); Game menu [8,8,30,26] top at 8 px (need 47).",
+      "fix": "Pad the HUD with env(safe-area-inset-*) plus a small margin (viewport-fit=cover), keeping at least 47 px top and 34 px bottom on a 390x844 phone.",
+      "box": [9, 786, 372, 49]
+    },
+    {
+      "screen": "fresh-city",
+      "viewport": "phone",
+      "rule": "TYP-01",
+      "severity": "medium",
+      "title": "Tutorial tip and HUD text drop to 11 px on phone",
+      "detail": "The first tip the player must read is 11 px on phone, smaller than on desktop (12 px), in five wrapped lines; the whole UI runs at 10-12 px (toolbar counts 10 px, goal values 11 px). The scale also fails TYP-02: 10, 11 and 12 px sit 1 px apart with no clear step between labels and values.",
+      "evidence": "Tip 'Pick the two-way street below...' [203,53,150,78] size 11; '2/4' 11 px; toolbar count '14' 10 px; contrast.md font sizes per shot: 10, 11, 12.",
+      "fix": "Set tip and panel body text to 14 px on phone (13-14 px on desktop), keep 12 px only for short labels, and reduce the scale to ~12 / 14 / 16 px.",
+      "box": [203, 53, 150, 78]
+    },
+    {
+      "screen": "level-up",
+      "viewport": "phone",
+      "rule": "COL-01",
+      "severity": "medium",
+      "title": "Level-up banner overlaps the HUD and the tip text bleeds through its reward lines",
+      "detail": "On phone the 'City Level 2' banner lands on top of the money chip, speed controls and tip card; the purple tip's text shows through behind the unlock list and reward line, so the reward reads as overlapping text.",
+      "evidence": "'+$8,000 road budget · 1 area unlock' p10 1.93; tip text under it p10 1.08; money chip visibly clipped to '$13,96'; ghosted 'Place your buildings.' visible inside the banner.",
+      "fix": "Make the banner fully opaque and place it below the HUD rows on phone, or hide the tip while the banner is up.",
+      "box": [55, 52, 280, 172]
+    },
+    {
+      "screen": "city",
+      "viewport": "phone",
+      "rule": "ONB-03",
+      "severity": "medium",
+      "title": "Seven road types are unlabeled lane glyphs, explained only by hover tooltips",
+      "detail": "The road tools are near-identical lane diagrams; their names and rules ('Boulevard ... Too busy for houses') live only in tooltips, which never appear on touch, so a phone player cannot tell Highway 3 from Boulevard or learn which roads allow buildings.",
+      "evidence": "Controls labelled 'Avenue (4) · Two-way, two lanes each way. Buildings can still...' etc. render as 40x40 icons with no visible text; no hover on touch.",
+      "fix": "On selection show a short name-and-rule caption above the toolbar (e.g. 'Avenue · buildings allowed'), on both touch and mouse.",
+      "box": [13, 791, 292, 40]
+    },
+    {
+      "screen": "fresh-city",
+      "viewport": "desktop",
+      "rule": "COL-03",
+      "severity": "low",
+      "title": "Goal colours contradict the checkmarks: green on an unmet goal, alarm red on normal progress",
+      "detail": "'no residents' is green (the 'met' colour) next to an empty, unmet goal circle, while 'All buildings placed' shows '16 to go' in alarm red in the first second of a new city when nothing is wrong (also a HUD-05 miss: the alarm colour is the default state).",
+      "evidence": "'no residents' (46,158,74) beside an unchecked circle; '16 to go' (217,68,63) at game start; elsewhere green = goal met (100.0% with filled check).",
+      "fix": "Use neutral grey for pending or not-applicable values ('no residents', 'N to go') and reserve red for a goal that was met and is now failing.",
+      "box": [1178, 36, 222, 36]
+    }
+  ],
+  "coverage": {
+    "HUD-01": "n/a",
+    "HUD-02": "pass",
+    "HUD-03": "fail",
+    "HUD-04": "pass",
+    "HUD-05": "fail",
+    "MENU-01": "pass",
+    "MENU-02": "fail",
+    "MENU-03": "fail",
+    "MENU-04": "n/a",
+    "TYP-01": "fail",
+    "TYP-02": "fail",
+    "TYP-03": "pass",
+    "TYP-04": "pass",
+    "COL-01": "fail",
+    "COL-02": "fail",
+    "COL-03": "fail",
+    "FB-01": "pass",
+    "FB-02": "n/a",
+    "FB-03": "n/a",
+    "ONB-01": "fail",
+    "ONB-02": "fail",
+    "ONB-03": "fail"
+  }
+}

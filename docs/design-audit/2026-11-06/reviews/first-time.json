@@ -1,0 +1,137 @@
+{
+  "lens": "first-time",
+  "findings": [
+    {
+      "screen": "fresh-city",
+      "viewport": "phone",
+      "rule": "ONB-01",
+      "severity": "high",
+      "title": "On phone the building tools are off-screen, yet the tips send the player to them",
+      "detail": "On a 390 px phone the bottom toolbar shows only the 7 road icons, the grid and half a roundabout. Houses, shop, office, upgrade, bulldoze and undo sit past the right edge, and the only hint is a soft fade. On the next screen the tip says 'Choose a building in the toolbar', but no building is visible, so a new player is stuck at the second step. Same on city, drawing-road, building-panel, signal-panel, saves and level-up phone shots.",
+      "evidence": "fresh-city@phone.dom.json lists toolbar controls only up to 'Roundabout (O)' at [360,791,40,40]. 'Junctions', the three building kinds, 'Bulldozer', 'Undo' and 'Redo' are missing from the visible controls. city@phone tip reads 'Place your buildings. Choose a building in the toolbar and click beside a street.'",
+      "fix": "On phone, collapse the 7 road types into one road button with a pop-up picker (or two rows), so the building group always shows. At minimum, scroll the toolbar to the building group when the 'Place your buildings' tip appears, and show a clear scroll arrow.",
+      "box": [9, 787, 372, 48]
+    },
+    {
+      "screen": "overlay-flow",
+      "viewport": "phone",
+      "rule": "NEW",
+      "severity": "high",
+      "title": "Overlays menu on phone opens underneath the money/speed bar and the tip card",
+      "detail": "New idea: a dropdown must layer above every other HUD element. Opening Overlays on phone, the selected 'Traffic flow' row is hidden behind the $ chip and speed buttons, and the right half of the first three rows is cut off by the purple tip, so the player can't read or tap the options they came for.",
+      "evidence": "Menu rows start at y=47 ('Traffic flow' [13,47,226,25]), and the money chip [18,50,45,15] plus speed buttons (y 45-69) draw over them. The tip card (x 192-381, y 44-141) cuts 'Overall building satisfacti', 'Access to nearby commer', 'Access to nearby workpla'.",
+      "fix": "Give the overlays menu a z-index above the HUD chips and tip, or open it as a bottom sheet on phone. Hide the tip while a menu is open.",
+      "box": [9, 42, 234, 240]
+    },
+    {
+      "screen": "fresh-city",
+      "viewport": "desktop",
+      "rule": "ONB-02",
+      "severity": "medium",
+      "title": "Half the goals show as already done on an empty map",
+      "detail": "Before the player has built anything, the goal card reads '2/4', with green ticks on '95% building satisfaction 100.0%' and '95% traffic flow 100.0%', plus a green 'no residents' beside the trip goal. A newcomer reads this as progress they made and can't tell which goals actually need work. The trip goal label is cut off as 'Trip taken by every n…', so its meaning is lost too.",
+      "evidence": "'City Level 1 2/4'. Ticked: '95% building satisfaction 100.0%', '95% traffic flow 100.0%'. 'no residents' is in good-green rgb(46,158,74). The label is truncated on screen while its full width is 189 px.",
+      "fix": "Show goals that can't be measured yet as neutral (grey dash, 'needs residents') instead of ticked, and count them toward n/4 only once buildings exist. Shorten the label to 'Every resident makes a trip' so it fits.",
+      "box": [1168, 8, 264, 118]
+    },
+    {
+      "screen": "fresh-city",
+      "viewport": "desktop",
+      "rule": "ONB-01",
+      "severity": "medium",
+      "title": "First tip says 'pick the two-way street below' but doesn't point to it",
+      "detail": "The tip sends the player to the toolbar, where they find seven near-identical lane diagrams with no labels and nothing highlighted. They have to hover icons one by one to find 'Street (2)', the second icon.",
+      "evidence": "Tip: 'Draw a street. Pick the two-way street below, click to start and click again to finish.' The road group [365,849,278,38] has 7 unlabelled 38x38 icons. No pulse or outline on 'Street (2)' at [405,849,38,38].",
+      "fix": "While this tip is up, pulse or outline the Street button (and show its name above it). Mention the key in the tip: 'Pick Street (2)'.",
+      "box": [365, 849, 278, 38]
+    },
+    {
+      "screen": "fresh-city",
+      "viewport": "desktop",
+      "rule": "ONB-03",
+      "severity": "medium",
+      "title": "Building buttons are named only by a number",
+      "detail": "The three building tools show a house, a blue block and a purple block with small counts. Their tooltip/aria name is just that count, so hovering gives the player '14' instead of 'House'. The player can't tell which is a shop and which is an office, or that the number means 'left to place'.",
+      "evidence": "Controls: '14' [787,849,38,38], '1' [827,849,38,38], '1' [867,849,38,38]. Badge digits are 10 px. On city@desktop the residential button is still labelled only '6'.",
+      "fix": "Name each one in its tooltip and aria-label, as the road tools are: 'Small Residential (14 left) · …'. Make the count badge at least 12 px.",
+      "box": [787, 849, 118, 38]
+    },
+    {
+      "screen": "fresh-city",
+      "viewport": "phone",
+      "rule": "ONB-02",
+      "severity": "medium",
+      "title": "On phone the level goals are collapsed out of sight",
+      "detail": "The phone layout shows only 'City Level 1 2/4 >'. The four goals, and which ones are missing, sit behind a chevron the player may never tap, so they don't know what levels them up.",
+      "evidence": "fresh-city@phone.dom.json has no goal text ('All buildings placed', '16 to go' are absent). Only 'City Level 1' and '2/4' are visible at [201,15,...].",
+      "fix": "Expand the goal card on first launch (and whenever a goal changes state), or show the next unmet goal as one line under the header, e.g. '16 buildings to place'.",
+      "box": [193, 9, 188, 28]
+    },
+    {
+      "screen": "drawing-road",
+      "viewport": "desktop",
+      "rule": "ONB-03",
+      "severity": "medium",
+      "title": "'Elevation 0 1 2 3' gives no clue what it does and the digits barely show",
+      "detail": "While drawing a road, a strip offers 'Elevation' with four coloured squares numbered 0-3. Nothing says these build bridges or overpasses, and the buttons have no tooltip. The digits 1-3 are white at 55% opacity on light green, blue and purple, so they nearly disappear. Same on drawing-road@phone.",
+      "evidence": "Controls are named just '0','1','2','3' [799-901,804,24,24]. Text opacity 0.55. Measured contrast for '1' 1.66, '2' 2.00, '3' 2.21 (needs 4.5).",
+      "fix": "Add tooltips such as 'Ground', 'Bridge level 1'..., or rename the strip to 'Height (bridges)'. Draw the digits at full opacity in dark ink on the tinted squares.",
+      "box": [738, 804, 163, 24]
+    },
+    {
+      "screen": "signal-panel",
+      "viewport": "desktop",
+      "rule": "ONB-03",
+      "severity": "medium",
+      "title": "Traffic-light phases use W/E/S letters the junction diagram never labels",
+      "detail": "The editor lists 'Phase 1 W E S' and 'Phase 2 W E S' as tiny toggles, but the diagram above shows only coloured arms with no compass letters. A new player can't tell which arm 'S' is or what a 'phase' means. The toggles are 16-20 x 17 px, so they're also hard to hit.",
+      "evidence": "Phase toggles 'W' [1243,370,20,17], 'E' [1265,370,16,17], 'S' [1283,370,16,17] are 10 px text. Unselected letters measure 1.07:1 over their background. The diagram has no text labels.",
+      "fix": "Put W/E/S labels on the diagram arms, or make each phase row a mini-diagram you click. Add a one-line hint: 'Each phase is a green light for the arms you pick'. Make the toggles at least 28x28.",
+      "box": [1179, 363, 242, 52]
+    },
+    {
+      "screen": "saves",
+      "viewport": "desktop",
+      "rule": "MENU-02",
+      "severity": "medium",
+      "title": "Delete-save button is the same bare X as the dialog's close button",
+      "detail": "Next to 'Load' sits an unlabelled X that deletes the save. It looks the same as the X that closes the dialog 100 px above, so a player who wants to leave may click it and lose their city. The prefilled name 'City Level 1' next to an existing 'Riverside' save also leaves it unclear whether Save overwrites or creates a new save.",
+      "evidence": "'Delete save' [893,454,28,24] is icon-only. 'Close' [916,358,18,18] is the same X glyph. The Save name input value is 'City Level 1'. The existing save is named 'Riverside'.",
+      "fix": "Use a trash icon with a 'Delete' tooltip and ask for confirmation (or offer undo). Prefill the input with the current save's name, or label the button 'Save as new'.",
+      "box": [893, 454, 28, 24]
+    },
+    {
+      "screen": "level-up",
+      "viewport": "desktop",
+      "rule": "ONB-02",
+      "severity": "medium",
+      "title": "Level-up banner never says the level is complete or what the list means",
+      "detail": "The banner's title is just 'City Level 2', followed by '10 × Small Residential · 1 × Copper Mine · ...' with no verb. A newcomer can't tell whether these are rewards, unlocks or the next things to place. 'Copper Works' and 'area unlock' are new terms. Meanwhile the goal card behind still reads 'City Level 1 3/4' with '6 to go' in red, which contradicts the banner.",
+      "evidence": "Banner text: 'City Level 2' / '10 × Small Residential · 1 × Copper Mine · 1 × Copper Works · 1 × Small Commercial' / '+$8,000 road budget · 1 area unlock'. Goal card: 'City Level 1 3/4', 'All buildings placed 6 to go'.",
+      "fix": "Headline 'Level 1 complete!', then 'Next: place 10 houses, a copper mine, copper works and a shop', with the reward line labelled 'Reward:'. Update the goal card when the banner shows.",
+      "box": [468, 53, 504, 140]
+    },
+    {
+      "screen": "level-up",
+      "viewport": "phone",
+      "rule": "NEW",
+      "severity": "medium",
+      "title": "Level-up banner on phone overlaps the tip card and money chip, with text showing through",
+      "detail": "New idea: modal banners should cover or hide the HUD they overlap, never blend with it. On phone the banner sits over the purple tip and the $/speed bar. 'Place your buildings...' bleeds through behind 'City Level 2' and the reward lines, and the money reads '$13,96'.",
+      "evidence": "Banner spans about x 55-334, y 52-223, and the tip card spans x 192-381, y 44-141. Measured p10 contrast drops to 1.93 for '+$8,000 road budget · 1 area unlock' and 1.08 for the tip text underneath.",
+      "fix": "Hide the tip card (and dim the HUD) while the banner shows, make the banner opaque, and place it below the top HUD rows on phone.",
+      "box": [9, 44, 372, 179]
+    },
+    {
+      "screen": "building-panel",
+      "viewport": "desktop",
+      "rule": "COL-03",
+      "severity": "low",
+      "title": "'Air pollution: none' carries a red mark that reads as a warning",
+      "detail": "In the building inspector, a perfectly clean shop still shows a red sliver at the start of the Air pollution bar. Red elsewhere means a problem ('6 to go', 'Remove lights'), so a new player looks for a pollution issue that isn't there. Same on building-panel@phone.",
+      "evidence": "Row 'Air pollution ... none' [1179,348,242,14]. The bar starts with a red tick while the other two rows' bars are green at 100%.",
+      "fix": "Draw an empty grey bar when the value is none, and use red only when pollution actually lowers satisfaction.",
+      "box": [1313, 348, 108, 14]
+    }
+  ]
+}
