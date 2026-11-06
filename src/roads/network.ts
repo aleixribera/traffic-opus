@@ -664,7 +664,8 @@ export class RoadNetwork {
       return {
         kind: "lane", uid: edgeUid++, key: `${s.id}:${dir}:${idx}`, seg: s.id, dir, idx, count,
         from: dir === 1 ? s.a : s.b, to: dir === 1 ? s.b : s.a,
-        offset: off, pl, hs, speed: T.speed, occ: [], outs: [], ins: [],
+        // round a roundabout nobody drives at the road's limit: cap by the ring's curvature, like a connector
+        offset: off, pl, hs, speed: s.ring ? Math.min(T.speed, Math.sqrt(2.8 * Math.max(2, ringR(pl)))) : T.speed, occ: [], outs: [], ins: [],
       };
     };
     for (let i = 0; i < T.fwd; i++) {
@@ -968,3 +969,14 @@ export function lanePoint(l: Edge, s: number): V2 {
 }
 
 export const SHOULDER_W = SHOULDER;
+
+/** Radius of the circle through a lane's first, middle and last points (a ring arc). */
+function ringR(pl: { pts: { x: number; y: number }[] }): number {
+  const P = pl.pts, a = P[0], b = P[P.length >> 1], c = P[P.length - 1];
+  const d = 2 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
+  if (Math.abs(d) < 1e-6) return 1e3;
+  const A = a.x * a.x + a.y * a.y, B = b.x * b.x + b.y * b.y, C = c.x * c.x + c.y * c.y;
+  const ux = (A * (b.y - c.y) + B * (c.y - a.y) + C * (a.y - b.y)) / d;
+  const uy = (A * (c.x - b.x) + B * (a.x - c.x) + C * (b.x - a.x)) / d;
+  return Math.hypot(a.x - ux, a.y - uy);
+}

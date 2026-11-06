@@ -46,7 +46,8 @@ export interface Vehicle {
   ideal: number;
   born: number; // sim time it entered the road
   block?: string; // why the junction last refused entry (debug + inspector)
-  crossing?: { lane: Lane; s: number }[]; // far lanes this car is still pulling out across
+  crossing?: { lane: Lane; s: number }[]; // far lanes this car is still pulling out across (spot where it started)
+  crossFrom?: number; // its own lane position when it started pulling out
   v0e: number; // free-road desired speed this step (limits, curves, driveway approach)
   constrained: boolean; // held up by another vehicle, a stop line or a signal this step
 }
@@ -74,10 +75,9 @@ export interface TrafficEvents {
 
 /** Segment-level flow statistics for overlays and objectives. */
 export interface FlowStat {
-  speedSum: number;
-  limitSum: number;
   n: number;
-  ratio: number; // smoothed mean speed / limit (1 = free flow)
+  ratio: number; // smoothed share of travel time not lost to other traffic (1 = free flow); the overlay
+  speed: number; // smoothed mean speed / limit; the router's travel-time estimate
   queue: number; // vehicles stopped
 }
 
@@ -122,9 +122,13 @@ export class Traffic {
     if (!best) return "fail";
     const k = best.keys[0];
     const lanes = this.lanesOf(k);
-    const lane = lanes.find((l) => l.idx === 0) ?? lanes[0];
+    const crossing = (best.dir === 1 ? 1 : -1) !== p.fromSide;
+    // joining from the far side you turn into the lane nearest the middle, as real drivers do
+    const want = crossing ? Math.max(...lanes.map((l) => l.idx)) : 0;
+    const lane = lanes.find((l) => l.idx === want) ?? lanes[0];
     if (!lane) return "fail";
-    const ls = polyClosest(lane.pl, p.from.p).s;
+    const lc = polyClosest(lane.pl, p.from.p);
+    const ls = lc.s;
     const len = p.truck ? SIM.truckLen : SIM.carLen;
     // gap check on the target lane (and traffic arriving soon)
     // gap acceptance like a real driver: ~4 s to oncoming traffic, shrinking as they get impatient,
@@ -139,7 +143,6 @@ export class Traffic {
     }
     // incoming vehicles from the connector feeding this lane near the start
     if (ls < 12) for (const c of lane.ins) if ((c.occ as Vehicle[]).length) { p.why = "junction"; return "wait"; }
-    const crossing = (best.dir === 1 ? 1 : -1) !== p.fromSide;
     if (crossing) {
       // must cross the near lanes: wait for a gap there too
       const near = this.lanesOf(dkey(p.from.seg, best.dir === 1 ? -1 : 1));
@@ -147,7 +150,10 @@ export class Traffic {
         const ns = polyClosest(nl.pl, p.from.p).s;
         p.clear.push({ lane: nl, s: ns });
         for (const o of nl.occ as Vehicle[]) {
-          if (o.s > ns - 3 && o.s - o.len < ns + 3) { p.why = "cross-occupied"; return "wait"; }
+          // we drive on (towards falling s on this far lane) while we cross it: keep that stretch clear too
+          if (o.s > ns - (o.v < 1 ? 12 : 3) && o.s - o.len < ns + 3) { p.why = "cross-occupied"; return "wait"; }
+          // someone on the far lane about to stop at their own driveway right where we'd cut across
+          if (o.destS >= 0 && o.s < o.destS + 1 && o.destS > ns - 12 && o.destS < ns + 4 && this.isFinal(o)) { p.why = "cross-occupied"; return "wait"; }
           // the far lane needs a real gap (crossing it takes a couple of seconds); slow traffic can stop for us
           const need = p.wait > 20 ? 1.6 : p.wait > 8 ? 2.2 : 3;
           const yields = o.v < 4 && ns - 3 - o.s > 1.5 + (o.v * o.v) / (2 * SIM.idm.b) + o.v * 0.8;
@@ -165,8 +171,9 @@ export class Traffic {
     };
     // slide out of the driveway: start offset towards the building
     const side = (lane.dir === 1 ? 1 : -1) * p.fromSide; // +1 = building on the right of travel
-    v.lat = side * (LANE_W * 0.9) * (crossing ? 2 : 1);
-    if (crossing) v.crossing = this.lanesOf(dkey(p.from.seg, best.dir === 1 ? -1 : 1)).map((nl) => ({ lane: nl, s: polyClosest(nl.pl, p.from.p).s }));
+    // start at the kerb (less a little: the nose is already poking out) and slide across into the lane
+    v.lat = side * Math.max(LANE_W * 0.9, lc.d - 1.2);
+    if (crossing) { v.crossing = this.lanesOf(dkey(p.from.seg, best.dir === 1 ? -1 : 1)).map((nl) => ({ lane: nl, s: polyClosest(nl.pl, p.from.p).s })); v.crossFrom = ls; }
     insertOcc(lane, v);
     this.vehicles.push(v);
     if (this.isFinal(v)) this.computeDestS(v);
@@ -252,7 +259,7 @@ export class Traffic {
         // arrival
         if (this.isFinal(v) && v.destS < 0 && lane.seg === v.dest.seg) this.computeDestS(v);
         if (this.isFinal(v) && v.destS >= 0) {
-          if (lane.idx === 0 && v.s >= v.destS - 0.8) {
+          if (lane.idx === this.turnIdx(v, lane) && v.s >= v.destS - 0.8) {
             if (this.canTurnIn(v, lane)) {
               // pulling out of a driveway takes a moment even on a quiet street: the first seconds aren't delay
               v.trip.freeFlow = v.ideal + Math.min(6, v.born - v.trip.startT);
@@ -266,7 +273,7 @@ export class Traffic {
             if (v.wait > 8 && this.turnBlockedByQueue) this.reroute(v);
             return false;
           }
-          if (lane.idx !== 0 && v.s > v.destS + 1) {
+          if (lane.idx !== this.turnIdx(v, lane) && v.s > v.destS + 1) {
             // missed the driveway (wrong lane): loop around
             this.reroute(v);
           }
@@ -311,6 +318,11 @@ export class Traffic {
 
   private isFinal(v: Vehicle) {
     return v.ri >= v.route.length - 1;
+  }
+
+  /** The lane a car on its last road turns into its destination from: kerb lane, or the inner lane for the far side. */
+  private turnIdx(v: Vehicle, lane: Lane): number {
+    return (lane.dir === 1 ? 1 : -1) * v.destSide > 0 ? 0 : lane.count - 1;
   }
 
   private computeDestS(v: Vehicle) {
@@ -393,7 +405,7 @@ export class Traffic {
     for (const c of opts) {
       let score = 0;
       if (nn !== undefined && c.to.outs.some((x) => dkey(x.to.seg, x.to.dir) === nn)) score += 10;
-      if (nn === undefined && c.to.idx === 0) score += 10;
+      if (nn === undefined && c.to.idx === this.turnIdx(v, c.to)) score += 10;
       score -= (c.to.occ.length + c.holders.length) * 1.5;
       if (score > bestScore) { bestScore = score; best = c; }
     }
@@ -500,7 +512,7 @@ export class Traffic {
     for (const v of this.vehicles) {
       if (v.edge.kind !== "lane" || v.v > 0.5 || v.destS < 0 || !this.isFinal(v)) continue;
       const lane = v.edge as Lane;
-      if (lane.idx !== 0 || v.s < v.destS - 2) continue;
+      if (lane.idx !== this.turnIdx(v, lane) || v.s < v.destS - 2) continue;
       if ((lane.dir === 1 ? 1 : -1) * v.destSide > 0) continue; // turning in on its own side: crosses nothing
       for (const ol of this.lanesOf(dkey(lane.seg, lane.dir === 1 ? -1 : 1))) add(ol, polyClosest(ol.pl, v.dest.p).s);
     }
@@ -510,7 +522,9 @@ export class Traffic {
     for (const v of this.vehicles) {
       if (!v.crossing) continue;
       if (Math.abs(v.lat) < LANE_W * 0.45) { v.crossing = undefined; continue; }
-      for (const c of v.crossing) { const a = this.crossers.get(c.lane); if (a) a.push(c.s); else this.crossers.set(c.lane, [c.s]); }
+      // it drives on while it crosses, towards the traffic on the far lane (which runs the other way)
+      const moved = v.edge.kind === "lane" ? Math.max(0, v.s - (v.crossFrom ?? v.s)) : 0;
+      for (const c of v.crossing) { const k = c.s - moved; const a = this.crossers.get(c.lane); if (a) a.push(k); else this.crossers.set(c.lane, [k]); }
     }
   }
 
@@ -611,9 +625,10 @@ export class Traffic {
         if (this.isFinal(v) && v.destS >= 0) {
           // slow down for the driveway
           const dd = v.destS - v.s;
-          if (lane.idx === 0 && dd > -1) {
+          if (lane.idx === this.turnIdx(v, lane) && dd > -1) {
             v0 = Math.min(v0, Math.sqrt(5 * 5 + 2 * 2 * Math.max(0, dd)));
-            if (!this.canTurnInCheap(v, lane)) { gap = Math.min(gap, dd + 0.5); dv = v.v; }
+            // stop with the nose at the driveway (s0 is the standstill gap IDM keeps to an obstacle)
+            if (!this.canTurnInCheap(v, lane)) { gap = Math.min(gap, Math.max(0.1, dd - 0.6 + P.s0)); dv = v.v; }
           }
         } else if (!c || !v.granted) {
           // stop line (braking for it only counts as delay once the junction has actually said no)
@@ -666,14 +681,18 @@ export class Traffic {
       }
     }
     // keep driveways clear: don't come to rest across a spot where someone waits to turn in or pull out
-    if (e.kind === "lane" && gap !== Infinity) {
+    // Only when what's ahead is (nearly) stopped, i.e. a queue is forming: a moving leader won't leave us there.
+    // The spot needs our front 6.5 m short of it (a car pulling out needs that much to fit in ahead of us)
+    // and our rear well past it; we come to rest s0 behind whatever we follow.
+    if (e.kind === "lane" && gap !== Infinity && v.v - dv < 2) {
       const K = this.keepClear.get(e as Lane);
       const mine = v.destS >= 0 && this.isFinal(v) ? v.destS : -1e9;
       if (K) for (const k of K) {
-        if (v.s > k - 3) continue; // already at or past it
+        const hold = k - 6.5;
+        if (v.s + (v.v * v.v) / 8 > hold) continue; // too close to stop short of it now: carry on through
         if (Math.abs(k - mine) < 6) continue; // that's our own driveway: we're turning in there
-        const stopFront = v.s + gap;
-        if (stopFront > k - 3 && stopFront - v.len < k + 3) { gap = Math.min(gap, Math.max(0.1, k - 3 - v.s)); soft = false; }
+        const restFront = v.s + gap - P.s0;
+        if (restFront > hold && restFront - v.len < k + 7.5) { gap = Math.min(gap, hold + P.s0 - v.s); dv = v.v; soft = false; }
       }
     }
     // diverging: a car that just left the same lane on a sibling connector is still right ahead
@@ -716,7 +735,7 @@ export class Traffic {
     const all = this.lanesOf(dkey(lane.seg, lane.dir));
     const nk = v.route[v.ri + 1];
     const final = this.isFinal(v);
-    const good = (l: Lane) => (final ? l.idx === 0 : nk !== undefined && l.outs.some((c) => dkey(c.to.seg, c.to.dir) === nk));
+    const good = (l: Lane) => (final ? l.idx === this.turnIdx(v, l) : nk !== undefined && l.outs.some((c) => dkey(c.to.seg, c.to.dir) === nk));
     let target: Lane | null = null;
     let mandatory = false;
     if (!good(lane)) {
@@ -982,7 +1001,7 @@ export class Traffic {
   }
 
   private stats() {
-    const acc = new Map<number, { sp: number; lim: number; n: number; q: number }>();
+    const acc = new Map<number, { eff: number; sp: number; lim: number; n: number; q: number }>();
     for (const v of this.vehicles) {
       if (v.edge.kind !== "lane") {
         const c = v.edge as Connector;
@@ -992,7 +1011,10 @@ export class Traffic {
       const l = v.edge as Lane;
       const k = dkey(l.seg, l.dir);
       let a = acc.get(k);
-      if (!a) acc.set(k, (a = { sp: 0, lim: 0, n: 0, q: 0 }));
+      if (!a) acc.set(k, (a = { eff: 0, sp: 0, lim: 0, n: 0, q: 0 }));
+      // share of real time this car is making progress it would make on an empty road: slowing for
+      // a turn, a driveway or pulling out is free; queueing, yielding and red lights are not
+      a.eff += v.constrained ? Math.min(1, v.v / Math.max(v.v0e, 1)) : 1;
       a.sp += v.v;
       a.lim += l.speed;
       a.n++;
@@ -1004,14 +1026,14 @@ export class Traffic {
     // decay
     for (const [k, f] of this.flow) {
       const a = acc.get(k);
-      const r = a ? a.sp / a.lim : 1;
-      f.ratio += (r - f.ratio) * 0.12;
+      f.ratio += ((a ? a.eff / a.n : 1) - f.ratio) * 0.12;
+      f.speed += ((a ? a.sp / a.lim : 1) - f.speed) * 0.12;
       f.queue = a ? a.q : 0;
       f.n = a ? a.n : 0;
-      if (!a && f.ratio > 0.99 && !this.net.segs.has(dkSeg(k))) this.flow.delete(k);
+      if (!a && f.ratio > 0.99 && f.speed > 0.99 && !this.net.segs.has(dkSeg(k))) this.flow.delete(k);
     }
     for (const [k, a] of acc) {
-      if (!this.flow.has(k)) this.flow.set(k, { speedSum: 0, limitSum: 0, n: a.n, ratio: Math.min(1, a.sp / a.lim), queue: a.q });
+      if (!this.flow.has(k)) this.flow.set(k, { n: a.n, ratio: a.eff / a.n, speed: Math.min(1, a.sp / a.lim), queue: a.q });
     }
     for (const [n, t] of this.jams) {
       const nt = t * 0.92;
@@ -1021,7 +1043,7 @@ export class Traffic {
     // feed measured speeds into the router (only where congested; else limit)
     for (const [k, f] of this.flow) {
       const lim = this.router.limit(k);
-      if (f.ratio < 0.85) this.router.speeds.set(k, lim * Math.max(0.15, f.ratio));
+      if (f.speed < 0.85) this.router.speeds.set(k, lim * Math.max(0.15, f.speed));
       else this.router.speeds.delete(k);
     }
     // trim trip window

@@ -648,27 +648,38 @@ function isRingFiller(net: RoadNetwork, id: number): boolean {
 function joinRing(net: RoadNetwork, seg: RSeg, p: V2): number | null {
   const R = ringsNear(net, p, 30).find((r) => r.id === seg.ring);
   if (!R) return null;
-  const near = (n: number) => isRingFiller(net, n) && dist(net.nodes.get(n)!.p, p) < 12;
   const prevSeg = (n: number) => net.segsAt(n).find((x) => x.b === n && x.ring === seg.ring);
   const nextSeg = (n: number) => net.segsAt(n).find((x) => x.a === n && x.ring === seg.ring);
-  // widen [X..Y] along the ring past every filler node crowding the new junction
+  // widen [X..Y] along the ring past every filler node out to the neighbouring junctions: the
+  // stretch is rebuilt as true arcs through the new junction, split evenly, so no filler is left
+  // crowding a junction (two junction boxes overlapping on a short arc jams a wide ring)
   const drop = new Set<number>([seg.id]);
   let X = seg.a, Y = seg.b;
-  for (let k = 0; k < 8 && near(X); k++) { const s = prevSeg(X); if (!s) return null; drop.add(s.id); X = s.a; }
-  for (let k = 0; k < 8 && near(Y); k++) { const s = nextSeg(Y); if (!s) return null; drop.add(s.id); Y = s.b; }
-  if (drop.size === 1 || X === Y) return null;
+  let whole = false;
+  for (let k = 0; k < 16 && isRingFiller(net, X); k++) {
+    const s = prevSeg(X); if (!s) return null;
+    if (drop.has(s.id)) { whole = true; break; }
+    drop.add(s.id); X = s.a;
+  }
+  if (!whole) for (let k = 0; k < 16 && isRingFiller(net, Y); k++) {
+    const s = nextSeg(Y); if (!s) return null;
+    if (drop.has(s.id)) { whole = true; break; }
+    drop.add(s.id); Y = s.b;
+  }
+  if (!whole && (isRingFiller(net, X) || isRingFiller(net, Y))) return null; // ran out of steps
+  if (!whole && drop.size === 1) return null;
   const ang = (q: V2) => Math.atan2(q.y - R.c.y, q.x - R.c.x);
   const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
   const pa = net.nodes.get(seg.a)!.p, pb = net.nodes.get(seg.b)!.p;
   const dirSign = Math.sign(wrap(ang(pb) - ang(pa))) || 1;
-  const sweepTo = (a0: number, a1: number) => { let sw = wrap(a1 - a0); if (Math.sign(sw) !== dirSign || sw === 0) sw += dirSign * Math.PI * 2; return sw; };
+  const sweepTo = (a0: number, a1: number) => { let sw = wrap(a1 - a0); if (Math.sign(sw) !== dirSign || Math.abs(sw) < 1e-6) sw += dirSign * Math.PI * 2; return sw; };
   const aN = ang(p);
-  if (Math.abs(sweepTo(ang(net.nodes.get(X)!.p), aN)) >= Math.abs(sweepTo(ang(net.nodes.get(X)!.p), ang(net.nodes.get(Y)!.p)))) return null;
+  if (!whole && X !== Y && Math.abs(sweepTo(ang(net.nodes.get(X)!.p), aN)) >= Math.abs(sweepTo(ang(net.nodes.get(X)!.p), ang(net.nodes.get(Y)!.p)))) return null;
   const { type, ring } = seg;
   const h = net.nodes.get(seg.a)!.h;
   const orphans = new Set<number>();
   for (const id of drop) { const s = net.segs.get(id)!; orphans.add(s.a); orphans.add(s.b); net.removeSeg(id, false); }
-  for (const n of orphans) if (n !== X && n !== Y && net.segsAt(n).length === 0) net.removeNode(n);
+  for (const n of orphans) if ((whole || (n !== X && n !== Y)) && net.segsAt(n).length === 0) net.removeNode(n);
   const N = net.addNode({ x: R.c.x + Math.cos(aN) * R.r, y: R.c.y + Math.sin(aN) * R.r }, h);
   const arc = (a: number, b: number) => {
     const a0 = ang(net.nodes.get(a)!.p);
@@ -680,8 +691,8 @@ function joinRing(net: RoadNetwork, seg: RSeg, p: V2): number | null {
       prev = next;
     });
   };
-  arc(X, N);
-  arc(N, Y);
+  if (whole) arc(N, N); // the ring had no junction yet: one full circle through the new one
+  else { arc(X, N); arc(N, Y); }
   return N;
 }
 
@@ -812,7 +823,7 @@ function tAtLength(c: Cubic, s: number): number {
 // Roundabouts
 // ---------------------------------------------------------------------------------------------
 
-export const ROUNDABOUT_R = { 1: 15, 2: 21 } as const;
+export const ROUNDABOUT_R = { 1: 16, 2: 26 } as const;
 
 /** Plan a roundabout centred at c. Roads crossing its circle get connected; their inside parts are removed. */
 export function planRoundabout(net: RoadNetwork, world: BuildWorld, c: V2, lanes: 1 | 2, level: number): Plan {

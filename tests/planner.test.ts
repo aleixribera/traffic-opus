@@ -114,11 +114,11 @@ describe("planner", () => {
     expect(through.errors.map((e) => e.msg)).toContain("Can't cross a roundabout's centre");
   });
 
-  it("joins four arms to a roundabout exactly where they are aimed", () => {
+  it.each([[1, "street"], [2, "avenue"]] as const)("joins four arms to a %i-lane roundabout exactly where they are aimed (%s)", (lanes, type) => {
     const net = new RoadNetwork();
     const w = world();
     const c = v2(300, 300);
-    const plan = planRoundabout(net, w, c, 1, 0);
+    const plan = planRoundabout(net, w, c, lanes, 0);
     expect(plan.errors).toEqual([]);
     net.begin();
     commitRoundabout(net, plan);
@@ -126,10 +126,10 @@ describe("planner", () => {
     net.commit();
     for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
       const from = free(v2(c.x + dx * 90, c.y + dy * 90));
-      const end = snap(net, c, { mpp: 0.3, level: 0, type: "street", from });
-      const p = planRoad(net, w, { start: from, end, mode: "straight", type: "street" });
+      const end = snap(net, c, { mpp: 0.3, level: 0, type, from });
+      const p = planRoad(net, w, { start: from, end, mode: "straight", type });
       expect(p.errors).toEqual([]);
-      build(net, w, from, end);
+      build(net, w, from, end, type);
       // the junction sits on the arm's own line, not bent to a nearby ring node
       const j = [...net.nodeGeom.entries()].filter(([, g]) => g.kind === "junction").map(([id]) => net.nodes.get(id)!.p);
       const hit = j.find((q) => Math.abs((q.x - c.x) * dy - (q.y - c.y) * dx) < 0.5 && (q.x - c.x) * dx + (q.y - c.y) * dy > 0);
@@ -140,6 +140,13 @@ describe("planner", () => {
     }
     const arms3 = [...net.nodeGeom.values()].filter((g) => g.kind === "junction" && g.arms.length === 3);
     expect(arms3.length).toBe(4);
+    // four arms a quarter-turn apart need no filler nodes at all: each stretch is one true arc
+    const fillers = [...net.nodes.keys()].filter((id) => net.segsAt(id).length === 2 && net.segsAt(id).every((s) => s.ring));
+    expect(fillers).toEqual([]);
+    // and nobody laps the ring at the road's full limit (about 30 km/h or less)
+    const ringLanes = [...net.lanes.values()].filter((l) => net.segs.get(l.seg)?.ring);
+    expect(ringLanes.length).toBeGreaterThan(0);
+    for (const l of ringLanes) expect(l.speed).toBeLessThan(9.5);
   });
 
   it("builds a street grid with junctions at every crossing", () => {

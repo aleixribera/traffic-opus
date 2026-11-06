@@ -119,6 +119,32 @@ describe("Game", () => {
     }
   });
 
+  it("an overloaded crossroads queues but never locks up at the driveways", () => {
+    // every trip crosses one street crossroads: homes on two arms, a shop and an office on the others.
+    // Cars waiting to turn left into a driveway across a standing queue used to freeze the whole box.
+    const g = new Game(7);
+    (g as any).money = 1e7;
+    (g as any).inventory = { house: 200, shop: 20, office: 20 };
+    const A = [v2(1200, 1050), v2(1350, 1200), v2(1200, 1350), v2(1050, 1200)];
+    road(g, A[3], A[1]);
+    road(g, A[0], A[2]);
+    A.forEach((a, i) => {
+      const d = { x: Math.sign(a.x - 1200), y: Math.sign(a.y - 1200) };
+      const kind: BuildingKind = i === 3 ? "office" : i === 2 ? "shop" : "house";
+      for (let r = 45; r < 145; r += kind === "house" ? 13 : 32) for (const s of [-13, 13]) {
+        const pl = g.placement(kind, v2(1200 + d.x * r + d.y * s, 1200 + d.y * r + d.x * s));
+        if (pl?.ok) g.place(kind, pl);
+      }
+    });
+    let worst = 0;
+    for (let t = 0; t < 900; t += 1 / 30) {
+      g.step(1 / 30);
+      for (const v of g.traffic.vehicles) worst = Math.max(worst, v.stuck);
+    }
+    // it queues (the junction is far over capacity) but nobody stands still for more than a minute and a half
+    expect(worst).toBeLessThan(90);
+  });
+
   it("keeps a busy street grid flowing without gridlock", () => {
     const g = new Game(3);
     (g as any).inventory = { house: 200, shop: 20, office: 20 };
