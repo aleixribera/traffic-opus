@@ -512,9 +512,13 @@ export class App {
     if (!this.anchor) return null;
     const g = this.game;
     const end = snap(g.net, this.cursor, this.snapOpts(this.anchor));
-    if (end.node !== undefined && end.node === this.anchor.node) return null;
+    // started inside a roundabout: join the rim on the side the road actually leaves from
+    const start = this.anchor.ringRaw
+      ? snap(g.net, this.anchor.ringRaw, { ...this.snapOpts(), from: { p: end.p } })
+      : this.anchor;
+    if (end.node !== undefined && end.node === start.node) return null;
     const plan = planRoad(g.net, g.world, {
-      start: this.anchor, end, mode: this.st.curve, type: this.st.roadType,
+      start, end, mode: this.st.curve, type: this.st.roadType,
       startTangent: this.startTangent, ctrl: this.ctrl ?? undefined,
     });
     (plan as Plan & { snapEnd?: Snap }).snapEnd = end;
@@ -727,6 +731,10 @@ export class App {
 
   start() {
     requestAnimationFrame(this.frame);
+    // closing or hiding the tab saves straight away, so at most a few seconds of work is ever lost
+    const flush = () => { if (this.game && this.game.playtime > 1) { this.saveT = 0; this.saves.autosave(this.game); } };
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
+    window.addEventListener("pagehide", flush);
   }
 
   /** Last road plan (for tests / debugging). */

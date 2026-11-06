@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { LANE_W, ROAD_TYPES, SHOULDER } from "../config";
 import { dist, norm, right, sub, type V2 } from "../core/math";
 import type { ChangeSet, RoadNetwork } from "../roads/network";
+import { ringsNear } from "../roads/planner";
 import { dkey } from "../sim/router";
 import type { Traffic } from "../sim/traffic";
 import { PAL } from "./palette";
@@ -96,12 +97,16 @@ export class Roads3D {
   // signal heads drawn as coloured dots at the stop line
   private lights: THREE.InstancedMesh;
   private lightRefs: { node: number; arm: number; x: number; y: number; h: number }[] = [];
+  // grass islands inside roundabouts
+  private islands = new THREE.Group();
+  private islandMat = new THREE.MeshLambertMaterial({ color: PAL.grass });
 
   constructor(private net: RoadNetwork) {
     this.lights = new THREE.InstancedMesh(new THREE.CircleGeometry(0.85, 16).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffffff }), 256);
     this.lights.count = 0;
     this.lights.renderOrder = 3;
-    this.group.add(this.lights);
+    this.lights.frustumCulled = false; // instances move around the whole map; bounds would go stale
+    this.group.add(this.lights, this.islands);
   }
 
   set flowMode(on: boolean) {
@@ -114,6 +119,7 @@ export class Roads3D {
     for (const id of this.net.segs.keys()) this.buildSeg(id);
     for (const id of this.net.nodes.keys()) this.buildNode(id);
     this.collectLights();
+    this.buildIslands();
   }
 
   apply(cs: ChangeSet) {
@@ -122,6 +128,7 @@ export class Roads3D {
     for (const id of cs.dirtySegs) { this.dropSeg(id); if (this.net.segs.has(id)) this.buildSeg(id); }
     for (const id of cs.dirtyNodes) { this.dropNode(id); if (this.net.nodes.has(id)) this.buildNode(id); }
     this.collectLights();
+    this.buildIslands();
   }
 
   private dropSeg(id: number) {
@@ -185,18 +192,11 @@ export class Roads3D {
     const n = this.net.nodes.get(id)!;
     const ng = this.net.nodeGeom.get(id);
     if (!ng || !ng.poly) return;
+    // roundabout nodes are drawn with their ring (continuous surface + flared mouths)
+    if (this.net.segsAt(id).some((sg) => sg.ring)) return;
     const out: THREE.Object3D[] = [];
     const y = n.h + LIFT + 0.012;
-    const shape = new THREE.Shape(ng.poly.map((p) => new THREE.Vector2(p.x, p.y)));
-    const geo = new THREE.ShapeGeometry(shape, 1);
-    geo.rotateX(Math.PI / 2); // shape (x, y) -> (x, 0, y)
-    // ShapeGeometry faces +z; after rotation its normal points down; flip the winding
-    flipWinding(geo);
-    geo.translate(0, y, 0);
-    const cnt = geo.getAttribute("position").count;
-    geo.setAttribute("aRoad", new THREE.Float32BufferAttribute(new Array(cnt * 4).fill(0).map((_, i) => (i % 4 === 2 ? -1 : 0)), 4));
-    geo.setAttribute("aFlow", new THREE.Float32BufferAttribute(new Array(cnt * 2).fill(1), 2));
-    const m = new THREE.Mesh(geo, this.plain.mat);
+    const m = new THREE.Mesh(plainPoly(ng.poly, y), this.plain.mat);
     m.receiveShadow = true;
     if (n.h > 0.3) {
       m.castShadow = true;
@@ -207,13 +207,102 @@ export class Roads3D {
     out.push(m);
     for (const k of ng.kerbs) {
       if (k.length < 2) continue;
-      const kg = strip(k, y + 0.01, 0.42);
-      const km = new THREE.Mesh(kg, this.edgeMat);
+      // the line is the road's outer edge; draw the band just inside it, like the segment shader does
+      const km = new THREE.Mesh(kerbStrip(k, y + 0.01, n.p), this.edgeMat);
       km.receiveShadow = true;
       out.push(km);
     }
     this.group.add(...out);
     this.nodes.set(id, out);
+  }
+
+  /** Roundabouts: one continuous ring surface, a grass island, and flared mouths where roads join. */
+  private buildIslands() {
+    for (const c of [...this.islands.children]) {
+      this.islands.remove(c);
+      (c as THREE.Mesh).geometry.dispose();
+    }
+    const seen = new Set<number>();
+    for (const sg of this.net.segs.values()) {
+      if (!sg.ring || seen.has(sg.ring)) continue;
+      seen.add(sg.ring);
+      const n0 = this.net.nodes.get(sg.a)!;
+      const R = ringsNear(this.net, n0.p, 4).find((r) => r.id === sg.ring);
+      const g = this.net.segGeom.get(sg.id);
+      if (!R || !g) continue;
+      const C = R.c, hw = g.width / 2;
+      const Ro = R.r + hw, Ri = R.r - hw;
+      if (Ri < 2) continue;
+      const y = R.h + LIFT;
+      const put = (geo: THREE.BufferGeometry, mat: THREE.Material) => {
+        const m = new THREE.Mesh(geo, mat);
+        m.receiveShadow = true;
+        this.islands.add(m);
+      };
+      // surface under the (trimmed) ring ribbons so the circle never shows notches at its nodes
+      put(plainGeo(new THREE.RingGeometry(Ri, Ro, 96, 1).rotateX(-Math.PI / 2).translate(C.x, y - 0.004, C.y)), this.plain.mat);
+      put(new THREE.CircleGeometry(Ri, 64).rotateX(-Math.PI / 2).translate(C.x, y + 0.015, C.y), this.islandMat);
+      put(strip(circlePts(C, Ri + 0.21, 64), y + 0.02, 0.42), this.edgeMat);
+      // mouths: each road joining the ring flares into it with kerb fillets
+      const gaps: [number, number][] = [];
+      const ringNodes = new Set<number>();
+      for (const s2 of this.net.segs.values()) if (s2.ring === sg.ring) { ringNodes.add(s2.a); ringNodes.add(s2.b); }
+      for (const nid of ringNodes) {
+        const ng = this.net.nodeGeom.get(nid);
+        const nn = this.net.nodes.get(nid);
+        if (!ng || !nn) continue;
+        for (const a of ng.arms) {
+          if (this.net.segs.get(a.seg)?.ring) continue;
+          const rt = right(a.dir);
+          const base = { x: nn.p.x + a.dir.x * a.trim, y: nn.p.y + a.dir.y * a.trim };
+          const thC = Math.atan2(base.y - C.y, base.x - C.x);
+          const flare = (side: number) => {
+            const e = { x: base.x + rt.x * a.halfW * side, y: base.y + rt.y * a.halfW * side };
+            // where this edge, carried on towards the centre, meets the ring's outer kerb
+            const m = { x: e.x - C.x, y: e.y - C.y };
+            const b = m.x * a.dir.x + m.y * a.dir.y;
+            const disc = b * b - (m.x * m.x + m.y * m.y - Ro * Ro);
+            let P: V2;
+            if (disc >= 0 && b - Math.sqrt(disc) > 0) {
+              const t = b - Math.sqrt(disc);
+              P = { x: e.x - a.dir.x * t, y: e.y - a.dir.y * t };
+            } else {
+              const l = Math.hypot(m.x, m.y) || 1;
+              P = { x: C.x + (m.x / l) * Ro, y: C.y + (m.y / l) * Ro };
+            }
+            const thP = Math.atan2(P.y - C.y, P.x - C.x);
+            const away = Math.sign(Math.atan2(Math.sin(thP - thC), Math.cos(thP - thC))) || side;
+            const thE = thP + away * (3.2 / Ro);
+            const E = { x: C.x + Math.cos(thE) * Ro, y: C.y + Math.sin(thE) * Ro };
+            const pts: V2[] = [];
+            for (let k = 0; k <= 8; k++) {
+              const t = k / 8, u = 1 - t;
+              pts.push({ x: u * u * e.x + 2 * u * t * P.x + t * t * E.x, y: u * u * e.y + 2 * u * t * P.y + t * t * E.y });
+            }
+            return { pts, thE };
+          };
+          const L = flare(-1), Rr = flare(1);
+          put(plainPoly([...Rr.pts, ...L.pts.slice().reverse()], y + 0.012), this.plain.mat);
+          const inside = { x: base.x - a.dir.x * 2, y: base.y - a.dir.y * 2 };
+          put(kerbStrip(Rr.pts, y + 0.022, inside), this.edgeMat);
+          put(kerbStrip(L.pts, y + 0.022, inside), this.edgeMat);
+          let a0 = L.thE, a1 = Rr.thE;
+          if (Math.atan2(Math.sin(a1 - a0), Math.cos(a1 - a0)) < 0) [a0, a1] = [a1, a0];
+          const span = (((a1 - a0) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+          gaps.push([a0, span]);
+        }
+      }
+      // outer kerb, broken at the mouths
+      for (const arc of arcsBetween(gaps)) {
+        const pts: V2[] = [];
+        const n = Math.max(2, Math.ceil((arc[1] / (Math.PI * 2)) * 96));
+        for (let k = 0; k <= n; k++) {
+          const t = arc[0] + (arc[1] * k) / n;
+          pts.push({ x: C.x + Math.cos(t) * (Ro - 0.21), y: C.y + Math.sin(t) * (Ro - 0.21) });
+        }
+        put(strip(pts, y + 0.02, 0.42), this.edgeMat);
+      }
+    }
   }
 
   private collectLights() {
@@ -247,6 +336,7 @@ export class Roads3D {
       this.group.remove(L);
       this.lights = new THREE.InstancedMesh(L.geometry, L.material, this.lightRefs.length * 2);
       this.lights.renderOrder = 3;
+      this.lights.frustumCulled = false;
       this.group.add(this.lights);
     }
     const li = this.lights;
@@ -392,13 +482,13 @@ function polyDeck(poly: V2[], y: number): THREE.BufferGeometry {
 }
 
 /** Flat strip of width w along a polyline (kerbs, guides). */
-export function strip(pts: V2[], y: number, w: number): THREE.BufferGeometry {
+export function strip(pts: V2[], y: number, w: number, off = 0): THREE.BufferGeometry {
   const pos: number[] = [];
   const idx: number[] = [];
   const n = pts.length;
   for (let i = 0; i < n; i++) {
     const r = lateralAt(pts, i);
-    const p = pts[i];
+    const p = { x: pts[i].x + r.x * off, y: pts[i].y + r.y * off };
     pos.push(p.x - r.x * w / 2, y, p.y - r.y * w / 2, p.x + r.x * w / 2, y, p.y + r.y * w / 2);
   }
   for (let i = 0; i < n - 1; i++) {
@@ -434,4 +524,59 @@ function flipWinding(g: THREE.BufferGeometry) {
   fixUpWinding(g);
   const nr = g.getAttribute("normal");
   if (nr) for (let i = 0; i < nr.count; i++) nr.setXYZ(i, 0, 1, 0);
+}
+
+/** Flat road-surface polygon (plain material: no lane markings). */
+function plainPoly(poly: V2[], y: number): THREE.BufferGeometry {
+  const shape = new THREE.Shape(poly.map((p) => new THREE.Vector2(p.x, p.y)));
+  const geo = new THREE.ShapeGeometry(shape, 1);
+  geo.rotateX(Math.PI / 2); // shape (x, y) -> (x, 0, y)
+  flipWinding(geo); // faces +y with upward normals
+  geo.translate(0, y, 0);
+  return plainGeo(geo);
+}
+
+/** Give any surface geometry the attributes the road shader expects, as a plain (unmarked) surface. */
+function plainGeo(geo: THREE.BufferGeometry): THREE.BufferGeometry {
+  const cnt = geo.getAttribute("position").count;
+  geo.setAttribute("aRoad", new THREE.Float32BufferAttribute(new Array(cnt * 4).fill(0).map((_, i) => (i % 4 === 2 ? -1 : 0)), 4));
+  geo.setAttribute("aFlow", new THREE.Float32BufferAttribute(new Array(cnt * 2).fill(1), 2));
+  return geo;
+}
+
+/** Kerb band along an outer road edge, drawn on the side facing `inside` (like the segment shader's edge). */
+function kerbStrip(k: V2[], y: number, inside: V2): THREE.BufferGeometry {
+  const mi = k.length >> 1;
+  const lat = lateralAt(k, mi);
+  const s = lat.x * (inside.x - k[mi].x) + lat.y * (inside.y - k[mi].y) > 0 ? 1 : -1;
+  return strip(k, y, 0.42, s * 0.21);
+}
+
+function circlePts(c: V2, r: number, n: number): V2[] {
+  const pts: V2[] = [];
+  for (let k = 0; k <= n; k++) {
+    const a = (k / n) * Math.PI * 2;
+    pts.push({ x: c.x + Math.cos(a) * r, y: c.y + Math.sin(a) * r });
+  }
+  return pts;
+}
+
+/** Complement of angular gaps [start, span] on a circle, as [start, span] arcs. */
+export function arcsBetween(gaps: [number, number][]): [number, number][] {
+  const TAU = Math.PI * 2;
+  if (!gaps.length) return [[0, TAU]];
+  const g = gaps.map(([a, sp]) => [((a % TAU) + TAU) % TAU, sp] as [number, number]).sort((x, y) => x[0] - y[0]);
+  const m: [number, number][] = [];
+  for (const [a, sp] of g) {
+    const last = m[m.length - 1];
+    if (last && a <= last[0] + last[1]) last[1] = Math.max(last[1], a + sp - last[0]);
+    else m.push([a, sp]);
+  }
+  const out: [number, number][] = [];
+  for (let i = 0; i < m.length; i++) {
+    const end = m[i][0] + m[i][1];
+    const next = i + 1 < m.length ? m[i + 1][0] : m[0][0] + TAU;
+    if (next - end > 1e-3) out.push([end, next - end]);
+  }
+  return out;
 }

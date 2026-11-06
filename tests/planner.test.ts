@@ -90,6 +90,58 @@ describe("planner", () => {
     for (const n of net.nodes.values()) expect(Math.hypot(n.p.x - 100, n.p.y - 100)).toBeGreaterThan(10);
   });
 
+  it("connects a road aimed into a roundabout to its ring", () => {
+    const net = new RoadNetwork();
+    const w = world();
+    const plan = planRoundabout(net, w, v2(100, 100), 1, 0);
+    expect(plan.errors).toEqual([]);
+    net.begin();
+    commitRoundabout(net, plan);
+    net.rebuild();
+    net.commit();
+    const from = free(v2(100, 260));
+    // drawn from outside, released on the centre: it ends on the rim, facing the ring
+    const end = snap(net, v2(100, 100), { mpp: 0.3, level: 0, type: "street", from });
+    expect(end.node !== undefined || end.seg !== undefined).toBe(true);
+    build(net, w, from, end);
+    const j = [...net.nodeGeom.values()].filter((g) => g.kind === "junction" && g.arms.length === 3);
+    expect(j.length).toBe(1);
+    // started inside a ring with nothing to aim from: projects to the rim
+    const s = snap(net, v2(104, 96), { mpp: 0.3, level: 0, type: "street" });
+    expect(s.node !== undefined || s.seg !== undefined).toBe(true);
+    // a road straight through the island is refused
+    const through = planRoad(net, w, { start: free(v2(40, 100)), end: free(v2(160, 100)), mode: "straight", type: "street" });
+    expect(through.errors.map((e) => e.msg)).toContain("Can't cross a roundabout's centre");
+  });
+
+  it("joins four arms to a roundabout exactly where they are aimed", () => {
+    const net = new RoadNetwork();
+    const w = world();
+    const c = v2(300, 300);
+    const plan = planRoundabout(net, w, c, 1, 0);
+    expect(plan.errors).toEqual([]);
+    net.begin();
+    commitRoundabout(net, plan);
+    net.rebuild();
+    net.commit();
+    for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+      const from = free(v2(c.x + dx * 90, c.y + dy * 90));
+      const end = snap(net, c, { mpp: 0.3, level: 0, type: "street", from });
+      const p = planRoad(net, w, { start: from, end, mode: "straight", type: "street" });
+      expect(p.errors).toEqual([]);
+      build(net, w, from, end);
+      // the junction sits on the arm's own line, not bent to a nearby ring node
+      const j = [...net.nodeGeom.entries()].filter(([, g]) => g.kind === "junction").map(([id]) => net.nodes.get(id)!.p);
+      const hit = j.find((q) => Math.abs((q.x - c.x) * dy - (q.y - c.y) * dx) < 0.5 && (q.x - c.x) * dx + (q.y - c.y) * dy > 0);
+      expect(hit).toBeDefined();
+      // and no leftover ring filler node crowds it (its trimmed arcs would vanish)
+      const fillers = [...net.nodes.keys()].filter((id) => net.segsAt(id).length === 2 && net.segsAt(id).every((s) => s.ring));
+      for (const f of fillers) expect(Math.hypot(net.nodes.get(f)!.p.x - hit!.x, net.nodes.get(f)!.p.y - hit!.y)).toBeGreaterThan(12);
+    }
+    const arms3 = [...net.nodeGeom.values()].filter((g) => g.kind === "junction" && g.arms.length === 3);
+    expect(arms3.length).toBe(4);
+  });
+
   it("builds a street grid with junctions at every crossing", () => {
     const net = new RoadNetwork();
     const w = world();

@@ -115,7 +115,7 @@ export class Hud {
 
     // ---- top right: objectives + tutorial
     const tr = h("div", "corner tr");
-    tr.append(this.objCard, this.tut);
+    tr.append(this.objCard, this.tut, this.panel);
 
     // ---- bottom: sub-bar + toolbar
     const bc = h("div", "corner bc");
@@ -126,7 +126,7 @@ export class Hud {
     this.modal.hidden = true;
     this.banner.hidden = true;
     this.rectEl.hidden = true;
-    this.root.append(tl, tc, tr, bc, this.chipBox, this.toastBox, this.panel, this.banner, this.rectEl, this.modal);
+    this.root.append(tl, tc, tr, bc, this.chipBox, this.toastBox, this.banner, this.rectEl, this.modal);
     document.addEventListener("pointerdown", (e) => {
       if (!this.overlayList.contains(e.target as Node) && e.target !== this.overlayBtn && !this.overlayBtn.contains(e.target as Node)) {
         this.overlayList.classList.remove("open");

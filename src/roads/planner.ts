@@ -36,6 +36,7 @@ export interface Snap {
   tangent?: V2; // natural continuation direction when starting from here (dead ends)
   guides: Guide[];
   label?: string;
+  ringRaw?: V2; // picked inside a roundabout: the rim point follows where the road heads
 }
 
 export interface Guide {
@@ -81,9 +82,74 @@ function deadEndTangent(net: RoadNetwork, nodeId: number): V2 | undefined {
   return s.a === nodeId ? scale(cubicTangent(s.c, 0), -1) : cubicTangent(s.c, 1);
 }
 
+/** Roundabout rings around p: centre and radius from three of their nodes. */
+export function ringsNear(net: RoadNetwork, p: V2, reach = 60): { id: number; c: V2; r: number; h: number }[] {
+  const ids = new Set<number>();
+  for (const id of net.segsNear(p.x - reach, p.y - reach, p.x + reach, p.y + reach)) {
+    const s = net.segs.get(id)!;
+    if (s.ring) ids.add(s.ring);
+  }
+  const out: { id: number; c: V2; r: number; h: number }[] = [];
+  for (const ring of ids) {
+    const nodes: V2[] = [];
+    let h = 0;
+    for (const s of net.segs.values()) {
+      if (s.ring !== ring) continue;
+      const n = net.nodes.get(s.a)!;
+      nodes.push(n.p);
+      h = n.h;
+    }
+    if (nodes.length < 3) continue;
+    const a = nodes[0], b = nodes[Math.floor(nodes.length / 3)], c = nodes[Math.floor((2 * nodes.length) / 3)];
+    const d = 2 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
+    if (Math.abs(d) < 1e-6) continue;
+    const a2 = a.x * a.x + a.y * a.y, b2 = b.x * b.x + b.y * b.y, c2 = c.x * c.x + c.y * c.y;
+    const ctr = { x: (a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d, y: (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d };
+    out.push({ id: ring, c: ctr, r: dist(ctr, a), h });
+  }
+  return out;
+}
+
+/**
+ * Aiming into a roundabout means "connect to the ring": take the point where the road meets the
+ * circle (or the nearest rim point when starting inside), reusing a plain ring node if one is close.
+ */
+function ringSnap(net: RoadNetwork, raw: V2, o: SnapOpts): Snap | null {
+  for (const R of ringsNear(net, raw)) {
+    if (dist(raw, R.c) > R.r) continue;
+    let q: V2 | null = null;
+    const f = o.from?.p;
+    if (f && dist(f, R.c) > R.r + 1) {
+      // first intersection of f -> raw with the circle
+      const d = sub(raw, f), m = sub(f, R.c);
+      const A = dot(d, d), B = 2 * dot(m, d), C = dot(m, m) - R.r * R.r;
+      const disc = B * B - 4 * A * C;
+      if (A > 1e-6 && disc >= 0) {
+        const t = (-B - Math.sqrt(disc)) / (2 * A);
+        if (t >= 0 && t <= 1) q = add(f, scale(d, t));
+      }
+    }
+    if (!q) {
+      const dir = len(sub(raw, R.c)) > 0.5 ? norm(sub(raw, R.c)) : f ? norm(sub(f, R.c)) : { x: 0, y: 1 };
+      q = add(R.c, scale(dir, R.r));
+    }
+    let bestS: { seg: RSeg; t: number; p: V2; d: number } | null = null;
+    for (const id of net.segsNear(q.x - 20, q.y - 20, q.x + 20, q.y + 20)) {
+      const sg = net.segs.get(id)!;
+      if (sg.ring !== R.id) continue;
+      const r = cubicClosest(sg.c, q);
+      if (!bestS || r.d < bestS.d) bestS = { seg: sg, t: r.t, p: r.p, d: r.d };
+    }
+    if (bestS) return { p: bestS.p, h: net.heightOnSeg(bestS.seg.id, bestS.t), seg: bestS.seg.id, t: bestS.t, guides: [], ringRaw: { ...raw } };
+  }
+  return null;
+}
+
 export function snap(net: RoadNetwork, raw: V2, o: SnapOpts): Snap {
   const guides: Guide[] = [];
   const h = o.level * LEVEL_H;
+  const rs = ringSnap(net, raw, o);
+  if (rs) return rs;
   // 1) nodes
   const nr = NODE_SNAP_PX * o.mpp;
   let bestN: { id: number; d: number } | null = null;
@@ -429,6 +495,15 @@ export function validateStrokes(net: RoadNetwork, world: BuildWorld, strokes: St
     if (mountain) errors.push({ msg: "Mountain in the way", p: mid });
     if (water) errors.push({ msg: "Needs a bridge here: raise it with R", p: mid });
     // buildings
+    // roundabout islands can't be driven through (a bridge high enough over it is fine)
+    if (kind !== "roundabout") {
+      const rings = ringsNear(net, mid, L / 2 + 80);
+      let inIsland: V2 | null = null;
+      for (const R of rings) for (let i = 0; i < pts.length && !inIsland; i++) {
+        if (Math.abs(hs[i] - R.h) < CLEARANCE && dist(pts[i], R.c) < R.r - 3.2) inIsland = pts[i];
+      }
+      if (inIsland) errors.push({ msg: "Can't cross a roundabout's centre", p: inIsland });
+    }
     const hit = world.buildingsHit(pts, w / 2 - 0.2);
     if (hit.length) errors.push({ msg: hit.length === 1 ? "Building in the way" : `${hit.length} buildings in the way`, p: mid, buildings: hit });
     // crossings -> junctions
@@ -442,6 +517,7 @@ export function validateStrokes(net: RoadNetwork, world: BuildWorld, strokes: St
       prevS = c.sPlan;
       const s = net.segs.get(c.seg)!;
       for (const n of [s.a, s.b]) {
+        if (isRingFiller(net, n)) continue; // moved to the new junction when built
         const d = dist(net.nodes.get(n)!.p, c.p);
         if (d >= 3 && d < 12) errors.push({ msg: "Too close to a junction", p: c.p });
       }
@@ -550,9 +626,63 @@ export function resolveAnchor(net: RoadNetwork, p: V2, h: number, tol = 0.8): nu
   if (best) {
     if (best.t < 0.002) return best.seg.a;
     if (best.t > 0.998) return best.seg.b;
+    if (best.seg.ring) {
+      const moved = joinRing(net, best.seg, p);
+      if (moved !== null) return moved;
+    }
     return net.splitSeg(best.seg.id, best.t);
   }
   return net.addNode(p, h);
+}
+
+/** A filler node of a roundabout (just two arcs of the same ring meet there). */
+function isRingFiller(net: RoadNetwork, id: number): boolean {
+  const ss = net.segsAt(id);
+  return ss.length === 2 && ss[0].ring !== 0 && ss[0].ring === ss[1].ring;
+}
+
+/**
+ * A road joining a ring close to a filler node: drop the filler and rebuild that stretch of the
+ * ring as true arcs through the new junction, so the road meets the ring exactly where it was aimed.
+ */
+function joinRing(net: RoadNetwork, seg: RSeg, p: V2): number | null {
+  const R = ringsNear(net, p, 30).find((r) => r.id === seg.ring);
+  if (!R) return null;
+  const near = (n: number) => isRingFiller(net, n) && dist(net.nodes.get(n)!.p, p) < 12;
+  const prevSeg = (n: number) => net.segsAt(n).find((x) => x.b === n && x.ring === seg.ring);
+  const nextSeg = (n: number) => net.segsAt(n).find((x) => x.a === n && x.ring === seg.ring);
+  // widen [X..Y] along the ring past every filler node crowding the new junction
+  const drop = new Set<number>([seg.id]);
+  let X = seg.a, Y = seg.b;
+  for (let k = 0; k < 8 && near(X); k++) { const s = prevSeg(X); if (!s) return null; drop.add(s.id); X = s.a; }
+  for (let k = 0; k < 8 && near(Y); k++) { const s = nextSeg(Y); if (!s) return null; drop.add(s.id); Y = s.b; }
+  if (drop.size === 1 || X === Y) return null;
+  const ang = (q: V2) => Math.atan2(q.y - R.c.y, q.x - R.c.x);
+  const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+  const pa = net.nodes.get(seg.a)!.p, pb = net.nodes.get(seg.b)!.p;
+  const dirSign = Math.sign(wrap(ang(pb) - ang(pa))) || 1;
+  const sweepTo = (a0: number, a1: number) => { let sw = wrap(a1 - a0); if (Math.sign(sw) !== dirSign || sw === 0) sw += dirSign * Math.PI * 2; return sw; };
+  const aN = ang(p);
+  if (Math.abs(sweepTo(ang(net.nodes.get(X)!.p), aN)) >= Math.abs(sweepTo(ang(net.nodes.get(X)!.p), ang(net.nodes.get(Y)!.p)))) return null;
+  const { type, ring } = seg;
+  const h = net.nodes.get(seg.a)!.h;
+  const orphans = new Set<number>();
+  for (const id of drop) { const s = net.segs.get(id)!; orphans.add(s.a); orphans.add(s.b); net.removeSeg(id, false); }
+  for (const n of orphans) if (n !== X && n !== Y && net.segsAt(n).length === 0) net.removeNode(n);
+  const N = net.addNode({ x: R.c.x + Math.cos(aN) * R.r, y: R.c.y + Math.sin(aN) * R.r }, h);
+  const arc = (a: number, b: number) => {
+    const a0 = ang(net.nodes.get(a)!.p);
+    const cs = arcCubics(R.c, R.r, a0, sweepTo(a0, ang(net.nodes.get(b)!.p)));
+    let prev = a;
+    cs.forEach((c, i) => {
+      const next = i === cs.length - 1 ? b : net.addNode(c.p3, h);
+      net.addSeg(prev, next, type, c, ring);
+      prev = next;
+    });
+  };
+  arc(X, N);
+  arc(N, Y);
+  return N;
 }
 
 /**

@@ -142,7 +142,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--sel-line); 
 .selrect[hidden] { display: none; }
 
 /* side panel */
-.panel { position: absolute; right: 8px; top: 160px; width: 264px; padding: 9px 10px 10px; }
+.panel { position: relative; width: 100%; padding: 9px 10px 10px; max-height: calc(100vh - 260px); overflow: auto; }
 .panel[hidden] { display: none; }
 .panel header { font-weight: 600; margin-bottom: 8px; padding-right: 18px; display: flex; align-items: center; }
 .panel .sat { display: flex; justify-content: space-between; margin-bottom: 6px; }
@@ -196,7 +196,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--sel-line); 
   .tr { width: 210px; }
   .obj-label { font-size: 11px; }
   .tc { top: 44px; left: 8px; transform: none; }
-  .panel { top: auto; bottom: 108px; right: 8px; left: 8px; width: auto; max-height: 45vh; overflow: auto; }
+  .panel { position: fixed; top: auto; bottom: 108px; right: 8px; left: 8px; width: auto; max-height: 45vh; overflow: auto; }
   .tool { width: 40px; height: 40px; }
   .toasts { bottom: 118px; }
   .tutorial { font-size: 11px; }
