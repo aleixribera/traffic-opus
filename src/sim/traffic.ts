@@ -42,6 +42,11 @@ export interface Vehicle {
   px: number; py: number; ph: number; pang: number;
   fade: number; // 0..1 spawn fade
   leaving: number; // >0 while turning into a driveway
+  /** Time the trip would have taken without other traffic: real time while unimpeded, distance at free speed while held up. */
+  ideal: number;
+  born: number; // sim time it entered the road
+  v0e: number; // free-road desired speed this step (limits, curves, driveway approach)
+  constrained: boolean; // held up by another vehicle, a stop line or a signal this step
 }
 
 export interface PendingSpawn {
@@ -135,14 +140,16 @@ export class Traffic {
       id: this.nextId++, truck: p.truck, len, color: p.truck ? 0xf5f5f0 : CAR_COLORS[(Math.random() * CAR_COLORS.length) | 0],
       edge: lane, s: ls, v: 3, acc: 0, route: best.keys, ri: 0, next: null, granted: false, holding: null,
       lat: 0, lcCool: 2, wait: 0, stuck: 0, dest: p.to, destSide: p.toSide, destS: -1,
-      trip: { ...p.trip, startT: this.time, freeFlow: best.freeFlow },
+      trip: { ...p.trip, freeFlow: best.freeFlow },
       x: 0, y: 0, h: 0, ang: 0, px: 0, py: 0, ph: 0, pang: 0, fade: 0, leaving: 0,
+      ideal: 0, born: this.time, v0e: 1, constrained: false,
     };
     // slide out of the driveway: start offset towards the building
     const side = (lane.dir === 1 ? 1 : -1) * p.fromSide; // +1 = building on the right of travel
     v.lat = side * (LANE_W * 0.9) * (crossing ? 2 : 1);
     insertOcc(lane, v);
     this.vehicles.push(v);
+    if (this.isFinal(v)) this.computeDestS(v);
     this.place(v, true);
     return "ok";
   }
@@ -180,6 +187,7 @@ export class Traffic {
       v.px = v.x; v.py = v.y; v.ph = v.h; v.pang = v.ang;
       v.v = Math.max(0, v.v + v.acc * dt);
       v.s += v.v * dt;
+      v.ideal += v.constrained ? (v.v * dt) / Math.max(v.v0e, 1) : dt;
       if (v.v < 0.3) { v.wait += dt; v.stuck += dt; } else { v.wait = 0; v.stuck = Math.max(0, v.stuck - dt * 2); }
       if (v.fade < 1) v.fade = Math.min(1, v.fade + dt * 2.5);
       if (Math.abs(v.lat) > 0.01) {
@@ -188,6 +196,9 @@ export class Traffic {
       }
       v.lcCool -= dt;
       const r = this.advance(v);
+      // the junction reservation ends once the whole car is out on the exit lane
+      const hc = v.holding;
+      if (hc && v.edge !== hc.from && v.edge !== hc && !(v.edge === hc.to && v.s - v.len <= 0.5)) this.release(v);
       if (r) done.push(v);
       else if (v.stuck > 150) {
         // last resort so a broken layout can never freeze the city: the driver gives up
@@ -217,9 +228,12 @@ export class Traffic {
       if (e.kind === "lane") {
         const lane = e as Lane;
         // arrival
+        if (this.isFinal(v) && v.destS < 0 && lane.seg === v.dest.seg) this.computeDestS(v);
         if (this.isFinal(v) && v.destS >= 0) {
           if (lane.idx === 0 && v.s >= v.destS - 0.8) {
             if (this.canTurnIn(v, lane)) {
+              // pulling out of a driveway takes a moment even on a quiet street: the first seconds aren't delay
+              v.trip.freeFlow = v.ideal + Math.min(6, v.born - v.trip.startT);
               this.ev.arrive(v, this.time);
               return true;
             }
@@ -295,6 +309,8 @@ export class Traffic {
     for (const ol of opp) {
       const os = polyClosest(ol.pl, v.dest.p).s;
       for (const o of ol.occ as Vehicle[]) {
+        // two cars turning across each other into facing driveways: the older one goes first
+        if (o.v < 0.5 && o.id > v.id && o.destS >= 0 && this.isFinal(o) && Math.abs(o.destS - 0.8 - o.s) < 1.5) continue;
         if (Math.abs(o.s - os) < 6) return false;
         if (o.s < os && (os - o.s) / Math.max(o.v, 0.5) < need) return false;
       }
@@ -333,6 +349,7 @@ export class Traffic {
     if (v.granted) return;
     if (this.canEnter(v, v.next, toEnd)) {
       v.granted = true;
+      if (v.holding) this.release(v);
       v.next.holders.push(v);
       v.holding = v.next;
     }
@@ -450,6 +467,7 @@ export class Traffic {
     if (v.truck) v0 *= 0.85;
     let gap = Infinity;
     let dv = 0;
+    let soft = false; // the binding constraint is a stop line not yet asked about
     // leader on the same edge
     const occ = e.occ as Vehicle[];
     const i = occ.indexOf(v);
@@ -472,9 +490,10 @@ export class Traffic {
             if (!this.canTurnInCheap(v, lane)) { gap = Math.min(gap, dd + 0.5); dv = v.v; }
           }
         } else if (!c || !v.granted) {
-          // stop line
+          // stop line (braking for it only counts as delay once the junction has actually said no)
           gap = Math.min(gap, d + 0.5);
           dv = v.v;
+          soft = d > Math.max(14, v.v * 3.4 + 8);
           if (c) v0 = Math.min(v0, Math.sqrt(c.speed * c.speed + 2 * 1.6 * Math.max(0, d)));
         } else {
           next = c;
@@ -497,13 +516,14 @@ export class Traffic {
         else break;
       }
     }
-    // lane-change neighbours we are merging next to: treat a vehicle we cut in front of softly (handled in LC)
     const free = 1 - Math.pow(v.v / Math.max(v0, 0.1), 4);
-    if (gap === Infinity) return P.a * free;
+    v.v0e = v0;
+    if (gap === Infinity) { v.constrained = false; return P.a * free; }
     const sStar = P.s0 + Math.max(0, v.v * P.T + (v.v * dv) / (2 * Math.sqrt(P.a * P.b)));
     const g = Math.max(gap, 0.1);
     let a = P.a * (free - (sStar / g) ** 2);
     if (a < -8) a = -8;
+    v.constrained = !soft && a < P.a * free - 0.25;
     return a;
   }
 
@@ -841,7 +861,8 @@ export class Traffic {
   /** City-wide traffic flow: sum of free-flow times / sum of actual times over recent trips. */
   flowScore(): number {
     let a = 0, b = 0;
-    for (const t of this.trips) { a += t.ff; b += Math.max(t.actual, t.ff); }
+    // a few seconds lost to a turn-in or a car pulling out isn't congestion: only delay beyond that counts
+    for (const t of this.trips) { a += t.ff; b += t.ff + Math.max(0, t.actual - t.ff - (3 + t.ff * 0.1)); }
     return b > 0 ? a / b : 1;
   }
 

@@ -333,7 +333,10 @@ function findCrossings(net: RoadNetwork, pts: V2[], cum: number[], hsPlan: numbe
     }
   }
   out.sort((a, b) => a.sPlan - b.sPlan);
-  return { crossings: out, bad };
+  // a hit exactly on a shared polyline vertex is found twice: keep one
+  const uniq: Crossing[] = [];
+  for (const c of out) if (!uniq.some((u) => u.seg === c.seg && Math.abs(u.sPlan - c.sPlan) < 1)) uniq.push(c);
+  return { crossings: uniq, bad };
 }
 
 export interface PlanInput {
