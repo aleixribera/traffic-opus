@@ -42,3 +42,20 @@ Sources: Orbital Potato's 65-min pre-release playthrough (main source: full capt
 ## Base-game scope (this milestone)
 
 Map + tile unlocks, the full road toolset above (minus lane-connection editing and keep-clear, which become automatic), the zone set (homes S/M/L, shops S/M/L, offices S/M, copper mine, farm, two factories), trucks for the goods chain, satisfaction and flow, ten City Levels, overlays, save/load, undo/redo.
+
+## Look and interaction reference (from the long video's frames)
+
+- **Camera**: straight top-down, orthographic feel, buildings read as low 3D blocks with a long soft shadow cast down-right. Pan + zoom only.
+- **Ground**: cream `#ECEAE0` base, blobby lime grass `#C3F08F`, pale sand `#F2E7A8` around lakes, periwinkle water `#9DB8F5`. Mountains are flat terraces in 3–4 greys, each step offset with its own soft shadow. Locked map tiles are tinted darker grey; unlocked tiles are clean.
+- **Roads**: near-white surface, thin mid-grey kerb outline, a thin yellow centre line on two-way roads, white dashes between same-direction lanes, small white arrows at segment ends. Elevated roads keep the white deck but get a thick near-black edge and a drop shadow; elevation previews are tinted by level (0 cyan, 1 green, 2 blue, 3 purple) with small level badges along the deck.
+- **Roundabouts**: white ring, yellow hatched "keep clear" crescents on the entries.
+- **Buildings** are one flat colour per zone: residential green (houses = small box + darker pitched roof, apartments = dark green square blocks with X-braced flat roofs), commercial blue, workplaces purple, industry grey with coloured roof stripes (mine = orange). Every building sits on a white lot pad with a short driveway tab to the kerb and a parked car; big ones get striped parking lots.
+- **Cars** are tiny rounded rectangles in saturated colours; trucks are longer and pale.
+- **HUD**: `Overlays ▾` pill at top-left opens a list (Traffic flow, Overall satisfaction, Access to input resources / nearby commercial / nearby workplaces / map-wide / workers & customers, Air pollution, Road noise). Money pill + pause/play at top-centre. Objectives card top-right (`City Level N`, four rows with check circle, a red "N to go" or green/red %, and a magnifier that desaturates the map and highlights the culprits in orange). Purple-bordered tutorial card under it.
+- **Toolbar**: one white rounded strip at the bottom: 7 road icons, grid, junction/connection tool, roundabout, keep-clear, then building icons with count badges, then bulldozer and upgrade. A sub-bar above it: `Curve mode [straight|curve]  Elevation [0][1][2][3]`; for the bulldozer `Elevations [All][0 only]…`.
+- **Draw feedback**: dashed alignment guides through the cursor and through existing endpoints, chips next to the cursor: cost, angle (`90.0°`), length (`0.2 km`), mode hints (`Parallel`, `Add lane`), red chips for errors (`Building in way`, `Cannot build slip road`). Valid preview = translucent cyan; invalid = dark red.
+- **Bulldozer** drags a rectangle: everything inside turns red, chip shows `$2367 refund`.
+- **Signals panel**: bottom sheet with a "Connections" diagram (drag to add lane connections, right-click removes) and phase cards (current phase highlighted green, arrows to reorder, bin, duration stepper, `+ Add phase`).
+- **Save dialog**: list on the left (New save, named saves, Autosave 1/2 with times), preview image + name + "City Level 8 · 00:43 playtime · 389 residents" on the right.
+
+Our departures: keep-clear is automatic at every junction (the sim never blocks the box), so no keep-clear tool; the junction tool edits lane connections and signals in one panel; the bulldozer gets single-click delete as well as rectangle drag.
