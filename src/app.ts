@@ -4,7 +4,7 @@ import { cubicTangent, dist, formatMoney, norm, rectCorners, v2, type V2 } from 
 import type { Building } from "./game/buildings";
 import { Game } from "./game/city";
 import {
-  cubicClosest, planGrid, planRoad, planRoundabout, removalRefund, segAt, segsInRect, snap, upgradeCost,
+  cubicClosest, planGrid, planRoad, planRoundabout, removalRefund, segAt, segsInRect, snap,
   type CurveMode, type Plan, type Snap,
 } from "./roads/planner";
 import { Buildings3D, lotMatrix } from "./render/buildings3d";
@@ -416,7 +416,7 @@ export class App {
       }
       const s = g.net.segs.get(id)!;
       if (s.type === this.st.roadType) { this.reject("Already this road type"); return; }
-      const u = upgradeCost(g.net, g.world, id, this.st.roadType);
+      const u = g.upgradePlan(id, this.st.roadType);
       if (u.errors.length) { this.reject(u.errors[0].msg); return; }
       if (g.upgrade(id, this.st.roadType)) this.hud?.sound("build");
       return;
@@ -618,11 +618,21 @@ export class App {
           pv.highlight(g.net, [id]);
           chips.push({ text: ROAD_TYPES[s.type].bwd > 0 ? "Two-way road" : "Reverse direction", kind: ROAD_TYPES[s.type].bwd > 0 ? "error" : "info" });
         } else {
-          const u = upgradeCost(g.net, g.world, id, this.st.roadType);
+          const u = g.upgradePlan(id, this.st.roadType);
           pv.highlight(g.net, [id]);
           if (s.type === this.st.roadType) chips.push({ text: "Already this type", kind: "info" });
           else {
             if (u.errors.length) chips.push({ text: u.errors[0].msg, kind: "error" });
+            for (const e of u.errors) for (const bid of e.buildings ?? []) {
+              const b = g.buildings.byId.get(bid);
+              if (b) pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
+            }
+            // lots that will be pushed back to make room
+            for (const m of u.moves) {
+              const b = g.buildings.byId.get(m.id);
+              if (b) pv.footprint(rectCorners(m.c1, b.hw, b.hd, b.rot), 0x58c8e6);
+            }
+            if (u.moves.length) chips.push({ text: u.moves.length === 1 ? "1 building moves back" : `${u.moves.length} buildings move back`, kind: "info" });
             chips.push({ text: `${ROAD_TYPES[s.type].name} → ${ROAD_TYPES[this.st.roadType].name}`, kind: "info" });
             chips.push({ text: formatMoney(u.cost), kind: u.cost > g.money ? "error" : "cost" });
           }

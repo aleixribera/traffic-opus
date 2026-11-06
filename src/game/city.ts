@@ -1,15 +1,15 @@
 import {
-  BUILDING_TYPES, BULLDOZE_REFUND, MAP, ROAD_TYPES, SIGNAL_COST, SIM, type BuildingKind, type Cargo, type RoadTypeId,
+  BUILDING_TYPES, BULLDOZE_REFUND, MAP, ROAD_TYPES, SIGNAL_COST, SIM, roadWidth, type BuildingKind, type Cargo, type RoadTypeId,
 } from "../config";
 import { dist, type V2 } from "../core/math";
 import { mulberry32 } from "../core/noise";
 import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/network";
 import {
-  commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type Plan,
+  commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type Plan, type PlanError,
 } from "../roads/planner";
 import { Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import { Terrain } from "../world/terrain";
-import { Buildings, type Building, type Placement } from "./buildings";
+import { Buildings, type Building, type BuildingMove, type Placement } from "./buildings";
 import { levelDef } from "./levels";
 
 export interface Resident {
@@ -29,6 +29,7 @@ interface UndoEntry {
   money: number; // money spent (negative = refunded)
   added: Building[];
   removed: Building[];
+  moved?: BuildingMove[]; // lots pushed back by a road widening
 }
 
 export interface Objective {
@@ -213,15 +214,30 @@ export class Game {
     return refund;
   }
 
+  /** Cost and problems of changing a road's type. Lots a wider road would cover are pushed back when there is room. */
+  upgradePlan(segId: number, to: RoadTypeId): { cost: number; errors: PlanError[]; moves: BuildingMove[] } {
+    const u = upgradeCost(this.net, this.world, segId, to);
+    const T = ROAD_TYPES[to];
+    const hit = u.errors.find((e) => e.buildings?.length);
+    if (!hit || !T.allowsAccess) return { ...u, moves: [] };
+    const r = this.buildings.pushBack(segId, roadWidth(T) / 2, hit.buildings!, this.world);
+    if (!r.stuck.length) return { cost: u.cost, errors: u.errors.filter((e) => e !== hit), moves: r.moves };
+    const n = r.stuck.length;
+    const errors = u.errors.map((e) => (e === hit ? { ...e, msg: n === 1 ? "Building in the way" : `${n} buildings in the way`, buildings: r.stuck } : e));
+    return { cost: u.cost, errors, moves: [] };
+  }
+
   upgrade(segId: number, to: RoadTypeId): boolean {
     const s = this.net.segs.get(segId);
     if (!s || s.type === to) return false;
-    const u = upgradeCost(this.net, this.world, segId, to);
+    const u = this.upgradePlan(segId, to);
     if (u.errors.length) return false;
+    this.buildings.applyMoves(u.moves, true);
     const ops = this.applyRoads(() => this.net.setType(segId, to));
     this.money -= u.cost;
-    this.pushUndo({ label: "upgrade", ops, money: u.cost, added: [], removed: [] });
+    this.pushUndo({ label: "upgrade", ops, money: u.cost, added: [], removed: [], moved: u.moves.length ? u.moves : undefined });
     this.emit({ t: "money" });
+    if (u.moves.length) this.emit({ t: "buildings" });
     return true;
   }
 
@@ -275,6 +291,8 @@ export class Game {
   undo() {
     const e = this.undoStack.pop();
     if (!e) return;
+    // lots go back before the road narrows, so their driveways re-attach
+    if (e.moved) this.buildings.applyMoves(e.moved, false);
     if (e.ops.length) {
       this.net.undo(e.ops);
       this.afterRoads(this.net.rebuild());
@@ -290,6 +308,7 @@ export class Game {
   redo() {
     const e = this.redoStack.pop();
     if (!e) return;
+    if (e.moved) this.buildings.applyMoves(e.moved, true);
     if (e.ops.length) {
       this.net.redo(e.ops);
       this.afterRoads(this.net.rebuild());

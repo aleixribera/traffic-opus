@@ -104,7 +104,8 @@ export class Roads3D {
   private ringSurface = makeRoadMaterial({ arrows: false }); // roundabout arcs: direction is obvious, chevrons only clip at the mouths
   private plain = makeRoadMaterial({ markings: false });
   private edgeMat = new THREE.MeshLambertMaterial({ color: PAL.roadEdge });
-  private deckMat = new THREE.MeshLambertMaterial({ color: PAL.deckSide });
+  // the deck body casts the bridge's shadow from both faces (three's default only draws back faces into the shadow map)
+  private deckMat = new THREE.MeshLambertMaterial({ color: PAL.deckSide, shadowSide: THREE.DoubleSide });
   private pillarMat = new THREE.MeshLambertMaterial({ color: PAL.pillar });
   private pillarGeo = new THREE.CylinderGeometry(0.9, 1.1, 1, 10).translate(0, 0.5, 0);
   // signal heads drawn as coloured dots at the stop line
@@ -175,7 +176,6 @@ export class Roads3D {
     const extra: THREE.Object3D[] = [];
     const maxH = Math.max(...hs);
     if (maxH > 0.3) {
-      surface.castShadow = true;
       const deck = deckSides(pts, hs, halfW, LIFT);
       const dm = new THREE.Mesh(deck, this.deckMat);
       dm.castShadow = true;
@@ -213,10 +213,11 @@ export class Roads3D {
     const m = new THREE.Mesh(plainPoly(ng.poly, y), this.plain.mat);
     m.receiveShadow = true;
     if (n.h > 0.3) {
-      m.castShadow = true;
       const deck = new THREE.Mesh(polyDeck(ng.poly, y), this.deckMat);
       deck.castShadow = true;
-      out.push(deck);
+      const under = new THREE.Mesh(plainPoly(ng.poly, Math.max(0.02, y - DECK)), this.deckMat);
+      under.castShadow = true;
+      out.push(deck, under);
     }
     out.push(m);
     for (const k of ng.kerbs) {

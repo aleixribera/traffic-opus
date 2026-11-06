@@ -127,6 +127,42 @@ describe("Game", () => {
     expect(g.traffic.flowScore()).toBeGreaterThan(0.85);
   });
 
+  it("upgrading a built-up street pushes its lots back, and undo puts them back", () => {
+    const g = new Game(7);
+    const y = 1200;
+    road(g, v2(1010, y), v2(1390, y));
+    expect(placeAlong(g, "house", 4, 1030, y, -1)).toBe(4);
+    expect(placeAlong(g, "house", 4, 1030, y, 1)).toBe(4);
+    const seg = [...g.net.segs.keys()][0];
+    const before = g.buildings.list.map((b) => ({ ...b.c }));
+    const u = g.upgradePlan(seg, "avenue");
+    expect(u.errors).toEqual([]);
+    expect(u.moves.length).toBe(8);
+    expect(g.upgrade(seg, "avenue")).toBe(true);
+    for (const [i, b] of g.buildings.list.entries()) {
+      expect(Math.abs(b.c.y - y)).toBeCloseTo(Math.abs(before[i].y - y) + 3.5, 1);
+      expect(b.access?.seg).toBe(seg); // still has its driveway
+    }
+    for (let t = 0; t < 120; t += 1 / 30) g.step(1 / 30);
+    expect(g.failedTrips).toBe(0);
+    g.undo();
+    for (const [i, b] of g.buildings.list.entries()) {
+      expect(b.c.y).toBeCloseTo(before[i].y, 5);
+      expect(b.access?.seg).toBe(seg);
+    }
+    // back-to-back lots from a parallel street leave no room: refused, and the blockers are named
+    const north = g.buildings.list.find((b) => b.c.y < y)!;
+    const outer = Math.abs(north.c.y - y) + north.hd;
+    const y2 = y - 2 * outer - 1;
+    road(g, v2(1010, y2), v2(1390, y2));
+    expect(placeAlong(g, "house", 4, 1030, y2, 1)).toBe(4);
+    const v = g.upgradePlan(seg, "avenue");
+    expect(v.errors.length).toBe(1);
+    expect(v.errors[0].buildings!.length).toBe(4);
+    expect(v.moves).toEqual([]);
+    expect(g.upgrade(seg, "avenue")).toBe(false);
+  });
+
   it("round-trips a save", () => {
     const g = new Game(7);
     road(g, v2(1010, 1200), v2(1390, 1200));

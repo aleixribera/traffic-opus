@@ -1028,7 +1028,7 @@ export function upgradeCost(net: RoadNetwork, world: BuildWorld, segId: number, 
   const w = roadWidth(T);
   if (w > g.width + 0.1) {
     const hit = world.buildingsHit(pts, w / 2 - 0.2);
-    if (hit.length) errors.push({ msg: "Building in the way", p: mid, buildings: hit });
+    if (hit.length) errors.push({ msg: hit.length === 1 ? "Building in the way" : `${hit.length} buildings in the way`, p: mid, buildings: hit });
   }
   if (cost > world.money() + 0.5) errors.push({ msg: "Not enough money", p: mid });
   return { cost, errors };

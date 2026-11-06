@@ -27,6 +27,12 @@ export interface Building {
   factors: Record<string, number>;
 }
 
+export interface BuildingMove {
+  id: number;
+  c0: V2; f0: V2; // before
+  c1: V2; f1: V2; // after
+}
+
 export interface Placement {
   ok: boolean;
   reason?: string;
@@ -205,6 +211,64 @@ export class Buildings {
           break;
         }
       }
+    }
+  }
+
+  /**
+   * Widening `segId` to half-width `halfW` covers the lots in `ids`: push each one straight back so it
+   * keeps the usual driveway setback. A lot that faces another road, is a mine, or has no free land
+   * behind it can't move, and is returned in `stuck`.
+   */
+  pushBack(segId: number, halfW: number, ids: number[], world: PlaceWorld): { moves: BuildingMove[]; stuck: number[] } {
+    const net = this.net;
+    const s = net.segs.get(segId)!;
+    const moving = new Set(ids);
+    const moves: BuildingMove[] = [];
+    const stuck: number[] = [];
+    for (const id of ids) {
+      const b = this.byId.get(id);
+      if (!b) continue;
+      if (b.access?.seg !== segId || BUILDING_TYPES[b.kind].needsMountain) { stuck.push(id); continue; }
+      const rc = cubicClosest(s.c, b.c);
+      const n = norm(sub(b.c, rc.p));
+      const mv = halfW + 2.2 + b.hd - rc.d;
+      if (mv <= 0) continue;
+      const rf = cubicClosest(s.c, b.front);
+      const nf = norm(sub(b.front, rf.p));
+      moves.push({ id, c0: b.c, f0: b.front, c1: add(b.c, scale(n, mv)), f1: add(rf.p, scale(nf, halfW)) });
+    }
+    const target = new Map(moves.map((m) => [m.id, m.c1]));
+    for (const m of moves) {
+      const b = this.byId.get(m.id)!;
+      const c = m.c1;
+      const corners = rectCorners(c, b.hw, b.hd, b.rot);
+      const samples = [...corners, c, ...corners.map((k) => scale(add(k, c), 0.5))];
+      let ok = samples.every((k) => world.inBounds(k) && world.unlocked(k) && !world.isWater(k) && !world.isMountain(k));
+      if (ok) ok = !this.list.some((o) => o.id !== b.id && (!moving.has(o.id) || target.has(o.id)) &&
+        obbOverlap(c, b.hw + 0.3, b.hd + 0.3, b.rot, target.get(o.id) ?? o.c, o.hw, o.hd, o.rot));
+      if (ok) {
+        const r = b.hw + b.hd;
+        roads: for (const id of net.segsNear(c.x - r, c.y - r, c.x + r, c.y + r)) {
+          const gg = net.segGeom.get(id)!;
+          const w2 = id === segId ? halfW : gg.width / 2;
+          for (let i = 0; i < gg.center.pts.length; i++) {
+            if (gg.hs[i] > 6) continue;
+            if (rectDistance(gg.center.pts[i], c, b.hw, b.hd, b.rot) < w2 + 0.4) { ok = false; break roads; }
+          }
+        }
+      }
+      if (!ok) stuck.push(m.id);
+    }
+    return { moves: stuck.length ? [] : moves, stuck };
+  }
+
+  /** Put buildings at one end of their moves (`to` = true: the new spots). */
+  applyMoves(moves: BuildingMove[], to: boolean) {
+    for (const m of moves) {
+      const b = this.byId.get(m.id);
+      if (!b) continue;
+      b.c = to ? m.c1 : m.c0;
+      b.front = to ? m.f1 : m.f0;
     }
   }
 
