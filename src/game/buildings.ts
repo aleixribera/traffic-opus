@@ -113,10 +113,12 @@ export class Buildings {
       if (world.isWater(k)) return fail("Can't build on water");
     }
     // mountains: only mines, and their back must be dug into the slope
-    const back = add(c, scale(nn, side * hd * 0.8));
     const frontMid = add(c, scale(nn, -side * hd * 0.9));
     if (T.needsMountain) {
-      if (!world.isMountain(back)) return fail("Mines must back onto a mountain");
+      // the shaft may start a few metres behind the lot: forgiving, so a road needn't hug the cliff
+      const tan2 = norm(cubicTangent(s.c, best.t));
+      const probes = [0.8, 1.15, 1.5].flatMap((k) => [-0.5, 0, 0.5].map((a) => add(add(c, scale(nn, side * hd * k)), scale(tan2, a * hw))));
+      if (!probes.some((k) => world.isMountain(k))) return fail("Mines must back onto a mountain");
       if (world.isMountain(frontMid)) return fail("Entrance is inside the mountain");
     } else {
       for (const k of samples) if (world.isMountain(k)) return fail("Mountain in the way");

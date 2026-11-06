@@ -1,0 +1,437 @@
+import * as THREE from "three";
+import { LANE_W, ROAD_TYPES, SHOULDER } from "../config";
+import { dist, norm, right, sub, type V2 } from "../core/math";
+import type { ChangeSet, RoadNetwork } from "../roads/network";
+import { dkey } from "../sim/router";
+import type { Traffic } from "../sim/traffic";
+import { PAL } from "./palette";
+
+const LIFT = 0.06;
+const DECK = 0.9;
+
+/** Shared road surface material: Lambert (so it takes shadows) with markings drawn in the fragment shader. */
+export function makeRoadMaterial(opts: { color?: number; opacity?: number; markings?: boolean } = {}) {
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: (opts.opacity ?? 1) < 1, opacity: opts.opacity ?? 1 });
+  const uniforms = {
+    uRoad: { value: new THREE.Color(opts.color ?? PAL.road) },
+    uEdge: { value: new THREE.Color(PAL.roadEdge) },
+    uLane: { value: new THREE.Color(PAL.lane) },
+    uCentre: { value: new THREE.Color(PAL.centre) },
+    uFlowMode: { value: 0 },
+    uMarkings: { value: opts.markings === false ? 0 : 1 },
+  };
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, uniforms);
+    sh.vertexShader = sh.vertexShader
+      .replace("#include <common>", "#include <common>\nattribute vec4 aRoad;\nattribute vec2 aFlow;\nvarying vec4 vRoad;\nvarying vec2 vFlow;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRoad = aRoad;\nvFlow = aFlow;");
+    sh.fragmentShader = sh.fragmentShader
+      .replace(
+        "#include <common>",
+        `#include <common>
+uniform vec3 uRoad; uniform vec3 uEdge; uniform vec3 uLane; uniform vec3 uCentre;
+uniform float uFlowMode; uniform float uMarkings;
+varying vec4 vRoad; varying vec2 vFlow;
+float band(float x, float w) { float f = fwidth(x) * 0.8 + 1e-4; return 1.0 - smoothstep(w - f, w + f, abs(x)); }
+vec3 flowTint(float r) {
+  float k = clamp((0.92 - r) / 0.6, 0.0, 1.0);
+  return mix(vec3(1.0), mix(vec3(1.0, 0.62, 0.28), vec3(0.86, 0.13, 0.16), smoothstep(0.35, 1.0, k)), smoothstep(0.0, 0.25, k));
+}`,
+      )
+      .replace(
+        "#include <color_fragment>",
+        `#include <color_fragment>
+{
+  float u = vRoad.x, v = vRoad.y, f = vRoad.z, b = vRoad.w;
+  vec3 c = uRoad;
+  if (f >= 0.0 && uMarkings > 0.5) {
+    float LW = ${LANE_W.toFixed(2)};
+    float halfW = (f + b) * LW * 0.5 + ${SHOULDER.toFixed(2)};
+    float edge = 1.0 - smoothstep(halfW - 0.42 - fwidth(u), halfW - 0.42, abs(u));
+    float dash = step(fract(v / 9.0), 0.5);
+    float lanes = 0.0;
+    if (b > 0.0) {
+      c = mix(c, uCentre, band(u, 0.13));
+      for (int k = 1; k < 4; k++) {
+        float fk = float(k);
+        if (fk < f) lanes = max(lanes, band(u - fk * LW, 0.08) * dash);
+        if (fk < b) lanes = max(lanes, band(u + fk * LW, 0.08) * dash);
+      }
+    } else {
+      for (int k = 1; k < 4; k++) {
+        float fk = float(k);
+        if (fk < f) lanes = max(lanes, band(u - (-f * 0.5 * LW + fk * LW), 0.08) * dash);
+      }
+    }
+    c = mix(c, uLane, lanes);
+    if (uFlowMode > 0.5) {
+      float r = (b > 0.0 && u < 0.0) ? vFlow.y : vFlow.x;
+      c *= flowTint(r);
+    }
+    c = mix(uEdge, c, edge);
+  }
+  diffuseColor.rgb *= c;
+}`,
+      );
+  };
+  return { mat, uniforms };
+}
+
+interface SegMeshes {
+  surface: THREE.Mesh;
+  extra: THREE.Object3D[];
+  flow: THREE.BufferAttribute;
+}
+
+export class Roads3D {
+  readonly group = new THREE.Group();
+  private segs = new Map<number, SegMeshes>();
+  private nodes = new Map<number, THREE.Object3D[]>();
+  readonly surface = makeRoadMaterial();
+  private plain = makeRoadMaterial({ markings: false });
+  private edgeMat = new THREE.MeshLambertMaterial({ color: PAL.roadEdge });
+  private deckMat = new THREE.MeshLambertMaterial({ color: PAL.deckSide });
+  private pillarMat = new THREE.MeshLambertMaterial({ color: PAL.pillar });
+  private pillarGeo = new THREE.CylinderGeometry(0.9, 1.1, 1, 10).translate(0, 0.5, 0);
+  // signal heads drawn as coloured dots at the stop line
+  private lights: THREE.InstancedMesh;
+  private lightRefs: { node: number; arm: number; x: number; y: number; h: number }[] = [];
+
+  constructor(private net: RoadNetwork) {
+    this.lights = new THREE.InstancedMesh(new THREE.CircleGeometry(0.85, 16).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffffff }), 256);
+    this.lights.count = 0;
+    this.lights.renderOrder = 3;
+    this.group.add(this.lights);
+  }
+
+  set flowMode(on: boolean) {
+    this.surface.uniforms.uFlowMode.value = on ? 1 : 0;
+  }
+
+  rebuildAll() {
+    for (const id of [...this.segs.keys()]) this.dropSeg(id);
+    for (const id of [...this.nodes.keys()]) this.dropNode(id);
+    for (const id of this.net.segs.keys()) this.buildSeg(id);
+    for (const id of this.net.nodes.keys()) this.buildNode(id);
+    this.collectLights();
+  }
+
+  apply(cs: ChangeSet) {
+    for (const id of cs.removedSegs) this.dropSeg(id);
+    for (const id of cs.removedNodes) this.dropNode(id);
+    for (const id of cs.dirtySegs) { this.dropSeg(id); if (this.net.segs.has(id)) this.buildSeg(id); }
+    for (const id of cs.dirtyNodes) { this.dropNode(id); if (this.net.nodes.has(id)) this.buildNode(id); }
+    this.collectLights();
+  }
+
+  private dropSeg(id: number) {
+    const m = this.segs.get(id);
+    if (!m) return;
+    this.group.remove(m.surface);
+    m.surface.geometry.dispose();
+    for (const o of m.extra) { this.group.remove(o); if ((o as THREE.Mesh).geometry && (o as THREE.Mesh).geometry !== this.pillarGeo) (o as THREE.Mesh).geometry.dispose(); }
+    this.segs.delete(id);
+  }
+
+  private dropNode(id: number) {
+    const os = this.nodes.get(id);
+    if (!os) return;
+    for (const o of os) { this.group.remove(o); (o as THREE.Mesh).geometry?.dispose(); }
+    this.nodes.delete(id);
+  }
+
+  private buildSeg(id: number) {
+    const s = this.net.segs.get(id)!;
+    const g = this.net.segGeom.get(id)!;
+    const T = ROAD_TYPES[s.type];
+    const s0 = g.trimA, s1 = Math.max(g.trimA + 0.3, g.center.length - g.trimB);
+    const { pts, hs, ss } = sampleRange(g.center.pts, g.center.cum, g.hs, s0, s1);
+    const halfW = g.width / 2;
+    const geo = ribbon(pts, hs, ss, halfW, LIFT, [T.fwd, T.bwd]);
+    const flow = geo.getAttribute("aFlow") as THREE.BufferAttribute;
+    const surface = new THREE.Mesh(geo, this.surface.mat);
+    surface.receiveShadow = true;
+    const extra: THREE.Object3D[] = [];
+    const maxH = Math.max(...hs);
+    if (maxH > 0.3) {
+      surface.castShadow = true;
+      const deck = deckSides(pts, hs, halfW, LIFT);
+      const dm = new THREE.Mesh(deck, this.deckMat);
+      dm.castShadow = true;
+      extra.push(dm);
+      // pillars where the deck is high enough to need them
+      const total = ss[ss.length - 1] - ss[0];
+      const n = Math.max(1, Math.round(total / 30));
+      for (let k = 0; k <= n; k++) {
+        const target = ss[0] + (total * (k + 0.5)) / (n + 1);
+        let i = 0;
+        while (i < ss.length - 2 && ss[i + 1] < target) i++;
+        const h = hs[i];
+        if (h < 2.5) continue;
+        const p = pts[i];
+        const pm = new THREE.Mesh(this.pillarGeo, this.pillarMat);
+        pm.position.set(p.x, 0, p.y);
+        pm.scale.set(Math.min(1.6, halfW / 3), h - DECK + 0.05, Math.min(1.6, halfW / 3));
+        pm.castShadow = true;
+        pm.receiveShadow = true;
+        extra.push(pm);
+      }
+    }
+    this.group.add(surface, ...extra);
+    this.segs.set(id, { surface, extra, flow });
+  }
+
+  private buildNode(id: number) {
+    const n = this.net.nodes.get(id)!;
+    const ng = this.net.nodeGeom.get(id);
+    if (!ng || !ng.poly) return;
+    const out: THREE.Object3D[] = [];
+    const y = n.h + LIFT + 0.012;
+    const shape = new THREE.Shape(ng.poly.map((p) => new THREE.Vector2(p.x, p.y)));
+    const geo = new THREE.ShapeGeometry(shape, 1);
+    geo.rotateX(Math.PI / 2); // shape (x, y) -> (x, 0, y)
+    // ShapeGeometry faces +z; after rotation its normal points down; flip the winding
+    flipWinding(geo);
+    geo.translate(0, y, 0);
+    const cnt = geo.getAttribute("position").count;
+    geo.setAttribute("aRoad", new THREE.Float32BufferAttribute(new Array(cnt * 4).fill(0).map((_, i) => (i % 4 === 2 ? -1 : 0)), 4));
+    geo.setAttribute("aFlow", new THREE.Float32BufferAttribute(new Array(cnt * 2).fill(1), 2));
+    const m = new THREE.Mesh(geo, this.plain.mat);
+    m.receiveShadow = true;
+    if (n.h > 0.3) {
+      m.castShadow = true;
+      const deck = new THREE.Mesh(polyDeck(ng.poly, y), this.deckMat);
+      deck.castShadow = true;
+      out.push(deck);
+    }
+    out.push(m);
+    for (const k of ng.kerbs) {
+      if (k.length < 2) continue;
+      const kg = strip(k, y + 0.01, 0.42);
+      const km = new THREE.Mesh(kg, this.edgeMat);
+      km.receiveShadow = true;
+      out.push(km);
+    }
+    this.group.add(...out);
+    this.nodes.set(id, out);
+  }
+
+  private collectLights() {
+    this.lightRefs = [];
+    for (const [id, n] of this.net.nodes) {
+      if (!n.signal) continue;
+      const ng = this.net.nodeGeom.get(id);
+      if (!ng) continue;
+      for (const a of ng.arms) {
+        // one dot per incoming lane, at the stop line
+        const g = this.net.segGeom.get(a.seg);
+        if (!g) continue;
+        for (const l of g.lanes) {
+          if (l.to !== id) continue;
+          const p = l.pl.pts[l.pl.pts.length - 1];
+          const q = l.pl.pts[Math.max(0, l.pl.pts.length - 3)];
+          const d = norm(sub(p, q));
+          this.lightRefs.push({ node: id, arm: a.seg, x: p.x - d.x * 1.2, y: p.y - d.y * 1.2, h: n.h });
+        }
+      }
+    }
+  }
+
+  private tmpM = new THREE.Matrix4();
+  private tmpC = new THREE.Color();
+
+  /** Per-frame: signal dots. Per-second: flow tint attributes. */
+  update(traffic: Traffic, flowOverlay: boolean) {
+    const L = this.lights;
+    if (this.lightRefs.length > L.instanceMatrix.count) {
+      this.group.remove(L);
+      this.lights = new THREE.InstancedMesh(L.geometry, L.material, this.lightRefs.length * 2);
+      this.lights.renderOrder = 3;
+      this.group.add(this.lights);
+    }
+    const li = this.lights;
+    li.count = this.lightRefs.length;
+    for (let i = 0; i < this.lightRefs.length; i++) {
+      const r = this.lightRefs[i];
+      this.tmpM.makeTranslation(r.x, r.h + LIFT + 0.05, r.y);
+      li.setMatrixAt(i, this.tmpM);
+      const st = traffic.signalState(r.node, r.arm);
+      li.setColorAt(i, this.tmpC.set(st === "green" ? 0x34c25a : st === "yellow" ? 0xf5b82e : 0xe5484d));
+    }
+    li.instanceMatrix.needsUpdate = true;
+    if (li.instanceColor) li.instanceColor.needsUpdate = true;
+    if (flowOverlay) {
+      for (const [id, m] of this.segs) {
+        const f1 = traffic.flow.get(dkey(id, 1))?.ratio ?? 1;
+        const f2 = traffic.flow.get(dkey(id, -1))?.ratio ?? 1;
+        const a = m.flow.array as Float32Array;
+        let changed = false;
+        for (let i = 0; i < a.length; i += 2) {
+          if (a[i] !== f1 || a[i + 1] !== f2) { a[i] = f1; a[i + 1] = f2; changed = true; }
+        }
+        if (changed) m.flow.needsUpdate = true;
+      }
+    }
+  }
+}
+
+
+// ------------------------------------------------------------------------------------------------
+
+function sampleRange(pts: V2[], cum: number[], hs: Float32Array, s0: number, s1: number) {
+  const outP: V2[] = [], outH: number[] = [], outS: number[] = [];
+  const at = (s: number) => {
+    let i = 0;
+    while (i < cum.length - 2 && cum[i + 1] < s) i++;
+    const seg = cum[i + 1] - cum[i] || 1;
+    const t = Math.max(0, Math.min(1, (s - cum[i]) / seg));
+    const a = pts[i], b = pts[Math.min(i + 1, pts.length - 1)];
+    return { p: { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }, h: hs[i] + (hs[Math.min(i + 1, hs.length - 1)] - hs[i]) * t };
+  };
+  const first = at(s0);
+  outP.push(first.p); outH.push(first.h); outS.push(s0);
+  for (let i = 0; i < pts.length; i++) {
+    if (cum[i] > s0 + 0.2 && cum[i] < s1 - 0.2) { outP.push(pts[i]); outH.push(hs[i]); outS.push(cum[i]); }
+  }
+  const last = at(s1);
+  outP.push(last.p); outH.push(last.h); outS.push(s1);
+  return { pts: outP, hs: outH, ss: outS };
+}
+
+function lateralAt(pts: V2[], i: number): V2 {
+  const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+  return right(norm(sub(b, a)));
+}
+
+/** Road ribbon with aRoad = (lateral u, arc length v, fwd lanes, bwd lanes). */
+export function ribbon(pts: V2[], hs: number[], ss: number[], halfW: number, lift: number, lanes: [number, number]): THREE.BufferGeometry {
+  const n = pts.length;
+  const pos = new Float32Array(n * 2 * 3);
+  const nor = new Float32Array(n * 2 * 3);
+  const road = new Float32Array(n * 2 * 4);
+  const flow = new Float32Array(n * 2 * 2).fill(1);
+  for (let i = 0; i < n; i++) {
+    const r = lateralAt(pts, i);
+    const p = pts[i], y = hs[i] + lift;
+    // left (u = -halfW) and right (u = +halfW)
+    pos.set([p.x - r.x * halfW, y, p.y - r.y * halfW, p.x + r.x * halfW, y, p.y + r.y * halfW], i * 6);
+    nor.set([0, 1, 0, 0, 1, 0], i * 6);
+    road.set([-halfW, ss[i], lanes[0], lanes[1], halfW, ss[i], lanes[0], lanes[1]], i * 8);
+  }
+  const idx: number[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+    // three's y-up with z = world y: (left, right, nextLeft) is counter-clockwise seen from above
+    idx.push(a, c, b, b, c, d);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  g.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
+  g.setAttribute("aRoad", new THREE.BufferAttribute(road, 4));
+  g.setAttribute("aFlow", new THREE.BufferAttribute(flow, 2));
+  g.setIndex(idx);
+  fixUpWinding(g);
+  g.computeBoundingSphere();
+  return g;
+}
+
+/** Vertical deck faces under an elevated ribbon, plus the underside. */
+function deckSides(pts: V2[], hs: number[], halfW: number, lift: number): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const idx: number[] = [];
+  const n = pts.length;
+  for (const side of [-1, 1]) {
+    const base = pos.length / 3;
+    for (let i = 0; i < n; i++) {
+      const r = lateralAt(pts, i);
+      const p = pts[i], y = hs[i] + lift;
+      const x = p.x + r.x * halfW * side, z = p.y + r.y * halfW * side;
+      pos.push(x, y, z, x, Math.max(0.02, y - DECK), z);
+    }
+    for (let i = 0; i < n - 1; i++) {
+      const a = base + i * 2, b = a + 1, c = a + 2, d = a + 3;
+      if (side > 0) idx.push(a, b, c, b, d, c);
+      else idx.push(a, c, b, b, c, d);
+    }
+  }
+  // underside
+  const base = pos.length / 3;
+  for (let i = 0; i < n; i++) {
+    const r = lateralAt(pts, i);
+    const p = pts[i], y = Math.max(0.02, hs[i] + lift - DECK);
+    pos.push(p.x - r.x * halfW, y, p.y - r.y * halfW, p.x + r.x * halfW, y, p.y + r.y * halfW);
+  }
+  for (let i = 0; i < n - 1; i++) {
+    const a = base + i * 2, b = a + 1, c = a + 2, d = a + 3;
+    idx.push(a, b, c, b, d, c);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+function polyDeck(poly: V2[], y: number): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const idx: number[] = [];
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i];
+    pos.push(p.x, y, p.y, p.x, Math.max(0.02, y - DECK), p.y);
+  }
+  const n = poly.length;
+  for (let i = 0; i < n; i++) {
+    const a = i * 2, b = a + 1, c = ((i + 1) % n) * 2, d = c + 1;
+    idx.push(a, b, c, b, d, c, a, c, b, b, c, d); // both windings: cheap double-sided
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/** Flat strip of width w along a polyline (kerbs, guides). */
+export function strip(pts: V2[], y: number, w: number): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const idx: number[] = [];
+  const n = pts.length;
+  for (let i = 0; i < n; i++) {
+    const r = lateralAt(pts, i);
+    const p = pts[i];
+    pos.push(p.x - r.x * w / 2, y, p.y - r.y * w / 2, p.x + r.x * w / 2, y, p.y + r.y * w / 2);
+  }
+  for (let i = 0; i < n - 1; i++) {
+    if (dist(pts[i], pts[i + 1]) < 1e-4) continue;
+    const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+    idx.push(a, c, b, b, c, d);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("normal", new THREE.Float32BufferAttribute(new Array(n * 2).fill(0).flatMap(() => [0, 1, 0]), 3));
+  g.setIndex(idx);
+  fixUpWinding(g);
+  return g;
+}
+
+/** Make every triangle face +y (seen from the top-down camera). */
+export function fixUpWinding(g: THREE.BufferGeometry) {
+  const p = g.getAttribute("position");
+  const ix = g.getIndex();
+  if (!ix) return;
+  const a = ix.array as Uint16Array | Uint32Array | number[];
+  for (let t = 0; t < ix.count; t += 3) {
+    const i0 = a[t], i1 = a[t + 1], i2 = a[t + 2];
+    const ux = p.getX(i1) - p.getX(i0), uz = p.getZ(i1) - p.getZ(i0);
+    const vx = p.getX(i2) - p.getX(i0), vz = p.getZ(i2) - p.getZ(i0);
+    // y component of (u x v) = uz*vx - ux*vz
+    if (uz * vx - ux * vz < 0) { a[t + 1] = i2; a[t + 2] = i1; }
+  }
+  ix.needsUpdate = true;
+}
+
+function flipWinding(g: THREE.BufferGeometry) {
+  fixUpWinding(g);
+  const nr = g.getAttribute("normal");
+  if (nr) for (let i = 0; i < nr.count; i++) nr.setXYZ(i, 0, 1, 0);
+}

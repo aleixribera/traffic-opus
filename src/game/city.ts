@@ -626,7 +626,7 @@ export class Game {
           b.sat = T.consumes ? 0.55 * staff + 0.45 * (f.input ?? 1) : staff - (f.pollution ?? 0);
         }
       }
-      b.sat = Math.max(0, Math.min(1.15, b.sat));
+      b.sat = Math.max(0, Math.min(1, b.sat));
       b.factors = f;
     }
   }
@@ -708,6 +708,10 @@ export class Game {
     this.evalObjectives();
     this.emit({ t: "level", level: this.level, note: L.note });
     this.emit({ t: "money" });
+  }
+
+  get levelSatTarget() {
+    return levelDef(this.level).satisfaction;
   }
 
   // ---------------------------------------------------------------- save / load

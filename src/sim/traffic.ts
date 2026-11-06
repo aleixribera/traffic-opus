@@ -58,6 +58,8 @@ export interface PendingSpawn {
   truck: boolean;
   tries: number;
   wait: number;
+  why?: string; // last reason the spawn had to wait (debug + inspector)
+  blocker?: number;
 }
 
 const CAR_COLORS = [0xe8534a, 0x3c8de0, 0xf2b632, 0x55b85b, 0x9b6ce0, 0xef7fb6, 0x40c2c9, 0xf08a3a, 0x4a5568, 0xf5f5f0];
@@ -118,12 +120,15 @@ export class Traffic {
     const ls = polyClosest(lane.pl, p.from.p).s;
     const len = p.truck ? SIM.truckLen : SIM.carLen;
     // gap check on the target lane (and traffic arriving soon)
+    // gap acceptance like a real driver: ~4 s to oncoming traffic, shrinking as they get impatient,
+    // so through traffic rarely has to brake for someone pulling out
+    const headway = p.wait > 12 ? 2 : p.wait > 5 ? 2.5 : 3.2;
     for (const o of lane.occ as Vehicle[]) {
-      if (o.s > ls - 2 && o.s - o.len < ls + len + 3) return "wait";
-      if (o.s <= ls && (ls - o.s) / Math.max(o.v, 0.5) < 2.2 && ls - o.s < 30) return "wait";
+      if (o.s > ls - 2 && o.s - o.len < ls + len + 3) { p.why = "occupied"; return "wait"; }
+      if (o.s <= ls && ls - o.s < Math.max(10, o.v * headway)) { p.why = "oncoming"; p.blocker = o.id; return "wait"; }
     }
     // incoming vehicles from the connector feeding this lane near the start
-    if (ls < 12) for (const c of lane.ins) if ((c.occ as Vehicle[]).length) return "wait";
+    if (ls < 12) for (const c of lane.ins) if ((c.occ as Vehicle[]).length) { p.why = "junction"; return "wait"; }
     const crossing = (best.dir === 1 ? 1 : -1) !== p.fromSide;
     if (crossing && p.wait < 10) {
       // must cross the near lanes: wait for a gap there too
@@ -131,14 +136,14 @@ export class Traffic {
       for (const nl of near) {
         const ns = polyClosest(nl.pl, p.from.p).s;
         for (const o of nl.occ as Vehicle[]) {
-          if (Math.abs(o.s - ns) < 8) return "wait";
-          if (o.s < ns && (ns - o.s) / Math.max(o.v, 0.5) < 2.5) return "wait";
+          if (Math.abs(o.s - ns) < 8) { p.why = "cross-occupied"; return "wait"; }
+          if (o.s < ns && (ns - o.s) / Math.max(o.v, 0.5) < 2.5) { p.why = "cross-oncoming"; return "wait"; }
         }
       }
     }
     const v: Vehicle = {
       id: this.nextId++, truck: p.truck, len, color: p.truck ? 0xf5f5f0 : CAR_COLORS[(Math.random() * CAR_COLORS.length) | 0],
-      edge: lane, s: ls, v: 3, acc: 0, route: best.keys, ri: 0, next: null, granted: false, holding: null,
+      edge: lane, s: ls, v: 5, acc: 0, route: best.keys, ri: 0, next: null, granted: false, holding: null,
       lat: 0, lcCool: 2, wait: 0, stuck: 0, dest: p.to, destSide: p.toSide, destS: -1,
       trip: { ...p.trip, freeFlow: best.freeFlow },
       x: 0, y: 0, h: 0, ang: 0, px: 0, py: 0, ph: 0, pang: 0, fade: 0, leaving: 0,
@@ -486,7 +491,7 @@ export class Traffic {
           // slow down for the driveway
           const dd = v.destS - v.s;
           if (lane.idx === 0 && dd > -1) {
-            v0 = Math.min(v0, Math.sqrt(4 * 4 + 2 * 1.4 * Math.max(0, dd)));
+            v0 = Math.min(v0, Math.sqrt(5 * 5 + 2 * 2 * Math.max(0, dd)));
             if (!this.canTurnInCheap(v, lane)) { gap = Math.min(gap, dd + 0.5); dv = v.v; }
           }
         } else if (!c || !v.granted) {
@@ -860,10 +865,12 @@ export class Traffic {
 
   /** City-wide traffic flow: sum of free-flow times / sum of actual times over recent trips. */
   flowScore(): number {
-    let a = 0, b = 0;
+    // a small prior of on-time travel keeps the first handful of trips from swinging the score wildly;
+    // a busy city logs well over a thousand seconds of trips per window, so it fades out quickly
+    let a = 90, b = 90;
     // a few seconds lost to a turn-in or a car pulling out isn't congestion: only delay beyond that counts
-    for (const t of this.trips) { a += t.ff; b += t.ff + Math.max(0, t.actual - t.ff - (3 + t.ff * 0.1)); }
-    return b > 0 ? a / b : 1;
+    for (const t of this.trips) { a += t.ff; b += t.ff + Math.max(0, t.actual - t.ff - (4 + t.ff * 0.12)); }
+    return a / b;
   }
 
   vehicleNear(p: V2, r: number): Vehicle | null {

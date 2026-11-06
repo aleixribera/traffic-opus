@@ -99,7 +99,7 @@ export const CARGO_LABEL: Record<Cargo, string> = { ore: "copper ore", food: "fo
 
 export const SIM = {
   dt: 1 / 30,
-  idm: { a: 1.6, b: 2.6, s0: 2.2, T: 1.1 },
+  idm: { a: 2.0, b: 2.6, s0: 2.2, T: 1.1 },
   carLen: 4.4,
   truckLen: 8.5,
   laneChangeTime: 2.2,
