@@ -39,6 +39,17 @@ describe("Game", () => {
     const o = g.objectives.map((x) => `${x.label}: ${x.value} ${x.done}`).join(" | ");
     expect(levelled, o).toBe(true);
     expect(g.failedTrips).toBe(0);
+    // nothing is locked after a level: a level-1 house can be picked up and put back down
+    const old = g.buildings.list.find((b) => b.kind === "house" && b.placedLevel === 1)!;
+    const inv = g.inventory.house ?? 0;
+    const spot = { ...old.c };
+    g.bulldoze([], [old.id]);
+    expect(g.buildings.byId.has(old.id)).toBe(false);
+    expect(g.inventory.house).toBe(inv + 1);
+    const again = g.placement("house", spot);
+    expect(again?.ok).toBe(true);
+    expect(g.place("house", again!)).toBeTruthy();
+    expect(g.inventory.house).toBe(inv);
   });
 
   it("refuses to place a building on a road and explains why", () => {

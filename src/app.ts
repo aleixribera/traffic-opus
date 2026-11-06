@@ -423,8 +423,7 @@ export class App {
     }
     if (t === "bulldoze") {
       const b = g.buildings.at(c);
-      if (b && b.placedLevel === g.level) { g.bulldoze([], [b.id]); this.hud?.sound("remove"); return; }
-      if (b) { this.reject("Buildings from earlier levels can't be moved"); return; }
+      if (b) { g.bulldoze([], [b.id]); this.hud?.sound("remove"); return; }
       const id = segAt(g.net, c, 2, this.st.bdzLevel);
       if (id !== null) {
         const refund = g.bulldoze([id], []);
@@ -475,7 +474,7 @@ export class App {
       if (g.build(plan)) this.hud?.sound("build");
     } else if (this.st.tool === "bulldoze") {
       const segs = segsInRect(g.net, r.a, r.b, this.st.bdzLevel);
-      const bs = this.buildingsInRect(r.a, r.b).filter((b) => b.placedLevel === g.level).map((b) => b.id);
+      const bs = this.buildingsInRect(r.a, r.b).map((b) => b.id);
       if (!segs.length && !bs.length) return;
       const refund = g.bulldoze(segs, bs);
       this.hud?.sound("remove");
@@ -642,14 +641,14 @@ export class App {
       if (this.dragRect) {
         const segs = segsInRect(g.net, this.dragRect.a, this.dragRect.b, this.st.bdzLevel);
         pv.removal(g.net, segs);
-        const bs = this.buildingsInRect(this.dragRect.a, this.dragRect.b).filter((b) => b.placedLevel === g.level);
+        const bs = this.buildingsInRect(this.dragRect.a, this.dragRect.b);
         for (const b of bs) pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
         chips.push({ text: `${formatMoney(removalRefund(g.net, g.world, segs))} refund`, kind: "cost" });
       } else {
         const b = g.buildings.at(c);
         if (b) {
-          pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), b.placedLevel === g.level ? 0xe5484d : 0x888888);
-          chips.push({ text: b.placedLevel === g.level ? `Pick up ${BUILDING_TYPES[b.kind].name}` : "Placed in an earlier level", kind: b.placedLevel === g.level ? "info" : "error" });
+          pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
+          chips.push({ text: `Pick up ${BUILDING_TYPES[b.kind].name}`, kind: "info" });
         } else {
           const id = segAt(g.net, c, 2, this.st.bdzLevel);
           if (id !== null) {

@@ -454,13 +454,12 @@ export class Hud {
     if (T.consumes) facts.push(`${b.stock > 0 ? "Has" : "Waiting for"} ${CARGO_LABEL[T.consumes]}`);
     if (T.produces) facts.push(`Ships ${CARGO_LABEL[T.produces]}`);
     if (!b.access) facts.push(`<span class="bad">Not connected to a road</span>`);
-    const canMove = b.placedLevel === g.level;
     this.panel.innerHTML = `<button class="close" aria-label="Close">${ICON.close}</button>
       <header><span class="zone-tag z-${T.zone}">${ZONE_LABEL[T.zone]}</span>${T.name}</header>
       <div class="sat"><span>Satisfaction</span><b class="${b.sat >= g.levelSatTarget ? "good" : "bad"}">${Math.round(b.sat * 100)}%</b></div>
       ${bars}
       <p class="facts">${facts.join(" · ")}</p>
-      ${canMove ? `<button class="btn pick">Pick up</button>` : `<p class="muted small">Placed in level ${b.placedLevel}. Only this level's buildings can be moved.</p>`}`;
+      <button class="btn pick">Pick up</button>`;
     (this.panel.querySelector(".close") as HTMLButtonElement).onclick = () => this.closePanels();
     const pick = this.panel.querySelector(".pick") as HTMLButtonElement | null;
     if (pick) pick.onclick = () => { g.bulldoze([], [b.id]); this.closePanels(); this.app.selected = null; this.sfx.play("remove"); };
