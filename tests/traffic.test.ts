@@ -63,6 +63,29 @@ describe("Traffic", () => {
     expect(r.arrived).toBe(trips.length);
   });
 
+  it("drives round a bend in the road without stopping", () => {
+    const net = new RoadNetwork();
+    net.begin();
+    const a = net.addNode(v2(100, 300), 0), b = net.addNode(v2(300, 300), 0), c = net.addNode(v2(300, 500), 0);
+    const s1 = road(net, a, b), s2 = road(net, b, c);
+    net.commit();
+    net.rebuild();
+    const tr = new Traffic(net, { arrive: () => {}, fail: () => {} });
+    const f = access(net, s1, 0.2, 1), to = access(net, s2, 0.8, 1);
+    tr.request({ from: f.a, fromSide: f.side, to: to.a, toSide: to.side, trip: { kind: "shop", from: 0, to: 0, resident: -1, startT: 0, freeFlow: 0 }, truck: false, tries: 0, wait: 0 });
+    let minV = Infinity, sawBend = false, done = false;
+    for (let t = 0; t < 60 && !done; t += 1 / 30) {
+      tr.step(1 / 30);
+      const v = tr.vehicles[0];
+      if (!v) { done = t > 1; continue; }
+      if (v.edge.kind === "conn") sawBend = true;
+      if (t > 3 && (v.edge.kind === "conn" || (v.edge as any).seg === s2 && v.s < 20)) minV = Math.min(minV, v.v);
+    }
+    expect(sawBend).toBe(true);
+    expect(done).toBe(true);
+    expect(minV).toBeGreaterThan(3); // slows for the corner, never stops at it
+  });
+
   it("handles a signalised avenue crossing", () => {
     const net = new RoadNetwork();
     net.begin();

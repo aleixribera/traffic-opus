@@ -100,8 +100,9 @@ export class Roads3D {
   readonly group = new THREE.Group();
   private segs = new Map<number, SegMeshes>();
   private nodes = new Map<number, THREE.Object3D[]>();
+  private bendFlow = new Map<number, { flow: THREE.BufferAttribute; k1: number; k2: number }>(); // bend node -> overlay tint source
   readonly surface = makeRoadMaterial();
-  private ringSurface = makeRoadMaterial({ arrows: false }); // roundabout arcs: direction is obvious, chevrons only clip at the mouths
+  private ringSurface = makeRoadMaterial({ arrows: false }); // roundabout arcs and bends: direction is obvious, chevrons only clip at the joins
   private plain = makeRoadMaterial({ markings: false });
   private edgeMat = new THREE.MeshLambertMaterial({ color: PAL.roadEdge });
   // the deck body casts the bridge's shadow from both faces (three's default only draws back faces into the shadow map)
@@ -160,6 +161,7 @@ export class Roads3D {
     if (!os) return;
     for (const o of os) { this.group.remove(o); (o as THREE.Mesh).geometry?.dispose(); }
     this.nodes.delete(id);
+    this.bendFlow.delete(id);
   }
 
   private buildSeg(id: number) {
@@ -209,6 +211,34 @@ export class Roads3D {
     // roundabout nodes are drawn with their ring (continuous surface + flared mouths)
     if (this.net.segsAt(id).some((sg) => sg.ring)) return;
     const out: THREE.Object3D[] = [];
+    if (ng.curve) {
+      // a bend is just more road: same markings, kerbs and deck as the segments either side
+      const { lanes, halfW } = ng.curve;
+      // run 0.4 m into each straight piece, a hair higher, so the joins never show a seam
+      const c0 = ng.curve.pts, n0 = c0.length;
+      const ext = (p: V2, q: V2) => { const d = norm(sub(p, q)); return { x: p.x + d.x * 0.4, y: p.y + d.y * 0.4 }; };
+      const pts = [ext(c0[0], c0[1]), ...c0, ext(c0[n0 - 1], c0[n0 - 2])];
+      const hs = [ng.curve.hs[0], ...ng.curve.hs, ng.curve.hs[n0 - 1]].map((h) => h + 0.004);
+      const ss: number[] = [0];
+      for (let i = 1; i < pts.length; i++) ss.push(ss[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+      const geo = ribbon(pts, hs, ss, halfW, LIFT, lanes);
+      // no one-way chevrons on the curve: the straights either side already point the way, and they'd clip at the joins
+      const surface = new THREE.Mesh(geo, this.ringSurface.mat);
+      surface.receiveShadow = true;
+      out.push(surface);
+      // the curve runs from the arm whose lanes come in: tint each half like that arm's two directions
+      const X = ng.arms.find((a) => { const g = this.net.segGeom.get(a.seg); return g?.lanes.some((l) => l.to === id); }) ?? ng.arms[0];
+      const inDir = X.end === "b" ? 1 : -1;
+      this.bendFlow.set(id, { flow: geo.getAttribute("aFlow") as THREE.BufferAttribute, k1: dkey(X.seg, inDir), k2: dkey(X.seg, -inDir as 1 | -1) });
+      if (Math.max(...hs) > 0.3) {
+        const dm = new THREE.Mesh(deckSides(pts, hs, halfW, LIFT), this.deckMat);
+        dm.castShadow = true;
+        out.push(dm);
+      }
+      this.group.add(...out);
+      this.nodes.set(id, out);
+      return;
+    }
     const y = n.h + LIFT + 0.012;
     const m = new THREE.Mesh(plainPoly(ng.poly, y), this.plain.mat);
     m.receiveShadow = true;
@@ -325,7 +355,7 @@ export class Roads3D {
     for (const [id, n] of this.net.nodes) {
       if (!n.signal) continue;
       const ng = this.net.nodeGeom.get(id);
-      if (!ng) continue;
+      if (!ng || ng.kind !== "junction") continue; // a plan left on a node that's now a plain bend does nothing
       for (const a of ng.arms) {
         // one dot per incoming lane, at the stop line
         const g = this.net.segGeom.get(a.seg);
@@ -375,6 +405,13 @@ export class Roads3D {
           if (a[i] !== f1 || a[i + 1] !== f2) { a[i] = f1; a[i + 1] = f2; changed = true; }
         }
         if (changed) m.flow.needsUpdate = true;
+      }
+      for (const b of this.bendFlow.values()) {
+        const f1 = traffic.flow.get(b.k1)?.ratio ?? 1, f2 = traffic.flow.get(b.k2)?.ratio ?? 1;
+        const a = b.flow.array as Float32Array;
+        if (a[0] === f1 && a[1] === f2) continue;
+        for (let i = 0; i < a.length; i += 2) { a[i] = f1; a[i + 1] = f2; }
+        b.flow.needsUpdate = true;
       }
     }
   }

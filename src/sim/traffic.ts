@@ -424,7 +424,7 @@ export class Traffic {
   private canEnter(v: Vehicle, c: Connector, toEnd: number): boolean {
     const ng = this.net.nodeGeom.get(c.node);
     if (!ng) return false;
-    if (ng.kind === "cont") return true;
+    if (ng.kind === "cont" || ng.kind === "bend") return true;
     // signals
     const sig = this.signalState(c.node, c.armIn);
     if (sig === "red") { v.block = "red"; return false; }

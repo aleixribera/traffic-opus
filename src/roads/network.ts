@@ -90,7 +90,8 @@ export interface Arm {
   trim: number;
 }
 
-export type JunctionKind = "end" | "cont" | "junction";
+/** end = dead end; cont = straight run-on; bend = the same road carrying on round a corner; junction = real crossing. */
+export type JunctionKind = "end" | "cont" | "bend" | "junction";
 
 export interface NodeGeom {
   kind: JunctionKind;
@@ -99,6 +100,8 @@ export interface NodeGeom {
   kerbs: V2[][]; // kerb lines (fillets) for outlines
   conns: Connector[];
   radius: number;
+  /** bend only: centre line of the curved piece joining the two trimmed ends, drawn as ordinary road */
+  curve?: { pts: V2[]; hs: number[]; lanes: [number, number]; halfW: number };
 }
 
 export interface SegGeom {
@@ -587,7 +590,13 @@ export class RoadNetwork {
     }
     arms.sort((x, y) => x.angle - y.angle);
     const kind = this.kindOf(arms, segs);
-    if (kind === "junction") {
+    if (kind === "bend") {
+      // a circular corner at the road's design radius, tangent to both arms
+      const theta = Math.acos(clamp(-dot(arms[0].dir, arms[1].dir), -1, 1)); // how far the road turns
+      const R = Math.max(...segs.map((s) => Math.max(ROAD_TYPES[s.type].minRadius, roadWidth(ROAD_TYPES[s.type]) / 2 + 2)));
+      const trim = Math.min(45, R * Math.tan(Math.min(theta, 2.8) / 2)) + 0.3;
+      for (const a of arms) a.trim = trim;
+    } else if (kind === "junction") {
       const n = arms.length;
       const trims = new Array(n).fill(0);
       for (let i = 0; i < n; i++) {
@@ -618,11 +627,12 @@ export class RoadNetwork {
     if (arms.length === 2) {
       const [x, y] = arms;
       const sx = segs.find((s) => s.id === x.seg)!, sy = segs.find((s) => s.id === y.seg)!;
-      const straight = dot(x.dir, y.dir) < -0.985; // within ~10 degrees of straight
-      // same lane layout in the direction of travel?
+      // same lane layout in the direction of travel: the same road carrying on, however it turns
       const lanesX = laneCounts(sx, x.end), lanesY = laneCounts(sy, y.end);
       const sameLayout = lanesX.inn === lanesY.out && lanesX.out === lanesY.inn;
-      if (straight && sameLayout) return "cont";
+      // roundabout arcs keep their own geometry (the ring is drawn and trimmed as a whole)
+      if (sx.ring || sy.ring) return sameLayout && dot(x.dir, y.dir) < -0.985 ? "cont" : "junction";
+      if (sameLayout && x.seg !== y.seg) return dot(x.dir, y.dir) < -0.9998 ? "cont" : "bend";
     }
     return "junction";
   }
@@ -747,8 +757,19 @@ export class RoadNetwork {
       return s.ring ? 10 : ROAD_TYPES[s.type].rank;
     };
 
-    if (kind === "cont") {
-      // straight continuation: 1:1 lanes, zero-ish length
+    if (kind === "bend") geom.curve = this.bendCurve(node, arms, segs);
+    if (geom.curve) {
+      const { pts, halfW } = geom.curve;
+      const side = (k: number) => pts.map((p, i) => {
+        const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+        return add(p, scale(right(norm(sub(b, a))), k * halfW));
+      });
+      geom.poly = [...side(-1), ...side(1).reverse()];
+      for (const p of geom.poly) geom.radius = Math.max(geom.radius, dist(p, c));
+    }
+
+    if (kind === "cont" || kind === "bend") {
+      // the road just carries on: 1:1 lanes (zero length when straight, a curve round a bend), nobody yields
       for (const A of arms) {
         const B = arms.find((x) => x !== A)!;
         const ins = laneOf(A, true), outs = laneOf(B, false);
@@ -813,6 +834,30 @@ export class RoadNetwork {
     }
     this.computeConflicts(geom.conns);
     return geom;
+  }
+
+  /** Centre line of a bend: from the trimmed end of the arm whose lanes come in, round to the other one. */
+  private bendCurve(node: RNode, arms: Arm[], segs: RSeg[]): NodeGeom["curve"] {
+    const segOf = (a: Arm) => segs.find((s) => s.id === a.seg)!;
+    let [X, Y] = arms;
+    if (laneCounts(segOf(X), X.end).inn === 0) [X, Y] = [Y, X];
+    const endOf = (a: Arm) => {
+      const g = this.segGeom.get(a.seg)!;
+      const sAt = a.end === "a" ? g.trimA : g.center.length - g.trimB;
+      const p = polyAt(g.center, sAt);
+      // unit direction pointing away from the node, along the trimmed road
+      const q = polyAt(g.center, a.end === "a" ? Math.min(g.center.length, sAt + 0.5) : Math.max(0, sAt - 0.5));
+      return { p, away: norm(sub(q, p)), h: this.heightFromCenter(segOf(a), g, sAt) };
+    };
+    const ex = endOf(X), ey = endOf(Y);
+    const t0 = scale(ex.away, -1), t3 = ey.away;
+    const th = Math.abs(signedAngle(t0, t3));
+    const k = th < 1e-3 ? 1 / 3 : ((2 / 3) * Math.tan(th / 4)) / Math.sin(th / 2);
+    const pts = dist(ex.p, ey.p) < 0.05 ? [ex.p, ey.p] : sampleCubic(hermiteCubic(ex.p, t0, ey.p, t3, Math.min(k, 1.2)), 1);
+    const pl = makePolyline(pts);
+    const hs = pts.map((_, i) => ex.h + (ey.h - ex.h) * smoothstep(pl.cum[i] / (pl.length || 1)));
+    const lc = laneCounts(segOf(X), X.end);
+    return { pts, hs, lanes: [lc.inn, lc.out], halfW: X.halfW };
   }
 
   private makeConn(nid: number, from: Lane, to: Lane, turn: Connector["turn"], h: number, armIn: number, prio: number): Connector {
