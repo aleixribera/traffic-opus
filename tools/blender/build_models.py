@@ -118,7 +118,13 @@ def palette():
         # landmarks: town hall (cream stone, slate roof, copper dome), stadium (pale shell, red seats, pitch),
         # tower (warm concrete, glass pod), concert hall (white shells), skyline tower (blue glass, pale fins)
         "lm_paving": "#e4ddd0", "lm_glass": "#a9cbe0", "lm_clock": "#f6f1e2", "lm_lamp": "#f4f1e0",
-        "th_wall": "#efe4cb", "th_trim": "#f8f4ea", "th_roof": "#6c7a90",
+        "th_wall": "#efe4cb", "th_trim": "#f8f4ea", "th_roof": "#6c7a90", "th_flag": "#c8483c",
+        # town growth: old high street (ochre / brick / cream render, green and red awnings), modern flats (white,
+        # timber, glass rails, green roofs), glass tower (blue glass, pale fins)
+        "hs_wall1": "#d8b07e", "hs_wall2": "#b9765a", "hs_wall3": "#e9dec6", "hs_awning": "#2f6f5f",
+        "hs_awning2": "#a9403a", "mf_wall": "#f2f1ec", "mf_wood": "#b88a5c", "mf_glass": "#9cc3d8",
+        "mf_rail": "#cfe3ec", "mf_dark": "#5a5f67", "mf_green": "#7d9850", "gt_glass": "#6f9cc0",
+        "gt_glass2": "#a6c8de", "gt_fin": "#e7eaec", "gt_podium": "#d5d8db",
         "st_shell": "#dfe3e8", "st_seat": "#d6503f", "st_seat2": "#e0705f", "st_roof": "#f4f6f8",
         "pitch": "#5fae4a", "pitch2": "#6cbc55",
         "obs_concrete": "#cdc6ba", "obs_white": "#f2f2ee",
@@ -2629,10 +2635,272 @@ def b_site_heap_sand(M, P):
 def b_site_heap_cu(M, P):
     return _heap(M, P, P["cu_ore"], P["cu_rock2"])
 
+def _flagpole(M, P, x, y, h=9.0):
+    cyl(M, x, y, 0.08, PAD_H, h, P["ind_steel"], n=5)
+    box(M, x + 0.06, x + 1.9, y - 0.03, y + 0.03, h - 1.3, h - 0.1, P["th_flag"])
+
+
+def _hip(M, x0, x1, y0, y1, ze, zr, m, oh=0.35):
+    """Hipped roof: frustum from the eaves rectangle up to a short ridge."""
+    w, d = x1 - x0, y1 - y0
+    r = min(w, d) / 2
+    if w >= d:
+        top = (x0 + r, x1 - r, (y0 + y1) / 2 - 0.05, (y0 + y1) / 2 + 0.05)
+    else:
+        top = ((x0 + x1) / 2 - 0.05, (x0 + x1) / 2 + 0.05, y0 + r, y1 - r)
+    taper(M, (x0 - oh, x1 + oh, y0 - oh, y1 + oh), top, ze, zr, m)
+
+
+def b_hamlethall(M, P):
+    """Hamlet hall: a small cream meeting hall under a slate gable, a white bell cupola on the ridge,
+    a porch over the door and a flagpole on a little paved square."""
+    L = lot(M, P, 20, 18, bay_row(2))
+    y0, y1 = L.y0, L.y1
+    plaza(M, P, L, -9.5, 9.5, y0 - 0.6, y0 + 3.2)
+    hx0, hx1, hy0, hy1 = -6.0, 6.0, y0 + 3.2, y1 - 0.6
+    band(M, hx0, hx1, hy0, hy1, 0, 0.6, P["stone"])
+    box(M, hx0, hx1, hy0, hy1, 0, 4.6, P["th_wall"])
+    for k in range(3):
+        wy = hy0 + 1.6 + k * (hy1 - hy0 - 3.2) / 2
+        for x in (hx0 - 0.06, hx1 - 0.0):
+            box(M, x, x + 0.06, wy - 0.45, wy + 0.45, 1.6, 3.6, P["lm_glass"])
+    gable(M, hx0, hx1, hy0, hy1, 4.6, 7.6, "y", P["th_roof"], P["th_wall"], oh_u=(0.5, 0.5), oh_a=(0.5, 0.5))
+    # porch with two posts and a little gable over the door
+    box(M, -2.0, 2.0, hy0 - 2.2, hy0, 0, 0.3, P["stone"])
+    for x in (-1.6, 1.6):
+        cyl(M, x, hy0 - 1.8, 0.18, 0.3, 3.4, P["column"], n=6)
+    gable(M, -2.0, 2.0, hy0 - 2.2, hy0, 3.4, 4.6, "y", P["th_roof"], P["th_trim"], oh_u=(0.2, 0.2), oh_a=(0.2, 0.0))
+    box(M, -0.7, 0.7, hy0 - 0.06, hy0, 0.3, 2.6, P["ind_dark"])
+    # bell cupola on the ridge near the front
+    cy = hy0 + 2.4
+    box(M, -1.0, 1.0, cy - 1.0, cy + 1.0, 6.4, 8.6, P["th_trim"])
+    for sx in (-1, 1):
+        box(M, -0.5, 0.5, cy + sx * 1.0 - 0.02, cy + sx * 1.0 + 0.02, 7.2, 8.2, P["ind_dark"])
+    box(M, -1.2, 1.2, cy - 1.2, cy + 1.2, 8.6, 8.85, P["th_trim"])
+    cone(M, 0.0, cy, 1.3, 8.85, 10.6, P["dome"], n=8)
+    cyl(M, 0.0, cy, 0.05, 10.5, 11.3, P["ind_steel"], n=4)
+    _flagpole(M, P, -7.8, y0 + 1.6, 8.0)
+    tree(M, P, 8.0, y0 + 1.4, 0.6)
+    bench(M, P, 4.2, y0 + 1.0, 0.0)
+    for x, y in ((-8.0, y1 - 2.0), (8.0, y1 - 2.4)):
+        tree(M, P, x, y, 0.75, alt=True)
+    return L
+
+
+def b_villagehall(M, P):
+    """Village hall: a two-storey civic house with an open arcade (the old market) at ground level,
+    a hipped slate roof, a clock gable over the middle and a flagpole on the front square."""
+    L = lot(M, P, 28, 24, bay_row(3))
+    y0, y1 = L.y0, L.y1
+    plaza(M, P, L, -13.5, 13.5, y0 - 0.6, y0 + 3.6)
+    hx0, hx1, hy0, hy1 = -10.0, 10.0, y0 + 3.6, y1 - 1.0
+    # ground floor: an arcade along the front, the closed hall behind it
+    box(M, hx0, hx1, hy0 + 3.0, hy1, 0, 4.0, P["th_wall"])
+    box(M, hx0, hx1, hy0, hy0 + 3.0, 0, 0.2, P["stone"])
+    for k in range(6):
+        x = hx0 + 0.5 + k * (hx1 - hx0 - 1.0) / 5
+        box(M, x - 0.45, x + 0.45, hy0, hy0 + 0.9, 0.2, 4.0, P["th_trim"])
+    band(M, hx0, hx1, hy0, hy1, 4.0, 4.5, P["th_trim"])
+    # upper floor with windows
+    box(M, hx0, hx1, hy0, hy1, 4.5, 8.0, P["th_wall"])
+    for k in range(5):
+        x = hx0 + 2.0 + k * (hx1 - hx0 - 4.0) / 4
+        box(M, x - 0.55, x + 0.55, hy0 - 0.06, hy0, 5.2, 7.2, P["lm_glass"])
+    for k in range(3):
+        y = hy0 + 3.0 + k * (hy1 - hy0 - 5.0) / 2
+        for x in (hx0 - 0.06, hx1):
+            box(M, x, x + 0.06, y - 0.5, y + 0.5, 5.2, 7.2, P["lm_glass"])
+    box(M, hx0 - 0.3, hx1 + 0.3, hy0 - 0.3, hy1 + 0.3, 8.0, 8.4, P["th_trim"])
+    _hip(M, hx0, hx1, hy0, hy1, 8.4, 11.6, P["th_roof"])
+    # clock gable over the middle of the front
+    box(M, -3.0, 3.0, hy0 - 0.4, hy0 + 2.0, 4.5, 10.4, P["th_wall"])
+    gable(M, -3.0, 3.0, hy0 - 0.4, hy0 + 2.0, 10.4, 12.6, "y", P["th_roof"], P["th_wall"],
+          oh_u=(0.3, 0.3), oh_a=(0.3, 0.0))
+    box(M, -1.0, 1.0, hy0 - 0.48, hy0 - 0.4, 8.4, 10.2, P["lm_clock"])
+    # small lantern on the roof ridge
+    box(M, -0.8, 0.8, hy0 + 6.0, hy0 + 7.6, 11.0, 12.6, P["th_trim"])
+    cone(M, 0.0, hy0 + 6.8, 1.1, 12.6, 14.2, P["dome"], n=8)
+    _flagpole(M, P, -12.0, y0 + 1.8, 9.5)
+    fountain(M, P, 9.0, y0 + 1.6, 1.3)
+    for x, y in ((-12.5, y1 - 2.5), (12.5, y1 - 3.0), (12.6, hy0 + 2.0)):
+        tree(M, P, x, y, 0.8, alt=x > 0)
+    return L
+
+
+def b_cityhall(M, P):
+    """City hall: a grand stone block round two light wells, a tall belfry with a clock and a green
+    copper spire over the entrance, a columned front and a broad square with fountains and trees."""
+    L = lot(M, P, 60, 50, bay_row(6))
+    y0, y1 = L.y0, L.y1
+    plaza(M, P, L, -29.0, 29.0, y0 - 0.6, y0 + 9.0)
+    bx0, bx1, by0, by1 = -24.0, 24.0, y0 + 9.0, y1 - 1.0
+    # the main block as a ring round two courts, split by a central wing
+    W = 8.0
+    parts = ((bx0, bx1, by0, by0 + W), (bx0, bx1, by1 - W, by1), (bx0, bx0 + W, by0 + W, by1 - W),
+             (bx1 - W, bx1, by0 + W, by1 - W), (-W / 2, W / 2, by0 + W, by1 - W))
+    for (a0, a1, c0, c1) in parts:
+        box(M, a0, a1, c0, c1, 0, 11.0, P["th_wall"])
+        band(M, a0, a1, c0, c1, 0, 1.2, P["stone"])
+        band(M, a0, a1, c0, c1, 5.4, 5.9, P["th_trim"])
+        box(M, a0 - 0.3, a1 + 0.3, c0 - 0.3, c1 + 0.3, 11.0, 11.6, P["th_trim"])
+    for (a0, a1, c0, c1) in parts[:4]:
+        _hip(M, a0, a1, c0, c1, 11.6, 14.4, P["th_roof"], oh=0.3)
+    box(M, -W / 2 - 0.3, W / 2 + 0.3, by0 + W - 0.3, by1 - W + 0.3, 11.6, 13.0, P["th_roof"])
+    for (cx0, cx1) in ((bx0 + W, -W / 2), (W / 2, bx1 - W)):
+        box(M, cx0, cx1, by0 + W, by1 - W, PAD_H, PAD_H + 0.05, P["grass"])
+        tree(M, P, (cx0 + cx1) / 2, (by0 + by1) / 2, 0.75)
+    # front windows: two rows along the facade
+    for row, (z0, z1) in enumerate(((2.0, 4.6), (6.6, 9.6))):
+        for k in range(14):
+            x = bx0 + 1.8 + k * (bx1 - bx0 - 3.6) / 13
+            if abs(x) < 7.0:
+                continue
+            box(M, x - 0.6, x + 0.6, by0 - 0.06, by0, z0, z1, P["lm_glass"])
+    # central portico: steps, eight columns, pediment
+    px0, px1, py0, py1 = -11.0, 11.0, by0 - 3.4, by0
+    for i, s in enumerate((0.0, 0.6, 1.2)):
+        box(M, px0 - 1.2 + s, px1 + 1.2 - s, py0 - 1.8 + s, py1, 0, 0.35 * (i + 1), P["stone"])
+    for k in range(8):
+        cx = px0 + 1.0 + k * (px1 - px0 - 2.0) / 7
+        cyl(M, cx, py0 + 0.7, 0.55, 1.05, 10.0, P["column"], n=8)
+    box(M, px0, px1, py0, py1, 10.0, 11.4, P["th_trim"])
+    gable(M, px0, px1, py0, py1, 11.4, 14.0, "y", P["th_roof"], P["th_wall"], oh_u=(0.3, 0.3), oh_a=(0.3, 0.0))
+    # belfry: square shaft, clock stage, open bell stage, copper spire
+    tx, ty = 0.0, by0 + W / 2
+    box(M, tx - 3.6, tx + 3.6, ty - 3.6, ty + 3.6, 0, 22.0, P["th_wall"])
+    box(M, tx - 3.9, tx + 3.9, ty - 3.9, ty + 3.9, 22.0, 22.6, P["th_trim"])
+    e = 3.6
+    for x0, x1, yy0, yy1 in ((-1.5, 1.5, -e - 0.12, -e), (-1.5, 1.5, e, e + 0.12),
+                             (-e - 0.12, -e, -1.5, 1.5), (e, e + 0.12, -1.5, 1.5)):
+        box(M, tx + x0, tx + x1, ty + yy0, ty + yy1, 17.6, 20.6, P["lm_clock"])
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            box(M, tx + sx * 2.9 - 0.5, tx + sx * 2.9 + 0.5, ty + sy * 2.9 - 0.5, ty + sy * 2.9 + 0.5,
+                22.6, 26.4, P["th_trim"])
+    box(M, tx - 2.4, tx + 2.4, ty - 2.4, ty + 2.4, 22.6, 22.9, P["ind_dark"])
+    box(M, tx - 3.6, tx + 3.6, ty - 3.6, ty + 3.6, 26.4, 27.2, P["th_trim"])
+    revolve(M, tx, ty, [(3.4, 27.2), (2.6, 29.0), (1.4, 31.6), (0.6, 33.8), (0.0, 35.4)], P["dome"], n=8,
+            rot=math.pi / 8)
+    cyl(M, tx, ty, 0.12, 35.2, 37.0, P["ind_steel"], n=6)
+    # the square: twin fountains, flagpoles, trees and benches
+    for x in (-17.0, 17.0):
+        fountain(M, P, x, y0 + 4.2, 2.2)
+        bench(M, P, x - 4.0, y0 + 2.2, 0.0)
+        bench(M, P, x + 4.0, y0 + 2.2, 0.0)
+    for x in (-27.0, -24.0, 24.0, 27.0):
+        tree(M, P, x, y0 + 6.5, 0.85, alt=x < 0)
+    for x in (-13.5, 13.5):
+        _flagpole(M, P, x, y0 + 7.4, 12.0)
+    for x, y in ((-28.0, y1 - 3.0), (28.0, y1 - 3.0), (-28.0, (by0 + by1) / 2), (28.0, (by0 + by1) / 2)):
+        tree(M, P, x, y, 0.9, alt=y > 0)
+    return L
+
+def _awning(M, x0, x1, y, z, depth, m):
+    """Sloped shop awning over a front at y (front faces -y)."""
+    M.loft([(x0, y, z), (x1, y, z), (x1, y, z + 0.06), (x0, y, z + 0.06)],
+           [(x0, y - depth, z - 0.7), (x1, y - depth, z - 0.7), (x1, y - depth, z - 0.64), (x0, y - depth, z - 0.64)], m)
+
+
+def b_highstreet(M, P):
+    """Old high street: three narrow attached shop-houses, each its own colour and height, a shopfront and
+    an awning on the ground floor, flats above under pitched roofs, chimneys on the party walls."""
+    L = lot(M, P, 18, 20, bay_row(3))
+    y0, y1 = L.y0 + 0.6, L.y1 - 0.4
+    xs = [-8.0, -2.4, 2.8, 8.0]
+    spec = [("hs_wall1", "res_roof", 8.6, "hs_awning"), ("hs_wall2", "res_roof2", 9.8, "hs_awning2"),
+            ("hs_wall3", "res_roof", 8.0, "hs_awning")]
+    for i, (wm, rm, ze, am) in enumerate(spec):
+        x0, x1 = xs[i], xs[i + 1]
+        box(M, x0, x1, y0, y1, 0, ze, P[wm])
+        box(M, x0 + 0.4, x1 - 0.4, y0 - 0.06, y0, 0.3, 3.0, P["lm_glass"])
+        box(M, x0, x1, y0 - 0.12, y0, 3.0, 3.35, P["res_trim"])
+        _awning(M, x0 + 0.3, x1 - 0.3, y0, 3.25, 1.4, P[am])
+        for fl in range(1, 3 if ze < 9 else 3):
+            z = 3.0 + (fl - 1) * 2.9
+            for k in range(2):
+                wx = x0 + (x1 - x0) * (0.3 + 0.4 * k)
+                box(M, wx - 0.45, wx + 0.45, y0 - 0.06, y0, z + 0.9, z + 2.3, P["lm_glass"])
+        box(M, x0 - 0.05, x1 + 0.05, y0 - 0.15, y0, ze - 0.4, ze, P["res_trim"])
+        gable(M, x0, x1, y0, y1, ze, ze + 2.6, "y" if i == 1 else "x", P[rm], P[wm],
+              oh_u=(0.35, 0.35) if i != 1 else (0.0, 0.0), oh_a=(0.0, 0.0) if i != 1 else (0.3, 0.3))
+        if i < 2:
+            box(M, x1 - 0.35, x1 + 0.35, y1 - 2.6, y1 - 1.8, ze, ze + 3.2, P["res_trim"], bevel=0.04)
+    return L
+
+
+def b_modernflats(M, P):
+    """Modern flats: two white mid-rise blocks with timber-clad corners and glass balcony bands, a green roof
+    with solar panels on each, a lawn courtyard with young trees between them."""
+    L = lot(M, P, 30, 30, bay_row(6))
+    y0, y1 = L.y0, L.y1
+    st = 3.0
+    blocks = ((-13.5, -2.5, y0 + 1.0, y1 - 0.5, 6), (2.0, 13.5, y0 + 1.0, y0 + 10.5, 5),
+              (2.0, 13.5, y0 + 10.5, y1 - 0.5, 4))
+    for (x0, x1, b0, b1, n) in blocks:
+        h = n * st
+        box(M, x0, x1, b0, b1, 0, h, P["mf_wall"])
+        box(M, x0 - 0.06, x0 + 2.6, b0 - 0.06, b0 + 2.6, 0, h, P["mf_wood"])
+        for s in range(n):
+            z = s * st
+            band(M, x0, x1, b0, b1, z + 0.9, z + 2.4, P["mf_glass"], o=0.05)
+            if s:
+                # balcony slab and glass balustrade along the front
+                box(M, x0 + 3.0, x1 - 0.4, b0 - 1.3, b0, z - 0.05, z + 0.15, P["mf_wall"])
+                box(M, x0 + 3.0, x1 - 0.4, b0 - 1.32, b0 - 1.2, z + 0.15, z + 1.1, P["mf_rail"])
+        box(M, x0 - 0.15, x1 + 0.15, b0 - 0.15, b1 + 0.15, h, h + 0.35, P["mf_dark"])
+        box(M, x0 + 0.4, x1 - 0.4, b0 + 0.4, b1 - 0.4, h + 0.35, h + 0.45, P["mf_green"])
+        nx = max(1, int((x1 - x0 - 2.0) // 2.4))
+        for k in range(nx):
+            px = x0 + 1.4 + k * 2.4
+            M.loft([(px, b1 - 3.6, h + 0.5), (px + 2.0, b1 - 3.6, h + 0.5), (px + 2.0, b1 - 3.6, h + 0.55),
+                    (px, b1 - 3.6, h + 0.55)],
+                   [(px, b1 - 1.2, h + 1.2), (px + 2.0, b1 - 1.2, h + 1.2), (px + 2.0, b1 - 1.2, h + 1.25),
+                    (px, b1 - 1.2, h + 1.25)], P["solar"])
+        box(M, x1 - 3.0, x1 - 1.0, b0 + 1.0, b0 + 3.0, h + 0.45, h + 1.8, P["mf_dark"])
+    # courtyard lawn between the blocks, entrance path from the front
+    box(M, -2.5, 2.0, y0 + 1.0, y1 - 0.5, PAD_H, PAD_H + 0.04, P["grass"])
+    box(M, -1.0, 0.6, y0, y1 - 0.5, PAD_H + 0.04, PAD_H + 0.07, P["path"])
+    for y in (y0 + 6.0, y0 + 14.0, y1 - 3.0):
+        tree(M, P, 1.2 if y > y0 + 10 else -1.6, y, 0.55, alt=y > y0 + 10)
+    return L
+
+
+def b_glasstower(M, P):
+    """Glass tower: a two-storey glazed podium with shops, a slim blue-glass shaft with pale vertical fins and
+    setbacks near the top, a lit crown and a roof plant deck."""
+    L = lot(M, P, 30, 30, bay_row(6))
+    y0, y1 = L.y0, L.y1
+    # podium
+    px0, px1, py0, py1 = -13.5, 13.5, y0 + 0.8, y1 - 0.5
+    box(M, px0, px1, py0, py1, 0, 7.0, P["gt_podium"])
+    band(M, px0, px1, py0, py1, 0.4, 6.4, P["gt_glass2"], o=0.05)
+    box(M, px0 - 0.2, px1 + 0.2, py0 - 0.2, py1 + 0.2, 7.0, 7.5, P["gt_fin"])
+    box(M, px0 + 0.3, px1 - 0.3, py0 + 0.3, py1 - 0.3, 7.5, 7.6, P["mf_green"])
+    _awning(M, -6.0, 6.0, py0 - 0.05, 4.4, 2.0, P["gt_fin"])
+    # shaft in three setbacks
+    tiers = ((-8.5, 8.5, py0 + 2.5, py1 - 2.5, 7.6, 44.0), (-7.0, 7.0, py0 + 4.0, py1 - 4.0, 44.0, 52.0),
+             (-5.0, 5.0, py0 + 5.5, py1 - 5.5, 52.0, 57.0))
+    for (x0, x1, b0, b1, z0, z1) in tiers:
+        box(M, x0, x1, b0, b1, z0, z1, P["gt_glass"])
+        for k in range(1, int((x1 - x0) // 2.0)):
+            x = x0 + k * 2.0
+            box(M, x - 0.12, x + 0.12, b0 - 0.25, b0, z0, z1, P["gt_fin"])
+            box(M, x - 0.12, x + 0.12, b1, b1 + 0.25, z0, z1, P["gt_fin"])
+        for k in range(1, int((b1 - b0) // 2.0)):
+            y = b0 + k * 2.0
+            box(M, x0 - 0.25, x0, y - 0.12, y + 0.12, z0, z1, P["gt_fin"])
+            box(M, x1, x1 + 0.25, y - 0.12, y + 0.12, z0, z1, P["gt_fin"])
+        box(M, x0 - 0.3, x1 + 0.3, b0 - 0.3, b1 + 0.3, z1, z1 + 0.6, P["gt_fin"])
+    x0, x1, b0, b1 = tiers[2][:4]
+    frame(M, x0 - 0.3, x1 + 0.3, b0 - 0.3, b1 + 0.3, 57.6, 60.2, 0.5, P["gt_fin"])
+    box(M, x0 + 1.0, x1 - 1.0, b0 + 1.0, b1 - 1.0, 57.6, 58.8, P["mf_dark"])
+    cyl(M, x1 - 1.6, b1 - 1.6, 0.1, 58.8, 64.0, P["ind_steel"], n=5)
+    return L
+
 
 SERVICES = ("garbage", "firestation", "police", "clinic", "hospital", "school", "highschool", "university",
             "park", "parklarge", "windturbine", "coalplant", "solarfarm", "waterpump", "sewageoutlet",
-            "townhall", "stadium", "obstower", "concerthall", "skytower")
+            "townhall", "hamlethall", "villagehall", "cityhall", "stadium", "obstower", "concerthall", "skytower")
 
 
 BUILDINGS = {
@@ -2644,6 +2912,9 @@ BUILDINGS = {
     "mall": (b_mall, 48, 40, 14),
     "office": (b_office, 20, 22, 5),
     "tower": (b_tower, 30, 30, 9),
+    "highstreet": (b_highstreet, 18, 20, 3),
+    "modernflats": (b_modernflats, 30, 30, 6),
+    "glasstower": (b_glasstower, 30, 30, 6),
     "mine": (b_mine, 26, 30, 2),
     "farm": (b_farm, 40, 40, 2),
     "works": (b_works, 36, 32, 4),
@@ -2701,6 +2972,9 @@ BUILDINGS = {
     "sewageoutlet": (b_sewageoutlet, 22, 20, 2),
     # landmarks
     "townhall": (b_townhall, 40, 36, 4),
+    "hamlethall": (b_hamlethall, 20, 18, 2),
+    "villagehall": (b_villagehall, 28, 24, 3),
+    "cityhall": (b_cityhall, 60, 50, 6),
     "stadium": (b_stadium, 72, 60, 8),
     "obstower": (b_obstower, 28, 28, 2),
     "concerthall": (b_concerthall, 52, 44, 6),

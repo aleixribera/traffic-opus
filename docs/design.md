@@ -124,6 +124,34 @@ itself across modes; you build tracks, docks and the transfer points, never line
 - Deliveries go to the town's shops, filling stations and building sites, so trucks drive into town streets.
 - No city services, taxes, policies or zoning.
 
+### Towns grow into cities (owner, 2026-11-08)
+
+A town should visibly turn from a hamlet into a city over a playthrough: bigger, denser, more modern.
+
+- **Town hall at the centre.** Every town is founded round its hall on a square at the first crossroads. The
+  hall is rebuilt bigger at each size: hamlet hall (chapel-like, bell cupola), village hall (arcaded market
+  house), town hall (domed, courtyard), city hall (belfry and copper spire, square with fountains). The square
+  and the hall stay as the old heart; everything round them modernises.
+- **Each size has its own era of building:**
+
+  | Size | Homes | Shops and work |
+  |---|---|---|
+  | Hamlet | houses | high-street shop-houses |
+  | Village | houses, terraces in the middle | high street |
+  | Town | terraces, 1960s apartment blocks in the middle | stores, offices |
+  | City | modern flats, apartment towers in the core | malls, office towers |
+  | Metropolis | towers in the core | glass towers (the skyline) |
+
+- **Redevelopment, not just sprawl.** When a town reaches a size, its inner rings are rezoned denser. Old
+  buildings in a denser ring are pulled down one at a time, centre first, and rebuilt (a construction site,
+  then the new building). So the houses you saw at the start become terraces, then flats, then towers, while
+  the edge keeps growing new houses.
+- **Each new size is a moment:** a banner ("Millbrook is now a Town"), the hall goes up as a building site,
+  the label shows the new size.
+- **Towns are inspectable.** Click a town (label or hall) for its panel: population over time, supply per need
+  with a bar each, growth toward the next size, deliveries per product, homes, jobs, and what it is short of.
+  The map shows each town's label with a supply bar and an icon for any need in shortage.
+
 ## Company
 
 - Income: payment for every load delivered to a town. Plant-to-plant transfers earn nothing; they keep the
