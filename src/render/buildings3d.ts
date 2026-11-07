@@ -2,6 +2,7 @@ import * as THREE from "three";
 import type { BuildingKind } from "../config";
 import { fromAngle, right, type V2 } from "../core/math";
 import type { Building } from "../game/buildings";
+import { ZONE_GROUP } from "../game/growables";
 import type { ModelSet } from "./models";
 import { CAR_COLORS, PAL } from "./palette";
 
@@ -15,25 +16,80 @@ export function lotMatrix(out: THREE.Matrix4, c: V2, rot: number, side: 1 | -1, 
   return out;
 }
 
+/** Front yard depth (m) for a lot with this much depth to spare around its model. */
+const setback = (spare: number) => Math.min(spare * 0.68, 5);
+
+const SITE = 0xcdbb8f; // construction site
+/** Ground of a grown lot: lawn for homes, paving for business. */
+const YARD: Record<string, number> = { res: 0xd5e7b0, com: 0xe2dfd6, ind: 0xd6d2c6, off: 0xe2dfd6 };
+const ABANDONED = 0x77736b;
+
 export class Buildings3D {
   readonly group = new THREE.Group();
   private kinds = new Map<BuildingKind, THREE.InstancedMesh>();
   private parked: THREE.InstancedMesh[] = [];
+  private yards: THREE.InstancedMesh | null = null;
+  private yardGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
   private drives: THREE.Mesh | null = null;
   private mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   private driveMat = new THREE.MeshLambertMaterial({ color: PAL.driveway });
   private order = new Map<BuildingKind, Building[]>();
   private tmp = new THREE.Matrix4();
+  private tmp2 = new THREE.Matrix4();
   private col = new THREE.Color();
+  private tintFn: ((b: Building) => number | null) | null = null;
+  private building: { b: Building; kind: BuildingKind; i: number }[] = [];
 
   constructor(private models: ModelSet) {}
+
+  /** Model depth (m) after fitting the lot. */
+  private depth(b: Building): number {
+    const mm = this.models.buildings.get(b.kind)!;
+    const bb = mm.geo.boundingBox!;
+    return (bb.max.z - bb.min.z) * b.fit;
+  }
+
+  /** Full matrix of a building's model: fitted to its lot, set back from the road, raised as it is built. */
+  private matrix(out: THREE.Matrix4, b: Building): THREE.Matrix4 {
+    lotMatrix(out, b.c, b.rot, b.side);
+    if (!b.zone) return out;
+    // the model stands near the street; deep lots keep the rest as a back yard
+    const spare = Math.max(0, b.hd * 2 - this.depth(b));
+    const grow = b.built >= 1 ? 1 : 0.08 + 0.92 * b.built;
+    this.tmp2.makeScale(b.fit, b.fit * b.tall * grow, b.fit).setPosition(0, 0, spare / 2 - setback(spare));
+    return out.multiply(this.tmp2);
+  }
+
+  private baseColor(b: Building): number | null {
+    if (b.abandoned) return ABANDONED;
+    if (b.built < 1) return SITE;
+    return null;
+  }
 
   rebuild(list: Building[]) {
     for (const m of this.kinds.values()) { this.group.remove(m); m.dispose(); }
     this.kinds.clear();
     for (const m of this.parked) { this.group.remove(m); m.dispose(); }
     this.parked = [];
+    if (this.yards) { this.group.remove(this.yards); this.yards.dispose(); this.yards = null; }
+    const lots = list.filter((b) => b.zone);
+    if (lots.length) {
+      const ym = new THREE.InstancedMesh(this.yardGeo, new THREE.MeshLambertMaterial({ color: 0xffffff }), lots.length);
+      ym.receiveShadow = true;
+      ym.renderOrder = 1;
+      const sc = new THREE.Matrix4();
+      lots.forEach((b, i) => {
+        lotMatrix(this.tmp, b.c, b.rot, b.side, 0.05);
+        // the lot is hw along the road and hd deep; in lot space x runs along the road
+        ym.setMatrixAt(i, this.tmp.multiply(sc.makeScale(b.hw * 2 - 0.8, 1, b.hd * 2 - 0.8)));
+        ym.setColorAt(i, this.col.setHex(b.built < 1 ? SITE : YARD[ZONE_GROUP[b.zone!]]));
+      });
+      ym.computeBoundingSphere();
+      this.yards = ym;
+      this.group.add(ym);
+    }
     this.order.clear();
+    this.building = [];
     for (const b of list) {
       let a = this.order.get(b.kind);
       if (!a) this.order.set(b.kind, (a = []));
@@ -45,24 +101,30 @@ export class Buildings3D {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       bs.forEach((b, i) => {
-        mesh.setMatrixAt(i, lotMatrix(this.tmp, b.c, b.rot, b.side));
-        mesh.setColorAt(i, this.col.set(1, 1, 1));
+        mesh.setMatrixAt(i, this.matrix(this.tmp, b));
+        if (b.built < 1) this.building.push({ b, kind, i });
       });
       mesh.computeBoundingSphere();
       this.kinds.set(kind, mesh);
       this.group.add(mesh);
     }
-    // parked cars, a deterministic share of bays filled
+    this.applyColors();
+    // parked cars, a deterministic share of bays filled (cars keep their size whatever the model's scale)
     const car = this.models.vehicles.get("car")!;
     const filled: { m: THREE.Matrix4; color: number }[] = [];
+    const inv = new THREE.Matrix4();
     for (const [kind, bs] of this.order) {
       const mm = this.models.buildings.get(kind)!;
       for (const b of bs) {
-        lotMatrix(this.tmp, b.c, b.rot, b.side);
+        if (b.built < 1 || b.abandoned) continue;
+        const M = this.matrix(this.tmp, b).clone();
+        const s = b.zone ? b.fit : 1;
+        const tall = b.zone ? b.tall : 1;
+        inv.makeScale(1 / s, 1 / (s * tall), 1 / s);
         mm.bays.forEach((bay, k) => {
           const hsh = (b.id * 73856093) ^ (k * 19349663);
           if ((hsh >>> 0) % 10 < 4) return; // ~60% occupied
-          filled.push({ m: this.tmp.clone().multiply(bay), color: CAR_COLORS[(hsh >>> 3) % CAR_COLORS.length] });
+          filled.push({ m: M.clone().multiply(bay).multiply(inv), color: CAR_COLORS[(hsh >>> 3) % CAR_COLORS.length] });
         });
       }
     }
@@ -82,19 +144,34 @@ export class Buildings3D {
     this.rebuildDrives(list);
   }
 
+  /** Raise buildings under construction (cheap; call a few times a second). */
+  updateConstruction() {
+    if (!this.building.length) return;
+    const touched = new Set<THREE.InstancedMesh>();
+    for (const it of this.building) {
+      const mesh = this.kinds.get(it.kind);
+      if (!mesh) continue;
+      mesh.setMatrixAt(it.i, this.matrix(this.tmp, it.b));
+      touched.add(mesh);
+    }
+    for (const m of touched) m.instanceMatrix.needsUpdate = true;
+  }
+
   rebuildDrives(list: Building[]) {
     if (this.drives) { this.group.remove(this.drives); this.drives.geometry.dispose(); this.drives = null; }
     const pos: number[] = [];
     const idx: number[] = [];
     for (const b of list) {
       const u = fromAngle(b.rot);
-      const toward = right(u); // * -side points at the road
-      const ex = { x: b.c.x - toward.x * b.side * b.hd, y: b.c.y - toward.y * b.side * b.hd };
-      // driveway from the kerb (b.front) straight back to the lot edge
+      const away = right(u); // * side points away from the road
+      // placed buildings: from the kerb to the lot edge; zoned lots start at the kerb, so to the model's front
+      const reach = b.zone ? b.hd - setback(Math.max(0, b.hd * 2 - this.depth(b))) + 0.5 : b.hd;
+      const ex = { x: b.c.x - away.x * b.side * reach, y: b.c.y - away.y * b.side * reach };
       const a = b.front;
-      const w = 1.7;
+      if (Math.hypot(ex.x - a.x, ex.y - a.y) < 0.6) continue;
+      const w = b.zone && b.hw > 14 ? 2.6 : 1.7;
       const base = pos.length / 3;
-      const y = 0.045;
+      const y = 0.08;
       pos.push(a.x - u.x * w, y, a.y - u.y * w, a.x + u.x * w, y, a.y + u.y * w);
       pos.push(ex.x - u.x * w, y, ex.y - u.y * w, ex.x + u.x * w, y, ex.y + u.y * w);
       idx.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
@@ -114,27 +191,24 @@ export class Buildings3D {
     }
     this.drives = new THREE.Mesh(g, this.driveMat);
     this.drives.receiveShadow = true;
+    this.drives.renderOrder = 3;
     this.group.add(this.drives);
   }
 
-  /** Tint buildings (overlays, magnifier highlights). null = normal colours. */
-  tint(fn: ((b: Building) => number | null) | null) {
+  private applyColors() {
     for (const [kind, bs] of this.order) {
       const mesh = this.kinds.get(kind)!;
       bs.forEach((b, i) => {
-        const c = fn ? fn(b) : null;
+        const c = this.tintFn?.(b) ?? this.baseColor(b);
         mesh.setColorAt(i, c === null ? this.col.set(1, 1, 1) : this.col.setHex(c));
       });
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
   }
 
-  /** Ghost mesh for placement previews. */
-  ghost(kind: BuildingKind): THREE.Mesh {
-    const mm = this.models.buildings.get(kind)!;
-    const m = new THREE.Mesh(mm.geo, new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.72, depthWrite: false }));
-    m.renderOrder = 6;
-    return m;
+  /** Tint buildings (overlays). null = normal colours. */
+  tint(fn: ((b: Building) => number | null) | null) {
+    this.tintFn = fn;
+    this.applyColors();
   }
-
 }

@@ -1,9 +1,9 @@
-import { LANE_W, SIM } from "../config";
+import { LANE_W, ROAD_TYPES, SIM } from "../config";
 import { clamp, dist, dot, norm, polyAt, polyClosest, polyDirSmooth, right, sub, type V2 } from "../core/math";
 import type { ChangeSet, Connector, Edge, Lane, RoadNetwork } from "../roads/network";
 import { Router, dkey, dkDir, dkSeg, type Access } from "./router";
 
-export type TripKind = "shop" | "work" | "home" | "cargo" | "empty";
+export type TripKind = "shop" | "leisure" | "work" | "home" | "cargo" | "move" | "empty";
 
 export interface Trip {
   kind: TripKind;
@@ -50,6 +50,10 @@ export interface Vehicle {
   crossFrom?: number; // its own lane position when it started pulling out
   v0e: number; // free-road desired speed this step (limits, curves, driveway approach)
   constrained: boolean; // held up by another vehicle, a stop line or a signal this step
+  /** Leaves the map at its destination (outside connection): drives through at speed instead of turning in. */
+  exit?: boolean;
+  /** Missed its way and can't get back (its trip already counted as failed): drives out of the region, or just leaves. */
+  lost?: boolean;
 }
 
 export interface PendingSpawn {
@@ -64,6 +68,10 @@ export interface PendingSpawn {
   why?: string; // last reason the spawn had to wait (debug + inspector)
   blocker?: number;
   clear?: { lane: Lane; s: number }[]; // spots a queue should leave free so this car can pull out
+  /** Enters from an outside connection: appears in lane at speed, no driveway. */
+  through?: boolean;
+  /** Leaves through an outside connection at `to`. */
+  exit?: boolean;
 }
 
 const CAR_COLORS = [0xe8534a, 0x3c8de0, 0xf2b632, 0x55b85b, 0x9b6ce0, 0xef7fb6, 0x40c2c9, 0xf08a3a, 0x4a5568, 0xf5f5f0];
@@ -71,6 +79,8 @@ const CAR_COLORS = [0xe8534a, 0x3c8de0, 0xf2b632, 0x55b85b, 0x9b6ce0, 0xef7fb6, 
 export interface TrafficEvents {
   arrive(v: Vehicle, now: number): void;
   fail(trip: Trip, reason: string, now: number): void;
+  /** Where cars leave the region (a car that lost its way heads for one). */
+  exits?(): Access[];
 }
 
 /** Segment-level flow statistics for overlays and objectives. */
@@ -169,6 +179,16 @@ export class Traffic {
       x: 0, y: 0, h: 0, ang: 0, px: 0, py: 0, ph: 0, pang: 0, fade: 0, leaving: 0,
       ideal: 0, born: this.time, v0e: 1, constrained: false,
     };
+    if (p.exit) v.exit = true;
+    if (p.through) {
+      v.v = ROAD_TYPES[net.segs.get(lane.seg)!.type].speed * 0.85;
+      v.fade = 1;
+      insertOcc(lane, v);
+      this.vehicles.push(v);
+      if (this.isFinal(v)) this.computeDestS(v);
+      this.place(v, true);
+      return "ok";
+    }
     // slide out of the driveway: start offset towards the building
     const side = (lane.dir === 1 ? 1 : -1) * p.fromSide; // +1 = building on the right of travel
     // start at the kerb (less a little: the nose is already poking out) and slide across into the lane
@@ -259,7 +279,14 @@ export class Traffic {
         // arrival
         if (this.isFinal(v) && v.destS < 0 && lane.seg === v.dest.seg) this.computeDestS(v);
         if (this.isFinal(v) && v.destS >= 0) {
-          if (lane.idx === this.turnIdx(v, lane) && v.s >= v.destS - 0.8) {
+          if (v.exit) {
+            if (v.s >= v.destS) {
+              if (v.lost) return true;
+              v.trip.freeFlow = v.ideal;
+              this.ev.arrive(v, this.time);
+              return true;
+            }
+          } else if (lane.idx === this.turnIdx(v, lane) && v.s >= v.destS - 0.8) {
             if (this.canTurnIn(v, lane)) {
               // pulling out of a driveway takes a moment even on a quiet street: the first seconds aren't delay
               v.trip.freeFlow = v.ideal + Math.min(6, v.born - v.trip.startT);
@@ -279,6 +306,8 @@ export class Traffic {
           }
         }
         if (v.s <= lane.pl.length) return false;
+        // lost with nowhere to go: leave the road here rather than block it
+        if (v.lost && this.isFinal(v) && lane.seg !== v.dest.seg) return true;
         if (!v.next || !v.granted) {
           v.s = lane.pl.length;
           v.v = 0;
@@ -365,7 +394,7 @@ export class Traffic {
     // only the vehicle closest to the stop line asks
     const occ = lane.occ as Vehicle[];
     if (occ[occ.length - 1] !== v) return;
-    if (this.isFinal(v)) return;
+    if (this.isFinal(v) && (lane.seg === v.dest.seg || !this.findWay(v, lane))) return;
     const toEnd = lane.pl.length - v.s;
     const check = Math.max(14, v.v * 3.4 + 8);
     if (toEnd > check) return;
@@ -622,7 +651,7 @@ export class Traffic {
       if (e.kind === "lane") {
         const lane = e as Lane;
         const c = v.next;
-        if (this.isFinal(v) && v.destS >= 0) {
+        if (this.isFinal(v) && v.destS >= 0 && !v.exit) {
           // slow down for the driveway
           const dd = v.destS - v.s;
           if (lane.idx === this.turnIdx(v, lane) && dd > -1) {
@@ -795,6 +824,32 @@ export class Traffic {
   }
 
   // ---------------------------------------------------------------- rerouting
+
+  /**
+   * A car on the last road of its plan that isn't its destination (it was squeezed into the wrong exit):
+   * plan again from here; if there's no way back, give up the trip and drive out of the region instead.
+   * Returns true when it has a road to go on to.
+   */
+  private findWay(v: Vehicle, lane: Lane): boolean {
+    if (v.lost) return false;
+    this.reroute(v);
+    if (!this.isFinal(v) || lane.seg === v.dest.seg) return !this.isFinal(v);
+    this.ev.fail(v.trip, "missed its turn", this.time);
+    v.lost = true;
+    const k = dkey(lane.seg, lane.dir);
+    for (const a of this.ev.exits?.() ?? []) {
+      const r = this.router.routeFromKey(k, a);
+      if (!r) continue;
+      v.dest = a;
+      v.exit = true;
+      v.route = r;
+      v.ri = 0;
+      v.destS = -1;
+      if (this.isFinal(v)) this.computeDestS(v);
+      return !this.isFinal(v);
+    }
+    return false;
+  }
 
   private reroute(v: Vehicle) {
     const e = v.edge;

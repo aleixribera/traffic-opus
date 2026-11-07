@@ -1,12 +1,13 @@
-import { BUILDING_TYPES, CARGO_LABEL, ROAD_ORDER, ROAD_TYPES, SIGNAL_COST, ZONE_LABEL, type BuildingKind } from "../config";
+import { BUILDING_TYPES, LEVEL_H, MAX_LEVEL, ROAD_TYPES, SIGNAL_COST, type RoadTypeId } from "../config";
 import { formatMoney, type V2 } from "../core/math";
 import type { Building } from "../game/buildings";
-import { FACTOR_LABEL } from "../game/city";
-import { levelDef } from "../game/levels";
+import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
+import { MILESTONES } from "../game/progression";
+import { ZONES, ZONE_ORDER, type ZoneGroup, type ZoneId } from "../game/zones";
 import type { SignalPlan } from "../roads/network";
-import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId } from "../app";
+import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId, type ZoneMode } from "../app";
 import { ROUNDABOUTS, type RoundaboutSize } from "../roads/planner";
-import { ICON, buildingIcon, roadIcon } from "./icons";
+import { ICON, roadIcon } from "./icons";
 import { Sfx } from "./sfx";
 
 export interface Chip {
@@ -15,18 +16,46 @@ export interface Chip {
   icon?: keyof typeof ICON;
 }
 
-const OVERLAYS: { id: OverlayId; label: string }[] = [
-  { id: "flow", label: "Traffic flow" },
-  { id: "sat", label: "Overall building satisfaction" },
-  { id: "commercial", label: "Access to nearby commercial" },
-  { id: "work", label: "Access to nearby workplaces" },
-  { id: "staff", label: "Access to workers/customers" },
-  { id: "input", label: "Access to input resources" },
-  { id: "pollution", label: "Air pollution" },
-  { id: "noise", label: "Road noise" },
+const OVERLAYS: { id: OverlayId; label: string; blurb: string }[] = [
+  { id: "flow", label: "Traffic flow", blurb: "How fast each road moves compared with its speed limit" },
+  { id: "zones", label: "Zoning", blurb: "What each zoned cell allows to grow" },
+  { id: "landvalue", label: "Land value", blurb: "Higher value lets buildings level up" },
+  { id: "level", label: "Building level", blurb: "Buildings grow from level 1 to 5" },
+  { id: "problems", label: "Problems", blurb: "Buildings missing workers, goods or customers" },
 ];
 
-const KIND_ORDER: BuildingKind[] = ["house", "terrace", "apartments", "shop", "store", "mall", "office", "tower", "mine", "farm", "works", "foodplant"];
+const GROUP_NAME: Record<ZoneGroup, string> = { res: "Residential", com: "Commercial", ind: "Industrial", off: "Office" };
+const GROUP_LETTER: Record<ZoneGroup, string> = { res: "R", com: "C", ind: "I", off: "O" };
+const GROUPS: ZoneGroup[] = ["res", "com", "ind", "off"];
+export const BRUSH_SIZES: { r: number; label: string }[] = [{ r: 10, label: "S" }, { r: 22, label: "M" }, { r: 40, label: "L" }];
+
+/** Build categories along the bottom bar, each with its asset tabs. */
+type CatId = "roads" | "zoning";
+type Asset =
+  | { kind: "road"; id: RoadTypeId }
+  | { kind: "roundabout"; size: RoundaboutSize }
+  | { kind: "junction" }
+  | { kind: "zone"; id: ZoneId };
+interface Tab { id: string; label: string; assets: Asset[] }
+const CATS: Record<CatId, { label: string; tabs: Tab[] }> = {
+  roads: {
+    label: "Roads",
+    tabs: [
+      { id: "small", label: "Small roads", assets: [{ kind: "road", id: "one1" }, { kind: "road", id: "street" }] },
+      { id: "medium", label: "Medium roads", assets: [{ kind: "road", id: "one2" }, { kind: "road", id: "avenue" }] },
+      { id: "large", label: "Large roads", assets: [{ kind: "road", id: "boulevard" }] },
+      { id: "highways", label: "Highways", assets: [{ kind: "road", id: "hw2" }, { kind: "road", id: "one3" }, { kind: "road", id: "one4" }] },
+      { id: "junctions", label: "Intersections", assets: [1, 2, 3, 4].map((s) => ({ kind: "roundabout", size: s as RoundaboutSize }) as Asset).concat([{ kind: "junction" }]) },
+    ],
+  },
+  zoning: {
+    label: "Zoning",
+    tabs: GROUPS.map((gp) => ({ id: gp, label: GROUP_NAME[gp], assets: ZONE_ORDER.filter((z) => ZONES[z].group === gp).map((id) => ({ kind: "zone", id }) as Asset) })),
+  },
+};
+const catOf = (t: ToolId): CatId | null => (t === "road" || t === "roundabout" || t === "junction" ? "roads" : t === "zone" ? "zoning" : null);
+
+type WinId = "info" | "progression" | "economy" | "city" | "transport";
 
 const h = <K extends keyof HTMLElementTagNameMap>(tag: K, cls = "", html = ""): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag);
@@ -40,37 +69,74 @@ const fmtTime = (s: number) => {
   return m >= 60 ? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}:${String(x).padStart(2, "0")}` : `${String(m).padStart(2, "0")}:${String(x).padStart(2, "0")}`;
 };
 
+const fmtNum = (n: number) => (n >= 10000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : n.toLocaleString("en-US"));
+const signed = (n: number) => `${n >= 0 ? "+" : "−"}${formatMoney(Math.abs(Math.round(n)))}`;
+const hex = (c: number) => "#" + c.toString(16).padStart(6, "0");
+
+type Milestone = (typeof MILESTONES)[number];
+const unlockAt = (test: (m: Milestone) => boolean): Milestone | undefined => MILESTONES.find(test);
+const FEATURE_NAME = { roundabout: "Roundabouts", signals: "Traffic lights", grid: "Grid tool", parallel: "Parallel roads" } as const;
+
+const KEYS: [string, string][] = [
+  ["Esc", "Back: close a panel, drop the tool, then the pause menu"],
+  ["Right click", "Undo the last click of a road; again to drop the tool"],
+  ["W A S D / drag", "Move the camera"],
+  ["Q / E", "Rotate the camera"],
+  ["R / F, wheel", "Zoom in / out"],
+  ["Tab", "Next road mode"],
+  ["Page Up / Down", "Raise or lower the road"],
+  ["[ / ]", "Parallel road spacing"],
+  ["Shift", "15° angle steps"],
+  ["B", "Bulldozer"],
+  ["M", "Map tiles"],
+  ["P / Z / C / X", "Progression / Economy / City / Transport"],
+  ["Space, 1 2 3", "Pause, game speed"],
+  ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
+  ["F5 / F9", "Quicksave / quickload"],
+  ["`", "Hide the interface"],
+];
+
 export class Hud {
   root = h("div", "hud");
-  private money = h("div", "money");
+  // bottom bar
+  private bbar = h("footer", "bbar");
+  private cityName = h("button", "cb-city");
+  private popEl = h("span", "cb-pop");
+  private moneyBtn = h("button", "cb-money");
+  private clockEl = h("span", "cb-clock");
   private speed = h("div", "speed");
-  private objCard = h("section", "card objectives");
+  private demandBtn = h("button", "cb-demand");
+  private demandPop = h("section", "card demand-pop");
+  private cats = h("nav", "cats");
+  private assets = h("section", "card assets");
+  private toolOpts = h("section", "card toolopts");
+  // corners
+  private tlBtns = new Map<WinId | "menu" | "tiles", HTMLButtonElement>();
+  private win = h("section", "card win");
   private tut = h("section", "card tutorial");
-  private overlayBtn = h("button", "btn overlay-btn");
-  private overlayList = h("div", "card overlay-list");
-  private legend = h("div", "legend");
-  private toolbar = h("nav", "toolbar");
-  private subbar = h("div", "subbar");
+  private panel = h("aside", "card panel");
   private chipBox = h("div", "chips");
   private toastBox = h("div", "toasts");
-  private panel = h("aside", "card panel");
   private modal = h("div", "modal");
   private rectEl = h("div", "selrect");
   private banner = h("section", "card banner");
-  private snapMenu = h("div", "card snap-menu");
   private compass = h("button", "btn icon-btn compass");
   private compassRot = NaN;
-  private undoBtn = h("button", "btn icon-btn");
-  private redoBtn = h("button", "btn icon-btn");
-  private toolBtns = new Map<string, HTMLButtonElement>();
-  private kindBtns = new Map<BuildingKind, HTMLButtonElement>();
+  private undoBtn = h("button", "cat hist");
+  private redoBtn = h("button", "cat hist");
+  private catBtns = new Map<string, HTMLButtonElement>();
+  private cat: CatId | null = null;
+  private tab: Record<CatId, string> = { roads: "small", zoning: "res" };
+  private lastRoad: RoadTypeId = "street";
+  private winKind: WinId | null = null;
   private panelKind: "building" | "signal" | null = null;
   private panelNode = -1;
   private panelPhase = 0;
-  private tutHidden = new Set<number>();
-  private lastObj = "";
-  private lastHint = "";
-  private objCollapsed = typeof matchMedia === "function" && matchMedia("(max-width: 560px)").matches; // phones start folded
+  private tutHidden = false;
+  private lastPanel = "";
+  private lastWin = "";
+  private lastAssets = "";
+  private resumeOnClose = false;
   private sfx = new Sfx();
 
   constructor(private app: App, parent: HTMLElement) {
@@ -80,294 +146,375 @@ export class Hud {
 
   private build() {
     const app = this.app;
-    // ---- top left: menu + overlays
+    // ---- top left: the menu and the city's info buttons
     const tl = h("div", "corner tl");
-    const menu = h("button", "btn icon-btn", ICON.menu);
-    menu.title = "Saves and new city (Ctrl+S)";
-    menu.setAttribute("aria-label", "Game menu");
-    menu.onclick = () => this.openSaves();
-    this.overlayBtn.innerHTML = `Overlays ${ICON.caret}`;
-    this.overlayBtn.setAttribute("aria-expanded", "false");
-    this.overlayBtn.onclick = () => {
-      const open = !this.overlayList.classList.contains("open");
-      this.overlayList.classList.toggle("open", open);
-      this.overlayBtn.setAttribute("aria-expanded", String(open));
+    const row = h("div", "tl-row");
+    const tlb = (k: WinId | "menu" | "tiles", icon: string, title: string, fn: () => void) => {
+      const b = h("button", "tlb", icon);
+      b.title = title;
+      b.setAttribute("aria-label", title);
+      b.onclick = () => { fn(); this.sfx.play("click"); };
+      this.tlBtns.set(k, b);
+      row.appendChild(b);
     };
-    for (const o of OVERLAYS) {
-      const b = h("button", "overlay-item", `<span class="ov-dot ov-${o.id}"></span>${o.label}`);
-      b.dataset.id = o.id;
-      b.onclick = () => app.setOverlay(o.id);
-      this.overlayList.appendChild(b);
-    }
-    this.overlayList.appendChild(this.legend);
+    tlb("menu", ICON.menu, "Pause menu (Esc)", () => this.openPause());
+    row.appendChild(h("span", "tl-sep"));
+    tlb("info", ICON.layers, "Info views", () => this.toggleWin("info"));
+    tlb("progression", ICON.flag, "Progression (P)", () => this.toggleWin("progression"));
+    tlb("economy", ICON.coins, "Economy (Z)", () => this.toggleWin("economy"));
+    tlb("city", ICON.chart, "City information (C)", () => this.toggleWin("city"));
+    tlb("transport", ICON.car, "Transportation overview (X)", () => this.toggleWin("transport"));
+    tlb("tiles", ICON.tiles, "Map tiles (M)", () => app.setTool({ tool: app.st.tool === "unlock" ? "inspect" : "unlock" }));
     this.compass.innerHTML = ICON.north;
     this.compass.title = "North up (the map is turned: Q / E or middle-drag)";
     this.compass.setAttribute("aria-label", "Turn the map north up");
     this.compass.onclick = () => { app.resetNorth(); this.compassAngle(0); };
     this.compass.hidden = true;
-    tl.append(menu, this.overlayBtn, this.overlayList, this.compass);
+    row.appendChild(this.compass);
+    this.win.hidden = true;
+    tl.append(row, this.win);
 
-    // ---- top centre: money + speed
-    const tc = h("div", "corner tc");
+    // ---- top right: tips + the selected object
+    const tr = h("div", "corner tr");
+    tr.append(this.tut, this.panel);
+
+    // ---- bottom: tool options, asset panel, the bar
+    const bottom = h("div", "bottom");
+    // city block (left)
+    const city = h("div", "bb-city");
+    this.cityName.onclick = () => this.toggleWin("progression");
+    this.cityName.title = "Progression (P)";
+    this.moneyBtn.onclick = () => this.toggleWin("economy");
+    this.moneyBtn.title = "Economy (Z)";
+    this.popEl.title = "Population";
+    city.append(this.cityName, this.popEl, this.moneyBtn);
+    // categories (centre)
+    const cat = (key: string, icon: string, label: string, title: string, fn: () => void) => {
+      const b = h("button", "cat", `${icon}<span>${label}</span>`);
+      b.title = title;
+      b.setAttribute("aria-label", title);
+      b.onclick = () => { fn(); this.sfx.play("click"); };
+      this.catBtns.set(key, b);
+      return b;
+    };
+    this.cats.append(
+      cat("roads", ICON.roadCat, "Roads", "Roads", () => this.toggleCat("roads")),
+      cat("zoning", ICON.zone, "Zoning", "Zoning", () => this.toggleCat("zoning")),
+      h("span", "cat-sep"),
+      cat("bulldoze", ICON.bulldoze, "Bulldoze", "Bulldozer (B)", () => app.setTool({ tool: app.st.tool === "bulldoze" ? "inspect" : "bulldoze" })),
+    );
+    this.undoBtn.innerHTML = ICON.undo + "<span>Undo</span>";
+    this.undoBtn.title = "Undo (Ctrl+Z) · full refund";
+    this.undoBtn.setAttribute("aria-label", "Undo");
+    this.undoBtn.onclick = () => app.undo();
+    this.redoBtn.innerHTML = ICON.redo + "<span>Redo</span>";
+    this.redoBtn.title = "Redo (Ctrl+Y)";
+    this.redoBtn.setAttribute("aria-label", "Redo");
+    this.redoBtn.onclick = () => app.redo();
+    this.cats.append(this.undoBtn, this.redoBtn);
+    // time, speed, demand (right)
+    const time = h("div", "bb-time");
     const speeds: [string, () => void, string][] = [
       [ICON.pause, () => app.togglePause(), "Pause (Space)"],
-      [ICON.play, () => app.setSpeed(1), "Normal speed"],
-      [ICON.fast, () => app.setSpeed(2), "Fast"],
-      [ICON.fastest, () => app.setSpeed(4), "Fastest"],
+      [ICON.play, () => app.setSpeed(1), "Normal speed (1)"],
+      [ICON.fast, () => app.setSpeed(2), "Fast (2)"],
+      [ICON.fastest, () => app.setSpeed(4), "Fastest (3)"],
     ];
     for (const [icon, fn, title] of speeds) {
-      const b = h("button", "btn speed-btn", icon);
+      const b = h("button", "speed-btn", icon);
       b.title = title;
       b.setAttribute("aria-label", title);
       b.onclick = fn;
       this.speed.appendChild(b);
     }
-    tc.append(this.money, this.speed);
-
-    // ---- top right: objectives + tutorial
-    const tr = h("div", "corner tr");
-    tr.append(this.objCard, this.tut, this.panel);
-
-    // ---- bottom: sub-bar + toolbar
-    const bc = h("div", "corner bc");
-    this.buildToolbar();
-    this.snapMenu.hidden = true;
-    bc.append(this.snapMenu, this.subbar, this.toolbar);
-    // narrow screens: the toolbar scrolls sideways; fade the edge that has more tools behind it
-    const edges = () => {
-      const t = this.toolbar;
-      t.classList.toggle("more-l", t.scrollLeft > 2);
-      t.classList.toggle("more-r", t.scrollLeft + t.clientWidth < t.scrollWidth - 2);
+    this.demandBtn.title = "Zone demand: what the city wants built";
+    this.demandBtn.setAttribute("aria-label", "Zone demand");
+    this.demandBtn.setAttribute("aria-expanded", "false");
+    this.demandBtn.innerHTML = GROUPS.map((gp) => `<span class="dm dm-${gp}"><i></i><b>${GROUP_LETTER[gp]}</b></span>`).join("");
+    this.demandBtn.onclick = () => {
+      this.demandPop.hidden = !this.demandPop.hidden;
+      this.demandBtn.setAttribute("aria-expanded", String(!this.demandPop.hidden));
+      this.fillDemand();
     };
-    this.toolbar.addEventListener("scroll", edges, { passive: true });
-    addEventListener("resize", edges);
-    requestAnimationFrame(edges);
+    this.demandPop.hidden = true;
+    time.append(this.clockEl, this.speed, this.demandBtn);
+    this.bbar.append(city, this.cats, time);
+    this.assets.hidden = true;
+    this.toolOpts.hidden = true;
+    bottom.append(this.toolOpts, this.assets, this.demandPop, this.bbar);
 
     this.panel.hidden = true;
     this.modal.hidden = true;
     this.banner.hidden = true;
     this.rectEl.hidden = true;
-    this.root.append(tl, tc, tr, bc, this.chipBox, this.toastBox, this.banner, this.rectEl, this.modal);
+    this.tut.hidden = true;
+    this.root.append(tl, tr, bottom, this.chipBox, this.toastBox, this.banner, this.rectEl, this.modal);
     document.addEventListener("pointerdown", (e) => {
       const tg = e.target as Node;
-      if (!this.snapMenu.hidden && !this.snapMenu.contains(tg) && !(tg instanceof Element && tg.closest(".snap-btn"))) { this.snapMenu.hidden = true; this.renderSubbar(); }
-      if (!this.overlayList.contains(e.target as Node) && e.target !== this.overlayBtn && !this.overlayBtn.contains(e.target as Node)) {
-        this.overlayList.classList.remove("open");
-        this.overlayBtn.setAttribute("aria-expanded", "false");
+      if (!this.demandPop.hidden && !this.demandPop.contains(tg) && !this.demandBtn.contains(tg)) {
+        this.demandPop.hidden = true;
+        this.demandBtn.setAttribute("aria-expanded", "false");
       }
       this.sfx.unlock();
     });
   }
 
-  private toolButton(key: string, icon: string, title: string, fn: () => void, cls = "") {
-    const b = h("button", "tool " + cls, icon);
-    b.title = title;
-    b.setAttribute("aria-label", title);
-    b.onclick = () => { fn(); this.sfx.play("click"); };
-    this.toolBtns.set(key, b);
-    return b;
+  // ---------------------------------------------------------------- categories
+
+  private toggleCat(c: CatId) {
+    const app = this.app;
+    if (this.cat === c) {
+      this.cat = null;
+      if (catOf(app.st.tool) === c) app.setTool({ tool: "inspect" });
+      else this.refresh();
+      return;
+    }
+    this.cat = c;
+    // like picking up the last thing you built from this category
+    if (c === "roads") app.setTool({ tool: "road", roadType: this.lastRoad });
+    else app.setTool({ tool: "zone", erase: false });
   }
 
-  private buildToolbar() {
+  private pick(a: Asset) {
     const app = this.app;
-    const roads = h("div", "group");
-    for (const id of ROAD_ORDER) {
-      const T = ROAD_TYPES[id];
-      roads.appendChild(this.toolButton("road:" + id, roadIcon(id), `${T.name} · ${T.hint}`, () => app.setTool({ tool: "road", roadType: id })));
-    }
-    const shapes = h("div", "group");
-    shapes.append(
-      this.toolButton("roundabout", ICON.roundabout, "Roundabout", () => app.setTool({ tool: "roundabout" })),
-      this.toolButton("junction", ICON.junction, "Junctions and traffic lights", () => app.setTool({ tool: "junction" })),
-    );
-    const kinds = h("div", "group kinds");
-    for (const k of KIND_ORDER) {
-      const T = BUILDING_TYPES[k];
-      const b = this.toolButton("kind:" + k, buildingIcon(k, T.zone) + `<span class="count"></span>`, `${T.name} · ${T.blurb}`, () => app.setTool({ tool: "building", kind: k }), "kind z-" + T.zone);
-      this.kindBtns.set(k, b);
-      kinds.appendChild(b);
-    }
-    const edit = h("div", "group");
-    edit.append(
-      this.toolButton("bulldoze", ICON.bulldoze, "Bulldozer (B) · click or drag", () => app.setTool({ tool: "bulldoze" })),
-      this.toolButton("unlock", ICON.unlock + `<span class="count"></span>`, "Unlock a new area", () => app.setTool({ tool: "unlock" })),
-    );
-    const hist = h("div", "group hist");
-    this.undoBtn.innerHTML = ICON.undo;
-    this.undoBtn.title = "Undo (Ctrl+Z) · full refund";
-    this.undoBtn.setAttribute("aria-label", "Undo");
-    this.undoBtn.onclick = () => app.undo();
-    this.redoBtn.innerHTML = ICON.redo;
-    this.redoBtn.title = "Redo (Ctrl+Y)";
-    this.redoBtn.setAttribute("aria-label", "Redo");
-    this.redoBtn.onclick = () => app.redo();
-    hist.append(this.undoBtn, this.redoBtn);
-    this.toolbar.append(roads, shapes, kinds, edit, hist);
+    if (a.kind === "road") { this.lastRoad = a.id; app.setTool({ tool: "road", roadType: a.id }); }
+    else if (a.kind === "roundabout") app.setTool({ tool: "roundabout", rbSize: a.size });
+    else if (a.kind === "junction") app.setTool({ tool: "junction" });
+    else app.setTool({ tool: "zone", zone: a.id, erase: false });
+    this.sfx.play("click");
   }
+
+  /** The asset a tool state points at (to light its card and open its tab). */
+  private current(): Asset | null {
+    const st = this.app.st;
+    if (st.tool === "road") return { kind: "road", id: st.roadType };
+    if (st.tool === "roundabout") return { kind: "roundabout", size: st.rbSize };
+    if (st.tool === "junction") return { kind: "junction" };
+    if (st.tool === "zone") return st.erase ? null : { kind: "zone", id: st.zone };
+    return null;
+  }
+
+  private assetInfo(a: Asset): { key: string; icon: string; name: string; sub: string; title: string; locked?: Milestone } {
+    const g = this.app.game;
+    if (a.kind === "road") {
+      const T = ROAD_TYPES[a.id];
+      const locked = g.roadsUnlocked.has(a.id) ? undefined : unlockAt((m) => m.roads.includes(a.id));
+      const lanes = T.bwd ? `${T.fwd}+${T.bwd} lanes` : `${T.fwd} lane${T.fwd > 1 ? "s" : ""} one-way`;
+      return { key: "road:" + a.id, icon: roadIcon(a.id), name: T.name, sub: `${formatMoney(T.costPerM * 10)}/10 m`, title: `${T.name} · ${lanes} · ${Math.round(T.speed * 3.6)} km/h. ${T.hint}`, locked };
+    }
+    if (a.kind === "roundabout") {
+      const R = ROUNDABOUTS[a.size];
+      const locked = g.featureUnlocked("roundabout") ? undefined : unlockAt((m) => m.features.includes("roundabout"));
+      return { key: "rb:" + a.size, icon: rbIcon(a.size), name: `${R.name} roundabout`, sub: `${R.r * 2} m`, title: `${R.name} roundabout: ${R.r * 2} m across, ${ROAD_TYPES[R.type].fwd}-lane ring. Drop it on a junction or a road.`, locked };
+    }
+    if (a.kind === "junction") {
+      const locked = g.featureUnlocked("signals") ? undefined : unlockAt((m) => m.features.includes("signals"));
+      return { key: "junction", icon: ICON.junction, name: "Traffic lights", sub: formatMoney(SIGNAL_COST), title: "Traffic lights: click a junction to add lights or edit their phases", locked };
+    }
+    const Z = ZONES[a.id];
+    const locked = g.zonesUnlocked.has(a.id) ? undefined : unlockAt((m) => m.zones.includes(a.id));
+    return { key: "zone:" + a.id, icon: `<i class="swatch" style="background:${hex(Z.color)}"></i>`, name: Z.short, sub: Z.high ? "High density" : "Low density", title: Z.name, locked };
+  }
+
+  private renderAssets() {
+    const c = this.cat, el = this.assets;
+    if (!c) { el.hidden = true; this.lastAssets = ""; return; }
+    const cur = this.current();
+    const curKey = cur ? this.assetInfo(cur).key : "";
+    const C = CATS[c];
+    // follow the tool to its tab (keyboard, right click, loading)
+    if (cur && catOf(this.app.st.tool) === c) {
+      const t = C.tabs.find((t) => t.assets.some((a) => this.assetInfo(a).key === curKey));
+      if (t && this.followKey !== curKey) this.tab[c] = t.id;
+    }
+    this.followKey = curKey;
+    const tab = C.tabs.find((t) => t.id === this.tab[c]) ?? C.tabs[0];
+    const infos = tab.assets.map((a) => ({ a, ...this.assetInfo(a) }));
+    const sig = [c, tab.id, curKey, infos.map((i) => i.key + (i.locked ? "L" : "")).join()].join("|");
+    el.hidden = false;
+    if (sig === this.lastAssets) return;
+    this.lastAssets = sig;
+    const fa = document.activeElement;
+    const focusKey = fa instanceof HTMLElement && el.contains(fa) ? fa.dataset.key : null;
+    el.innerHTML = "";
+    const head = h("header", "as-head");
+    const tabs = h("div", "as-tabs");
+    tabs.setAttribute("role", "tablist");
+    for (const t of C.tabs) {
+      const b = h("button", "as-tab", t.label);
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", String(t === tab));
+      b.dataset.key = "tab:" + t.id;
+      b.classList.toggle("on", t === tab);
+      b.onclick = () => { this.tab[c] = t.id; this.renderAssets(); this.sfx.play("click"); };
+      tabs.appendChild(b);
+    }
+    const close = h("button", "close", ICON.close);
+    close.setAttribute("aria-label", `Close ${C.label}`);
+    close.dataset.key = "close";
+    close.onclick = () => this.toggleCat(c);
+    head.append(h("b", "as-title", C.label), tabs, close);
+    const cards = h("div", "as-cards");
+    for (const i of infos) {
+      const b = h("button", "asset", `<span class="as-icon">${i.icon}</span><b>${i.name}</b><span class="as-sub">${i.locked ? `${ICON.lock} ${i.locked.name}` : i.sub}</span>`);
+      b.dataset.key = i.key;
+      const on = i.key === curKey;
+      b.classList.toggle("on", on);
+      b.classList.toggle("locked", !!i.locked);
+      b.setAttribute("aria-pressed", String(on));
+      b.title = i.locked ? `${i.name} · unlocks at ${i.locked.name} (${fmtNum(i.locked.pop)} people)` : i.title;
+      b.setAttribute("aria-label", b.title);
+      b.disabled = !!i.locked;
+      b.onclick = () => this.pick(i.a);
+      cards.appendChild(b);
+    }
+    el.append(head, cards);
+    if (focusKey) el.querySelector<HTMLElement>(`[data-key="${focusKey}"]`)?.focus();
+  }
+  private followKey = "";
 
   // ---------------------------------------------------------------- refresh
 
   refresh() {
     const app = this.app, g = app.game, st = app.st;
     if (!g) return;
-    // tools
-    for (const [key, b] of this.toolBtns) {
-      let on = false;
-      if (key.startsWith("road:")) on = st.tool === "road" && st.roadType === key.slice(5) && !(st.mode === "replace" && st.reverse);
-      else if (key.startsWith("kind:")) on = st.tool === "building" && st.kind === key.slice(5);
-      else on = st.tool === (key as ToolId);
+    const tc = catOf(st.tool);
+    if (tc) this.cat = tc;
+    else if (st.tool !== "inspect") this.cat = null;
+    if (st.tool === "road") this.lastRoad = st.roadType;
+    for (const [k, b] of this.catBtns) {
+      const on = k === "bulldoze" ? st.tool === "bulldoze" : this.cat === k;
       b.classList.toggle("on", on);
-      b.setAttribute("aria-pressed", String(on));
+      b.setAttribute(k === "bulldoze" ? "aria-pressed" : "aria-expanded", String(on));
     }
-    for (const [k, b] of this.kindBtns) {
-      const n = g.inventory[k] ?? 0;
-      b.hidden = n <= 0 && !g.buildings.list.some((x) => x.kind === k);
-      b.disabled = n <= 0;
-      b.querySelector(".count")!.textContent = n > 0 ? String(n) : "";
-      const T = BUILDING_TYPES[k];
-      b.title = `${T.name} · ${n > 0 ? `${n} left` : "none left"} · ${T.blurb}`;
-      b.setAttribute("aria-label", `${T.name}, ${n} left`);
+    for (const [k, b] of this.tlBtns) {
+      const on = k === "tiles" ? st.tool === "unlock" : k === "info" ? this.winKind === "info" || app.overlay !== "none" : this.winKind === k;
+      b.classList.toggle("on", on);
     }
-    const un = this.toolBtns.get("unlock")!;
-    un.hidden = g.tileTokens <= 0 && st.tool !== "unlock";
-    un.querySelector(".count")!.textContent = g.tileTokens > 0 ? String(g.tileTokens) : "";
     this.undoBtn.disabled = !g.canUndo();
     this.redoBtn.disabled = !g.canRedo();
-    // speed
     const sb = this.speed.children;
     const sp = g.paused ? 0 : g.speed === 1 ? 1 : g.speed === 2 ? 2 : 3;
-    for (let i = 0; i < sb.length; i++) sb[i].classList.toggle("on", i === sp);
-    // overlays
-    for (const el of this.overlayList.querySelectorAll<HTMLButtonElement>(".overlay-item")) el.classList.toggle("on", el.dataset.id === app.overlay);
-    this.overlayBtn.classList.toggle("on", app.overlay !== "none");
-    this.overlayBtn.innerHTML = `<span class="ov-label">${app.overlay === "none" ? "Overlays" : OVERLAYS.find((o) => o.id === app.overlay)!.label}</span> ${ICON.caret}`;
-    this.legend.innerHTML = app.overlay === "none" ? "" : app.overlay === "flow"
-      ? `<span class="lg lg-flow"></span><span>Free flowing</span><span>Jammed</span>`
-      : `<span class="lg lg-sat"></span><span>Poor</span><span>Good</span>`;
-    this.renderSubbar();
+    for (let i = 0; i < sb.length; i++) {
+      sb[i].classList.toggle("on", i === sp);
+      sb[i].setAttribute("aria-pressed", String(i === sp));
+    }
+    this.renderAssets();
+    this.renderToolOpts();
     this.tick(true);
   }
 
-  private renderSubbar() {
+  // ---------------------------------------------------------------- tool options
+
+  private renderToolOpts() {
     const app = this.app, st = app.st, g = app.game;
-    const sb = this.subbar;
-    // the bar is rebuilt on every change: remember which control had keyboard focus
+    const el = this.toolOpts;
     const fa = document.activeElement;
-    const focusKey = fa instanceof HTMLElement && sb.contains(fa) ? fa.getAttribute("aria-label") : null;
-    sb.innerHTML = "";
-    const label = (t: string) => h("span", "sb-label", t);
-    const seg = (items: { html: string; on: boolean; title: string; fn: () => void; cls?: string }[]) => {
-      const w = h("div", "seg");
+    const focusKey = fa instanceof HTMLElement && el.contains(fa) ? fa.getAttribute("aria-label") : null;
+    el.innerHTML = "";
+    const sec = (title: string, ...kids: HTMLElement[]) => {
+      const s = h("div", "to-sec");
+      s.append(h("span", "to-label", title), ...kids);
+      return s;
+    };
+    const seg = (items: { html: string; on: boolean; title: string; fn: () => void; cls?: string; disabled?: boolean }[], cls = "") => {
+      const w = h("div", "seg " + cls);
       for (const it of items) {
         const b = h("button", "seg-btn " + (it.cls ?? ""), it.html);
         b.classList.toggle("on", it.on);
         b.setAttribute("aria-pressed", String(it.on));
         b.title = it.title;
         b.setAttribute("aria-label", it.title);
+        b.disabled = !!it.disabled;
         b.onclick = () => { it.fn(); this.sfx.play("click"); };
         w.appendChild(b);
       }
       return w;
     };
-    const elevation = () => [
-      label("Height"),
-      seg([0, 1, 2, 3].map((l) => ({ html: String(l), on: st.level === l, title: l === 0 ? "Ground level (Page Down)" : `Bridge level ${l}: passes over roads below (Page Up / Page Down)`, fn: () => app.setLevel(l), cls: "lvl lvl" + l }))),
-    ];
+    const stepper = (value: string, cls: string, down: () => void, up: () => void, labels: [string, string], dis: [boolean, boolean]) => {
+      const w = h("div", "stepper " + cls);
+      const a = h("button", "seg-btn", "−"), v = h("span", "st-val", value), b = h("button", "seg-btn", "+");
+      a.title = labels[0]; a.setAttribute("aria-label", labels[0]); a.disabled = dis[0]; a.onclick = () => { down(); this.sfx.play("click"); };
+      b.title = labels[1]; b.setAttribute("aria-label", labels[1]); b.disabled = dis[1]; b.onclick = () => { up(); this.sfx.play("click"); };
+      w.append(a, v, b);
+      return w;
+    };
+    const elevation = () => sec("Elevation", stepper(st.level === 0 ? "Ground" : `${st.level * LEVEL_H} m`, "lvl lvl" + st.level,
+      () => app.setLevel(st.level - 1), () => app.setLevel(st.level + 1), ["Lower (Page Down)", "Raise (Page Up)"], [st.level <= 0, st.level >= MAX_LEVEL]));
     const items: HTMLElement[] = [];
-    this.snapMenu.hidden = this.snapMenu.hidden || st.tool !== "road" || st.mode === "replace";
     if (st.tool === "road") {
       const T = ROAD_TYPES[st.roadType];
       const MODE: Record<RoadMode, { icon: string; title: string }> = {
         straight: { icon: ICON.straight, title: "Straight: click the start, then the end" },
         curve: { icon: ICON.curve, title: "Simple curve: start, bend point, end" },
         complex: { icon: ICON.complex, title: "Complex curve: start, two handles, end" },
-        continuous: { icon: ICON.continuous, title: "Continuous: each click carries the road on smoothly, and it meets roads square" },
+        continuous: { icon: ICON.continuous, title: "Continuous: each click carries the road on smoothly" },
         grid: { icon: ICON.gridMode, title: "Grid: click a corner, the width, then the depth" },
         replace: { icon: ICON.replace, title: "Replace: click a road to change it to this type" },
       };
-      items.push(
-        h("span", "sb-name", `${T.name} <span class="muted">${T.short}</span>`),
-        seg(ROAD_MODES.map((m) => ({ html: MODE[m].icon, on: st.mode === m, title: MODE[m].title + " (Tab)", fn: () => app.setTool({ mode: m }) }))),
-      );
+      items.push(sec("Mode", seg(ROAD_MODES.map((m) => ({ html: MODE[m].icon, on: st.mode === m, title: MODE[m].title + " (Tab)", fn: () => app.setTool({ mode: m }), disabled: m === "grid" && !g.featureUnlocked("grid") })))));
       if (st.mode === "replace") {
-        items.push(seg([
-          { html: "Change type", on: !st.reverse, title: `Turn a road into ${T.name}`, fn: () => app.setTool({ reverse: false }) },
+        items.push(sec("Replace", seg([
+          { html: "Type", on: !st.reverse, title: `Turn a road into ${T.name}`, fn: () => app.setTool({ reverse: false }) },
           { html: "Reverse", on: st.reverse, title: "Flip a one-way road (Shift+click)", fn: () => app.setTool({ reverse: true }) },
-        ]));
+        ])));
       } else {
         if (st.mode !== "grid") {
           const off = Math.round(app.parallelOffset());
-          const par = seg([
-            { html: ICON.parallel, on: st.parallel, title: T.bwd === 0 ? "Parallel: also build the opposite carriageway alongside" : "Parallel: also build a second road alongside", fn: () => app.setTool({ parallel: !st.parallel }) },
-            ...(st.parallel ? [
-              { html: "−", on: false, title: "Closer ([)", fn: () => app.nudgeParallel(-1) },
-              { html: `${off} m`, on: false, title: "Distance between the two road centres (click to reset)", fn: () => app.setTool({ parOffset: null }), cls: "val" },
-              { html: "+", on: false, title: "Further apart (])", fn: () => app.nudgeParallel(1) },
-            ] : []),
-          ]);
-          items.push(par);
+          const par = seg([{ html: ICON.parallel, on: st.parallel, title: T.bwd === 0 ? "Parallel: also build the opposite carriageway" : "Parallel: also build a second road alongside", fn: () => app.setTool({ parallel: !st.parallel }) }]);
+          items.push(st.parallel
+            ? sec("Parallel", par, stepper(`${off} m`, "", () => app.nudgeParallel(-1), () => app.nudgeParallel(1), ["Closer ([)", "Further apart (])"], [false, false]))
+            : sec("Parallel", par));
         }
-        const snapBtn = h("button", "seg-btn snap-btn", ICON.magnet + ICON.caret);
-        const anyOff = st.snapOff.geometry || st.snapOff.guides || st.snapOff.netSide;
-        snapBtn.classList.toggle("on", !this.snapMenu.hidden);
-        snapBtn.classList.toggle("partial", anyOff);
-        snapBtn.title = "Snapping";
-        snapBtn.setAttribute("aria-label", "Snapping options");
-        snapBtn.setAttribute("aria-expanded", String(!this.snapMenu.hidden));
-        snapBtn.onclick = () => { this.snapMenu.hidden = !this.snapMenu.hidden; this.renderSubbar(); };
-        if (!this.snapMenu.hidden) requestAnimationFrame(() => {
-          // sit over the snapping button, kept on screen
-          const host = this.snapMenu.parentElement!.getBoundingClientRect(), r = snapBtn.getBoundingClientRect();
-          const w = this.snapMenu.offsetWidth, vw = document.documentElement.clientWidth;
-          const left = Math.max(8, Math.min(vw - w - 8, r.left + r.width / 2 - w / 2));
-          this.snapMenu.style.left = `${left - host.left}px`;
-        });
-        items.push(snapBtn, ...elevation());
-        this.renderSnapMenu();
+        items.push(elevation());
+        const snap = h("div", "snaps");
+        const opts: { k: "geometry" | "guides" | "netSide" | "length"; label: string; on: boolean }[] = [
+          { k: "geometry", label: "Existing roads", on: !st.snapOff.geometry },
+          { k: "guides", label: "Guidelines", on: !st.snapOff.guides },
+          { k: "netSide", label: "Road sides", on: !st.snapOff.netSide },
+          { k: "length", label: "8 m lengths", on: st.snapLength },
+        ];
+        for (const o of opts) {
+          const l = h("label", "snap-row", `<input type="checkbox" ${o.on ? "checked" : ""}><span>${o.label}</span>`);
+          const cb = l.querySelector("input")!;
+          cb.setAttribute("aria-label", `Snap to ${o.label.toLowerCase()}`);
+          cb.onchange = () => {
+            if (o.k === "length") app.setTool({ snapLength: cb.checked });
+            else app.setTool({ snapOff: { ...st.snapOff, [o.k]: !cb.checked } });
+          };
+          snap.appendChild(l);
+        }
+        items.push(sec("Snapping", snap));
       }
-    } else if (st.tool === "roundabout") {
-      items.push(label("Size"), seg(([1, 2, 3, 4] as RoundaboutSize[]).map((n) => {
-        const R = ROUNDABOUTS[n];
-        return { html: R.name, on: st.rbSize === n, title: `${R.name}: ${R.r * 2} m across, ${ROAD_TYPES[R.type].fwd}-lane ring`, fn: () => app.setTool({ rbSize: n }) };
-      })), ...elevation());
-    } else if (st.tool === "bulldoze") {
-      items.push(label("Elevations"), seg([null, 0, 1, 2, 3].map((l) => ({
-        html: l === null ? "All" : `${l} only`, on: st.bdzLevel === l, title: l === null ? "Remove roads at any height" : `Only remove roads at elevation ${l}`, fn: () => app.setTool({ bdzLevel: l }),
-      }))));
-    } else if (st.tool === "building" && st.kind) {
-      const T = BUILDING_TYPES[st.kind];
-      items.push(h("span", `sb-text zone-tag z-${T.zone}`, `${T.name}`), h("span", "sb-text muted", T.blurb));
-    } else if (st.tool === "junction") {
-      items.push(h("span", "sb-text", "Click a junction to add traffic lights or edit their phases"));
-    } else if (st.tool === "unlock") {
-      items.push(h("span", "sb-text", `${g.tileTokens} area unlock${g.tileTokens === 1 ? "" : "s"} left · click a darkened area next to yours`));
-    }
-    sb.append(...items);
-    sb.hidden = items.length === 0;
-    if (focusKey) [...sb.querySelectorAll<HTMLElement>("[aria-label]")].find((e) => e.getAttribute("aria-label") === focusKey)?.focus();
-  }
-
-  private renderSnapMenu() {
-    const app = this.app, st = app.st;
-    const opts: { k: "geometry" | "guides" | "netSide" | "length"; label: string; on: boolean }[] = [
-      { k: "geometry", label: "Existing roads and junctions", on: !st.snapOff.geometry },
-      { k: "guides", label: "Guidelines and right angles", on: !st.snapOff.guides },
-      { k: "netSide", label: "Alongside other roads", on: !st.snapOff.netSide },
-      { k: "length", label: "Lengths in 8 m steps", on: st.snapLength },
-    ];
-    this.snapMenu.innerHTML = `<div class="sm-head">Snapping</div>` + opts.map((o) =>
-      `<label class="sm-row"><input type="checkbox" data-k="${o.k}" ${o.on ? "checked" : ""}><span>${o.label}</span></label>`).join("") +
-      `<div class="sm-foot">Hold Shift for 15° steps</div>`;
-    for (const cb of this.snapMenu.querySelectorAll<HTMLInputElement>("input")) {
-      cb.onchange = () => {
-        const k = cb.dataset.k!;
-        if (k === "length") app.setTool({ snapLength: cb.checked });
-        else app.setTool({ snapOff: { ...st.snapOff, [k]: !cb.checked } });
+    } else if (st.tool === "zone") {
+      const ZMODE: Record<ZoneMode, { icon: string; title: string }> = {
+        fill: { icon: ICON.fill, title: "Fill: click to zone a whole block of empty cells" },
+        brush: { icon: ICON.brush, title: "Paint: drag over cells" },
+        marquee: { icon: ICON.marquee, title: "Marquee: drag a rectangle" },
       };
+      items.push(sec("Mode", seg((["fill", "brush", "marquee"] as ZoneMode[]).map((m) => ({ html: ZMODE[m].icon, on: st.zoneMode === m, title: ZMODE[m].title, fn: () => app.setTool({ zoneMode: m }) })))));
+      if (st.zoneMode === "brush") items.push(sec("Size", seg(BRUSH_SIZES.map((s) => ({ html: s.label, on: st.brush === s.r, title: `Brush size ${s.label}`, fn: () => app.setTool({ brush: s.r }) })))));
+      items.push(sec("Unzone", seg([{ html: ICON.erase, on: st.erase, title: "Unzone (or use the right mouse button)", fn: () => app.setTool({ erase: !st.erase }) }])));
+    } else if (st.tool === "roundabout") {
+      items.push(elevation());
+    } else if (st.tool === "bulldoze") {
+      items.push(sec("Elevation", seg([null, 0, 1, 2, 3].map((l) => ({
+        html: l === null ? "All" : l === 0 ? "Ground" : `${l * LEVEL_H} m`, on: st.bdzLevel === l, title: l === null ? "Remove roads at any height" : `Only remove roads at ${l === 0 ? "ground level" : `${l * LEVEL_H} m`}`, fn: () => app.setTool({ bdzLevel: l }),
+      })), "wrap")));
+    } else if (st.tool === "junction") {
+      items.push(h("p", "to-text", "Click a junction to add traffic lights or edit their phases."));
+    } else if (st.tool === "unlock") {
+      const left = g.tileSlotsLeft;
+      items.push(h("p", "to-text", left > 0
+        ? `Next tile ${formatMoney(g.nextTilePrice)} · ${left} more allowed. Click a darkened tile next to your land.`
+        : "Reach the next milestone to buy more land."));
     }
+    if (!items.length) { el.hidden = true; return; }
+    el.hidden = false;
+    el.append(h("header", "to-head", "Tool options"), ...items);
+    if (focusKey) [...el.querySelectorAll<HTMLElement>("[aria-label]")].find((e) => e.getAttribute("aria-label") === focusKey)?.focus();
   }
 
-  /** Keep the north arrow in step with the view; it only shows while the map is turned. */
   compassAngle(rot: number) {
     if (Math.abs(rot - this.compassRot) < 1e-4) return;
     this.compassRot = rot;
@@ -376,66 +523,79 @@ export class Hud {
     (this.compass.firstElementChild as HTMLElement | null)?.style.setProperty("transform", `rotate(${-rot}rad)`);
   }
 
-  /** Cheap periodic update: money, objectives, open panels. */
+  /** Cheap periodic update: the bar, tips, open panels. */
   tick(force = false) {
     const g = this.app.game;
     if (!g) return;
-    this.money.textContent = formatMoney(g.money);
-    this.money.classList.toggle("low", g.money < 500);
-    const L = levelDef(g.level);
-    const app = this.app;
-    const key = JSON.stringify([g.level, g.objectives, app.focus, this.objCollapsed]);
-    if (force || key !== this.lastObj) {
-      this.lastObj = key;
-      const rows = g.objectives.map((o) => {
-        const mag = o.id === "placed" ? "" : `<button class="mag ${app.focus === o.id ? "on" : ""}" data-f="${o.id}" title="Show what holds this back" aria-label="Highlight ${o.label}">${ICON.magnifier}</button>`;
-        const sub = o.sub && !o.done ? `<div class="obj-sub"><span>${o.sub.label}</span><span class="bad">−${o.sub.value}</span></div>` : "";
-        return `<div class="obj ${o.done ? "done" : ""}">${o.done ? ICON.check : ICON.open}<span class="obj-label">${o.label}</span><span class="obj-val ${o.good === null ? "" : o.good ? "good" : "bad"}">${o.value}</span>${mag}</div>${sub}`;
-      }).join("");
-      const done = g.objectives.filter((o) => o.done).length;
-      const nx = g.objectives.find((o) => !o.done);
-      const next = nx ? `<div class="obj-next"><span class="obj-label">${nx.label}</span><span class="obj-val ${nx.good === null ? "" : nx.good ? "good" : "bad"}">${nx.value}</span></div>` : "";
-      this.objCard.classList.toggle("folded", this.objCollapsed);
-      this.objCard.innerHTML = `<header><button class="obj-head" aria-expanded="${!this.objCollapsed}" title="${this.objCollapsed ? "Show" : "Hide"} goals">City Level ${g.level}<span class="obj-count">${done}/${g.objectives.length}</span>${ICON.caret}</button></header>${this.objCollapsed ? next : rows}`;
-      (this.objCard.querySelector(".obj-head") as HTMLButtonElement).onclick = () => { this.objCollapsed = !this.objCollapsed; this.tick(true); };
-      for (const b of this.objCard.querySelectorAll<HTMLButtonElement>(".mag")) b.onclick = () => app.setFocus(b.dataset.f as "trips" | "sat" | "flow");
+    const st = g.people.stats;
+    const M = MILESTONES[g.milestone], N = MILESTONES[g.milestone + 1];
+    const prog = N ? Math.max(0, Math.min(1, (st.population - M.pop) / (N.pop - M.pop))) : 1;
+    const key = [g.cityName, g.milestone, Math.round(prog * 100)].join("|");
+    if (force || this.cityName.dataset.k !== key) {
+      this.cityName.dataset.k = key;
+      this.cityName.innerHTML = `<b>${escapeHtml(g.cityName)}</b><span class="cb-ms"><span>${M.name}</span><i style="--p:${prog}"></i></span>`;
+      this.cityName.setAttribute("aria-label", `${g.cityName}, ${M.name}. ${N ? `${Math.round(prog * 100)}% of the way to ${N.name}` : "Final milestone"}. Open progression`);
     }
-    // tutorial / level note
-    const tips = this.tips();
-    if (tips && !this.tutHidden.has(g.level)) {
-      this.tut.hidden = false;
-      if (this.tut.dataset.k !== tips.key) {
-        this.tut.dataset.k = tips.key;
-        this.tut.innerHTML = `<button class="close" aria-label="Hide tips">${ICON.close}</button><p>${tips.html}</p>`;
-        (this.tut.querySelector(".close") as HTMLButtonElement).onclick = () => { this.tutHidden.add(g.level); this.tut.hidden = true; };
-      }
-    } else this.tut.hidden = true;
-    // the tool the tip talks about pulses until it is picked; on narrow screens scroll it into view
-    const hint = this.tut.hidden ? "" : tips?.key === "1a" ? "road:street" : tips?.key === "1b" ? "kind:" : "";
-    let first: HTMLButtonElement | null = null;
-    for (const [k, b] of this.toolBtns) {
-      const on = !!hint && (hint.endsWith(":") ? k.startsWith(hint) && !b.hidden && !b.disabled : k === hint);
-      b.classList.toggle("hint", on);
-      if (on && !first) first = b;
+    this.popEl.innerHTML = `${ICON.people}<span>${fmtNum(st.population)}</span>`;
+    const net = g.netIncome;
+    this.moneyBtn.innerHTML = `<b class="${g.money < 0 ? "bad" : ""}">${formatMoney(Math.round(g.money))}</b><span class="${net >= 0 ? "good" : "bad"}">${signed(net)}/h</span>`;
+    this.moneyBtn.setAttribute("aria-label", `Money ${formatMoney(Math.round(g.money))}, ${signed(net)} per hour. Open economy`);
+    const hr = g.hour, mm = Math.floor((hr % 1) * 60 / 10) * 10;
+    this.clockEl.innerHTML = `<b>${String(Math.floor(hr)).padStart(2, "0")}:${String(mm).padStart(2, "0")}</b><span class="cb-day">Day ${g.day}</span>`;
+    this.clockEl.classList.toggle("night", hr < 6 || hr >= 21);
+    const bars = this.demandBtn.querySelectorAll<HTMLElement>(".dm i");
+    GROUPS.forEach((gp, i) => bars[i].style.setProperty("--v", String(g.demand[gp].v / 100)));
+    if (!this.demandPop.hidden) this.fillDemand();
+    this.renderTips();
+    if (this.panelKind === "building" && this.app.selected) {
+      if (!g.buildings.byId.has(this.app.selected.id)) { this.closeSelection(); this.app.selected = null; }
+      else this.fillBuilding(this.app.selected);
     }
-    if (first && this.lastHint !== hint) {
-      const t = this.toolbar, bl = first.offsetLeft, br = bl + first.offsetWidth;
-      if (bl < t.scrollLeft || br > t.scrollLeft + t.clientWidth) t.scrollTo({ left: bl - 12, behavior: "smooth" });
-    }
-    this.lastHint = hint;
-    void L;
-    if (this.panelKind === "building" && this.app.selected) this.fillBuilding(this.app.selected);
+    if (this.winKind) this.fillWin();
   }
 
-  private tips(): { key: string; html: string } | null {
+  private fillDemand() {
     const g = this.app.game;
-    const L = levelDef(g.level);
-    if (g.level === 1) {
-      if (g.net.segs.size === 0) return { key: "1a", html: "<b>Draw a street.</b> Pick <b>Street</b> in the toolbar, click to start and click again to finish. Keep clicking to continue the road; right-click steps back." };
-      if (g.remainingToPlace() > 0) return { key: "1b", html: "<b>Place your buildings.</b> Choose a building in the toolbar and click beside a street. Each one gets its own driveway." };
-      return { key: "1c", html: "<b>Keep traffic moving.</b> Residents drive to shops and work. Hold all four goals for a few seconds to reach the next level." };
+    const html = GROUPS.map((gp) => {
+      const d = g.demand[gp];
+      const fs = d.factors.filter((f) => f.v !== 0 || f.label.startsWith("Unlocks")).map((f) =>
+        `<li><span>${f.label}</span><b class="${f.v > 0 ? "good" : f.v < 0 ? "bad" : ""}">${f.v > 0 ? "+" : f.v < 0 ? "−" : ""}${Math.abs(f.v) || ""}</b></li>`).join("");
+      return `<div class="dp-row"><div class="dp-head"><i class="dm-${gp}"></i><span>${GROUP_NAME[gp]}</span><span class="dp-bar"><i class="dm-${gp}" style="width:${d.v}%"></i></span><b>${d.v}</b></div><ul>${fs}</ul></div>`;
+    }).join("");
+    if (this.demandPop.dataset.h !== html) {
+      this.demandPop.dataset.h = html;
+      this.demandPop.innerHTML = `<header>Zone demand</header><p class="muted small">Zone more of whatever is high: buildings only grow where there is demand.</p>${html}`;
     }
-    if (L.note) return { key: "n" + g.level, html: L.note };
+  }
+
+  private renderTips() {
+    const tip = this.tipFor();
+    const crowded = !!this.winKind && matchMedia("(max-width: 760px)").matches; // phones: one thing at the top at a time
+    if (!tip || this.tutHidden || this.panelKind || crowded) { this.tut.hidden = true; this.hint(null); return; }
+    this.tut.hidden = false;
+    if (this.tut.dataset.k !== tip.key) {
+      this.tut.dataset.k = tip.key;
+      this.tut.innerHTML = `<button class="close" aria-label="Hide tips">${ICON.close}</button><p>${tip.html}</p>`;
+      (this.tut.querySelector(".close") as HTMLButtonElement).onclick = () => { this.tutHidden = true; this.tut.hidden = true; this.hint(null); };
+    }
+    this.hint(tip.cat ?? null);
+  }
+
+  private hint(cat: string | null) {
+    for (const [k, b] of this.catBtns) b.classList.toggle("hint", k === cat && !b.classList.contains("on"));
+  }
+
+  private tipFor(): { key: string; html: string; cat?: string } | null {
+    const g = this.app.game;
+    let own = 0;
+    for (const s of g.net.segs.values()) if (ROAD_TYPES[s.type].allowsAccess) { own++; break; }
+    if (!own) return { key: "roads", cat: "roads", html: "<b>Connect to the highway.</b> Open <b>Roads</b>, pick <b>Street</b>, click on the highway to start, and click again to lay a road towards open land." };
+    let zoned = 0, jobsZoned = 0;
+    for (const c of g.zones.allCells()) if (c.zone) { zoned++; if (ZONE_GROUP[c.zone] !== "res") jobsZoned++; if (zoned > 40 && jobsZoned > 20) break; }
+    if (zoned < 10) return { key: "zone", cat: "zoning", html: "<b>Zone homes.</b> Open <b>Zoning</b>, pick <b>Low homes</b> and click beside your street. Houses grow when there is demand." };
+    if (jobsZoned < 8) return { key: "jobs", cat: "zoning", html: "<b>Zone jobs.</b> New residents need work and shops. Zone some <b>Industry</b> and <b>Low shops</b>, away from homes if you can: factories lower land value." };
+    if (g.people.stats.population < 60) return { key: "grow", html: "<b>Watch the demand bars</b> at the bottom right. Zone more of whatever is high. Trucks bring goods from the highway; keep the road to it flowing." };
+    if (g.milestone === 0) return { key: "ms", html: `<b>Grow to ${MILESTONES[1].pop} people</b> to reach ${MILESTONES[1].name}: it unlocks avenues, roundabouts and traffic lights. Progression (P) shows what's next.` };
     return null;
   }
 
@@ -479,47 +639,216 @@ export class Hud {
     this.sfx.play(k);
   }
 
-  levelUp(level: number, note?: string) {
-    const L = levelDef(level);
-    const gifts = Object.entries(L.give).filter(([, n]) => n).map(([k, n]) => `${n} × ${BUILDING_TYPES[k as BuildingKind].name}`);
-    this.banner.innerHTML = `<header>Level ${level - 1} complete</header>
-      <p class="sub">City Level ${level} unlocks</p>
-      <p class="gifts">${gifts.join(" · ")}</p>
-      <p class="gifts">+${formatMoney(L.money)} road budget${L.tiles ? ` · ${L.tiles} area unlock` : ""}</p>
-      ${note ? `<p class="note">${note}</p>` : ""}
+  /** A milestone was reached: what it unlocks, and the grant. */
+  milestone(index: number) {
+    const M = MILESTONES[index];
+    const unl: string[] = [...M.roads.map((r) => ROAD_TYPES[r].name), ...M.zones.map((z) => ZONES[z].name), ...M.features.map((f) => FEATURE_NAME[f])];
+    this.banner.innerHTML = `<header>${M.name}</header>
+      <p class="sub">Milestone reached · ${fmtNum(M.pop)} people</p>
+      ${unl.length ? `<p class="gifts">Unlocked: ${unl.join(" · ")}</p>` : ""}
+      <p class="gifts">+${formatMoney(M.grant)} grant · ${M.tiles} more map tile${M.tiles === 1 ? "" : "s"} to buy</p>
       <button class="btn primary">Continue</button>`;
     this.banner.hidden = false;
     this.banner.classList.remove("in");
     void this.banner.offsetWidth;
     this.banner.classList.add("in");
-    this.root.classList.add("banner-up");
     const ok = this.banner.querySelector("button") as HTMLButtonElement;
-    ok.onclick = () => { this.banner.hidden = true; this.root.classList.remove("banner-up"); };
+    ok.onclick = () => { this.banner.hidden = true; };
     requestAnimationFrame(() => ok.focus({ preventScroll: true }));
     this.sfx.play("level");
     this.refresh();
   }
 
-  // ---------------------------------------------------------------- panels
+  // ---------------------------------------------------------------- back / Esc
 
-  /** Close the snapping menu if it is open (Esc). */
-  closeMenu(): boolean {
-    if (this.snapMenu.hidden) return false;
-    this.snapMenu.hidden = true;
-    this.renderSubbar();
+  /** One step back, the way Esc works: popups, dialogs, panels, the tool, the asset menu. False when there was nothing to close. */
+  back(): boolean {
+    if (!this.demandPop.hidden) { this.demandPop.hidden = true; this.demandBtn.setAttribute("aria-expanded", "false"); return true; }
+    if (!this.banner.hidden) { this.banner.hidden = true; return true; }
+    if (!this.modal.hidden) { this.closeModal(); return true; }
+    if (this.panelKind) { this.closeSelection(); this.app.selected = null; return true; }
+    if (this.winKind) { this.closeWin(); return true; }
+    if (this.app.st.tool !== "inspect") { this.cat = null; this.app.setTool({ tool: "inspect" }); return true; }
+    if (this.cat) { this.cat = null; this.refresh(); return true; }
+    return false;
+  }
+
+  /** Called when the tool changes away from inspecting: the selection panel gives way. */
+  closePanels(): boolean {
+    const was = !!this.panelKind;
+    this.closeSelection();
+    return was;
+  }
+
+  private closeSelection() {
+    this.panel.hidden = true;
+    this.panelKind = null;
+    this.lastPanel = "";
+  }
+
+  private closeModal() {
+    this.modal.hidden = true;
+    this.modal.innerHTML = "";
+    if (this.resumeOnClose) { this.resumeOnClose = false; if (this.app.game.paused) this.app.togglePause(); }
+  }
+
+  // ---------------------------------------------------------------- windows (top left)
+
+  toggleWin(k: WinId) {
+    if (this.winKind === k) { this.closeWin(); return; }
+    this.winKind = k;
+    this.lastWin = "";
+    this.win.hidden = false;
+    if (k === "transport" && this.app.overlay !== "flow") this.app.setOverlay("flow");
+    this.fillWin();
+    this.refresh();
+  }
+
+  private closeWin() {
+    if (this.winKind === "transport" && this.app.overlay === "flow") this.app.setOverlay("flow");
+    this.winKind = null;
+    this.win.hidden = true;
+    this.lastWin = "";
+    this.refresh();
+  }
+
+  private setWin(title: string, html: string): boolean {
+    const full = `<header class="win-head"><b>${title}</b><button class="close" aria-label="Close ${title}">${ICON.close}</button></header><div class="win-body">${html}</div>`;
+    if (full === this.lastWin) return false;
+    this.lastWin = full;
+    const body = this.win.querySelector(".win-body");
+    const scroll = body?.scrollTop ?? 0;
+    this.win.innerHTML = full;
+    this.win.querySelector(".win-body")!.scrollTop = scroll;
+    (this.win.querySelector(".close") as HTMLButtonElement).onclick = () => this.closeWin();
     return true;
   }
 
-  closePanels(): boolean {
-    const was = !this.panel.hidden || !this.modal.hidden;
-    this.panel.hidden = true;
-    this.modal.hidden = true;
-    this.panelKind = null;
-    return was;
+  private fillWin() {
+    const k = this.winKind;
+    if (k === "info") this.fillInfo();
+    else if (k === "progression") this.fillProgression();
+    else if (k === "economy") this.fillEconomy();
+    else if (k === "city") this.fillCity();
+    else if (k === "transport") this.fillTransport();
+  }
+
+  private fillInfo() {
+    const app = this.app;
+    const rows = OVERLAYS.map((o) => `<button class="iv ${app.overlay === o.id ? "on" : ""}" data-id="${o.id}" aria-pressed="${app.overlay === o.id}"><span class="ov-dot ov-${o.id}"></span><span><b>${o.label}</b><span class="small muted">${o.blurb}</span></span></button>`).join("");
+    if (!this.setWin("Info views", `<div class="iv-list">${rows}</div><div class="legend">${this.legendHtml()}</div>`)) return;
+    for (const b of this.win.querySelectorAll<HTMLButtonElement>(".iv")) b.onclick = () => { app.setOverlay(b.dataset.id as OverlayId); this.sfx.play("click"); this.fillInfo(); };
+  }
+
+  private legendHtml(): string {
+    const o = this.app.overlay;
+    if (o === "flow") return `<span class="lg lg-flow"></span><span>Free flowing</span><span>Jammed</span>`;
+    if (o === "landvalue") return `<span class="lg lg-sat"></span><span>Low</span><span>High</span>`;
+    if (o === "level") return `<span class="lg lg-level"></span><span>Level 1</span><span>Level 5</span>`;
+    if (o === "problems") return `<span class="lg lg-prob"></span><span>Has a problem</span><span>Fine</span>`;
+    if (o === "zones") return GROUPS.map((gp) => `<span class="lg-key"><i class="dm-${gp}"></i>${GROUP_NAME[gp]}</span>`).join("");
+    return "";
+  }
+
+  private fillEconomy() {
+    const g = this.app.game;
+    const B = g.budget;
+    const inc = GROUPS.map((gp) => [GROUP_NAME[gp], B.income[gp]] as [string, number]);
+    const totalIn = inc.reduce((a, [, v]) => a + v, 0);
+    const totalOut = B.expense.roads + B.expense.services + B.expense.loans;
+    const spark = sparkline(g.history.map((x) => x.money), "Money");
+    const tax = GROUPS.map((gp) => `<div class="tax-row"><span>${GROUP_NAME[gp]}</span>
+      <button class="dur" data-g="${gp}" data-d="-1" aria-label="Lower ${GROUP_NAME[gp]} tax">−</button><b>${g.tax[gp]}%</b><button class="dur" data-g="${gp}" data-d="1" aria-label="Raise ${GROUP_NAME[gp]} tax">+</button></div>`).join("");
+    const html = `<p class="win-sub">Per game hour</p>
+      <dl class="facts money-rows">${inc.map(([k, v]) => `<dt>${k} taxes</dt><dd class="good">${signed(v)}</dd>`).join("")}
+      <dt>Road upkeep</dt><dd class="bad">${signed(-B.expense.roads)}</dd>
+      <dt class="tot">Balance</dt><dd class="tot ${totalIn - totalOut >= 0 ? "good" : "bad"}">${signed(totalIn - totalOut)}</dd></dl>
+      ${spark}
+      <h3 class="sub-h">Tax rates</h3>
+      <p class="muted small">Higher taxes earn more but lower demand for that zone.</p>
+      ${tax}`;
+    if (!this.setWin("Economy", html)) return;
+    for (const b of this.win.querySelectorAll<HTMLButtonElement>(".tax-row .dur")) {
+      b.onclick = () => {
+        const gp = b.dataset.g as ZoneGroup;
+        g.tax[gp] = Math.max(0, Math.min(30, g.tax[gp] + Number(b.dataset.d)));
+        this.fillEconomy();
+        this.sfx.play("click");
+      };
+    }
+  }
+
+  private fillProgression() {
+    const g = this.app.game;
+    const pop = g.people.stats.population;
+    const rows = MILESTONES.slice(1).map((M, k) => {
+      const i = k + 1;
+      const done = g.milestone >= i;
+      const cur = i === g.milestone + 1;
+      const unl = [...M.roads.map((r) => ROAD_TYPES[r].name), ...M.zones.map((z) => ZONES[z].short), ...M.features.map((f) => FEATURE_NAME[f])];
+      const p = cur ? Math.min(1, pop / M.pop) : done ? 1 : 0;
+      return `<li class="${done ? "done" : cur ? "cur" : ""}">
+        <div class="ms-top">${done ? ICON.check : ICON.open}<b>${M.name}</b><span class="muted">${fmtNum(M.pop)} people</span></div>
+        ${cur ? `<span class="bar"><i style="width:${Math.max(2, p * 100)}%"></i></span>` : ""}
+        <p class="small muted">${unl.length ? unl.join(" · ") + " · " : ""}${formatMoney(M.grant)} · +${M.tiles} tiles</p></li>`;
+    }).join("");
+    this.setWin("Progression", `<ul class="ms-list">${rows}</ul>`);
+  }
+
+  private fillCity() {
+    const g = this.app.game;
+    const s = g.people.stats;
+    let jobs = 0, homes = 0;
+    for (const b of g.buildings.list) { if (!b.zone || b.built < 1) continue; if (ZONE_GROUP[b.zone] === "res") homes += b.cap; else jobs += b.cap; }
+    const [e0, e1, e2] = s.edu;
+    const edTot = Math.max(1, e0 + e1 + e2);
+    const html = `<dl class="facts">
+        <dt>Population</dt><dd>${fmtNum(s.population)}${s.movingIn ? ` <span class="muted">+${s.movingIn} moving in</span>` : ""}</dd>
+        <dt>Households</dt><dd>${fmtNum(s.households)} <span class="muted">of ${fmtNum(homes)} homes</span></dd>
+        <dt>Children · adults · seniors</dt><dd>${s.children} · ${s.adults} · ${s.seniors}</dd>
+        <dt>Employed</dt><dd>${fmtNum(s.employed)} <span class="muted">of ${fmtNum(s.workers)}</span></dd>
+        <dt>Unemployed</dt><dd class="${s.unemployed > s.workers * 0.1 ? "bad" : ""}">${fmtNum(s.unemployed)}</dd>
+        <dt>Commuters from outside</dt><dd>${fmtNum(s.commuters)}</dd>
+        <dt>Jobs</dt><dd>${fmtNum(jobs)}</dd>
+      </dl>
+      <h3 class="sub-h">Education</h3>
+      <span class="edu"><i style="flex:${e0 / edTot}"></i><i style="flex:${e1 / edTot}"></i><i style="flex:${e2 / edTot}"></i></span>
+      <p class="small muted">Basic ${e0} · High school ${e1} · University ${e2}</p>
+      ${sparkline(g.history.map((x) => x.pop), "Population")}`;
+    this.setWin("City information", html);
+  }
+
+  private fillTransport() {
+    const g = this.app.game;
+    const flow = g.traffic.flowScore();
+    let cars = 0, trucks = 0;
+    for (const v of g.traffic.vehicles) { if (v.truck) trucks++; else cars++; }
+    let len = 0;
+    for (const s of g.net.segs.values()) len += cubicLength(s);
+    const html = `<dl class="facts">
+        <dt>Traffic flow</dt><dd class="${flow < 0.6 ? "bad" : flow > 0.85 ? "good" : ""}">${Math.round(flow * 100)}%</dd>
+        <dt>Cars on the road</dt><dd>${fmtNum(cars)}</dd>
+        <dt>Trucks on the road</dt><dd>${fmtNum(trucks)}</dd>
+        <dt>Road network</dt><dd>${(len / 1000).toFixed(1)} km</dd>
+      </dl>
+      <p class="small muted">The map shows the Traffic flow view while this is open: red roads are jammed.</p>`;
+    this.setWin("Transportation", html);
+  }
+
+  // ---------------------------------------------------------------- selection panel (top right)
+
+  /** Set the panel's HTML only when it changed (keeps focus and hover steady under the live refresh). */
+  private setPanel(html: string): boolean {
+    if (html === this.lastPanel) return false;
+    this.lastPanel = html;
+    this.panel.innerHTML = `<button class="close" aria-label="Close">${ICON.close}</button>${html}`;
+    (this.panel.querySelector(".close") as HTMLButtonElement).onclick = () => { this.closeSelection(); this.app.selected = null; };
+    return true;
   }
 
   openBuilding(b: Building) {
     this.panelKind = "building";
+    this.lastPanel = "";
     this.panel.hidden = false;
     this.fillBuilding(b);
   }
@@ -527,36 +856,68 @@ export class Hud {
   private fillBuilding(b: Building) {
     const g = this.app.game;
     const T = BUILDING_TYPES[b.kind];
-    const fac = Object.entries(b.factors).filter(([k]) => !k.startsWith("_"));
-    const bars = fac.map(([k, v]) => {
-      const bad = k === "pollution" || k === "noise";
-      const val = bad ? v : Math.min(1, v);
-      const pct = Math.round(val * 100);
-      return `<div class="fac"><span>${FACTOR_LABEL[k] ?? k}</span><span class="bar ${bad ? "neg" : ""}"><i style="width:${bad && !pct ? 0 : Math.max(3, pct)}%"></i></span><span class="num">${bad ? (pct ? "−" + pct + "%" : "none") : pct + "%"}</span></div>`;
-    }).join("");
-    const residents = g.residents.filter((r) => r.home === b.id).length;
-    const workers = g.residents.filter((r) => r.job === b.id).length;
-    const facts: string[] = [];
-    if (T.residents) facts.push(`${residents} resident${residents === 1 ? "" : "s"}`);
-    if (T.jobs) facts.push(`${workers}/${T.jobs} jobs filled`);
-    if (T.consumes) facts.push(`${b.stock > 0 ? "Has" : "Waiting for"} ${CARGO_LABEL[T.consumes]}`);
-    if (T.produces) facts.push(`Ships ${CARGO_LABEL[T.produces]}`);
-    if (!b.access) facts.push(`<span class="bad">Not connected to a road</span>`);
-    this.panel.innerHTML = `<button class="close" aria-label="Close">${ICON.close}</button>
-      <header><span class="zone-tag z-${T.zone}">${ZONE_LABEL[T.zone]}</span>${T.name}</header>
-      <div class="sat"><span>Satisfaction</span><b class="${b.sat >= g.levelSatTarget ? "good" : "bad"}">${Math.round(b.sat * 100)}%</b></div>
-      ${bars}
-      <p class="facts">${facts.join(" · ")}</p>
-      <button class="btn pick">Pick up</button>`;
-    (this.panel.querySelector(".close") as HTMLButtonElement).onclick = () => this.closePanels();
-    const pick = this.panel.querySelector(".pick") as HTMLButtonElement | null;
-    if (pick) pick.onclick = () => { g.bulldoze([], [b.id]); this.closePanels(); this.app.selected = null; this.sfx.play("remove"); };
+    const rows: [string, string][] = [];
+    let status = "", statusCls = "";
+    if (!b.zone) {
+      if (!this.setPanel(`<header>${T.name}</header><p class="muted">${T.blurb}</p><button class="btn quiet danger demolish">Demolish</button>`)) return;
+      this.bindDemolish(b);
+      return;
+    }
+    const Z = ZONES[b.zone], grp = ZONE_GROUP[b.zone];
+    const health = (b as Building & { health?: number }).health ?? 1;
+    if (b.abandoned) { status = "Abandoned: it will be cleared and something new can grow"; statusCls = "bad"; }
+    else if (b.built < 1) { status = `Under construction · ${Math.round(b.built * 100)}%`; }
+    else if (b.problem) { status = b.problem; statusCls = "bad"; }
+    else { status = grp === "res" ? "Residents are happy here" : "Business is doing well"; statusCls = "good"; }
+    if (grp === "res") {
+      const hhs = g.people.hhAt.get(b.id) ?? [];
+      let res = 0, adults = 0, emp = 0, kids = 0, old = 0, moving = 0;
+      for (const hh of hhs) {
+        if (!hh.arrived) moving++;
+        for (const c of hh.members) {
+          res++;
+          if (c.age === 1) { adults++; if (c.job >= 0) emp++; } else if (c.age === 0) kids++; else old++;
+        }
+      }
+      rows.push(["Households", `${hhs.length} / ${b.cap}${moving ? ` <span class="muted">(${moving} moving in)</span>` : ""}`]);
+      rows.push(["Residents", `${res}${res ? ` <span class="muted">· ${kids} children, ${old} seniors</span>` : ""}`]);
+      if (adults) rows.push(["Working", `${emp} of ${adults} adults`]);
+    } else {
+      const w = g.people.workersAt(b.id);
+      rows.push(["Workers", `${w} / ${b.cap}${grp === "off" ? ` <span class="muted">· needs high school</span>` : ""}`]);
+      if (grp === "com") {
+        rows.push(["Goods in stock", stockBar(b.stock, 6)]);
+        rows.push(["Customers", `${Math.round(b.visits)} <span class="muted">recently</span>`]);
+      } else if (grp === "ind") {
+        rows.push(["Materials", stockBar(b.stock, 6)]);
+        rows.push(["Goods to ship", stockBar(b.out, 6)]);
+      }
+      if (b.built >= 1 && !b.abandoned) rows.push(["Efficiency", `${Math.round(health * 100)}%`]);
+    }
+    const next = b.level < 5 ? LEVEL_LV[b.level + 1] : null;
+    const lvBar = `<span class="bar lv"><i style="width:${Math.max(3, b.lv)}%"></i>${next ? `<em style="left:${next}%"></em>` : ""}</span>`;
+    rows.push(["Land value", `${lvBar}<span class="num">${Math.round(b.lv)}</span>`]);
+    if (!g.linkedOutside(b)) rows.push(["Highway", `<span class="bad">Not connected</span>`]);
+    const stars = Array.from({ length: 5 }, (_, i) => `<i class="${i < b.level ? "on" : ""}"></i>`).join("");
+    const html = `<header><span class="zone-tag" style="background:${hex(Z.color)}">${Z.short}</span>${Z.name}</header>
+      <div class="lvl-row"><span class="stars" role="img" aria-label="Level ${b.level} of 5">${stars}</span><span class="muted">Level ${b.level}${next ? ` · next at land value ${next}` : " · top level"}</span></div>
+      <p class="status ${statusCls}">${status}</p>
+      <dl class="facts">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
+      <button class="btn quiet danger demolish">Demolish</button>`;
+    if (this.setPanel(html)) this.bindDemolish(b);
+  }
+
+  private bindDemolish(b: Building) {
+    const g = this.app.game;
+    const btn = this.panel.querySelector(".demolish") as HTMLButtonElement | null;
+    if (btn) btn.onclick = () => { g.bulldoze([], [b.id]); this.closeSelection(); this.app.selected = null; this.sfx.play("remove"); };
   }
 
   openSignal(node: number) {
     this.panelKind = "signal";
     this.panelNode = node;
     this.panelPhase = 0;
+    this.lastPanel = "";
     this.panel.hidden = false;
     this.fillSignal();
   }
@@ -565,11 +926,10 @@ export class Hud {
     const g = this.app.game;
     const node = g.net.nodes.get(this.panelNode);
     const ng = g.net.nodeGeom.get(this.panelNode);
-    if (!node || !ng) { this.closePanels(); return; }
+    if (!node || !ng) { this.closeSelection(); return; }
     const plan = node.signal;
     const arms = ng.arms;
     const ph = plan ? plan.phases[Math.min(this.panelPhase, plan.phases.length - 1)] : null;
-    // connection diagram: arms as spokes, green when in the selected phase
     const spokes = arms.map((a) => {
       const on = ph?.arms.includes(a.seg);
       const x = 50 + a.dir.x * 40, y = 50 + a.dir.y * 40;
@@ -578,21 +938,22 @@ export class Hud {
         `<text x="${lx}" y="${ly}" font-size="10" font-weight="600" fill="#5d6168" text-anchor="middle">${compass(a.dir)}</text>`;
     }).join("");
     const diagram = `<svg viewBox="-8 -8 116 116" class="diagram" aria-hidden="true">${spokes}<circle cx="50" cy="50" r="9" fill="#fff" stroke="#8d939a" stroke-width="2"/></svg>`;
+    const sigOn = g.featureUnlocked("signals");
     let body = "";
     if (!plan) {
       body = `<p class="muted">Unsignalled: cars give way by road priority. Lights stop traffic in turns and help busy crossings.</p>
-        <button class="btn primary add-sig">Add traffic lights · ${formatMoney(SIGNAL_COST)}</button>`;
+        <button class="btn primary add-sig" ${sigOn ? "" : "disabled"}>${sigOn ? `Add traffic lights · ${formatMoney(SIGNAL_COST)}` : `Traffic lights unlock at ${MILESTONES.find((m) => m.features.includes("signals"))!.name}`}</button>`;
     } else {
       body = plan.phases.map((p, i) => `<div class="phase ${i === this.panelPhase ? "on" : ""}" data-i="${i}">
           <span class="ph-name">Phase ${i + 1}</span>
-          <span class="ph-arms">${arms.map((a, k) => `<button class="arm ${p.arms.includes(a.seg) ? "on" : ""}" data-i="${i}" data-seg="${a.seg}" title="Toggle this approach">${compass(a.dir)}${k >= 0 ? "" : ""}</button>`).join("")}</span>
+          <span class="ph-arms">${arms.map((a) => `<button class="arm ${p.arms.includes(a.seg) ? "on" : ""}" data-i="${i}" data-seg="${a.seg}" title="Toggle this approach">${compass(a.dir)}</button>`).join("")}</span>
           <span class="ph-dur"><button class="dur" data-i="${i}" data-d="-2" aria-label="Shorter">−</button><b>${p.dur}s</b><button class="dur" data-i="${i}" data-d="2" aria-label="Longer">+</button></span>
           ${plan.phases.length > 1 ? `<button class="ph-del" data-i="${i}" aria-label="Remove phase">${ICON.close}</button>` : ""}
         </div>`).join("") + `<div class="row"><button class="btn add-ph">+ Add phase</button><button class="btn quiet danger rm-sig">Remove lights</button></div>`;
     }
-    this.panel.innerHTML = `<button class="close" aria-label="Close">${ICON.close}</button><header>Junction</header>${diagram}${body}`;
+    this.lastPanel = "";
+    this.setPanel(`<header>Junction</header>${diagram}${body}`);
     const q = <T extends Element>(s: string) => [...this.panel.querySelectorAll<T & HTMLElement>(s)];
-    (this.panel.querySelector(".close") as HTMLButtonElement).onclick = () => this.closePanels();
     const set = (p: SignalPlan | null) => { if (!g.setSignal(this.panelNode, p)) this.toast("Not enough money", true); this.fillSignal(); };
     q(".add-sig").forEach((b) => (b.onclick = () => { set(g.defaultSignal(this.panelNode)); this.sfx.play("build"); }));
     q(".rm-sig").forEach((b) => (b.onclick = () => set(null)));
@@ -616,57 +977,132 @@ export class Hud {
     q(".ph-del").forEach((b) => (b.onclick = () => { const p = clonePlan(plan!); p.phases.splice(+b.dataset.i!, 1); this.panelPhase = 0; set(p); }));
   }
 
-  openSaves() {
-    const app = this.app;
-    const list = app.saves.list();
+  // ---------------------------------------------------------------- pause menu, saves
+
+  private showModal(html: string, label: string): HTMLElement {
     this.modal.hidden = false;
+    this.modal.innerHTML = `<div class="card dialog" role="dialog" aria-modal="true" aria-label="${label}">${html}</div>`;
+    this.modal.onclick = (e) => { if (e.target === this.modal) this.closeModal(); };
+    return this.modal.querySelector(".dialog") as HTMLElement;
+  }
+
+  /** The pause menu (Esc with nothing else open). The game stops while it is up. */
+  openPause() {
+    const app = this.app;
+    if (!app.game.paused) { app.togglePause(); this.resumeOnClose = true; }
+    const dlg = this.showModal(`<header class="pm-head">${escapeHtml(app.game.cityName)}<span class="muted">Paused</span></header>
+      <div class="pm-list">
+        <button class="pm resume">Resume</button>
+        <button class="pm save">Save game</button>
+        <button class="pm load">Load game</button>
+        <button class="pm keys">Controls</button>
+        <button class="pm new">New city</button>
+      </div>`, "Pause menu");
+    dlg.classList.add("pause");
+    const on = (s: string, fn: () => void) => { (dlg.querySelector(s) as HTMLButtonElement).onclick = () => { this.sfx.play("click"); fn(); }; };
+    on(".resume", () => this.closeModal());
+    on(".save", () => this.openSaves(true));
+    on(".load", () => this.openSaves(false));
+    on(".keys", () => this.openKeys());
+    on(".new", () => {
+      const b = dlg.querySelector(".new") as HTMLButtonElement;
+      if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Start a new city? Your city is autosaved"; b.classList.add("danger"); return; }
+      app.saves.autosave(app.game);
+      app.newGame(1 + Math.floor(Math.random() * 9999));
+      this.resumeOnClose = false;
+      this.closeModal();
+      this.tutHidden = false;
+      this.toast("New city. Your last one is in the autosaves.");
+    });
+    requestAnimationFrame(() => (dlg.querySelector(".resume") as HTMLButtonElement).focus());
+  }
+
+  private backButton(dlg: HTMLElement) {
+    const b = h("button", "btn quiet back", `${ICON.caret}<span>Back</span>`);
+    b.onclick = () => this.openPause();
+    dlg.prepend(b);
+  }
+
+  private openKeys() {
+    const dlg = this.showModal(`<header>Controls</header><dl class="keys">${KEYS.map(([k, v]) => `<dt><kbd>${k}</kbd></dt><dd>${v}</dd>`).join("")}</dl>`, "Controls");
+    this.backButton(dlg);
+  }
+
+  openSaves(saving = true) {
+    const app = this.app;
+    if (this.modal.hidden && !app.game.paused) { app.togglePause(); this.resumeOnClose = true; }
+    const list = app.saves.list();
     const g = app.game;
-    this.modal.innerHTML = `<div class="card dialog" role="dialog" aria-modal="true" aria-label="Saves">
-      <button class="close" aria-label="Close">${ICON.close}</button>
-      <header>Saves</header>
-      <form class="save-row"><input name="n" maxlength="40" autocomplete="off" aria-label="Save name" value="City Level ${g.level}"><button class="btn primary" type="submit">Save</button></form>
-      <ul class="save-list">${list.map((m) => `<li data-id="${m.id}">
+    const dlg = this.showModal(`<header>${saving ? "Save game" : "Load game"}</header>
+      ${saving ? `<form class="save-row"><input name="n" maxlength="40" autocomplete="off" aria-label="Save name" value="${escapeHtml(g.cityName)}"><button class="btn primary" type="submit">Save</button></form>` : ""}
+      <ul class="save-list">${list.map((m) => {
+        const old = (m.v ?? 1) < 2;
+        return `<li data-id="${m.id}">
           ${m.thumb ? `<img src="${m.thumb}" alt="" width="96" height="60">` : `<span class="thumb-empty"></span>`}
-          <span class="save-meta"><b>${escapeHtml(m.name)}</b><span>City Level ${m.level} · ${fmtTime(m.playtime)} playtime · ${m.residents} residents</span></span>
-          <button class="btn load">Load</button>${m.auto ? "" : `<button class="btn icon-btn del" aria-label="Delete save" title="Delete save">${ICON.bulldoze}</button>`}
-        </li>`).join("") || `<li class="muted">No saves yet. The game autosaves every minute.</li>`}</ul>
-      <div class="row"><button class="btn new">New city</button></div>
-    </div>`;
-    const dlg = this.modal.querySelector(".dialog") as HTMLElement;
-    (dlg.querySelector(".close") as HTMLButtonElement).onclick = () => this.closePanels();
-    this.modal.onclick = (e) => { if (e.target === this.modal) this.closePanels(); };
-    (dlg.querySelector("form") as HTMLFormElement).onsubmit = (e) => {
+          <span class="save-meta"><b>${escapeHtml(m.name)}</b><span>${old ? "Older version: can't be loaded" : `${MILESTONES[m.level]?.name ?? ""} · ${fmtNum(m.residents)} people · ${fmtTime(m.playtime)} played`}</span></span>
+          ${saving ? "" : `<button class="btn load" ${old ? "disabled" : ""}>Load</button>`}${m.auto ? "" : `<button class="btn icon-btn del" aria-label="Delete save" title="Delete save">${ICON.bulldoze}</button>`}
+        </li>`;
+      }).join("") || `<li class="muted">No saves yet. The game autosaves every minute.</li>`}</ul>`, saving ? "Save game" : "Load game");
+    this.backButton(dlg);
+    const form = dlg.querySelector("form") as HTMLFormElement | null;
+    if (form) form.onsubmit = (e) => {
       e.preventDefault();
       const name = ((dlg.querySelector("input") as HTMLInputElement).value || "City").trim();
       const m = app.saves.save(g, name);
       this.toast(m ? "Game saved" : "Couldn't save: browser storage is full", !m);
-      this.openSaves();
+      this.openSaves(true);
     };
     for (const li of dlg.querySelectorAll<HTMLLIElement>("li[data-id]")) {
-      (li.querySelector(".load") as HTMLButtonElement).onclick = () => {
+      const load = li.querySelector(".load") as HTMLButtonElement | null;
+      if (load) load.onclick = () => {
         const d = app.saves.load(li.dataset.id!);
         if (!d) { this.toast("That save is unreadable", true); return; }
-        app.loadGame(d);
-        this.closePanels();
+        try { app.loadGame(d); } catch { this.toast("That save is from an older version", true); return; }
+        this.resumeOnClose = false;
+        this.closeModal();
         this.toast("Loaded");
       };
       const del = li.querySelector(".del") as HTMLButtonElement | null;
       if (del) del.onclick = () => {
-        if (del.dataset.armed) { app.saves.remove(li.dataset.id!); this.openSaves(); return; }
+        if (del.dataset.armed) { app.saves.remove(li.dataset.id!); this.openSaves(saving); return; }
         del.dataset.armed = "1";
         del.classList.add("danger");
         del.innerHTML = "Delete?";
         setTimeout(() => { if (del.isConnected) { delete del.dataset.armed; del.classList.remove("danger"); del.innerHTML = ICON.bulldoze; } }, 2500);
       };
     }
-    (dlg.querySelector(".new") as HTMLButtonElement).onclick = () => {
-      app.saves.autosave(g);
-      app.newGame(1 + Math.floor(Math.random() * 9999));
-      this.closePanels();
-      this.toast("New city. Your last one is in the autosaves.");
-    };
-    (dlg.querySelector("input") as HTMLInputElement).focus();
+    (dlg.querySelector("input, .load:not(:disabled), .back") as HTMLElement | null)?.focus();
   }
+}
+
+function cubicLength(s: { c: { p0: V2; p1: V2; p2: V2; p3: V2 } }): number {
+  const { p0, p1, p2, p3 } = s.c;
+  let len = 0, px = p0.x, py = p0.y;
+  for (let i = 1; i <= 8; i++) {
+    const t = i / 8, u = 1 - t;
+    const x = u * u * u * p0.x + 3 * u * u * t * p1.x + 3 * u * t * t * p2.x + t * t * t * p3.x;
+    const y = u * u * u * p0.y + 3 * u * u * t * p1.y + 3 * u * t * t * p2.y + t * t * t * p3.y;
+    len += Math.hypot(x - px, y - py);
+    px = x; py = y;
+  }
+  return len;
+}
+
+function sparkline(vs: number[], what: string): string {
+  if (vs.length < 2) return "";
+  const lo = Math.min(...vs), hi = Math.max(...vs), span = Math.max(1, hi - lo);
+  const pts = vs.map((v, i) => `${(i / (vs.length - 1)) * 220},${38 - ((v - lo) / span) * 34}`).join(" ");
+  return `<svg class="spark" viewBox="0 -2 220 42" preserveAspectRatio="none" role="img" aria-label="${what} over the last ${vs.length} hours"><polyline points="${pts}" fill="none" stroke="#2373c4" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg><p class="muted small">${what}, last ${vs.length} hours</p>`;
+}
+
+function rbIcon(size: RoundaboutSize): string {
+  const r = 4 + size * 1.6, w = 1.6 + size * 0.5;
+  return `<svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true" focusable="false"><path d="M14 1 v${14 - r - 1} M14 ${14 + r + 1} V27 M1 14 h${14 - r - 1} M${14 + r + 1} 14 H27" stroke="#8d939a" stroke-width="3"/><circle cx="14" cy="14" r="${r}" fill="#cfe6b8" stroke="#5b6168" stroke-width="${w}"/></svg>`;
+}
+
+function stockBar(n: number, max: number): string {
+  const k = Math.max(0, Math.min(max, Math.round(n)));
+  return `<span class="pips" role="img" aria-label="${k} of ${max}">${Array.from({ length: max }, (_, i) => `<i class="${i < k ? "on" : ""}"></i>`).join("")}</span>`;
 }
 
 function clonePlan(p: SignalPlan): SignalPlan {
@@ -674,7 +1110,6 @@ function clonePlan(p: SignalPlan): SignalPlan {
 }
 
 function compass(d: V2): string {
-  // world y is south; arm dir points away from the junction
   const a = (Math.atan2(d.y, d.x) * 180) / Math.PI;
   const names = ["E", "SE", "S", "SW", "W", "NW", "N", "NE"];
   return names[((Math.round(a / 45) % 8) + 8) % 8];
@@ -683,5 +1118,3 @@ function compass(d: V2): string {
 function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
-
-

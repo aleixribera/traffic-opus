@@ -3,10 +3,18 @@ import { type V2, add, angleOf, cubicTangent, dist, dot, norm, rectCorners, rect
 import type { RoadNetwork } from "../roads/network";
 import { cubicClosest } from "../roads/planner";
 import type { Access } from "../sim/router";
+import type { ZoneId } from "./zones";
+
+export interface Lot {
+  block: string; // zone block key
+  col0: number; // first column
+  w: number; // columns
+  d: number; // rows
+}
 
 export interface Building {
   id: number;
-  kind: BuildingKind;
+  kind: BuildingKind; // model
   c: V2; // footprint centre
   rot: number; // angle of the frontage (road tangent)
   hw: number; // half frontage
@@ -14,17 +22,25 @@ export interface Building {
   front: V2; // driveway meets the kerb here
   access: Access | null; // null = cut off from the road network
   side: 1 | -1; // building side relative to the access seg's a->b direction
-  placedLevel: number;
+  /** Zoned building (grown by demand); undefined for placed ones. */
+  zone?: ZoneId;
+  lot?: Lot;
+  level: number; // 1-5
+  cap: number; // households (residential) or jobs
+  fit: number; // model scale
+  tall: number; // model height multiplier
+  built: number; // construction progress 0..1
+  abandoned: number; // sim time it was abandoned (0 = in use)
+  lv: number; // land value 0..100
+  upT: number; // seconds the land value has supported the next level
+  badT: number; // seconds the place has been failing
+  problem: string | null; // what's wrong, for the inspector and icons
   // simulation state
-  stock: number; // input stock (cargo units)
+  stock: number; // goods or materials in stock (cargo units)
   out: number; // produced cargo waiting to ship
   prodT: number;
-  workersPresent: number; // EWMA of staff on site
-  visits: number; // EWMA of customer arrivals per minute
-  shopTime: number; // EWMA of residents' trip time to shops (s)
-  workTime: number;
-  sat: number; // last computed satisfaction 0..1.2
-  factors: Record<string, number>;
+  visits: number; // decaying count of customers
+  born: number; // sim time it appeared
 }
 
 export interface BuildingMove {
@@ -147,15 +163,19 @@ export class Buildings {
     return pl;
   }
 
-  add(kind: BuildingKind, pl: Placement, level: number): Building {
+  add(kind: BuildingKind, pl: Placement, now = 0): Building {
     const T = BUILDING_TYPES[kind];
-    const b: Building = {
+    return this.insert({
       id: this.nextId++, kind, c: pl.c, rot: pl.rot, hw: T.w / 2, hd: T.d / 2, front: pl.front, access: pl.access, side: pl.side,
-      placedLevel: level, stock: T.consumes ? 1 : 0, out: 0, prodT: 0, workersPresent: 0, visits: 0, shopTime: -1, workTime: -1,
-      sat: 1, factors: {},
-    };
+      level: 1, cap: T.jobs, fit: 1, tall: 1, built: 1, abandoned: 0, lv: 0, upT: 0, badT: 0, problem: null,
+      stock: T.consumes ? 1 : 0, out: 0, prodT: 0, visits: 0, born: now,
+    });
+  }
+
+  insert(b: Building): Building {
     this.list.push(b);
     this.byId.set(b.id, b);
+    if (b.id >= this.nextId) this.nextId = b.id + 1;
     return b;
   }
 

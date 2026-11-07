@@ -1,29 +1,21 @@
 import {
-  BUILDING_TYPES, BULLDOZE_REFUND, START_TILES, TILE, ROAD_TYPES, SIGNAL_COST, SIM, roadWidth, type BuildingKind, type Cargo, type RoadTypeId,
+  BUILDING_TYPES, BULLDOZE_REFUND, START_TILES, TILE, ROAD_TYPES, SIGNAL_COST, SIM, roadWidth, type RoadTypeId,
 } from "../config";
-import { dist, type V2 } from "../core/math";
+import { add, dist, polyClosest, rectCorners, scale, sub, type V2 } from "../core/math";
 import { mulberry32 } from "../core/noise";
 import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/network";
 import {
-  applyTrim, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type Plan, type PlanError,
+  applyTrim, chainPoints, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type Plan, type PlanError,
 } from "../roads/planner";
 import { Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import { Terrain } from "../world/terrain";
 import type { Gateway } from "../world/gen";
 import { MOTORWAY_TYPE, carriageways, centrePoints, planMotorway, type MotorwayPlan } from "../world/motorway";
-import { Buildings, type Building, type BuildingMove, type Placement } from "./buildings";
-import { levelDef } from "./levels";
-
-export interface Resident {
-  id: number;
-  home: number;
-  job: number; // building id, -1 = none
-  state: "home" | "out" | "away" | "back";
-  t: number; // timer for the current state
-  trips: number; // completed outbound trips
-  at: number; // building id while away
-  lastWorkOk: number; // time of the last successful commute
-}
+import { Buildings, type Building, type BuildingMove } from "./buildings";
+import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, type LotTemplate } from "./growables";
+import { MILESTONES, milestoneFor, tilePrice, tileSlots, unlockedFeature, unlockedRoads, unlockedZones, type Milestone } from "./progression";
+import { DAY, HOUR, Society, estTime, type Port } from "./society";
+import { CELL, DEPTH, ZoneMap, type Block, type Cell, type ZoneGroup, type ZoneId } from "./zones";
 
 interface UndoEntry {
   label: string;
@@ -32,33 +24,30 @@ interface UndoEntry {
   added: Building[];
   removed: Building[];
   moved?: BuildingMove[]; // lots pushed back by a road widening
+  zones?: { p: V2; from: ZoneId | null; to: ZoneId | null }[];
 }
-
-export interface Objective {
-  id: "placed" | "trips" | "sat" | "flow";
-  label: string;
-  done: boolean;
-  value: string; // "14 to go" / "93.4%"
-  good: boolean | null; // null: can't be measured yet (shown neutral)
-  sub?: { label: string; value: string }; // biggest satisfaction drag
-}
-
-export const FACTOR_LABEL: Record<string, string> = {
-  commercial: "Access to nearby commercial",
-  work: "Access to nearby workplaces",
-  staff: "Access to workers/customers",
-  input: "Access to input resources",
-  pollution: "Air pollution",
-  noise: "Road noise",
-};
 
 export type GameEvent =
   | { t: "roads"; cs: ChangeSet }
   | { t: "buildings" }
-  | { t: "level"; level: number; note?: string }
+  | { t: "zones" }
+  | { t: "milestone"; index: number }
   | { t: "money" }
   | { t: "tiles" }
   | { t: "toast"; msg: string };
+
+export interface DemandFactor { label: string; v: number }
+export interface Demand { v: number; factors: DemandFactor[] }
+
+export interface Budget {
+  income: Record<"res" | "com" | "ind" | "off", number>;
+  expense: Record<"roads" | "services" | "loans", number>;
+}
+
+/** A truck load not simulated as a vehicle, arriving at a set time. */
+interface VirtualCargo { t: number; to: number; cargo: "goods" | "materials" }
+
+const GROUPS: ZoneGroup[] = ["res", "com", "ind", "off"];
 
 export class Game {
   seed: number;
@@ -66,70 +55,88 @@ export class Game {
   net = new RoadNetwork();
   traffic: Traffic;
   buildings: Buildings;
-  residents: Resident[] = [];
-  private residentById = new Map<number, Resident>();
-  private nextResident = 1;
+  zones: ZoneMap;
+  people: Society;
   money = 0;
-  level = 1;
-  inventory: Partial<Record<BuildingKind, number>> = {};
   tiles = new Set<string>();
-  tileTokens = 0;
   time = 0;
   playtime = 0;
   speed = 1;
   paused = false;
+  readonly dt = SIM.dt;
+  milestone = 0;
+  cityName = "Larkfield";
+  tax: Record<ZoneGroup, number> = { res: 10, com: 10, ind: 10, off: 10 };
+  demand: Record<ZoneGroup, Demand> = { res: { v: 0, factors: [] }, com: { v: 0, factors: [] }, ind: { v: 0, factors: [] }, off: { v: 0, factors: [] } };
+  /** Per game hour: last complete hour, and the one being counted. */
+  budget: Budget = emptyBudget();
+  private budgetNow: Budget = emptyBudget();
+  /** Money at the end of each of the last 48 hours. */
+  history: { money: number; pop: number; jobs: number }[] = [];
+  rng: () => number;
   private acc = 0;
-  private rng: () => number;
   private undoStack: UndoEntry[] = [];
   private redoStack: UndoEntry[] = [];
   private listeners: ((e: GameEvent) => void)[] = [];
-  private objTimer = 0;
-  private allGoodFor = 0;
-  private jobTimer = 0;
-  objectives: Objective[] = [];
+  private tickT = 0;
+  private hourT = 0;
+  private cargoQ: VirtualCargo[] = [];
+  private ordered = new Map<number, number>(); // building id -> loads on their way
   failedTrips = 0;
-  enRoute = new Map<number, number>(); // consumer building id -> trucks heading there
   readonly world: BuildWorld;
-  /** Outside cities around the region. */
   gateways: Gateway[] = [];
   motorway: MotorwayPlan | null = null;
+  /** Points where traffic enters (entries) and leaves (exits) the region. */
+  entries: Port[] = [];
+  exits: Port[] = [];
+  private borderPts: { gateIn: number; gateOut: number; inP: V2; outP: V2 }[] = [];
+  private comp = new Map<number, number>(); // node id -> connected component
+  private compVersion = -1;
+  private shopCache: Building[] | null = null;
+  private candCache = new Map<ZoneGroup, Cell[]>();
+  private candVersion = -1;
+  /** Roads whose use is blocked (no route); shown as notifications. */
+  noRouteAt = new Map<number, number>();
 
   constructor(seed = 7) {
     this.seed = seed;
     this.rng = mulberry32(seed * 31 + 5);
     this.terrain = new Terrain(seed);
-    // the region: outside cities and the motorway that links the start to two of them; its corridor is carved
-    // through hills before any terrain is generated
     this.gateways = this.terrain.gen.gateways();
     this.motorway = planMotorway(this.terrain.gen, this.gateways);
-    if (this.motorway) this.terrain.gen.corridors.add(centrePoints(this.motorway.prims, 40));
+    if (this.motorway) {
+      this.mwPts = centrePoints(this.motorway.prims, 40);
+      this.terrain.gen.corridors.add(this.mwPts);
+    }
     this.buildings = new Buildings(this.net);
     this.traffic = new Traffic(this.net, {
       arrive: (v, now) => this.onArrive(v, now),
       fail: (trip, reason) => this.onFail(trip, reason),
+      exits: () => this.exits.map((p) => p.a),
     });
     for (const [i, j] of START_TILES) this.tiles.add(`${i},${j}`);
-    const L = levelDef(1);
-    this.money = L.money;
-    this.inventory = { ...L.give };
-    this.tileTokens = L.tiles;
+    this.money = 60000;
     const t = this.terrain;
+    this.zones = new ZoneMap(this.net, { isWater: (p) => t.isWater(p), isMountain: (p) => t.isMountain(p), owned: (p) => this.unlocked(p) });
+    this.people = new Society(this);
     this.world = {
       isWater: (p) => t.isWater(p),
       isMountain: (p) => t.isMountain(p),
       inBounds: (p) => t.inBounds(p, 2),
-      unlocked: (p) => this.unlocked(p),
-      buildingsHit: (pts, hw) => this.buildings.hit(pts, hw),
+      unlocked: () => true, // roads can go anywhere (CS2: building needs owned land, roads don't)
+      buildingsHit: (pts, hw) => this.buildings.hit(pts, hw).filter((id) => !this.buildings.byId.get(id)?.zone),
       money: () => this.money,
     };
     if (this.motorway) this.layMotorway(this.motorway);
-    this.evalObjectives();
+    this.zones.rebuildAll();
+    this.updateOutside();
   }
 
   /** Build the pre-built motorway's two carriageways (not undoable; free). */
   private layMotorway(plan: MotorwayPlan) {
+    const cws = carriageways(plan);
     this.applyRoads(() => {
-      for (const cw of carriageways(plan)) {
+      for (const cw of cws) {
         let prev = -1;
         for (const pc of cw.pieces) {
           const a = prev >= 0 ? prev : this.net.addNode(pc.c.p0, pc.h0);
@@ -139,6 +146,56 @@ export class Game {
         }
       }
     });
+    // border points: where each carriageway crosses a ring round the start (the region's simulated edge)
+    const R = 2400;
+    cws.forEach((cw, k) => {
+      const pts: V2[] = [];
+      for (const pc of cw.pieces) for (let i = 0; i <= 8; i++) {
+        const u = i / 8, w = 1 - u, c = pc.c;
+        pts.push({ x: w * w * w * c.p0.x + 3 * w * w * u * c.p1.x + 3 * w * u * u * c.p2.x + u * u * u * c.p3.x, y: w * w * w * c.p0.y + 3 * w * w * u * c.p1.y + 3 * w * u * u * c.p2.y + u * u * u * c.p3.y });
+      }
+      const first = pts.findIndex((p) => Math.hypot(p.x, p.y) < R);
+      let last = -1;
+      for (let i = pts.length - 1; i >= 0; i--) if (Math.hypot(p0(pts[i]), p1(pts[i])) < R) { last = i; break; }
+      if (first < 0 || last < 0) return;
+      const near = (p: V2) => this.gateways.reduce((b, g) => (dist(g.p, p) < dist(b.p, p) ? g : b), this.gateways[0]);
+      this.borderPts.push({ gateIn: near(pts[0]).id, gateOut: near(pts[pts.length - 1]).id, inP: pts[first], outP: pts[last] });
+      void k;
+    });
+  }
+
+  /** Find the motorway segs at the border points (they change when the player builds ramps). */
+  private updateOutside() {
+    const at = (p: V2, gate: number): Port | null => {
+      for (const id of this.net.segsNear(p.x - 30, p.y - 30, p.x + 30, p.y + 30)) {
+        const s = this.net.segs.get(id)!;
+        if (ROAD_TYPES[s.type].bwd > 0) continue;
+        const g = this.net.segGeom.get(id)!;
+        const c = polyClosest(g.center, p);
+        if (c.d < 4) return { gate, a: { seg: id, s: c.s, p }, side: 1 };
+      }
+      return null;
+    };
+    this.entries = [];
+    this.exits = [];
+    for (const bp of this.borderPts) {
+      const i = at(bp.inP, bp.gateIn), o = at(bp.outP, bp.gateOut);
+      if (i) this.entries.push(i);
+      if (o) this.exits.push(o);
+    }
+  }
+
+  /** The entry point that reaches `seg`, if any. */
+  entryFor(seg: number): Port | null {
+    return this.entries.find((p) => this.connected(p.a.seg, seg)) ?? null;
+  }
+
+  exitFor(seg: number): Port | null {
+    return this.exits.find((p) => this.connected(p.a.seg, seg)) ?? null;
+  }
+
+  get hasOutside(): boolean {
+    return this.entries.length > 0;
   }
 
   on(fn: (e: GameEvent) => void) {
@@ -160,18 +217,51 @@ export class Game {
     return this.tiles.has(`${i},${j}`);
   }
 
+  get tileSlotsLeft(): number {
+    return tileSlots(this.milestone) - this.tiles.size;
+  }
+
+  get nextTilePrice(): number {
+    return tilePrice(this.tiles.size);
+  }
+
+  /** Why a tile can't be bought, or null if it can. */
+  tileBlock(i: number, j: number): string | null {
+    if (this.tiles.has(`${i},${j}`)) return "Already yours";
+    if (Math.abs(i) > 120 || Math.abs(j) > 120) return "Too far away";
+    if (this.tileSlotsLeft <= 0) return "Reach the next milestone to buy more land";
+    if (this.nextTilePrice > this.money) return "Not enough money";
+    const nb = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => this.tiles.has(`${i + a},${j + b}`));
+    if (!nb && !this.roadInTile(i, j)) return "Must border your land or have one of your roads";
+    return null;
+  }
+
   canUnlock(i: number, j: number): boolean {
-    if (Math.abs(i) > 120 || Math.abs(j) > 120 || this.tiles.has(`${i},${j}`) || this.tileTokens <= 0) return false;
-    return [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => this.tiles.has(`${i + a},${j + b}`));
+    return this.tileBlock(i, j) === null;
+  }
+
+  private roadInTile(i: number, j: number): boolean {
+    const x0 = (i - 0.5) * TILE, y0 = (j - 0.5) * TILE;
+    for (const id of this.net.segsNear(x0, y0, x0 + TILE, y0 + TILE)) if (this.net.segs.get(id)!.type !== MOTORWAY_TYPE) return true;
+    return false;
   }
 
   unlockTile(i: number, j: number): boolean {
     if (!this.canUnlock(i, j)) return false;
+    this.money -= this.nextTilePrice;
     this.tiles.add(`${i},${j}`);
-    this.tileTokens--;
+    this.zones.rebuildAll();
     this.emit({ t: "tiles" });
+    this.emit({ t: "zones" });
+    this.emit({ t: "money" });
     return true;
   }
+
+  // ---------------------------------------------------------------- unlocks
+
+  get roadsUnlocked(): Set<RoadTypeId> { return unlockedRoads(this.milestone); }
+  get zonesUnlocked(): Set<ZoneId> { return unlockedZones(this.milestone); }
+  featureUnlocked(f: Milestone["features"][number]): boolean { return unlockedFeature(this.milestone, f); }
 
   // ---------------------------------------------------------------- road edits
 
@@ -187,7 +277,10 @@ export class Game {
   private afterRoads(cs: ChangeSet) {
     this.buildings.reattach();
     this.traffic.onNetworkChange(cs);
+    this.zones.onNetworkChange(cs);
+    this.updateOutside();
     this.emit({ t: "roads", cs });
+    this.emit({ t: "zones" });
   }
 
   private pushUndo(e: UndoEntry) {
@@ -196,9 +289,52 @@ export class Game {
     this.redoStack = [];
   }
 
+  /** Zoned buildings a planned road would clear (shown before building, like CS2). */
+  lotsUnder(plan: Plan): Building[] {
+    const out = new Set<Building>();
+    for (const st of plan.strokes) {
+      if (st.h0 > 6 && st.h1 > 6) continue; // bridges pass over
+      const pts = chainPoints(st.chain, 2);
+      const lim = roadWidth(ROAD_TYPES[st.type]) / 2 - 0.5;
+      for (const id of this.buildings.hit(pts, lim)) {
+        const b = this.buildings.byId.get(id);
+        if (b?.zone) out.add(b);
+      }
+    }
+    return [...out];
+  }
+
+  /** Zoned buildings standing where a road now runs: demolished (CS2 clears growables in a road's path). */
+  private clearRoadsOverLots(): Building[] {
+    const gone: Building[] = [];
+    for (const b of [...this.buildings.list]) {
+      if (!b.zone) continue;
+      const pts = rectCorners(b.c, b.hw - 1, b.hd - 1, b.rot);
+      pts.push(b.c);
+      let hit = false;
+      for (const id of this.net.segsNear(b.c.x - b.hw - b.hd, b.c.y - b.hw - b.hd, b.c.x + b.hw + b.hd, b.c.y + b.hw + b.hd)) {
+        const g = this.net.segGeom.get(id)!;
+        const lim = g.width / 2 - 0.5;
+        // walk the centreline in short steps (a straight road has only two vertices)
+        const P = g.center.pts;
+        for (let i = 0; i < P.length && !hit; i++) {
+          if (g.hs[i] > 6 && (i + 1 >= P.length || g.hs[i + 1] > 6)) continue;
+          const q = P[i], r = P[i + 1] ?? q;
+          const n = Math.max(1, Math.ceil(dist(q, r) / 2));
+          for (let k = 0; k <= n && !hit; k++) {
+            const t = k / n;
+            if (pointInRect({ x: q.x + (r.x - q.x) * t, y: q.y + (r.y - q.y) * t }, b, lim)) hit = true;
+          }
+        }
+        if (hit) break;
+      }
+      if (hit) { gone.push(b); this.removeBuildingRaw(b); }
+    }
+    return gone;
+  }
+
   build(plan: Plan): boolean {
     if (plan.errors.length) return false;
-    const before = this.net.nodes.size + this.net.segs.size;
     const ops = this.applyRoads(() => {
       if (plan.kind === "roundabout") commitRoundabout(this.net, plan);
       else {
@@ -220,14 +356,15 @@ export class Game {
         }
       }
     });
-    void before;
+    const gone = this.clearRoadsOverLots();
     this.money -= plan.cost;
-    this.pushUndo({ label: plan.kind, ops, money: plan.cost, added: [], removed: [] });
+    this.pushUndo({ label: plan.kind, ops, money: plan.cost, added: [], removed: gone });
     this.emit({ t: "money" });
+    if (gone.length) this.emit({ t: "buildings" });
     return true;
   }
 
-  /** Remove roads and/or buildings. Roads refund 75%; buildings go back to the inventory. */
+  /** Remove roads and/or buildings. Roads refund 75%. */
   bulldoze(segs: number[], bIds: number[]): number {
     const refund = removalRefund(this.net, this.world, segs);
     const removed: Building[] = [];
@@ -246,7 +383,7 @@ export class Game {
     return refund;
   }
 
-  /** Cost and problems of changing a road's type. Lots a wider road would cover are pushed back when there is room. */
+  /** Cost and problems of changing a road's type. Placed buildings a wider road would cover are pushed back. */
   upgradePlan(segId: number, to: RoadTypeId): { cost: number; errors: PlanError[]; moves: BuildingMove[] } {
     const u = upgradeCost(this.net, this.world, segId, to);
     const T = ROAD_TYPES[to];
@@ -266,10 +403,11 @@ export class Game {
     if (u.errors.length) return false;
     this.buildings.applyMoves(u.moves, true);
     const ops = this.applyRoads(() => this.net.setType(segId, to));
+    const gone = this.clearRoadsOverLots();
     this.money -= u.cost;
-    this.pushUndo({ label: "upgrade", ops, money: u.cost, added: [], removed: [], moved: u.moves.length ? u.moves : undefined });
+    this.pushUndo({ label: "upgrade", ops, money: u.cost, added: [], removed: gone, moved: u.moves.length ? u.moves : undefined });
     this.emit({ t: "money" });
-    if (u.moves.length) this.emit({ t: "buildings" });
+    if (u.moves.length || gone.length) this.emit({ t: "buildings" });
     return true;
   }
 
@@ -304,7 +442,6 @@ export class Game {
       if (used.has(a.seg)) continue;
       used.add(a.seg);
       const group = [a.seg];
-      // opposite arm: direction closest to -a.dir
       let best: (typeof arms)[number] | null = null, bd = -0.7;
       for (const b of arms) {
         if (used.has(b.seg)) continue;
@@ -317,24 +454,44 @@ export class Game {
     return { phases };
   }
 
+  // ---------------------------------------------------------------- zoning
+
+  /** Paint (or clear, zone = null) cells. Buildings standing on repainted cells of another zone are demolished. */
+  zonePaint(cells: Iterable<Cell>, zone: ZoneId | null): number {
+    if (zone && !this.zonesUnlocked.has(zone)) return 0;
+    const ch = this.zones.paint(cells, zone);
+    if (!ch.length) return 0;
+    const removed: Building[] = [];
+    for (const { cell } of ch) {
+      if (!cell.lot) continue;
+      const b = this.buildings.byId.get(cell.lot);
+      if (b && b.zone !== zone) { removed.push(b); this.removeBuildingRaw(b); }
+    }
+    this.pushUndo({ label: "zone", ops: [], money: 0, added: [], removed, zones: ch.map((c) => ({ p: c.cell.c, from: c.from, to: zone })) });
+    this.emit({ t: "zones" });
+    if (removed.length) this.emit({ t: "buildings" });
+    return ch.length;
+  }
+
   canUndo() { return this.undoStack.length > 0; }
   canRedo() { return this.redoStack.length > 0; }
 
   undo() {
     const e = this.undoStack.pop();
     if (!e) return;
-    // lots go back before the road narrows, so their driveways re-attach
     if (e.moved) this.buildings.applyMoves(e.moved, false);
     if (e.ops.length) {
       this.net.undo(e.ops);
       this.afterRoads(this.net.rebuild());
     }
+    if (e.zones) this.zones.paintAt(e.zones.map((z) => ({ p: z.p, zone: z.from })));
     this.money += e.money; // undo refunds 100%
     for (const b of e.added) this.removeBuildingRaw(this.buildings.byId.get(b.id) ?? b);
     for (const b of e.removed) this.restoreBuilding(b);
     this.redoStack.push(e);
     this.emit({ t: "money" });
     this.emit({ t: "buildings" });
+    this.emit({ t: "zones" });
   }
 
   redo() {
@@ -345,86 +502,187 @@ export class Game {
       this.net.redo(e.ops);
       this.afterRoads(this.net.rebuild());
     }
+    if (e.zones) this.zones.paintAt(e.zones.map((z) => ({ p: z.p, zone: z.to })));
     this.money -= e.money;
     for (const b of e.added) this.restoreBuilding(b);
     for (const b of e.removed) this.removeBuildingRaw(this.buildings.byId.get(b.id) ?? b);
+    if (e.ops.length) this.clearRoadsOverLots();
     this.undoStack.push(e);
     this.emit({ t: "money" });
     this.emit({ t: "buildings" });
+    this.emit({ t: "zones" });
   }
 
   // ---------------------------------------------------------------- buildings
 
-  placement(kind: BuildingKind, p: V2): Placement | null {
-    return this.buildings.placement(kind, p, this.world);
-  }
-
-  place(kind: BuildingKind, pl: Placement): Building | null {
-    if (!pl.ok || (this.inventory[kind] ?? 0) <= 0) return null;
-    const b = this.buildings.add(kind, pl, this.level);
-    this.inventory[kind] = (this.inventory[kind] ?? 0) - 1;
-    this.spawnResidents(b);
-    this.pushUndo({ label: "place", ops: [], money: 0, added: [b], removed: [] });
-    this.emit({ t: "buildings" });
-    return b;
-  }
-
-  private spawnResidents(b: Building) {
-    const T = BUILDING_TYPES[b.kind];
-    for (let i = 0; i < T.residents; i++) {
-      const r: Resident = { id: this.nextResident++, home: b.id, job: -1, state: "home", t: 5 + this.rng() * 60, trips: 0, at: -1, lastWorkOk: -1e9 };
-      this.residents.push(r);
-      this.residentById.set(r.id, r);
-    }
-    this.assignJobs();
-  }
-
   private removeBuildingRaw(b: Building) {
     if (!this.buildings.byId.has(b.id)) return;
     this.buildings.remove(b.id);
-    this.inventory[b.kind] = (this.inventory[b.kind] ?? 0) + 1;
-    // residents of a removed home leave; workers lose their job
-    this.residents = this.residents.filter((r) => {
-      if (r.home === b.id) { this.residentById.delete(r.id); return false; }
-      if (r.job === b.id) r.job = -1;
-      if (r.at === b.id && r.state === "away") { r.state = "home"; r.t = 10; }
-      return true;
-    });
-    this.assignJobs();
+    this.people.onBuildingRemoved(b.id);
+    this.ordered.delete(b.id);
+    for (const c of this.lotCells(b)) if (c.lot === b.id) c.lot = 0;
+    this.shopCache = null;
+    this.candVersion = -1;
   }
 
   private restoreBuilding(b: Building) {
     if (this.buildings.byId.has(b.id)) return;
-    this.buildings.list.push(b);
-    this.buildings.byId.set(b.id, b);
-    this.inventory[b.kind] = Math.max(0, (this.inventory[b.kind] ?? 0) - 1);
+    this.buildings.insert(b);
+    for (const c of this.lotCells(b)) c.lot = b.id;
     this.buildings.reattach();
-    this.spawnResidents(b);
+    this.shopCache = null;
+    this.candVersion = -1;
   }
 
-  /** Give unemployed residents the nearest open job. */
-  private assignJobs() {
-    const open: { b: Building; free: number }[] = [];
-    const taken = new Map<number, number>();
-    for (const r of this.residents) if (r.job >= 0) taken.set(r.job, (taken.get(r.job) ?? 0) + 1);
-    for (const b of this.buildings.list) {
-      const jobs = BUILDING_TYPES[b.kind].jobs;
-      if (jobs > 0) open.push({ b, free: jobs - (taken.get(b.id) ?? 0) });
+  /** Zone cells under a building's lot. */
+  lotCells(b: Building): Cell[] {
+    if (!b.zone) return [];
+    return this.zones.inPoly(rectCorners(b.c, b.hw - 0.5, b.hd - 0.5, b.rot));
+  }
+
+  get shops(): Building[] {
+    if (!this.shopCache) this.shopCache = this.buildings.list.filter((b) => b.zone && ZONE_GROUP[b.zone] === "com");
+    return this.shopCache;
+  }
+
+  /** Empty, zoned front-row cells of a group, where a new lot could start. */
+  private candidates(group: ZoneGroup): Cell[] {
+    if (this.candVersion !== this.zones.version) {
+      this.candCache.clear();
+      for (const gp of GROUPS) this.candCache.set(gp, []);
+      for (const c of this.zones.allCells()) if (c.row === 0 && c.ok && c.zone && !c.lot) this.candCache.get(ZONE_GROUP[c.zone])!.push(c);
+      this.candVersion = this.zones.version;
     }
-    for (const r of this.residents) {
-      if (r.job >= 0) continue;
-      const home = this.buildings.byId.get(r.home);
-      if (!home) continue;
-      let best: { b: Building; free: number } | null = null, bd = Infinity;
-      for (const o of open) {
-        if (o.free <= 0) continue;
-        const d = dist(o.b.c, home.c);
-        if (d < bd) { bd = d; best = o; }
+    return this.candCache.get(group)!;
+  }
+
+  /** Try to grow a building on zoned land of a group. */
+  private grow(group: ZoneGroup): Building | null {
+    const cands = this.candidates(group);
+    if (!cands.length) return null;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const c = cands[(this.rng() * cands.length) | 0];
+      if (c.lot || !c.ok || !c.zone) continue;
+      const b = c.block;
+      const seg = this.net.segs.get(b.seg);
+      if (!seg) continue;
+      const temps = ZONE_LOTS[c.zone];
+      const order = this.rng() < 0.35 ? [...temps].reverse() : temps;
+      for (const t of order) {
+        for (let shift = 0; shift < t.w; shift++) {
+          const col0 = c.col - shift;
+          if (col0 < 0 || col0 + t.w > b.cols) continue;
+          if (this.lotFits(b, col0, t, c.zone)) return this.placeLot(b, col0, t, this.lotDepth(b, col0, t, c.zone), c.zone);
+        }
       }
-      if (!best) break;
-      r.job = best.b.id;
-      best.free--;
     }
+    return null;
+  }
+
+  private lotFits(b: Block, col0: number, t: LotTemplate, zone: ZoneId): boolean {
+    if (t.d > DEPTH) return false;
+    const r0 = b.cells[col0 * DEPTH].rot;
+    for (let k = col0; k < col0 + t.w; k++) {
+      for (let r = 0; r < t.d; r++) {
+        const c = b.cells[k * DEPTH + r];
+        if (!c.ok || c.zone !== zone || c.lot) return false;
+      }
+      if (Math.abs(Math.cos(b.cells[k * DEPTH].rot - r0)) < 0.97) return false; // too curved
+    }
+    return true;
+  }
+
+  /** How deep a lot can reach: the template's depth, then on through the zoned cells behind it (CS2 lots take the block's depth, the rest is yard). */
+  private lotDepth(b: Block, col0: number, t: LotTemplate, zone: ZoneId): number {
+    let d = t.d;
+    while (d < DEPTH) {
+      for (let k = col0; k < col0 + t.w; k++) {
+        const c = b.cells[k * DEPTH + d];
+        if (!c || !c.ok || c.zone !== zone || c.lot) return d;
+      }
+      d++;
+    }
+    return d;
+  }
+
+  private placeLot(b: Block, col0: number, t: LotTemplate, depth: number, zone: ZoneId): Building | null {
+    const g = this.net.segGeom.get(b.seg);
+    if (!g) return null;
+    let cx = 0, cy = 0, ux = 0, uy = 0;
+    const cells: Cell[] = [];
+    for (let k = col0; k < col0 + t.w; k++) for (let r = 0; r < depth; r++) {
+      const c = b.cells[k * DEPTH + r];
+      cells.push(c);
+      cx += c.c.x; cy += c.c.y;
+      ux += Math.cos(c.rot); uy += Math.sin(c.rot);
+    }
+    const n = cells.length;
+    const c = { x: cx / n, y: cy / n };
+    const rot = Math.atan2(uy, ux);
+    const sMid = (b.colS[col0] + b.colS[col0 + t.w - 1]) / 2;
+    // kerb point in front of the lot's middle
+    const away = { x: -Math.sin(rot) * b.side, y: Math.cos(rot) * b.side };
+    const front = add(c, scale(away, -(depth * CELL) / 2));
+    const M = BUILDING_TYPES[t.model];
+    const tall = t.tall ? t.tall[0] + this.rng() * (t.tall[1] - t.tall[0]) : 1;
+    const bl: Building = {
+      id: this.buildings.nextId++, kind: t.model, c, rot, hw: (t.w * CELL) / 2, hd: (depth * CELL) / 2, front,
+      access: { seg: b.seg, s: sMid, p: front }, side: b.side, zone, lot: { block: b.key, col0, w: t.w, d: depth },
+      // deeper lots hold a bit more (the back is yard, parking or storage)
+      level: 1, cap: capacity(zone, t.w, t.d + (depth - t.d) * 0.5, 1, tall), fit: modelFit(t, M.w, M.d), tall, built: 0, abandoned: 0, lv: 0, upT: 0, badT: 0,
+      problem: null, stock: ZONE_GROUP[zone] === "com" ? 2 : ZONE_GROUP[zone] === "ind" ? 2 : 0, out: 0, prodT: 0, visits: 0, born: this.time,
+    };
+    this.buildings.insert(bl);
+    for (const cc of cells) cc.lot = bl.id;
+    this.buildings.reattach();
+    if (!bl.access) { this.removeBuildingRaw(bl); return null; }
+    this.shopCache = null;
+    this.candVersion = -1;
+    return bl;
+  }
+
+  // ---------------------------------------------------------------- network connectivity
+
+  /** Whether two segs are joined by roads (ignoring one-way direction). */
+  connected(a: number, b: number): boolean {
+    if (this.compVersion !== this.net.version) this.rebuildComponents();
+    const sa = this.net.segs.get(a), sb = this.net.segs.get(b);
+    if (!sa || !sb) return false;
+    return this.comp.get(sa.a) === this.comp.get(sb.a);
+  }
+
+  private rebuildComponents() {
+    const parent = new Map<number, number>();
+    const find = (x: number): number => {
+      let r = x;
+      while (parent.get(r) !== r) r = parent.get(r)!;
+      let y = x;
+      while (parent.get(y) !== r) { const nx = parent.get(y)!; parent.set(y, r); y = nx; }
+      return r;
+    };
+    for (const id of this.net.nodes.keys()) parent.set(id, id);
+    for (const s of this.net.segs.values()) {
+      const ra = find(s.a), rb = find(s.b);
+      if (ra !== rb) parent.set(ra, rb);
+    }
+    this.comp.clear();
+    for (const id of this.net.nodes.keys()) this.comp.set(id, find(id));
+    this.compVersion = this.net.version;
+  }
+
+  /** Whether a building can reach the outside world by road. */
+  linkedOutside(b: Building): boolean {
+    return !!b.access && !!this.entryFor(b.access.seg);
+  }
+
+  noRoute(b: Building | null) {
+    if (b) this.noRouteAt.set(b.id, this.time);
+  }
+
+  /** Real trips per simulated car (1 in small towns). */
+  get tripScale(): number {
+    const p = this.people.stats.population + this.people.stats.commuters;
+    return Math.max(1, p / 1600);
   }
 
   // ---------------------------------------------------------------- simulation
@@ -433,12 +691,12 @@ export class Game {
     if (this.paused) return;
     this.acc += Math.min(realDt, 0.25) * this.speed;
     let steps = 0;
-    while (this.acc >= SIM.dt && steps < 16) {
+    while (this.acc >= SIM.dt && steps < 24) {
       this.step(SIM.dt);
       this.acc -= SIM.dt;
       steps++;
     }
-    if (steps >= 16) this.acc = 0; // fell behind: drop time rather than spiral
+    if (steps >= 24) this.acc = 0; // fell behind: drop time rather than spiral
     this.playtime += realDt;
   }
 
@@ -447,375 +705,419 @@ export class Game {
     return this.acc / SIM.dt;
   }
 
+  get hour() { return this.people.hourOf(); }
+  get day() { return this.people.dayOf(); }
+
   step(dt: number) {
     this.time += dt;
     this.traffic.step(dt);
-    for (const r of this.residents) {
-      if (r.state !== "home" && r.state !== "away") continue;
-      r.t -= dt;
-      if (r.t > 0) continue;
-      if (r.state === "home") this.startOutbound(r);
-      else this.startReturn(r);
+    this.people.step();
+    // virtual cargo arrivals
+    if (this.cargoQ.length && this.cargoQ[0].t <= this.time) {
+      this.cargoQ.sort((a, b) => a.t - b.t);
+      while (this.cargoQ.length && this.cargoQ[0].t <= this.time) this.deliver(this.cargoQ.shift()!.to);
     }
-    for (const b of this.buildings.list) this.stepBuilding(b, dt);
-    this.jobTimer += dt;
-    if (this.jobTimer > 10) { this.jobTimer = 0; this.assignJobs(); }
-    this.objTimer += dt;
-    if (this.objTimer >= 0.5) {
-      const span = this.objTimer;
-      this.objTimer = 0;
-      this.updateSatisfaction(span);
-      this.evalObjectives();
-      if (this.objectives.every((o) => o.done)) {
-        this.allGoodFor += span;
-        if (this.allGoodFor >= 3) this.levelUp();
-      } else this.allGoodFor = 0;
+    this.tickT += dt;
+    const TICK = HOUR / 8;
+    if (this.tickT >= TICK) {
+      this.tickT -= TICK;
+      this.tick(TICK);
+    }
+    this.hourT += dt;
+    if (this.hourT >= HOUR) {
+      this.hourT -= HOUR;
+      this.hourly();
     }
   }
 
-  private startOutbound(r: Resident) {
-    const home = this.buildings.byId.get(r.home);
-    if (!home || !home.access) { r.t = 15; return; }
-    const job = r.job >= 0 ? this.buildings.byId.get(r.job) : undefined;
-    let dest: Building | undefined;
-    let kind: Trip["kind"] = "shop";
-    if (job && job.access && (r.trips === 0 ? this.rng() < 0.5 : this.rng() < 0.55)) { dest = job; kind = "work"; }
-    else {
-      dest = this.pickShop(home);
-      if (!dest && job?.access) { dest = job; kind = "work"; }
+  /** Every 1/8 game hour: construction, demand, growth, move-ins, businesses. */
+  private tick(span: number) {
+    this.computeDemand();
+    let changed = false;
+    for (const b of this.buildings.list) {
+      if (b.built < 1) {
+        b.built = Math.min(1, b.built + span / (HOUR * 1.5));
+        if (b.built >= 1) changed = true;
+      }
     }
-    if (!dest || !dest.access) { r.t = 20 + this.rng() * 20; return; }
-    r.state = "out";
-    r.at = dest.id;
-    this.traffic.request({
-      from: home.access, fromSide: home.side, to: dest.access, toSide: dest.side,
-      trip: { kind, from: home.id, to: dest.id, resident: r.id, startT: this.time, freeFlow: 0 },
-      truck: false, tries: 0, wait: 0,
-    });
+    // growth: more demand, more buildings at once
+    for (const gp of GROUPS) {
+      const d = this.demand[gp].v;
+      if (d <= 8) continue;
+      const pop = this.people.stats.population;
+      let n = (d / 100) * (0.7 + Math.min(4, pop / 1500));
+      while (n > 0) {
+        if (this.rng() < Math.min(1, n)) { if (this.grow(gp)) changed = true; }
+        n -= 1;
+      }
+    }
+    this.moveIns();
+    for (const b of this.buildings.list) this.stepBuilding(b, span);
+    if (changed) this.emit({ t: "buildings" });
   }
 
-  private startReturn(r: Resident) {
-    const at = this.buildings.byId.get(r.at);
-    const home = this.buildings.byId.get(r.home);
-    if (!home) return;
-    if (!at || !at.access || !home.access) { r.state = "home"; r.t = 30; return; }
-    r.state = "back";
-    this.traffic.request({
-      from: at.access, fromSide: at.side, to: home.access, toSide: home.side,
-      trip: { kind: "home", from: at.id, to: home.id, resident: r.id, startT: this.time, freeFlow: 0 },
-      truck: false, tries: 0, wait: 0,
-    });
+  private moveIns() {
+    const R = this.demand.res.v;
+    if (R <= 0 || !this.entries.length) return;
+    let n = Math.ceil((R / 100) * (1.5 + this.people.stats.households * 0.01));
+    const homes = this.buildings.list.filter((b) => b.zone && ZONE_GROUP[b.zone] === "res" && b.built >= 1 && !b.abandoned && b.access);
+    if (!homes.length) return;
+    for (let k = 0; k < homes.length * 2 && n > 0; k++) {
+      const h = homes[(this.rng() * homes.length) | 0];
+      if (this.people.householdsIn(h.id) >= h.cap) continue;
+      if (!this.linkedOutside(h)) { h.problem = "Not connected to the highway: nobody can move in"; continue; }
+      this.people.moveIn(h, this.entryFor(h.access!.seg));
+      n--;
+    }
   }
 
-  /** Nearby commercial, weighted towards the closest few. */
-  private pickShop(home: Building): Building | undefined {
-    const shops = this.buildings.list.filter((b) => BUILDING_TYPES[b.kind].zone === "com" && b.access);
-    if (!shops.length) return undefined;
-    const scored = shops.map((b) => {
-      const pull = b.kind === "mall" ? 2.2 : b.kind === "store" ? 1.5 : 1;
-      return { b, d: dist(b.c, home.c) / pull };
-    }).sort((a, b) => a.d - b.d);
-    const k = Math.min(3, scored.length);
-    let tot = 0;
-    const w = scored.slice(0, k).map((s) => { const x = 1 / (s.d + 60); tot += x; return x; });
-    let u = this.rng() * tot;
-    for (let i = 0; i < k; i++) { u -= w[i]; if (u <= 0) return scored[i].b; }
-    return scored[0].b;
+  private stepBuilding(b: Building, span: number) {
+    if (!b.zone || b.built < 1) return;
+    const grp = ZONE_GROUP[b.zone];
+    b.visits *= Math.exp(-span / (HOUR * 6));
+    if (b.abandoned) {
+      // cleared after a day; the land can grow something new
+      if (this.time - b.abandoned > DAY) { this.removeBuildingRaw(b); this.emit({ t: "buildings" }); }
+      return;
+    }
+    let health = 1;
+    let problem: string | null = null;
+    if (!b.access) { health = 0; problem = "No road access"; }
+    else if (grp === "res") {
+      const hh = this.people.householdsIn(b.id);
+      if (!this.linkedOutside(b) && hh === 0) problem = "Not connected to the highway: nobody can move in";
+    } else {
+      const staff = b.cap ? this.people.workersAt(b.id) / b.cap : 1;
+      health = Math.min(1, staff * 1.25);
+      if (staff < 0.5) problem = "Not enough workers";
+      if (grp === "com") {
+        if (b.stock <= 0) { health *= 0.4; problem = "Out of goods to sell"; }
+        const customers = b.visits / Math.max(1, b.cap * 0.8);
+        if (this.time - b.born > DAY && customers < 0.2) { health *= 0.6 + customers * 2; problem ??= "Not enough customers"; }
+        if (b.stock < 3) this.order(b, "goods");
+      } else if (grp === "ind") {
+        if (b.stock <= 0) { health *= 0.4; problem = "Waiting for materials"; }
+        else {
+          b.prodT += span * staff;
+          if (b.prodT >= HOUR * 2) { b.prodT = 0; b.stock--; b.out = Math.min(6, b.out + 1); }
+        }
+        if (b.stock < 2) this.order(b, "materials");
+        if (b.out >= 2) this.ship(b);
+        if (b.out >= 6) { health *= 0.5; problem = "Can't ship its goods"; }
+      }
+    }
+    if (this.noRouteAt.has(b.id) && this.time - this.noRouteAt.get(b.id)! < HOUR * 2) problem ??= "Trips can't find a route";
+    b.problem = problem;
+    (b as Building & { health?: number }).health = health;
+    // failing for two days: abandoned
+    if (health < 0.35 && this.time - b.born > HOUR * 12) b.badT += span;
+    else b.badT = Math.max(0, b.badT - span * 2);
+    if (b.badT > DAY * 2) {
+      b.abandoned = this.time;
+      this.people.onBuildingRemoved(b.id);
+      this.emit({ t: "buildings" });
+      return;
+    }
+    // level up when land value holds above the next threshold for a day
+    if (b.level < 5 && b.lv >= LEVEL_LV[b.level + 1] && (grp === "res" ? this.people.householdsIn(b.id) >= b.cap : health > 0.8)) {
+      b.upT += span;
+      if (b.upT > DAY) {
+        b.level++;
+        b.upT = 0;
+        const t = ZONE_LOTS[b.zone].find((x) => x.model === b.kind) ?? ZONE_LOTS[b.zone][0];
+        const d = b.lot?.d ?? t.d;
+        b.cap = capacity(b.zone, b.lot?.w ?? t.w, Math.min(d, t.d) + Math.max(0, d - t.d) * 0.5, b.level, b.tall);
+        this.emit({ t: "buildings" });
+      }
+    } else b.upT = Math.max(0, b.upT - span);
+  }
+
+  /** A shopper bought something. */
+  sale(b: Building) {
+    b.prodT += 1;
+    if (b.prodT >= 8) { b.prodT = 0; b.stock = Math.max(0, b.stock - 1); }
+  }
+
+  // ---------------------------------------------------------------- cargo
+
+  /** Order a load: goods for shops (from local industry, else imported), materials for industry (imported). */
+  private order(b: Building, cargo: "goods" | "materials") {
+    if ((this.ordered.get(b.id) ?? 0) > 0) return;
+    let from: Building | null = null;
+    if (cargo === "goods") {
+      let bd = Infinity;
+      for (const o of this.buildings.list) {
+        if (o.out <= 0 || o.zone !== "ind" || !o.access || o.abandoned) continue;
+        if (!this.connected(o.access.seg, b.access!.seg)) continue;
+        const d = dist(o.c, b.c);
+        if (d < bd) { bd = d; from = o; }
+      }
+    }
+    if (from) from.out--;
+    else if (!this.entryFor(b.access!.seg)) return;
+    this.ordered.set(b.id, 1);
+    this.truck(from, b, cargo);
+  }
+
+  /** Export goods to the outside world. */
+  private ship(b: Building) {
+    if (!this.exitFor(b.access!.seg)) return;
+    b.out--;
+    this.budgetNow.income.ind += 40 * (this.tax.ind / 10);
+    this.truck(b, null, "goods");
+  }
+
+  private truck(from: Building | null, to: Building | null, cargo: "goods" | "materials") {
+    const inP = !from && to ? this.entryFor(to.access!.seg) : null;
+    const outP = !to && from ? this.exitFor(from.access!.seg) : null;
+    const a = from ? from.access : inP?.a;
+    const b = to ? to.access : outP?.a;
+    if (!a || !b) { if (to) this.ordered.delete(to.id); return; }
+    const real = this.rng() * Math.max(1, this.tripScale / 2) < 1;
+    if (real) {
+      this.traffic.request({
+        from: a, fromSide: from ? from.side : inP!.side, to: b, toSide: to ? to.side : outP!.side,
+        trip: { kind: "cargo", from: from ? from.id : -1, to: to ? to.id : -1, resident: -1, cargo, startT: this.time, freeFlow: 0 },
+        truck: true, tries: 0, wait: 0, through: !from, exit: !to,
+      });
+    } else if (to) {
+      this.cargoQ.push({ t: this.time + estTime(from ? from.c : a.p, to.c), to: to.id, cargo });
+    }
+  }
+
+  private deliver(to: number) {
+    this.ordered.delete(to);
+    const b = this.buildings.byId.get(to);
+    if (b) b.stock = Math.min(6, b.stock + 3);
   }
 
   private onArrive(v: Vehicle, now: number) {
     const trip = v.trip;
-    const actual = now - trip.startT;
-    this.traffic.recordTrip(trip.freeFlow, actual);
-    const to = this.buildings.byId.get(trip.to);
+    this.traffic.recordTrip(trip.freeFlow, now - trip.startT);
     if (trip.kind === "cargo") {
-      const n = this.enRoute.get(trip.to) ?? 1;
-      this.enRoute.set(trip.to, n - 1);
-      if (to) to.stock = Math.min(5, to.stock + 1);
+      if (trip.to >= 0) this.deliver(trip.to);
       return;
     }
-    const r = this.residentById.get(trip.resident);
-    if (!r) return;
-    if (trip.kind === "home") { r.state = "home"; r.t = SIM.tripInterval[0] + this.rng() * (SIM.tripInterval[1] - SIM.tripInterval[0]); return; }
-    const home = this.buildings.byId.get(r.home);
-    r.state = "away";
-    r.trips++;
-    r.at = trip.to;
-    if (trip.kind === "work") {
-      r.t = 50 + this.rng() * 40;
-      r.lastWorkOk = now;
-      if (home) home.workTime = ewma(home.workTime, actual, 0.25);
-    } else {
-      r.t = SIM.dwellMin + this.rng() * (SIM.dwellMax - SIM.dwellMin);
-      if (home) home.shopTime = ewma(home.shopTime, actual, 0.25);
-      if (to) to.visits += 1;
-    }
+    this.people.onArrive(v);
   }
 
   private onFail(trip: Trip, _reason: string) {
     this.failedTrips++;
     if (trip.kind === "cargo") {
-      const n = this.enRoute.get(trip.to) ?? 1;
-      this.enRoute.set(trip.to, n - 1);
+      if (trip.to >= 0) this.ordered.delete(trip.to);
       const from = this.buildings.byId.get(trip.from);
-      if (from) from.out = Math.min(4, from.out + 1);
+      if (from && from.zone === "ind") from.out = Math.min(6, from.out + 1);
+      const to = this.buildings.byId.get(trip.to);
+      this.noRoute(to ?? from ?? null);
       return;
     }
-    const r = this.residentById.get(trip.resident);
-    if (!r) return;
-    const home = this.buildings.byId.get(r.home);
-    if (home) {
-      // a trip that couldn't happen counts as a very slow one
-      if (trip.kind === "work") home.workTime = ewma(home.workTime, SIM.workTarget * 3, 0.25);
-      else if (trip.kind === "shop") home.shopTime = ewma(home.shopTime, SIM.shopTarget * 3, 0.25);
-    }
-    r.state = "home";
-    r.t = 25 + this.rng() * 25;
+    this.people.onFail(trip);
   }
 
-  private stepBuilding(b: Building, dt: number) {
-    const T = BUILDING_TYPES[b.kind];
-    b.visits *= Math.exp(-dt / 180); // decaying customer count (~3 min memory)
-    const staff = b.factors.staff ?? 1;
-    if (T.produces) {
-      const needsInput = !!T.consumes;
-      if (!needsInput || b.stock > 0) {
-        b.prodT += dt * Math.max(0.15, staff);
-        if (b.prodT >= SIM.deliveryInterval) {
-          b.prodT = 0;
-          if (needsInput) b.stock--;
-          b.out = Math.min(4, b.out + 1);
-        }
-      }
-      if (b.out > 0 && b.access) this.dispatch(b, T.produces);
-    } else if (T.consumes) {
-      // shops sell their goods over time
-      b.prodT += dt;
-      if (b.prodT >= 150) { b.prodT = 0; if (b.stock > 0) b.stock--; }
-    }
-  }
+  // ---------------------------------------------------------------- demand
 
-  private dispatch(from: Building, cargo: Cargo) {
-    let best: Building | null = null, bs = Infinity;
+  private computeDemand() {
+    const st = this.people.stats;
+    const jobs: Record<ZoneGroup, number> = { res: 0, com: 0, ind: 0, off: 0 };
+    let homes = 0, homesBuilding = 0;
     for (const b of this.buildings.list) {
-      if (BUILDING_TYPES[b.kind].consumes !== cargo || !b.access) continue;
-      const pending = this.enRoute.get(b.id) ?? 0;
-      const level = b.stock + pending;
-      if (level >= 4) continue;
-      const score = level * 600 + dist(b.c, from.c);
-      if (score < bs) { bs = score; best = b; }
+      if (!b.zone || b.abandoned) continue;
+      const gp = ZONE_GROUP[b.zone];
+      if (gp === "res") { if (b.built >= 1) homes += b.cap; else homesBuilding += b.cap; }
+      else jobs[gp] += b.cap;
     }
-    if (!best) return;
-    from.out--;
-    this.enRoute.set(best.id, (this.enRoute.get(best.id) ?? 0) + 1);
-    this.traffic.request({
-      from: from.access!, fromSide: from.side, to: best.access!, toSide: best.side,
-      trip: { kind: "cargo", from: from.id, to: best.id, resident: -1, cargo, startT: this.time, freeFlow: 0 },
-      truck: true, tries: 0, wait: 0,
-    });
+    const totalJobs = jobs.com + jobs.ind + jobs.off;
+    const pop = st.population;
+    const workers = Math.max(1, st.workers);
+    const freeJobs = totalJobs - st.employed - st.commuters;
+    const vacant = homes + homesBuilding - st.households - st.movingIn;
+    const unemp = st.workers ? st.unemployed / st.workers : 0;
+    const taxF = (gp: ZoneGroup) => -(this.tax[gp] - 10) * 3;
+    const clamp = (x: number) => Math.max(0, Math.min(100, Math.round(x)));
+    // residential
+    {
+      const f: DemandFactor[] = [];
+      f.push({ label: "Region attractiveness", v: pop < 150 ? 60 : 30 });
+      if (totalJobs > 0) f.push({ label: "Available jobs", v: Math.round(Math.max(-30, Math.min(45, (freeJobs / Math.max(5, workers * 0.12)) * 25))) });
+      if (unemp > 0.04) f.push({ label: "Unemployment", v: -Math.round(Math.min(60, (unemp - 0.04) * 250)) });
+      if (vacant > 0) f.push({ label: "Empty homes", v: -Math.round(Math.min(50, (vacant / Math.max(3, (homes + homesBuilding) * 0.1)) * 25)) });
+      if (this.tax.res !== 10) f.push({ label: "Taxes", v: taxF("res") });
+      if (!this.entries.length) f.push({ label: "No highway connection", v: -100 });
+      this.demand.res = { v: clamp(f.reduce((a, x) => a + x.v, 0)), factors: f };
+    }
+    // jobs follow the workforce (plus the households on their way): shared out between shops, industry and offices
+    const offOn = this.zonesUnlocked.has("offLow");
+    const share: Record<ZoneGroup, number> = { res: 0, com: 0.28, ind: offOn ? 0.5 : 0.72, off: offOn ? 0.22 : 0 };
+    const labour = st.workers * 0.97 + st.movingIn * 1.2 + Math.max(0, this.demand.res.v - 30) * 0.15 + 10;
+    const need = (gp: ZoneGroup, label: string) => {
+      const want = labour * share[gp];
+      return { label, v: Math.round(Math.max(-60, Math.min(60, ((want - jobs[gp]) / Math.max(5, want * 0.3)) * 50))) };
+    };
+    const lack = unemp < 0.03 && freeJobs > workers * 0.12 ? { label: "Not enough workers", v: -40 } : null;
+    // commercial: shoppers
+    {
+      const f: DemandFactor[] = [{ label: "Base", v: 40 }, need("com", "Shoppers")];
+      if (pop < 30) f.push({ label: "Too few residents", v: -60 });
+      if (lack) f.push(lack);
+      if (this.tax.com !== 10) f.push({ label: "Taxes", v: taxF("com") });
+      this.demand.com = { v: clamp(f.reduce((a, x) => a + x.v, 0)), factors: f };
+    }
+    // industrial: goods for shops and export
+    {
+      const f: DemandFactor[] = [{ label: "Base", v: 45 }, need("ind", "Workers looking for jobs")];
+      if (lack) f.push(lack);
+      if (!this.entries.length) f.push({ label: "No highway connection", v: -60 });
+      if (this.tax.ind !== 10) f.push({ label: "Taxes", v: taxF("ind") });
+      this.demand.ind = { v: clamp(f.reduce((a, x) => a + x.v, 0)), factors: f };
+    }
+    // office: educated workers
+    {
+      const f: DemandFactor[] = offOn ? [{ label: "Base", v: 35 }, need("off", "Educated workers")] : [{ label: "Unlocks at Village", v: 0 }];
+      if (offOn && st.edu[1] + st.edu[2] < 20) f.push({ label: "Few educated workers", v: -30 });
+      if (lack && offOn) f.push(lack);
+      if (this.tax.off !== 10) f.push({ label: "Taxes", v: taxF("off") });
+      this.demand.off = { v: clamp(f.reduce((a, x) => a + x.v, 0)), factors: f };
+    }
   }
 
-  // ---------------------------------------------------------------- satisfaction + objectives
+  // ---------------------------------------------------------------- hourly: economy, land value, milestones
 
-  private updateSatisfaction(_span: number) {
-    const polluters = this.buildings.list.filter((b) => BUILDING_TYPES[b.kind].pollution > 0);
-    const workersAt = new Map<number, number>();
-    for (const r of this.residents) {
-      if (r.job >= 0 && this.time - r.lastWorkOk < 420) workersAt.set(r.job, (workersAt.get(r.job) ?? 0) + 1);
-    }
-    const assigned = new Map<number, number>();
-    for (const r of this.residents) if (r.job >= 0) assigned.set(r.job, (assigned.get(r.job) ?? 0) + 1);
+  private hourly() {
+    const st = this.people.stats;
+    const B = this.budgetNow;
+    B.income.res += st.employed * 0.9 * (this.tax.res / 10);
     for (const b of this.buildings.list) {
-      const T = BUILDING_TYPES[b.kind];
-      const f: Record<string, number> = {};
-      if (!b.access) {
-        b.factors = { commercial: 0, work: 0 };
-        b.sat = 0;
-        continue;
-      }
-      // pollution and noise hurt homes, shops and farms
-      let pol = 0;
-      if (T.zone === "res" || T.zone === "com" || b.kind === "farm") {
-        for (const p of polluters) {
-          if (p === b) continue;
-          const R = BUILDING_TYPES[p.kind].pollution;
-          const d = dist(p.c, b.c);
-          if (d < R) pol += 1 - d / R;
-        }
-      }
-      if (T.zone === "res") {
-        const shop = b.shopTime < 0 ? 1 : clamp01x(SIM.shopTarget / Math.max(1, b.shopTime));
-        const hasJobs = this.residents.some((r) => r.home === b.id && r.job >= 0);
-        const work = !hasJobs || b.workTime < 0 ? 1 : clamp01x(SIM.workTarget / Math.max(1, b.workTime));
-        f.commercial = shop;
-        f.work = work;
-        f.noise = this.noiseAt(b);
-        f.pollution = Math.min(0.6, pol * 0.45);
-        b.sat = 0.5 * shop + 0.5 * work - f.noise - f.pollution;
-      } else {
-        const jobs = T.jobs;
-        const filled = Math.min(jobs, assigned.get(b.id) ?? 0);
-        const arriving = workersAt.get(b.id) ?? 0;
-        // before anyone could commute, judge by filled positions only
-        const placedFor = this.time - (b.factors._t ?? this.time);
-        const staff = jobs ? (placedFor < 200 ? filled / jobs : Math.min(1, (arriving + 0.5) / Math.max(1, filled || jobs)) * (filled / jobs)) : 1;
-        f._t = b.factors._t ?? this.time;
-        if (T.zone === "com") {
-          const expected = jobs * 0.5;
-          const cust = Math.min(1, (b.visits * (180 / 60)) / Math.max(1, expected * 3) + (placedFor < 240 ? 1 : 0));
-          f.staff = Math.min(1, 0.5 * staff + 0.5 * cust);
-          f.input = b.stock > 0 ? 1 : 0.35;
-          f.pollution = Math.min(0.5, pol * 0.3);
-          b.sat = 0.7 * f.staff + 0.3 * f.input - f.pollution;
-        } else if (T.zone === "work") {
-          f.staff = staff;
-          b.sat = staff;
-        } else {
-          f.staff = staff;
-          if (T.consumes) f.input = b.stock > 0 ? 1 : 0.3;
-          if (b.kind === "farm") f.pollution = Math.min(0.6, pol * 0.5);
-          b.sat = T.consumes ? 0.55 * staff + 0.45 * (f.input ?? 1) : staff - (f.pollution ?? 0);
-        }
-      }
-      b.sat = Math.max(0, Math.min(1, b.sat));
-      b.factors = f;
+      if (!b.zone || b.abandoned || b.built < 1) continue;
+      const gp = ZONE_GROUP[b.zone];
+      if (gp === "res") continue;
+      const h = (b as Building & { health?: number }).health ?? 1;
+      const w = this.people.workersAt(b.id);
+      const rate = gp === "com" ? 0.8 : gp === "ind" ? 0.7 : 1.0;
+      B.income[gp] += w * rate * h * (this.tax[gp] / 10);
     }
-  }
-
-  private noiseAt(b: Building): number {
-    let worst = 0;
-    for (const id of this.net.segsNear(b.c.x - 40, b.c.y - 40, b.c.x + 40, b.c.y + 40)) {
-      const s = this.net.segs.get(id)!;
-      const rank = ROAD_TYPES[s.type].rank;
-      if (rank < 3) continue;
-      const g = this.net.segGeom.get(id)!;
-      let d = Infinity;
-      for (const p of g.center.pts) d = Math.min(d, dist(p, b.c));
-      d -= g.width / 2 + b.hd;
-      const n = (rank >= 4 ? 0.18 : 0.12) * Math.max(0, 1 - d / 35);
-      worst = Math.max(worst, n);
+    let roads = 0;
+    for (const s of this.net.segs.values()) {
+      if (s.type === MOTORWAY_TYPE && this.isPrebuilt(s.id)) continue;
+      const g = this.net.segGeom.get(s.id);
+      if (g) roads += g.center.length * ROAD_TYPES[s.type].costPerM * 0.004;
     }
-    return worst;
-  }
-
-  /** City-wide average building satisfaction and the factor that drags it down most. */
-  satisfaction(): { avg: number; drag: { key: string; loss: number } | null } {
-    const L = this.buildings.list;
-    if (!L.length) return { avg: 1, drag: null };
-    let sum = 0;
-    const loss: Record<string, number> = {};
-    for (const b of L) {
-      sum += b.sat;
-      for (const [k, v] of Object.entries(b.factors)) {
-        if (k.startsWith("_")) continue;
-        const l = k === "pollution" || k === "noise" ? v : Math.max(0, 1 - v) * (BUILDING_TYPES[b.kind].zone === "res" ? 0.5 : 0.6);
-        loss[k] = (loss[k] ?? 0) + l;
-      }
+    B.expense.roads += roads;
+    const net = sum(B.income) - sum(B.expense);
+    this.money += net;
+    this.budget = B;
+    this.budgetNow = emptyBudget();
+    let jobs = 0;
+    for (const b of this.buildings.list) if (b.zone && ZONE_GROUP[b.zone] !== "res" && !b.abandoned) jobs += b.cap;
+    this.history.push({ money: this.money, pop: st.population, jobs });
+    if (this.history.length > 72) this.history.shift();
+    this.landValue();
+    // households with nobody working for two days leave
+    for (const hh of [...this.people.households.values()]) {
+      if (!hh.arrived) continue;
+      const adults = hh.members.filter((c) => c.age === 1);
+      if (!adults.length || adults.some((c) => c.job >= 0)) continue;
+      if (adults.every((c) => this.time - c.jobless > DAY * 2) && this.rng() < 0.15) this.people.moveOut(hh);
     }
-    let drag: { key: string; loss: number } | null = null;
-    for (const [k, v] of Object.entries(loss)) if (!drag || v > drag.loss) drag = { key: k, loss: v / L.length };
-    return { avg: sum / L.length, drag: drag && drag.loss > 0.004 ? drag : null };
-  }
-
-  remainingToPlace(): number {
-    let n = 0;
-    for (const v of Object.values(this.inventory)) n += v ?? 0;
-    return n;
-  }
-
-  residentsWithoutTrip(): Resident[] {
-    return this.residents.filter((r) => r.trips === 0);
-  }
-
-  evalObjectives() {
-    const L = levelDef(this.level);
-    const left = this.remainingToPlace();
-    const noTrip = this.residentsWithoutTrip().length;
-    const sat = this.satisfaction();
-    const flow = this.traffic.flowScore();
-    const pct = (x: number) => (x * 100).toFixed(1) + "%";
-    this.objectives = [
-      { id: "placed", label: "All buildings placed", done: left === 0, value: left ? `${left} to go` : "", good: left === 0 },
-      { id: "trips", label: "Trip taken by every new resident", done: noTrip === 0 && this.residents.length > 0, value: noTrip ? `${noTrip} to go` : this.residents.length ? "" : "none yet", good: this.residents.length ? noTrip === 0 : null },
-      {
-        id: "sat", label: `${Math.round(L.satisfaction * 100)}% building satisfaction`, done: sat.avg >= L.satisfaction - 1e-9, value: pct(sat.avg), good: sat.avg >= L.satisfaction,
-        sub: sat.drag ? { label: FACTOR_LABEL[sat.drag.key] ?? sat.drag.key, value: pct(sat.drag.loss) } : undefined,
-      },
-      { id: "flow", label: `${Math.round(L.flow * 100)}% traffic flow`, done: flow >= L.flow - 1e-9, value: pct(flow), good: flow >= L.flow },
-    ];
-  }
-
-  private levelUp() {
-    this.allGoodFor = 0;
-    this.level++;
-    const L = levelDef(this.level);
-    for (const [k, v] of Object.entries(L.give)) {
-      if (!v) continue;
-      const kk = k as BuildingKind;
-      this.inventory[kk] = (this.inventory[kk] ?? 0) + v;
+    for (const [id, t] of this.noRouteAt) if (this.time - t > HOUR * 3) this.noRouteAt.delete(id);
+    // milestones
+    const m = milestoneFor(st.population);
+    if (m > this.milestone) {
+      for (let k = this.milestone + 1; k <= m; k++) this.money += MILESTONES[k].grant;
+      this.milestone = m;
+      this.zones.rebuildAll();
+      this.emit({ t: "milestone", index: m });
+      this.emit({ t: "zones" });
     }
-    this.money += L.money;
-    this.tileTokens += L.tiles;
-    this.evalObjectives();
-    this.emit({ t: "level", level: this.level, note: L.note });
     this.emit({ t: "money" });
   }
 
-  get levelSatTarget() {
-    return levelDef(this.level).satisfaction;
+  private mwPts: V2[] = [];
+  /** The pre-built motorway's upkeep is paid by the region (CS2's starting highway costs nothing to keep). */
+  private isPrebuilt(id: number) {
+    const g = this.net.segGeom.get(id);
+    if (!g || !this.mwPts.length) return false;
+    const m = g.center.pts[g.center.pts.length >> 1];
+    for (const q of this.mwPts) if (Math.abs(q.x - m.x) < 40 && Math.abs(q.y - m.y) < 40) return true;
+    return false;
+  }
+
+  /** Land value from road access, nearby shops and jobs, minus industrial pollution and busy-road noise. */
+  private landValue() {
+    const list = this.buildings.list.filter((b) => b.zone && !b.abandoned);
+    const ind = list.filter((b) => b.zone === "ind");
+    const shops = list.filter((b) => b.zone && ZONE_GROUP[b.zone] === "com");
+    const pop = this.people.stats.population;
+    for (const b of list) {
+      let lv = 18 + Math.min(12, pop / 600);
+      if (b.access) {
+        const s = this.net.segs.get(b.access.seg);
+        if (s) lv += ROAD_TYPES[s.type].rank === 2 ? 4 : 0;
+      }
+      const grp = ZONE_GROUP[b.zone!];
+      if (grp === "res") {
+        let near = 0;
+        for (const o of shops) if (dist(o.c, b.c) < 320) near++;
+        lv += Math.min(12, near * 3);
+        for (const o of ind) {
+          const d = dist(o.c, b.c);
+          if (d < 180) lv -= 22 * (1 - d / 180);
+        }
+      } else if (grp === "com") lv += Math.min(10, b.visits / Math.max(1, b.cap));
+      b.lv = Math.max(0, Math.min(100, lv));
+    }
   }
 
   // ---------------------------------------------------------------- save / load
 
   serialize() {
     return {
-      v: 1,
+      v: 2,
       seed: this.seed,
       net: this.net.toJSON(),
-      buildings: this.buildings.list.map((b) => ({ id: b.id, kind: b.kind, c: b.c, rot: b.rot, front: b.front, side: b.side, placedLevel: b.placedLevel, stock: b.stock })),
+      buildings: this.buildings.list.map((b) => ({ ...b, access: null })),
       nextBuilding: this.buildings.nextId,
-      residents: this.residents.map((r) => ({ id: r.id, home: r.home, job: r.job, trips: r.trips })),
-      nextResident: this.nextResident,
+      zones: [...this.zones.allCells()].filter((c) => c.zone).map((c) => [Math.round(c.c.x * 10) / 10, Math.round(c.c.y * 10) / 10, c.zone]),
+      zoneAges: this.zones.agesJSON(),
+      people: this.people.toJSON(),
       money: this.money,
-      level: this.level,
-      inventory: this.inventory,
+      milestone: this.milestone,
       tiles: [...this.tiles],
-      tileTokens: this.tileTokens,
+      tax: this.tax,
       time: this.time,
       playtime: this.playtime,
+      cityName: this.cityName,
     };
   }
 
   static load(data: ReturnType<Game["serialize"]>): Game {
+    if ((data as { v?: number }).v !== 2) throw new Error("Save from an older version");
     const g = new Game(data.seed);
     g.net.load(data.net);
-    g.buildings.list = [];
-    g.buildings.byId.clear();
-    for (const d of data.buildings) {
-      const T = BUILDING_TYPES[d.kind];
-      const b: Building = {
-        id: d.id, kind: d.kind, c: d.c, rot: d.rot, hw: T.w / 2, hd: T.d / 2, front: d.front, access: null, side: d.side,
-        placedLevel: d.placedLevel, stock: d.stock, out: 0, prodT: 0, workersPresent: 0, visits: 0, shopTime: -1, workTime: -1, sat: 1, factors: {},
-      };
-      g.buildings.list.push(b);
-      g.buildings.byId.set(b.id, b);
-    }
-    g.buildings.nextId = data.nextBuilding;
-    g.residents = data.residents.map((r) => ({ ...r, state: "home" as const, t: 3 + g.rng() * 40, at: -1, lastWorkOk: -1e9 }));
-    for (const r of g.residents) g.residentById.set(r.id, r);
-    g.nextResident = data.nextResident;
-    g.money = data.money;
-    g.level = data.level;
-    g.inventory = { ...data.inventory };
     g.tiles = new Set(data.tiles);
-    g.tileTokens = data.tileTokens;
+    g.milestone = data.milestone;
+    g.money = data.money;
+    g.tax = { ...data.tax };
     g.time = data.time;
     g.traffic.time = data.time;
     g.playtime = data.playtime;
+    g.cityName = data.cityName ?? g.cityName;
     const cs = g.net.rebuildAll();
-    g.buildings.reattach();
     g.traffic.onNetworkChange(cs);
-    g.evalObjectives();
+    if (data.zoneAges) g.zones.loadAges(data.zoneAges);
+    g.zones.rebuildAll();
+    g.zones.paintAt(data.zones.map(([x, y, z]) => ({ p: { x: x as number, y: y as number }, zone: z as ZoneId })));
+    g.buildings.list = [];
+    g.buildings.byId.clear();
+    for (const d of data.buildings) {
+      const b = d as Building;
+      g.buildings.insert({ ...b, access: null });
+      for (const c of g.lotCells(b)) c.lot = b.id;
+    }
+    g.buildings.nextId = data.nextBuilding;
+    g.buildings.reattach();
+    g.updateOutside();
+    g.people.load(data.people);
+    g.computeDemand();
     return g;
   }
 
@@ -824,18 +1126,35 @@ export class Game {
   }
 
   refundOf(segs: number[]) {
-    return removalRefund(this.net, this.world, segs) ;
+    return removalRefund(this.net, this.world, segs);
   }
 
   get bulldozeRate() {
     return BULLDOZE_REFUND;
   }
+
+  /** Hourly net income (last full hour). */
+  get netIncome(): number {
+    return sum(this.budget.income) - sum(this.budget.expense);
+  }
 }
 
-function ewma(prev: number, x: number, k: number) {
-  return prev < 0 ? x : prev + (x - prev) * k;
+function emptyBudget(): Budget {
+  return { income: { res: 0, com: 0, ind: 0, off: 0 }, expense: { roads: 0, services: 0, loans: 0 } };
 }
 
-function clamp01x(x: number) {
-  return Math.max(0, Math.min(1.15, x));
+function sum(o: Record<string, number>): number {
+  let s = 0;
+  for (const v of Object.values(o)) s += v;
+  return s;
 }
+
+function pointInRect(p: V2, b: Building, pad: number): boolean {
+  const u = { x: Math.cos(b.rot), y: Math.sin(b.rot) };
+  const d = sub(p, b.c);
+  const a = Math.abs(d.x * u.x + d.y * u.y), c = Math.abs(-d.x * u.y + d.y * u.x);
+  return a < b.hw + pad && c < b.hd + pad;
+}
+
+const p0 = (p: V2) => p.x;
+const p1 = (p: V2) => p.y;

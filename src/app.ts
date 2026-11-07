@@ -1,13 +1,15 @@
 import * as THREE from "three";
-import { BUILDING_TYPES, LEVEL_H, TILE, MAX_LEVEL, ROAD_TYPES, roadWidth, type BuildingKind, type RoadTypeId } from "./config";
-import { dist, dot, formatMoney, norm, rectCorners, right, sub, v2, type V2 } from "./core/math";
+import { BUILDING_TYPES, LEVEL_H, TILE, MAX_LEVEL, ROAD_TYPES, roadWidth, type RoadTypeId } from "./config";
+import { cubicAt, dist, dot, formatMoney, norm, rectCorners, right, sub, v2, type V2 } from "./core/math";
 import type { Building } from "./game/buildings";
 import { Game } from "./game/city";
 import {
   parallelSpacing, planGrid, planRoad, planRoundabout, removalRefund, segAt, snap,
   type CurveMode, type Plan, type RoundaboutSize, type Snap, type SnapOpts,
 } from "./roads/planner";
-import { Buildings3D, lotMatrix } from "./render/buildings3d";
+import { Buildings3D } from "./render/buildings3d";
+import { Zones3D } from "./render/zones3d";
+import { ZONES, type Cell, type ZoneId } from "./game/zones";
 import type { ModelSet } from "./render/models";
 import { Preview3D } from "./render/preview3d";
 import { Roads3D } from "./render/roads3d";
@@ -19,12 +21,13 @@ import { View } from "./render/view";
 import { Saves } from "./game/saves";
 import type { Hud, Chip } from "./ui/hud";
 
-export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "bulldoze" | "building" | "unlock";
+export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "bulldoze" | "zone" | "unlock";
+/** Zoning tool modes (CS2): fill one side of a street, paint with a brush, or drag a rectangle. */
+export type ZoneMode = "fill" | "brush" | "marquee";
 /** Road tool modes, as in CS2: the four drawing modes, a 3-click grid, and Replace (change type / reverse). */
 export type RoadMode = CurveMode | "grid" | "replace";
 export const ROAD_MODES: RoadMode[] = ["straight", "curve", "complex", "continuous", "grid", "replace"];
-export type OverlayId = "none" | "flow" | "sat" | "commercial" | "work" | "staff" | "input" | "pollution" | "noise";
-export type FocusId = "trips" | "sat" | "flow" | null;
+export type OverlayId = "none" | "flow" | "zones" | "landvalue" | "level" | "problems";
 
 export interface ToolState {
   tool: ToolId;
@@ -38,7 +41,10 @@ export interface ToolState {
   /** Snapping menu: which kinds are switched off, and 8 m length steps. */
   snapOff: { geometry: boolean; guides: boolean; netSide: boolean };
   snapLength: boolean;
-  kind: BuildingKind | null;
+  zone: ZoneId;
+  zoneMode: ZoneMode;
+  brush: number; // brush radius, m
+  erase: boolean; // zoning tool removes zoning
   bdzLevel: number | null; // bulldozer elevation filter (null = all)
   reverse: boolean; // upgrade tool flips one-ways instead
 }
@@ -59,11 +65,11 @@ export class App {
   hud!: Hud;
   st: ToolState = {
     tool: "inspect", roadType: "street", mode: "straight", level: 0, rbSize: 1, parallel: false, parOffset: null,
-    snapOff: { geometry: false, guides: false, netSide: false }, snapLength: false, kind: null, bdzLevel: null, reverse: false,
+    snapOff: { geometry: false, guides: false, netSide: false }, snapLength: false, zone: "resLow", zoneMode: "fill", brush: 22, erase: false, bdzLevel: null, reverse: false,
   };
   uiHidden = false;
   overlay: OverlayId = "none";
-  focus: FocusId = null;
+  zones3d!: Zones3D;
   selected: Building | null = null;
   private worldRoot = new THREE.Group();
   private cursor: V2 = v2(0, 0);
@@ -81,6 +87,8 @@ export class App {
   private pointers = new Map<number, PointerInfo>();
   /** Bulldozer marquee, in screen pixels (the view may be turned). */
   private dragRect: { a: V2; b: V2 } | null = null;
+  /** A zoning brush or marquee stroke in progress. */
+  private zoneStroke: { erase: boolean; cells: Set<Cell>; last: V2; a: V2; b: V2; pointer: number } | null = null;
   private pinch: { d: number; mid: V2; ang: number } | null = null;
   private keys = new Set<string>();
   private last = performance.now();
@@ -104,9 +112,18 @@ export class App {
 
   newGame(seed = 7) {
     this.setGame(new Game(seed));
-    this.view.cx = 0;
-    this.view.cy = 0;
-    this.view.halfH = 170;
+    // open on the town site with the motorway you connect to in view
+    let best = v2(0, 0), bd = Infinity;
+    for (const s of this.game.net.segs.values()) {
+      for (let i = 0; i <= 16; i++) {
+        const p = cubicAt(s.c, i / 16), d = Math.hypot(p.x, p.y);
+        if (d < bd) { bd = d; best = p; }
+      }
+    }
+    const far = bd < 900;
+    this.view.cx = far ? best.x * 0.5 : 0;
+    this.view.cy = far ? best.y * 0.5 : 0;
+    this.view.halfH = far ? Math.max(170, bd * 0.62) : 170;
   }
 
   loadGame(data: ReturnType<Game["serialize"]>) {
@@ -124,7 +141,9 @@ export class App {
     this.labels.set(g.gateways.map((gw) => ({ p: gw.p, name: gw.name, sub: GATEWAY_LABEL[gw.kind], minHalfH: 900 })));
     this.vehicles = new Vehicles3D(this.models);
     this.buildings3d = new Buildings3D(this.models);
-    this.worldRoot.add(this.terrain3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group);
+    this.zones3d = new Zones3D(g.zones);
+    this.zones3d.setGrid(this.st.tool === "zone" || this.overlay === "zones");
+    this.worldRoot.add(this.terrain3d.group, this.zones3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group);
     this.roads.rebuildAll();
     this.buildings3d.rebuild(g.buildings.list);
     this.terrain3d.setTiles(g.tiles);
@@ -132,7 +151,8 @@ export class App {
       if (e.t === "roads") { this.roads.apply(e.cs); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
       else if (e.t === "buildings") { this.buildings3d.rebuild(g.buildings.list); this.applyTint(); this.dirtyPreview = true; }
       else if (e.t === "tiles") this.terrain3d.setTiles(g.tiles);
-      else if (e.t === "level") this.hud?.levelUp(e.level, e.note);
+      else if (e.t === "zones") this.dirtyPreview = true;
+      else if (e.t === "milestone") this.hud?.milestone(e.index);
       else if (e.t === "toast") this.hud?.toast(e.msg);
       this.hud?.refresh();
     });
@@ -147,9 +167,12 @@ export class App {
     const prev = this.st.tool, prevMode = this.st.mode;
     Object.assign(this.st, p);
     if ((p.tool && p.tool !== prev) || (p.mode && p.mode !== prevMode)) this.cancelStroke();
-    if (this.st.tool === "building" && this.st.kind) {
-      this.preview.setGhost(this.buildings3d.ghost(this.st.kind));
-    } else this.preview.setGhost(null);
+    // locked road types can't be picked (keyboard, saved state)
+    if (!this.game.roadsUnlocked.has(this.st.roadType)) this.st.roadType = "street";
+    if ((this.st.tool === "roundabout" && !this.game.featureUnlocked("roundabout"))) this.st.tool = "inspect";
+    if (!this.game.zonesUnlocked.has(this.st.zone)) this.st.zone = "resLow";
+    this.zones3d?.setGrid(this.st.tool === "zone" || this.overlay === "zones");
+    if (this.st.tool !== "zone") { this.zoneStroke = null; this.zones3d?.highlight([], null); }
     if (this.st.tool !== "inspect") { this.selected = null; this.hud?.closePanels(); }
     this.dirtyPreview = true;
     this.hud?.refresh();
@@ -161,40 +184,26 @@ export class App {
 
   setOverlay(o: OverlayId) {
     this.overlay = this.overlay === o ? "none" : o;
-    this.roads.flowMode = this.overlay === "flow" || this.focus === "flow";
+    this.roads.flowMode = this.overlay === "flow";
+    this.zones3d?.setGrid(this.st.tool === "zone" || this.overlay === "zones");
     this.applyTint();
     this.hud?.refresh();
   }
 
-  setFocus(f: FocusId) {
-    this.focus = this.focus === f ? null : f;
-    this.roads.flowMode = this.overlay === "flow" || this.focus === "flow";
-    this.applyTint();
-    this.hud?.refresh();
-  }
-
-  /** Building colours for overlays and magnifier highlights. */
+  /** Building colours for overlays. */
   applyTint() {
     const g = this.game;
-    const mode = this.focus ?? this.overlay;
-    if (mode === "none" || mode === "flow" || mode === null) { this.buildings3d.tint(null); return; }
-    if (mode === "trips") {
-      const homes = new Set(g.residentsWithoutTrip().map((r) => r.home));
-      this.buildings3d.tint((b) => (homes.has(b.id) ? 0xff9a3c : 0x9a9a9a));
-      return;
-    }
-    const target = mode === "sat" && this.focus === "sat" ? g.levelSatTarget : null;
+    const mode = this.overlay;
+    if (mode === "none" || mode === "flow") { this.buildings3d.tint(null); return; }
     this.buildings3d.tint((b) => {
-      let v: number | undefined;
-      if (mode === "sat") v = b.sat;
-      else if (mode === "pollution" || mode === "noise") {
-        const x = b.factors[mode];
-        v = x === undefined ? undefined : 1 - x * 2;
-      } else v = b.factors[mode];
-      if (v === undefined) return 0xb5b5b5;
-      if (target !== null) return v >= target ? 0xb5b5b5 : 0xff9a3c;
-      return ramp(v);
+      if (!b.zone) return 0xb5b5b5;
+      if (mode === "zones") return ZONES[b.zone].color;
+      if (mode === "landvalue") return ramp(b.lv / 80);
+      if (mode === "level") return ramp((b.level - 1) / 4);
+      // problems
+      return b.abandoned || b.problem ? 0xe5484d : b.built < 1 ? 0xd8c9a0 : 0xb5c9b8;
     });
+    void g;
   }
 
   cancelStroke() {
@@ -205,6 +214,8 @@ export class App {
     this.parFrom = undefined;
     this.plan = null;
     this.dragRect = null;
+    this.zoneStroke = null;
+    this.zones3d?.highlight([], null);
     this.dirtyPreview = true;
     this.hud?.rect(null);
   }
@@ -246,10 +257,70 @@ export class App {
       this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mid: v2((a.x + b.x) / 2, (a.y + b.y) / 2), ang: Math.atan2(b.y - a.y, b.x - a.x) };
       this.dragRect = null;
       this.hud?.rect(null);
+      if (this.zoneStroke) { this.zoneStroke = null; this.zones3d.highlight([], null); this.hud?.rect(null); }
       return;
     }
     this.updateCursor(p);
+    if (this.st.tool === "zone" && this.st.zoneMode !== "fill" && (e.button === 0 || e.button === 2)) {
+      this.zoneStroke = { erase: e.button === 2 || this.st.erase, cells: new Set(), last: this.cursor, a: p, b: p, pointer: e.pointerId };
+      if (this.st.zoneMode === "brush") this.brushTo(this.cursor);
+      this.dirtyPreview = true;
+      return;
+    }
     if (e.button === 0 && e.pointerType !== "touch" && this.st.tool === "bulldoze") this.dragRect = { a: p, b: p };
+  }
+
+  /** Grown buildings a road plan would clear: outlined red, with a count. */
+  private lotWarning(plan: Plan, chips: Chip[]) {
+    if (plan.errors.length) return;
+    const lots = this.game.lotsUnder(plan);
+    for (const b of lots) this.preview.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
+    if (lots.length) chips.push({ text: `${lots.length} building${lots.length === 1 ? "" : "s"} demolished`, kind: "error" });
+  }
+
+  /** Brush stroke: add the cells swept from the last point to p. */
+  private brushTo(p: V2) {
+    const zs = this.zoneStroke!;
+    const r = this.st.brush;
+    const d = dist(zs.last, p);
+    const n = Math.max(1, Math.ceil(d / (r * 0.5)));
+    for (let k = d < 0.01 ? n : 1; k <= n; k++) {
+      const q = v2(zs.last.x + ((p.x - zs.last.x) * k) / n, zs.last.y + ((p.y - zs.last.y) * k) / n);
+      for (const c of this.game.zones.near(q, r)) if (c.ok) zs.cells.add(c);
+    }
+    zs.last = p;
+  }
+
+  /** Cells inside a screen rectangle (marquee zoning; the view may be turned). */
+  private cellsInScreenRect(a: V2, b: V2): Cell[] {
+    const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+    const poly = [this.view.toWorld(x0, y0), this.view.toWorld(x1, y0), this.view.toWorld(x1, y1), this.view.toWorld(x0, y1)];
+    return this.game.zones.inPoly(poly).filter((c) => c.ok);
+  }
+
+  /** The cells a fill click at p would change: the run of same-zoned cells on that side of the street. */
+  private fillCells(p: V2, erase: boolean): Cell[] {
+    const c = this.game.zones.cellAt(p);
+    if (!c || !c.ok) return [];
+    const want = c.zone;
+    if (erase && !want) return [];
+    return c.block.cells.filter((x) => x.ok && x.zone === want);
+  }
+
+  private finishZoneStroke() {
+    const zs = this.zoneStroke!;
+    this.zoneStroke = null;
+    this.hud?.rect(null);
+    this.zones3d.highlight([], null);
+    const cells = this.st.zoneMode === "marquee" ? this.cellsInScreenRect(zs.a, zs.b) : [...zs.cells];
+    this.paintZone(cells, zs.erase);
+  }
+
+  private paintZone(cells: Cell[], erase: boolean) {
+    if (!cells.length) return;
+    const n = this.game.zonePaint(cells, erase ? null : this.st.zone);
+    if (n) this.hud?.sound(erase ? "remove" : "place");
+    this.dirtyPreview = true;
   }
 
   private onMove(e: PointerEvent) {
@@ -268,6 +339,16 @@ export class App {
       if (Math.abs(da) < 0.5) this.view.rotateAt(mid.x, mid.y, -da);
       this.pinch = { d, mid, ang };
       this.clampView();
+      return;
+    }
+    if (pi && this.zoneStroke && this.zoneStroke.pointer === pi.id) {
+      if (Math.hypot(p.x - pi.sx, p.y - pi.sy) > 4) pi.moved = true;
+      pi.x = p.x; pi.y = p.y;
+      this.updateCursor(p);
+      const zs = this.zoneStroke;
+      zs.b = p;
+      if (this.st.zoneMode === "brush") this.brushTo(this.cursor);
+      else if (pi.moved) this.hud?.rect([zs.a, zs.b]);
       return;
     }
     if (pi) {
@@ -302,6 +383,11 @@ export class App {
     if (this.pinch) { if (this.pointers.size < 2) this.pinch = null; return; }
     if (!pi) return;
     const p = this.local(e);
+    if (this.zoneStroke && this.zoneStroke.pointer === pi.id) {
+      this.zoneStroke.b = p;
+      this.finishZoneStroke();
+      return;
+    }
     if (this.dragRect && pi.moved && pi.button === 0) {
       this.finishRect();
       return;
@@ -310,7 +396,13 @@ export class App {
     this.hud?.rect(null);
     if (pi.moved) return;
     this.updateCursor(p);
-    if (pi.button === 2) { this.stepBack(); return; }
+    if (pi.button === 2) {
+      // zoning: right-click unzones that side of the street (CS2)
+      if (this.st.tool === "zone") { this.paintZone(this.fillCells(this.cursor, true), true); return; }
+      // right click undoes the last click; with nothing to undo it puts the tool down (CS2)
+      if (!this.stepBack() && this.st.tool !== "inspect") this.setTool({ tool: "inspect" });
+      return;
+    }
     if (pi.button === 0) this.onClick(e.shiftKey);
   }
 
@@ -323,14 +415,11 @@ export class App {
     if ((e.ctrlKey || e.metaKey) && !e.altKey) {
       if (k === "z" && !e.shiftKey) { e.preventDefault(); this.undo(); }
       else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); this.redo(); }
-      else if (k === "s") { e.preventDefault(); this.hud?.openSaves(); }
+      else if (k === "s") { e.preventDefault(); this.hud?.openSaves(true); }
       return;
     }
-    if (k === "Escape") {
-      if (this.hud?.closeMenu() || this.hud?.closePanels()) { /* closed a menu or panel */ }
-      else if (this.st.tool !== "inspect") this.setTool({ tool: "inspect" });
-      else this.cancelStroke();
-    }
+    // Esc steps back like CS2: popups, dialogs, panels, the tool, the asset menu, then the pause menu
+    if (k === "Escape") { if (!this.hud?.back()) this.hud?.openPause(); }
     else if (k === " ") { e.preventDefault(); if (!e.repeat) this.togglePause(); }
     else if (k === "1") this.setSpeed(1);
     else if (k === "2") this.setSpeed(2);
@@ -344,7 +433,11 @@ export class App {
       this.setTool({ tool: "road", mode: order[(i + (e.shiftKey ? order.length - 1 : 1)) % order.length] });
     }
     else if (k === "b") this.setTool({ tool: "bulldoze" });
-    else if (k === "m") this.setTool({ tool: "unlock" });
+    else if (k === "m") this.setTool({ tool: this.st.tool === "unlock" ? "inspect" : "unlock" });
+    else if (k === "p") this.hud?.toggleWin("progression");
+    else if (k === "z") this.hud?.toggleWin("economy");
+    else if (k === "c") this.hud?.toggleWin("city");
+    else if (k === "x") this.hud?.toggleWin("transport");
     else if (k === "[" || k === "]") this.nudgeParallel(k === "]" ? 1 : -1);
     else if (k === "`" || e.code === "Backquote") this.toggleUi();
     else if (k === "F5") { e.preventDefault(); this.quickSave(); }
@@ -441,18 +534,28 @@ export class App {
   // ---------------------------------------------------------------- clicks
 
   /** Right click (CS2): undo the last click of the road being drawn. */
-  stepBack() {
+  /** Undo the last click of a stroke. False when there was nothing to undo. */
+  stepBack(): boolean {
+    this.dirtyPreview = true;
     if (this.dragRect) { this.dragRect = null; this.hud?.rect(null); }
     else if (this.ctrl2) this.ctrl2 = null;
     else if (this.ctrl) this.ctrl = null;
     else if (this.anchor) { this.anchor = null; this.startTangent = undefined; this.parFrom = undefined; }
-    this.dirtyPreview = true;
+    else return false;
+    return true;
   }
 
   private onClick(shift: boolean) {
     const g = this.game;
     const t = this.st.tool;
     const c = this.cursor;
+    if (t === "zone") {
+      if (this.st.zoneMode !== "fill") return;
+      const cells = this.fillCells(c, this.st.erase);
+      if (!cells.length) { if (!g.zones.cellAt(c)) this.reject("Zone beside a street, avenue or one-way road"); return; }
+      this.paintZone(cells, this.st.erase);
+      return;
+    }
     if (t === "inspect") {
       const b = g.buildings.at(c);
       this.selected = b;
@@ -547,19 +650,6 @@ export class App {
       }
       return;
     }
-    if (t === "building" && this.st.kind) {
-      const pl = g.placement(this.st.kind, c);
-      if (!pl) { this.reject("Place it next to a street or avenue"); return; }
-      if (!pl.ok) { this.reject(pl.reason ?? "Can't place here"); return; }
-      if (g.place(this.st.kind, pl)) {
-        this.hud?.sound("place");
-        if ((g.inventory[this.st.kind] ?? 0) <= 0) {
-          const next = (Object.keys(g.inventory) as BuildingKind[]).find((k) => (g.inventory[k] ?? 0) > 0);
-          this.setTool(next ? { kind: next } : { tool: "inspect", kind: null });
-        }
-      }
-      return;
-    }
     if (t === "junction") {
       const n = this.nodeAt(c);
       if (n === null) { this.reject("Click a junction"); return; }
@@ -569,11 +659,14 @@ export class App {
     if (t === "unlock") {
       const [i, j] = g.tileOf(c);
       if (g.tiles.has(`${i},${j}`)) return;
-      if (g.tileTokens <= 0) { this.reject("No area unlocks left. Complete levels to earn more"); return; }
-      if (!g.canUnlock(i, j)) { this.reject("Unlock an area next to one you own"); return; }
+      const why = g.tileBlock(i, j);
+      if (why) { this.reject(why); return; }
+      const price = g.nextTilePrice;
       g.unlockTile(i, j);
       this.hud?.sound("place");
-      if (g.tileTokens <= 0) this.setTool({ tool: "inspect" });
+      this.hud?.toast(`Bought land for ${formatMoney(price)}`);
+      if (g.tileSlotsLeft <= 0) this.setTool({ tool: "inspect" });
+      else this.hud?.refresh();
     }
   }
 
@@ -682,12 +775,13 @@ export class App {
     this.dirtyPreview = false;
     const pv = this.preview;
     pv.clear();
-    if (!this.hasCursor) { if (pv.ghost) pv.ghost.visible = false; this.hud?.chips(null); return; }
+    if (!this.hasCursor) { if (pv.ghost) pv.ghost.visible = false; this.zones3d.highlight(this.zoneStroke ? [...this.zoneStroke.cells] : [], this.zoneStroke?.erase ? null : this.st.zone); this.hud?.chips(null); return; }
     const g = this.game;
     const c = this.cursor;
     const t = this.st.tool;
     const chips: Chip[] = [];
     if (pv.ghost) pv.ghost.visible = false;
+    if (t !== "zone") this.zones3d.highlight([], null);
     if (t === "road" && this.st.mode === "replace") {
       const id = segAt(g.net, c, 2, null);
       if (id !== null) {
@@ -738,6 +832,7 @@ export class App {
             pv.plan(plan, this.st.level);
             if (plan.errors.length) chips.push({ text: plan.errors[0].msg, kind: "error" });
             chips.push({ text: formatMoney(plan.cost), kind: plan.cost > g.money ? "error" : "cost" });
+            this.lotWarning(plan, chips);
           }
         }
       } else if (step === "ctrl" || step === "ctrl2") {
@@ -768,6 +863,7 @@ export class App {
             }
           }
           chips.push({ text: formatMoney(plan.cost), kind: plan.cost > g.money ? "error" : "cost" });
+          this.lotWarning(plan, chips);
           const L = plan.strokes[0].chain.length ? plan.length / plan.strokes.length : 0;
           chips.push({ text: L < 950 ? `${Math.round(L)} m` : `${(L / 1000).toFixed(2)} km`, kind: "info" });
           const dh = plan.strokes[0].h1 - plan.strokes[0].h0;
@@ -784,6 +880,7 @@ export class App {
         if (plan.removeSegs?.length) pv.removal(g.net, plan.removeSegs);
         if (plan.errors.length) chips.push({ text: plan.errors[0].msg, kind: "error" });
         chips.push({ text: formatMoney(plan.cost), kind: plan.cost > g.money ? "error" : "cost" });
+        this.lotWarning(plan, chips);
       }
     } else if (t === "bulldoze") {
       if (this.dragRect && this.pointers.size && [...this.pointers.values()][0].moved) {
@@ -796,7 +893,7 @@ export class App {
         const b = g.buildings.at(c);
         if (b) {
           pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
-          chips.push({ text: `Pick up ${BUILDING_TYPES[b.kind].name}`, kind: "info" });
+          chips.push({ text: `Demolish ${b.zone ? ZONES[b.zone].short.toLowerCase() : BUILDING_TYPES[b.kind].name}`, kind: "info" });
         } else {
           const id = segAt(g.net, c, 2, this.st.bdzLevel);
           if (id !== null) {
@@ -805,25 +902,24 @@ export class App {
           }
         }
       }
-    } else if (t === "building" && this.st.kind) {
-      const pl = g.placement(this.st.kind, c);
-      const gh = pv.ghost;
-      if (gh) {
-        if (pl) {
-          gh.visible = true;
-          lotMatrix(gh.matrix, pl.c, pl.rot, pl.side, 0.2);
-          gh.matrixAutoUpdate = false;
-          gh.matrixWorldNeedsUpdate = true;
-          (gh.material as THREE.MeshLambertMaterial).color.setHex(pl.ok ? 0xffffff : 0xff6b6b);
-          if (!pl.ok) {
-            chips.push({ text: pl.reason ?? "Can't place here", kind: "error" });
-            for (const id of pl.blockers) {
-              const b = g.buildings.byId.get(id);
-              if (b) pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
-            }
-          }
-        } else chips.push({ text: "Needs a street or avenue to face", kind: "error" });
-      }
+    } else if (t === "zone") {
+      const zs = this.zoneStroke;
+      const erase = zs ? zs.erase : this.st.erase;
+      let cells: Cell[];
+      if (zs) cells = this.st.zoneMode === "marquee" ? (this.pointers.get(zs.pointer)?.moved ? this.cellsInScreenRect(zs.a, zs.b) : []) : [...zs.cells];
+      else if (this.st.zoneMode === "brush") cells = g.zones.near(c, this.st.brush).filter((x) => x.ok);
+      else if (this.st.zoneMode === "fill") cells = this.fillCells(c, erase);
+      else cells = [];
+      const Z = ZONES[this.st.zone];
+      const to = erase ? null : this.st.zone;
+      this.zones3d.highlight(cells, to);
+      chips.push({ text: erase ? "Unzone" : Z.short, kind: "info" });
+      if (cells.length) {
+        const change = cells.filter((x) => x.zone !== to).length;
+        chips.push({ text: `${change} cell${change === 1 ? "" : "s"}`, kind: "info" });
+        const built = new Set(cells.filter((x) => x.lot && x.zone !== to).map((x) => x.lot)).size;
+        if (built) chips.push({ text: `${built} building${built === 1 ? "" : "s"} demolished`, kind: "error" });
+      } else if (!zs && !g.zones.cellAt(c)) chips.push({ text: "Zone beside a street", kind: "info" });
     } else if (t === "junction") {
       const n = this.nodeAt(c);
       if (n !== null) {
@@ -835,12 +931,14 @@ export class App {
       const [i, j] = g.tileOf(c);
       if (!g.tiles.has(`${i},${j}`)) {
         const T = TILE, a = (i - 0.5) * T, b = (j - 0.5) * T;
-        pv.footprint([v2(a, b), v2(a + T, b), v2(a + T, b + T), v2(a, b + T)], g.canUnlock(i, j) ? 0x58c8e6 : 0x888888);
-        chips.push({ text: g.canUnlock(i, j) ? `Unlock area (${g.tileTokens} left)` : g.tileTokens > 0 ? "Must border an owned area" : "No unlocks left", kind: g.canUnlock(i, j) ? "info" : "error" });
+        const why = g.tileBlock(i, j);
+        pv.footprint([v2(a, b), v2(a + T, b), v2(a + T, b + T), v2(a, b + T)], why ? 0x888888 : 0x58c8e6);
+        chips.push(why ? { text: why, kind: "error" } : { text: "Buy this tile", kind: "info" });
+        chips.push({ text: formatMoney(g.nextTilePrice), kind: g.nextTilePrice > g.money ? "error" : "cost" });
       }
     } else if (t === "inspect") {
       const b = g.buildings.at(c);
-      if (b) chips.push({ text: BUILDING_TYPES[b.kind].name, kind: "info" });
+      if (b) chips.push({ text: b.zone ? `${ZONES[b.zone].short} · level ${b.level}` : BUILDING_TYPES[b.kind].name, kind: "info" });
     }
     this.hud?.chips(chips.length ? this.cursorPx : null, chips);
   }
@@ -874,7 +972,8 @@ export class App {
     g.update(dt);
     this.vehicles.update(g.traffic, g.alpha);
     this.flowT += dt;
-    const flowOn = this.overlay === "flow" || this.focus === "flow";
+    const flowOn = this.overlay === "flow";
+    this.zones3d.update();
     this.roads.update(g.traffic, flowOn && this.flowT > 0.5);
     if (this.flowT > 0.5) this.flowT = 0;
     if (this.dirtyPreview) this.refreshPreview();
@@ -882,7 +981,8 @@ export class App {
     if (this.hudT > 0.25) {
       this.hudT = 0;
       this.hud?.tick();
-      if (this.overlay !== "none" || this.focus) this.applyTint();
+      this.buildings3d.updateConstruction();
+      if (this.overlay !== "none" && this.overlay !== "flow") this.applyTint();
     }
     this.saveT += dt;
     if (this.saveT > 60) { this.saveT = 0; this.saves.autosave(g); }
