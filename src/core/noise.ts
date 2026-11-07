@@ -14,6 +14,7 @@ export function mulberry32(seed: number): () => number {
 export class Noise2D {
   private perm: Uint8Array;
   private grads: Float32Array;
+  private salt: number;
 
   constructor(seed: number) {
     const rnd = mulberry32(seed);
@@ -27,6 +28,7 @@ export class Noise2D {
       p[j] = t;
     }
     for (let i = 0; i < 512; i++) this.perm[i] = p[i & 255];
+    this.salt = (rnd() * 0x7fffffff) | 0;
     this.grads = new Float32Array(512);
     for (let i = 0; i < 256; i++) {
       const a = rnd() * Math.PI * 2;
@@ -36,7 +38,10 @@ export class Noise2D {
   }
 
   private g(ix: number, iy: number, x: number, y: number): number {
-    const h = this.perm[(this.perm[ix & 255] + iy) & 511] & 255;
+    // integer hash (not a 256-periodic table): the world is endless, so the noise must never repeat
+    let h = Math.imul(ix, 0x27d4eb2d) ^ Math.imul(iy, 0x165667b1) ^ this.salt;
+    h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+    h = (h ^ (h >>> 13)) & 255;
     return this.grads[h * 2] * x + this.grads[h * 2 + 1] * y;
   }
 
@@ -53,6 +58,19 @@ export class Noise2D {
     const a = n00 + (n10 - n00) * u;
     const b = n01 + (n11 - n01) * u;
     return (a + (b - a) * v) * 1.41;
+  }
+
+  /** Ridged noise in [0, 1]: sharp crests where the gradient noise crosses zero (mountain ranges). */
+  ridged(x: number, y: number, oct = 4): number {
+    let amp = 1, f = 1, sum = 0, norm = 0;
+    for (let i = 0; i < oct; i++) {
+      const n = 1 - Math.abs(this.noise(x * f, y * f));
+      sum += n * n * amp;
+      norm += amp;
+      amp *= 0.5;
+      f *= 2.03;
+    }
+    return sum / norm;
   }
 
   fbm(x: number, y: number, oct = 4, lac = 2, gain = 0.5): number {

@@ -1,5 +1,5 @@
 import {
-  BUILDING_TYPES, BULLDOZE_REFUND, MAP, ROAD_TYPES, SIGNAL_COST, SIM, roadWidth, type BuildingKind, type Cargo, type RoadTypeId,
+  BUILDING_TYPES, BULLDOZE_REFUND, START_TILES, TILE, ROAD_TYPES, SIGNAL_COST, SIM, roadWidth, type BuildingKind, type Cargo, type RoadTypeId,
 } from "../config";
 import { dist, type V2 } from "../core/math";
 import { mulberry32 } from "../core/noise";
@@ -9,6 +9,8 @@ import {
 } from "../roads/planner";
 import { Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import { Terrain } from "../world/terrain";
+import type { Gateway } from "../world/gen";
+import { MOTORWAY_TYPE, carriageways, centrePoints, planMotorway, type MotorwayPlan } from "../world/motorway";
 import { Buildings, type Building, type BuildingMove, type Placement } from "./buildings";
 import { levelDef } from "./levels";
 
@@ -88,17 +90,25 @@ export class Game {
   failedTrips = 0;
   enRoute = new Map<number, number>(); // consumer building id -> trucks heading there
   readonly world: BuildWorld;
+  /** Outside cities around the region. */
+  gateways: Gateway[] = [];
+  motorway: MotorwayPlan | null = null;
 
   constructor(seed = 7) {
     this.seed = seed;
     this.rng = mulberry32(seed * 31 + 5);
     this.terrain = new Terrain(seed);
+    // the region: outside cities and the motorway that links the start to two of them; its corridor is carved
+    // through hills before any terrain is generated
+    this.gateways = this.terrain.gen.gateways();
+    this.motorway = planMotorway(this.terrain.gen, this.gateways);
+    if (this.motorway) this.terrain.gen.corridors.add(centrePoints(this.motorway.prims, 40));
     this.buildings = new Buildings(this.net);
     this.traffic = new Traffic(this.net, {
       arrive: (v, now) => this.onArrive(v, now),
       fail: (trip, reason) => this.onFail(trip, reason),
     });
-    for (const [i, j] of MAP.startTiles) this.tiles.add(`${i},${j}`);
+    for (const [i, j] of START_TILES) this.tiles.add(`${i},${j}`);
     const L = levelDef(1);
     this.money = L.money;
     this.inventory = { ...L.give };
@@ -112,7 +122,23 @@ export class Game {
       buildingsHit: (pts, hw) => this.buildings.hit(pts, hw),
       money: () => this.money,
     };
+    if (this.motorway) this.layMotorway(this.motorway);
     this.evalObjectives();
+  }
+
+  /** Build the pre-built motorway's two carriageways (not undoable; free). */
+  private layMotorway(plan: MotorwayPlan) {
+    this.applyRoads(() => {
+      for (const cw of carriageways(plan)) {
+        let prev = -1;
+        for (const pc of cw.pieces) {
+          const a = prev >= 0 ? prev : this.net.addNode(pc.c.p0, pc.h0);
+          const b = this.net.addNode(pc.c.p3, pc.h1);
+          this.net.addSeg(a, b, MOTORWAY_TYPE, pc.c);
+          prev = b;
+        }
+      }
+    });
   }
 
   on(fn: (e: GameEvent) => void) {
@@ -126,7 +152,7 @@ export class Game {
   // ---------------------------------------------------------------- tiles
 
   tileOf(p: V2): [number, number] {
-    return [Math.floor(p.x / MAP.tile), Math.floor(p.y / MAP.tile)];
+    return [Math.floor(p.x / TILE + 0.5), Math.floor(p.y / TILE + 0.5)];
   }
 
   unlocked(p: V2): boolean {
@@ -135,8 +161,7 @@ export class Game {
   }
 
   canUnlock(i: number, j: number): boolean {
-    const n = MAP.size / MAP.tile;
-    if (i < 0 || j < 0 || i >= n || j >= n || this.tiles.has(`${i},${j}`) || this.tileTokens <= 0) return false;
+    if (Math.abs(i) > 120 || Math.abs(j) > 120 || this.tiles.has(`${i},${j}`) || this.tileTokens <= 0) return false;
     return [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => this.tiles.has(`${i + a},${j + b}`));
   }
 

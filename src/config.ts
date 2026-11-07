@@ -11,7 +11,7 @@ export const MIN_ARM_ANGLE = (24 * Math.PI) / 180;
 export const NODE_SNAP_PX = 18;
 export const ROAD_SNAP_PX = 14;
 
-export type RoadTypeId = "street" | "avenue" | "boulevard" | "one1" | "one2" | "one3" | "one4";
+export type RoadTypeId = "street" | "avenue" | "boulevard" | "one1" | "one2" | "hw2" | "one3" | "one4";
 
 export interface RoadType {
   id: RoadTypeId;
@@ -35,11 +35,12 @@ export const ROAD_TYPES: Record<RoadTypeId, RoadType> = {
   boulevard: { id: "boulevard", name: "Boulevard", short: "3+3", fwd: 3, bwd: 3, speed: kmh(70), costPerM: 21, minRadius: 20, allowsAccess: false, rank: 3, hint: "Two-way, three lanes each way. Too busy for driveways." },
   one1: { id: "one1", name: "One-way", short: "1", fwd: 1, bwd: 0, speed: kmh(50), costPerM: 4, minRadius: 8, allowsAccess: true, rank: 1, hint: "One lane, drawn direction only. Ideal for ramps and loops." },
   one2: { id: "one2", name: "One-way 2", short: "2", fwd: 2, bwd: 0, speed: kmh(70), costPerM: 9, minRadius: 16, allowsAccess: true, rank: 2, hint: "Two lanes, drawn direction only." },
+  hw2: { id: "hw2", name: "Highway 2", short: "2", fwd: 2, bwd: 0, speed: kmh(100), costPerM: 12, minRadius: 60, allowsAccess: false, rank: 3, hint: "Two-lane motorway carriageway. Build pairs, link with ramps." },
   one3: { id: "one3", name: "Highway 3", short: "3", fwd: 3, bwd: 0, speed: kmh(90), costPerM: 15, minRadius: 30, allowsAccess: false, rank: 3, hint: "Three-lane carriageway. Build pairs for a motorway." },
   one4: { id: "one4", name: "Highway 4", short: "4", fwd: 4, bwd: 0, speed: kmh(100), costPerM: 21, minRadius: 40, allowsAccess: false, rank: 4, hint: "Four-lane carriageway for the heaviest flows." },
 };
 
-export const ROAD_ORDER: RoadTypeId[] = ["one1", "street", "one2", "avenue", "one3", "boulevard", "one4"];
+export const ROAD_ORDER: RoadTypeId[] = ["one1", "street", "one2", "avenue", "hw2", "one3", "boulevard", "one4"];
 
 export function roadWidth(t: RoadType): number {
   return (t.fwd + t.bwd) * LANE_W + SHOULDER * 2;
@@ -113,13 +114,7 @@ export const SIM = {
   deliveryInterval: 55,
 };
 
-export const MAP = {
-  size: 2400,
-  tile: 400,
-  startTiles: [
-    [2, 2],
-    [3, 2],
-    [2, 3],
-    [3, 3],
-  ] as [number, number][],
-};
+/** Land tile size in metres. Tile (i, j) is centred on (i * TILE, j * TILE); the start tile is centred on the origin. */
+export const TILE = 640;
+/** Tiles owned at the start: the 3x3 block around the origin (CS2 starts with 9 tiles). */
+export const START_TILES: [number, number][] = [-1, 0, 1].flatMap((i) => [-1, 0, 1].map((j) => [i, j] as [number, number]));

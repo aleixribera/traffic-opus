@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { Game } from "../src/game/city";
 import { planGrid, planRoad, planRoundabout, snap } from "../src/roads/planner";
-import { v2, type V2 } from "../src/core/math";
+import { v2 as V, type V2 } from "../src/core/math";
+
+// the old fixed map put the start at (1200, 1200); the endless world centres it on the origin
+const v2 = (x: number, y: number) => V(x - 1200, y - 1200);
 import type { BuildingKind } from "../src/config";
 
 function road(g: Game, a: V2, b: V2, type: any = "street") {
@@ -68,6 +71,7 @@ describe("Game", () => {
   it("undo restores money and removes buildings back to the inventory", () => {
     const g = new Game(7);
     const m0 = g.money;
+    const base = g.net.segs.size; // the pre-built motorway
     road(g, v2(1010, 1200), v2(1390, 1200));
     expect(g.money).toBeLessThan(m0);
     const pl = g.placement("house", v2(1100, 1214))!;
@@ -77,9 +81,9 @@ describe("Game", () => {
     expect(g.inventory.house).toBe(inv + 1);
     g.undo();
     expect(g.money).toBe(m0);
-    expect(g.net.segs.size).toBe(0);
+    expect(g.net.segs.size).toBe(base);
     g.redo();
-    expect(g.net.segs.size).toBe(1);
+    expect(g.net.segs.size).toBe(base + 1);
   });
 
   it("keeps traffic moving through a roundabout (no ring gridlock)", () => {
@@ -129,7 +133,7 @@ describe("Game", () => {
     road(g, A[3], A[1]);
     road(g, A[0], A[2]);
     A.forEach((a, i) => {
-      const d = { x: Math.sign(a.x - 1200), y: Math.sign(a.y - 1200) };
+      const d = { x: Math.sign(a.x), y: Math.sign(a.y) };
       const kind: BuildingKind = i === 3 ? "office" : i === 2 ? "shop" : "house";
       for (let r = 45; r < 145; r += kind === "house" ? 13 : 32) for (const s of [-13, 13]) {
         const pl = g.placement(kind, v2(1200 + d.x * r + d.y * s, 1200 + d.y * r + d.x * s));
@@ -148,8 +152,10 @@ describe("Game", () => {
   it("keeps a busy street grid flowing without gridlock", () => {
     const g = new Game(3);
     (g as any).inventory = { house: 200, shop: 20, office: 20 };
-    expect(g.build(planGrid(g.net, g.world, v2(1090, 1090), v2(1310, 1310), v2(1, 0), "street", 0))).toBe(true);
-    const ys = [...new Set([...g.net.nodes.values()].map((nd) => Math.round(nd.p.y)))];
+    const grid = planGrid(g.net, g.world, v2(1090, 1090), v2(1310, 1310), V(1, 0), "street", 0);
+    expect(grid.errors.map((e) => e.msg)).toEqual([]);
+    expect(g.build(grid)).toBe(true);
+    const ys = [...new Set([...g.net.nodes.values()].filter((nd) => Math.hypot(nd.p.x, nd.p.y) < 300).map((nd) => Math.round(nd.p.y) + 1200))];
     let h = 0, s = 0, o = 0, i = 0;
     const tryAt = (k: BuildingKind, x: number, yy: number) => { const pl = g.placement(k, v2(x, yy)); return pl?.ok && g.place(k, pl) ? 1 : 0; };
     for (let x = 1095; x < 1310; x += 12) for (const yy of ys) for (const dy of [-13, 13]) {
@@ -158,7 +164,7 @@ describe("Game", () => {
       else if (i % 11 === 0 && o < 6) o += tryAt("office", x, yy + dy);
       else if (h < 55) h += tryAt("house", x, yy + dy);
     }
-    expect(h).toBe(55);
+    expect(h, `${s} shops ${o} offices`).toBe(55);
     for (let t = 0; t < 900; t += 1 / 30) g.step(1 / 30);
     expect(g.failedTrips).toBe(0);
     expect(g.traffic.flowScore()).toBeGreaterThan(0.85);
@@ -166,18 +172,18 @@ describe("Game", () => {
 
   it("upgrading a built-up street pushes its lots back, and undo puts them back", () => {
     const g = new Game(7);
-    const y = 1200;
+    const y = 1200, Y = v2(0, y).y;
     road(g, v2(1010, y), v2(1390, y));
     expect(placeAlong(g, "house", 4, 1030, y, -1)).toBe(4);
     expect(placeAlong(g, "house", 4, 1030, y, 1)).toBe(4);
-    const seg = [...g.net.segs.keys()][0];
+    const seg = Math.max(...g.net.segs.keys());
     const before = g.buildings.list.map((b) => ({ ...b.c }));
     const u = g.upgradePlan(seg, "avenue");
     expect(u.errors).toEqual([]);
     expect(u.moves.length).toBe(8);
     expect(g.upgrade(seg, "avenue")).toBe(true);
     for (const [i, b] of g.buildings.list.entries()) {
-      expect(Math.abs(b.c.y - y)).toBeCloseTo(Math.abs(before[i].y - y) + 3.5, 1);
+      expect(Math.abs(b.c.y - Y)).toBeCloseTo(Math.abs(before[i].y - Y) + 3.5, 1);
       expect(b.access?.seg).toBe(seg); // still has its driveway
     }
     for (let t = 0; t < 120; t += 1 / 30) g.step(1 / 30);
@@ -188,8 +194,8 @@ describe("Game", () => {
       expect(b.access?.seg).toBe(seg);
     }
     // back-to-back lots from a parallel street leave no room: refused, and the blockers are named
-    const north = g.buildings.list.find((b) => b.c.y < y)!;
-    const outer = Math.abs(north.c.y - y) + north.hd;
+    const north = g.buildings.list.find((b) => b.c.y < Y)!;
+    const outer = Math.abs(north.c.y - Y) + north.hd;
     const y2 = y - 2 * outer - 1;
     road(g, v2(1010, y2), v2(1390, y2));
     expect(placeAlong(g, "house", 4, 1030, y2, 1)).toBe(4);
@@ -202,11 +208,12 @@ describe("Game", () => {
 
   it("round-trips a save", () => {
     const g = new Game(7);
+    const base = g.net.segs.size;
     road(g, v2(1010, 1200), v2(1390, 1200));
     g.place("house", g.placement("house", v2(1100, 1214))!);
     const json = JSON.parse(JSON.stringify(g.serialize()));
     const h = Game.load(json);
-    expect(h.net.segs.size).toBe(1);
+    expect(h.net.segs.size).toBe(base + 1);
     expect(h.buildings.list.length).toBe(1);
     expect(h.buildings.list[0].access).not.toBeNull();
     expect(h.residents.length).toBe(2);

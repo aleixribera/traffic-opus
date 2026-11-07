@@ -16,7 +16,7 @@ export class View {
   cy = 1200;
   halfH = 160;
   minHalfH = 28;
-  maxHalfH = 1300;
+  maxHalfH = 30000;
   w = 1;
   h = 1;
   private sunDir = new THREE.Vector3(-0.42, 1, -0.62).normalize();

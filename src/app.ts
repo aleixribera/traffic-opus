@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BUILDING_TYPES, LEVEL_H, MAP, MAX_LEVEL, ROAD_TYPES, type BuildingKind, type RoadTypeId } from "./config";
+import { BUILDING_TYPES, LEVEL_H, ROAD_ORDER, TILE, MAX_LEVEL, ROAD_TYPES, type BuildingKind, type RoadTypeId } from "./config";
 import { cubicTangent, dist, formatMoney, norm, rectCorners, v2, type V2 } from "./core/math";
 import type { Building } from "./game/buildings";
 import { Game } from "./game/city";
@@ -11,6 +11,8 @@ import { Buildings3D, lotMatrix } from "./render/buildings3d";
 import type { ModelSet } from "./render/models";
 import { Preview3D } from "./render/preview3d";
 import { Roads3D } from "./render/roads3d";
+import { RoadsFar } from "./render/roadsFar";
+import { MapLabels } from "./ui/labels";
 import { Terrain3D } from "./render/terrain3d";
 import { Vehicles3D } from "./render/vehicles3d";
 import { View } from "./render/view";
@@ -38,6 +40,8 @@ export class App {
   game!: Game;
   view: View;
   roads!: Roads3D;
+  roadsFar!: RoadsFar;
+  labels = new MapLabels();
   vehicles!: Vehicles3D;
   buildings3d!: Buildings3D;
   terrain3d!: Terrain3D;
@@ -83,8 +87,8 @@ export class App {
 
   newGame(seed = 7) {
     this.setGame(new Game(seed));
-    this.view.cx = MAP.size / 2;
-    this.view.cy = MAP.size / 2;
+    this.view.cx = 0;
+    this.view.cy = 0;
     this.view.halfH = 170;
   }
 
@@ -98,14 +102,17 @@ export class App {
     const small = Math.min(window.innerWidth, window.innerHeight) < 700;
     this.terrain3d = new Terrain3D(g.terrain, small);
     this.roads = new Roads3D(g.net);
+    this.roadsFar = new RoadsFar(g.net);
+    this.terrain3d.setGateways(g.gateways);
+    this.labels.set(g.gateways.map((gw) => ({ p: gw.p, name: gw.name, sub: GATEWAY_LABEL[gw.kind], minHalfH: 900 })));
     this.vehicles = new Vehicles3D(this.models);
     this.buildings3d = new Buildings3D(this.models);
-    this.worldRoot.add(this.terrain3d.group, this.roads.group, this.buildings3d.group, this.vehicles.group);
+    this.worldRoot.add(this.terrain3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group);
     this.roads.rebuildAll();
     this.buildings3d.rebuild(g.buildings.list);
     this.terrain3d.setTiles(g.tiles);
     g.on((e) => {
-      if (e.t === "roads") { this.roads.apply(e.cs); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
+      if (e.t === "roads") { this.roads.apply(e.cs); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
       else if (e.t === "buildings") { this.buildings3d.rebuild(g.buildings.list); this.applyTint(); this.dirtyPreview = true; }
       else if (e.t === "tiles") this.terrain3d.setTiles(g.tiles);
       else if (e.t === "level") this.hud?.levelUp(e.level, e.note);
@@ -304,9 +311,8 @@ export class App {
     else if (k === "g") this.setTool({ tool: "grid" });
     else if (k === "j") this.setTool({ tool: "junction" });
     else if (k === "o") this.setTool({ tool: "roundabout" });
-    else if (/^[1-7]$/.test(k)) {
-      const order: RoadTypeId[] = ["one1", "street", "one2", "avenue", "one3", "boulevard", "one4"];
-      this.setTool({ tool: this.st.tool === "upgrade" || this.st.tool === "grid" ? this.st.tool : "road", roadType: order[+k - 1] });
+    else if (/^[1-8]$/.test(k)) {
+      this.setTool({ tool: this.st.tool === "upgrade" || this.st.tool === "grid" ? this.st.tool : "road", roadType: ROAD_ORDER[+k - 1] });
     } else if (k === "=" || k === "+") this.setSpeed(Math.min(4, this.game.speed * 2));
     else if (k === "-") this.setSpeed(Math.max(1, this.game.speed / 2));
   }
@@ -326,8 +332,8 @@ export class App {
   redo() { this.game.redo(); this.cancelStroke(); }
 
   private clampView() {
-    const m = 200;
-    this.view.clampTo(-m, -m, MAP.size + m, MAP.size + m);
+    const m = 120000;
+    this.view.clampTo(-m, -m, m, m);
   }
 
   private updateCursor(px: V2) {
@@ -686,8 +692,8 @@ export class App {
     } else if (t === "unlock") {
       const [i, j] = g.tileOf(c);
       if (!g.tiles.has(`${i},${j}`)) {
-        const T = MAP.tile;
-        pv.footprint([v2(i * T, j * T), v2((i + 1) * T, j * T), v2((i + 1) * T, (j + 1) * T), v2(i * T, (j + 1) * T)], g.canUnlock(i, j) ? 0x58c8e6 : 0x888888);
+        const T = TILE, a = (i - 0.5) * T, b = (j - 0.5) * T;
+        pv.footprint([v2(a, b), v2(a + T, b), v2(a + T, b + T), v2(a, b + T)], g.canUnlock(i, j) ? 0x58c8e6 : 0x888888);
         chips.push({ text: g.canUnlock(i, j) ? `Unlock area (${g.tileTokens} left)` : g.tileTokens > 0 ? "Must border an owned area" : "No unlocks left", kind: g.canUnlock(i, j) ? "info" : "error" });
       }
     } else if (t === "inspect") {
@@ -734,6 +740,13 @@ export class App {
       this.shake = Math.max(0, this.shake - dt * 4);
       this.hud?.shake(this.shake);
     }
+    // far out: no cars, no shadow map (the ground draws its own hill shadows)
+    const far = this.view.halfH > 1800;
+    this.vehicles.group.visible = !far;
+    this.view.sun.castShadow = this.view.halfH < 2400;
+    this.terrain3d.update(this.view);
+    this.roadsFar.update(this.view.mpp, this.view.w, this.view.h);
+    this.labels.update(this.view);
     this.view.render();
     requestAnimationFrame(this.frame);
   };
@@ -755,6 +768,10 @@ export class App {
     return this.view.mpp;
   }
 }
+
+const GATEWAY_LABEL: Record<string, string> = {
+  port: "Port city", capital: "Capital", industry: "Industrial city", farm: "Farm town", mining: "Mining town", tech: "Tech city",
+};
 
 /** red -> amber -> green ramp for 0..1 */
 export function ramp(v: number): number {
