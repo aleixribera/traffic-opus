@@ -1057,7 +1057,7 @@ export class App {
         if (lp.cost) chips.push({ text: formatMoney(lp.cost), kind: lp.cost > g.money ? "error" : "cost" });
         if (lp.road) this.lotWarning(lp.road, chips);
         else if (!lp.errors.length && !removing) {
-          const lots = g.lotsUnderOutline(lp.outline);
+          const lots = g.lotsUnderOutline(lp.widen ?? lp.outline);
           for (const b of lots) pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
           if (lots.length) chips.push({ text: `${lots.length} building${lots.length === 1 ? "" : "s"} demolished`, kind: "error" });
         }

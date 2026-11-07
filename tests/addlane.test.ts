@@ -81,6 +81,30 @@ describe("Add lane: turn lanes", () => {
     expect(planAddLane(net, world({ money: () => 0 }), v2(-60, 0.2 * LANE_W))!.errors[0].msg).toBe("Not enough money");
     expect(planAddLane(net, world(), v2(-60, 40))).toBeNull();
   });
+
+  it("checks for buildings where the road widens at the kerb, for a left-turn lane too", () => {
+    const { net } = cross();
+    // a building just past the eastbound kerb (y = one lane out): the left-turn lane pushes the through lane onto it
+    const near = world({ buildingsHit: (pts) => (pts.some((q) => q.x < -5 && q.x > -40 && q.y > LANE_W + 1) ? [7] : []) });
+    const lp = planAddLane(net, near, v2(-50, 0.2 * LANE_W))!;
+    expect(lp.pocket!.side).toBe("l");
+    expect(lp.errors[0]?.msg).toBe("Building in the way");
+    expect(Math.max(...lp.widen!.map((q) => q.y))).toBeCloseTo(2 * LANE_W, 1);
+  });
+
+  it("a turn lane can still be taken away after the road became a one-way motorway", () => {
+    const { net, w } = cross();
+    apply(net, planAddLane(net, world(), v2(-60, 0.2 * LANE_W))!);
+    net.begin();
+    net.setType(w, "hw1");
+    net.commit();
+    net.rebuild();
+    const rm = planAddLane(net, world(), v2(-60, 0), true)!;
+    expect(rm.errors).toEqual([]);
+    expect(rm.pocket).toMatchObject({ seg: w, end: "b", to: null });
+    apply(net, rm);
+    expect(net.segs.get(w)!.pk).toBeUndefined();
+  });
 });
 
 describe("Add lane: motorway slip lanes", () => {

@@ -404,8 +404,7 @@ export class RoadNetwork {
     s.a = s.b;
     s.b = a;
     s.c = { p0: s.c.p3, p1: s.c.p2, p2: s.c.p1, p3: s.c.p0 };
-    // the traffic now arrives at the other ends: pockets go with the junctions they sit before
-    if (s.pk) s.pk = { a: s.pk.b, b: s.pk.a };
+    // (a pocket stays where the traffic arrives: before the junction it now drives up to)
     // signal plans reference seg ids, unaffected
     this.removedSegs.add(id); // lanes change direction: treat as replaced
     this.touchSeg(id);
@@ -660,6 +659,23 @@ export class RoadNetwork {
       }
     }
 
+    // 2a) pockets the junctions either side now leave no room for aren't built: the mouth narrows back too
+    for (const id of dirtySegs) {
+      const g = this.segGeom.get(id)!, s = this.segs.get(id)!;
+      if (!g.ends.a.pocket && !g.ends.b.pocket) continue;
+      const z = pocketZones(s, g);
+      for (const [end, zz] of [["b", z.fwd], ["a", z.bwd]] as const) {
+        const p = g.ends[end].pocket;
+        if (!p) continue;
+        const eff = { r: zz.rLen > 0 ? p.r : 0, l: zz.lLen > 0 ? p.l : 0 };
+        if (eff.r === p.r && eff.l === p.l) continue;
+        const k = (eff.r > 0 ? 1 : 0) + (eff.l > 0 ? 1 : 0);
+        g.ends = { ...g.ends, [end]: { ...g.ends[end], pocket: k ? eff : undefined } };
+        const arm = armsByNode.get(end === "a" ? s.a : s.b)?.find((x) => x.seg === id && x.end === end);
+        if (arm) arm.wL = k ? k * LANE_W : undefined;
+      }
+    }
+
     // 2b) shifted and glued centrelines (glued ones last: they follow the road they're glued to)
     const shaped = [...dirtySegs].filter((id) => { const e = this.segGeom.get(id)!.ends; return !!(e.a.shift || e.b.shift || e.a.glue || e.b.glue); });
     shaped.sort((x, y) => Number(this.hasGlue(x)) - Number(this.hasGlue(y)));
@@ -696,7 +712,7 @@ export class RoadNetwork {
       if (!this.nodes.has(nid)) continue;
       const prev = this.nodeGeom.get(nid);
       if (prev) oldConns.set(nid, prev.conns);
-      const arms = armsByNode.get(nid) ?? this.computeArms(nid, segsByNode.get(nid) ?? []);
+      const arms = armsByNode.get(nid) ?? this.computeArms(nid, segsByNode.get(nid) ?? [], false);
       this.nodeGeom.set(nid, this.buildJunction(nid, arms));
     }
     // reset lane in/out lists for lanes at rebuilt nodes
@@ -755,7 +771,7 @@ export class RoadNetwork {
 
   // ---------------- geometry builders ----------------
 
-  private computeArms(nid: number, segs: RSeg[]): Arm[] {
+  private computeArms(nid: number, segs: RSeg[], dirty = true): Arm[] {
     const arms: Arm[] = [];
     for (const s of segs) {
       const loops = s.a === nid && s.b === nid;
@@ -776,7 +792,8 @@ export class RoadNetwork {
     } else if (kind === "junction") {
       for (const a of arms) {
         const s = segs.find((x) => x.id === a.seg)!;
-        const p = s.ring ? undefined : s.pk?.[a.end];
+        const g = this.segGeom.get(s.id);
+        const p = s.ring ? undefined : g && !dirty ? g.ends[a.end].pocket : s.pk?.[a.end];
         const k = p ? (p.r > 0 ? 1 : 0) + (p.l > 0 ? 1 : 0) : 0;
         if (k && laneCounts(s, a.end).inn > 0) a.wL = k * LANE_W;
       }
@@ -1082,7 +1099,8 @@ export class RoadNetwork {
       for (let i = 0; i < n; i++) lanes.push(mk(dir, i, n, z.lLen > 0 ? (sc: number) => offOf(i) + sw(sc) : offOf(i)));
       const at = (len: number) => (dir === 1 ? { s0: z.stop - len, s1: z.stop } : { s0: z.stop, s1: z.stop + len });
       if (z.lLen > 0) lanes.push(mk(dir, n, n, offOf(n - 1), at(z.lLen), "l"));
-      if (z.rLen > 0) lanes.push(mk(dir, -1, n, offOf(0) + sg * LANE_W * (z.lLen > 0 ? 2 : 1), at(z.rLen), "r"));
+      // (outside the kerb lane wherever it is: swung over where the left pocket is open, on its usual line before)
+      if (z.rLen > 0) lanes.push(mk(dir, -1, n, z.lLen > 0 ? (sc: number) => offOf(0) + sg * LANE_W * (1 + z.l(sc)) : offOf(0) + sg * LANE_W, at(z.rLen), "r"));
     };
     side(1, T.fwd, (i) => (twoWay ? (T.fwd - i - 0.5) * LANE_W + med : (T.fwd / 2 - i - 0.5) * LANE_W));
     side(-1, T.bwd, (j) => -(T.bwd - j - 0.5) * LANE_W - med);
@@ -1429,11 +1447,15 @@ export interface PocketZone { stop: number; rLen: number; lLen: number; r: (sc: 
  * Where a road's turn pockets open out: for the traffic one way (fwd: a->b, arriving at b) and the other (bwd),
  * each pocket full width over its length before the stop line and opening out over a taper before that.
  */
+/** The shortest turn pocket worth building (m): one squeezed shorter by its junctions is left out. */
+const POCKET_FIT = 8;
+
 export function pocketZones(s: RSeg, g: SegGeom): { fwd: PocketZone; bwd: PocketZone } {
   const L = g.center.length, tp = pocketTaper(s.type);
   const zone = (p: Pocket | undefined, dir: 1 | -1, room: number): PocketZone => {
     const stop = dir === 1 ? L - g.trimB : g.trimA;
-    const fit = (len: number) => (len > 0 ? Math.max(0, Math.min(len, room - tp)) : 0);
+    // (squeezed shorter than a car or two by the junctions either side, it isn't built at all)
+    const fit = (len: number) => { const f = len > 0 ? Math.min(len, room - tp) : 0; return f >= POCKET_FIT ? f : 0; };
     const rLen = fit(p?.r ?? 0), lLen = fit(p?.l ?? 0);
     const open = (len: number) => (sc: number) => {
       if (len <= 0) return 0;

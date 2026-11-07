@@ -170,4 +170,93 @@ describe("Turn pockets", () => {
     expect(Math.abs(v!.lat), "it still gets over").toBeLessThan(0.5);
     expect(worst, "most it turned away from the road (rad)").toBeLessThan(0.1);
   });
+
+  it("cars queued in a turn lane don't stop anyone turning across into a driveway further back", () => {
+    const { net, w } = cross();
+    net.begin();
+    net.setPocket(w, "b", { r: 0, l: 40 });
+    net.commit();
+    net.rebuild();
+    const tr = new Traffic(net, { arrive: () => {}, fail: () => {} });
+    const pk = into(net, w, 1).find((l) => l.pocket)!;
+    // a car standing at the very start of the pocket's queue
+    (pk.occ as unknown[]).push({ id: 1, s: 4.6, len: 4.5, v: 0, wait: 20, destS: -1, truck: false });
+    // westbound, 250 m back from the junction, turning left into a driveway on the eastbound side
+    const west = into(net, w, -1)[0];
+    const g = net.segGeom.get(w)!;
+    const p = polyAt(g.center, 150);
+    const v = { id: 2, s: west.pl.length - 160, v: 8, wait: 0, destSide: 1, destS: west.pl.length - 150, dest: { seg: w, s: 150, p: { x: p.x, y: p.y + 6 } } };
+    expect((tr as any).canTurnIn(v, west)).toBe(true);
+  });
+
+  it("a right turn lane longer than the left one runs right beside the kerb lane all the way", () => {
+    const { net, w } = cross();
+    net.begin();
+    net.setPocket(w, "b", { r: 80, l: 20 });
+    net.commit();
+    net.rebuild();
+    const ls = into(net, w, 1);
+    const rp = ls.find((l) => l.pocket === "r")!, kerb = ls.find((l) => l.idx === 0)!;
+    for (const q of rp.pl.pts) {
+      const k = kerb.pl.pts.reduce((b, x) => (Math.abs(x.x - q.x) < Math.abs(b.x - q.x) ? x : b));
+      expect(q.y - k.y).toBeCloseTo(LANE_W, 0);
+    }
+  });
+
+  it("turn lanes squeezed to nothing by the junctions either side aren't built, and the turns stay on the through lane", () => {
+    for (const L of [52, 56, 60]) {
+      const net = new RoadNetwork();
+      net.begin();
+      const A = net.addNode(v2(0, 0), 0), B = net.addNode(v2(L, 0), 0);
+      const mid = road(net, A, B);
+      for (const [n, x] of [[A, 0], [B, L]] as const) {
+        road(net, n, net.addNode(v2(x, -200), 0));
+        road(net, n, net.addNode(v2(x, 200), 0));
+      }
+      road(net, net.addNode(v2(-200, 0), 0), A);
+      road(net, B, net.addNode(v2(L + 200, 0), 0));
+      net.commit();
+      net.rebuild();
+      net.begin();
+      net.setPocket(mid, "a", { r: 0, l: 30 });
+      net.setPocket(mid, "b", { r: 0, l: 30 });
+      net.commit();
+      net.rebuild();
+      const g = net.segGeom.get(mid)!;
+      for (const l of g.lanes.filter((x) => x.pocket)) expect(l.pl.length, `${L} m road`).toBeGreaterThanOrEqual(8);
+      for (const [node, dir] of [[B, 1], [A, -1]] as const) {
+        const ng = net.nodeGeom.get(node)!;
+        const lefts = ng.conns.filter((c) => c.from.seg === mid && c.turn === "L");
+        expect(lefts.length, `${L} m road: a left turn at ${node}`).toBeGreaterThan(0);
+        const built = g.lanes.some((l) => l.pocket && l.dir === dir);
+        const arm = ng.arms.find((a) => a.seg === mid)!;
+        expect(!!arm.wL, `${L} m road: the mouth widens only for a built pocket`).toBe(built);
+      }
+    }
+  });
+
+  it("reversing a one-way keeps its turn lane before the junction the traffic now drives up to", () => {
+    // a one-way between two junctions
+    const net = new RoadNetwork();
+    net.begin();
+    const A = net.addNode(v2(0, 0), 0), B = net.addNode(v2(200, 0), 0);
+    const w = road(net, A, B, "one1");
+    for (const [n, x] of [[A, 0], [B, 200]] as const) {
+      road(net, n, net.addNode(v2(x, -200), 0));
+      road(net, n, net.addNode(v2(x, 200), 0));
+    }
+    net.commit();
+    net.rebuild();
+    net.begin();
+    net.setPocket(w, "b", { r: 0, l: 40 });
+    net.commit();
+    net.rebuild();
+    net.begin();
+    net.flip(w);
+    net.commit();
+    net.rebuild();
+    const s = net.segs.get(w)!;
+    expect(s.pk?.b).toEqual({ r: 0, l: 40 });
+    expect(net.segGeom.get(w)!.lanes.some((l) => l.pocket === "l" && l.to === s.b)).toBe(true);
+  });
 });

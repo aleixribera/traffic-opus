@@ -222,9 +222,7 @@ export class Traffic {
     if (ls < 12) for (const c of lane.ins) if ((c.occ as Vehicle[]).length) { p.why = "junction"; return "wait"; }
     if (crossing) {
       // must cross the near lanes: wait for a gap there too
-      const near = this.lanesOf(dkey(p.from.seg, best.dir === 1 ? -1 : 1));
-      for (const nl of near) {
-        const ns = polyClosest(nl.pl, p.from.p).s;
+      for (const { lane: nl, s: ns } of this.lanesAt(dkey(p.from.seg, best.dir === 1 ? -1 : 1), p.from.p)) {
         p.clear.push({ lane: nl, s: ns });
         for (const o of nl.occ as Vehicle[]) {
           // we drive on (towards falling s on this far lane) while we cross it: keep that stretch clear too
@@ -269,7 +267,7 @@ export class Traffic {
     // start at the kerb (less a little: the nose is already poking out) and slide across into the lane
     v.lat = side * Math.max(LANE_W * 0.9, lc.d - 1.2);
     if (fromLot(p)) v.fade = 1; // it was drawn rolling out of its lot up to here
-    if (crossing) { v.crossing = this.lanesOf(dkey(p.from.seg, best.dir === 1 ? -1 : 1)).map((nl) => ({ lane: nl, s: polyClosest(nl.pl, p.from.p).s })); v.crossFrom = ls; }
+    if (crossing) { v.crossing = this.lanesAt(dkey(p.from.seg, best.dir === 1 ? -1 : 1), p.from.p); v.crossFrom = ls; }
     insertOcc(lane, v);
     this.vehicles.push(v);
     if (this.isFinal(v)) this.computeDestS(v);
@@ -277,6 +275,17 @@ export class Traffic {
     const ld = polyDirSmooth(lane.pl, clamp(ls, 0, lane.pl.length), 1), lr = right(ld);
     this.place(v, true, norm({ x: lr.x * side - ld.x * 0.35, y: lr.y * side - ld.y * 0.35 }));
     return "ok";
+  }
+
+  /** The lanes one way along a road that a point beside it lies across from, with where (a turn lane only where it runs). */
+  lanesAt(k: number, p: V2): { lane: Lane; s: number }[] {
+    const out: { lane: Lane; s: number }[] = [];
+    for (const l of this.lanesOf(k)) {
+      const r = polyClosest(l.pl, p);
+      if (l.pocket && r.d > 12) continue;
+      out.push({ lane: l, s: r.s });
+    }
+    return out;
   }
 
   lanesOf(k: number): Lane[] {
@@ -482,15 +491,14 @@ export class Traffic {
     const sideOfTravel = (lane.dir === 1 ? 1 : -1) * v.destSide; // +1 = on our right
     if (sideOfTravel > 0) return true;
     // crossing the opposite carriageway: wait for a gap, with growing impatience
-    const opp = this.lanesOf(dkey(lane.seg, lane.dir === 1 ? -1 : 1));
+    const opp = this.lanesAt(dkey(lane.seg, lane.dir === 1 ? -1 : 1), v.dest.p);
     const need = v.wait > 12 ? 0.8 : v.wait > 5 ? 1.6 : 2.6;
     this.turnBlockedByQueue = false;
     // judged for when we get there (asked from a way off, a car that will be long gone by then is no reason to stop)
     // (a cautious guess both ways: we may get there as soon as at our present speed, or as late as slowing to 5 m/s)
     const dd = v.destS >= 0 ? Math.max(0, v.destS - v.s) : 0;
     const tMe = dd / Math.max((v.v + 5) / 2, 1), tSoon = dd / Math.max(v.v, 5);
-    for (const ol of opp) {
-      const os = polyClosest(ol.pl, v.dest.p).s;
+    for (const { lane: ol, s: os } of opp) {
       for (const o of ol.occ as Vehicle[]) {
         // two cars turning across each other into facing driveways: the older one goes first
         if (o.v < 0.5 && o.id > v.id && o.destS >= 0 && this.isFinal(o) && Math.abs(o.destS - 0.8 - o.s) < 1.5) continue;
@@ -787,7 +795,7 @@ export class Traffic {
       const lane = v.edge as Lane;
       if (lane.idx !== this.turnIdx(v, lane) || v.s < v.destS - 2) continue;
       if ((lane.dir === 1 ? 1 : -1) * v.destSide > 0) continue; // turning in on its own side: crosses nothing
-      for (const ol of this.lanesOf(dkey(lane.seg, lane.dir === 1 ? -1 : 1))) add(ol, polyClosest(ol.pl, v.dest.p).s);
+      for (const o of this.lanesAt(dkey(lane.seg, lane.dir === 1 ? -1 : 1), v.dest.p)) add(o.lane, o.s);
     }
     for (const p of this.pending) if (p.wait > 1.5 && p.clear) for (const c of p.clear) add(c.lane, c.s);
     // cars pulling out across a far lane are obstacles on it until they're clear of it

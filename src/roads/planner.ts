@@ -1939,6 +1939,8 @@ export interface LanePlan {
   label: string;
   /** the new lane's outline (and its taper), for the preview */
   outline: V2[];
+  /** a turn lane: the ground the road widens onto at its kerb (closed), which has to be clear of buildings */
+  widen?: V2[];
 }
 
 const POCKET_MIN = 15;
@@ -1955,31 +1957,34 @@ export function planAddLane(net: RoadNetwork, world: BuildWorld, p: V2, remove =
   const s = net.segs.get(id)!, g = net.segGeom.get(id)!;
   const T = ROAD_TYPES[s.type];
   const fail = (msg: string, label = ""): LanePlan => ({ cost: 0, errors: [{ msg, p }], label, outline: [] });
-  if (isHighway(T) && T.bwd === 0) return planMotorwayLane(net, world, p, id);
-  if (s.ring) return fail("Not on a roundabout");
   const sc = polyClosest(g.center, p).s, dr = polyDir(g.center, sc);
   const lat = cross(dr, sub(p, polyAt(g.center, sc))); // + = right of a->b
   const dir: 1 | -1 = T.bwd === 0 || lat >= 0 ? 1 : -1;
   const end = dir === 1 ? "b" : "a";
+  const n = dir === 1 ? T.fwd : T.bwd, med = (T.median ?? 0) / 2;
+  // which half of this side's lanes the cursor is over
+  let side: "r" | "l" = T.bwd === 0 ? (lat < 0 ? "l" : "r") : Math.abs(lat) - med < (n * LANE_W) / 2 ? "l" : "r";
+  const prev = s.pk?.[end] ?? null;
+  if (remove && prev) {
+    // (with only one turn lane there, either half takes it away)
+    if (!prev[side]) side = side === "r" ? "l" : "r";
+    const what = side === "r" ? "right-turn lane" : "left-turn lane";
+    const to = { ...prev, [side]: 0 };
+    return { pocket: { seg: id, end, to: to.r || to.l ? to : null, side, len: 0 }, cost: 0, errors: [], label: `Remove ${what}`, outline: s.ring || !n ? [] : pocketOutline(net, id, dir, side, prev[side], prev).lane };
+  }
+  if (isHighway(T) && T.bwd === 0) return planMotorwayLane(net, world, p, id);
+  if (s.ring) return fail("Not on a roundabout");
+  const name = side === "r" ? "Right-turn lane" : "Left-turn lane";
+  if (remove) return fail(`No ${name.toLowerCase()} here`);
   const node = dir === 1 ? s.b : s.a;
   const ng = net.nodeGeom.get(node);
   if (!ng || ng.kind !== "junction" || ng.arms.length < 3) return fail("Turn lanes go just before a junction");
-  const n = dir === 1 ? T.fwd : T.bwd, med = (T.median ?? 0) / 2;
-  // which half of this side's lanes the cursor is over
-  const side: "r" | "l" = T.bwd === 0 ? (lat < 0 ? "l" : "r") : Math.abs(lat) - med < (n * LANE_W) / 2 ? "l" : "r";
-  const prev = s.pk?.[end] ?? null;
-  const name = side === "r" ? "Right-turn lane" : "Left-turn lane";
-  if (remove) {
-    if (!prev || !prev[side]) return fail(`No ${name.toLowerCase()} here`);
-    const to = { ...prev, [side]: 0 };
-    return { pocket: { seg: id, end, to: to.r || to.l ? to : null, side, len: 0 }, cost: 0, errors: [], label: `Remove ${name.toLowerCase()}`, outline: pocketOutline(net, id, dir, side, prev[side], prev) };
-  }
   // there has to be a turn that way for it to serve
   const turns = side === "r" ? ["R"] : ["L", "U"];
   if (!ng.conns.some((c) => c.from.seg === id && c.from.dir === dir && turns.includes(c.turn))) return fail(side === "r" ? "No right turn at this junction" : "No left turn at this junction", name);
   const L = g.center.length, tp = pocketTaper(s.type);
   const stop = dir === 1 ? L - g.trimB : g.trimA;
-  const other = s.pk?.[end === "a" ? "b" : "a"];
+  const other = g.ends[end === "a" ? "b" : "a"].pocket;
   const room = L - g.trimA - g.trimB - 4 - (other ? Math.max(other.r, other.l) + tp : 0) - tp;
   if (room < POCKET_MIN) return fail("Too short a road for a turn lane", name);
   let len = Math.round(Math.max(POCKET_MIN, dir === 1 ? stop - sc : sc - stop) / 5) * 5;
@@ -1990,36 +1995,55 @@ export function planAddLane(net: RoadNetwork, world: BuildWorld, p: V2, remove =
   const was = prev?.[side] ?? 0;
   const cost = Math.round(Math.max(0, len - was) * perM + (was ? 0 : tp * 0.5 * perM));
   const errors: PlanError[] = [];
-  const outline = pocketOutline(net, id, dir, side, len, to);
-  const hit = world.buildingsHit(outline, 0.2);
+  const { lane: outline, widen } = pocketOutline(net, id, dir, side, len, to);
+  const hit = world.buildingsHit(widen, 0.2);
   if (hit.length) errors.push({ msg: hit.length === 1 ? "Building in the way" : `${hit.length} buildings in the way`, p, buildings: hit });
   if (cost > world.money() + 0.5) errors.push({ msg: "Not enough money", p });
-  return { pocket: { seg: id, end, to, side, len }, cost, errors, label: `${name} ${len} m${capped ? " (all that fits)" : ""}`, outline };
+  return { pocket: { seg: id, end, to, side, len }, cost, errors, label: `${name} ${len} m${capped ? " (all that fits)" : ""}`, outline, widen };
 }
 
-/** The outline of a turn pocket's lane (with its taper) on road `id`, for the traffic going `dir`. */
-function pocketOutline(net: RoadNetwork, id: number, dir: 1 | -1, side: "r" | "l", len: number, pk: Pocket): V2[] {
+/**
+ * A turn pocket on road `id`, for the traffic going `dir`, with lengths `pk` and its `side` lane `len` long: that
+ * lane's outline (with its taper), and the ground the road widens onto at the kerb (both pockets; closed).
+ */
+function pocketOutline(net: RoadNetwork, id: number, dir: 1 | -1, side: "r" | "l", len: number, pk: Pocket): { lane: V2[]; widen: V2[] } {
   const s = net.segs.get(id)!, g = net.segGeom.get(id)!;
   const T = ROAD_TYPES[s.type];
   const L = g.center.length, tp = pocketTaper(s.type);
   const stop = dir === 1 ? L - g.trimB : g.trimA;
   const sg = dir === 1 ? 1 : -1;
   const n = dir === 1 ? T.fwd : T.bwd, med = (T.median ?? 0) / 2, twoWay = T.bwd > 0;
-  // the side's inside edge (centre line, median or a one-way's left edge), and how far out the pocket's lane sits
+  // the side's inside edge (centre line, median or a one-way's left edge)
   const inner = twoWay ? med : -(n / 2) * LANE_W;
-  const a = inner + (side === "l" ? 0 : n + (pk.l > 0 ? 1 : 0)) * LANE_W;
-  const left: V2[] = [], rightE: V2[] = [];
+  const kerb = inner + n * LANE_W;
+  // how open a pocket `ln` long is `back` metres back from the stop line
+  const open = (ln: number, back: number) => (ln <= 0 ? 0 : back <= ln ? 1 : back < ln + tp ? smoothstep(1 - (back - ln) / tp) : 0);
+  const at = (back: number) => {
+    const sc = clamp(dir === 1 ? stop - back : stop + back, 0, L);
+    return { q: polyAt(g.center, sc), r: right(polyDir(g.center, sc)) };
+  };
+  const lane0: V2[] = [], lane1: V2[] = [];
   const steps = Math.max(4, Math.ceil((len + tp) / 3));
   for (let k = 0; k <= steps; k++) {
-    const back = ((len + tp) * k) / steps; // metres back from the stop line
-    const sc = clamp(dir === 1 ? stop - back : stop + back, 0, L);
-    const open = back <= len ? 1 : smoothstep(1 - (back - len) / tp);
-    const q = polyAt(g.center, sc), r = right(polyDir(g.center, sc));
-    // while it opens, the lane is only so wide
-    left.push(add(q, scale(r, sg * a)));
-    rightE.push(add(q, scale(r, sg * (a + LANE_W * open))));
+    const back = ((len + tp) * k) / steps;
+    const { q, r } = at(back);
+    // a left lane opens on the inside; a right one beside the kerb lane, which moves out as the left one opens
+    const a = side === "l" ? inner : kerb + LANE_W * open(pk.l, back);
+    lane0.push(add(q, scale(r, sg * a)));
+    lane1.push(add(q, scale(r, sg * (a + LANE_W * open(len, back)))));
   }
-  return [...left, ...rightE.reverse()];
+  const far = Math.max(pk.l, pk.r) + tp;
+  const w0: V2[] = [], w1: V2[] = [];
+  const ws = Math.max(4, Math.ceil(far / 3));
+  for (let k = 0; k <= ws; k++) {
+    const back = (far * k) / ws;
+    const { q, r } = at(back);
+    w0.push(add(q, scale(r, sg * kerb)));
+    w1.push(add(q, scale(r, sg * (kerb + LANE_W * (open(pk.l, back) + open(pk.r, back))))));
+  }
+  const widen = [...w0, ...w1.reverse()];
+  widen.push(widen[0]);
+  return { lane: [...lane0, ...lane1.reverse()], widen };
 }
 
 /** On a motorway: lengthen the slip lane of the exit ahead (or the entry behind) to reach `p`. */
