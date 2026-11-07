@@ -83,15 +83,10 @@ export const SIGNAL_COST = 300;
 export type BuildingKind =
   | "house" | "terrace" | "apartments"
   | "shop" | "store" | "mall"
-  | "office" | "tower"
   | "mine" | "farm" | "works" | "foodplant"
-  // city services (placed by the player, see game/services.ts)
-  | "garbage" | "firestation" | "police" | "clinic" | "hospital" | "school" | "highschool" | "university" | "park" | "parklarge"
-  // utilities (see game/utilities.ts)
-  | "windturbine" | "coalplant" | "solarfarm" | "waterpump" | "sewageoutlet"
-  // landmarks (one per city, later milestones)
-  | "townhall" | "stadium" | "obstower" | "concerthall" | "skytower";
-export type Zone = "res" | "com" | "work" | "ind" | "svc";
+  // placed by the player (see game/placed.ts)
+  | "coalplant";
+export type Zone = "res" | "com" | "ind" | "placed";
 export type Cargo = "ore" | "food" | "goods";
 
 export interface BuildingType {
@@ -117,35 +112,14 @@ export const BUILDING_TYPES: Record<BuildingKind, BuildingType> = {
   shop: { kind: "shop", name: "Small Commercial", zone: "com", w: 18, d: 20, residents: 0, jobs: 3, consumes: "goods", pollution: 0, parking: 4, blurb: "Needs customers, staff and deliveries of goods." },
   store: { kind: "store", name: "Medium Commercial", zone: "com", w: 30, d: 28, residents: 0, jobs: 7, consumes: "goods", pollution: 0, parking: 8, blurb: "A bigger store that draws customers from further away." },
   mall: { kind: "mall", name: "Large Commercial", zone: "com", w: 48, d: 40, residents: 0, jobs: 14, consumes: "goods", pollution: 0, parking: 14, blurb: "Shopping centre. Expect heavy traffic at the entrance." },
-  office: { kind: "office", name: "Small Office", zone: "work", w: 20, d: 22, residents: 0, jobs: 10, pollution: 0, parking: 5, blurb: "Clean workplace. Needs commuters." },
-  tower: { kind: "tower", name: "Medium Office", zone: "work", w: 30, d: 30, residents: 0, jobs: 22, pollution: 0, parking: 9, blurb: "Office block with many jobs." },
   mine: { kind: "mine", name: "Copper Mine", zone: "ind", w: 26, d: 30, residents: 0, jobs: 8, produces: "ore", pollution: 70, needsMountain: true, parking: 2, blurb: "Must be dug into a mountain. Ships copper ore to Copper Works." },
   farm: { kind: "farm", name: "Farm", zone: "ind", w: 40, d: 40, residents: 0, jobs: 4, produces: "food", pollution: 0, parking: 2, blurb: "Grows food for Food Plants. Dislikes pollution." },
   works: { kind: "works", name: "Copper Works", zone: "ind", w: 36, d: 32, residents: 0, jobs: 14, consumes: "ore", produces: "goods", pollution: 130, parking: 4, blurb: "Turns copper ore into consumer goods. Polluting." },
   foodplant: { kind: "foodplant", name: "Food Plant", zone: "ind", w: 32, d: 30, residents: 0, jobs: 12, consumes: "food", produces: "goods", pollution: 90, parking: 4, blurb: "Turns food into consumer goods." },
-  garbage: { kind: "garbage", name: "Waste Transfer Station", zone: "svc", w: 36, d: 32, residents: 0, jobs: 8, pollution: 60, parking: 3, blurb: "Garbage trucks collect from every building they can reach." },
-  firestation: { kind: "firestation", name: "Fire Station", zone: "svc", w: 26, d: 24, residents: 0, jobs: 8, pollution: 0, parking: 3, blurb: "Fire engines put out fires before buildings burn down." },
-  police: { kind: "police", name: "Police Station", zone: "svc", w: 24, d: 22, residents: 0, jobs: 8, pollution: 0, parking: 3, blurb: "Patrol cars answer crime calls." },
-  clinic: { kind: "clinic", name: "Medical Clinic", zone: "svc", w: 26, d: 24, residents: 0, jobs: 8, pollution: 0, parking: 3, blurb: "Ambulances bring sick residents in for treatment." },
-  hospital: { kind: "hospital", name: "Hospital", zone: "svc", w: 46, d: 40, residents: 0, jobs: 30, pollution: 0, parking: 5, blurb: "A large hospital with many ambulances and beds." },
-  school: { kind: "school", name: "Elementary School", zone: "svc", w: 40, d: 34, residents: 0, jobs: 10, pollution: 0, parking: 4, blurb: "Children are driven here every morning." },
-  highschool: { kind: "highschool", name: "High School", zone: "svc", w: 52, d: 42, residents: 0, jobs: 18, pollution: 0, parking: 5, blurb: "Adults study here and graduate with a high-school education." },
-  university: { kind: "university", name: "University", zone: "svc", w: 70, d: 56, residents: 0, jobs: 40, pollution: 0, parking: 6, blurb: "Graduates are the educated workers offices need." },
-  park: { kind: "park", name: "Small Park", zone: "svc", w: 24, d: 24, residents: 0, jobs: 0, pollution: 0, parking: 0, blurb: "Raises land value nearby. Residents come for an outing." },
-  parklarge: { kind: "parklarge", name: "Large Park", zone: "svc", w: 48, d: 48, residents: 0, jobs: 2, pollution: 0, parking: 0, blurb: "A big park with a pond. Raises land value across the neighbourhood." },
-  windturbine: { kind: "windturbine", name: "Wind Turbine", zone: "svc", w: 16, d: 16, residents: 0, jobs: 1, pollution: 0, parking: 1, blurb: "Clean, cheap power, a little at a time." },
-  coalplant: { kind: "coalplant", name: "Coal Power Plant", zone: "svc", w: 64, d: 52, residents: 0, jobs: 24, pollution: 140, parking: 5, blurb: "Plenty of power for its price, and smoke that drags land value down for a few hundred metres. Keep homes away." },
-  solarfarm: { kind: "solarfarm", name: "Solar Farm", zone: "svc", w: 60, d: 44, residents: 0, jobs: 4, pollution: 0, parking: 2, blurb: "Rows of panels: clean power for a growing town." },
-  waterpump: { kind: "waterpump", name: "Water Pump", zone: "svc", w: 22, d: 20, residents: 0, jobs: 4, pollution: 0, parking: 2, blurb: "Draws fresh water from a river or lake. Build it on the shore." },
-  sewageoutlet: { kind: "sewageoutlet", name: "Sewage Outlet", zone: "svc", w: 22, d: 20, residents: 0, jobs: 3, pollution: 50, parking: 2, blurb: "Lets the town's sewage out into the water. Build it on the shore; it smells, so keep homes back." },
-  townhall: { kind: "townhall", name: "Town Hall", zone: "svc", w: 40, d: 36, residents: 0, jobs: 20, pollution: 0, parking: 4, blurb: "A grand civic hall with a clock tower. The streets round it become the place to live." },
-  stadium: { kind: "stadium", name: "Stadium", zone: "svc", w: 72, d: 60, residents: 0, jobs: 30, pollution: 0, parking: 8, blurb: "Match days bring the whole town out. Lifts land value across the district." },
-  obstower: { kind: "obstower", name: "Observation Tower", zone: "svc", w: 28, d: 28, residents: 0, jobs: 12, pollution: 0, parking: 2, blurb: "A viewing tower seen from everywhere. Everyone wants a view of it." },
-  concerthall: { kind: "concerthall", name: "Concert Hall", zone: "svc", w: 52, d: 44, residents: 0, jobs: 24, pollution: 0, parking: 6, blurb: "White sails over a glass foyer: the city's cultural heart." },
-  skytower: { kind: "skytower", name: "Skyline Tower", zone: "svc", w: 36, d: 36, residents: 0, jobs: 90, pollution: 0, parking: 4, blurb: "The tallest tower in the region: a sign this is a real city." },
+  coalplant: { kind: "coalplant", name: "Coal Power Plant", zone: "placed", w: 64, d: 52, residents: 0, jobs: 24, pollution: 140, parking: 5, blurb: "Plenty of power for its price, and smoke that drags land value down for a few hundred metres. Keep homes away." },
 };
 
-export const ZONE_LABEL: Record<Zone, string> = { res: "Residential", com: "Commercial", work: "Workplace", ind: "Industry", svc: "City service" };
+export const ZONE_LABEL: Record<Zone, string> = { res: "Residential", com: "Commercial", ind: "Industry", placed: "Company building" };
 export const CARGO_LABEL: Record<Cargo, string> = { ore: "copper ore", food: "food", goods: "consumer goods" };
 
 // ---------- Simulation ----------

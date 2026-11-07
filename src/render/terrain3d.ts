@@ -10,7 +10,6 @@ const N = CH + 4; // texels per chunk side: nodes -1 .. CH+2
 const OWN = 256; // owned-tile texture covers tiles -128..127 on each axis
 const LODS = 5; // chunk size 1 km * 4^L
 const MAX_PER_LOD = 220;
-const MAX_CITIES = 24;
 
 const col = (c: number) => new THREE.Color(c);
 
@@ -40,7 +39,6 @@ export class Terrain3D {
     uTile: { value: TILE },
     uSun: { value: new THREE.Vector2(-0.56, -0.83) },
     uRot: { value: new THREE.Vector2(1, 0) },
-    uCities: { value: Array.from({ length: MAX_CITIES }, () => new THREE.Vector4(0, 0, 0, 0)) },
   };
 
   constructor(private terrain: Terrain, _small: boolean) {
@@ -62,15 +60,6 @@ export class Terrain3D {
       if (a >= 0 && b >= 0 && a < OWN && b < OWN) this.ownData[b * OWN + a] = 255;
     }
     this.ownTex.needsUpdate = true;
-  }
-
-  /** Outside cities drawn as urban fabric on the ground: (x, y, radius, seed). */
-  setGateways(gws: { p: { x: number; y: number }; r: number; id: number }[]) {
-    const u = this.shared.uCities.value;
-    for (let i = 0; i < MAX_CITIES; i++) {
-      const g = gws[i];
-      if (g) u[i].set(g.p.x, g.p.y, g.r, g.id * 7.31 + 1.7); else u[i].set(0, 0, 0, 0);
-    }
   }
 
   setOverlay(mode: "none" | "resources" | "tiles") {
@@ -195,7 +184,6 @@ const c3 = (c: number) => {
 const GROUND_GLSL = /* glsl */ `
 varying vec2 vWorld;
 uniform sampler2D uF0; uniform sampler2D uF1; uniform sampler2D uOwn;
-uniform vec4 uCities[${MAX_CITIES}];
 uniform vec2 uOrigin; uniform float uRes; uniform float uOverlay; uniform float uTile; uniform vec2 uSun; uniform vec2 uRot;
 
 vec4 bsw(float t) {
@@ -331,40 +319,6 @@ vec3 groundColor(vec2 p) {
     float wd = (water - 0.5) / max(fwidth(water), 1e-5);
     vec3 wc = mix(${c3(PAL.waterEdge)}, ${c3(PAL.water)}, smoothstep(1.0, 3.0, wd));
     c = mix(c, wc, wa);
-  }
-  // outside cities: a block grid of roofs inside a ragged edge
-  for (int i = 0; i < ${MAX_CITIES}; i++) {
-    vec4 C = uCities[i];
-    if (C.z <= 0.0) continue;
-    vec2 d = p - C.xy;
-    float dl = length(d);
-    if (dl > C.z * 1.5) continue;
-    float edge = C.z * (0.82 + 0.4 * vnoise(d / 260.0 + C.w));
-    float inC = 1.0 - smoothstep(edge - mpp, edge + mpp, dl);
-    if (inC <= 0.0) continue;
-    float ang = fract(C.w * 0.37) * 1.57;
-    mat2 R = mat2(cos(ang), -sin(ang), sin(ang), cos(ang));
-    vec2 q = R * d;
-    float B = 64.0;
-    vec2 bi = floor(q / B), bf = q - bi * B;
-    float street = min(min(bf.x, B - bf.x), min(bf.y, B - bf.y));
-    float h = hash12(bi + C.w);
-    // lots inside each block
-    vec2 li = floor(bf / vec2(16.0, 21.0)), lf = bf - li * vec2(16.0, 21.0);
-    float lh = hash12(li + bi * 7.0 + C.w);
-    float lot = min(min(lf.x, 16.0 - lf.x), min(lf.y, 21.0 - lf.y));
-    float core = 1.0 - smoothstep(0.0, C.z, dl);
-    vec3 roof = mix(vec3(0.80, 0.79, 0.76), vec3(0.70, 0.71, 0.74), lh);
-    roof = mix(roof, vec3(0.83, 0.64, 0.55), step(0.82, lh) * (1.0 - core));
-    roof = mix(roof, vec3(0.62, 0.64, 0.69), core * step(0.4, lh));
-    vec3 uc = mix(vec3(0.88, 0.87, 0.84), roof, smoothstep(0.6, 1.4, lot / max(mpp, 0.5)) * step(0.06, h));
-    // park blocks
-    uc = mix(uc, ${c3(PAL.grass)} * 0.92, step(h, 0.06));
-    float sw = max(4.5, mpp * 1.2);
-    uc = mix(uc, ${c3(PAL.road)}, 1.0 - smoothstep(sw - mpp, sw + mpp, street));
-    // far out it reads as one grey patch
-    uc = mix(uc, vec3(0.78, 0.77, 0.74), smoothstep(6.0, 14.0, mpp));
-    c = mix(c, uc, inC * (1.0 - wa));
   }
   // resources overlay
   if (uOverlay > 0.5 && uOverlay < 1.5) {

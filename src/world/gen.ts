@@ -3,7 +3,6 @@
 // fields. Small-scale (hundreds of m): hills, lakes, patches. The start sits at (0, 0) on open buildable land.
 
 import { Noise2D, mulberry32 } from "../core/noise";
-import { dist, type V2 } from "../core/math";
 
 /**
  * Field indices, all 0..1. Most use 0.5 as the "present" threshold. Two are special:
@@ -26,57 +25,17 @@ export const waterOf = (o: ArrayLike<number>) => Math.max(o[F.lake], riverWater(
 /** Terrace thresholds of the mountain field. Level k is solid where m >= MOUNTAIN_STEPS[k-1]. */
 export const MOUNTAIN_STEPS = [0.5, 0.6, 0.7, 0.8];
 
-export type GatewayKind = "port" | "capital" | "industry" | "farm" | "mining" | "tech";
-
-export interface Gateway {
-  id: number;
-  name: string;
-  kind: GatewayKind;
-  p: V2; // where roads end (the city's edge)
-  r: number; // radius of the city blob
-}
-
 const ss = (a: number, b: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 };
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
-/** Corridors carved through hills (pre-built motorways): spatial hash of polyline points. */
-class Corridors {
-  private cells = new Map<string, V2[]>();
-  private readonly C = 400;
-  add(pts: V2[]) {
-    for (let i = 0; i < pts.length - 1; i++) {
-      const a = pts[i], b = pts[i + 1];
-      const n = Math.max(1, Math.ceil(dist(a, b) / 40));
-      for (let k = 0; k <= n; k++) {
-        const p = { x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n };
-        const key = `${Math.floor(p.x / this.C)},${Math.floor(p.y / this.C)}`;
-        const l = this.cells.get(key);
-        if (l) l.push(p); else this.cells.set(key, [p]);
-      }
-    }
-  }
-  /** Distance to the nearest corridor point (capped at the cell size). */
-  near(x: number, y: number): number {
-    if (!this.cells.size) return Infinity;
-    const ci = Math.floor(x / this.C), cj = Math.floor(y / this.C);
-    let best = Infinity;
-    for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++) {
-      const l = this.cells.get(`${i},${j}`);
-      if (l) for (const p of l) { const d = (p.x - x) ** 2 + (p.y - y) ** 2; if (d < best) best = d; }
-    }
-    return Math.sqrt(best);
-  }
-}
-
 export class WorldGen {
   private N: Noise2D[];
   /** Offset from world coordinates to noise space (moves the chosen start spot to the origin). */
   ox = 0;
   oy = 0;
-  readonly corridors = new Corridors();
   private tmp = new Float32Array(NF);
 
   constructor(readonly seed: number) {
@@ -101,13 +60,10 @@ export class WorldGen {
       // thin the forest so the start has room
       out[F.forest] = lerp(Math.min(out[F.forest], 0.44), out[F.forest], ss(350, 1100, d0));
     }
-    // corridors of pre-built roads: hills cut back so the road never sits on a cliff
-    const dc = this.corridors.near(x, y);
-    if (dc < 260) out[F.mtn] = lerp(Math.min(out[F.mtn], 0.44), out[F.mtn], ss(90, 260, dc));
     return out;
   }
 
-  /** Fields in noise space, before the start clearing and corridors. */
+  /** Fields in noise space, before the start clearing. */
   raw(X: number, Y: number, out: Float32Array) {
     const N = this.N;
     const wx = X + N[0].fbm(X / 3000, Y / 3000, 3) * 900;
@@ -178,62 +134,6 @@ export class WorldGen {
     }
     this.ox = best.x;
     this.oy = best.y;
-  }
-
-  /** Gateway cities within `reach` of the start, deterministic per 24 km grid cell. */
-  gateways(reach = 45000): Gateway[] {
-    const C = 24000;
-    const out: Gateway[] = [];
-    const n = Math.ceil(reach / C);
-    const o = new Float32Array(NF);
-    for (let i = -n; i <= n; i++) for (let j = -n; j <= n; j++) {
-      const rnd = mulberry32(this.seed * 1009 + (i + 500) * 7919 + (j + 500) * 104729);
-      let p = { x: (i + 0.5 + (rnd() - 0.5) * 0.7) * C, y: (j + 0.5 + (rnd() - 0.5) * 0.7) * C };
-      const d0 = Math.hypot(p.x, p.y);
-      if (d0 < 9000 || d0 > reach) continue;
-      // settle on open, dry land nearby
-      let found = false;
-      for (let t = 0; t < 60 && !found; t++) {
-        const q = t === 0 ? p : { x: p.x + (rnd() - 0.5) * 6000, y: p.y + (rnd() - 0.5) * 6000 };
-        let ok = true;
-        for (let a = 0; a < 8 && ok; a++) {
-          const s = this.at(q.x + Math.cos(a) * 700, q.y + Math.sin(a) * 700, o);
-          if (s[F.mtn] >= 0.47 || waterOf(s) >= 0.5) ok = false;
-        }
-        const c = this.at(q.x, q.y, o);
-        if (ok && c[F.mtn] < 0.47 && waterOf(c) < 0.5) { p = q; found = true; }
-      }
-      if (!found) continue;
-      // character from the land around it, with variety: each kind already used counts against itself
-      let ore = 0, fert = 0, water = 0, oil = 0, forest = 0;
-      for (let a = 0; a < 24; a++) {
-        const R = 1500 + (a % 3) * 1500;
-        const s = this.at(p.x + Math.cos(a * 2.4) * R, p.y + Math.sin(a * 2.4) * R, o);
-        ore += s[F.ore] >= 0.5 || s[F.mtn] >= 0.5 ? 1 : 0;
-        fert += s[F.fert] >= 0.5 ? 1 : 0;
-        water += waterOf(s) >= 0.5 ? 1 : 0;
-        oil += s[F.oil] >= 0.5 ? 1 : 0;
-        forest += s[F.forest] >= 0.5 ? 1 : 0;
-      }
-      const used = (k: GatewayKind) => out.filter((g) => g.kind === k).length * 2.2;
-      const score: Record<GatewayKind, number> = {
-        port: water * 0.9 - 1.5,
-        mining: ore * 0.8,
-        farm: fert * 0.45,
-        industry: oil * 0.8 + forest * 0.15,
-        capital: 2.6,
-        tech: 2.0,
-      };
-      let kind: GatewayKind = "capital", best = -Infinity;
-      for (const k of Object.keys(score) as GatewayKind[]) {
-        const v = score[k] - used(k) + rnd() * 1.5;
-        if (v > best) { best = v; kind = k; }
-      }
-      let name = cityName(rnd);
-      for (let t = 0; t < 20 && out.some((g) => g.name === name); t++) name = cityName(rnd);
-      out.push({ id: out.length, name, kind, p, r: kind === "capital" ? 1000 + rnd() * 300 : 650 + rnd() * 350 });
-    }
-    return out;
   }
 }
 

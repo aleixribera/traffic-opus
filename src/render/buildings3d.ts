@@ -54,7 +54,7 @@ export class Buildings3D {
 
   constructor(private models: ModelSet) {}
 
-  /** Model and matrix for a building that isn't placed yet (the service placement ghost). */
+  /** Model and matrix for a building that isn't placed yet (the placement ghost). */
   ghost(kind: BuildingKind, c: V2, rot: number, side: 1 | -1): { geo: THREE.BufferGeometry; m: THREE.Matrix4 } | null {
     const mm = this.models.buildings.get(kind);
     if (!mm) return null;

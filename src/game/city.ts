@@ -1,7 +1,7 @@
 import {
   BUILDING_TYPES, BULLDOZE_REFUND, START_TILES, TILE, ROAD_TYPES, SIGNAL_COST, SIM, isHighway, roadWidth, type RoadTypeId,
 } from "../config";
-import { add, dist, polyAt, polyClosest, polyDir, rectCorners, scale, sub, type V2 } from "../core/math";
+import { add, dist, rectCorners, scale, sub, type V2 } from "../core/math";
 import { mulberry32 } from "../core/noise";
 import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/network";
 import {
@@ -9,17 +9,13 @@ import {
 } from "../roads/planner";
 import { Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import { Terrain } from "../world/terrain";
-import type { Gateway } from "../world/gen";
-import { MOTORWAY_TYPE, carriageways, centrePoints, planMotorway, type MotorwayPlan } from "../world/motorway";
 import { Buildings, obbOverlap, type Building, type BuildingMove } from "./buildings";
 import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, type LotTemplate } from "./growables";
 import { MILESTONES, milestoneFor, tilePrice, tileSlots, unlockedFeature, unlockedRoads, unlockedZones, type Milestone } from "./progression";
-import { DAY, HOUR, Society, estTime, type Port } from "./society";
-import { SERVICES, Services, type ServiceKind } from "./services";
-import { Policies, EFFECT } from "./policies";
+import { DAY, HOUR, Society, estTime } from "./society";
+import { PLACED, SHORE_REACH, type PlacedKind } from "./placed";
 import { Transit } from "./transit";
-import { EXPORT_PRICE, MATERIALS_PASS, TRADE, TRADE_DEMAND_CAP, pickPartner, type TradeTally } from "./trade";
-import { Utilities, SHORE_REACH } from "./utilities";
+import { Utilities } from "./utilities";
 import type { Placement } from "./buildings";
 import { CELL, DEPTH, ZoneMap, type Block, type Cell, type ZoneGroup, type ZoneId } from "./zones";
 
@@ -40,22 +36,29 @@ export type GameEvent =
   | { t: "milestone"; index: number }
   | { t: "money" }
   | { t: "tiles" }
-  /** the set of linked gateway cities changed */
-  | { t: "trade" }
   | { t: "toast"; msg: string };
 
 export interface DemandFactor { label: string; v: number }
 export interface Demand { v: number; factors: DemandFactor[] }
 
 export interface Budget {
-  income: Record<"res" | "com" | "ind" | "off" | "transit" | "utilities", number>;
-  expense: Record<"roads" | "services" | "transit" | "utilities" | "imports" | "policies" | "loans", number>;
+  income: Record<"res" | "com" | "ind" | "transit", number>;
+  expense: Record<"roads" | "transit" | "utilities" | "loans", number>;
 }
 
 /** A truck load not simulated as a vehicle, arriving at a set time. */
-interface VirtualCargo { t: number; to: number; cargo: "goods" | "materials" }
+interface VirtualCargo { t: number; to: number; cargo: "goods" }
 
-const GROUPS: ZoneGroup[] = ["res", "com", "ind", "off"];
+/** Save format: 3 = no city services, utilities beyond power, taxes or outside world. */
+export const SAVE_V = 3;
+
+/**
+ * What each worker earns the city an hour, by zone group (residents: per employed resident).
+ * TODO(industry): replaced by delivery income. Fixed at what the old default 10% tax produced.
+ */
+const INCOME_RATE: Record<ZoneGroup, number> = { res: 0.9, com: 0.8, ind: 0.7 };
+
+const GROUPS: ZoneGroup[] = ["res", "com", "ind"];
 
 export class Game {
   seed: number;
@@ -65,10 +68,8 @@ export class Game {
   buildings: Buildings;
   zones: ZoneMap;
   people: Society;
-  services: Services;
   transit: Transit;
   utilities: Utilities;
-  policies: Policies;
   money = 0;
   tiles = new Set<string>();
   time = 0;
@@ -78,8 +79,7 @@ export class Game {
   readonly dt = SIM.dt;
   milestone = 0;
   cityName = "Larkfield";
-  tax: Record<ZoneGroup, number> = { res: 10, com: 10, ind: 10, off: 10 };
-  demand: Record<ZoneGroup, Demand> = { res: { v: 0, factors: [] }, com: { v: 0, factors: [] }, ind: { v: 0, factors: [] }, off: { v: 0, factors: [] } };
+  demand: Record<ZoneGroup, Demand> = { res: { v: 0, factors: [] }, com: { v: 0, factors: [] }, ind: { v: 0, factors: [] } };
   /** Per game hour: last complete hour, and the one being counted. */
   budget: Budget = emptyBudget();
   private budgetNow: Budget = emptyBudget();
@@ -98,17 +98,6 @@ export class Game {
   private ordered = new Map<number, number>(); // building id -> loads on their way
   failedTrips = 0;
   readonly world: BuildWorld;
-  gateways: Gateway[] = [];
-  motorway: MotorwayPlan | null = null;
-  /** Points where traffic enters (entries) and leaves (exits) the region. */
-  entries: Port[] = [];
-  exits: Port[] = [];
-  /** gateway cities the road network reaches: the city's trade partners */
-  linked = new Set<number>();
-  /** this hour's trade with each partner, and the last full hour's */
-  private tradeNow = new Map<number, TradeTally>();
-  trade = new Map<number, TradeTally>();
-  private borderPts: { gateIn: number; gateOut: number; inP: V2; outP: V2 }[] = [];
   private comp = new Map<number, number>(); // node id -> connected component
   private compVersion = -1;
   private shopCache: Building[] | null = null;
@@ -123,17 +112,10 @@ export class Game {
     this.seed = seed;
     this.rng = mulberry32(seed * 31 + 5);
     this.terrain = new Terrain(seed);
-    this.gateways = this.terrain.gen.gateways();
-    this.motorway = planMotorway(this.terrain.gen, this.gateways);
-    if (this.motorway) {
-      this.mwPts = centrePoints(this.motorway.prims, 40);
-      this.terrain.gen.corridors.add(this.mwPts);
-    }
     this.buildings = new Buildings(this.net);
     this.traffic = new Traffic(this.net, {
       arrive: (v, now) => this.onArrive(v, now),
       fail: (trip, reason) => this.onFail(trip, reason),
-      exits: () => this.exits.map((p) => p.a),
       busAt: (v) => this.transit.busAt(v),
     });
     for (const [i, j] of START_TILES) this.tiles.add(`${i},${j}`);
@@ -141,10 +123,8 @@ export class Game {
     const t = this.terrain;
     this.zones = new ZoneMap(this.net, { isWater: (p) => t.isWater(p), isMountain: (p) => t.isMountain(p), owned: (p) => this.unlocked(p) });
     this.people = new Society(this);
-    this.services = new Services(this);
     this.transit = new Transit(this);
     this.utilities = new Utilities(this);
-    this.policies = new Policies(this);
     this.world = {
       isWater: (p) => t.isWater(p),
       isMountain: (p) => t.isMountain(p),
@@ -153,146 +133,7 @@ export class Game {
       buildingsHit: (pts, hw) => this.buildings.hit(pts, hw).filter((id) => !this.buildings.byId.get(id)?.zone),
       money: () => this.money,
     };
-    if (this.motorway) this.layMotorway(this.motorway);
     this.zones.rebuildAll();
-    this.updateOutside();
-  }
-
-  /** Build the pre-built motorway's two carriageways (not undoable; free). */
-  private layMotorway(plan: MotorwayPlan) {
-    const cws = carriageways(plan);
-    this.applyRoads(() => {
-      for (const cw of cws) {
-        let prev = -1;
-        for (const pc of cw.pieces) {
-          const a = prev >= 0 ? prev : this.net.addNode(pc.c.p0, pc.h0);
-          const b = this.net.addNode(pc.c.p3, pc.h1);
-          this.net.addSeg(a, b, MOTORWAY_TYPE, pc.c);
-          prev = b;
-        }
-      }
-    });
-    // border points: where each carriageway crosses a ring round the start (the region's simulated edge)
-    const R = 2400;
-    cws.forEach((cw, k) => {
-      const pts: V2[] = [];
-      for (const pc of cw.pieces) for (let i = 0; i <= 8; i++) {
-        const u = i / 8, w = 1 - u, c = pc.c;
-        pts.push({ x: w * w * w * c.p0.x + 3 * w * w * u * c.p1.x + 3 * w * u * u * c.p2.x + u * u * u * c.p3.x, y: w * w * w * c.p0.y + 3 * w * w * u * c.p1.y + 3 * w * u * u * c.p2.y + u * u * u * c.p3.y });
-      }
-      const first = pts.findIndex((p) => Math.hypot(p.x, p.y) < R);
-      let last = -1;
-      for (let i = pts.length - 1; i >= 0; i--) if (Math.hypot(p0(pts[i]), p1(pts[i])) < R) { last = i; break; }
-      if (first < 0 || last < 0) return;
-      const near = (p: V2) => this.gateways.reduce((b, g) => (dist(g.p, p) < dist(b.p, p) ? g : b), this.gateways[0]);
-      this.borderPts.push({ gateIn: near(pts[0]).id, gateOut: near(pts[pts.length - 1]).id, inP: pts[first], outP: pts[last] });
-      void k;
-    });
-  }
-
-  /** Find the motorway segs at the border points (they change when the player builds ramps). */
-  private updateOutside() {
-    const at = (p: V2, gate: number): Port | null => {
-      for (const id of this.net.segsNear(p.x - 30, p.y - 30, p.x + 30, p.y + 30)) {
-        const s = this.net.segs.get(id)!;
-        if (ROAD_TYPES[s.type].bwd > 0) continue;
-        const g = this.net.segGeom.get(id)!;
-        const c = polyClosest(g.center, p);
-        if (c.d < 4) return { gate, a: { seg: id, s: c.s, p }, side: 1 };
-      }
-      return null;
-    };
-    this.entries = [];
-    this.exits = [];
-    for (const bp of this.borderPts) {
-      const i = at(bp.inP, bp.gateIn), o = at(bp.outP, bp.gateOut);
-      if (i) this.entries.push(i);
-      if (o) this.exits.push(o);
-    }
-    // a road built into another gateway city opens it: traffic to and from it uses that road
-    const viaMotorway = new Set(this.borderPts.flatMap((bp) => [bp.gateIn, bp.gateOut]));
-    const homeComps = new Set<number | null>();
-    for (const p of [...this.entries, ...this.exits]) homeComps.add(this.compOf(p.a.seg));
-    for (const b of this.buildings.list) if (b.access) homeComps.add(this.compOf(b.access.seg));
-    homeComps.delete(null);
-    const linked = new Set<number>();
-    for (const p of [...this.entries, ...this.exits]) linked.add(p.gate);
-    for (const gw of this.gateways) {
-      if (viaMotorway.has(gw.id)) continue;
-      let inP: Port | null = null, outP: Port | null = null, di = Infinity, dout = Infinity;
-      for (const id of this.net.segsNear(gw.p.x - gw.r, gw.p.y - gw.r, gw.p.x + gw.r, gw.p.y + gw.r)) {
-        const s = this.net.segs.get(id)!;
-        if (this.isPrebuilt(id)) continue;
-        const geo = this.net.segGeom.get(id);
-        if (!geo) continue;
-        const c = polyClosest(geo.center, gw.p);
-        if (c.d > gw.r) continue;
-        // (kept off the road's ends: cars leaving can't reach a stop at a dead end's very tip)
-        const L = geo.center.length, m = Math.min(25, L / 2), portS = Math.min(Math.max(c.s, m), L - m);
-        const p = polyAt(geo.center, portS);
-        const port: Port = { gate: gw.id, a: { seg: id, s: portS, p }, side: 1 };
-        // a one-way road only carries traffic one way: away from the gateway it brings cars in, towards it takes them out
-        const away = ROAD_TYPES[s.type].bwd > 0 ? 0 : Math.sign(polyDir(geo.center, c.s).x * (p.x - gw.p.x) + polyDir(geo.center, c.s).y * (p.y - gw.p.y)) || 1;
-        if (away >= 0 && c.d < di) { di = c.d; inP = port; }
-        if (away <= 0 && c.d < dout) { dout = c.d; outP = { ...port, a: { ...port.a } }; }
-      }
-      // only once it joins the network the city's buildings are on
-      const joined = (p: Port | null) => !!p && homeComps.has(this.compOf(p.a.seg));
-      if (!joined(inP) && !joined(outP)) continue;
-      if (joined(inP)) this.entries.push(inP!);
-      if (joined(outP)) this.exits.push(outP!);
-      linked.add(gw.id);
-    }
-    const was = this.linked;
-    this.linked = linked;
-    if ([...linked].sort().join() === [...was].sort().join()) return;
-    this.emit({ t: "trade" });
-    if (!was.size) return; // (the start's motorway links its two quietly)
-    for (const id of linked) if (!was.has(id)) this.emit({ t: "toast", msg: `${this.gatewayOf(id)?.name} is linked: your factories can trade with it now. See Trade (T).` });
-    for (const id of was) if (!linked.has(id)) this.emit({ t: "toast", msg: `${this.gatewayOf(id)?.name} is no longer linked by road: trade with it has stopped.` });
-  }
-
-  /** The gateway a port leads to. */
-  gatewayOf(id: number) {
-    return this.gateways.find((g) => g.id === id) ?? null;
-  }
-
-  private tally(gate: number): TradeTally {
-    let t = this.tradeNow.get(gate);
-    if (!t) this.tradeNow.set(gate, (t = { exports: 0, imports: 0, earned: 0 }));
-    return t;
-  }
-
-  /** What the factories pay for materials, times the usual price: the cheapest partner whose road in reaches
-   *  them (before there are factories, the cheapest linked one; 1 with none). */
-  get materialsPrice(): number {
-    const comps = new Set<number | null>();
-    for (const b of this.buildings.list) if (b.zone && ZONE_GROUP[b.zone] === "ind" && b.access && !b.abandoned) comps.add(this.compOf(b.access.seg));
-    let m = Infinity;
-    for (const p of this.entries) {
-      if (comps.size && !comps.has(this.compOf(p.a.seg))) continue;
-      const gw = this.gatewayOf(p.gate);
-      if (gw) m = Math.min(m, TRADE[gw.kind].materials);
-    }
-    return m === Infinity ? 1 : m;
-  }
-
-  /** Industry taxes rise when factories buy cheap materials (and fall when they only reach dear ones). */
-  get materialsFactor(): number {
-    return 1 + (1 - this.materialsPrice) * MATERIALS_PASS;
-  }
-
-  /** The entry point that reaches `seg`, if any. */
-  entryFor(seg: number): Port | null {
-    return this.entries.find((p) => this.connected(p.a.seg, seg)) ?? null;
-  }
-
-  exitFor(seg: number): Port | null {
-    return this.exits.find((p) => this.connected(p.a.seg, seg)) ?? null;
-  }
-
-  get hasOutside(): boolean {
-    return this.entries.length > 0;
   }
 
   on(fn: (e: GameEvent) => void) {
@@ -339,8 +180,7 @@ export class Game {
 
   private roadInTile(i: number, j: number): boolean {
     const x0 = (i - 0.5) * TILE, y0 = (j - 0.5) * TILE;
-    for (const id of this.net.segsNear(x0, y0, x0 + TILE, y0 + TILE)) if (this.net.segs.get(id)!.type !== MOTORWAY_TYPE) return true;
-    return false;
+    return this.net.segsNear(x0, y0, x0 + TILE, y0 + TILE).size > 0;
   }
 
   unlockTile(i: number, j: number): boolean {
@@ -359,7 +199,7 @@ export class Game {
   get roadsUnlocked(): Set<RoadTypeId> { return unlockedRoads(this.milestone); }
   get zonesUnlocked(): Set<ZoneId> { return unlockedZones(this.milestone); }
   featureUnlocked(f: Milestone["features"][number]): boolean { return unlockedFeature(this.milestone, f); }
-  serviceUnlocked(k: ServiceKind): boolean { return this.milestone >= SERVICES[k].unlock; }
+  placedUnlocked(k: PlacedKind): boolean { return this.milestone >= PLACED[k].unlock; }
 
   toast(msg: string) {
     this.emit({ t: "toast", msg });
@@ -448,7 +288,6 @@ export class Game {
     this.transit.afterRoads();
     this.traffic.onNetworkChange(cs);
     this.zones.onNetworkChange(cs);
-    this.updateOutside();
     this.emit({ t: "roads", cs });
     this.emit({ t: "zones" });
   }
@@ -695,7 +534,7 @@ export class Game {
     for (const { cell } of ch) {
       if (!cell.lot) continue;
       const b = this.buildings.byId.get(cell.lot);
-      if (b && !b.svc && b.zone !== zone) { removed.push(b); this.removeBuildingRaw(b); }
+      if (b && !b.placed && b.zone !== zone) { removed.push(b); this.removeBuildingRaw(b); }
     }
     this.pushUndo({ label: "zone", ops: [], money: 0, added: [], removed, zones: ch.map((c) => ({ p: c.cell.c, from: c.from, to: zone })) });
     this.emit({ t: "zones" });
@@ -735,7 +574,7 @@ export class Game {
     if (e.zones) this.zones.paintAt(e.zones.map((z) => ({ p: z.p, zone: z.to })));
     this.money -= e.money;
     for (const b of e.added) {
-      if (b.svc) {
+      if (b.placed) {
         // zoned buildings that grew on the spot after the undo make way again, as when it was first placed
         for (const o of [...this.buildings.list]) {
           if (o.zone && !e.removed.some((r) => r.id === o.id) && obbOverlap(b.c, b.hw, b.hd, b.rot, o.c, o.hw, o.hd, o.rot)) {
@@ -756,15 +595,16 @@ export class Game {
 
   // ---------------------------------------------------------------- buildings
 
-  /** Where a service building would go near p, and what it would cost and replace. */
-  servicePlan(kind: ServiceKind, p: V2): (Placement & { cost: number }) | null {
+  /** Where a placed building would go near p, and what it would cost and replace. */
+  placedPlan(kind: PlacedKind, p: V2): (Placement & { cost: number }) | null {
     const world = { ...this.world, unlocked: (q: V2) => this.unlocked(q) };
     const pl = this.buildings.placement(kind, p, world, (o) => !!o.zone);
     if (!pl) return null;
-    const cost = SERVICES[kind].cost;
-    if (pl.ok && !this.serviceUnlocked(kind)) return { ...pl, ok: false, reason: "Not unlocked yet", cost };
-    if (pl.ok && SERVICES[kind].unique && this.buildings.list.some((b) => b.kind === kind)) return { ...pl, ok: false, reason: "Only one per city", cost };
-    if (pl.ok && SERVICES[kind].shore && !this.nearWater(pl.c, pl.rot, BUILDING_TYPES[kind].w / 2, BUILDING_TYPES[kind].d / 2)) return { ...pl, ok: false, reason: "Has to be on a shore", cost };
+    const D = PLACED[kind];
+    const cost = D.cost;
+    if (pl.ok && !this.placedUnlocked(kind)) return { ...pl, ok: false, reason: "Not unlocked yet", cost };
+    if (pl.ok && D.unique && this.buildings.list.some((b) => b.kind === kind)) return { ...pl, ok: false, reason: "Only one per city", cost };
+    if (pl.ok && D.shore && !this.nearWater(pl.c, pl.rot, BUILDING_TYPES[kind].w / 2, BUILDING_TYPES[kind].d / 2)) return { ...pl, ok: false, reason: "Has to be on a shore", cost };
     if (pl.ok && this.money < cost) return { ...pl, ok: false, reason: "Not enough money", cost };
     return { ...pl, cost };
   }
@@ -788,9 +628,9 @@ export class Game {
     return false;
   }
 
-  /** Build a service building (fire station, school, park...). Zoned buildings in the way are cleared. */
-  placeService(kind: ServiceKind, p: V2): Building | null {
-    const pl = this.servicePlan(kind, p);
+  /** Place a building (a power plant...). Zoned buildings in the way are cleared. */
+  place(kind: PlacedKind, p: V2): Building | null {
+    const pl = this.placedPlan(kind, p);
     if (!pl || !pl.ok) return null;
     const removed: Building[] = [];
     for (const id of pl.clears ?? []) {
@@ -798,30 +638,20 @@ export class Game {
       if (o) { removed.push(o); this.removeBuildingRaw(o); }
     }
     const b = this.buildings.add(kind, pl, this.time);
-    b.svc = true;
-    b.busy = 0;
-    b.users = 0;
+    b.placed = true;
     for (const c of this.lotCells(b)) c.lot = b.id;
-    this.services.dirty();
     this.candVersion = -1;
     this.money -= pl.cost;
-    this.pushUndo({ label: "service", ops: [], money: pl.cost, added: [b], removed });
+    this.pushUndo({ label: "place", ops: [], money: pl.cost, added: [b], removed });
     this.emit({ t: "money" });
     this.emit({ t: "buildings" });
     return b;
-  }
-
-  /** A fire nobody put out: the building is gone (zoned land grows something new). */
-  burnDown(b: Building) {
-    this.removeBuildingRaw(b);
-    this.emit({ t: "buildings" });
   }
 
   private removeBuildingRaw(b: Building) {
     if (!this.buildings.byId.has(b.id)) return;
     this.buildings.remove(b.id);
     this.people.onBuildingRemoved(b.id);
-    this.services.onBuildingRemoved(b.id);
     this.ordered.delete(b.id);
     this.cargoQ = this.cargoQ.filter((c) => c.to !== b.id);
     for (const c of this.lotCells(b)) if (c.lot === b.id) c.lot = 0;
@@ -834,15 +664,13 @@ export class Game {
     this.buildings.insert(b);
     for (const c of this.lotCells(b)) c.lot = b.id;
     this.buildings.reattach();
-    this.services.restored(b);
-    this.services.dirty();
     this.shopCache = null;
     this.candVersion = -1;
   }
 
   /** Zone cells under a building's lot. */
   lotCells(b: Building): Cell[] {
-    if (!b.zone && !b.svc) return [];
+    if (!b.zone && !b.placed) return [];
     return this.zones.inPoly(rectCorners(b.c, b.hw - 0.5, b.hd - 0.5, b.rot));
   }
 
@@ -982,7 +810,7 @@ export class Game {
       access: { seg: b.seg, s: sMid, p: front }, side: b.side, zone, lot: { block: b.key, col0, w: t.w, d: depth },
       // deeper lots hold a bit more (the back is yard, parking or storage)
       level: 1, cap: capacity(zone, t.w, t.d + (depth - t.d) * 0.5, 1, tall), fit: modelFit(t, M.w, M.d), tall, built: 0, abandoned: 0, lv: 0, upT: 0, badT: 0,
-      problem: null, stock: ZONE_GROUP[zone] === "com" ? 2 : ZONE_GROUP[zone] === "ind" ? 2 : 0, out: 0, prodT: 0, visits: 0, born: this.time,
+      problem: null, stock: ZONE_GROUP[zone] === "com" ? 2 : 0, out: 0, prodT: 0, visits: 0, born: this.time,
     };
     this.buildings.insert(bl);
     for (const cc of cells) cc.lot = bl.id;
@@ -1029,11 +857,6 @@ export class Game {
     this.compVersion = this.net.version;
   }
 
-  /** Whether a building can reach the outside world by road. */
-  linkedOutside(b: Building): boolean {
-    return !!b.access && !!this.entryFor(b.access.seg);
-  }
-
   noRoute(b: Building | null) {
     if (b) this.noRouteAt.set(b.id, this.time);
   }
@@ -1044,7 +867,7 @@ export class Game {
    * out as people. One car per trip in a hamlet, rising gently so a town of 1000 has some 130 cars about (CS-like).
    */
   get tripScale(): number {
-    const p = this.people.stats.population + this.people.stats.commuters;
+    const p = this.people.stats.population;
     return Math.max(1, Math.sqrt(p) / 10);
   }
 
@@ -1119,7 +942,6 @@ export class Game {
       }
     }
     this.moveIns();
-    this.services.tick(span);
     this.utilities.tick(span);
     this.transit.tick();
     for (const b of [...this.buildings.list]) this.stepBuilding(b, span);
@@ -1128,20 +950,21 @@ export class Game {
 
   private moveIns() {
     const R = this.demand.res.v;
-    if (R <= 0 || !this.entries.length) return;
+    if (R <= 0) return;
     let n = Math.ceil((R / 100) * (1.5 + this.people.stats.households * 0.01));
     const homes = this.buildings.list.filter((b) => b.zone && ZONE_GROUP[b.zone] === "res" && b.built >= 1 && !b.abandoned && b.access);
     if (!homes.length) return;
     for (let k = 0; k < homes.length * 2 && n > 0; k++) {
       const h = homes[(this.rng() * homes.length) | 0];
       if (this.people.householdsIn(h.id) >= h.cap) continue;
-      if (!this.linkedOutside(h)) { h.problem = "Not connected to the highway: nobody can move in"; continue; }
-      this.people.moveIn(h, this.entryFor(h.access!.seg));
+      this.people.moveIn(h);
       n--;
     }
   }
 
   private stepBuilding(b: Building, span: number) {
+    // placed buildings: a plant's own trouble (no road, nobody on its roads, no staff)
+    if (b.placed) { b.problem = b.built >= 1 && PLACED[b.kind as PlacedKind]?.utility ? this.utilities.plantProblem(b) : null; return; }
     if (!b.zone || b.built < 1) return;
     const grp = ZONE_GROUP[b.zone];
     // shops count their customers over a day (an evening rush and a quiet morning even out); parks over a few hours
@@ -1155,11 +978,7 @@ export class Game {
     let problem: string | null = null;
     if (!b.access) { health = 0; problem = "No road access"; }
     else if (grp === "res") {
-      const hh = this.people.householdsIn(b.id);
-      if (!this.linkedOutside(b) && hh === 0) problem = "Not connected to the highway: nobody can move in";
-      // residents put up with a lot, but piled-up garbage, crime and no services for days make them leave
-      if (hh > 0 && this.services.active) health = this.services.happiness(b);
-      if (hh > 0 && this.utilities.active) health = Math.max(0, health - this.utilities.unhappiness(b));
+      // (homes stay as long as they have a road)
     } else {
       const staff = b.cap ? this.people.workersAt(b.id) / b.cap : 1;
       health = Math.min(1, staff * 1.25);
@@ -1170,28 +989,18 @@ export class Game {
         const customers = Math.max(b.custDay ?? 0, b.custToday ?? 0) / Math.max(1, b.cap * 3.2);
         if (this.time - b.born > DAY * 2 && customers < 0.2) { health *= 0.6 + customers * 2; problem ??= "Not enough customers"; }
         // (counting what is already on its way)
-        if (b.stock + 3 * this.inFlight(b) < 3) this.order(b, "goods");
+        if (b.stock + 3 * this.inFlight(b) < 3) this.order(b);
       } else if (grp === "ind") {
-        if (b.stock <= 0) { health *= 0.4; problem = "Waiting for materials"; }
-        else {
+        // TODO(industry): a bridge until the new chains replace zoned industry. Factories make goods from nothing
+        // (there is nowhere to buy materials any more) and only the town's own shops take them; a factory whose
+        // store is full just waits for a shop to order.
+        if (b.out < 6) {
           b.prodT += span * staff;
-          if (b.prodT >= HOUR * 2) { b.prodT = 0; b.stock--; b.out = Math.min(6, b.out + 1); }
+          if (b.prodT >= HOUR * 2) { b.prodT = 0; b.out++; }
         }
-        // a load lasts ~6 hours and one from the highway can take as long to come, so keep the next on its way
-        if (b.stock + 3 * this.inFlight(b) < 5) this.order(b, "materials");
-        if (b.out >= 2) this.ship(b);
-        if (b.out >= 6) { health *= 0.5; problem = "Can't ship its goods"; }
       }
     }
     if (this.noRouteAt.has(b.id) && this.time - this.noRouteAt.get(b.id)! < HOUR * 2) problem ??= "Trips can't find a route";
-    if (grp !== "res" && this.utilities.active) health *= this.utilities.workFactor(b);
-    const up = this.utilities.active ? this.utilities.problemOf(b) : null;
-    if (up) problem = problem && problem !== "Not enough workers" ? problem : up;
-    const sp = this.services.problemOf(b);
-    if (sp) {
-      problem = sp === "On fire!" ? sp : problem ?? sp;
-      if (grp !== "res") health *= b.fire ? 0 : 0.8;
-    }
     b.problem = problem;
     (b as Building & { health?: number }).health = health;
     // failing for two days: abandoned
@@ -1225,36 +1034,21 @@ export class Game {
 
   // ---------------------------------------------------------------- cargo
 
-  /** Order a load: goods for shops (from local industry, else imported), materials for industry (imported). */
-  private order(b: Building, cargo: "goods" | "materials") {
+  /** Order a load of goods for a shop from the nearest local factory that has some (none: it waits). */
+  private order(b: Building) {
     const n = this.inFlight(b);
     if (n >= 2) return;
-    let from: Building | null = null;
-    if (cargo === "goods") {
-      let bd = Infinity;
-      for (const o of this.buildings.list) {
-        if (o.out <= 0 || o.zone !== "ind" || !o.access || o.abandoned) continue;
-        if (!this.connected(o.access.seg, b.access!.seg)) continue;
-        const d = dist(o.c, b.c);
-        if (d < bd) { bd = d; from = o; }
-      }
+    let from: Building | null = null, bd = Infinity;
+    for (const o of this.buildings.list) {
+      if (o.out <= 0 || o.zone !== "ind" || !o.access || o.abandoned) continue;
+      if (!this.connected(o.access.seg, b.access!.seg)) continue;
+      const d = dist(o.c, b.c);
+      if (d < bd) { bd = d; from = o; }
     }
-    let port: Port | undefined;
-    if (from) from.out--;
-    else {
-      // from outside: materials come from the cheapest partner the factory's roads reach
-      let best = Infinity;
-      for (const p of this.entries) {
-        if (!this.connected(p.a.seg, b.access!.seg)) continue;
-        const gw = this.gatewayOf(p.gate);
-        const m = cargo === "materials" && gw ? TRADE[gw.kind].materials : 1;
-        if (m < best) { best = m; port = p; }
-      }
-      if (!port) return;
-      if (cargo === "materials") this.tally(port.gate).imports++;
-    }
+    if (!from) return;
+    from.out--;
     this.ordered.set(b.id, n + 1);
-    this.truck(from, b, cargo, port);
+    this.truck(from, b, "goods");
   }
 
   /** Loads on their way to a building. */
@@ -1269,40 +1063,22 @@ export class Game {
     else this.ordered.delete(id);
   }
 
-  /** Export goods to the outside world. */
-  private ship(b: Building) {
-    const ex = this.exits.filter((p) => this.connected(p.a.seg, b.access!.seg));
-    const price = (p: Port) => { const gw = this.gatewayOf(p.gate); return gw ? TRADE[gw.kind].goods : 1; };
-    const port = pickPartner(ex, price, this.rng());
-    if (!port) return;
-    b.out--;
-    const earned = EXPORT_PRICE * price(port) * (this.tax.ind / 10);
-    this.budgetNow.income.ind += earned;
-    const t = this.tally(port.gate);
-    t.exports++;
-    t.earned += earned;
-    this.truck(b, null, "goods", port);
-  }
-
-  private truck(from: Building | null, to: Building | null, cargo: "goods" | "materials", port?: Port) {
-    const inP = !from && to ? port ?? this.entryFor(to.access!.seg) : null;
-    const outP = !to && from ? port ?? this.exitFor(from.access!.seg) : null;
-    const a = from ? from.access : inP?.a;
-    const b = to ? to.access : outP?.a;
-    if (!a || !b) { if (to) this.unorder(to.id); return; }
+  private truck(from: Building, to: Building, cargo: "goods") {
+    const a = from.access, b = to.access;
+    if (!a || !b) { this.unorder(to.id); return; }
     const real = this.rng() * Math.max(1, this.tripScale / 2) < 1;
     if (real) {
       this.traffic.request({
-        from: a, fromSide: from ? from.side : inP!.side, to: b, toSide: to ? to.side : outP!.side,
-        trip: { kind: "cargo", from: from ? from.id : -1, to: to ? to.id : -1, resident: -1, cargo, startT: this.time, freeFlow: 0 },
-        truck: true, tries: 0, wait: 0, through: !from, exit: !to,
+        from: a, fromSide: from.side, to: b, toSide: to.side,
+        trip: { kind: "cargo", from: from.id, to: to.id, resident: -1, cargo, startT: this.time, freeFlow: 0 },
+        truck: true, tries: 0, wait: 0,
       });
-    } else if (to) {
-      this.queueCargo({ t: this.time + estTime(from ? from.c : a.p, to.c), to: to.id, cargo });
+    } else {
+      this.queueCargo({ t: this.time + estTime(from.c, to.c), to: to.id, cargo });
     }
   }
 
-  /** A virtual load, kept in arrival order (a short local run doesn't wait behind a long import). */
+  /** A virtual load, kept in arrival order (a short run doesn't wait behind a long one). */
   private queueCargo(c: VirtualCargo) {
     let i = this.cargoQ.length;
     while (i > 0 && this.cargoQ[i - 1].t > c.t) i--;
@@ -1319,7 +1095,6 @@ export class Game {
     const trip = v.trip;
     if (trip.bus) { this.transit.onGone(trip.bus, { x: v.x, y: v.y }); return; }
     this.traffic.recordTrip(trip.freeFlow, now - trip.startT);
-    if (trip.run) { this.services.onArrive(v); return; }
     if (trip.kind === "cargo") {
       if (trip.to >= 0) this.deliver(trip.to);
       return;
@@ -1330,7 +1105,6 @@ export class Game {
   private onFail(trip: Trip, reason: string) {
     if (trip.bus) { this.transit.onGone(trip.bus); return; }
     this.failedTrips++;
-    if (trip.run) { this.services.onFail(trip); return; }
     if (trip.kind === "cargo") {
       if (trip.to >= 0) this.unorder(trip.to);
       const from = this.buildings.byId.get(trip.from);
@@ -1347,40 +1121,22 @@ export class Game {
 
   private computeDemand() {
     const st = this.people.stats;
-    const jobs: Record<ZoneGroup, number> = { res: 0, com: 0, ind: 0, off: 0 };
-    let homes = 0, homesBuilding = 0, svcJobs = 0;
+    const jobs: Record<ZoneGroup, number> = { res: 0, com: 0, ind: 0 };
+    let homes = 0, homesBuilding = 0, placedJobs = 0;
     for (const b of this.buildings.list) {
-      if (b.svc) svcJobs += b.cap;
+      if (b.placed) placedJobs += b.cap;
       if (!b.zone || b.abandoned) continue;
       const gp = ZONE_GROUP[b.zone];
       if (gp === "res") { if (b.built >= 1) homes += b.cap; else homesBuilding += b.cap; }
       else jobs[gp] += b.cap;
     }
-    const totalJobs = jobs.com + jobs.ind + jobs.off + svcJobs;
+    const totalJobs = jobs.com + jobs.ind + placedJobs;
     const pop = st.population;
     const workers = Math.max(1, st.workers);
-    const freeJobs = totalJobs - st.employed - st.commuters;
-    const vacant = homes + homesBuilding - st.households - st.movingIn;
+    const freeJobs = totalJobs - st.employed;
+    const vacant = homes + homesBuilding - st.households;
     const unemp = st.workers ? st.unemployed / st.workers : 0;
-    const taxF = (gp: ZoneGroup) => -(this.tax[gp] - 10) * 3;
     const clamp = (x: number) => Math.max(0, Math.min(100, Math.round(x)));
-    // short of power, water or sewage: nobody wants to move in or set up shop
-    const ws = this.utilities.worstShare;
-    const utilF = (scale: number): DemandFactor | null => this.utilities.active && ws.share < 0.97
-      ? { label: ws.u === "power" ? "Not enough electricity" : ws.u === "water" ? "Not enough water" : "Not enough sewage capacity", v: -Math.round(Math.min(80, (1 - ws.share) * 160 * scale)) }
-      : null;
-    const pushU = (f: DemandFactor[], scale: number) => { const u = utilF(scale); if (u) f.push(u); };
-    // linked gateway cities: migrants, firms, markets (one factor per partner, capped per zone)
-    const tradeF = (gp: ZoneGroup, f: DemandFactor[]) => {
-      let left = TRADE_DEMAND_CAP;
-      for (const id of this.linked) {
-        const gw = this.gatewayOf(id);
-        const v = gw ? Math.min(left, TRADE[gw.kind].demand[gp] ?? 0) : 0;
-        if (v <= 0) continue;
-        f.push({ label: `Trade with ${gw!.name}`, v });
-        left -= v;
-      }
-    };
     // residential
     {
       const f: DemandFactor[] = [];
@@ -1388,25 +1144,11 @@ export class Game {
       if (totalJobs > 0) f.push({ label: "Available jobs", v: Math.round(Math.max(-30, Math.min(45, (freeJobs / Math.max(5, workers * 0.12)) * 25))) });
       if (unemp > 0.04) f.push({ label: "Unemployment", v: -Math.round(Math.min(60, (unemp - 0.04) * 250)) });
       if (vacant > 0) f.push({ label: "Empty homes", v: -Math.round(Math.min(50, (vacant / Math.max(3, (homes + homesBuilding) * 0.1)) * 25)) });
-      if (this.tax.res !== 10) f.push({ label: "Taxes", v: taxF("res") });
-      if (this.services.active) {
-        let hs = 0, n = 0;
-        for (const b of this.buildings.list) {
-          if (!b.zone || ZONE_GROUP[b.zone] !== "res" || b.abandoned || !this.people.householdsIn(b.id)) continue;
-          hs += this.services.happiness(b);
-          n++;
-        }
-        if (n) f.push({ label: "City services", v: Math.round(Math.max(-35, Math.min(20, (hs / n - 0.64) * 140))) });
-      }
-      pushU(f, 1);
-      if (!this.entries.length) f.push({ label: "No highway connection", v: -100 });
-      tradeF("res", f);
       this.demand.res = { v: clamp(f.reduce((a, x) => a + x.v, 0)), factors: f };
     }
-    // jobs follow the workforce (plus the households on their way): shared out between shops, industry and offices
-    const offOn = this.zonesUnlocked.has("offLow");
-    const share: Record<ZoneGroup, number> = { res: 0, com: 0.28, ind: offOn ? 0.5 : 0.72, off: offOn ? 0.22 : 0 };
-    const labour = st.workers * 0.97 + st.movingIn * 1.2 + Math.max(0, this.demand.res.v - 30) * 0.15 + 10;
+    // jobs follow the workforce: shared out between shops and industry
+    const share: Record<ZoneGroup, number> = { res: 0, com: 0.28, ind: 0.72 };
+    const labour = st.workers * 0.97 + Math.max(0, this.demand.res.v - 30) * 0.15 + 10;
     const need = (gp: ZoneGroup, label: string) => {
       const want = labour * share[gp];
       return { label, v: Math.round(Math.max(-60, Math.min(60, ((want - jobs[gp]) / Math.max(5, want * 0.3)) * 50))) };
@@ -1416,34 +1158,14 @@ export class Game {
     {
       const f: DemandFactor[] = [{ label: "Base", v: 40 }, need("com", "Shoppers")];
       if (pop < 30) f.push({ label: "Too few residents", v: -60 });
-      const sights = this.buildings.list.filter((b) => b.svc && SERVICES[b.kind as ServiceKind]?.svc === "landmark" && b.built >= 1).length;
-      if (sights) f.push({ label: "Visitors to landmarks", v: Math.min(30, sights * 8) });
-      if (this.policies.has("tourism")) f.push({ label: "Tourism campaign", v: EFFECT.tourism });
-      tradeF("com", f);
       if (lack) f.push(lack);
-      pushU(f, 0.7);
-      if (this.tax.com !== 10) f.push({ label: "Taxes", v: taxF("com") });
       this.demand.com = { v: clamp(f.reduce((a, x) => a + x.v, 0)), factors: f };
     }
-    // industrial: goods for shops and export
+    // industrial: goods for the shops
     {
       const f: DemandFactor[] = [{ label: "Base", v: 45 }, need("ind", "Workers looking for jobs")];
-      tradeF("ind", f);
       if (lack) f.push(lack);
-      if (!this.entries.length) f.push({ label: "No highway connection", v: -60 });
-      pushU(f, 0.8);
-      if (this.tax.ind !== 10) f.push({ label: "Taxes", v: taxF("ind") });
       this.demand.ind = { v: clamp(f.reduce((a, x) => a + x.v, 0)), factors: f };
-    }
-    // office: educated workers
-    {
-      const f: DemandFactor[] = offOn ? [{ label: "Base", v: 35 }, need("off", "Educated workers")] : [{ label: "Unlocks at Village", v: 0 }];
-      if (offOn && st.edu[1] + st.edu[2] < 20) f.push({ label: "Few educated workers", v: -30 });
-      if (offOn) tradeF("off", f);
-      if (lack && offOn) f.push(lack);
-      if (offOn) pushU(f, 0.7);
-      if (this.tax.off !== 10) f.push({ label: "Taxes", v: taxF("off") });
-      this.demand.off = { v: clamp(f.reduce((a, x) => a + x.v, 0)), factors: f };
     }
   }
 
@@ -1452,50 +1174,39 @@ export class Game {
   private hourly() {
     const st = this.people.stats;
     const B = this.budgetNow;
-    B.income.res += st.employed * 0.9 * (this.tax.res / 10);
-    const mf = this.materialsFactor;
+    // TODO(industry): replaced by delivery income
+    B.income.res += st.employed * INCOME_RATE.res;
     for (const b of this.buildings.list) {
       if (!b.zone || b.abandoned || b.built < 1) continue;
       const gp = ZONE_GROUP[b.zone];
       if (gp === "res") continue;
       const h = (b as Building & { health?: number }).health ?? 1;
       const w = this.people.workersAt(b.id);
-      const rate = gp === "com" ? 0.8 : gp === "ind" ? 0.7 * mf : 1.0;
-      B.income[gp] += w * rate * h * (this.tax[gp] / 10);
+      B.income[gp] += w * INCOME_RATE[gp] * h;
     }
     let roads = 0;
     for (const s of this.net.segs.values()) {
-      if (s.type === MOTORWAY_TYPE && this.isPrebuilt(s.id)) continue;
       const g = this.net.segGeom.get(s.id);
       if (g) roads += g.center.length * ROAD_TYPES[s.type].costPerM * 0.004;
     }
     B.expense.roads += roads;
-    B.expense.services += this.services.upkeep();
-    const ut = this.utilities.hourly();
-    B.expense.utilities += ut.upkeep;
-    B.expense.imports += ut.imports;
-    B.income.utilities += ut.exports;
-    B.expense.policies += this.policies.hourly();
+    B.expense.utilities += this.utilities.upkeep();
     const tr = this.transit.hourly();
     B.income.transit += tr.fares;
     B.expense.transit += tr.upkeep;
-    this.services.hourly();
-    this.trade = this.tradeNow;
-    this.tradeNow = new Map();
     const net = sum(B.income) - sum(B.expense);
     this.money += net;
     this.budget = B;
     this.budgetNow = emptyBudget();
     let jobs = 0;
-    for (const b of this.buildings.list) if ((b.svc || (b.zone && ZONE_GROUP[b.zone] !== "res")) && !b.abandoned) jobs += b.cap;
+    for (const b of this.buildings.list) if ((b.placed || (b.zone && ZONE_GROUP[b.zone] !== "res")) && !b.abandoned) jobs += b.cap;
     this.history.push({ money: this.money, pop: st.population, jobs });
     if (this.history.length > 72) this.history.shift();
     this.landValue();
     // households with nobody working for two days leave
     for (const hh of [...this.people.households.values()]) {
-      if (!hh.arrived) continue;
       const adults = hh.members.filter((c) => c.age === 1);
-      if (!adults.length || adults.some((c) => c.job >= 0 || c.school >= 0)) continue;
+      if (!adults.length || adults.some((c) => c.job >= 0)) continue;
       if (adults.every((c) => this.time - c.jobless > DAY * 2) && this.rng() < 0.15) this.people.moveOut(hh);
     }
     for (const [id, t] of this.noRouteAt) if (this.time - t > HOUR * 3) this.noRouteAt.delete(id);
@@ -1509,16 +1220,6 @@ export class Game {
       this.emit({ t: "zones" });
     }
     this.emit({ t: "money" });
-  }
-
-  private mwPts: V2[] = [];
-  /** The pre-built motorway's upkeep is paid by the region (CS2's starting highway costs nothing to keep). */
-  private isPrebuilt(id: number) {
-    const g = this.net.segGeom.get(id);
-    if (!g || !this.mwPts.length) return false;
-    const m = g.center.pts[g.center.pts.length >> 1];
-    for (const q of this.mwPts) if (Math.abs(q.x - m.x) < 40 && Math.abs(q.y - m.y) < 40) return true;
-    return false;
   }
 
   /** Land value from road access, nearby shops and jobs, minus industrial pollution and busy-road noise. */
@@ -1540,10 +1241,9 @@ export class Game {
         lv += Math.min(12, near * 3);
         for (const o of ind) {
           const d = dist(o.c, b.c);
-          if (d < 180) lv -= 22 * (1 - d / 180) * (this.policies.has("filters") ? EFFECT.filters : 1);
+          if (d < 180) lv -= 22 * (1 - d / 180);
         }
       } else if (grp === "com") lv += Math.min(10, b.visits / Math.max(1, b.cap * 4));
-      lv += this.services.landValueOf(b);
       lv += this.utilities.landValueOf(b);
       b.lv = Math.max(0, Math.min(100, lv));
     }
@@ -1553,7 +1253,7 @@ export class Game {
 
   serialize() {
     return {
-      v: 2,
+      v: SAVE_V,
       seed: this.seed,
       net: this.net.toJSON(),
       buildings: this.buildings.list.map((b) => ({ ...b, access: null })),
@@ -1565,10 +1265,8 @@ export class Game {
       money: this.money,
       milestone: this.milestone,
       tiles: [...this.tiles],
-      policies: this.policies.toJSON(),
       /** loads sent as estimates (real trucks on the road aren't saved: their orders lapse and are placed again) */
       cargo: this.cargoQ as VirtualCargo[] | undefined,
-      tax: this.tax,
       budget: this.budget as Budget | undefined,
       time: this.time,
       playtime: this.playtime,
@@ -1577,14 +1275,12 @@ export class Game {
   }
 
   static load(data: ReturnType<Game["serialize"]>): Game {
-    if ((data as { v?: number }).v !== 2) throw new Error("Save from an older version");
+    if ((data as { v?: number }).v !== SAVE_V) throw new Error("Save from an older version");
     const g = new Game(data.seed);
     g.net.load(data.net);
     g.tiles = new Set(data.tiles);
     g.milestone = data.milestone;
-    g.policies.load(data.policies);
     g.money = data.money;
-    g.tax = { ...data.tax };
     if (data.budget) {
       const e = emptyBudget();
       g.budget = { income: { ...e.income, ...data.budget.income }, expense: { ...e.expense, ...data.budget.expense } };
@@ -1619,8 +1315,6 @@ export class Game {
     g.buildings.reattach();
     // (saves from before shops kept daily books: a day's custom from how busy they were)
     for (const b of g.shops) if (b.custDay === undefined) b.custDay = Math.round(b.visits * 4);
-    g.updateOutside();
-    g.services.reset();
     g.people.load(data.people);
     g.transit.load(data.transit);
     for (const c of data.cargo ?? []) {
@@ -1652,7 +1346,7 @@ export class Game {
 }
 
 function emptyBudget(): Budget {
-  return { income: { res: 0, com: 0, ind: 0, off: 0, transit: 0, utilities: 0 }, expense: { roads: 0, services: 0, transit: 0, utilities: 0, imports: 0, policies: 0, loans: 0 } };
+  return { income: { res: 0, com: 0, ind: 0, transit: 0 }, expense: { roads: 0, transit: 0, utilities: 0, loans: 0 } };
 }
 
 function sum(o: Record<string, number>): number {
@@ -1667,6 +1361,3 @@ function pointInRect(p: V2, b: Building, pad: number): boolean {
   const a = Math.abs(d.x * u.x + d.y * u.y), c = Math.abs(-d.x * u.y + d.y * u.x);
   return a < b.hw + pad && c < b.hd + pad;
 }
-
-const p0 = (p: V2) => p.x;
-const p1 = (p: V2) => p.y;

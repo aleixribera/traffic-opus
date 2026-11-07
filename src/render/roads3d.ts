@@ -47,10 +47,7 @@ vec3 flowTint(float r) {
   float k = clamp((0.92 - r) / 0.6, 0.0, 1.0);
   return mix(vec3(1.0), mix(vec3(1.0, 0.62, 0.28), vec3(0.86, 0.13, 0.16), smoothstep(0.35, 1.0, k)), smoothstep(0.0, 0.25, k));
 }
-vec3 covTint(float r) {
-  // service coverage: uncovered roads go grey, covered ones green, deeper the better served
-  return r <= 0.01 ? vec3(0.78, 0.78, 0.8) : mix(vec3(0.72, 0.95, 0.62), vec3(0.22, 0.72, 0.36), clamp((r - 0.4) / 0.6, 0.0, 1.0));
-}`,
+`,
       )
       .replace(
         "#include <color_fragment>",
@@ -111,7 +108,7 @@ vec3 covTint(float r) {
     c = mix(c, uLane, lanes);
     if (uFlowMode > 0.5) {
       float r = (b > 0.0 && u < 0.0) ? vFlow.y : vFlow.x;
-      c *= uFlowMode > 1.5 ? covTint(r) : flowTint(r);
+      c *= flowTint(r);
     }
     if (med > 0.0) {
       // planted median: a kerb either side, grass between, and a row of trees when it is wide enough
@@ -275,29 +272,6 @@ export class Roads3D {
 
   set flowMode(on: boolean) {
     for (const m of this.marked) m.uniforms.uFlowMode.value = on ? 1 : 0;
-  }
-
-  /** Tint roads by a per-seg value 0..1 (service coverage); null switches it off. */
-  coverage(cov: Map<number, number> | null) {
-    const mode = cov ? 2 : this.surface.uniforms.uFlowMode.value > 1.5 ? 0 : this.surface.uniforms.uFlowMode.value;
-    for (const m of this.marked) m.uniforms.uFlowMode.value = mode;
-    if (!cov) return;
-    for (const [id, m] of this.segs) {
-      const f = cov.get(id) ?? 0;
-      const a = m.flow.array as Float32Array;
-      if (a[0] === f && a[a.length - 1] === f) continue;
-      a.fill(f);
-      m.flow.needsUpdate = true;
-    }
-    for (const [id, b] of this.bendFlow) {
-      // a bend node joins two halves of one road: take the seg it belongs to
-      void id;
-      const f = cov.get(b.k1 >> 1) ?? 0;
-      const a = b.flow.array as Float32Array;
-      if (a[0] === f) continue;
-      a.fill(f);
-      b.flow.needsUpdate = true;
-    }
   }
 
   rebuildAll() {

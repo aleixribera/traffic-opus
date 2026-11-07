@@ -1,4 +1,4 @@
-import type { Game } from "./city";
+import { SAVE_V, type Game } from "./city";
 
 export interface SaveMeta {
   id: string;
@@ -9,7 +9,7 @@ export interface SaveMeta {
   savedAt: number;
   thumb?: string;
   auto?: boolean;
-  v?: number; // save format (2 = zoned cities)
+  v?: number; // save format (see SAVE_V; older ones can't be loaded)
 }
 
 const INDEX = "flowtown.saves";
@@ -41,7 +41,7 @@ export class Saves {
   save(game: Game, name: string, id = "s" + Date.now().toString(36), auto = false): SaveMeta | null {
     const data = JSON.stringify(game.serialize());
     const meta: SaveMeta = {
-      id, name, level: game.milestone, playtime: game.playtime, residents: game.people.stats.population, savedAt: Date.now(), auto, v: 2,
+      id, name, level: game.milestone, playtime: game.playtime, residents: game.people.stats.population, savedAt: Date.now(), auto, v: SAVE_V,
       thumb: this.thumb?.(), // ~192x120 jpeg: a few ms, worth it so autosaves are recognisable
     };
     try {
