@@ -141,6 +141,9 @@ def palette():
         "pj": "#a9473a", "tank_roof": "#c4c8cc", "column_steel": "#c9ccd0", "flame": "#f0a040",
         "sand_rim": "#dcc68f", "sand_rim2": "#c9b07a", "pond": "#6f8c86", "sand_pile": "#e4cb8c", "sand_pile2": "#d3b574",
         "glass_sheet": "#a7cad3", "saw_glass": "#9fb6c4", "fur_wall": "#c9bca4", "fur_roof": "#8c8f91", "panel": "#cfccc3", "cullet": "#b7d0c8",
+        # tier 4: copper, electronics, machinery
+        "cu_rock": "#8f9389", "cu_rock2": "#7b8077", "cu_floor": "#646d66", "cu_ore": "#5f8f7c", "cu_road": "#a39e90",
+        "el_wall": "#e7e8e6", "el_roof": "#c4c8cb", "el_glass": "#6f93b0", "el_accent": "#3d7bb0", "mw_band": "#2f5f8a",
     }.items():
         P[k] = mat(k, v)
     return P
@@ -2259,6 +2262,175 @@ def b_constructionplant(M, P):
         box(M, 1.0, 7.5, yy0 + 2.0 + k * 1.4, yy0 + 2.8 + k * 1.4, PAD_H, 0.9, P["rust2"])
     return L
 
+# ------------------------------------------------------------------ tier 4 industry
+
+def haul_truck(M, P, cx, cy, s=1.0, rot=False):
+    """A big mining dump truck seen from above: yellow body, raised tray, dark tyres. Long axis along Y (X if rot)."""
+    def bx(x0, x1, y0, y1, z0, z1, m):
+        if rot:
+            box(M, cx + y0 * s, cx + y1 * s, cy + x0 * s, cy + x1 * s, z0 * s, z1 * s, m)
+        else:
+            box(M, cx + x0 * s, cx + x1 * s, cy + y0 * s, cy + y1 * s, z0 * s, z1 * s, m)
+    for y in (-2.2, 1.8):
+        bx(-2.1, -1.3, y - 0.8, y + 0.8, 0.0, 1.6, P["ind_dark"])
+        bx(1.3, 2.1, y - 0.8, y + 0.8, 0.0, 1.6, P["ind_dark"])
+    bx(-1.3, 1.3, -3.0, 3.0, 0.6, 1.6, P["ind_dark"])
+    taper(M, *((
+        (cx - 1.9 * s, cx + 1.9 * s, cy - 2.0 * s, cy + 3.2 * s) if not rot else (cx - 2.0 * s, cx + 3.2 * s, cy - 1.9 * s, cy + 1.9 * s)),
+        ((cx - 2.1 * s, cx + 2.1 * s, cy - 2.4 * s, cy + 3.4 * s) if not rot else (cx - 2.4 * s, cx + 3.4 * s, cy - 2.1 * s, cy + 2.1 * s))),
+          1.6 * s, 3.0 * s, P["ind_yellow"])
+    bx(-1.9, 1.9, -3.4, -2.1, 1.6, 2.8, P["ind_yellow"])
+    bx(-1.6, -0.2, -3.3, -2.3, 2.8, 3.5, P["ind_dark"])
+
+
+def b_coppermine(M, P):
+    """Open-pit copper mine: a deep grey-green pit cut in benches with a spiral haul road, a dump truck coming
+    up it, a primary crusher at the rim and a heap of green-veined ore by the loadout."""
+    L = lot(M, P, 44, 40, bay_row(3, -13.0), asphalt=(-22.0, -6.0))
+    yp = L.yf + PARK_DEPTH
+    cx, cy = -4.0, 5.5
+    rings = ((17.5, 13.0, 3.0, P["cu_rock"]), (14.6, 10.4, 2.2, P["cu_rock2"]), (11.7, 7.8, 1.4, P["cu_rock"]),
+             (8.8, 5.4, 0.7, P["cu_rock2"]))
+    for hx, hy, z, m in rings:
+        frame(M, cx - hx, cx + hx, cy - hy, cy + hy, 0, z, 2.9, m)
+    box(M, cx - 5.9, cx + 5.9, cy - 2.5, cy + 2.5, 0, 0.2, P["cu_floor"])
+    box(M, cx - 3.0, cx + 1.0, cy - 1.2, cy + 1.6, 0.2, 0.32, P["cu_ore"])
+    # haul road ramp down the right side
+    lo = [(cx + 11.7, cy - 7.8, 1.4), (cx + 14.6, cy - 7.8, 1.4), (cx + 14.6, cy + 6.0, 3.0), (cx + 11.7, cy + 6.0, 3.0)]
+    M.loft([(x, y, 0.0) for x, y, _ in lo], lo, P["cu_road"])
+    haul_truck(M, P, 17.5, 0.5, s=0.62)
+    haul_truck(M, P, cx - 1.0, cy + 0.3, s=0.62, rot=True)
+    # primary crusher at the rim, belt to the ore heap
+    kx0, kx1, ky0, ky1 = 15.5, 21.0, 6.0, 13.0
+    flat_block(M, kx0, kx1, ky0, ky1, 8.0, P["ind_wall"], P["ind_roof"])
+    taper(M, (kx0 + 1.0, kx1 - 1.0, ky1 - 3.0, ky1 - 0.5), (kx0 + 0.2, kx1 - 0.2, ky1 - 3.6, ky1 + 0.5), 8.2, 10.0,
+          P["ind_copper"])
+    conveyor(M, P, (18.0, ky0 - 0.2, 7.0), (17.0, yp + 4.8, 8.0), wd=1.1, legs=(0.5,))
+    pile(M, 15.0, yp + 4.2, 6.0, 3.7, 6.4, P["cu_ore"])
+    return L
+
+
+def b_coppersmelter(M, P):
+    """Copper smelter: a tall smelter house clad in copper-brown panels with a flue to a very tall stack,
+    the white tanks of the acid plant, an anode casting shed and stacks of copper anodes in the yard."""
+    L = lot(M, P, 50, 42, bay_row(4, -14.5))
+    y0, y1 = L.y0, L.y1
+    wall, roof, dark, cu = P["ind_wall"], P["ind_roof"], P["ind_dark"], P["ind_copper"]
+    # smelter house: a tall block with a stepped upper storey
+    hx0, hx1, hy0, hy1 = -23.5, -6.0, y0 + 2.0, y0 + 16.0
+    top = flat_block(M, hx0, hx1, hy0, hy1, 16.0, P["cm_wall"], roof)
+    band(M, hx0, hx1, hy0, hy1, 6.0, 12.0, cu, o=0.05)
+    box(M, hx0 + 3.0, hx1 - 6.0, hy0 + 3.0, hy1 - 2.0, top, top + 6.0, P["cm_wall"])
+    box(M, hx0 + 2.9, hx1 - 5.9, hy0 + 2.9, hy1 - 1.9, top + 6.0, top + 6.3, roof)
+    box(M, hx0 + 3.0, hx1 - 6.0, hy0 + 2.96, hy0 + 3.0, top + 3.6, top + 4.4, cu)
+    for x in (-19.0, -11.0):
+        box(M, x - 2.0, x + 2.0, hy0 - 0.06, hy0, 0, 6.0, dark)
+    # flue to the stack
+    sx, sy = -14.0, y1 - 3.0
+    pipe_y(M, sx, 12.0, 1.0, hy1, sy - 2.0, P["ind_steel"])
+    cyl(M, sx, sy, 2.2, 0, 46.0, P["concrete"], n=14)
+    cyl(M, sx, sy, 2.3, 40.0, 42.5, P["cp_red"], n=14)
+    cyl(M, sx, sy, 1.8, 46.0, 46.06, P["coal"], n=12)
+    # acid plant: white tanks and a scrubber tower
+    for (tx, ty, r, h) in ((2.0, y1 - 5.0, 3.4, 9.0), (10.0, y1 - 5.0, 3.4, 9.0), (18.5, y1 - 4.0, 2.6, 7.0)):
+        tank(M, P, tx, ty, r, h, P["ind_tank"])
+    cyl(M, 5.5, 4.0, 1.6, 0, 20.0, P["column_steel"], n=12)
+    revolve(M, 5.5, 4.0, [(1.6, 20.0), (0.0, 21.2)], P["column_steel"], n=12)
+    cyl(M, 5.5, 4.0, 2.1, 12.0, 12.4, P["ind_yellow"], n=12)
+    pipe_x(M, 4.0, 10.0, 0.6, hx1, 5.5 - 1.6, P["ind_steel"])
+    # anode casting shed and the anode stacks
+    ax0, ax1, ay0, ay1 = 2.0, 13.0, y0, y0 + 9.0
+    box(M, ax0, ax1, ay0, ay1, 0, 7.0, wall)
+    gable(M, ax0, ax1, ay0, ay1, 7.0, 9.0, "x", cu, wall, oh_u=(0.4, 0.4), oh_a=(0.4, 0.4))
+    for i in range(3):
+        for k in range(2):
+            px, py = 16.0 + i * 2.8, y0 + 1.5 + k * 3.6
+            box(M, px - 1.1, px + 1.1, py - 1.3, py + 1.3, PAD_H, 1.1 + 0.3 * ((i + k) % 2), cu, bevel=0.04)
+            box(M, px - 1.1, px + 1.1, py - 0.08, py + 0.08, 1.1 + 0.3 * ((i + k) % 2), 1.2 + 0.3 * ((i + k) % 2), dark)
+    return L
+
+
+def b_electronics(M, P):
+    """Electronics plant: a clean white fab block with a dense grid of rooftop air handlers, a glazed office
+    wing at the front, a gas yard of small tanks, and a solar canopy over the staff car park."""
+    L = lot(M, P, 44, 36, bay_row(5, -10.0))
+    y0, y1 = L.y0, L.y1
+    wall, roof, dark = P["el_wall"], P["el_roof"], P["ind_dark"]
+    fx0, fx1, fy0, fy1 = -20.5, 10.0, y0 + 4.0, y1
+    top = flat_block(M, fx0, fx1, fy0, fy1, 11.0, wall, roof, parapet=P["el_wall"])
+    band(M, fx0, fx1, fy0, fy1, 8.6, 9.4, P["el_accent"], o=0.05)
+    for i in range(4):
+        for k in range(3):
+            ax = fx0 + 4.0 + i * 7.2
+            ay = fy0 + 4.0 + k * 7.5
+            box(M, ax - 2.6, ax + 2.6, ay - 1.6, ay + 1.6, top, top + 1.6, P["ac_box"])
+            for j in range(3):
+                cyl(M, ax - 1.7 + j * 1.7, ay, 0.62, top + 1.6, top + 1.7, P["ac_fan"], n=8)
+    # glazed office wing at the front left
+    ox0, ox1, oy0, oy1 = -20.5, -6.0, y0, fy0 + 0.5
+    otop = flat_block(M, ox0, ox1, oy0, oy1, 7.5, P["el_glass"], P["el_wall"])
+    for z in (2.6, 5.2):
+        band(M, ox0, ox1, oy0, oy1, z, z + 0.4, P["el_wall"], o=0.04)
+    box(M, ox0 + 0.5, ox0 + 3.2, oy0 - 1.0, oy0, 3.4, 3.7, P["el_wall"])
+    # loading dock on the fab's front right
+    for x in (-1.0, 3.5, 8.0):
+        box(M, x - 1.4, x + 1.4, fy0 - 0.06, fy0, 0, 3.8, dark)
+    # gas yard: small tanks in a fenced bay at the right
+    gx0, gx1, gy0, gy1 = 12.5, 21.0, y0 + 2.0, y1 - 1.0
+    frame(M, gx0, gx1, gy0, gy1, 0, 1.6, 0.12, P["ind_steel"])
+    for i in range(3):
+        cyl(M, gx0 + 2.4 + i * 2.0, gy1 - 3.0, 0.8, 0, 7.5, P["ind_tank"], n=10)
+    for i in range(2):
+        revolve(M, gx0 + 3.0 + i * 3.4, gy0 + 4.0, [(1.3, 0.0), (1.3, 4.0), (0.0, 4.9)], P["ind_tank"], n=12)
+    box(M, gx0 + 1.0, gx1 - 1.0, gy0 + 8.0, gy0 + 10.5, 0, 2.6, P["ac_box"])
+    return L
+
+
+def b_machineworks(M, P):
+    """Machine works: a big assembly hall under a tall pitched roof with rooflights, a crane runway out over
+    the yard, rows of finished yellow machines waiting for trucks, and crates by the office."""
+    L = lot(M, P, 52, 44, bay_row(5, -15.0))
+    y0, y1 = L.y0, L.y1
+    wall, roof, dark, yellow = P["ind_wall"], P["ind_roof"], P["ind_dark"], P["ind_yellow"]
+    hx0, hx1, hy0, hy1 = -24.5, 6.0, y0 + 2.0, y1
+    box(M, hx0, hx1, hy0, hy1, 0, 12.0, wall)
+    band(M, hx0, hx1, hy0, hy1, 10.0, 10.8, P["mw_band"], o=0.05)
+    gable(M, hx0, hx1, hy0, hy1, 12.0, 16.0, "y", roof, wall, oh_u=(0.5, 0.5), oh_a=(0.4, 0.4))
+    xc, s = (hx0 + hx1) / 2, (16.0 - 12.0) / ((hx1 - hx0) / 2)
+
+    def zr(x):
+        return 16.0 - s * abs(x - xc) + 0.04
+    for k in range(4):
+        yy = hy0 + 3.0 + k * ((hy1 - hy0 - 6.0) / 3)
+        for side in (-1, 1):
+            xa, xb = xc + side * 5.0, xc + side * 10.0
+            lo = [(xa, yy - 1.2, zr(xa)), (xb, yy - 1.2, zr(xb)), (xb, yy + 1.2, zr(xb)), (xa, yy + 1.2, zr(xa))]
+            if side < 0:
+                lo = lo[::-1]
+            M.loft(lo, [(x, y, z + 0.1) for x, y, z in lo], P["saw_glass"])
+    for x in (-20.0, -12.0, -4.0):
+        box(M, x - 2.6, x + 2.6, hy0 - 0.06, hy0, 0, 8.0, dark)
+    # crane runway out of the hall's side over the yard
+    for y in (hy0 + 6.0, hy1 - 2.0):
+        box(M, hx1, 22.0, y - 0.4, y + 0.4, 9.0, 9.8, yellow)
+        for x in (14.0, 21.6):
+            box(M, x - 0.4, x + 0.4, y - 0.4, y + 0.4, 0, 9.0, yellow)
+    box(M, 15.5, 17.5, hy0 + 5.4, hy1 - 1.4, 9.8, 10.8, dark)
+    # finished machines in rows in the yard
+    for i in range(3):
+        for k in range(3):
+            mx, my = 10.5 + i * 4.6, hy0 + 9.5 + k * 6.0
+            box(M, mx - 1.5, mx + 1.5, my - 2.2, my + 2.2, PAD_H, 0.9, dark)
+            box(M, mx - 1.3, mx + 1.3, my - 1.6, my + 1.4, 0.9, 2.6, yellow, bevel=0.05)
+            box(M, mx - 1.0, mx + 0.6, my - 0.2, my + 1.2, 2.6, 3.8, dark)
+            bar(M, (mx, my - 1.4), (mx + (1.0 if k % 2 else -1.0), my - 4.0), 0.5, 2.2, 2.7, yellow)
+    # office and crates at the front right
+    flat_block(M, 9.0, 18.0, y0, y0 + 5.5, 6.5, P["work_wall"], P["work_roof"])
+    band(M, 9.0, 18.0, y0, y0 + 5.5, 2.4, 3.6, P["work_glass"], o=0.04)
+    for i in range(3):
+        box(M, 22.4, 25.4, y0 + 0.5 + i * 2.6, y0 + 2.6 + i * 2.6, PAD_H, 1.6 + 0.4 * (i % 2), P["wood"], bevel=0.04)
+    return L
+
 
 SERVICES = ("garbage", "firestation", "police", "clinic", "hospital", "school", "highschool", "university",
             "park", "parklarge", "windturbine", "coalplant", "solarfarm", "waterpump", "sewageoutlet",
@@ -2291,6 +2463,10 @@ BUILDINGS = {
     "glassworks": (b_glassworks, 46, 38, 4),
     "furniture": (b_furniture, 40, 34, 4),
     "constructionplant": (b_constructionplant, 50, 42, 5),
+    "coppermine": (b_coppermine, 44, 40, 3),
+    "coppersmelter": (b_coppersmelter, 50, 42, 4),
+    "electronics": (b_electronics, 44, 36, 5),
+    "machineworks": (b_machineworks, 52, 44, 5),
     # services
     "garbage": (b_garbage, 36, 32, 3),
     "firestation": (b_firestation, 26, 24, 3),
