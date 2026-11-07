@@ -137,6 +137,10 @@ def palette():
         "lime": "#ddd7c4", "lime2": "#cbc4ae", "lime3": "#b8b09a", "lime_floor": "#a7a08a",
         "furnace": "#4b4745", "glow": "#e8823a", "stove": "#8f9296", "kiln": "#c7c4bb",
         "cement": "#d2d0c9", "cement2": "#b9b7b0",
+        # tier 3: oil, sand, refinery, glass, furniture, construction parts
+        "pj": "#a9473a", "tank_roof": "#c4c8cc", "column_steel": "#c9ccd0", "flame": "#f0a040",
+        "sand_rim": "#dcc68f", "sand_rim2": "#c9b07a", "pond": "#6f8c86", "sand_pile": "#e4cb8c", "sand_pile2": "#d3b574",
+        "glass_sheet": "#a7cad3", "saw_glass": "#9fb6c4", "fur_wall": "#c9bca4", "fur_roof": "#8c8f91", "panel": "#cfccc3", "cullet": "#b7d0c8",
     }.items():
         P[k] = mat(k, v)
     return P
@@ -2013,6 +2017,248 @@ def b_cementworks(M, P):
     cyl(M, 22.0, y1 - 4.0, 1.0, 30.0, 30.06, P["coal"], n=8)
     return L
 
+# ------------------------------------------------------------------ tier 3 industry
+
+def pumpjack(M, P, cx, cy, s=1.0):
+    """A nodding-donkey pump: skid, A-frame samson post, walking beam with its horsehead over the well,
+    gearbox and counterweights at the back. Long axis along X, head toward -X."""
+    dark, red = P["ind_dark"], P["pj"]
+    box(M, cx - 3.6 * s, cx + 3.0 * s, cy - 0.7 * s, cy + 0.7 * s, 0, 0.4 * s, P["concrete"])
+    for dy in (-0.75, 0.75):
+        taper(M, (cx - 1.0 * s, cx + 1.0 * s, cy + dy * s - 0.18 * s, cy + dy * s + 0.18 * s),
+              (cx - 0.18 * s, cx + 0.18 * s, cy + dy * 0.35 * s - 0.15 * s, cy + dy * 0.35 * s + 0.15 * s), 0.4 * s, 4.2 * s, red)
+    box(M, cx - 3.0 * s, cx + 2.6 * s, cy - 0.28 * s, cy + 0.28 * s, 4.2 * s, 4.75 * s, red)
+    taper(M, (cx - 3.6 * s, cx - 2.9 * s, cy - 0.32 * s, cy + 0.32 * s), (cx - 3.4 * s, cx - 2.9 * s, cy - 0.32 * s, cy + 0.32 * s),
+          2.9 * s, 5.0 * s, dark)
+    cyl(M, cx - 3.4 * s, cy, 0.22 * s, 0.4 * s, 1.5 * s, dark, n=6)
+    box(M, cx + 1.4 * s, cx + 2.6 * s, cy - 0.45 * s, cy + 0.45 * s, 0.4 * s, 1.6 * s, dark)
+    for dy in (-0.75, 0.75):
+        box(M, cx + 1.5 * s, cx + 2.7 * s, cy + dy * s - 0.12 * s, cy + dy * s + 0.12 * s, 0.9 * s, 2.7 * s, red)
+
+
+def tank(M, P, cx, cy, r, h, m, roof=None, n=16):
+    """Storage tank with a shallow cone roof and a dark band at the top."""
+    cyl(M, cx, cy, r, 0, h, m, n=n)
+    cyl(M, cx, cy, r + 0.05, h - 0.5, h - 0.2, P["ind_dark"], n=n)
+    revolve(M, cx, cy, [(r, h), (r * 0.15, h + r * 0.18), (0.0, h + r * 0.19)], roof or P["tank_roof"], n=n)
+
+
+def b_oilwell(M, P):
+    """Oil well site: three pumpjacks over their wells on a gravel pad, flowlines to a pair of storage tanks
+    in a bund by the truck lane, and a small switch house."""
+    L = lot(M, P, 30, 30, bay_row(2, -9.0), asphalt=(-15.0, -3.0))
+    g = PAD_H + 0.03
+    box(M, -14.6, 14.6, L.yf + PARK_DEPTH, 14.6, PAD_H, g, P["gravel"])
+    wells = ((-6.5, 10.5), (6.5, 10.5), (-6.5, 2.5))
+    for x, y in wells:
+        pumpjack(M, P, x, y, s=1.3)
+    for x, y in wells:
+        bar(M, (x - 4.4, y), (8.0, -4.5), 0.25, g, g + 0.25, P["ind_dark"])
+    # tank bund at the front right
+    bx0, bx1, by0, by1 = 1.5, 14.0, L.y0, L.y0 + 7.8
+    frame(M, bx0, bx1, by0, by1, 0, 0.8, 0.4, P["concrete"])
+    tank(M, P, 4.9, (by0 + by1) / 2, 2.8, 6.0, P["ind_tank"])
+    tank(M, P, 10.6, (by0 + by1) / 2, 2.8, 6.0, P["ind_tank"])
+    flat_block(M, -13.0, -9.0, L.y0, L.y0 + 4.0, 3.2, P["ind_wall"], P["ind_roof"])
+    return L
+
+
+def b_sandpit(M, P):
+    """Sand pit: a flooded working in pale sand banks with a dredge on the water piping to a screening
+    plant, which belts washed sand out to golden cone heaps by the truck lane."""
+    L = lot(M, P, 40, 38, bay_row(3, -11.0), asphalt=(-20.0, -2.0))
+    yp = L.yf + PARK_DEPTH
+    cx, cy = -5.0, 7.0
+    for hx, hy, z, m in ((14.5, 11.0, 1.4, P["sand_rim"]), (11.6, 8.4, 0.8, P["sand_rim2"])):
+        frame(M, cx - hx, cx + hx, cy - hy, cy + hy, 0, z, 2.9, m)
+    box(M, cx - 8.7, cx + 8.7, cy - 5.5, cy + 5.5, 0, 0.3, P["pond"])
+    # the dredge on the water, its pipe to the plant
+    box(M, cx - 1.5, cx + 2.5, cy - 1.2, cy + 1.2, 0.3, 1.1, P["ind_yellow"], bevel=0.05)
+    box(M, cx - 0.6, cx + 1.4, cy - 0.8, cy + 0.8, 1.1, 2.4, P["ind_dark"])
+    bar(M, (cx - 1.5, cy), (cx - 5.0, cy + 2.0), 0.4, 1.1, 1.5, P["ind_steel"])
+    bar(M, (cx + 2.5, cy), (13.0, 6.0), 0.35, 1.5, 1.85, P["ind_dark"])
+    # screening plant: a steel frame with a sloping screen deck and a hopper
+    px0, px1, py0, py1 = 11.0, 17.5, 2.0, 10.0
+    for x in (px0, px1 - 0.5):
+        for y in (py0, py1 - 0.5):
+            box(M, x, x + 0.5, y, y + 0.5, 0, 6.0, P["ind_dark"])
+    lo = [(px0, py0, 7.6), (px1, py0, 7.6), (px1, py1, 5.6), (px0, py1, 5.6)]
+    M.loft([(x, y, z - 0.7) for x, y, z in lo], lo, P["ind_steel"])
+    taper(M, (px0 + 1.5, px1 - 1.5, py0 + 0.5, py0 + 3.0), (px0 + 0.8, px1 - 0.8, py0 - 0.2, py0 + 3.6), 7.6, 9.4,
+          P["ind_yellow"])
+    # belts out to the heaps near the front
+    for (hx, hy, r, h, m) in ((15.8, yp + 4.2, 3.6, 6.4, P["sand_pile"]), (9.0, yp + 3.6, 3.0, 5.2, P["sand_pile2"])):
+        conveyor(M, P, ((px0 + px1) / 2, py0 + 0.2, 5.0), (hx, hy + 0.4, h + 0.8), wd=0.9, legs=(0.5,))
+        cone_pile(M, hx, hy, r, h, m)
+    flat_block(M, -1.0, 3.5, L.y0, L.y0 + 4.0, 3.2, P["ind_wall"], P["ind_roof"])
+    return L
+
+
+def b_refinery(M, P):
+    """Oil refinery: a tank farm in concrete bunds at the back, distillation columns ringed with platforms,
+    a fired heater with its stacks, a pipe rack tying them together, a flare stack and a control house."""
+    L = lot(M, P, 60, 50, bay_row(6, -14.0))
+    y0, y1 = L.y0, L.y1
+    dark, steel = P["ind_dark"], P["ind_steel"]
+    # tank farm: four big tanks along the back
+    for i, x in enumerate((-22.0, -10.0, 2.0, 14.0)):
+        ty = y1 - 6.0
+        frame(M, x - 5.8, x + 5.8, ty - 5.8, ty + 5.8, 0, 0.9, 0.45, P["concrete"])
+        tank(M, P, x, ty, 4.8, 8.0 if i % 2 else 9.5, P["ind_tank"])
+    # pipe rack across the middle
+    ry = 3.0
+    for x in range(-26, 27, 6):
+        box(M, x - 0.25, x + 0.25, ry - 1.4, ry - 0.9, 0, 6.0, dark)
+        box(M, x - 0.25, x + 0.25, ry + 0.9, ry + 1.4, 0, 6.0, dark)
+    box(M, -26.5, 26.5, ry - 1.5, ry + 1.5, 6.0, 6.4, steel)
+    for dy in (-0.8, 0.0, 0.8):
+        pipe_x(M, ry + dy, 6.8, 0.32, -26.0, 26.0, P["tank_roof"] if dy else P["ind_copper"], n=6)
+    # process area in front of the rack: columns, heater, flare
+    for cx, cy, r, h in ((-14.0, -4.0, 1.7, 30.0), (-9.0, -6.0, 1.3, 24.0), (-4.5, -3.5, 2.1, 19.0)):
+        cyl(M, cx, cy, r, 0, h, P["column_steel"], n=12)
+        revolve(M, cx, cy, [(r, h), (r * 0.7, h + r * 0.6), (0.0, h + r * 0.7)], P["column_steel"], n=12)
+        for z in (h * 0.35, h * 0.7):
+            cyl(M, cx, cy, r + 0.55, z, z + 0.35, P["ind_yellow"], n=12)
+    hx0, hx1, hy0, hy1 = 2.0, 12.0, y0 + 1.0, y0 + 7.0
+    box(M, hx0, hx1, hy0, hy1, 0, 9.0, P["ind_wall"])
+    box(M, hx0 - 0.1, hx1 + 0.1, hy0 - 0.1, hy1 + 0.1, 9.0, 9.3, P["ind_roof"])
+    for x in (4.5, 9.5):
+        cyl(M, x, (hy0 + hy1) / 2, 0.9, 9.3, 22.0, steel, n=10)
+        cyl(M, x, (hy0 + hy1) / 2, 0.95, 19.0, 20.0, P["cp_red"], n=10)
+        cyl(M, x, (hy0 + hy1) / 2, 0.6, 22.0, 22.06, P["coal"], n=8)
+    fx, fy = 25.0, -6.0
+    cyl(M, fx, fy, 0.5, 0, 34.0, steel, n=8)
+    box(M, fx - 1.4, fx + 1.4, fy - 1.4, fy + 1.4, 0, 0.8, P["concrete"])
+    revolve(M, fx, fy, [(0.55, 34.0), (0.9, 35.4), (0.0, 37.2)], P["flame"], n=8)
+    flat_block(M, -26.5, -19.0, y0, y0 + 6.0, 4.0, P["ind_wall"], P["ind_roof"])
+    return L
+
+
+def b_glassworks(M, P):
+    """Glassworks: a long float-line hall with a roof monitor, the furnace house at its head with two stacks,
+    batch silos for sand and soda behind, and racks of finished glass sheets in the yard."""
+    L = lot(M, P, 46, 38, bay_row(4, -12.0))
+    y0, y1 = L.y0, L.y1
+    wall, roof, dark = P["ind_wall"], P["ind_roof"], P["ind_dark"]
+    hx0, hx1, hy0, hy1 = -21.5, 9.0, y0, y0 + 10.0
+    top = flat_block(M, hx0, hx1, hy0, hy1, 8.0, wall, roof)
+    ribs(M, hx0 + 1.5, hx1 - 1.5, hy0 + 1.2, hy1 - 1.2, top, P["saw_glass"], 7, along="y", wd=1.6, h=0.2)
+    box(M, hx0 + 1.0, hx1 - 1.0, (hy0 + hy1) / 2 - 0.5, (hy0 + hy1) / 2 + 0.5, top, top + 0.9, P["ind_steel"])
+    band(M, hx0, hx1, hy0, hy1, 6.4, 7.0, P["glass_sheet"], o=0.05)
+    for x in (-16.0, -6.0):
+        box(M, x - 2.0, x + 2.0, hy0 - 0.06, hy0, 0, 4.6, dark)
+    # furnace house at the head of the line
+    fx0, fx1, fy0, fy1 = 9.0, 21.5, y0, y0 + 14.0
+    ftop = flat_block(M, fx0, fx1, fy0, fy1, 13.0, P["cm_wall"], roof)
+    box(M, fx0 + 1.5, fx1 - 6.0, fy0 + 1.5, fy0 + 6.0, ftop, ftop + 1.6, P["ind_dark"])
+    ac_unit(M, fx1 - 3.0, fy0 + 3.0, ftop, P)
+    for cx, cy, ch in ((13.0, fy1 - 3.0, 30.0), (18.0, fy1 - 3.0, 26.0)):
+        cyl(M, cx, cy, 1.2, ftop, ch, P["concrete"], n=12)
+        cyl(M, cx, cy, 1.25, ch - 3.0, ch - 2.0, P["cp_red"], n=12)
+        cyl(M, cx, cy, 0.8, ch, ch + 0.06, P["coal"], n=10)
+    # batch silos behind the hall
+    for i in range(3):
+        sx = 4.0 + i * 4.8
+        revolve(M, sx, y1 - 3.2, [(0.5, 3.0), (2.1, 5.0), (2.1, 15.0), (0.0, 15.8)], P["silo"], n=12)
+        for dx in (-1.5, 1.5):
+            box(M, sx + dx - 0.18, sx + dx + 0.18, y1 - 3.4, y1 - 3.0, 0, 5.0, dark)
+    box(M, 1.5, 16.5, y1 - 3.5, y1 - 2.9, 15.8, 16.2, P["ind_steel"])
+    # glass racks in the yard
+    cone_pile(M, -3.0, 3.6, 2.8, 2.4, P["cullet"])
+    cone_pile(M, 2.0, 5.0, 2.2, 1.9, P["cullet"], rot=0.3)
+    for i in range(4):
+        rx = -18.0 + i * 4.6
+        for k, ry in enumerate((y1 - 6.5, y1 - 2.5)):
+            box(M, rx - 1.8, rx + 1.8, ry - 0.6, ry + 0.6, 0, 0.3, P["wood"])
+            taper(M, (rx - 1.7, rx + 1.7, ry - 0.55, ry + 0.55), (rx - 1.7, rx + 1.7, ry - 0.1, ry + 0.1), 0.3,
+                  2.6 + 0.3 * ((i + k) % 2), P["glass_sheet"])
+    return L
+
+
+def b_furniture(M, P):
+    """Furniture factory: a sawtooth-roofed hall (glazed north lights catching the sky), an open timber shed
+    stacked with planks, a dust-extraction cyclone, and a covered dispatch dock."""
+    L = lot(M, P, 40, 34, bay_row(4, -8.0))
+    y0, y1 = L.y0, L.y1
+    wall, roof, dark = P["fur_wall"], P["fur_roof"], P["ind_dark"]
+    hx0, hx1, hy0, hy1, h = -18.5, 7.0, y0 + 1.5, y1 - 1.0, 6.5
+    box(M, hx0, hx1, hy0, hy1, 0, h, wall)
+    band(M, hx0, hx1, hy0, hy1, 5.2, 5.8, P["wood"], o=0.05)
+    n = 5
+    tw = (hy1 - hy0) / n
+    for i in range(n):
+        a, b = hy0 + i * tw, hy0 + (i + 1) * tw
+        extrude_profile(M, [(a, h), (b, h), (b, h + 2.4)], "x", hx0, hx1, roof)
+        box(M, hx0 + 0.2, hx1 - 0.2, b - 0.12, b, h, h + 2.2, P["saw_glass"])
+    # dispatch dock: canopy over the front doors
+    box(M, -14.5, -1.5, hy0 - 2.5, hy0, 3.8, 4.1, P["ind_roof"])
+    for x in (-14.2, -1.8):
+        box(M, x - 0.15, x + 0.15, hy0 - 2.4, hy0 - 2.1, 0, 3.8, dark)
+    for x in (-11.5, -8.0, -4.5):
+        box(M, x - 1.3, x + 1.3, hy0 - 0.06, hy0, 0, 3.4, dark)
+    # timber shed at the right: a mono-pitch roof on posts, plank stacks under it
+    sx0, sx1, sy0, sy1 = 9.0, 18.5, y0 + 3.0, y1 - 1.0
+    sm = sy1 - 9.0
+    for x in (sx0, sx1 - 0.4):
+        for y in (sm, sy1 - 0.4):
+            box(M, x, x + 0.4, y, y + 0.4, 0, 5.0, P["wood"])
+    extrude_profile(M, [(sx0 - 0.3, 5.0), (sx1 + 0.3, 6.0), (sx1 + 0.3, 6.25), (sx0 - 0.3, 5.25)], "y", sm - 0.4, sy1 + 0.4,
+                    P["lg_roof"])
+    box(M, sx0 - 0.5, sx1 + 0.5, sy0 - 0.5, sy1 + 0.5, PAD_H, PAD_H + 0.03, P["lg_yard"])
+    for i in range(3):
+        yy = sy0 + 0.6 + i * 4.4
+        box(M, sx0 + 1.2, sx1 - 1.2, yy, yy + 3.4, 0, 1.6 + 0.4 * (i % 2), P["plank"])
+        ribs(M, sx0 + 1.2, sx1 - 1.2, yy, yy + 3.4, 1.6 + 0.4 * (i % 2), P["stick"], 3, along="y", wd=0.2, h=0.1)
+    # dust extraction cyclone beside the hall
+    revolve(M, 9.5, y0 + 0.8, [(0.2, 2.5), (1.4, 5.5), (1.4, 8.5), (0.0, 9.0)], P["ind_steel"], n=10)
+    for dx in (-1.0, 1.0):
+        box(M, 9.5 + dx - 0.12, 9.5 + dx + 0.12, y0 + 0.7, y0 + 0.9, 0, 5.5, dark)
+    bar(M, (hx1, y0 + 4.0), (9.5, y0 + 0.8), 0.6, 7.6, 8.1, P["ind_steel"])
+    return L
+
+
+def b_constructionplant(M, P):
+    """Construction parts plant: a long precast hall, a concrete batching tower with its cement silos and
+    belt, and a yard under a gantry crane stacked with precast panels and steel beams."""
+    L = lot(M, P, 50, 42, bay_row(5, -13.0))
+    y0, y1 = L.y0, L.y1
+    wall, roof, dark = P["ind_wall"], P["ind_roof"], P["ind_dark"]
+    hx0, hx1, hy0, hy1 = -23.5, 6.0, y0, y0 + 12.0
+    box(M, hx0, hx1, hy0, hy1, 0, 9.0, wall)
+    band(M, hx0, hx1, hy0, hy1, 7.4, 8.0, P["ind_yellow"], o=0.05)
+    gable(M, hx0, hx1, hy0, hy1, 9.0, 11.6, "x", roof, wall, oh_u=(0.5, 0.5), oh_a=(0.4, 0.4))
+    for x in (-18.0, -8.0, 1.0):
+        box(M, x - 2.2, x + 2.2, hy0 - 0.06, hy0, 0, 6.5, dark)
+    # batching tower and cement silos at the front right
+    bx0, bx1, by0, by1 = 13.0, 18.0, y0 + 1.0, y0 + 7.0
+    top = flat_block(M, bx0, bx1, by0, by1, 16.0, P["cement"], roof)
+    band(M, bx0, bx1, by0, by1, 13.0, 13.8, P["ind_yellow"], o=0.05)
+    for sx in (20.5,):
+        for sy in (by0 + 1.2, by1 - 1.2):
+            revolve(M, sx, sy, [(0.4, 3.5), (1.6, 5.5), (1.6, 17.5), (0.0, 18.3)], P["cement"], n=12)
+            for dx in (-1.2, 1.2):
+                box(M, sx + dx - 0.15, sx + dx + 0.15, sy - 0.15, sy + 0.15, 0, 5.5, dark)
+    conveyor(M, P, (18.5, 9.0, 3.0), (15.5, by1, 15.0), wd=1.0, legs=(0.4, 0.75))
+    cone_pile(M, 19.0, 12.0, 3.6, 4.4, P["gravel"])
+    cone_pile(M, 14.0, 15.5, 3.0, 3.6, P["sand_pile2"], rot=0.3)
+    # precast yard behind the hall under a gantry crane
+    yy0, yy1, gx0, gx1 = hy1 + 2.0, y1, -23.0, 8.0
+    box(M, gx0, gx1, yy0, yy1, PAD_H, PAD_H + 0.03, P["gravel"])
+    for x in (-17.0, -5.0):
+        for side in (yy0 + 0.6, yy1 - 0.6):
+            taper(M, (x - 0.9, x + 0.9, side - 0.35, side + 0.35), (x - 0.3, x + 0.3, side - 0.3, side + 0.3), 0, 9.0,
+                  P["ind_yellow"])
+        box(M, x - 0.6, x + 0.6, yy0, yy1, 9.0, 10.2, P["ind_yellow"])
+    box(M, -17.5, -4.5, (yy0 + yy1) / 2 - 1.0, (yy0 + yy1) / 2 + 1.0, 10.2, 11.2, dark)
+    for i in range(4):
+        px = -21.0 + i * 5.5
+        for k in range(3):
+            py = yy0 + 2.0 + k * 6.2
+            box(M, px - 2.0, px + 2.0, py, py + 3.6, PAD_H, 0.8 + 0.5 * ((i + k) % 3), P["panel"])
+    for k in range(3):
+        box(M, 1.0, 7.5, yy0 + 2.0 + k * 1.4, yy0 + 2.8 + k * 1.4, PAD_H, 0.9, P["rust2"])
+    return L
+
 
 SERVICES = ("garbage", "firestation", "police", "clinic", "hospital", "school", "highschool", "university",
             "park", "parklarge", "windturbine", "coalplant", "solarfarm", "waterpump", "sewageoutlet",
@@ -2039,6 +2285,12 @@ BUILDINGS = {
     "quarry": (b_quarry, 42, 40, 3),
     "smelter": (b_smelter, 52, 44, 5),
     "cementworks": (b_cementworks, 48, 42, 4),
+    "oilwell": (b_oilwell, 30, 30, 2),
+    "sandpit": (b_sandpit, 40, 38, 3),
+    "refinery": (b_refinery, 60, 50, 6),
+    "glassworks": (b_glassworks, 46, 38, 4),
+    "furniture": (b_furniture, 40, 34, 4),
+    "constructionplant": (b_constructionplant, 50, 42, 5),
     # services
     "garbage": (b_garbage, 36, 32, 3),
     "firestation": (b_firestation, 26, 24, 3),
