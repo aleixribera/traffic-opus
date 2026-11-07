@@ -59,7 +59,7 @@ describe("Traffic", () => {
       trips.push([access(net, a, 0.3, k % 2 ? 1 : -1), access(net, b, 0.35, k % 3 ? 1 : -1)]);
     }
     const r = run(net, trips, 260);
-    expect(r.failed).toBe(0);
+    expect(r.failed, JSON.stringify(r.reasons)).toBe(0);
     expect(r.arrived).toBe(trips.length);
   });
 

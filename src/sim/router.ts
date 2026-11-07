@@ -1,3 +1,4 @@
+import { ROAD_TYPES } from "../config";
 import type { RoadNetwork, Lane } from "../roads/network";
 import { dist, type V2 } from "../core/math";
 
@@ -10,6 +11,8 @@ export interface Access {
   seg: number;
   s: number; // centreline arc-length on the seg
   p: V2; // kerb point the driveway meets
+  /** Side of the seg (relative to a->b) the building stands on. On a road with a median only that side's lanes reach it. */
+  side?: 1 | -1;
 }
 
 class Heap {
@@ -137,8 +140,11 @@ export class Router {
     const prev = new Map<number, number>();
     const heap = new Heap();
     const goalKeys = new Map<number, number>(); // key -> remaining fraction cost
+    const toSeg = this.net.segs.get(to.seg)!;
+    const divided = (ROAD_TYPES[toSeg.type].median ?? 0) > 0;
     for (const d of [1, -1] as const) {
       if (!this.hasLanes(to.seg, d)) continue;
+      if (divided && to.side && d !== to.side) continue; // across the median: go round and come back on the right side
       goalKeys.set(dkey(to.seg, d), this.along(to.seg, d, to.s));
     }
     for (const d of [1, -1] as const) {

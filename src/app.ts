@@ -871,6 +871,7 @@ export class App {
           if (plan.angleDeg !== undefined && L > 3) chips.push({ text: `${plan.angleDeg.toFixed(1)}°`, kind: "info", icon: "angle" });
           if (this.st.parallel) chips.push({ text: `Parallel ${Math.round(this.parallelOffset())} m`, kind: "info" });
           if (end.label) chips.push({ text: end.label, kind: "info" });
+          if (plan.note) chips.push({ text: plan.note, kind: "info" });
         }
       }
     } else if (t === "roundabout") {

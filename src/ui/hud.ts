@@ -41,9 +41,9 @@ const CATS: Record<CatId, { label: string; tabs: Tab[] }> = {
   roads: {
     label: "Roads",
     tabs: [
-      { id: "small", label: "Small roads", assets: [{ kind: "road", id: "one1" }, { kind: "road", id: "street" }] },
-      { id: "medium", label: "Medium roads", assets: [{ kind: "road", id: "one2" }, { kind: "road", id: "avenue" }] },
-      { id: "large", label: "Large roads", assets: [{ kind: "road", id: "boulevard" }] },
+      { id: "small", label: "Small roads", assets: [{ kind: "road", id: "one1" }, { kind: "road", id: "street" }, { kind: "road", id: "streetM" }] },
+      { id: "medium", label: "Medium roads", assets: [{ kind: "road", id: "one2" }, { kind: "road", id: "avenue" }, { kind: "road", id: "avenueM" }] },
+      { id: "large", label: "Large roads", assets: [{ kind: "road", id: "boulevard" }, { kind: "road", id: "boulevardM" }] },
       { id: "highways", label: "Highways", assets: [{ kind: "road", id: "hw2" }, { kind: "road", id: "one3" }, { kind: "road", id: "one4" }] },
       { id: "junctions", label: "Intersections", assets: [1, 2, 3, 4].map((s) => ({ kind: "roundabout", size: s as RoundaboutSize }) as Asset).concat([{ kind: "junction" }]) },
     ],

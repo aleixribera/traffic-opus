@@ -46,6 +46,8 @@ export interface Vehicle {
   ideal: number;
   born: number; // sim time it entered the road
   block?: string; // why the junction last refused entry (debug + inspector)
+  blockTo?: Lane; // the lane the car it last gave way to was heading into
+  wish?: { lane: Lane; t: number }; // a lane it must change into but found no gap in (last tried at t)
   crossing?: { lane: Lane; s: number }[]; // far lanes this car is still pulling out across (spot where it started)
   crossFrom?: number; // its own lane position when it started pulling out
   v0e: number; // free-road desired speed this step (limits, curves, driveway approach)
@@ -101,7 +103,17 @@ export class Traffic {
   private statTimer = 0;
   private turnBlockedByQueue = false; // set by canTurnIn: the car in the way is standing still
   private keepClear = new Map<Lane, number[]>(); // lane -> driveway spots queues leave free (this step)
+  // lane -> cars beside it that need to get into it soon: the car behind each one holds back to make room
+  private wishes = new Map<Lane, Vehicle[]>();
   private crossers = new Map<Lane, number[]>(); // lane -> spots where a car is pulling out across it (this step)
+  // An unsignalled junction where a car has waited long for a gap that never comes: traffic that can still stop
+  // lets it out (one car at a time, for a few seconds, then the main road gets a turn again).
+  private courtesy = new Map<number, { v: Vehicle; until: number }>();
+  private courtesyRest = new Map<number, number>(); // node -> time before another car may claim it
+  // A backed-up exit lane: the car that has waited longest at its stop line for room on it gets the next gap,
+  // instead of whoever happens to roll up at speed when the queue moves.
+  private roomClaim = new Map<Lane, Vehicle>();
+
   private ringLoads = new Map<number, number>(); // ring id -> share of its capacity in use (this step)
   flow = new Map<number, FlowStat>(); // by directed seg key
   trips: { ff: number; actual: number; t: number }[] = [];
@@ -120,12 +132,16 @@ export class Traffic {
   private trySpawn(p: PendingSpawn): "ok" | "wait" | "fail" {
     const net = this.net;
     if (!net.segs.has(p.from.seg) || !net.segs.has(p.to.seg)) return "fail";
-    // pick a start direction: prefer the kerb side (no crossing), but take the faster route if much better
+    // pick a start direction: prefer the kerb side (no crossing), but take the faster route if much better.
+    // A median can't be crossed: there you can only pull out to the right (and arrive from the right).
+    const divided = (seg: number) => (ROAD_TYPES[net.segs.get(seg)!.type].median ?? 0) > 0;
+    const to: Access = { ...p.to, side: p.toSide };
     let best: { keys: number[]; time: number; freeFlow: number; dir: 1 | -1 } | null = null;
     for (const d of [1, -1] as const) {
-      const r = this.router.route(p.from, p.to, d);
-      if (!r) continue;
       const crossing = (d === 1 ? 1 : -1) !== p.fromSide;
+      if (crossing && divided(p.from.seg) && !p.through) continue;
+      const r = this.router.route(p.from, to, d);
+      if (!r) continue;
       const t = r.time + (crossing ? 6 : 0);
       if (!best || t < best.time) best = { ...r, time: t, dir: d };
     }
@@ -174,7 +190,7 @@ export class Traffic {
     const v: Vehicle = {
       id: this.nextId++, truck: p.truck, len, color: p.truck ? 0xf5f5f0 : CAR_COLORS[(Math.random() * CAR_COLORS.length) | 0],
       edge: lane, s: ls, v: 5, acc: 0, route: best.keys, ri: 0, next: null, granted: false, holding: null,
-      lat: 0, lcCool: 2, wait: 0, stuck: 0, dest: p.to, destSide: p.toSide, destS: -1,
+      lat: 0, lcCool: 2, wait: 0, stuck: 0, dest: to, destSide: p.toSide, destS: -1,
       trip: { ...p.trip, freeFlow: best.freeFlow },
       x: 0, y: 0, h: 0, ang: 0, px: 0, py: 0, ph: 0, pang: 0, fade: 0, leaving: 0,
       ideal: 0, born: this.time, v0e: 1, constrained: false,
@@ -226,6 +242,16 @@ export class Traffic {
 
     const vs = this.vehicles;
     this.collectKeepClear();
+    for (const [node, cl] of this.courtesy) {
+      const cv = cl.v;
+      const live = cv.edge.kind === "lane" && !cv.granted && cv.next?.node === node && (cv.edge.occ as Vehicle[]).includes(cv);
+      if (!live || this.time > cl.until || cv.block === "box") {
+        this.courtesy.delete(node);
+        this.courtesyRest.set(node, this.time + 8);
+      }
+    }
+    if (this.courtesyRest.size > 64) for (const [n, t] of this.courtesyRest) if (t < this.time) this.courtesyRest.delete(n);
+
     // junction permissions (only the front vehicle of each lane asks)
     for (const v of vs) this.planJunction(v);
     // accelerations
@@ -261,6 +287,14 @@ export class Traffic {
     if (this.lcTimer > 0.25) {
       this.lcTimer = 0;
       for (const v of vs) if (v.edge.kind === "lane" && v.lcCool <= 0) this.laneChange(v);
+      this.wishes.clear();
+      for (const v of vs) {
+        const w = v.wish;
+        if (!w) continue;
+        if (this.time - w.t > 0.6 || v.edge.kind !== "lane" || (v.edge as Lane).seg !== w.lane.seg) { v.wish = undefined; continue; }
+        const a = this.wishes.get(w.lane);
+        if (a) a.push(v); else this.wishes.set(w.lane, [v]);
+      }
     }
     for (const v of vs) this.place(v, false);
     this.statTimer += dt;
@@ -305,9 +339,9 @@ export class Traffic {
             this.reroute(v);
           }
         }
+        // lost with nowhere to go: leave the road at the end of the lane rather than block it
+        if (v.lost && this.isFinal(v) && (lane.seg !== v.dest.seg || v.destS < 0) && v.s >= lane.pl.length - 3) return true;
         if (v.s <= lane.pl.length) return false;
-        // lost with nowhere to go: leave the road here rather than block it
-        if (v.lost && this.isFinal(v) && lane.seg !== v.dest.seg) return true;
         if (!v.next || !v.granted) {
           v.s = lane.pl.length;
           v.v = 0;
@@ -403,8 +437,11 @@ export class Traffic {
       v.granted = false;
       if (!v.next) {
         // wrong lane at the end: after a short wait, take any exit and re-plan
-        if (toEnd < 2 && v.wait > 3.5 && lane.outs.length) {
-          const alt = lane.outs[(Math.random() * lane.outs.length) | 0];
+        if (((toEnd < 2 && v.wait > 3.5) || (v.wish && toEnd < 9 && v.wait > 20)) && lane.outs.length) {
+          // prefer a way on from which the destination can still be reached
+          const viable = lane.outs.filter((c) => this.router.routeFromKey(dkey(c.to.seg, c.to.dir), v.dest));
+          const pool = viable.length ? viable : lane.outs;
+          const alt = pool[(Math.random() * pool.length) | 0];
           v.route = [dkey(lane.seg, lane.dir), dkey(alt.to.seg, alt.to.dir)];
           v.ri = 0;
           v.next = alt;
@@ -413,8 +450,22 @@ export class Traffic {
         return;
       }
     }
-    if (v.granted) return;
-    if (this.canEnter(v, v.next, toEnd)) {
+    if (v.granted) {
+      // a grant is only final once the car can't comfortably stop any more; until then it is re-checked,
+      // so a reservation made far out can't hold up everyone else (or a full exit) for seconds on end
+      if (this.committed(v) || this.canEnter(v, v.next, toEnd)) return;
+      v.granted = false;
+      this.release(v);
+      return;
+    }
+    const ok = this.canEnter(v, v.next, toEnd);
+    const node = v.next.node;
+    if (!ok && v.wait > 18 && toEnd < 3 && (v.block === "yield" || v.block === "reserved") && !this.courtesy.has(node) && this.time > (this.courtesyRest.get(node) ?? 0) && this.signalState(node, v.next.armIn) === "none") {
+      this.courtesy.set(node, { v, until: this.time + 10 });
+    }
+    if (ok) {
+      if (this.courtesy.get(node)?.v === v) { this.courtesy.delete(node); this.courtesyRest.set(node, this.time + 6); }
+      if (this.roomClaim.get(v.next.to) === v) this.roomClaim.delete(v.next.to);
       v.granted = true;
       if (v.holding) this.release(v);
       v.next.holders.push(v);
@@ -463,12 +514,28 @@ export class Traffic {
   }
 
   private canEnter(v: Vehicle, c: Connector, toEnd: number): boolean {
+    v.blockTo = undefined;
     const ng = this.net.nodeGeom.get(c.node);
     if (!ng) return false;
     if (ng.kind === "cont" || ng.kind === "bend") return true;
+    if (ng.kind === "split" || ng.kind === "lane") {
+      // the main line never stops for a slip road: a merging car finds a gap and falls in (car-following does the rest)
+      if (c.turn === "S") return true;
+      for (const cf of c.conflicts) if (cf.merge && !this.mergeOk(v, c, cf.c)) { v.block = "yield"; return false; }
+      return true;
+    }
+    // two roads meeting (one road changing type, or what's left of a removed crossing): nothing crosses here, so
+    // there is no box to keep clear. Cars just follow on; where lanes narrow they zip in turn.
+    if (ng.arms.length === 2 && c.conflicts.every((cf) => cf.merge) && !this.net.nodes.get(c.node)?.signal && !this.net.segs.get(c.to.seg)?.ring && !this.net.segs.get((c.from as Lane).seg)?.ring) {
+      for (const cf of c.conflicts) if (cf.merge && !this.mergeOk(v, c, cf.c)) { v.block = "yield"; return false; }
+      return true;
+    }
     // signals
     const sig = this.signalState(c.node, c.armIn);
     if (sig === "red") { v.block = "red"; return false; }
+    // letting a long-waiting car out: hold back if our path crosses its and we can still stop
+    const cl = this.courtesy.get(c.node);
+    if (cl && cl.v !== v && cl.v.next && !this.committed(v) && cl.v.next.conflicts.some((cf) => cf.c === c)) { v.block = "courtesy"; return false; }
     if (sig === "yellow" && toEnd > (v.v * v.v) / (2 * SIM.idm.b) + 1) { v.block = "red"; return false; }
     // don't block the box: room on the exit lane. Not between arcs of the same roundabout:
     // circulating cars just follow each other (requiring a free arc ahead gridlocks a full ring)
@@ -486,13 +553,24 @@ export class Traffic {
     for (const h of this.holdersInto(out)) {
       if (h === v) continue;
       if (ringOut && (this.remTo(h, out) > myRem || h.v > 1)) continue;
+      if (this.outranks(v, h)) continue; // still far off and able to stop: it re-checks and waits for us
       free -= h.len + 2;
     }
     if (ringOut && first && first.v > 1) free = Infinity;
     const moving = first && first.v > 3;
+    // someone else has been waiting at their line for room on this lane: they get it first
+    const claim = this.roomClaim.get(out);
+    if (claim && claim !== v) {
+      if (!this.claimLive(claim, out)) this.roomClaim.delete(out);
+      else if (claim.wait > v.wait + 2 && !(v.v > 2 && toEnd <= (v.v * v.v) / (2 * 3.5) + 0.5)) { v.block = "box"; return false; }
+    }
     if (free < v.len + 1.5 && !(moving && free > 0.5)) {
       // a short link lane can't hold a car: allow if the lane after it is clear (chain of cont nodes)
-      if (!(out.pl.length < v.len + 2 && !first)) { v.block = "box"; return false; }
+      if (!(out.pl.length < v.len + 2 && !first)) {
+        v.block = "box";
+        if (toEnd < 3 && (!claim || claim === v || !this.claimLive(claim, out) || v.wait > claim.wait)) this.roomClaim.set(out, v);
+        return false;
+      }
     }
     return this.conflictsClear(v, c, sig);
   }
@@ -510,23 +588,28 @@ export class Traffic {
         if (h.edge === o || h.edge === o.to) {
           // on the connector, or already out on its exit lane with the tail still in the box
           const rear = (h.edge === o ? h.s : o.pl.length + h.s) - h.len;
-          if (rear < cf.sOther + 1.2) { v.block = "crossing"; return false; }
-        } else if (h.edge === o.from || h.edge.kind === "lane") {
-          v.block = "reserved"; return false; // reserved and still approaching
+          if (rear < cf.sOther + 1.2) { v.block = "crossing"; v.blockTo = o.to; return false; }
+        } else if (!this.outranks(v, h)) {
+          v.block = "reserved"; v.blockTo = o.to; return false; // reserved, and too close (or too soon) to give way to us now
         }
       }
-      // yield to higher-priority traffic that is about to arrive
+      // yield to higher-priority traffic that is about to arrive (unless it is stopping to let us out, or
+      // waiting for room on the same lane behind us)
+      // (traffic on the crossing road holds back for a courtesy car itself: see "courtesy" in canEnter)
+      if (this.courtesy.get(c.node)?.v === v) continue;
+      const exempt = cf.merge && o.to === c.to && this.roomClaim.get(c.to) === v;
       const yieldTo = o.prio > c.prio || (sig !== "none" && c.turn === "L" && o.turn !== "L" && !cf.merge) || (cf.merge && o.prio === c.prio && o.turn === "S" && c.turn !== "S");
       if (yieldTo) {
         if (sig !== "none" && this.signalState(o.node, o.armIn) === "red") continue;
         const ap = o.from.occ as Vehicle[];
         const w = ap[ap.length - 1];
         if (w && w !== v && (w.next === o || (w.next === null && !this.isFinal(w)))) {
+          if (exempt && !this.committed(w)) continue; // it can still stop for us
           const d = o.from.pl.length - w.s;
           const tArr = d / Math.max(w.v, 0.5);
           const patience = v.wait > 20 ? 0.45 : v.wait > 8 ? 0.7 : 1;
           if (tArr < SIM.yieldGap * patience && (w.v > 1 || d < 6)) {
-            if (!(w.next === null && w.v < 0.5 && d > 3)) { v.block = "yield"; return false; }
+            if (!(w.next === null && w.v < 0.5 && d > 3)) { v.block = "yield"; v.blockTo = o.to; return false; }
           }
         }
       }
@@ -613,6 +696,41 @@ export class Traffic {
     return true;
   }
 
+  /**
+   * A room claim still stands: its car is still first in its lane, waiting to go into `out`, and only for room
+   * there or for cars going into the same lane (so claims at one junction can never wait on each other).
+   */
+  private claimLive(c: Vehicle, out: Lane): boolean {
+    if (c.edge.kind !== "lane" || c.granted || c.next?.to !== out) return false;
+    if (c.block !== "box" && c.blockTo !== out) return false;
+    const occ = c.edge.occ as Vehicle[];
+    return occ[occ.length - 1] === c;
+  }
+
+  /** Past the point where it could still stop comfortably for its stop line (or already in the junction). */
+  private committed(h: Vehicle, react = 0): boolean {
+    const e = h.edge;
+    if (e.kind !== "lane") return true;
+    return e.pl.length - h.s <= (h.v * h.v) / (2 * 3.5) + 3 + h.v * react; // (a car waiting at the line that got its go is committed)
+  }
+
+  /** Seconds until a car reaches its stop line at its current speed. */
+  private tArr(h: Vehicle): number {
+    const e = h.edge;
+    return e.kind === "lane" ? Math.max(0, e.pl.length - h.s) / Math.max(h.v, 1) : 0;
+  }
+
+  /**
+   * May `v` go ahead of `h`'s reservation? Only if `h` can still stop, and `v` gets there clearly first, or `v` has
+   * waited a long time while `h` is still rolling up (a driver letting a waiting car out). Never true both ways round.
+   */
+  private outranks(v: Vehicle, h: Vehicle): boolean {
+    if (this.committed(h, 1.5)) return false; // well short of the point of no return, not just this step
+    if (v.next && this.courtesy.get(v.next.node)?.v === v) return true; // it is letting us out
+    if (this.tArr(v) + 1 < this.tArr(h)) return true;
+    return v.wait > 12 && h.wait < 1 && v.v < 1;
+  }
+
   private holdersInto(out: Lane): Vehicle[] {
     const r: Vehicle[] = [];
     for (const c of out.ins) for (const h of c.holders as Vehicle[]) if (h.edge !== out) r.push(h);
@@ -637,6 +755,7 @@ export class Traffic {
     let gap = Infinity;
     let dv = 0;
     let soft = false; // the binding constraint is a stop line not yet asked about
+    let capA = Infinity; // a plain limit on acceleration from rules that aren't a leader to follow
     // leader on the same edge
     const occ = e.occ as Vehicle[];
     const i = occ.indexOf(v);
@@ -700,6 +819,40 @@ export class Traffic {
         }
       }
     }
+    // cooperative merging (see laneChange): line up behind a car in the lane we must get into...
+    if (e.kind === "lane" && v.wish) {
+      const tl = v.wish.lane;
+      // and wait short of the end of the lane, where there's still room to pull across
+      const hold = e.pl.length - 7 - v.s;
+      if (hold > -2 && hold < gap) { gap = Math.max(0.1, hold); dv = v.v; soft = false; }
+      const ts = this.mapS(e as Lane, tl, v.s);
+      for (const o of tl.occ as Vehicle[]) {
+        if (o.s <= ts - v.len) continue; // already behind us: it makes room (below)
+        // two cars that each need the other's lane: the older one goes first, the other drops back behind it
+        if (o.wish?.lane === e && o.id > v.id) continue;
+        const g2 = this.mapS(tl, e as Lane, o.s - o.len) - v.s - 1.5;
+        if (g2 >= P.s0) {
+          if (g2 < gap) { gap = g2; dv = v.v - o.v; soft = false; }
+        } else {
+          // still alongside it: drop back to a little under its speed (comfortable braking) rather than
+          // stopping dead beside it, or creeping along level with it
+          const tv = Math.max(0, o.v - 2);
+          capA = Math.min(capA, v.v > tv ? Math.max(-3.5, (tv - v.v) * 1.5) : 0);
+        }
+        break;
+      }
+    }
+    // ...and hold back for a car beside us that needs to get into our lane ahead of us
+    if (e.kind === "lane") {
+      const W = this.wishes.get(e as Lane);
+      if (W) for (const w of W) {
+        if (w === v || !w.wish) continue;
+        const wRear = this.mapS(w.edge as Lane, e as Lane, w.s) - w.len;
+        const g2 = wRear - v.s - 1.5;
+        if (g2 <= 0 || g2 > 60 || (v.v * v.v) / (2 * 3) > g2 + 1) continue; // alongside already, far off, or too late to stop
+        if (g2 < gap) { gap = g2; dv = v.v - w.v; soft = false; }
+      }
+    }
     // brake for a car pulling out across this lane
     if (e.kind === "lane") {
       const X = this.crossers.get(e as Lane);
@@ -741,12 +894,13 @@ export class Traffic {
     }
     const free = 1 - Math.pow(v.v / Math.max(v0, 0.1), 4);
     v.v0e = v0;
-    if (gap === Infinity) { v.constrained = false; return P.a * free; }
+    if (gap === Infinity) { v.constrained = capA < P.a * free - 0.25; return Math.min(P.a * free, capA); }
     const sStar = P.s0 + Math.max(0, v.v * P.T + (v.v * dv) / (2 * Math.sqrt(P.a * P.b)));
     const g = Math.max(gap, 0.1);
     let a = P.a * (free - (sStar / g) ** 2);
     if (a < -8) a = -8;
-    v.constrained = !soft && a < P.a * free - 0.25;
+    a = Math.min(a, capA);
+    v.constrained = (!soft || a === capA) && a < P.a * free - 0.25;
     return a;
   }
 
@@ -764,9 +918,21 @@ export class Traffic {
     const all = this.lanesOf(dkey(lane.seg, lane.dir));
     const nk = v.route[v.ri + 1];
     const final = this.isFinal(v);
-    const good = (l: Lane) => (final ? l.idx === this.turnIdx(v, l) : nk !== undefined && l.outs.some((c) => dkey(c.to.seg, c.to.dir) === nk));
+    // look one road further: a short next road (an exit right after a lane gain) leaves no room to change there
+    const nn = v.route[v.ri + 2];
+    const reach = (l: Lane) => nk !== undefined && l.outs.some((c) => dkey(c.to.seg, c.to.dir) === nk);
+    // a long next road normally leaves room to pick the lane there, unless the queue for the lane we'll need
+    // already reaches back to its start: then join that queue's tail here, as drivers do
+    const serves = (x: Lane) => nn !== undefined && x.outs.some((y) => dkey(y.to.seg, y.to.dir) === nn);
+    const queuedBack = (x: Lane) => { const o = x.occ as Vehicle[]; return o.length > 0 && o[0].s < 50 && o[0].v < 5; };
+    const needLanes = nk !== undefined && nn !== undefined ? this.lanesOf(nk).filter(serves) : [];
+    const needQueued = needLanes.length > 0 && needLanes.every(queuedBack);
+    const ahead = (l: Lane) => l.outs.some((c) => dkey(c.to.seg, c.to.dir) === nk && (nn === undefined || serves(c.to) || (c.to.pl.length > 160 && !needQueued)));
+    const strict = !final && all.some(ahead);
+    const good = (l: Lane) => (final ? l.idx === this.turnIdx(v, l) : strict ? ahead(l) : reach(l));
     let target: Lane | null = null;
     let mandatory = false;
+    v.wish = undefined;
     if (!good(lane)) {
       const goods = all.filter(good);
       if (!goods.length) return;
@@ -803,8 +969,12 @@ export class Traffic {
       if (o.s >= ts) { lead = o; break; }
       follow = o;
     }
-    if (lead && lead.s - lead.len - ts < Math.max(2.5, v.v * 0.6 * k)) return;
-    if (follow && ts - v.len - follow.s < Math.max(2.5, follow.v * 0.9 * k + (follow.v - v.v) * 0.8)) return;
+    const noGap = (lead && lead.s - lead.len - ts < Math.max(2.5, v.v * 0.6 * k)) || (follow && ts - v.len - follow.s < Math.max(2.5, follow.v * 0.9 * k + (follow.v - v.v) * 0.8));
+    if (noGap) {
+      // must get over soon and there's no gap: say so. We line up behind a car there, and the one behind it lets us in.
+      if (mandatory && toEnd < 160) v.wish = { lane: target, t: this.time };
+      return;
+    }
     // commit
     removeOcc(lane, v);
     if (v.holding) this.release(v);
@@ -833,42 +1003,39 @@ export class Traffic {
   private findWay(v: Vehicle, lane: Lane): boolean {
     if (v.lost) return false;
     this.reroute(v);
-    if (!this.isFinal(v) || lane.seg === v.dest.seg) return !this.isFinal(v);
-    this.ev.fail(v.trip, "missed its turn", this.time);
-    v.lost = true;
-    const k = dkey(lane.seg, lane.dir);
-    for (const a of this.ev.exits?.() ?? []) {
-      const r = this.router.routeFromKey(k, a);
-      if (!r) continue;
-      v.dest = a;
-      v.exit = true;
-      v.route = r;
-      v.ri = 0;
-      v.destS = -1;
-      if (this.isFinal(v)) this.computeDestS(v);
-      return !this.isFinal(v);
-    }
-    return false;
+    return !this.isFinal(v) || (!v.lost && lane.seg === v.dest.seg);
   }
 
+  /**
+   * Plan again from the end of the current lane. A plan from a lane end always has at least one more road in it,
+   * so this never lands back on a final lane it has already overshot. With no way to the destination at all
+   * (a dead-end one-way, a road removed behind it) the trip is given up and the car heads out of the region;
+   * if it can't even do that it leaves the road at the end of this lane instead of parking there.
+   */
   private reroute(v: Vehicle) {
     const e = v.edge;
     if (e.kind !== "lane") return;
     const lane = e as Lane;
     const k = dkey(lane.seg, lane.dir);
-    const r = this.router.routeFromKey(k, v.dest);
-    if (r) {
-      v.route = r;
-      v.ri = 0;
-    } else {
-      v.route = [k];
-      v.ri = 0;
-    }
     if (v.holding) this.release(v);
     v.next = null;
     v.granted = false;
     v.destS = -1;
-    if (this.isFinal(v) && lane.seg === v.dest.seg) this.computeDestS(v);
+    v.ri = 0;
+    const r = this.router.routeFromKey(k, v.dest);
+    if (r) { v.route = r; return; }
+    v.route = [k];
+    if (v.lost) return;
+    this.ev.fail(v.trip, "missed its turn", this.time);
+    v.lost = true;
+    for (const a of this.ev.exits?.() ?? []) {
+      const r2 = this.router.routeFromKey(k, a);
+      if (!r2) continue;
+      v.dest = a;
+      v.exit = true;
+      v.route = r2;
+      return;
+    }
   }
 
   /** Keep route[0..from] and plan the rest from route[from]. */
@@ -883,9 +1050,20 @@ export class Traffic {
   /** Carry vehicles over to rebuilt lanes/connectors; drop only those whose road is gone. */
   onNetworkChange(cs: ChangeSet) {
     const net = this.net;
+    this.roomClaim.clear();
+    this.courtesy.clear();
+    this.courtesyRest.clear();
+    this.wishes.clear();
     const lost: Vehicle[] = [];
     // all connector holder lists at rebuilt nodes are fresh: recompute them from vehicle state
     for (const v of this.vehicles) {
+      // destination seg removed or split: find it again first, so any new plan below heads for the right road
+      // (the old route ends on the removed seg, so it gets re-planned)
+      if (!net.segs.has(v.dest.seg)) {
+        const nd = this.remapAccess(v.dest);
+        if (nd) v.dest = nd;
+        else { lost.push(v); continue; }
+      }
       const e = v.edge;
       let ok = true;
       if (e.kind === "lane") {
@@ -938,13 +1116,6 @@ export class Traffic {
         // network changed: the route still exists, but junction layout may differ; recompute dest slot
         if (v.edge.kind === "lane" && this.isFinal(v)) this.computeDestS(v);
       }
-      // destination seg removed or split
-      if (!net.segs.has(v.dest.seg)) {
-        const nd = this.remapAccess(v.dest);
-        if (nd) v.dest = nd;
-        else { lost.push(v); continue; }
-        if (v.edge.kind === "lane") this.reroute(v);
-      }
     }
     // rebuild holder lists from vehicles that are on or reserved a connector
     for (const v of this.vehicles) {
@@ -974,7 +1145,11 @@ export class Traffic {
       const g = this.net.segGeom.get(id)!;
       const r = polyClosest(g.center, a.p);
       const d = Math.max(0, r.d - g.width / 2);
-      if (d < bd) { bd = d; best = { seg: id, s: r.s, p: a.p }; }
+      if (d < bd) {
+        bd = d;
+        const q = polyAt(g.center, r.s), t = polyDirSmooth(g.center, r.s, 2);
+        best = { seg: id, s: r.s, p: a.p, side: dot(sub(a.p, q), right(t)) >= 0 ? 1 : -1 };
+      }
     }
     return best;
   }
@@ -1026,6 +1201,10 @@ export class Traffic {
   clearAll() {
     for (const v of [...this.vehicles]) this.remove(v);
     this.pending = [];
+    this.roomClaim.clear();
+    this.courtesy.clear();
+    this.courtesyRest.clear();
+    this.wishes.clear();
   }
 
   // ---------------------------------------------------------------- render placement + stats

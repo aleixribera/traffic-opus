@@ -5,7 +5,7 @@ import { add, dist, polyClosest, rectCorners, scale, sub, type V2 } from "../cor
 import { mulberry32 } from "../core/noise";
 import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/network";
 import {
-  applyTrim, chainPoints, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type Plan, type PlanError,
+  applyTrim, chainPoints, commitRoundabout, commitStrokes, commitWiden, removalRefund, segCost, upgradeCost, type BuildWorld, type Plan, type PlanError,
 } from "../roads/planner";
 import { Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import { Terrain } from "../world/terrain";
@@ -337,6 +337,7 @@ export class Game {
     if (plan.errors.length) return false;
     const ops = this.applyRoads(() => {
       if (plan.kind === "roundabout") commitRoundabout(this.net, plan);
+      else if (plan.widen) commitWiden(this.net, plan.widen);
       else {
         // a parallel pair turning a corner: cut the old twin back first
         if (plan.trim) {

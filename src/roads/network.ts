@@ -2,7 +2,8 @@ import { LANE_W, ROAD_TYPES, SHOULDER, roadWidth, type RoadTypeId } from "../con
 import {
   type Cubic, type Polyline, type V2,
   add, angleOf, clamp, cubicTangent, dist, dot, lineIntersect, makePolyline, minRadius, norm, offsetPolyline,
-  polyAt, right, sampleCubic, scale, segIntersect, signedAngle, smoothstep, splitCubic, sub, trimPolyline, hermiteCubic,
+  polyAt, polyClosest, polyDir, right, sampleCubic, scale, segIntersect, signedAngle, smoothstep, splitCubic, sub, trimPolyline, hermiteCubic,
+  cubicAt,
 } from "../core/math";
 
 // ---------------------------------------------------------------------------------------------
@@ -90,8 +91,40 @@ export interface Arm {
   trim: number;
 }
 
-/** end = dead end; cont = straight run-on; bend = the same road carrying on round a corner; junction = real crossing. */
-export type JunctionKind = "end" | "cont" | "bend" | "junction";
+/**
+ * end = dead end; cont = straight run-on; bend = the same road carrying on round a corner; junction = real crossing;
+ * split = a one-way carriageway dividing in two or two joining (motorway exits and slip roads), drawn as lanes that
+ * run on with the side road glued alongside before it peels off; lane = a one-way road gaining or losing lanes.
+ */
+export type JunctionKind = "end" | "cont" | "bend" | "junction" | "split" | "lane";
+
+/** How a one-way road's end is shaped where it meets a split or a lane change (derived from the network, not saved). */
+export interface EndShape {
+  /** centreline moved sideways at this end (+ = right of travel), easing back over the road's first stretch */
+  shift: number;
+  /** run beside road `seg` at `d` metres from its centreline (+ = its right) before peeling off on our own line */
+  glue: { seg: number; d: number } | null;
+  /** surface pulled in from one edge at the node, widening to full over clipLen (a taper) */
+  clip: number;
+  clipSide: 1 | -1;
+  clipLen: number;
+  /** per lane idx: how far from the node the lane starts (or ends); a connector carries cars across the taper */
+  laneTrim: number[];
+}
+
+export const NO_SHAPE: EndShape = { shift: 0, glue: null, clip: 0, clipSide: 1, clipLen: 0, laneTrim: [] };
+
+/** Who is who at a split or lane change (see JunctionKind). */
+export interface SplitRoles {
+  trunk: Arm; // the single carriageway on one side
+  main: Arm; // carries straight on from it
+  ramp: Arm | null; // the slip road (none at a lane change)
+  diverge: boolean; // trunk comes in (and splits); false = branches come in and join
+  side: 1 | -1; // ramp / extra lanes on this side of travel
+}
+
+/** How far a shifted centreline takes to ease back onto its own line. */
+const SHIFT_LEN = 90;
 
 export interface NodeGeom {
   kind: JunctionKind;
@@ -101,7 +134,7 @@ export interface NodeGeom {
   conns: Connector[];
   radius: number;
   /** bend only: centre line of the curved piece joining the two trimmed ends, drawn as ordinary road */
-  curve?: { pts: V2[]; hs: number[]; lanes: [number, number]; halfW: number };
+  curve?: { pts: V2[]; hs: number[]; lanes: [number, number]; halfW: number; median: number };
 }
 
 export interface SegGeom {
@@ -113,6 +146,7 @@ export interface SegGeom {
   lanes: Lane[];
   minR: number;
   bbox: { x0: number; y0: number; x1: number; y1: number };
+  ends: { a: EndShape; b: EndShape };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -471,6 +505,7 @@ export class RoadNetwork {
         center, hs, width: w,
         trimA: prev?.trimA ?? 0, trimB: prev?.trimB ?? 0,
         lanes: prev?.lanes ?? [],
+        ends: prev?.ends ?? { a: NO_SHAPE, b: NO_SHAPE },
         minR: minRadius(pts),
         bbox: { x0: x0 - pad, y0: y0 - pad, x1: x1 + pad, y1: y1 + pad },
       });
@@ -482,12 +517,19 @@ export class RoadNetwork {
     for (const nid of dirtyNodes) {
       const arms = this.computeArms(nid, segsByNode.get(nid) ?? []);
       armsByNode.set(nid, arms);
-      for (const arm of arms) {
+      const shapes = this.shapeEnds(arms, segsByNode.get(nid) ?? []);
+      for (const [i, arm] of arms.entries()) {
         const g = this.segGeom.get(arm.seg)!;
         if (arm.end === "a") g.trimA = arm.trim;
         else g.trimB = arm.trim;
+        g.ends = { ...g.ends, [arm.end]: shapes[i] };
       }
     }
+
+    // 2b) shifted and glued centrelines (glued ones last: they follow the road they're glued to)
+    const shaped = [...dirtySegs].filter((id) => { const e = this.segGeom.get(id)!.ends; return !!(e.a.shift || e.b.shift || e.a.glue || e.b.glue); });
+    shaped.sort((x, y) => Number(this.hasGlue(x)) - Number(this.hasGlue(y)));
+    for (const id of shaped) this.shapeCenter(id);
 
     // keep trims from eating a whole segment
     for (const id of dirtySegs) {
@@ -635,28 +677,182 @@ export class RoadNetwork {
       if (sx.ring || sy.ring) return sameLayout && dot(x.dir, y.dir) < -0.985 ? "cont" : "junction";
       if (sameLayout && x.seg !== y.seg) return dot(x.dir, y.dir) < -0.9998 ? "cont" : "bend";
     }
+    const roles = this.splitRoles(arms, segs);
+    if (roles) return roles.ramp ? "split" : "lane";
     return "junction";
+  }
+
+  /**
+   * One-way carriageways meeting nearly in line: a diverge (one in, two out), a merge (two in, one out) or a lane
+   * gain/drop (one in, one out, different lane counts). The main branch carries straight on; the ramp branch is glued
+   * alongside it on `side` (+1 = right of travel).
+   */
+  splitRoles(arms: Arm[], segs: RSeg[]): SplitRoles | null {
+    if (arms.length !== 2 && arms.length !== 3) return null;
+    const segOf = (a: Arm) => segs.find((s) => s.id === a.seg)!;
+    if (new Set(arms.map((a) => a.seg)).size !== arms.length) return null;
+    for (const a of arms) {
+      const s = segOf(a);
+      if (!s || s.ring || ROAD_TYPES[s.type].bwd > 0) return null;
+    }
+    const lanes = (a: Arm) => ROAD_TYPES[segOf(a).type].fwd;
+    const ins = arms.filter((a) => a.end === "b"), outs = arms.filter((a) => a.end === "a");
+    if (arms.length === 2) {
+      if (ins.length !== 1) return null;
+      const [i, o] = [ins[0], outs[0]];
+      if (dot(i.dir, o.dir) > -Math.cos((20 * Math.PI) / 180) || lanes(i) === lanes(o)) return null;
+      const gain = lanes(o) > lanes(i);
+      return { trunk: gain ? i : o, main: gain ? o : i, ramp: null, diverge: gain, side: 1 };
+    }
+    const diverge = ins.length === 1;
+    if (!diverge && outs.length !== 1) return null;
+    const trunk = diverge ? ins[0] : outs[0];
+    const branches = diverge ? outs : ins;
+    const fwd = diverge ? scale(trunk.dir, -1) : trunk.dir; // travel direction through the node
+    const travel = (b: Arm) => (diverge ? b.dir : scale(b.dir, -1));
+    const lim = Math.cos((32 * Math.PI) / 180);
+    if (branches.some((b) => dot(travel(b), fwd) < lim)) return null;
+    const dev = (b: Arm) => Math.acos(clamp(dot(travel(b), fwd), -1, 1));
+    const score = (b: Arm) => (segOf(b).type === segOf(trunk).type ? 100 : 0) + lanes(b) * 10 - dev(b) * 8;
+    const [main, ramp] = score(branches[0]) >= score(branches[1]) ? branches : [branches[1], branches[0]];
+    // which side the ramp is on: compare where both branches are the same distance out from the node (its end
+    // tangent may run exactly in line, and a long curving main line can swing further out mid-way than the ramp)
+    const at = (a: Arm) => { const s = segOf(a); return a.end === "a" ? s.c.p0 : s.c.p3; };
+    const walk = (a: Arm, d: number | null): { p: V2; len: number } => {
+      const s = segOf(a);
+      let prev = at(a), len = 0;
+      for (let i = 1; i <= 48; i++) {
+        const t = a.end === "a" ? i / 48 : 1 - i / 48;
+        const p = cubicAt(s.c, t);
+        len += dist(p, prev);
+        prev = p;
+        if (d !== null && len >= d) return { p, len };
+      }
+      return { p: prev, len };
+    };
+    const reach = Math.min(30, walk(ramp, null).len * 0.5, walk(main, null).len * 0.5);
+    const lat = (a: Arm) => dot(sub(walk(a, reach).p, at(a)), right(fwd));
+    let l = lat(ramp) - lat(main);
+    if (Math.abs(l) < 0.05) l = signedAngle(fwd, travel(ramp));
+    return { trunk, main, ramp, diverge, side: l >= 0 ? 1 : -1 };
+  }
+
+  /** Lane layout across a split or lane change: centreline offsets, glue, tapers and per-lane taper lengths. */
+  private shapeEnds(arms: Arm[], segs: RSeg[]): EndShape[] {
+    const out = arms.map(() => NO_SHAPE);
+    const roles = this.splitRoles(arms, segs);
+    if (!roles) return out;
+    const { trunk, main, ramp, side: sg } = roles;
+    const typeOf = (a: Arm) => ROAD_TYPES[segs.find((s) => s.id === a.seg)!.type];
+    const T = typeOf(trunk), M = typeOf(main), R = ramp ? typeOf(ramp) : null;
+    const n = T.fwd, m = M.fwd, r = R?.fwd ?? 0;
+    const tH = roadWidth(T) / 2, mH = roadWidth(M) / 2, rH = R ? roadWidth(R) / 2 : 0;
+    // line the far-side lanes up: the wider of trunk and main moves over, the other stays on its line
+    const Tc = n >= m ? (sg * (n - m) * LANE_W) / 2 : 0;
+    const Mc = n >= m ? 0 : (sg * (m - n) * LANE_W) / 2;
+    // lane positions by rank from the far side (0 = furthest from the ramp side)
+    const posT = (f: number) => Tc - sg * (n / 2 - f - 0.5) * LANE_W;
+    const posM = (j: number) => Mc - sg * (m / 2 - j - 0.5) * LANE_W;
+    const idxOf = (f: number, count: number) => (sg > 0 ? count - 1 - f : f);
+    const rate = clamp(Math.min(T.speed, M.speed) / 3, 5, 10); // tapers sized for the main line's speed
+    const taper = (d: number) => (d < 0.3 ? 0 : clamp(d * rate, 12, 50));
+    const mTrim = new Array(m).fill(0);
+    for (let j = 0; j < m; j++) mTrim[idxOf(j, m)] = taper(Math.abs(posM(j) - posT(Math.min(j, n - 1))));
+    const shape = (o: Partial<EndShape>): EndShape => ({ ...NO_SHAPE, ...o });
+    const mClip = ramp ? 0 : Math.max(0, sg * (Mc + sg * mH - (Tc + sg * tH)));
+    out[arms.indexOf(trunk)] = shape({ shift: Tc });
+    out[arms.indexOf(main)] = shape({
+      shift: Mc, laneTrim: mTrim,
+      ...(mClip > 0.05 ? { clip: mClip, clipSide: sg, clipLen: Math.max(...mTrim, taper(mClip)) } : {}),
+    });
+    if (ramp && R) {
+      const Rc = Mc + sg * (mH + rH - 0.42); // touching: the two edge lines become one
+      const posR = (k: number) => Rc - sg * (r / 2 - k - 0.5) * LANE_W;
+      const rTrim = new Array(r).fill(0);
+      for (let k = 0; k < r; k++) rTrim[idxOf(k, r)] = taper(Math.abs(posR(k) - posT(Math.min(m + k, n - 1))));
+      const clip = Math.max(0, sg * (Rc + sg * rH - (Tc + sg * tH)));
+      out[arms.indexOf(ramp)] = shape({
+        glue: { seg: main.seg, d: Rc - Mc }, laneTrim: rTrim,
+        ...(clip > 0.05 ? { clip, clipSide: sg, clipLen: Math.max(...rTrim, taper(clip)) } : {}),
+      });
+    }
+    return out;
+  }
+
+  private hasGlue(id: number): boolean {
+    const e = this.segGeom.get(id)!.ends;
+    return !!(e.a.glue || e.b.glue);
+  }
+
+  /** Apply end shifts and glue to a freshly sampled centreline (then heights, bounds and the index follow). */
+  private shapeCenter(id: number) {
+    const s = this.segs.get(id)!, g = this.segGeom.get(id)!;
+    const { a, b } = g.ends;
+    const pts0 = g.center.pts, cum = g.center.cum, L = g.center.length;
+    let pts = pts0.map((p) => ({ x: p.x, y: p.y }));
+    if (a.shift || b.shift) {
+      const ld = L < 2 * SHIFT_LEN || (a.shift && b.shift) ? L : SHIFT_LEN; // shifted at both ends: hold it between
+      pts = pts.map((p, i) => {
+        const off = a.shift * (1 - smoothstep(clamp(cum[i] / ld, 0, 1))) + b.shift * (1 - smoothstep(clamp((L - cum[i]) / ld, 0, 1)));
+        if (Math.abs(off) < 1e-4) return p;
+        const d = norm(sub(pts0[Math.min(i + 1, pts0.length - 1)], pts0[Math.max(i - 1, 0)]));
+        return add(p, scale(right(d), off));
+      });
+    }
+    for (const end of ["a", "b"] as const) {
+      const gl = g.ends[end].glue;
+      const mg = gl ? this.segGeom.get(gl.seg) : undefined;
+      if (!gl || !mg) continue;
+      const D = Math.abs(gl.d), sg = Math.sign(gl.d) || 1;
+      const k = 3, win = Math.min(L * 0.6, 260), fade = Math.min(25, win * 0.4);
+      // smooth max(x, 0): exactly 0 below -k, exactly x above k
+      const f = (x: number) => (x >= k ? x : x <= -k ? 0 : (x + k) ** 2 / (4 * k));
+      for (let i = 0; i < pts.length; i++) {
+        const sd = end === "a" ? cum[i] : L - cum[i];
+        if (sd > win) continue;
+        const w = 1 - smoothstep(clamp((sd - (win - fade)) / fade, 0, 1));
+        const p = pts[i];
+        const c = polyClosest(mg.center, p);
+        const foot = polyAt(mg.center, c.s), nrm = right(polyDir(mg.center, c.s));
+        const lat = dot(sub(p, foot), nrm) * sg;
+        const want = D + f(lat - D);
+        pts[i] = add(p, scale(nrm, sg * (want - lat) * w));
+      }
+    }
+    const center = makePolyline(pts);
+    const ha = this.nodes.get(s.a)!.h, hb = this.nodes.get(s.b)!.h;
+    const hs = new Float32Array(pts.length);
+    for (let i = 0; i < pts.length; i++) hs[i] = ha + (hb - ha) * smoothstep(center.cum[i] / (center.length || 1));
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+    const pad = g.width / 2 + 1;
+    g.center = center;
+    g.hs = hs;
+    g.minR = minRadius(pts);
+    g.bbox = { x0: x0 - pad, y0: y0 - pad, x1: x1 + pad, y1: y1 + pad };
+    this.indexSeg(id);
   }
 
   private buildLanes(s: RSeg, g: SegGeom): Lane[] {
     const T = ROAD_TYPES[s.type];
     const lanes: Lane[] = [];
-    const s0 = g.trimA, s1 = Math.max(g.trimA + 0.5, g.center.length - g.trimB);
-    const base = trimPolyline(g.center, s0, s1);
-    // heights along the trimmed base
-    const basePl = makePolyline(base);
-    const hsFor = (pts: number) => {
-      const out = new Float32Array(pts);
-      for (let i = 0; i < pts; i++) {
-        const sc = s0 + (basePl.cum[Math.min(i, basePl.cum.length - 1)] ?? 0);
-        out[i] = this.heightFromCenter(s, g, sc);
-      }
-      return out;
+    const L = g.center.length;
+    const span = (idx: number, dir: 1 | -1) => {
+      // lanes of a taper start (or end) further from the node: a connector carries cars across it
+      let ta = dir === 1 ? g.ends.a.laneTrim[idx] ?? 0 : 0, tb = dir === 1 ? g.ends.b.laneTrim[idx] ?? 0 : 0;
+      const room = Math.max(0, L - g.trimA - g.trimB - 1);
+      if (ta + tb > room * 0.8) { const k = (room * 0.8) / (ta + tb); ta *= k; tb *= k; }
+      const s0 = g.trimA + ta;
+      return { s0, s1: Math.max(s0 + 0.5, L - g.trimB - tb) };
     };
     const twoWay = T.bwd > 0;
     const mk = (dir: 1 | -1, idx: number, count: number, off: number): Lane => {
+      const { s0, s1 } = span(idx, dir);
+      const base = trimPolyline(g.center, s0, s1);
+      const basePl = makePolyline(base);
       let pts = offsetPolyline(base, off);
-      let hs = hsFor(pts.length);
+      let hs = new Float32Array(pts.length);
+      for (let i = 0; i < pts.length; i++) hs[i] = this.heightFromCenter(s, g, s0 + (basePl.cum[Math.min(i, basePl.cum.length - 1)] ?? 0));
       if (dir === -1) {
         pts = pts.slice().reverse();
         hs = hs.slice().reverse();
@@ -669,12 +865,13 @@ export class RoadNetwork {
         offset: off, pl, hs, speed: s.ring ? Math.min(T.speed, Math.sqrt(2.8 * Math.max(2, ringR(pl)))) : T.speed, occ: [], outs: [], ins: [],
       };
     };
+    const med = (T.median ?? 0) / 2; // a median pushes both directions out from the centre line
     for (let i = 0; i < T.fwd; i++) {
-      const off = twoWay ? (T.fwd - i - 0.5) * LANE_W : (T.fwd / 2 - i - 0.5) * LANE_W;
+      const off = twoWay ? (T.fwd - i - 0.5) * LANE_W + med : (T.fwd / 2 - i - 0.5) * LANE_W;
       lanes.push(mk(1, i, T.fwd, off));
     }
     for (let j = 0; j < T.bwd; j++) {
-      const off = -(T.bwd - j - 0.5) * LANE_W;
+      const off = -(T.bwd - j - 0.5) * LANE_W - med;
       lanes.push(mk(-1, j, T.bwd, off));
     }
     return lanes;
@@ -770,6 +967,35 @@ export class RoadNetwork {
       for (const p of geom.poly) geom.radius = Math.max(geom.radius, dist(p, c));
     }
 
+    if (kind === "split" || kind === "lane") {
+      // lanes line up from the far side: main first, then the ramp's; a short trunk fans its last lane out
+      const roles = this.splitRoles(arms, segs)!;
+      const { trunk, main, ramp, diverge, side } = roles;
+      const byFar = (ls: Lane[]) => (side > 0 ? ls.slice().reverse() : ls); // rank 0 = furthest from the ramp side
+      const tl = byFar(laneOf(trunk, diverge));
+      const ml = byFar(laneOf(main, !diverge));
+      const rl = ramp ? byFar(laneOf(ramp, !diverge)) : [];
+      const sideTurn: Connector["turn"] = side > 0 ? "R" : "L";
+      const g = (a: Arm) => this.segGeom.get(a.seg)!.ends[a.end];
+      const tapered = (a: Arm, l: Lane) => (g(a).laneTrim[l.idx] ?? 0) > 0;
+      const link = (t: Lane, b: Lane, arm: Arm, turn: Connector["turn"]) => {
+        if (!t || !b) return;
+        const tt = tapered(arm, b) ? sideTurn : turn;
+        if (diverge) geom.conns.push(this.makeConn(nid, t, b, tt, nodeH, trunk.seg, prioOf(trunk)));
+        else geom.conns.push(this.makeConn(nid, b, t, tt, nodeH, arm.seg, prioOf(arm)));
+      };
+      const n = tl.length;
+      if (n) {
+        ml.forEach((l, j) => link(tl[Math.min(j, n - 1)], l, main, "S"));
+        rl.forEach((l, k) => link(tl[Math.min(ml.length + k, n - 1)], l, ramp!, sideTurn));
+        // more trunk lanes than both branches take: the spare ones run into the outermost branch lane
+        const last = rl.length ? { l: rl[rl.length - 1], arm: ramp! } : { l: ml[ml.length - 1], arm: main };
+        for (let f = ml.length + rl.length; f < n; f++) link(tl[f], last.l, last.arm, sideTurn);
+      }
+      this.computeConflicts(geom.conns);
+      return geom;
+    }
+
     if (kind === "cont" || kind === "bend") {
       // the road just carries on: 1:1 lanes (zero length when straight, a curve round a bend), nobody yields
       for (const A of arms) {
@@ -788,8 +1014,10 @@ export class RoadNetwork {
       if (!ins.length) continue;
       const inDir = scale(A.dir, -1);
       const exits: { arm: Arm; ang: number; outs: Lane[] }[] = [];
+      // a road with a median can't be crossed mid-block, so it gets U-turns at its junctions instead
+      const uTurn = deadEnd || (ROAD_TYPES[segs.find((s) => s.id === A.seg)!.type].median ?? 0) > 0;
       for (const B of arms) {
-        if (B === A && !deadEnd) continue;
+        if (B === A && !uTurn) continue;
         const outs = laneOf(B, false);
         if (!outs.length) continue;
         const ang = B === A ? Math.PI : signedAngle(inDir, B.dir);
@@ -859,7 +1087,7 @@ export class RoadNetwork {
     const pl = makePolyline(pts);
     const hs = pts.map((_, i) => ex.h + (ey.h - ex.h) * smoothstep(pl.cum[i] / (pl.length || 1)));
     const lc = laneCounts(segOf(X), X.end);
-    return { pts, hs, lanes: [lc.inn, lc.out], halfW: X.halfW };
+    return { pts, hs, lanes: [lc.inn, lc.out], halfW: X.halfW, median: ROAD_TYPES[segOf(X).type].median ?? 0 };
   }
 
   private makeConn(nid: number, from: Lane, to: Lane, turn: Connector["turn"], h: number, armIn: number, prio: number): Connector {

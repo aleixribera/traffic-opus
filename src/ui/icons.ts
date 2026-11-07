@@ -8,20 +8,23 @@ const svg = (w: number, h: number, body: string) =>
 export function roadIcon(id: RoadTypeId): string {
   const T = ROAD_TYPES[id];
   const n = T.fwd + T.bwd;
-  const lw = 5;
-  const W = n * lw + 4;
+  const med = T.median ? 3 : 0;
+  const lw = n + med / 5 > 6 ? 4 : 5;
+  const W = n * lw + 4 + med;
   const x0 = (28 - W) / 2;
   let b = `<rect x="${x0}" y="2" width="${W}" height="24" rx="1.5" fill="#fff" stroke="#8d939a" stroke-width="1.2"/>`;
-  const lineX = (k: number) => x0 + 2 + k * lw;
+  // lanes left of the median sit at x0 + 2 + k * lw; the ones past it shift over by the median
+  const lineX = (k: number) => x0 + 2 + k * lw + (med && k > T.bwd ? med : 0);
   for (let k = 1; k < n; k++) {
     const centre = T.bwd > 0 && k === T.bwd;
-    b += centre
+    if (centre && med) b += `<rect x="${lineX(k)}" y="2.6" width="${med}" height="22.8" fill="#8fc46a" stroke="#6f9a52" stroke-width="0.6"/>`;
+    else b += centre
       ? `<line x1="${lineX(k)}" y1="3" x2="${lineX(k)}" y2="25" stroke="#e9b32a" stroke-width="1.3"/>`
       : `<line x1="${lineX(k)}" y1="4" x2="${lineX(k)}" y2="24" stroke="#a9aeb4" stroke-width="0.9" stroke-dasharray="3 2.4"/>`;
   }
   // direction arrows
   for (let k = 0; k < n; k++) {
-    const cx = lineX(k) + lw / 2;
+    const cx = lineX(k) + (med && k === T.bwd ? med : 0) + lw / 2;
     const up = k >= T.bwd;
     b += up
       ? `<path d="M${cx - 1.5} 11.5 L${cx} 9 L${cx + 1.5} 11.5" fill="none" stroke="#5b6168" stroke-width="0.9" stroke-linecap="round"/>`

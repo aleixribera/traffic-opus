@@ -59,7 +59,7 @@ export class Preview3D {
       // dark outline under the ghost
       const ol = new THREE.Mesh(ribbon(pts, hs, ss, w / 2 + 0.55, lift - 0.02, [-1, 0]), this.outline);
       this.add(ol, 7);
-      const m = new THREE.Mesh(ribbon(pts, hs, ss, w / 2, lift, [T.fwd, T.bwd]), mat.mat);
+      const m = new THREE.Mesh(ribbon(pts, hs, ss, w / 2, lift, [T.fwd, T.bwd], undefined, T.median ?? 0), mat.mat);
       this.add(m, 8);
     }
   }

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { LANE_W, ROAD_TYPES, SHOULDER } from "../config";
-import { dist, norm, right, sub, type V2 } from "../core/math";
+import { clamp, dist, norm, right, smoothstep, sub, type V2 } from "../core/math";
 import type { ChangeSet, RoadNetwork } from "../roads/network";
 import { ringsNear } from "../roads/planner";
 import { dkey } from "../sim/router";
@@ -18,6 +18,9 @@ export function makeRoadMaterial(opts: { color?: number; opacity?: number; marki
     uEdge: { value: new THREE.Color(PAL.roadEdge) },
     uLane: { value: new THREE.Color(PAL.lane) },
     uCentre: { value: new THREE.Color(PAL.centre) },
+    uGrass: { value: new THREE.Color(PAL.grass) },
+    uTree: { value: new THREE.Color(PAL.tree) },
+    uTreeLight: { value: new THREE.Color(PAL.treeLight) },
     uFlowMode: { value: 0 },
     uMarkings: { value: opts.markings === false ? 0 : 1 },
     uArrows: { value: opts.arrows === false ? 0 : 1 },
@@ -25,15 +28,16 @@ export function makeRoadMaterial(opts: { color?: number; opacity?: number; marki
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
     sh.vertexShader = sh.vertexShader
-      .replace("#include <common>", "#include <common>\nattribute vec4 aRoad;\nattribute vec2 aFlow;\nvarying vec4 vRoad;\nvarying vec2 vFlow;")
-      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRoad = aRoad;\nvFlow = aFlow;");
+      .replace("#include <common>", "#include <common>\nattribute vec4 aRoad;\nattribute vec2 aFlow;\nattribute vec3 aMed;\nvarying vec4 vRoad;\nvarying vec2 vFlow;\nvarying vec3 vMed;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRoad = aRoad;\nvFlow = aFlow;\nvMed = aMed;");
     sh.fragmentShader = sh.fragmentShader
       .replace(
         "#include <common>",
         `#include <common>
 uniform vec3 uRoad; uniform vec3 uEdge; uniform vec3 uLane; uniform vec3 uCentre;
+uniform vec3 uGrass; uniform vec3 uTree; uniform vec3 uTreeLight;
 uniform float uFlowMode; uniform float uMarkings; uniform float uArrows;
-varying vec4 vRoad; varying vec2 vFlow;
+varying vec4 vRoad; varying vec2 vFlow; varying vec3 vMed;
 float band(float x, float w) { float f = fwidth(x) * 0.8 + 1e-4; return 1.0 - smoothstep(w - f, w + f, abs(x)); }
 vec3 flowTint(float r) {
   float k = clamp((0.92 - r) / 0.6, 0.0, 1.0);
@@ -48,16 +52,17 @@ vec3 flowTint(float r) {
   vec3 c = uRoad;
   if (f >= 0.0 && uMarkings > 0.5) {
     float LW = ${LANE_W.toFixed(2)};
-    float halfW = (f + b) * LW * 0.5 + ${SHOULDER.toFixed(2)};
+    float med = vMed.x * 0.5; // half the median: both directions start this far out
+    float halfW = (f + b) * LW * 0.5 + ${SHOULDER.toFixed(2)} + med;
     float edge = 1.0 - smoothstep(halfW - 0.42 - fwidth(u), halfW - 0.42, abs(u));
     float dash = step(fract(v / 9.0), 0.5);
     float lanes = 0.0;
     if (b > 0.0) {
-      c = mix(c, uCentre, band(u, 0.13));
+      if (med <= 0.0) c = mix(c, uCentre, band(u, 0.13));
       for (int k = 1; k < 4; k++) {
         float fk = float(k);
-        if (fk < f) lanes = max(lanes, band(u - fk * LW, 0.08) * dash);
-        if (fk < b) lanes = max(lanes, band(u + fk * LW, 0.08) * dash);
+        if (fk < f) lanes = max(lanes, band(u - med - fk * LW, 0.08) * dash);
+        if (fk < b) lanes = max(lanes, band(u + med + fk * LW, 0.08) * dash);
       }
     } else {
       for (int k = 1; k < 4; k++) {
@@ -80,6 +85,25 @@ vec3 flowTint(float r) {
     if (uFlowMode > 0.5) {
       float r = (b > 0.0 && u < 0.0) ? vFlow.y : vFlow.x;
       c *= flowTint(r);
+    }
+    if (med > 0.0) {
+      // planted median: a kerb either side, grass between, and a row of trees when it is wide enough
+      // it stops short of a junction in a rounded nose (vMed.y: distance to the nearer junction end)
+      float dn = vMed.y - 2.2;
+      float mh = dn >= med ? med : (dn <= 0.0 ? 0.0 : sqrt(med * med - (med - dn) * (med - dn)));
+      float au = abs(u), fw = fwidth(u) + 1e-4;
+      float inMed = 1.0 - smoothstep(mh - fw, mh, au);
+      vec3 mc = mix(uEdge, uGrass, 1.0 - smoothstep(mh - 0.32 - fw, mh - 0.32, au));
+      // trees keep clear of the piece ends (vMed.z) so a crown is never cut in half at a join
+      if (med > 1.4 && dn > med + 2.0 && vMed.z > 2.6) {
+        float y = mod(v, 12.0) - 6.0;
+        float rr = min(med - 0.25, 2.4);
+        float d = length(vec2(u, y));
+        float crown = 1.0 - smoothstep(rr - fwidth(d) - 0.04, rr, d);
+        float lit = 1.0 - smoothstep(0.0, rr * 1.3, length(vec2(u + rr * 0.35, y + rr * 0.35)));
+        mc = mix(mc, mix(uTree, uTreeLight, lit), crown);
+      }
+      c = mix(c, mc, inMed);
     }
     c = mix(uEdge, c, edge);
   }
@@ -171,11 +195,59 @@ export class Roads3D {
     const s0 = g.trimA, s1 = Math.max(g.trimA + 0.3, g.center.length - g.trimB);
     const { pts, hs, ss } = sampleRange(g.center.pts, g.center.cum, g.hs, s0, s1);
     const halfW = g.width / 2;
-    const geo = ribbon(pts, hs, ss, halfW, LIFT, [T.fwd, T.bwd]);
+    // tapers: where a slip road or an extra lane opens out of (or closes into) the road it runs beside, the
+    // surface starts narrow on that side and widens to full
+    const L = g.center.length;
+    const clipAt = (sc: number, side: 1 | -1) => {
+      let c = 0;
+      for (const [e, d] of [[g.ends.a, sc], [g.ends.b, L - sc]] as const) {
+        if (!e.clip || e.clipSide !== side) continue;
+        const len = Math.max(1, Math.min(e.clipLen, L * 0.45));
+        c = Math.max(c, e.clip * (1 - smoothstep(clamp(d / len, 0, 1))));
+      }
+      return c;
+    };
+    const clipped = !!(g.ends.a.clip || g.ends.b.clip);
+    const edges = clipped ? { l: ss.map((sc) => -halfW + clipAt(sc, -1)), r: ss.map((sc) => halfW - clipAt(sc, 1)) } : undefined;
+    // a median ends in a nose at a junction or dead end, but runs straight on into more of the same road
+    let medEnd: number[] | undefined;
+    if (T.median) {
+      const nose = (nid: number) => {
+        const ng = this.net.nodeGeom.get(nid);
+        if (!ng || (ng.kind !== "cont" && ng.kind !== "bend")) return true;
+        const o = ng.arms.find((a) => a.seg !== id) ?? ng.arms.find((a) => a.seg === id && a.end !== (s.a === nid ? "a" : "b"));
+        const os = o && this.net.segs.get(o.seg);
+        return !os || ROAD_TYPES[os.type].median !== T.median;
+      };
+      const na = nose(s.a), nb = nose(s.b);
+      medEnd = ss.map((sc) => Math.min(na ? sc - s0 : 1e4, nb ? s1 - sc : 1e4));
+    }
+    const geo = ribbon(pts, hs, ss, halfW, LIFT, [T.fwd, T.bwd], edges, T.median ?? 0, medEnd, ss.map((sc) => Math.min(sc - s0, s1 - sc)));
     const flow = geo.getAttribute("aFlow") as THREE.BufferAttribute;
     const surface = new THREE.Mesh(geo, s.ring ? this.ringSurface.mat : this.surface.mat);
     surface.receiveShadow = true;
     const extra: THREE.Object3D[] = [];
+    if (edges) {
+      // the tapered edge gets its line drawn explicitly (the shader's edge line sits at the full width)
+      for (const side of [-1, 1] as const) {
+        const us = side > 0 ? edges.r : edges.l;
+        let run: { p: V2; h: number }[] = [];
+        const flush = () => {
+          if (run.length > 1) {
+            const km = new THREE.Mesh(strip(run.map((q) => q.p), Math.max(...run.map((q) => q.h)) + LIFT + 0.01, 0.42, -side * 0.21), this.edgeMat);
+            km.receiveShadow = true;
+            extra.push(km);
+          }
+          run = [];
+        };
+        for (let i = 0; i < pts.length; i++) {
+          if (Math.abs(us[i]) > halfW - 0.02) { flush(); continue; }
+          const r = lateralAt(pts, i);
+          run.push({ p: { x: pts[i].x + r.x * us[i], y: pts[i].y + r.y * us[i] }, h: hs[i] });
+        }
+        flush();
+      }
+    }
     const maxH = Math.max(...hs);
     if (maxH > 0.3) {
       const deck = deckSides(pts, hs, halfW, LIFT);
@@ -221,7 +293,7 @@ export class Roads3D {
       const hs = [ng.curve.hs[0], ...ng.curve.hs, ng.curve.hs[n0 - 1]].map((h) => h + 0.004);
       const ss: number[] = [0];
       for (let i = 1; i < pts.length; i++) ss.push(ss[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
-      const geo = ribbon(pts, hs, ss, halfW, LIFT, lanes);
+      const geo = ribbon(pts, hs, ss, halfW, LIFT, lanes, undefined, ng.curve.median);
       // no one-way chevrons on the curve: the straights either side already point the way, and they'd clip at the joins
       const surface = new THREE.Mesh(geo, this.ringSurface.mat);
       surface.receiveShadow = true;
@@ -446,7 +518,7 @@ function lateralAt(pts: V2[], i: number): V2 {
 }
 
 /** Road ribbon with aRoad = (lateral u, arc length v, fwd lanes, bwd lanes). */
-export function ribbon(pts: V2[], hs: number[], ss: number[], halfW: number, lift: number, lanes: [number, number]): THREE.BufferGeometry {
+export function ribbon(pts: V2[], hs: number[], ss: number[], halfW: number, lift: number, lanes: [number, number], edges?: { l: number[]; r: number[] }, median = 0, medEnd?: number[], treeEnd?: number[]): THREE.BufferGeometry {
   const n = pts.length;
   const pos = new Float32Array(n * 2 * 3);
   const nor = new Float32Array(n * 2 * 3);
@@ -455,10 +527,11 @@ export function ribbon(pts: V2[], hs: number[], ss: number[], halfW: number, lif
   for (let i = 0; i < n; i++) {
     const r = lateralAt(pts, i);
     const p = pts[i], y = hs[i] + lift;
-    // left (u = -halfW) and right (u = +halfW)
-    pos.set([p.x - r.x * halfW, y, p.y - r.y * halfW, p.x + r.x * halfW, y, p.y + r.y * halfW], i * 6);
+    // left (u = -halfW) and right (u = +halfW), or the tapered edges
+    const ul = edges ? edges.l[i] : -halfW, ur = edges ? edges.r[i] : halfW;
+    pos.set([p.x + r.x * ul, y, p.y + r.y * ul, p.x + r.x * ur, y, p.y + r.y * ur], i * 6);
     nor.set([0, 1, 0, 0, 1, 0], i * 6);
-    road.set([-halfW, ss[i], lanes[0], lanes[1], halfW, ss[i], lanes[0], lanes[1]], i * 8);
+    road.set([ul, ss[i], lanes[0], lanes[1], ur, ss[i], lanes[0], lanes[1]], i * 8);
   }
   const idx: number[] = [];
   for (let i = 0; i < n - 1; i++) {
@@ -471,6 +544,12 @@ export function ribbon(pts: V2[], hs: number[], ss: number[], halfW: number, lif
   g.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
   g.setAttribute("aRoad", new THREE.BufferAttribute(road, 4));
   g.setAttribute("aFlow", new THREE.BufferAttribute(flow, 2));
+  const med = new Float32Array(n * 6);
+  for (let i = 0; i < n; i++) {
+    const a = medEnd?.[i] ?? 1e4, t = treeEnd ? treeEnd[i] : 0;
+    med.set([median, a, t, median, a, t], i * 6);
+  }
+  g.setAttribute("aMed", new THREE.BufferAttribute(med, 3));
   g.setIndex(idx);
   fixUpWinding(g);
   g.computeBoundingSphere();

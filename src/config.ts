@@ -11,7 +11,7 @@ export const MIN_ARM_ANGLE = (24 * Math.PI) / 180;
 export const NODE_SNAP_PX = 18;
 export const ROAD_SNAP_PX = 14;
 
-export type RoadTypeId = "street" | "avenue" | "boulevard" | "one1" | "one2" | "hw2" | "one3" | "one4";
+export type RoadTypeId = "street" | "avenue" | "boulevard" | "streetM" | "avenueM" | "boulevardM" | "one1" | "one2" | "hw2" | "one3" | "one4";
 
 export interface RoadType {
   id: RoadTypeId;
@@ -25,6 +25,8 @@ export interface RoadType {
   allowsAccess: boolean; // buildings can attach driveways
   rank: number; // priority at unsignalled junctions
   hint: string;
+  /** Width of a planted median between the two directions (m). Nobody crosses it: driveways are right-in, right-out. */
+  median?: number;
 }
 
 const kmh = (k: number) => k / 3.6;
@@ -33,6 +35,9 @@ export const ROAD_TYPES: Record<RoadTypeId, RoadType> = {
   street: { id: "street", name: "Street", short: "1+1", fwd: 1, bwd: 1, speed: kmh(50), costPerM: 6, minRadius: 9, allowsAccess: true, rank: 1, hint: "Two-way, one lane each way. Houses and shops can face it." },
   avenue: { id: "avenue", name: "Avenue", short: "2+2", fwd: 2, bwd: 2, speed: kmh(60), costPerM: 13, minRadius: 14, allowsAccess: true, rank: 2, hint: "Two-way, two lanes each way. Buildings can still face it." },
   boulevard: { id: "boulevard", name: "Boulevard", short: "3+3", fwd: 3, bwd: 3, speed: kmh(70), costPerM: 21, minRadius: 20, allowsAccess: false, rank: 3, hint: "Two-way, three lanes each way. Too busy for driveways." },
+  streetM: { id: "streetM", name: "Divided street", short: "1|1", fwd: 1, bwd: 1, speed: kmh(50), costPerM: 9, minRadius: 10, allowsAccess: true, rank: 1, median: 2.5, hint: "One lane each way split by a planted median. No turning across it: cars U-turn at junctions." },
+  avenueM: { id: "avenueM", name: "Divided avenue", short: "2|2", fwd: 2, bwd: 2, speed: kmh(60), costPerM: 17, minRadius: 16, allowsAccess: true, rank: 2, median: 3.5, hint: "Two lanes each way with a median. Safer and faster than an avenue; buildings get right-in, right-out." },
+  boulevardM: { id: "boulevardM", name: "Divided boulevard", short: "3|3", fwd: 3, bwd: 3, speed: kmh(70), costPerM: 26, minRadius: 22, allowsAccess: false, rank: 3, median: 5, hint: "Three lanes each way either side of a wide median. A city's main artery." },
   one1: { id: "one1", name: "One-way", short: "1", fwd: 1, bwd: 0, speed: kmh(50), costPerM: 4, minRadius: 8, allowsAccess: true, rank: 1, hint: "One lane, drawn direction only. Ideal for ramps and loops." },
   one2: { id: "one2", name: "One-way 2", short: "2", fwd: 2, bwd: 0, speed: kmh(70), costPerM: 9, minRadius: 16, allowsAccess: true, rank: 2, hint: "Two lanes, drawn direction only." },
   hw2: { id: "hw2", name: "Highway 2", short: "2", fwd: 2, bwd: 0, speed: kmh(100), costPerM: 12, minRadius: 60, allowsAccess: false, rank: 3, hint: "Two-lane motorway carriageway. Build pairs, link with ramps." },
@@ -40,10 +45,10 @@ export const ROAD_TYPES: Record<RoadTypeId, RoadType> = {
   one4: { id: "one4", name: "Highway 4", short: "4", fwd: 4, bwd: 0, speed: kmh(100), costPerM: 21, minRadius: 40, allowsAccess: false, rank: 4, hint: "Four-lane carriageway for the heaviest flows." },
 };
 
-export const ROAD_ORDER: RoadTypeId[] = ["one1", "street", "one2", "avenue", "hw2", "one3", "boulevard", "one4"];
+export const ROAD_ORDER: RoadTypeId[] = ["one1", "street", "streetM", "one2", "avenue", "avenueM", "hw2", "one3", "boulevard", "boulevardM", "one4"];
 
 export function roadWidth(t: RoadType): number {
-  return (t.fwd + t.bwd) * LANE_W + SHOULDER * 2;
+  return (t.fwd + t.bwd) * LANE_W + SHOULDER * 2 + (t.median ?? 0);
 }
 
 export const ELEVATED_COST_MULT = [1, 2.2, 2.8, 3.4];
