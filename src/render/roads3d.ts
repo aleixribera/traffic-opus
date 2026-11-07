@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { LANE_W, ROAD_TYPES, SHOULDER, SIDEWALK, STREET_TREES, isHighway, roadGroup, roadWidth } from "../config";
-import { clamp, dist, dot, norm, polyAt, polyClosest, polyDir, right, smoothstep, sub, type Polyline, type V2 } from "../core/math";
+import { add, clamp, dist, dot, norm, polyAt, polyClosest, polyDir, right, scale, smoothstep, sub, type Polyline, type V2 } from "../core/math";
 import { pocketZones, type ChangeSet, type RoadNetwork } from "../roads/network";
 import { ringsNear } from "../roads/planner";
 import { dkey } from "../sim/router";
@@ -412,7 +412,11 @@ export class Roads3D {
     for (const gl of [g.ends.a.glue, g.ends.b.glue]) {
       const ms = gl && this.net.segs.get(gl.seg), mg = gl && this.net.segGeom.get(gl.seg);
       if (!gl || !ms || !mg) continue;
-      const geo = seamGeo(g.center.pts, Array.from(g.hs), gl.line ?? mg.center, Math.abs(gl.d), roadWidth(ROAD_TYPES[ms.type]) / 2, g.width / 2, isHighway(T) ? 0.56 : 0.2);
+      // (where the slip lane is still opening out of a taper, the seam stops inside its edge line, and starts only
+      // once there's room for it: the carriageway's own kerb carries on up to there)
+      const cum = g.center.cum, edgeAt = (i: number) => ({ l: -halfW + clipAt(cum[i], -1), r: halfW - clipAt(cum[i], 1) });
+      const inset = isHighway(T) ? SHOULDER + 0.2 : 0.45;
+      const geo = seamGeo(g.center.pts, Array.from(g.hs), gl.line ?? mg.center, Math.abs(gl.d), roadWidth(ROAD_TYPES[ms.type]) / 2, g.width / 2, isHighway(T) ? 0.56 : 0.2, clipped ? { at: edgeAt, inset } : undefined);
       if (geo) { const sm = new THREE.Mesh(geo, isHighway(T) ? this.seamHw : this.seamTown); sm.receiveShadow = true; extra.push(sm); }
     }
     const maxH = Math.max(...hs);
@@ -880,7 +884,10 @@ function seamMaterial(road: number, line: number): THREE.MeshLambertMaterial {
  * dashed line down it. Where the two part, the band widens to fill the gap and the line turns solid, up to where the
  * kerbs are clear of each other (the gore). `pad`: how far past the kerbs the band reaches. null where they never meet.
  */
-function seamGeo(pts: V2[], hs: number[], main: Polyline, d: number, mainHalf: number, rampHalf: number, pad: number): THREE.BufferGeometry | null {
+function seamGeo(
+  pts: V2[], hs: number[], main: Polyline, d: number, mainHalf: number, rampHalf: number, pad: number,
+  taper?: { at: (i: number) => { l: number; r: number }; inset: number },
+): THREE.BufferGeometry | null {
   const pos: number[] = [], uv: number[] = [], idx: number[] = [];
   let run = 0, v = 0, prev: V2 | null = null;
   for (let i = 0; i < pts.length; i++) {
@@ -895,13 +902,23 @@ function seamGeo(pts: V2[], hs: number[], main: Polyline, d: number, mainHalf: n
     // between the carriageway's outer edge and the slip road's inner edge (they overlap 0.42 m when flush)
     const e0 = mainHalf - 0.42, e1 = Math.abs(lat) - rampHalf + 0.42;
     const mid = (e0 + e1) / 2, cover = (e1 - e0) / 2 + pad;
+    // the outer side reaches no further than just inside the slip road's (tapered) edge line
+    let reach = cover;
+    if (taper) {
+      const e = taper.at(i), rr = lateralAt(pts, i);
+      const far = Math.max(...[e.l, e.r].map((u) => Math.abs(dot(sub(add(pts[i], scale(rr, u)), foot), nrm))));
+      reach = Math.min(cover, far - taper.inset - mid);
+      if (reach < 0.3) { run = 0; prev = null; continue; }
+    }
     const m = { x: foot.x + nrm.x * sg * mid, y: foot.y + nrm.y * sg * mid };
     if (prev) v += dist(prev, m);
     prev = m;
     const base = pos.length / 3;
     const solid = smoothstep(clamp((gap - 0.1) / 0.3, 0, 1));
-    pos.push(m.x - nrm.x * cover, y, m.y - nrm.y * cover, m.x + nrm.x * cover, y, m.y + nrm.y * cover);
-    uv.push(-cover, v, solid, cover, v, solid);
+    // (-nrm side first)
+    const lo = sg > 0 ? cover : reach, hi = sg > 0 ? reach : cover;
+    pos.push(m.x - nrm.x * lo, y, m.y - nrm.y * lo, m.x + nrm.x * hi, y, m.y + nrm.y * hi);
+    uv.push(-lo, v, solid, hi, v, solid);
     if (run > 0) idx.push(base - 2, base - 1, base, base - 1, base + 1, base);
     run++;
   }
