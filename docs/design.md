@@ -1,4 +1,6 @@
-# Design: an industrial company on a road map
+# Kilometre Zero: design
+
+An industrial company on a road map.
 
 Decided 2026-11-07 with the owner. You run an **industrial company**. You claim deposits, build big extractors
 and plants, found towns that grow on their own, and draw the roads that tie it all together. Freight routes

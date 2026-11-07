@@ -134,8 +134,8 @@ export class MainMenu {
     this.root.innerHTML = `
       <nav class="card mm-card" aria-label="Main menu">
         <header class="mm-head">
-          <h1 class="mm-title">Flowtown</h1>
-          <p class="mm-tag">Lay the roads, zone the land, watch every car find its way.</p>
+          <h1 class="mm-title">Kilometre Zero</h1>
+          <p class="mm-tag">Claim the land, build the roads, keep every truck moving.</p>
         </header>
         <div class="mm-list">
           ${meta ? `<button class="mm-item primary" data-a="continue"><span class="mm-l">Continue</span><span class="mm-s">${esc(meta.name.replace(/, autosave$/, ""))} · ${fmtNum(meta.residents)} people · ${ago(meta.savedAt)}</span></button>` : ""}
