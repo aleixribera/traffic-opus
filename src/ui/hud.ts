@@ -7,7 +7,8 @@ import { ZONES, ZONE_ORDER, type ZoneGroup, type ZoneId } from "../game/zones";
 import type { SignalPlan } from "../roads/network";
 import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId, type ZoneMode } from "../app";
 import { ROUNDABOUTS, type RoundaboutSize } from "../roads/planner";
-import { ICON, roadIcon } from "./icons";
+import { ICON, roadIcon, serviceIcon } from "./icons";
+import { SERVICES, SERVICE_TABS, type ServiceKind } from "../game/services";
 import { Sfx } from "./sfx";
 
 export interface Chip {
@@ -22,6 +23,12 @@ const OVERLAYS: { id: OverlayId; label: string; blurb: string }[] = [
   { id: "landvalue", label: "Land value", blurb: "Higher value lets buildings level up" },
   { id: "level", label: "Building level", blurb: "Buildings grow from level 1 to 5" },
   { id: "problems", label: "Problems", blurb: "Buildings missing workers, goods or customers" },
+  { id: "garbage", label: "Garbage", blurb: "Where garbage trucks reach in time" },
+  { id: "health", label: "Healthcare", blurb: "Where ambulances reach in time" },
+  { id: "fire", label: "Fire", blurb: "Where fire engines reach in time" },
+  { id: "police", label: "Police", blurb: "Where patrols reach in time" },
+  { id: "school", label: "Education", blurb: "Homes within reach of an elementary school" },
+  { id: "parks", label: "Parks", blurb: "Homes near a park" },
 ];
 
 const GROUP_NAME: Record<ZoneGroup, string> = { res: "Residential", com: "Commercial", ind: "Industrial", off: "Office" };
@@ -30,9 +37,10 @@ const GROUPS: ZoneGroup[] = ["res", "com", "ind", "off"];
 export const BRUSH_SIZES: { r: number; label: string }[] = [{ r: 10, label: "S" }, { r: 22, label: "M" }, { r: 40, label: "L" }];
 
 /** Build categories along the bottom bar, each with its asset tabs. */
-type CatId = "roads" | "zoning";
+type CatId = "roads" | "zoning" | "services";
 type Asset =
   | { kind: "road"; id: RoadTypeId }
+  | { kind: "service"; id: ServiceKind }
   | { kind: "roundabout"; size: RoundaboutSize }
   | { kind: "junction" }
   | { kind: "zone"; id: ZoneId };
@@ -44,7 +52,7 @@ const CATS: Record<CatId, { label: string; tabs: Tab[] }> = {
       { id: "small", label: "Small roads", assets: [{ kind: "road", id: "one1" }, { kind: "road", id: "street" }, { kind: "road", id: "streetM" }] },
       { id: "medium", label: "Medium roads", assets: [{ kind: "road", id: "one2" }, { kind: "road", id: "avenue" }, { kind: "road", id: "avenueM" }] },
       { id: "large", label: "Large roads", assets: [{ kind: "road", id: "boulevard" }, { kind: "road", id: "boulevardM" }] },
-      { id: "highways", label: "Highways", assets: [{ kind: "road", id: "hw2" }, { kind: "road", id: "one3" }, { kind: "road", id: "one4" }] },
+      { id: "highways", label: "Highways", assets: [{ kind: "road", id: "hw1" }, { kind: "road", id: "hw2" }, { kind: "road", id: "one3" }, { kind: "road", id: "one4" }] },
       { id: "junctions", label: "Intersections", assets: [1, 2, 3, 4].map((s) => ({ kind: "roundabout", size: s as RoundaboutSize }) as Asset).concat([{ kind: "junction" }]) },
     ],
   },
@@ -52,8 +60,12 @@ const CATS: Record<CatId, { label: string; tabs: Tab[] }> = {
     label: "Zoning",
     tabs: GROUPS.map((gp) => ({ id: gp, label: GROUP_NAME[gp], assets: ZONE_ORDER.filter((z) => ZONES[z].group === gp).map((id) => ({ kind: "zone", id }) as Asset) })),
   },
+  services: {
+    label: "Services",
+    tabs: SERVICE_TABS.map((t) => ({ id: t.id, label: t.label, assets: t.kinds.map((id) => ({ kind: "service", id }) as Asset) })),
+  },
 };
-const catOf = (t: ToolId): CatId | null => (t === "road" || t === "roundabout" || t === "junction" ? "roads" : t === "zone" ? "zoning" : null);
+const catOf = (t: ToolId): CatId | null => (t === "road" || t === "roundabout" || t === "junction" ? "roads" : t === "zone" ? "zoning" : t === "service" ? "services" : null);
 
 type WinId = "info" | "progression" | "economy" | "city" | "transport";
 
@@ -75,6 +87,7 @@ const hex = (c: number) => "#" + c.toString(16).padStart(6, "0");
 
 type Milestone = (typeof MILESTONES)[number];
 const unlockAt = (test: (m: Milestone) => boolean): Milestone | undefined => MILESTONES.find(test);
+const servicesAt = (i: number) => (Object.values(SERVICES)).filter((s) => s.unlock === i).map((s) => BUILDING_TYPES[s.kind].name);
 const FEATURE_NAME = { roundabout: "Roundabouts", signals: "Traffic lights", grid: "Grid tool", parallel: "Parallel roads" } as const;
 
 const KEYS: [string, string][] = [
@@ -126,7 +139,7 @@ export class Hud {
   private redoBtn = h("button", "cat hist");
   private catBtns = new Map<string, HTMLButtonElement>();
   private cat: CatId | null = null;
-  private tab: Record<CatId, string> = { roads: "small", zoning: "res" };
+  private tab: Record<CatId, string> = { roads: "small", zoning: "res", services: "garbage" };
   private lastRoad: RoadTypeId = "street";
   private winKind: WinId | null = null;
   private panelKind: "building" | "signal" | null = null;
@@ -200,6 +213,7 @@ export class Hud {
     this.cats.append(
       cat("roads", ICON.roadCat, "Roads", "Roads", () => this.toggleCat("roads")),
       cat("zoning", ICON.zone, "Zoning", "Zoning", () => this.toggleCat("zoning")),
+      cat("services", ICON.services, "Services", "City services", () => this.toggleCat("services")),
       h("span", "cat-sep"),
       cat("bulldoze", ICON.bulldoze, "Bulldoze", "Bulldozer (B)", () => app.setTool({ tool: app.st.tool === "bulldoze" ? "inspect" : "bulldoze" })),
     );
@@ -272,7 +286,12 @@ export class Hud {
     this.cat = c;
     // like picking up the last thing you built from this category
     if (c === "roads") app.setTool({ tool: "road", roadType: this.lastRoad });
-    else app.setTool({ tool: "zone", erase: false });
+    else if (c === "services") {
+      // open on the first tab with something buildable, holding the tool only if it's unlocked
+      const k = app.game.serviceUnlocked(app.st.service) ? app.st.service : SERVICE_TABS.flatMap((t) => t.kinds).find((x) => app.game.serviceUnlocked(x));
+      if (k) app.setTool({ tool: "service", service: k });
+      else this.refresh();
+    } else app.setTool({ tool: "zone", erase: false });
   }
 
   private pick(a: Asset) {
@@ -280,6 +299,7 @@ export class Hud {
     if (a.kind === "road") { this.lastRoad = a.id; app.setTool({ tool: "road", roadType: a.id }); }
     else if (a.kind === "roundabout") app.setTool({ tool: "roundabout", rbSize: a.size });
     else if (a.kind === "junction") app.setTool({ tool: "junction" });
+    else if (a.kind === "service") app.setTool({ tool: "service", service: a.id });
     else app.setTool({ tool: "zone", zone: a.id, erase: false });
     this.sfx.play("click");
   }
@@ -290,6 +310,7 @@ export class Hud {
     if (st.tool === "road") return { kind: "road", id: st.roadType };
     if (st.tool === "roundabout") return { kind: "roundabout", size: st.rbSize };
     if (st.tool === "junction") return { kind: "junction" };
+    if (st.tool === "service") return { kind: "service", id: st.service };
     if (st.tool === "zone") return st.erase ? null : { kind: "zone", id: st.zone };
     return null;
   }
@@ -306,6 +327,15 @@ export class Hud {
       const R = ROUNDABOUTS[a.size];
       const locked = g.featureUnlocked("roundabout") ? undefined : unlockAt((m) => m.features.includes("roundabout"));
       return { key: "rb:" + a.size, icon: rbIcon(a.size), name: `${R.name} roundabout`, sub: `${R.r * 2} m`, title: `${R.name} roundabout: ${R.r * 2} m across, ${ROAD_TYPES[R.type].fwd}-lane ring. Drop it on a junction or a road.`, locked };
+    }
+    if (a.kind === "service") {
+      const S = SERVICES[a.id], T = BUILDING_TYPES[a.id];
+      const locked = g.serviceUnlocked(a.id) ? undefined : MILESTONES[S.unlock];
+      const what = S.vehicles ? `${S.vehicles} vehicles` : S.cap ? `${S.cap} ${S.tier === 0 ? "pupils" : "students"}` : "";
+      return {
+        key: "svc:" + a.id, icon: serviceIcon(a.id), name: T.name, sub: `${formatMoney(S.cost)} · ${formatMoney(S.upkeep)}/h`,
+        title: `${T.name}: ${T.blurb}${what ? ` ${what}.` : ""} Costs ${formatMoney(S.cost)}, upkeep ${formatMoney(S.upkeep)} an hour.`, locked,
+      };
     }
     if (a.kind === "junction") {
       const locked = g.featureUnlocked("signals") ? undefined : unlockAt((m) => m.features.includes("signals"));
@@ -642,10 +672,11 @@ export class Hud {
   /** A milestone was reached: what it unlocks, and the grant. */
   milestone(index: number) {
     const M = MILESTONES[index];
-    const unl: string[] = [...M.roads.map((r) => ROAD_TYPES[r].name), ...M.zones.map((z) => ZONES[z].name), ...M.features.map((f) => FEATURE_NAME[f])];
+    const unl: string[] = [...M.roads.map((r) => ROAD_TYPES[r].name), ...M.zones.map((z) => ZONES[z].name), ...M.features.map((f) => FEATURE_NAME[f]), ...servicesAt(index)];
     this.banner.innerHTML = `<header>${M.name}</header>
       <p class="sub">Milestone reached · ${fmtNum(M.pop)} people</p>
       ${unl.length ? `<p class="gifts">Unlocked: ${unl.join(" · ")}</p>` : ""}
+      ${index === 1 ? `<p class="gifts">Your town now needs city services: garbage, healthcare, fire and police (Services menu)</p>` : ""}
       <p class="gifts">+${formatMoney(M.grant)} grant · ${M.tiles} more map tile${M.tiles === 1 ? "" : "s"} to buy</p>
       <button class="btn primary">Continue</button>`;
     this.banner.hidden = false;
@@ -747,6 +778,7 @@ export class Hud {
     if (o === "level") return `<span class="lg lg-level"></span><span>Level 1</span><span>Level 5</span>`;
     if (o === "problems") return `<span class="lg lg-prob"></span><span>Has a problem</span><span>Fine</span>`;
     if (o === "zones") return GROUPS.map((gp) => `<span class="lg-key"><i class="dm-${gp}"></i>${GROUP_NAME[gp]}</span>`).join("");
+    if (o === "garbage" || o === "health" || o === "fire" || o === "police" || o === "school" || o === "parks") return `<span class="lg lg-cov"></span><span>Not covered</span><span>Well covered</span>`;
     return "";
   }
 
@@ -762,6 +794,7 @@ export class Hud {
     const html = `<p class="win-sub">Per game hour</p>
       <dl class="facts money-rows">${inc.map(([k, v]) => `<dt>${k} taxes</dt><dd class="good">${signed(v)}</dd>`).join("")}
       <dt>Road upkeep</dt><dd class="bad">${signed(-B.expense.roads)}</dd>
+      <dt>Service upkeep</dt><dd class="bad">${signed(-B.expense.services)}</dd>
       <dt class="tot">Balance</dt><dd class="tot ${totalIn - totalOut >= 0 ? "good" : "bad"}">${signed(totalIn - totalOut)}</dd></dl>
       ${spark}
       <h3 class="sub-h">Tax rates</h3>
@@ -785,7 +818,7 @@ export class Hud {
       const i = k + 1;
       const done = g.milestone >= i;
       const cur = i === g.milestone + 1;
-      const unl = [...M.roads.map((r) => ROAD_TYPES[r].name), ...M.zones.map((z) => ZONES[z].short), ...M.features.map((f) => FEATURE_NAME[f])];
+      const unl = [...M.roads.map((r) => ROAD_TYPES[r].name), ...M.zones.map((z) => ZONES[z].short), ...M.features.map((f) => FEATURE_NAME[f]), ...servicesAt(i)];
       const p = cur ? Math.min(1, pop / M.pop) : done ? 1 : 0;
       return `<li class="${done ? "done" : cur ? "cur" : ""}">
         <div class="ms-top">${done ? ICON.check : ICON.open}<b>${M.name}</b><span class="muted">${fmtNum(M.pop)} people</span></div>
@@ -858,6 +891,30 @@ export class Hud {
     const T = BUILDING_TYPES[b.kind];
     const rows: [string, string][] = [];
     let status = "", statusCls = "";
+    if (b.svc && b.kind in SERVICES) {
+      const S = SERVICES[b.kind as ServiceKind];
+      const w = g.people.workersAt(b.id);
+      const fleet = g.services.fleet(b);
+      if (b.problem) { status = b.problem; statusCls = "bad"; }
+      else { status = "Working normally"; statusCls = "good"; }
+      if (S.svc !== "parks") rows.push(["Staff", `${w} / ${b.cap}`]);
+      if (S.vehicles) rows.push(["Vehicles", `${Math.min(b.busy ?? 0, fleet)} of ${fleet} out${fleet < S.vehicles ? ` <span class="muted">· ${S.vehicles} with full staff</span>` : ""}`]);
+      if (S.svc === "health") rows.push(["Patients", `${b.users ?? 0} / ${S.cap}`]);
+      if (S.svc === "school") rows.push([S.tier === 0 ? "Pupils" : "Students", `${b.users ?? 0} / ${S.cap}`]);
+      if (S.svc === "parks") rows.push(["Visitors", `${Math.round(b.visits)} <span class="muted">recently</span>`]);
+      if (S.svc !== "parks") {
+        const reach = g.services.reachOf(b).size;
+        rows.push(["Covers", `${reach} road${reach === 1 ? "" : "s"} <span class="muted">· ${Math.round(S.range)} s drive</span>`]);
+      }
+      rows.push(["Upkeep", `${formatMoney(S.upkeep)} / h`]);
+      const html = `<header><span class="svc-tag">${serviceIcon(b.kind)}</span>${T.name}</header>
+        <p class="muted small">${T.blurb}</p>
+        <p class="status ${statusCls}">${status}</p>
+        <dl class="facts">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
+        <button class="btn quiet danger demolish">Demolish</button>`;
+      if (this.setPanel(html)) this.bindDemolish(b);
+      return;
+    }
     if (!b.zone) {
       if (!this.setPanel(`<header>${T.name}</header><p class="muted">${T.blurb}</p><button class="btn quiet danger demolish">Demolish</button>`)) return;
       this.bindDemolish(b);
@@ -897,6 +954,16 @@ export class Hud {
     const next = b.level < 5 ? LEVEL_LV[b.level + 1] : null;
     const lvBar = `<span class="bar lv"><i style="width:${Math.max(3, b.lv)}%"></i>${next ? `<em style="left:${next}%"></em>` : ""}</span>`;
     rows.push(["Land value", `${lvBar}<span class="num">${Math.round(b.lv)}</span>`]);
+    if (g.services.active && b.built >= 1 && !b.abandoned) {
+      const cv = g.services.cov.get(b.id);
+      const have = (["health", "police", "fire", "garbage", "school", "parks"] as const).filter((k) => (cv?.[k] ?? 0) > 0);
+      const NAME = { health: "healthcare", police: "police", fire: "fire", garbage: "garbage", school: "school", parks: "park" };
+      const miss = (["garbage", "health", "fire", "police"] as const).filter((k) => !have.includes(k));
+      rows.push(["Services", have.length ? `${have.map((k) => NAME[k]).join(", ")}${miss.length ? ` <span class="bad">· no ${miss.map((k) => NAME[k]).join(", ")}</span>` : ""}` : `<span class="bad">None in reach</span>`]);
+      if (grp === "res" && (g.people.hhAt.get(b.id)?.length ?? 0) > 0) rows.push(["Happiness", `${Math.round(g.services.happiness(b) * 100)}%`]);
+      if ((b.garbage ?? 0) > 12) rows.push(["Garbage", stockBar(Math.min(6, Math.round((b.garbage ?? 0) / 20)), 6)]);
+      if ((b.crime ?? 0) > 22) rows.push(["Crime", stockBar(Math.min(6, Math.round((b.crime ?? 0) / 15)), 6)]);
+    }
     if (!g.linkedOutside(b)) rows.push(["Highway", `<span class="bad">Not connected</span>`]);
     const stars = Array.from({ length: 5 }, (_, i) => `<i class="${i < b.level ? "on" : ""}"></i>`).join("");
     const html = `<header><span class="zone-tag" style="background:${hex(Z.color)}">${Z.short}</span>${Z.name}</header>

@@ -21,6 +21,10 @@ export class Preview3D {
   private markerGeo = new THREE.RingGeometry(1.3, 2.1, 24).rotateX(-Math.PI / 2);
   private markerMat = new THREE.MeshBasicMaterial({ color: 0x1c1d20, depthTest: false, transparent: true, opacity: 0.9 });
   ghost: THREE.Mesh | null = null;
+  /** Shared geometry (building models) that clear() must not dispose. */
+  private keep = new Set<THREE.BufferGeometry>();
+  private modelOk = new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.82 });
+  private modelBad = new THREE.MeshLambertMaterial({ color: 0xe5484d, transparent: true, opacity: 0.6 });
 
   constructor() {
     for (const m of [...this.okMats, this.badMat]) m.mat.depthTest = false;
@@ -30,7 +34,7 @@ export class Preview3D {
     for (const o of this.items) {
       this.group.remove(o);
       const m = o as THREE.Mesh;
-      if (m.geometry && m.geometry !== this.markerGeo) m.geometry.dispose();
+      if (m.geometry && m.geometry !== this.markerGeo && !this.keep.has(m.geometry)) m.geometry.dispose();
     }
     this.items = [];
   }
@@ -100,12 +104,22 @@ export class Preview3D {
   }
 
   /** Flat footprint outline (buildings to be bulldozed or blocking). */
-  footprint(corners: V2[], color: number) {
+  footprint(corners: V2[], color: number, under = false) {
     const shape = new THREE.Shape(corners.map((p) => new THREE.Vector2(p.x, p.y)));
     const geo = new THREE.ShapeGeometry(shape).rotateX(Math.PI / 2);
-    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.5, depthTest: false, side: THREE.DoubleSide }));
-    m.position.y = 20;
-    this.add(m, 9);
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: under ? 0.3 : 0.5, depthTest: false, side: THREE.DoubleSide }));
+    // under a ghost model the footprint is a ground decal drawn first, so the model stays visible on top
+    m.position.y = under ? 0.15 : 20;
+    this.add(m, under ? 5 : 9);
+  }
+
+  /** A see-through building model where it would be placed. */
+  model(geo: THREE.BufferGeometry, m: THREE.Matrix4, ok: boolean) {
+    this.keep.add(geo);
+    const mesh = new THREE.Mesh(geo, ok ? this.modelOk : this.modelBad);
+    mesh.matrixAutoUpdate = false;
+    mesh.matrix.copy(m);
+    this.add(mesh, 6);
   }
 
   setGhost(mesh: THREE.Mesh | null) {

@@ -19,6 +19,9 @@ identity rotation. The vehicle models point their nose along glTF +Z, so a car p
 bay needs a 180° turn about the up axis relative to the node (or copy the node's transform and
 rotate the car by π).
 
+Service buildings (garbage … university) follow the same lot rules. The parks (`park`,
+`parklarge`) are all grass: no asphalt strip and no `park_N` nodes.
+
 | model | footprint w × d (m) | height (m) | tris | park empties |
 |---|---|---|---|---|
 | house | 12 × 15 | 5.7 | 342 | 1 |
@@ -33,6 +36,16 @@ rotate the car by π).
 | farm | 40 × 40 | 10.8 | 824 | 2 |
 | works | 36 × 32 | 23.2 | 566 | 4 |
 | foodplant | 32 × 30 | 9.0 | 962 | 4 |
+| garbage | 36 × 32 | 10.8 | 592 | 3 |
+| firestation | 26 × 24 | 16.1 | 678 | 3 |
+| police | 24 × 22 | 9.0 | 692 | 3 |
+| clinic | 26 × 24 | 7.4 | 534 | 3 |
+| hospital | 46 × 40 | 17.6 | 1422 | 5 |
+| school | 40 × 34 | 6.4 | 1030 | 4 |
+| highschool | 52 × 42 | 10.4 | 1368 | 5 |
+| university | 70 × 56 | 20.6 | 1756 | 6 |
+| park | 24 × 24 | 5.0 | 1094 | 0 |
+| parklarge | 48 × 48 | 5.5 | 1876 | 0 |
 
 ## Vehicles
 
@@ -40,8 +53,16 @@ Front at glTF +Z (Blender -Y), origin at the ground centre, wheels on y = 0. Sep
 material: `body` and `cargo` are pure white (#ffffff) for per-instance tinting, `glass` is
 #2b3440, `dark` (tyres, bumpers, chassis) is #30343a.
 
+Service vehicles (garbagetruck, firetruck, ambulance, policecar) have fixed colours and no `body`
+or `cargo` node, so nothing on them is tinted: `paint` (main colour), `trim` (stripes, white parts),
+`lights` (beacons / light bar), `ladder` (firetruck only), plus `glass` and `dark` as above.
+
 | model | W × L × H (m) | tris | nodes |
 |---|---|---|---|
 | car | 1.85 × 4.4 × 1.45 | 156 | `body`, `dark`, `glass` |
 | van | 2 × 5 × 2 | 164 | `body`, `dark`, `glass` |
 | truck | 2.5 × 8.5 × 3.2 | 228 | `body`, `cargo`, `dark`, `glass` |
+| garbagetruck | 2.5 × 8.5 × 3.2 | 224 | `dark`, `glass`, `lights`, `paint`, `trim` |
+| firetruck | 2.5 × 8.5 × 3.15 | 276 | `dark`, `glass`, `ladder`, `lights`, `paint`, `trim` |
+| ambulance | 2 × 5.505 × 2.62 | 256 | `dark`, `glass`, `lights`, `paint`, `trim` |
+| policecar | 1.86 × 4.6 × 1.6 | 180 | `dark`, `glass`, `lights`, `paint`, `trim` |

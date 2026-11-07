@@ -15,19 +15,22 @@ import { Preview3D } from "./render/preview3d";
 import { Roads3D } from "./render/roads3d";
 import { RoadsFar } from "./render/roadsFar";
 import { MapLabels } from "./ui/labels";
+import { MapIcons } from "./ui/mapIcons";
 import { Terrain3D } from "./render/terrain3d";
 import { Vehicles3D } from "./render/vehicles3d";
 import { View } from "./render/view";
 import { Saves } from "./game/saves";
+import { SERVICES, type ServiceId, type ServiceKind } from "./game/services";
 import type { Hud, Chip } from "./ui/hud";
 
-export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "bulldoze" | "zone" | "unlock";
+export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "bulldoze" | "zone" | "unlock" | "service";
 /** Zoning tool modes (CS2): fill one side of a street, paint with a brush, or drag a rectangle. */
 export type ZoneMode = "fill" | "brush" | "marquee";
 /** Road tool modes, as in CS2: the four drawing modes, a 3-click grid, and Replace (change type / reverse). */
 export type RoadMode = CurveMode | "grid" | "replace";
 export const ROAD_MODES: RoadMode[] = ["straight", "curve", "complex", "continuous", "grid", "replace"];
-export type OverlayId = "none" | "flow" | "zones" | "landvalue" | "level" | "problems";
+export type OverlayId = "none" | "flow" | "zones" | "landvalue" | "level" | "problems" | ServiceId;
+const SERVICE_VIEWS: OverlayId[] = ["garbage", "fire", "police", "health", "school", "parks"];
 
 export interface ToolState {
   tool: ToolId;
@@ -47,6 +50,7 @@ export interface ToolState {
   erase: boolean; // zoning tool removes zoning
   bdzLevel: number | null; // bulldozer elevation filter (null = all)
   reverse: boolean; // upgrade tool flips one-ways instead
+  service: ServiceKind; // service building being placed
 }
 
 interface PointerInfo { id: number; x: number; y: number; sx: number; sy: number; button: number; moved: boolean; t: number }
@@ -57,6 +61,8 @@ export class App {
   roads!: Roads3D;
   roadsFar!: RoadsFar;
   labels = new MapLabels();
+  icons = new MapIcons();
+  private iconT = 0;
   vehicles!: Vehicles3D;
   buildings3d!: Buildings3D;
   terrain3d!: Terrain3D;
@@ -66,6 +72,7 @@ export class App {
   st: ToolState = {
     tool: "inspect", roadType: "street", mode: "straight", level: 0, rbSize: 1, parallel: false, parOffset: null,
     snapOff: { geometry: false, guides: false, netSide: false }, snapLength: false, zone: "resLow", zoneMode: "fill", brush: 22, erase: false, bdzLevel: null, reverse: false,
+    service: "garbage",
   };
   uiHidden = false;
   overlay: OverlayId = "none";
@@ -97,6 +104,10 @@ export class App {
   private saveT = 0;
   private dirtyPreview = true;
   private shake = 0;
+  /** What a service building placed at the cursor would cover (seg -> level), keyed by where it would stand. */
+  private svcReach: { key: string; cov: Map<number, number> } | null = null;
+  private covShown = false;
+  private covT = 0;
 
   constructor(canvas: HTMLCanvasElement, private models: ModelSet) {
     this.view = new View(canvas);
@@ -171,6 +182,10 @@ export class App {
     if (!this.game.roadsUnlocked.has(this.st.roadType)) this.st.roadType = "street";
     if ((this.st.tool === "roundabout" && !this.game.featureUnlocked("roundabout"))) this.st.tool = "inspect";
     if (!this.game.zonesUnlocked.has(this.st.zone)) this.st.zone = "resLow";
+    if (this.st.tool === "service" && !this.game.serviceUnlocked(this.st.service)) this.st.tool = "inspect";
+    if (this.st.tool !== "service") this.svcReach = null;
+    this.covT = 1; // refresh the coverage view now
+    if (this.buildings3d) this.applyTint();
     this.zones3d?.setGrid(this.st.tool === "zone" || this.overlay === "zones");
     if (this.st.tool !== "zone") { this.zoneStroke = null; this.zones3d?.highlight([], null); }
     if (this.st.tool !== "inspect") { this.selected = null; this.hud?.closePanels(); }
@@ -185,15 +200,47 @@ export class App {
   setOverlay(o: OverlayId) {
     this.overlay = this.overlay === o ? "none" : o;
     this.roads.flowMode = this.overlay === "flow";
+    this.covShown = false;
+    this.covT = 1;
     this.zones3d?.setGrid(this.st.tool === "zone" || this.overlay === "zones");
     this.applyTint();
     this.hud?.refresh();
+  }
+
+  /** The service whose coverage is on show: its info view, or the one being placed (CS2 shows it while placing). */
+  coverageView(): ServiceId | null {
+    if (SERVICE_VIEWS.includes(this.overlay)) return this.overlay as ServiceId;
+    if (this.overlay === "none" && this.st.tool === "service") return SERVICES[this.st.service].svc;
+    return null;
+  }
+
+  /** Roads tinted by coverage (plus what the building at the cursor would add). */
+  private updateCoverage() {
+    const svc = this.coverageView();
+    if (!svc || svc === "parks") {
+      if (this.covShown) { this.roads.coverage(null); this.roads.flowMode = this.overlay === "flow"; this.covShown = false; }
+      return;
+    }
+    const cov = this.game.services.segCoverage(svc);
+    if (this.svcReach) for (const [s, l] of this.svcReach.cov) if (l > (cov.get(s) ?? 0)) cov.set(s, l);
+    this.roads.coverage(cov);
+    this.covShown = true;
   }
 
   /** Building colours for overlays. */
   applyTint() {
     const g = this.game;
     const mode = this.overlay;
+    const cv = this.coverageView();
+    if (cv) {
+      // coverage: buildings in reach go green (darker = better served), the rest grey; the service's own buildings stand out
+      this.buildings3d.tint((b) => {
+        if (b.svc) return SERVICES[b.kind as ServiceKind]?.svc === cv ? 0x2f86e0 : 0xc9c9c9;
+        const c = g.services.cov.get(b.id)?.[cv] ?? 0;
+        return c <= 0 ? 0xc4c4c4 : covRamp(c);
+      });
+      return;
+    }
     if (mode === "none" || mode === "flow") { this.buildings3d.tint(null); return; }
     this.buildings3d.tint((b) => {
       if (!b.zone) return 0xb5b5b5;
@@ -549,6 +596,19 @@ export class App {
     const g = this.game;
     const t = this.st.tool;
     const c = this.cursor;
+    if (t === "service") {
+      const k = this.st.service;
+      const pl = g.servicePlan(k, c);
+      if (!pl) { this.reject("Place it beside a street"); return; }
+      if (!pl.ok) { this.reject(pl.reason ?? "Can't build here"); return; }
+      const b = g.placeService(k, c);
+      if (!b) { this.reject("Can't build here"); return; }
+      this.hud?.sound("build");
+      this.hud?.toast(`${BUILDING_TYPES[k].name} built for ${formatMoney(pl.cost)}`);
+      this.covT = 1;
+      this.dirtyPreview = true;
+      return;
+    }
     if (t === "zone") {
       if (this.st.zoneMode !== "fill") return;
       const cells = this.fillCells(c, this.st.erase);
@@ -937,6 +997,36 @@ export class App {
         chips.push(why ? { text: why, kind: "error" } : { text: "Buy this tile", kind: "info" });
         chips.push({ text: formatMoney(g.nextTilePrice), kind: g.nextTilePrice > g.money ? "error" : "cost" });
       }
+    } else if (t === "service") {
+      const k = this.st.service;
+      const pl = g.servicePlan(k, c);
+      const T = BUILDING_TYPES[k];
+      chips.push({ text: T.name, kind: "info" });
+      if (!pl) {
+        chips.push({ text: "Place it beside a street", kind: "info" });
+        if (this.svcReach) { this.svcReach = null; this.covT = 1; }
+      } else {
+        const corners = rectCorners(pl.c, T.w / 2, T.d / 2, pl.rot);
+        const gh = this.buildings3d.ghost(k, pl.c, pl.rot, pl.side);
+        if (gh) pv.model(gh.geo, gh.m, pl.ok);
+        pv.footprint(corners, pl.ok ? 0x34c25a : 0xe5484d, !!gh);
+        for (const id of pl.clears ?? []) {
+          const o = g.buildings.byId.get(id);
+          if (o) pv.footprint(rectCorners(o.c, o.hw, o.hd, o.rot), 0xf2a33a, !!gh);
+        }
+        if (!pl.ok) chips.push({ text: pl.reason ?? "Can't build here", kind: "error" });
+        else {
+          chips.push({ text: formatMoney(pl.cost), kind: pl.cost > g.money ? "error" : "cost" });
+          chips.push({ text: `${formatMoney(SERVICES[k].upkeep)}/h upkeep`, kind: "info" });
+          const n = pl.clears?.length ?? 0;
+          if (n) chips.push({ text: `${n} building${n === 1 ? "" : "s"} replaced`, kind: "error" });
+        }
+        const key = pl.access ? `${pl.access.seg}:${Math.round(pl.access.s / 8)}:${g.net.version}` : "";
+        if (!this.svcReach || this.svcReach.key !== key) {
+          this.svcReach = { key, cov: pl.access ? g.services.previewReach(k, pl.access) : new Map() };
+          this.covT = 1;
+        }
+      }
     } else if (t === "inspect") {
       const b = g.buildings.at(c);
       if (b) chips.push({ text: b.zone ? `${ZONES[b.zone].short} · level ${b.level}` : BUILDING_TYPES[b.kind].name, kind: "info" });
@@ -983,8 +1073,11 @@ export class App {
       this.hudT = 0;
       this.hud?.tick();
       this.buildings3d.updateConstruction();
-      if (this.overlay !== "none" && this.overlay !== "flow") this.applyTint();
+      if ((this.overlay !== "none" && this.overlay !== "flow") || this.st.tool === "service") this.applyTint();
+      else if (this.covShown) this.applyTint();
     }
+    this.covT += dt;
+    if (this.covT > 0.5) { this.covT = 0; this.updateCoverage(); }
     this.saveT += dt;
     if (this.saveT > 60) { this.saveT = 0; this.saves.autosave(g); }
     if (this.shake > 0) {
@@ -998,6 +1091,9 @@ export class App {
     this.terrain3d.update(this.view);
     this.roadsFar.update(this.view.mpp, this.view.w, this.view.h);
     this.labels.update(this.view);
+    this.iconT += dt;
+    if (this.iconT > 0.4) { this.iconT = 0; this.icons.set(this.uiHidden ? [] : g.buildings.list, this.view); }
+    else this.icons.update(this.view);
     this.hud?.compassAngle(this.view.rot);
     this.view.render();
     requestAnimationFrame(this.frame);
@@ -1026,6 +1122,13 @@ const GATEWAY_LABEL: Record<string, string> = {
 };
 
 /** red -> amber -> green ramp for 0..1 */
+/** Coverage colour: pale to deep green. */
+function covRamp(v: number): number {
+  const t = Math.max(0, Math.min(1, (v - 0.4) / 0.6));
+  const r = Math.round(0xb4 + (0x2e - 0xb4) * t), gg = Math.round(0xe0 + (0xa6 - 0xe0) * t), b = Math.round(0x9c + (0x4c - 0x9c) * t);
+  return (r << 16) | (gg << 8) | b;
+}
+
 export function ramp(v: number): number {
   const c = new THREE.Color();
   const t = Math.max(0, Math.min(1, v));

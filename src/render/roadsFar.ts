@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
-import { ROAD_TYPES } from "../config";
+import { ROAD_TYPES, isHighway, type RoadType } from "../config";
 import type { RoadNetwork } from "../roads/network";
 import { PAL } from "./palette";
 
@@ -13,18 +13,19 @@ import { PAL } from "./palette";
  */
 export class RoadsFar {
   readonly group = new THREE.Group();
-  private tiers: { mats: LineMaterial[]; lines: LineSegments2[]; px: number; pick: (lanes: number, access: boolean) => boolean }[];
+  private tiers: { mats: LineMaterial[]; lines: LineSegments2[]; px: number; fill: number; casing: number; pick: (t: RoadType) => boolean }[];
   private dirty = true;
 
   constructor(private net: RoadNetwork) {
     this.group.renderOrder = 5;
-    // major roads (highways, 3+ lane carriageways) and the rest
+    // town roads, boulevards, and highways (widest, in highway grey)
     this.tiers = [
-      { px: 2.2, pick: (_l, access) => access, mats: [], lines: [] },
-      { px: 3.6, pick: (_l, access) => !access, mats: [], lines: [] },
+      { px: 2.2, fill: PAL.road, casing: PAL.roadEdge, pick: (t) => t.allowsAccess, mats: [], lines: [] },
+      { px: 3.6, fill: PAL.road, casing: PAL.roadEdge, pick: (t) => !t.allowsAccess && !isHighway(t), mats: [], lines: [] },
+      { px: 3.6, fill: PAL.hwRoad, casing: PAL.hwEdge, pick: isHighway, mats: [], lines: [] },
     ];
     for (const t of this.tiers) {
-      for (const [k, color] of [[0, PAL.roadEdge], [1, PAL.road]] as const) {
+      for (const [k, color] of [[0, t.casing], [1, t.fill]] as const) {
         const mat = new LineMaterial({ color, linewidth: k === 0 ? t.px + 1.6 : t.px, worldUnits: false, transparent: true, depthTest: false, depthWrite: false });
         const line = new LineSegments2(new LineSegmentsGeometry(), mat);
         line.renderOrder = 10 + k * 2 + (t.px > 3 ? 1 : 0);
@@ -56,7 +57,7 @@ export class RoadsFar {
       const pos: number[] = [];
       for (const s of this.net.segs.values()) {
         const T = ROAD_TYPES[s.type];
-        if (!t.pick(T.fwd + T.bwd, T.allowsAccess)) continue;
+        if (!t.pick(T)) continue;
         const g = this.net.segGeom.get(s.id);
         if (!g) continue;
         const pts = g.center.pts;

@@ -16,6 +16,8 @@ Conventions (1 unit = 1 m, Blender Z up)
     local +Y pointing the way a parked car's nose faces (cars park nose-in, so +Y, toward the building).
     Vehicles: front at -Y, origin at the ground centre, wheels on z = 0, one mesh object per material:
     body / glass / dark (+ cargo for the truck). body and cargo are pure white so the engine can tint them.
+    Service vehicles keep fixed colours instead: paint / trim / lights (+ ladder) / glass / dark, no body/cargo.
+    Parks (park, parklarge) are grass lots with no asphalt strip and no park_N empties.
 """
 import math
 import os
@@ -88,6 +90,21 @@ def palette():
         # farm
         "barn_roof": "#f3f4f1", "farm_accent": "#4caf50", "silo": "#f8f8f5", "soil": "#cbb68e",
         "crop_g1": "#8ac843", "crop_g2": "#6fb23a", "crop_w1": "#e8cc6c", "crop_w2": "#d4b14f",
+        # services: waste (sage + green), fire (brick red + white), police (navy + gold), health (white + red
+        # cross, mint accents), education (cream + orange / terracotta), parks (grass, paths, trees, water)
+        "gb_wall": "#a9b2ac", "gb_roof": "#4f9a6c", "gb_cap": "#37804f", "gb_fence": "#7b8681",
+        "gb_skip_g": "#3f9a4e", "gb_light": "#cfe3d6", "gb_skip_b": "#3f7fc8", "gb_rubbish": "#6e6656",
+        "fire_wall": "#c9463c", "fire_roof": "#b0382f", "fire_trim": "#f4f2ee", "fire_door": "#dfe2e6",
+        "pol_wall": "#e6ebf2", "pol_roof": "#2b4a8a", "pol_band": "#4a7fd4", "pol_white": "#f6f7f9",
+        "pol_star": "#f2c230",
+        "hc_wall": "#f6f7f5", "hc_roof": "#e1e5e8", "hc_glass": "#bfe6df", "hc_accent": "#4fb7a6",
+        "hc_red": "#e0453a", "hc_white": "#ffffff", "heli": "#4b525b",
+        "sch_wall": "#f3e7c9", "sch_roof": "#f0a43a", "sch_roof2": "#e58e2e", "sch_trim": "#d9762a",
+        "sch_glass": "#d9eef5", "court": "#4f8fd0", "play": "#e9785a", "sand": "#ead49c", "wood": "#a97c50",
+        "track": "#d0654a",
+        "uni_wall": "#eadcbc", "uni_roof": "#c8683f", "dome": "#5fb39e", "column": "#f7f3ea",
+        "grass": "#a6d880", "path": "#ece4cd", "leaf": "#4f9f45", "leaf2": "#68b552", "trunk": "#8a6a4a",
+        "water": "#6fbbe3", "stone": "#d6d8d4", "pav_roof": "#d8654f",
     }.items():
         P[k] = mat(k, v)
     return P
@@ -616,6 +633,528 @@ def b_foodplant(M, P):
     return L
 
 
+# ------------------------------------------------------------------ service helpers
+
+def revolve(M, cx, cy, prof, m, n=8, rot=0.0):
+    """Closed solid of revolution about (cx, cy): prof = [(r, z), ...] bottom to top, r = 0 is a pole."""
+    bm, idx = M.bm, M.mi(m)
+    rings = []
+    for r, z in prof:
+        if r <= 1e-6:
+            rings.append([bm.verts.new((cx, cy, z))])
+        else:
+            rings.append([bm.verts.new((cx + r * math.cos(rot + 2 * math.pi * i / n),
+                                        cy + r * math.sin(rot + 2 * math.pi * i / n), z)) for i in range(n)])
+    fs = []
+    if len(rings[0]) > 1:
+        fs.append(bm.faces.new(rings[0][::-1]))
+    if len(rings[-1]) > 1:
+        fs.append(bm.faces.new(rings[-1]))
+    for a, b in zip(rings, rings[1:]):
+        for i in range(n):
+            j = (i + 1) % n
+            if len(a) == 1:
+                fs.append(bm.faces.new((a[0], b[i], b[j])))
+            elif len(b) == 1:
+                fs.append(bm.faces.new((a[i], a[j], b[0])))
+            else:
+                fs.append(bm.faces.new((a[i], a[j], b[j], b[i])))
+    for f in fs:
+        f.material_index = idx
+    bmesh.ops.recalc_face_normals(bm, faces=fs)
+    return fs
+
+
+def ribbon(M, pts, wd, z0, z1, m, closed=False):
+    """Flat strip (footpath) of width wd along a 2D polyline, mitred so the segments meet without gaps."""
+    n, hw = len(pts), wd / 2
+    V = [Vector(p) for p in pts]
+    left, right = [], []
+    for i in range(n):
+        p = V[i]
+        a = V[i - 1] if (closed or i > 0) else None
+        b = V[(i + 1) % n] if (closed or i < n - 1) else None
+        d0 = (p - a).normalized() if a is not None else (b - p).normalized()
+        d1 = (b - p).normalized() if b is not None else d0
+        t = (d0 + d1).normalized()
+        nrm = Vector((-t.y, t.x))
+        s = hw / max(nrm.dot(Vector((-d1.y, d1.x))), 0.35)
+        left.append(p + nrm * s)
+        right.append(p - nrm * s)
+    for i in (range(n) if closed else range(n - 1)):
+        j = (i + 1) % n
+        q = [right[i], right[j], left[j], left[i]]
+        M.loft([(v.x, v.y, z0) for v in q], [(v.x, v.y, z1) for v in q], m)
+
+
+def poly_prism(M, pts, z0, z1, m):
+    """Prism over any simple 2D polygon (pond, star, track)."""
+    return M.loft([(x, y, z0) for x, y in pts], [(x, y, z1) for x, y in pts], m)
+
+
+def star_pts(cx, cy, ro, ri, k=5):
+    return [(cx + (ro if i % 2 == 0 else ri) * math.cos(math.pi / 2 + math.pi * i / k),
+             cy + (ro if i % 2 == 0 else ri) * math.sin(math.pi / 2 + math.pi * i / k)) for i in range(2 * k)]
+
+
+def stadium_pts(cx, cy, r, half, n=8):
+    """Running-track outline: two semicircles of radius r joined by straights, long axis along Y."""
+    top = [(cx + r * math.cos(math.pi * i / n), cy + half + r * math.sin(math.pi * i / n)) for i in range(n + 1)]
+    bot = [(cx - r * math.cos(math.pi * i / n), cy - half - r * math.sin(math.pi * i / n)) for i in range(n + 1)]
+    return top + bot
+
+
+def cross_sign(M, cx, cy, s, arm, z0, z1, m):
+    """Medical cross, s across, arms arm wide (3 non-overlapping boxes)."""
+    box(M, cx - arm / 2, cx + arm / 2, cy - s / 2, cy + s / 2, z0, z1, m)
+    box(M, cx - s / 2, cx - arm / 2, cy - arm / 2, cy + arm / 2, z0, z1, m)
+    box(M, cx + arm / 2, cx + s / 2, cy - arm / 2, cy + arm / 2, z0, z1, m)
+
+
+def tree(M, P, x, y, s=1.0, alt=False):
+    """Low-poly tree: a thin trunk under a faceted round canopy."""
+    cyl(M, x, y, 0.22 * s, PAD_H, 2.0 * s, P["trunk"], n=5)
+    r, z = 1.9 * s, 1.5 * s
+    revolve(M, x, y, [(0, z), (0.8 * r, z + 0.45 * r), (r, z + 1.0 * r), (0.72 * r, z + 1.55 * r), (0, z + 1.85 * r)],
+            P["leaf2" if alt else "leaf"], n=7, rot=(x * 0.37 + y * 0.61) % 1.0)
+
+
+def bench(M, P, x, y, ang):
+    """Park bench centred at (x, y), seat running along angle ang, backrest on the far side from ang+90deg."""
+    u = Vector((math.cos(ang), math.sin(ang)))
+    nv = Vector((-u.y, u.x))
+    c = Vector((x, y))
+    bar(M, c - u * 0.8, c + u * 0.8, 0.55, 0.38, 0.48, P["wood"])
+    b = c - nv * 0.3
+    bar(M, b - u * 0.8, b + u * 0.8, 0.1, 0.48, 0.9, P["wood"])
+    bar(M, c - u * 0.6, c + u * 0.6, 0.35, PAD_H, 0.38, P["ind_dark"])
+
+
+def fountain(M, P, x, y, r=2.2):
+    z = PAD_H
+    cyl(M, x, y, r, z, z + 0.55, P["stone"], n=14)
+    cyl(M, x, y, r - 0.35, z + 0.4, z + 0.58, P["water"], n=14)
+    cyl(M, x, y, 0.3, z + 0.58, z + 1.4, P["stone"], n=8)
+    cyl(M, x, y, 0.8, z + 1.4, z + 1.6, P["stone"], n=10)
+    cyl(M, x, y, 0.55, z + 1.6, z + 1.65, P["water"], n=10)
+
+
+def skip_bin(M, P, cx, cy, w, l, h, m):
+    """Open waste skip: tapered steel box with dark rubbish showing inside the rim."""
+    taper(M, (cx - w / 2 + 0.3, cx + w / 2 - 0.3, cy - l / 2 + 0.6, cy + l / 2 - 0.6),
+          (cx - w / 2, cx + w / 2, cy - l / 2, cy + l / 2), PAD_H, h, m)
+    box(M, cx - w / 2 + 0.28, cx + w / 2 - 0.28, cy - l / 2 + 0.28, cy + l / 2 - 0.28, h - 0.3, h + 0.03,
+        P["gb_rubbish"])
+
+
+def green_lot(M, P, w, d):
+    """Park lot: grass over the whole footprint, no asphalt strip and no bays."""
+    L = Lot(w, d)
+    box(M, -w / 2, w / 2, -d / 2, d / 2, 0, PAD_H, P["grass"])
+    return L
+
+
+# ------------------------------------------------------------------ service buildings
+
+def b_garbage(M, P):
+    L = lot(M, P, 36, 32, bay_row(3, -6.25))
+    wall, roof, cap, dark = P["gb_wall"], P["gb_roof"], P["gb_cap"], P["ind_dark"]
+    # transfer hall: tall shed, low gable along Y, green ridge cap and eaves band, three roller doors
+    x0, x1, y0, y1, h = -16.5, 4.0, L.y0, L.y1 - 0.5, 8.0
+    band(M, x0, x1, y0, y1, 6.3, 7.0, cap)
+    box(M, x0, x1, y0, y1, 0, h, wall)
+    gable(M, x0, x1, y0, y1, h, h + 2.6, "y", roof, wall, oh_u=(0.5, 0.5), oh_a=(0.5, 0.5))
+    xm = (x0 + x1) / 2
+    box(M, xm - 0.32, xm + 0.32, y0 - 0.55, y1 + 0.55, h + 2.45, h + 2.75, cap, bevel=0.05)
+    def zt(u):   # top of the roof shell above u
+        return h + 2.6 * (1.0 - abs(u - xm) / (xm - x0))
+    for ua, ub in ((x0 + 2.0, x0 + 3.4), (x0 + 6.0, x0 + 7.4)):   # rooflight strips laid on both slopes
+        for sgn in (1, -1):
+            us = [xm + sgn * (u - xm) for u in (ua, ub)]
+            q = [(us[0], y0 + 1.5), (us[1], y0 + 1.5), (us[1], y1 - 1.5), (us[0], y1 - 1.5)]
+            M.loft([(u, y, zt(u) + 0.01) for u, y in q], [(u, y, zt(u) + 0.09) for u, y in q], P["gb_light"])
+    for dx in (-13.0, -6.25, 0.5):
+        box(M, dx - 2.3, dx + 2.3, y0 - 0.08, y0, 0, 5.4, dark)
+        box(M, dx - 2.6, dx + 2.6, y0 - 0.3, y0, 5.4, 5.8, cap)
+    # fenced yard with skips and a roll-off container
+    yx0, yx1, yy0, yy1 = 5.6, 17.4, L.y0 - 1.0, L.y1 + 0.6
+    box(M, yx0, yx1, yy0, yy1, PAD_H, PAD_H + 0.02, P["asphalt"])
+    fz, ft, fm = 1.9, 0.15, P["gb_fence"]
+    box(M, yx0, yx1, yy1 - ft, yy1, 0, fz, fm)
+    box(M, yx0, yx0 + ft, yy0, yy1 - ft, 0, fz, fm)
+    box(M, yx1 - ft, yx1, yy0, yy1 - ft, 0, fz, fm)
+    box(M, yx0 + ft, 9.6, yy0, yy0 + ft, 0, fz, fm)
+    box(M, 14.2, yx1 - ft, yy0, yy0 + ft, 0, fz, fm)
+    for cx, m in ((8.0, P["gb_skip_g"]), (11.1, P["ind_yellow"]), (14.2, P["gb_skip_b"])):
+        skip_bin(M, P, cx, 11.6, 2.5, 4.6, 1.7, m)
+    skip_bin(M, P, 14.9, 2.6, 2.7, 6.6, 2.2, P["gb_skip_g"])
+    skip_bin(M, P, 9.0, 3.6, 2.5, 4.2, 1.7, P["ind_yellow"])
+    # gatehouse with a weighbridge plate in front of it
+    flat_block(M, yx0 + 0.3, yx0 + 3.0, yy0 + 0.6, yy0 + 3.2, 2.8, wall, cap)
+    box(M, 9.9, 13.9, yy0 + 1.0, yy0 + 7.0, PAD_H, PAD_H + 0.1, P["ind_steel"])
+    return L
+
+
+def b_firestation(M, P):
+    bx = [-8.6, -5.0, -1.4]
+    L = lot(M, P, 26, 24, bx)
+    wall, roof, trim, door = P["fire_wall"], P["fire_roof"], P["fire_trim"], P["fire_door"]
+    # apparatus hall: three big doors on the apron, white lane stripes on the roof
+    x0, x1, y0, y1, h = -11.5, 1.6, L.y0, 7.0, 6.2
+    box(M, x0, x1, L.yf + PARK_DEPTH, y0, PAD_H, PAD_H + 0.02, P["asphalt"])
+    band(M, x0, x1, y0, y1, 5.2, 5.6, trim)
+    top = flat_block(M, x0, x1, y0, y1, h, wall, roof, parapet=trim)
+    for cx in bx:
+        box(M, cx - 1.6, cx + 1.6, y0 - 0.08, y0, 0, 4.4, door)
+        box(M, cx - 0.55, cx + 0.55, y0 + 0.8, y1 - 0.8, top, top + 0.12, trim)
+    # hose / training tower in the back-left corner
+    tx0, tx1, ty0, ty1, th = -11.5, -7.3, y1, L.y1, 15.0
+    for z in (8.2, 11.4):
+        band(M, tx0, tx1, ty0, ty1, z, z + 0.9, trim)
+    ttop = flat_block(M, tx0, tx1, ty0, ty1, th, wall, roof, parapet=trim)
+    box(M, tx0 + 1.0, tx1 - 1.0, ty0 + 1.0, ty1 - 1.0, ttop, ttop + 0.9, trim)
+    # crew quarters: two storeys with window bands
+    qx0, qx1, qy0, qy1 = x1, 11.5, L.y0 + 1.5, L.y1
+    for z in (1.0, 4.4):
+        band(M, qx0, qx1, qy0, qy1, z, z + 1.2, P["com_glass"])
+    qtop = flat_block(M, qx0, qx1, qy0, qy1, 7.0, wall, roof, parapet=trim)
+    ac_unit(M, 8.5, qy1 - 2.5, qtop, P)
+    box(M, 4.5, 8.5, qy0 - 1.3, qy0, 2.8, 3.05, trim, bevel=0.04)
+    return L
+
+
+def b_police(M, P):
+    L = lot(M, P, 24, 22, bay_row(3, -4.5))
+    wall, roof, bnd, white = P["pol_wall"], P["pol_roof"], P["pol_band"], P["pol_white"]
+    # main block: two storeys, navy roof with a white badge and a gold star
+    x0, x1, y0, y1 = -11.0, 3.5, L.y0, 6.4
+    for z in (1.0, 4.3):
+        band(M, x0, x1, y0, y1, z, z + 1.2, bnd)
+    top = flat_block(M, x0, x1, y0, y1, 7.0, wall, roof, parapet=white)
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    cyl(M, cx, cy, 3.2, top, top + 0.1, white, n=20)
+    poly_prism(M, star_pts(cx, cy, 2.7, 1.1), top + 0.1, top + 0.22, P["pol_star"])
+    box(M, -7.0, -2.0, y0 - 1.5, y0, 2.9, 3.15, roof, bevel=0.04)
+    box(M, -6.0, -3.0, y0 - 0.06, y0, 0.3, 2.6, P["com_glass"])
+    # lower back wing
+    flat_block(M, x0, -3.0, y1, L.y1, 4.0, wall, roof, parapet=white)
+    # walled vehicle yard on the right
+    yx0, yx1, yy0, yy1 = 4.6, 11.2, -1.6, L.y1 + 0.4
+    box(M, yx0, yx1, yy0, yy1, PAD_H, PAD_H + 0.02, P["asphalt"])
+    wz, wt = 2.2, 0.3
+    box(M, yx0, yx1, yy1 - wt, yy1, 0, wz, wall)
+    box(M, yx0, yx0 + wt, yy0, yy1 - wt, 0, wz, wall)
+    box(M, yx1 - wt, yx1, yy0, yy1 - wt, 0, wz, wall)
+    box(M, yx0 + wt, 6.4, yy0, yy0 + wt, 0, wz, wall)
+    box(M, 10.0, yx1 - wt, yy0, yy0 + wt, 0, wz, wall)
+    frame(M, yx0, yx1, yy0, yy1, wz, wz + 0.15, wt, bnd)
+    box(M, yx0 + wt, yx1 - wt, yy1 - 4.0, yy1 - wt, 3.0, 3.2, roof, bevel=0.04)   # car port
+    # flagpole in front of the yard
+    fx, fy = 8.2, -3.6
+    cyl(M, fx, fy, 0.6, 0, 0.3, white, n=8)
+    cyl(M, fx, fy, 0.09, 0.3, 9.0, P["ind_steel"], n=6)
+    box(M, fx + 0.09, fx + 1.9, fy - 0.04, fy + 0.04, 7.6, 8.8, roof)
+    return L
+
+
+def b_clinic(M, P):
+    L = lot(M, P, 26, 24, bay_row(3, 7.4))
+    wall, roof, glass, acc = P["hc_wall"], P["hc_roof"], P["hc_glass"], P["hc_accent"]
+    # main block: two storeys, white roof sign with a red cross
+    x0, x1, y0, y1 = -11.0, 6.5, L.y0 + 1.5, L.y1
+    for z in (1.0, 4.3):
+        band(M, x0, x1, y0, y1, z, z + 1.2, glass)
+    top = flat_block(M, x0, x1, y0, y1, 6.8, wall, roof, parapet=wall)
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    box(M, cx - 4.4, cx + 4.4, cy - 4.4, cy + 4.4, top, top + 0.08, P["hc_white"])
+    cross_sign(M, cx, cy, 7.0, 2.4, top + 0.08, top + 0.2, P["hc_red"])
+    # one-storey ambulance wing with a mint roof, drive-through canopy in front of it
+    wx0, wx1, wy0 = x1, 11.0, y0 + 2.0
+    box(M, wx0 + 0.6, wx1 - 0.6, wy0 - 0.06, wy0, 0.0, 3.0, glass)
+    flat_block(M, wx0, wx1, wy0, y1, 4.0, wall, acc)
+    yp = L.yf + PARK_DEPTH
+    box(M, 3.4, 11.6, yp, wy0, PAD_H, PAD_H + 0.02, P["asphalt"])
+    box(M, 3.4, 11.6, yp + 0.3, y0, 3.5, 3.8, acc, bevel=0.05)
+    for px in (3.9, 11.1):
+        box(M, px - 0.15, px + 0.15, yp + 0.45, yp + 0.75, 0, 3.5, wall)
+    box(M, 3.8, 6.0, y0 - 0.06, y0, 0.3, 2.8, glass)
+    # small garden strip on the left
+    box(M, x0, 1.8, yp + 0.3, y0 - 0.4, PAD_H, PAD_H + 0.03, P["grass"])
+    tree(M, P, -8.0, (yp + y0) / 2, 0.75)
+    tree(M, P, -2.0, (yp + y0) / 2, 0.7, alt=True)
+    return L
+
+
+def b_hospital(M, P):
+    L = lot(M, P, 46, 40, bay_row(5, -12.5))
+    wall, roof, glass, acc = P["hc_wall"], P["hc_roof"], P["hc_glass"], P["hc_accent"]
+    st = 3.4
+    # central ward tower with the helipad
+    tx0, tx1, ty0, ty1 = -8.0, 8.0, L.y0 + 7.5, L.y1 - 5.0
+    for s in range(5):
+        band(M, tx0, tx1, ty0, ty1, s * st + 1.0, s * st + 2.3, glass)
+    ttop = flat_block(M, tx0, tx1, ty0, ty1, 5 * st, wall, roof, parapet=wall)
+    hx, hy = 0.0, (ty0 + ty1) / 2
+    cyl(M, hx, hy, 6.4, ttop, ttop + 0.1, P["heli"], n=18)
+    cyl(M, hx, hy, 5.3, ttop + 0.1, ttop + 0.13, P["hc_white"], n=18)
+    cyl(M, hx, hy, 4.9, ttop + 0.13, ttop + 0.16, P["heli"], n=18)
+    box(M, hx - 1.8, hx - 1.0, hy - 2.4, hy + 2.4, ttop + 0.16, ttop + 0.2, P["hc_white"])
+    box(M, hx + 1.0, hx + 1.8, hy - 2.4, hy + 2.4, ttop + 0.16, ttop + 0.2, P["hc_white"])
+    box(M, hx - 1.0, hx + 1.0, hy - 0.4, hy + 0.4, ttop + 0.16, ttop + 0.2, P["hc_white"])
+    # left wing: three storeys, big cross on the roof
+    lx0, lx1, ly0, ly1 = -21.5, tx0, L.y0 + 3.0, L.y1 - 6.5
+    for s in range(3):
+        band(M, lx0, lx1, ly0, ly1, s * st + 1.0, s * st + 2.3, glass)
+    ltop = flat_block(M, lx0, lx1, ly0, ly1, 3 * st, wall, roof, parapet=wall)
+    cx, cy = (lx0 + lx1) / 2, (ly0 + ly1) / 2
+    box(M, cx - 5.2, cx + 5.2, cy - 5.2, cy + 5.2, ltop, ltop + 0.08, P["hc_white"])
+    cross_sign(M, cx, cy, 8.4, 2.8, ltop + 0.08, ltop + 0.2, P["hc_red"])
+    # right wing: two storeys, set back, plant on the roof
+    rx0, rx1, ry0, ry1 = tx1, 21.5, L.y0 + 9.0, L.y1
+    for s in range(2):
+        band(M, rx0, rx1, ry0, ry1, s * st + 1.0, s * st + 2.3, glass)
+    rtop = flat_block(M, rx0, rx1, ry0, ry1, 2 * st, wall, acc, parapet=wall)
+    for ax, ay in ((11.5, ry0 + 4.0), (15.5, ry0 + 4.0), (11.5, ry1 - 4.0), (15.5, ry1 - 4.0)):
+        ac_unit(M, ax, ay, rtop, P, rot=True)
+    box(M, 18.0, 20.5, ry0 + 3.0, ry1 - 3.0, rtop, rtop + 1.8, wall, bevel=0.06)
+    # glazed entrance block with the emergency canopy and drop-off
+    ex0, ex1, ey0, ey1 = -4.5, 6.0, L.y0, ty0
+    box(M, ex0 + 0.8, ex1 - 0.8, ey0 - 0.06, ey0, 0.3, 3.0, glass)
+    flat_block(M, ex0, ex1, ey0, ey1, 4.4, wall, acc)
+    yp = L.yf + PARK_DEPTH
+    box(M, ex0 - 1.0, 21.5, yp, ey0, PAD_H, PAD_H + 0.02, P["asphalt"])
+    box(M, ex1, 13.5, yp + 0.3, ey0 + 3.0, 3.6, 3.9, acc, bevel=0.05)
+    for px in (8.0, 13.0):
+        box(M, px - 0.15, px + 0.15, yp + 0.45, yp + 0.75, 0, 3.6, wall)
+    # garden in front of the right wing
+    box(M, 14.5, 21.5, yp + 1.5, ry0 - 0.5, PAD_H, PAD_H + 0.03, P["grass"])
+    tree(M, P, 17.0, ry0 - 3.0, 0.8)
+    tree(M, P, 20.0, yp + 3.0, 0.7, alt=True)
+    return L
+
+
+def b_school(M, P):
+    L = lot(M, P, 40, 34, bay_row(4, -8.0))
+    wall, roof, glass, trim = P["sch_wall"], P["sch_roof"], P["sch_glass"], P["sch_trim"]
+    # L-shaped single-storey building: front wing along X, side wing back along Y
+    fx0, fx1, fy0, fy1 = -18.0, 5.0, L.y0, L.y0 + 7.0
+    sx0, sx1, sy1 = -18.0, -10.5, L.y1
+    band(M, fx0, fx1, fy0, fy1, 1.0, 2.6, glass)
+    band(M, sx0, sx1, fy1, sy1, 1.0, 2.6, glass)
+    box(M, fx0, fx1, fy0, fy1, 0, 4.2, wall)
+    gable(M, fx0, fx1, fy0, fy1, 4.2, 6.4, "x", roof, wall)
+    box(M, sx0, sx1, fy1, sy1, 0, 4.2, wall)
+    gable(M, sx0, sx1, fy1, sy1, 4.2, 6.2, "y", roof, wall, oh_a=(0.0, 0.4))
+    box(M, -6.0, -1.0, fy0 - 1.4, fy0, 2.9, 3.15, trim, bevel=0.04)
+    box(M, -5.0, -2.0, fy0 - 0.06, fy0, 0.3, 2.6, glass)
+    # sports court in the yard
+    cx0, cx1, cy0, cy1 = -8.0, 17.0, 2.0, 15.0
+    zc = PAD_H + 0.04
+    box(M, cx0, cx1, cy0, cy1, PAD_H, zc, P["court"])
+    lz, lt, ln = zc + 0.012, 0.14, P["line"]
+    frame(M, cx0 + 0.8, cx1 - 0.8, cy0 + 0.8, cy1 - 0.8, zc, lz, lt, ln)
+    xm, ym = (cx0 + cx1) / 2, (cy0 + cy1) / 2
+    box(M, xm - lt / 2, xm + lt / 2, cy0 + 0.8 + lt, cy1 - 0.8 - lt, zc, lz, ln)
+    cyl(M, xm, ym, 2.0, zc, lz, ln, n=16)
+    cyl(M, xm, ym, 2.0 - lt, lz, lz + 0.006, P["court"], n=16)
+    for kx0, kx1 in ((cx0 + 0.8 + lt, cx0 + 5.6), (cx1 - 5.6, cx1 - 0.8 - lt)):
+        frame(M, kx0 - (lt if kx0 > xm else 0), kx1 + (lt if kx1 < xm else 0), ym - 2.4, ym + 2.4, zc, lz, lt, ln)
+    for hx in (cx0 + 0.3, cx1 - 0.3):
+        box(M, hx - 0.12, hx + 0.12, ym - 0.12, ym + 0.12, zc, 3.05, P["ind_dark"])
+    # playground: rubber surface, sandpit, play tower with a slide, swings
+    px0, px1, py0, py1 = 7.0, 18.5, L.y0 - 0.5, 0.6
+    box(M, px0, px1, py0, py1, PAD_H, PAD_H + 0.03, P["play"])
+    z = PAD_H + 0.03
+    frame(M, 8.0, 11.6, py0 + 1.0, py0 + 4.2, z, z + 0.3, 0.25, P["wood"])
+    box(M, 8.25, 11.35, py0 + 1.25, py0 + 3.95, z, z + 0.22, P["sand"])
+    tx, ty = 14.6, py0 + 2.2
+    box(M, tx - 1.0, tx + 1.0, ty - 1.0, ty + 1.0, z, 1.5, P["wood"])
+    for dx in (-0.85, 0.85):
+        for dy in (-0.85, 0.85):
+            box(M, tx + dx - 0.1, tx + dx + 0.1, ty + dy - 0.1, ty + dy + 0.1, 1.5, 2.6, P["wood"])
+    cone(M, tx, ty, 1.55, 2.6, 3.7, P["ind_yellow"], n=4)
+    lo = [(tx - 0.45, ty + 1.0, 1.5), (tx + 0.45, ty + 1.0, 1.5), (tx + 0.45, ty + 4.0, z), (tx - 0.45, ty + 4.0, z)]
+    M.loft(lo, [(x, y, zz + 0.12) for x, y, zz in lo], P["court"])
+    sx, sy = 9.8, py1 - 1.6
+    box(M, sx - 2.2, sx + 2.2, sy - 0.08, sy + 0.08, 2.3, 2.45, P["ind_steel"])
+    for dx in (-2.1, 2.1):
+        box(M, sx + dx - 0.08, sx + dx + 0.08, sy - 0.08, sy + 0.08, z, 2.3, P["ind_steel"])
+    for dx in (-0.9, 0.9):
+        box(M, sx + dx - 0.3, sx + dx + 0.3, sy - 0.15, sy + 0.15, 0.5, 0.58, P["ind_dark"])
+    tree(M, P, -8.6, cy0 - 1.6, 0.8)
+    tree(M, P, 18.2, 4.2, 0.9, alt=True)
+    tree(M, P, 18.2, 12.5, 0.85)
+    return L
+
+
+def b_highschool(M, P):
+    L = lot(M, P, 52, 42, bay_row(5, -14.0))
+    wall, roof, roof2, glass, trim = P["sch_wall"], P["sch_roof"], P["sch_roof2"], P["sch_glass"], P["sch_trim"]
+    st = 3.5
+    # main teaching block (two storeys) and a side wing, flat orange roofs with cream parapets
+    mx0, mx1, my0, my1 = -24.5, 2.5, L.y0, L.y0 + 11.5
+    wx0, wx1, wy1 = -24.5, -13.0, L.y1
+    for s in range(2):
+        band(M, mx0, mx1, my0, my1, s * st + 1.0, s * st + 2.5, glass)
+        band(M, wx0, wx1, my1, wy1, s * st + 1.0, s * st + 2.5, glass)
+    top = flat_block(M, mx0, mx1, my0, my1, 2 * st, wall, roof2, parapet=wall)
+    flat_block(M, wx0, wx1, my1, wy1, 2 * st, wall, roof2, parapet=wall)
+    for x in (-20.0, -12.0, -4.0):
+        box(M, x - 2.0, x + 2.0, my0 + 3.5, my1 - 3.5, top, top + 0.5, glass, bevel=0.05)   # skylights
+    for y in (my1 + 6.0, my1 + 14.0):
+        box(M, wx0 + 3.5, wx1 - 3.5, y - 2.0, y + 2.0, top, top + 0.5, glass, bevel=0.05)
+    box(M, -14.0, -6.0, my0 - 1.6, my0, 3.1, 3.35, trim, bevel=0.04)
+    box(M, -12.5, -7.5, my0 - 0.06, my0, 0.3, 2.8, glass)
+    # gym: tall hall with a shallow gable
+    gx0, gx1, gy0, gy1 = -10.5, 2.5, my1 + 4.0, L.y1
+    band(M, gx0, gx1, gy0, gy1, 6.0, 7.2, glass)
+    box(M, gx0, gx1, gy0, gy1, 0, 8.6, wall)
+    gable(M, gx0, gx1, gy0, gy1, 8.6, 10.4, "y", roof, wall, oh_u=(0.4, 0.4), oh_a=(0.4, 0.4))
+    # courtyard trees
+    tree(M, P, -9.0, my1 + 2.0, 0.75, alt=True)
+    tree(M, P, -1.5, my1 + 2.0, 0.7)
+    # running track with a football pitch in the infield, small stand on the far side
+    tcx, tcy, r, half = 14.5, 3.6, 9.0, 7.0
+    z = PAD_H
+    layers = [(r, P["line"]), (r - 0.15, P["track"]), (r - 1.45, P["line"]), (r - 1.57, P["track"]),
+              (r - 2.9, P["line"]), (r - 3.05, P["grass"])]
+    for i, (rr, m) in enumerate(layers):
+        poly_prism(M, stadium_pts(tcx, tcy, rr, half), z + i * 0.012, z + (i + 1) * 0.012, m)
+    zp, lt = z + len(layers) * 0.012, 0.12
+    frame(M, tcx - 3.8, tcx + 3.8, tcy - 9.6, tcy + 9.6, zp, zp + 0.008, lt, P["line"])
+    box(M, tcx - 3.8 + lt, tcx + 3.8 - lt, tcy - lt / 2, tcy + lt / 2, zp, zp + 0.008, P["line"])
+    for s in (-1, 1):
+        box(M, tcx - 1.6, tcx + 1.6, tcy + s * 9.6 - 0.1, tcy + s * 9.6 + 0.1, zp, 2.1, P["hc_white"])
+    for i in range(3):
+        box(M, 24.0 + i * 0.6, 25.8, -4.0, 11.0, 0, 0.6 + i * 0.6, P["court"] if i % 2 == 0 else P["ind_steel"])
+    return L
+
+
+def b_university(M, P):
+    L = lot(M, P, 70, 56, bay_row(6, -21.0))
+    wall, roof, glass, col = P["uni_wall"], P["uni_roof"], P["sch_glass"], P["column"]
+    st = 3.6
+    # main hall at the back with a portico and a copper dome
+    hx0, hx1, hy0, hy1 = -15.0, 15.0, 16.5, L.y1
+    for s in range(2):
+        band(M, hx0, hx1, hy0, hy1, s * st + 1.4, s * st + 2.9, glass)
+    box(M, hx0, hx1, hy0, hy1, 0, 9.0, wall)
+    gable(M, hx0, hx1, hy0, hy1, 9.0, 11.8, "x", roof, wall)
+    py0 = hy0 - 3.4
+    box(M, -5.4, 5.4, py0, hy0, 0, 0.6, col)
+    for i in range(6):
+        cyl(M, -4.5 + i * 1.8, py0 + 0.6, 0.38, 0.6, 7.6, col, n=6)
+    box(M, -5.6, 5.6, py0, hy0, 7.6, 8.3, col)
+    gable(M, -5.6, 5.6, py0, hy0 + 1.0, 8.3, 10.2, "y", roof, col, oh_u=(0.2, 0.2), oh_a=(0.3, 0.0))
+    dx, dy = 0.0, (hy0 + hy1) / 2
+    cyl(M, dx, dy, 4.3, 9.0, 14.2, wall, n=14)
+    cyl(M, dx, dy, 4.6, 13.6, 14.2, col, n=14)
+    revolve(M, dx, dy, [(4.4, 14.2), (4.2, 15.5), (3.6, 16.8), (2.6, 17.8), (1.3, 18.4), (0, 18.6)],
+            P["dome"], n=14)
+    cyl(M, dx, dy, 0.7, 18.4, 19.6, col, n=8)
+    cone(M, dx, dy, 0.85, 19.6, 20.6, P["dome"], n=8)
+    # two wings framing the quad, linked to the hall
+    for s in (-1, 1):
+        a0, a1 = (-33.5, -19.0) if s < 0 else (19.0, 33.5)
+        wy0, wy1 = L.y0 + 2.0, L.y1
+        for k in range(2):
+            band(M, a0, a1, wy0, wy1, k * st + 1.2, k * st + 2.7, glass)
+        box(M, a0, a1, wy0, wy1, 0, 7.6, wall)
+        gable(M, a0, a1, wy0, wy1, 7.6, 10.4, "y", roof, wall)
+        b0, b1 = (a1, hx0) if s < 0 else (hx1, a0)
+        flat_block(M, b0, b1, hy0 + 1.5, hy1 - 1.5, 6.6, wall, roof)
+        ex = a1 if s < 0 else a0
+        box(M, ex - 0.06 if s > 0 else ex, ex + 0.06 if s < 0 else ex, -6.0, -2.0, 0.3, 2.8, glass)
+    # quad: lawn, paths (axis, cross, diagonals), a round plaza with a fountain, trees
+    qx0, qx1, qy0, qy1 = -19.0, 19.0, L.y0, hy0
+    z0, z1, z2 = PAD_H, PAD_H + 0.03, PAD_H + 0.05
+    box(M, qx0, qx1, qy0, py0, z0, z1, P["grass"])
+    pm = P["path"]
+    yp = L.yf + PARK_DEPTH
+    box(M, -1.6, 1.6, yp, py0, z1, z2, pm)
+    box(M, qx0, qx1, -5.6, -2.4, z1, z2, pm)
+    for a, b in (((qx0 + 1.0, qy0 + 1.0), (qx1 - 1.0, py0 - 1.0)), ((qx1 - 1.0, qy0 + 1.0), (qx0 + 1.0, py0 - 1.0))):
+        bar(M, a, b, 1.6, z1, z2 - 0.005, pm)
+    cyl(M, 0.0, -4.0, 5.2, z1, z2 + 0.005, pm, n=18)
+    fountain(M, P, 0.0, -4.0, 2.4)
+    for tx, ty, k in ((-9.0, -14.0, 0), (9.0, -14.0, 1), (-9.0, 7.0, 1), (9.0, 7.0, 0),
+                      (-15.5, -4.0, 0), (15.5, -4.0, 1)):
+        tree(M, P, tx, ty, 1.0, alt=bool(k))
+    return L
+
+
+def b_park(M, P):
+    L = green_lot(M, P, 24, 24)
+    z0, z1, pm = PAD_H, PAD_H + 0.03, P["path"]
+    cx, cy, rr = 0.0, 1.0, 5.0
+    ring = [(cx + rr * math.cos(2 * math.pi * i / 16), cy + rr * math.sin(2 * math.pi * i / 16)) for i in range(16)]
+    ribbon(M, ring, 1.6, z0, z1, pm, closed=True)
+    ribbon(M, [(0.0, -12.0), (0.0, cy - rr + 0.3)], 1.8, z0, z1, pm)
+    # spurs end on a segment square to the lot edge so they stay inside the footprint
+    ribbon(M, [(-3.3, 4.6), (-5.4, 6.6), (-8.0, 7.6), (-10.2, 7.8), (-12.0, 7.8)], 1.5, z0, z1, pm)
+    ribbon(M, [(4.0, -1.8), (6.4, -3.4), (9.0, -4.4), (10.2, -4.6), (12.0, -4.6)], 1.5, z0, z1, pm)
+    ribbon(M, [(1.4, 5.6), (2.4, 8.4), (3.7, 10.2), (4.4, 10.9), (4.4, 12.0)], 1.5, z0, z1, pm)
+    fountain(M, P, cx, cy, 2.3)
+    for a in (40, 150, 200, 240):
+        t = math.radians(a)
+        bench(M, P, cx + 6.3 * math.cos(t), cy + 6.3 * math.sin(t), t + math.pi / 2)
+    for hx0, hx1 in ((-11.6, -1.5), (1.5, 11.6)):
+        box(M, hx0, hx1, -11.6, -10.8, z0, 0.9, P["leaf2"], bevel=0.08)
+    for x, y, s, k in ((-7.8, -6.6, 1.0, 0), (7.6, -8.4, 0.9, 1), (-8.4, 1.0, 0.85, 1), (8.4, 6.4, 1.0, 0),
+                       (-6.6, 9.8, 0.9, 0), (9.4, 1.6, 0.7, 1)):
+        tree(M, P, x, y, s, alt=bool(k))
+    return L
+
+
+def b_parklarge(M, P):
+    L = green_lot(M, P, 48, 48)
+    z0, z1, pm = PAD_H, PAD_H + 0.03, P["path"]
+    # pond with a sandy rim and a little jetty
+    px, py = -7.0, 6.5
+    def pond(grow):
+        out = []
+        for i in range(20):
+            a = 2 * math.pi * i / 20
+            rr = 7.6 + 1.4 * math.sin(2 * a + 0.6) + 0.9 * math.cos(3 * a) + grow
+            out.append((px + rr * math.cos(a), py + 0.72 * rr * math.sin(a)))
+        return out
+    poly_prism(M, pond(1.0), z0, z0 + 0.03, P["sand"])
+    poly_prism(M, pond(0.0), z0, z0 + 0.05, P["water"])
+    box(M, -1.4, 2.6, 4.3, 5.5, 0.2, 0.35, P["wood"])
+    # loop path, entrance from the road, spurs to the other three edges, path to the pavilion
+    R = 17.5
+    loop = [(R * math.cos(2 * math.pi * i / 24), R * 0.95 * math.sin(2 * math.pi * i / 24)) for i in range(24)]
+    ribbon(M, loop, 2.0, z0, z1, pm, closed=True)
+    ribbon(M, [(0.0, -24.0), (0.0, -R * 0.95 + 0.4)], 2.4, z0, z1, pm)
+    ribbon(M, [(R - 0.4, 1.0), (20.5, 2.6), (22.0, 3.0), (24.0, 3.0)], 1.8, z0, z1, pm)
+    ribbon(M, [(-R + 0.4, -4.0), (-20.5, -5.6), (-22.0, -6.0), (-24.0, -6.0)], 1.8, z0, z1, pm)
+    ribbon(M, [(-4.0, R * 0.95 - 0.6), (-4.6, 20.5), (-4.8, 22.0), (-4.8, 24.0)], 1.8, z0, z1, pm)
+    ribbon(M, [(1.0, -R * 0.95 + 0.8), (3.0, -10.0), (6.0, -3.0), (8.8, 4.2)], 1.6, z0, z1, pm)
+    # hexagonal pavilion
+    vx, vy = 9.6, 7.6
+    cyl(M, vx, vy, 3.4, z0, 0.35, P["stone"], n=6)
+    for x, y, _ in ngon(vx, vy, 2.9, 6, 0):
+        box(M, x - 0.14, x + 0.14, y - 0.14, y + 0.14, 0.35, 2.9, P["column"])
+    M.loft(ngon(vx, vy, 3.8, 6, 2.9), ngon(vx, vy, 3.8, 6, 3.1), P["pav_roof"])
+    M.cone(ngon(vx, vy, 3.8, 6, 3.1), (vx, vy, 4.9), P["pav_roof"])
+    # benches along the loop and by the pond
+    for a in (-60, -120, 20, 160, 205):
+        t = math.radians(a)
+        bench(M, P, (R + 1.9) * math.cos(t), (R * 0.95 + 1.9) * math.sin(t), t + math.pi / 2)
+    bench(M, P, 2.2, 0.0, 0.0)
+    # trees round the edge and inside the loop
+    trees = [(-20.5, -20.0), (-11.0, -21.2), (11.0, -21.2), (20.5, -20.0), (21.3, -10.5), (21.4, 12.5),
+             (20.0, 20.5), (11.0, 21.4), (-13.0, 21.2), (-20.5, 20.0), (-21.3, 11.0), (-21.4, -14.0),
+             (-9.5, -9.0), (10.5, -9.5), (13.0, -1.0), (-13.0, -3.0), (-1.0, 13.6)]
+    for i, (x, y) in enumerate(trees):
+        tree(M, P, x, y, 0.85 + 0.25 * ((i * 7) % 5) / 4, alt=bool(i % 2))
+    return L
+
+
+SERVICES = ("garbage", "firestation", "police", "clinic", "hospital", "school", "highschool", "university",
+            "park", "parklarge")
+
+
 BUILDINGS = {
     "house": (b_house, 12, 15, 1),
     "terrace": (b_terrace, 24, 17, 3),
@@ -629,6 +1168,17 @@ BUILDINGS = {
     "farm": (b_farm, 40, 40, 2),
     "works": (b_works, 36, 32, 4),
     "foodplant": (b_foodplant, 32, 30, 4),
+    # services
+    "garbage": (b_garbage, 36, 32, 3),
+    "firestation": (b_firestation, 26, 24, 3),
+    "police": (b_police, 24, 22, 3),
+    "clinic": (b_clinic, 26, 24, 3),
+    "hospital": (b_hospital, 46, 40, 5),
+    "school": (b_school, 40, 34, 4),
+    "highschool": (b_highschool, 52, 42, 5),
+    "university": (b_university, 70, 56, 6),
+    "park": (b_park, 24, 24, 0),
+    "parklarge": (b_parklarge, 48, 48, 0),
 }
 
 
@@ -710,10 +1260,115 @@ def v_truck(Ms, P):
         wheel_axle(dark, y, 0.5, 1.2, P["dark"])
 
 
+# Service vehicles keep fixed colours: their nodes are paint / trim / lights (+ ladder), never "body" or
+# "cargo", which the engine tints per instance.
+
+def svc_mats(name, paint, trim, lights, extra=None):
+    m = {"paint": mat(f"{name}_paint", paint), "trim": mat(f"{name}_trim", trim),
+         "lights": mat(f"{name}_lights", lights)}
+    if extra:
+        m.update({k: mat(f"{name}_{k}", v) for k, v in extra.items()})
+    return m
+
+
+def v_garbagetruck(Ms, P):
+    S = svc_mats("garbagetruck", "#2f8a4a", "#f4f5f2", "#f5a623")
+    paint, trim, lights, glass, dark = Ms["paint"], Ms["trim"], Ms["lights"], Ms["glass"], Ms["dark"]
+    hw = 1.2
+    side_profile(trim, [(-4.22, 0.62), (-2.3, 0.62), (-2.3, 2.95), (-3.95, 2.95), (-4.22, 2.62)], hw, S["trim"])
+    box(glass, -1.05, 1.05, -4.25, -4.22, 1.55, 2.5, P["glass"])
+    box(glass, -hw - 0.02, hw + 0.02, -4.0, -3.1, 1.65, 2.55, P["glass"])
+    box(paint, -hw - 0.02, hw + 0.02, -3.95, -2.45, 0.9, 1.25, S["paint"])          # green cab stripe
+    box(lights, -0.85, 0.85, -3.7, -3.4, 2.95, 3.12, S["lights"])                    # amber beacon bar
+    # green collection body, white side band, white compactor at the back with a sloped top
+    box(paint, -1.24, 1.24, -2.2, 2.6, 0.98, 3.2, S["paint"])
+    box(trim, -1.25, 1.25, -2.0, 2.4, 1.7, 2.0, S["trim"])
+    extrude_profile(trim, [(2.6, 0.75), (4.25, 0.75), (4.25, 1.9), (3.7, 3.05), (2.6, 3.05)], "x", -1.2, 1.2,
+                    S["trim"])
+    box(dark, -0.85, 0.85, -4.0, 2.6, 0.5, 0.98, P["dark"])
+    box(dark, -1.2, 1.2, -4.25, -4.05, 0.35, 0.8, P["dark"])
+    box(dark, -1.0, 1.0, 4.2, 4.25, 0.9, 1.7, P["dark"])                             # hopper mouth
+    for y in (-3.35, 1.25, 2.45):
+        wheel_axle(dark, y, 0.5, 1.2, P["dark"])
+
+
+def v_firetruck(Ms, P):
+    S = svc_mats("firetruck", "#d8352e", "#f4f2ee", "#3d7cf0", {"ladder": "#d3d7dc"})
+    paint, trim, lights, ladder, glass, dark = (Ms[k] for k in ("paint", "trim", "lights", "ladder", "glass", "dark"))
+    hw = 1.23
+    side_profile(paint, [(-4.22, 0.62), (-1.9, 0.62), (-1.9, 2.85), (-3.95, 2.85), (-4.22, 2.55)], hw, S["paint"])
+    box(paint, -hw, hw, -1.9, 4.25, 0.85, 2.75, S["paint"])
+    box(glass, -1.05, 1.05, -4.25, -4.22, 1.5, 2.4, P["glass"])
+    box(glass, -hw - 0.015, hw + 0.015, -3.95, -2.2, 1.6, 2.45, P["glass"])
+    box(trim, -1.25, 1.25, -4.2, 4.2, 1.1, 1.38, S["trim"])                           # white side stripe
+    box(ladder, -hw - 0.015, hw + 0.015, -1.6, 3.9, 1.55, 2.6, S["ladder"])         # locker shutters
+    box(lights, -0.95, 0.95, -3.85, -3.5, 2.85, 3.0, S["lights"])                    # blue light bar
+    # roof ladder on a turntable at the back
+    box(ladder, -0.85, 0.85, 3.0, 4.0, 2.75, 2.95, S["ladder"])
+    for x in (-0.6, 0.48):
+        box(ladder, x, x + 0.12, -3.3, 4.2, 2.95, 3.15, S["ladder"])
+    for i in range(6):
+        y = -2.9 + i * 1.2
+        box(ladder, -0.48, 0.48, y - 0.05, y + 0.05, 2.98, 3.1, S["ladder"])
+    box(dark, -0.85, 0.85, -4.0, 4.1, 0.5, 0.85, P["dark"])
+    box(dark, -1.23, 1.23, -4.25, -4.05, 0.35, 0.8, P["dark"])
+    for y in (-2.9, 2.6):
+        wheel_axle(dark, y, 0.5, 1.2, P["dark"])
+
+
+def v_ambulance(Ms, P):
+    S = svc_mats("ambulance", "#f6f6f3", "#e0453a", "#3d7cf0")
+    paint, trim, lights, glass, dark = Ms["paint"], Ms["trim"], Ms["lights"], Ms["glass"], Ms["dark"]
+    hw = 0.95
+    side_profile(paint, [(-2.72, 0.32), (-0.95, 0.32), (-0.95, 2.05), (-1.3, 2.05), (-2.02, 1.2), (-2.72, 1.02)],
+                 hw, S["paint"])
+    slab_on(glass, (-2.0, 1.24), (-1.34, 2.0), 0.86, 0.03, P["glass"])
+    win = [(-1.7, 1.3), (-1.05, 1.3), (-1.05, 1.85), (-1.45, 1.85)]   # cab side windows, under the sloped nose
+    extrude_profile(glass, win, "x", hw, hw + 0.015, P["glass"])
+    extrude_profile(glass, win, "x", -hw - 0.015, -hw, P["glass"])
+    # boxy patient module, red band round it, red cross on the roof, light bar at its front edge
+    box(paint, -0.99, 0.99, -0.95, 2.75, 0.32, 2.48, S["paint"])
+    box(trim, -1.0, 1.0, -0.94, 2.755, 1.05, 1.32, S["trim"])
+    box(trim, -0.96, 0.96, -1.95, -0.95, 1.05, 1.2, S["trim"])
+    cross_sign(trim, 0.0, 1.15, 1.3, 0.42, 2.48, 2.5, S["trim"])
+    box(lights, -0.8, 0.0, -0.9, -0.55, 2.48, 2.62, S["lights"])
+    box(trim, 0.0, 0.8, -0.9, -0.55, 2.48, 2.62, S["trim"])
+    box(glass, -0.75, 0.75, 2.75, 2.755, 1.5, 2.1, P["glass"])
+    box(glass, -0.85, 0.85, -2.75, -2.72, 0.66, 0.8, P["glass"])
+    wheel_axle(dark, -1.8, 0.36, 0.94, P["dark"])
+    wheel_axle(dark, 1.75, 0.36, 0.94, P["dark"])
+    box(dark, -0.97, 0.97, -2.75, -2.6, 0.28, 0.58, P["dark"])
+    box(dark, -0.97, 0.97, 2.6, 2.75, 0.28, 0.5, P["dark"])
+
+
+def v_policecar(Ms, P):
+    S = svc_mats("policecar", "#f6f7f9", "#2456b8", "#e0453a")
+    paint, trim, lights, glass, dark = Ms["paint"], Ms["trim"], Ms["lights"], Ms["glass"], Ms["dark"]
+    hw, s = 0.925, 4.6 / 4.4
+    # blue lower body (hood and boot read from above), white doors and roof, red/blue light bar
+    side_profile(trim, [(y * s, z) for y, z in [(-2.17, 0.28), (2.17, 0.28), (2.17, 0.76), (2.08, 0.9), (1.32, 0.95),
+                                                (-0.92, 0.95), (-1.98, 0.83), (-2.17, 0.70)]], hw, S["trim"])
+    taper(glass, (-0.84, 0.84, -0.92 * s, 1.32 * s), (-0.75, 0.75, -0.42 * s, 1.06 * s), 0.95, 1.37, P["glass"])
+    taper(paint, (-0.76, 0.76, -0.43 * s, 1.07 * s), (-0.71, 0.71, -0.36 * s, 1.0 * s), 1.37, 1.45, S["paint"])
+    box(paint, -0.93, 0.93, -0.95, 1.05, 0.4, 0.86, S["paint"])
+    box(lights, -0.62, 0.0, 0.12, 0.46, 1.45, 1.6, S["lights"])
+    box(trim, 0.0, 0.62, 0.12, 0.46, 1.45, 1.6, S["trim"])
+    wheel_axle(dark, -1.38 * s, 0.32, 0.88, P["dark"])
+    wheel_axle(dark, 1.36 * s, 0.32, 0.88, P["dark"])
+    box(dark, -0.9, 0.9, -2.3, -2.14, 0.26, 0.52, P["dark"])
+    box(dark, -0.9, 0.9, 2.14, 2.3, 0.26, 0.52, P["dark"])
+    box(glass, -0.82, 0.82, -2.29, -2.26, 0.55, 0.67, P["glass"])
+
+
 VEHICLES = {
     "car": (v_car, ("body", "glass", "dark"), (1.85, 4.4, 1.45)),
     "van": (v_van, ("body", "glass", "dark"), (2.0, 5.0, 2.0)),
     "truck": (v_truck, ("body", "glass", "dark", "cargo"), (2.5, 8.5, 3.2)),
+    # services (fixed colours)
+    "garbagetruck": (v_garbagetruck, ("paint", "trim", "lights", "glass", "dark"), (2.5, 8.5, 3.2)),
+    "firetruck": (v_firetruck, ("paint", "trim", "lights", "ladder", "glass", "dark"), (2.5, 8.5, 3.15)),
+    "ambulance": (v_ambulance, ("paint", "trim", "lights", "glass", "dark"), (2.0, 5.5, 2.62)),
+    "policecar": (v_policecar, ("paint", "trim", "lights", "glass", "dark"), (1.86, 4.6, 1.6)),
 }
 
 
@@ -975,6 +1630,9 @@ def write_readme(stats):
         "bay needs a 180° turn about the up axis relative to the node (or copy the node's transform and",
         "rotate the car by π).",
         "",
+        "Service buildings (garbage … university) follow the same lot rules. The parks (`park`,",
+        "`parklarge`) are all grass: no asphalt strip and no `park_N` nodes.",
+        "",
         "| model | footprint w × d (m) | height (m) | tris | park empties |",
         "|---|---|---|---|---|",
     ]
@@ -990,6 +1648,10 @@ def write_readme(stats):
         "Front at glTF +Z (Blender -Y), origin at the ground centre, wheels on y = 0. Separate mesh nodes per",
         "material: `body` and `cargo` are pure white (#ffffff) for per-instance tinting, `glass` is",
         "#2b3440, `dark` (tyres, bumpers, chassis) is #30343a.",
+        "",
+        "Service vehicles (garbagetruck, firetruck, ambulance, policecar) have fixed colours and no `body`",
+        "or `cargo` node, so nothing on them is tinted: `paint` (main colour), `trim` (stripes, white parts),",
+        "`lights` (beacons / light bar), `ladder` (firetruck only), plus `glass` and `dark` as above.",
         "",
         "| model | W × L × H (m) | tris | nodes |",
         "|---|---|---|---|",
@@ -1033,9 +1695,13 @@ def main():
         for n in names:
             preview(cam, n, built[n])
         if only is None:
-            overview(cam, [built[n] for n in BUILDINGS], "_overview_buildings.png", 56, 4, "top", 1600, 1200)
-            overview(cam, [built[n] for n in BUILDINGS], "_overview_buildings_34.png", 56, 4, "q", 1600, 1200)
-            overview(cam, [built[n] for n in VEHICLES], "_overview_vehicles.png", 4.0, 3, "q", 1200, 600)
+            zoned = [built[n] for n in BUILDINGS if n not in SERVICES]
+            services = [built[n] for n in SERVICES]
+            overview(cam, zoned, "_overview_buildings.png", 56, 4, "top", 1600, 1200)
+            overview(cam, zoned, "_overview_buildings_34.png", 56, 4, "q", 1600, 1200)
+            overview(cam, services, "_overview_services.png", 78, 5, "top", 1800, 800)
+            overview(cam, services, "_overview_services_34.png", 78, 5, "q", 1800, 1000)
+            overview(cam, [built[n] for n in VEHICLES], "_overview_vehicles.png", 4.0, len(VEHICLES), "q", 1600, 600)
     if do_verify:
         stats = verify(names)
         if only is None:

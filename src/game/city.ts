@@ -11,10 +11,12 @@ import { Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import { Terrain } from "../world/terrain";
 import type { Gateway } from "../world/gen";
 import { MOTORWAY_TYPE, carriageways, centrePoints, planMotorway, type MotorwayPlan } from "../world/motorway";
-import { Buildings, type Building, type BuildingMove } from "./buildings";
+import { Buildings, obbOverlap, type Building, type BuildingMove } from "./buildings";
 import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, type LotTemplate } from "./growables";
 import { MILESTONES, milestoneFor, tilePrice, tileSlots, unlockedFeature, unlockedRoads, unlockedZones, type Milestone } from "./progression";
 import { DAY, HOUR, Society, estTime, type Port } from "./society";
+import { SERVICES, Services, type ServiceKind } from "./services";
+import type { Placement } from "./buildings";
 import { CELL, DEPTH, ZoneMap, type Block, type Cell, type ZoneGroup, type ZoneId } from "./zones";
 
 interface UndoEntry {
@@ -57,6 +59,7 @@ export class Game {
   buildings: Buildings;
   zones: ZoneMap;
   people: Society;
+  services: Services;
   money = 0;
   tiles = new Set<string>();
   time = 0;
@@ -119,6 +122,7 @@ export class Game {
     const t = this.terrain;
     this.zones = new ZoneMap(this.net, { isWater: (p) => t.isWater(p), isMountain: (p) => t.isMountain(p), owned: (p) => this.unlocked(p) });
     this.people = new Society(this);
+    this.services = new Services(this);
     this.world = {
       isWater: (p) => t.isWater(p),
       isMountain: (p) => t.isMountain(p),
@@ -262,6 +266,11 @@ export class Game {
   get roadsUnlocked(): Set<RoadTypeId> { return unlockedRoads(this.milestone); }
   get zonesUnlocked(): Set<ZoneId> { return unlockedZones(this.milestone); }
   featureUnlocked(f: Milestone["features"][number]): boolean { return unlockedFeature(this.milestone, f); }
+  serviceUnlocked(k: ServiceKind): boolean { return this.milestone >= SERVICES[k].unlock; }
+
+  toast(msg: string) {
+    this.emit({ t: "toast", msg });
+  }
 
   // ---------------------------------------------------------------- road edits
 
@@ -466,7 +475,7 @@ export class Game {
     for (const { cell } of ch) {
       if (!cell.lot) continue;
       const b = this.buildings.byId.get(cell.lot);
-      if (b && b.zone !== zone) { removed.push(b); this.removeBuildingRaw(b); }
+      if (b && !b.svc && b.zone !== zone) { removed.push(b); this.removeBuildingRaw(b); }
     }
     this.pushUndo({ label: "zone", ops: [], money: 0, added: [], removed, zones: ch.map((c) => ({ p: c.cell.c, from: c.from, to: zone })) });
     this.emit({ t: "zones" });
@@ -505,7 +514,18 @@ export class Game {
     }
     if (e.zones) this.zones.paintAt(e.zones.map((z) => ({ p: z.p, zone: z.to })));
     this.money -= e.money;
-    for (const b of e.added) this.restoreBuilding(b);
+    for (const b of e.added) {
+      if (b.svc) {
+        // zoned buildings that grew on the spot after the undo make way again, as when it was first placed
+        for (const o of [...this.buildings.list]) {
+          if (o.zone && !e.removed.some((r) => r.id === o.id) && obbOverlap(b.c, b.hw, b.hd, b.rot, o.c, o.hw, o.hd, o.rot)) {
+            e.removed.push(o);
+            this.removeBuildingRaw(o);
+          }
+        }
+      }
+      this.restoreBuilding(b);
+    }
     for (const b of e.removed) this.removeBuildingRaw(this.buildings.byId.get(b.id) ?? b);
     if (e.ops.length) this.clearRoadsOverLots();
     this.undoStack.push(e);
@@ -516,10 +536,51 @@ export class Game {
 
   // ---------------------------------------------------------------- buildings
 
+  /** Where a service building would go near p, and what it would cost and replace. */
+  servicePlan(kind: ServiceKind, p: V2): (Placement & { cost: number }) | null {
+    const world = { ...this.world, unlocked: (q: V2) => this.unlocked(q) };
+    const pl = this.buildings.placement(kind, p, world, (o) => !!o.zone);
+    if (!pl) return null;
+    const cost = SERVICES[kind].cost;
+    if (pl.ok && !this.serviceUnlocked(kind)) return { ...pl, ok: false, reason: "Not unlocked yet", cost };
+    if (pl.ok && this.money < cost) return { ...pl, ok: false, reason: "Not enough money", cost };
+    return { ...pl, cost };
+  }
+
+  /** Build a service building (fire station, school, park...). Zoned buildings in the way are cleared. */
+  placeService(kind: ServiceKind, p: V2): Building | null {
+    const pl = this.servicePlan(kind, p);
+    if (!pl || !pl.ok) return null;
+    const removed: Building[] = [];
+    for (const id of pl.clears ?? []) {
+      const o = this.buildings.byId.get(id);
+      if (o) { removed.push(o); this.removeBuildingRaw(o); }
+    }
+    const b = this.buildings.add(kind, pl, this.time);
+    b.svc = true;
+    b.busy = 0;
+    b.users = 0;
+    for (const c of this.lotCells(b)) c.lot = b.id;
+    this.services.dirty();
+    this.candVersion = -1;
+    this.money -= pl.cost;
+    this.pushUndo({ label: "service", ops: [], money: pl.cost, added: [b], removed });
+    this.emit({ t: "money" });
+    this.emit({ t: "buildings" });
+    return b;
+  }
+
+  /** A fire nobody put out: the building is gone (zoned land grows something new). */
+  burnDown(b: Building) {
+    this.removeBuildingRaw(b);
+    this.emit({ t: "buildings" });
+  }
+
   private removeBuildingRaw(b: Building) {
     if (!this.buildings.byId.has(b.id)) return;
     this.buildings.remove(b.id);
     this.people.onBuildingRemoved(b.id);
+    this.services.onBuildingRemoved(b.id);
     this.ordered.delete(b.id);
     for (const c of this.lotCells(b)) if (c.lot === b.id) c.lot = 0;
     this.shopCache = null;
@@ -531,13 +592,15 @@ export class Game {
     this.buildings.insert(b);
     for (const c of this.lotCells(b)) c.lot = b.id;
     this.buildings.reattach();
+    this.services.restored(b);
+    this.services.dirty();
     this.shopCache = null;
     this.candVersion = -1;
   }
 
   /** Zone cells under a building's lot. */
   lotCells(b: Building): Cell[] {
-    if (!b.zone) return [];
+    if (!b.zone && !b.svc) return [];
     return this.zones.inPoly(rectCorners(b.c, b.hw - 0.5, b.hd - 0.5, b.rot));
   }
 
@@ -753,7 +816,8 @@ export class Game {
       }
     }
     this.moveIns();
-    for (const b of this.buildings.list) this.stepBuilding(b, span);
+    this.services.tick(span);
+    for (const b of [...this.buildings.list]) this.stepBuilding(b, span);
     if (changed) this.emit({ t: "buildings" });
   }
 
@@ -787,6 +851,8 @@ export class Game {
     else if (grp === "res") {
       const hh = this.people.householdsIn(b.id);
       if (!this.linkedOutside(b) && hh === 0) problem = "Not connected to the highway: nobody can move in";
+      // residents put up with a lot, but piled-up garbage, crime and no services for days make them leave
+      if (hh > 0 && this.services.active) health = this.services.happiness(b);
     } else {
       const staff = b.cap ? this.people.workersAt(b.id) / b.cap : 1;
       health = Math.min(1, staff * 1.25);
@@ -808,6 +874,11 @@ export class Game {
       }
     }
     if (this.noRouteAt.has(b.id) && this.time - this.noRouteAt.get(b.id)! < HOUR * 2) problem ??= "Trips can't find a route";
+    const sp = this.services.problemOf(b);
+    if (sp) {
+      problem = sp === "On fire!" ? sp : problem ?? sp;
+      if (grp !== "res") health *= b.fire ? 0 : 0.8;
+    }
     b.problem = problem;
     (b as Building & { health?: number }).health = health;
     // failing for two days: abandoned
@@ -895,6 +966,7 @@ export class Game {
   private onArrive(v: Vehicle, now: number) {
     const trip = v.trip;
     this.traffic.recordTrip(trip.freeFlow, now - trip.startT);
+    if (trip.run) { this.services.onArrive(v); return; }
     if (trip.kind === "cargo") {
       if (trip.to >= 0) this.deliver(trip.to);
       return;
@@ -904,6 +976,7 @@ export class Game {
 
   private onFail(trip: Trip, _reason: string) {
     this.failedTrips++;
+    if (trip.run) { this.services.onFail(trip); return; }
     if (trip.kind === "cargo") {
       if (trip.to >= 0) this.ordered.delete(trip.to);
       const from = this.buildings.byId.get(trip.from);
@@ -920,14 +993,15 @@ export class Game {
   private computeDemand() {
     const st = this.people.stats;
     const jobs: Record<ZoneGroup, number> = { res: 0, com: 0, ind: 0, off: 0 };
-    let homes = 0, homesBuilding = 0;
+    let homes = 0, homesBuilding = 0, svcJobs = 0;
     for (const b of this.buildings.list) {
+      if (b.svc) svcJobs += b.cap;
       if (!b.zone || b.abandoned) continue;
       const gp = ZONE_GROUP[b.zone];
       if (gp === "res") { if (b.built >= 1) homes += b.cap; else homesBuilding += b.cap; }
       else jobs[gp] += b.cap;
     }
-    const totalJobs = jobs.com + jobs.ind + jobs.off;
+    const totalJobs = jobs.com + jobs.ind + jobs.off + svcJobs;
     const pop = st.population;
     const workers = Math.max(1, st.workers);
     const freeJobs = totalJobs - st.employed - st.commuters;
@@ -943,6 +1017,15 @@ export class Game {
       if (unemp > 0.04) f.push({ label: "Unemployment", v: -Math.round(Math.min(60, (unemp - 0.04) * 250)) });
       if (vacant > 0) f.push({ label: "Empty homes", v: -Math.round(Math.min(50, (vacant / Math.max(3, (homes + homesBuilding) * 0.1)) * 25)) });
       if (this.tax.res !== 10) f.push({ label: "Taxes", v: taxF("res") });
+      if (this.services.active) {
+        let hs = 0, n = 0;
+        for (const b of this.buildings.list) {
+          if (!b.zone || ZONE_GROUP[b.zone] !== "res" || b.abandoned || !this.people.householdsIn(b.id)) continue;
+          hs += this.services.happiness(b);
+          n++;
+        }
+        if (n) f.push({ label: "City services", v: Math.round(Math.max(-35, Math.min(20, (hs / n - 0.64) * 140))) });
+      }
       if (!this.entries.length) f.push({ label: "No highway connection", v: -100 });
       this.demand.res = { v: clamp(f.reduce((a, x) => a + x.v, 0)), factors: f };
     }
@@ -1003,12 +1086,14 @@ export class Game {
       if (g) roads += g.center.length * ROAD_TYPES[s.type].costPerM * 0.004;
     }
     B.expense.roads += roads;
+    B.expense.services += this.services.upkeep();
+    this.services.hourly();
     const net = sum(B.income) - sum(B.expense);
     this.money += net;
     this.budget = B;
     this.budgetNow = emptyBudget();
     let jobs = 0;
-    for (const b of this.buildings.list) if (b.zone && ZONE_GROUP[b.zone] !== "res" && !b.abandoned) jobs += b.cap;
+    for (const b of this.buildings.list) if ((b.svc || (b.zone && ZONE_GROUP[b.zone] !== "res")) && !b.abandoned) jobs += b.cap;
     this.history.push({ money: this.money, pop: st.population, jobs });
     if (this.history.length > 72) this.history.shift();
     this.landValue();
@@ -1016,7 +1101,7 @@ export class Game {
     for (const hh of [...this.people.households.values()]) {
       if (!hh.arrived) continue;
       const adults = hh.members.filter((c) => c.age === 1);
-      if (!adults.length || adults.some((c) => c.job >= 0)) continue;
+      if (!adults.length || adults.some((c) => c.job >= 0 || c.school >= 0)) continue;
       if (adults.every((c) => this.time - c.jobless > DAY * 2) && this.rng() < 0.15) this.people.moveOut(hh);
     }
     for (const [id, t] of this.noRouteAt) if (this.time - t > HOUR * 3) this.noRouteAt.delete(id);
@@ -1064,6 +1149,7 @@ export class Game {
           if (d < 180) lv -= 22 * (1 - d / 180);
         }
       } else if (grp === "com") lv += Math.min(10, b.visits / Math.max(1, b.cap));
+      lv += this.services.landValueOf(b);
       b.lv = Math.max(0, Math.min(100, lv));
     }
   }
@@ -1117,6 +1203,7 @@ export class Game {
     g.buildings.nextId = data.nextBuilding;
     g.buildings.reattach();
     g.updateOutside();
+    g.services.reset();
     g.people.load(data.people);
     g.computeDemand();
     return g;

@@ -17,8 +17,9 @@ export interface VehicleModel {
 
 export const BUILDING_MODELS: BuildingKind[] = [
   "house", "terrace", "apartments", "shop", "store", "mall", "office", "tower", "mine", "farm", "works", "foodplant",
+  "garbage", "firestation", "police", "clinic", "hospital", "school", "highschool", "university", "park", "parklarge",
 ];
-export const VEHICLE_MODELS = ["car", "van", "truck"] as const;
+export const VEHICLE_MODELS = ["car", "van", "truck", "garbagetruck", "firetruck", "ambulance", "policecar"] as const;
 export type VehicleKind = (typeof VEHICLE_MODELS)[number];
 
 export interface ModelSet {

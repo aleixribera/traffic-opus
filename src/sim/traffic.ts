@@ -3,7 +3,9 @@ import { clamp, dist, dot, norm, polyAt, polyClosest, polyDirSmooth, right, sub,
 import type { ChangeSet, Connector, Edge, Lane, RoadNetwork } from "../roads/network";
 import { Router, dkey, dkDir, dkSeg, type Access } from "./router";
 
-export type TripKind = "shop" | "leisure" | "work" | "home" | "cargo" | "move" | "empty";
+export type TripKind = "shop" | "leisure" | "work" | "home" | "cargo" | "move" | "empty" | "school" | "service";
+/** What a service vehicle is doing: driving out to a call, or back to its station (see game/services.ts). */
+export interface ServiceRun { svc: string; station: number; target: number; leg: "out" | "back"; patient?: number; /** the leg ended (arrived or failed) */ done?: boolean }
 
 export interface Trip {
   kind: TripKind;
@@ -13,6 +15,7 @@ export interface Trip {
   cargo?: string;
   startT: number;
   freeFlow: number;
+  run?: ServiceRun;
 }
 
 export interface Vehicle {

@@ -42,6 +42,13 @@ export class Buildings3D {
 
   constructor(private models: ModelSet) {}
 
+  /** Model and matrix for a building that isn't placed yet (the service placement ghost). */
+  ghost(kind: BuildingKind, c: V2, rot: number, side: 1 | -1): { geo: THREE.BufferGeometry; m: THREE.Matrix4 } | null {
+    const mm = this.models.buildings.get(kind);
+    if (!mm) return null;
+    return { geo: mm.geo, m: lotMatrix(new THREE.Matrix4(), c, rot, side, 0.1) };
+  }
+
   /** Model depth (m) after fitting the lot. */
   private depth(b: Building): number {
     const mm = this.models.buildings.get(b.kind)!;

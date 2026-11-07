@@ -21,6 +21,10 @@ export const PAL = {
   roadEdge: 0xa5aab0,
   lane: 0xbfc3c8,
   centre: 0xf0bd2c,
+  // highways: darker asphalt, darker shoulders, white lines
+  hwRoad: 0xc4c8ce,
+  hwEdge: 0x7d838b,
+  hwLane: 0xffffff,
   deckSide: 0x3c3f44,
   pillar: 0xd9dbdd,
   driveway: 0xe3e5e6,

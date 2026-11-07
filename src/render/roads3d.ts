@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { LANE_W, ROAD_TYPES, SHOULDER } from "../config";
+import { LANE_W, ROAD_TYPES, SHOULDER, isHighway } from "../config";
 import { clamp, dist, norm, right, smoothstep, sub, type V2 } from "../core/math";
 import type { ChangeSet, RoadNetwork } from "../roads/network";
 import { ringsNear } from "../roads/planner";
@@ -11,12 +11,14 @@ const LIFT = 0.06;
 const DECK = 0.9;
 
 /** Shared road surface material: Lambert (so it takes shadows) with markings drawn in the fragment shader. */
-export function makeRoadMaterial(opts: { color?: number; opacity?: number; markings?: boolean; arrows?: boolean } = {}) {
+export function makeRoadMaterial(opts: { color?: number; opacity?: number; markings?: boolean; arrows?: boolean; highway?: boolean } = {}) {
+  const hw = !!opts.highway;
   const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: (opts.opacity ?? 1) < 1, opacity: opts.opacity ?? 1 });
   const uniforms = {
-    uRoad: { value: new THREE.Color(opts.color ?? PAL.road) },
-    uEdge: { value: new THREE.Color(PAL.roadEdge) },
-    uLane: { value: new THREE.Color(PAL.lane) },
+    uRoad: { value: new THREE.Color(opts.color ?? (hw ? PAL.hwRoad : PAL.road)) },
+    uEdge: { value: new THREE.Color(hw ? PAL.hwEdge : PAL.roadEdge) },
+    uLane: { value: new THREE.Color(hw ? PAL.hwLane : PAL.lane) },
+    uHw: { value: hw ? 1 : 0 },
     uCentre: { value: new THREE.Color(PAL.centre) },
     uGrass: { value: new THREE.Color(PAL.grass) },
     uTree: { value: new THREE.Color(PAL.tree) },
@@ -36,12 +38,16 @@ export function makeRoadMaterial(opts: { color?: number; opacity?: number; marki
         `#include <common>
 uniform vec3 uRoad; uniform vec3 uEdge; uniform vec3 uLane; uniform vec3 uCentre;
 uniform vec3 uGrass; uniform vec3 uTree; uniform vec3 uTreeLight;
-uniform float uFlowMode; uniform float uMarkings; uniform float uArrows;
+uniform float uFlowMode; uniform float uMarkings; uniform float uArrows; uniform float uHw;
 varying vec4 vRoad; varying vec2 vFlow; varying vec3 vMed;
 float band(float x, float w) { float f = fwidth(x) * 0.8 + 1e-4; return 1.0 - smoothstep(w - f, w + f, abs(x)); }
 vec3 flowTint(float r) {
   float k = clamp((0.92 - r) / 0.6, 0.0, 1.0);
   return mix(vec3(1.0), mix(vec3(1.0, 0.62, 0.28), vec3(0.86, 0.13, 0.16), smoothstep(0.35, 1.0, k)), smoothstep(0.0, 0.25, k));
+}
+vec3 covTint(float r) {
+  // service coverage: uncovered roads go grey, covered ones green, deeper the better served
+  return r <= 0.01 ? vec3(0.78, 0.78, 0.8) : mix(vec3(0.72, 0.95, 0.62), vec3(0.22, 0.72, 0.36), clamp((r - 0.4) / 0.6, 0.0, 1.0));
 }`,
       )
       .replace(
@@ -81,10 +87,12 @@ vec3 flowTint(float r) {
         lanes = max(lanes, band(y + ax * 0.9 + 0.5, 0.22) * m);
       }
     }
+    // highways: a solid white line along each edge, just inside the shoulder
+    if (uHw > 0.5) lanes = max(lanes, band(abs(u) - (halfW - ${SHOULDER.toFixed(2)} - 0.05), 0.11));
     c = mix(c, uLane, lanes);
     if (uFlowMode > 0.5) {
       float r = (b > 0.0 && u < 0.0) ? vFlow.y : vFlow.x;
-      c *= flowTint(r);
+      c *= uFlowMode > 1.5 ? covTint(r) : flowTint(r);
     }
     if (med > 0.0) {
       // planted median: a kerb either side, grass between, and a row of trees when it is wide enough
@@ -128,7 +136,18 @@ export class Roads3D {
   readonly surface = makeRoadMaterial();
   private ringSurface = makeRoadMaterial({ arrows: false }); // roundabout arcs and bends: direction is obvious, chevrons only clip at the joins
   private plain = makeRoadMaterial({ markings: false });
+  private hwSurface = makeRoadMaterial({ highway: true });
+  private hwRing = makeRoadMaterial({ highway: true, arrows: false });
+  private hwPlain = makeRoadMaterial({ highway: true, markings: false });
   private edgeMat = new THREE.MeshLambertMaterial({ color: PAL.roadEdge });
+  private hwEdgeMat = new THREE.MeshLambertMaterial({ color: PAL.hwEdge });
+  /** Every marked surface material, so overlay modes reach all of them. */
+  private get marked() { return [this.surface, this.ringSurface, this.hwSurface, this.hwRing]; }
+  /** Is every road meeting this node a highway (so its junction or bend is drawn in highway asphalt)? */
+  private hwNode(id: number): boolean {
+    const at = this.net.segsAt(id);
+    return at.length > 0 && at.every((sg) => isHighway(ROAD_TYPES[sg.type]));
+  }
   // the deck body casts the bridge's shadow from both faces (three's default only draws back faces into the shadow map)
   private deckMat = new THREE.MeshLambertMaterial({ color: PAL.deckSide, shadowSide: THREE.DoubleSide });
   private pillarMat = new THREE.MeshLambertMaterial({ color: PAL.pillar });
@@ -149,8 +168,30 @@ export class Roads3D {
   }
 
   set flowMode(on: boolean) {
-    this.surface.uniforms.uFlowMode.value = on ? 1 : 0;
-    this.ringSurface.uniforms.uFlowMode.value = on ? 1 : 0;
+    for (const m of this.marked) m.uniforms.uFlowMode.value = on ? 1 : 0;
+  }
+
+  /** Tint roads by a per-seg value 0..1 (service coverage); null switches it off. */
+  coverage(cov: Map<number, number> | null) {
+    const mode = cov ? 2 : this.surface.uniforms.uFlowMode.value > 1.5 ? 0 : this.surface.uniforms.uFlowMode.value;
+    for (const m of this.marked) m.uniforms.uFlowMode.value = mode;
+    if (!cov) return;
+    for (const [id, m] of this.segs) {
+      const f = cov.get(id) ?? 0;
+      const a = m.flow.array as Float32Array;
+      if (a[0] === f && a[a.length - 1] === f) continue;
+      a.fill(f);
+      m.flow.needsUpdate = true;
+    }
+    for (const [id, b] of this.bendFlow) {
+      // a bend node joins two halves of one road: take the seg it belongs to
+      void id;
+      const f = cov.get(b.k1 >> 1) ?? 0;
+      const a = b.flow.array as Float32Array;
+      if (a[0] === f) continue;
+      a.fill(f);
+      b.flow.needsUpdate = true;
+    }
   }
 
   rebuildAll() {
@@ -224,7 +265,8 @@ export class Roads3D {
     }
     const geo = ribbon(pts, hs, ss, halfW, LIFT, [T.fwd, T.bwd], edges, T.median ?? 0, medEnd, ss.map((sc) => Math.min(sc - s0, s1 - sc)));
     const flow = geo.getAttribute("aFlow") as THREE.BufferAttribute;
-    const surface = new THREE.Mesh(geo, s.ring ? this.ringSurface.mat : this.surface.mat);
+    const hw = isHighway(T);
+    const surface = new THREE.Mesh(geo, s.ring ? this.ringSurface.mat : hw ? this.hwSurface.mat : this.surface.mat);
     surface.receiveShadow = true;
     const extra: THREE.Object3D[] = [];
     if (edges) {
@@ -234,7 +276,7 @@ export class Roads3D {
         let run: { p: V2; h: number }[] = [];
         const flush = () => {
           if (run.length > 1) {
-            const km = new THREE.Mesh(strip(run.map((q) => q.p), Math.max(...run.map((q) => q.h)) + LIFT + 0.01, 0.42, -side * 0.21), this.edgeMat);
+            const km = new THREE.Mesh(strip(run.map((q) => q.p), Math.max(...run.map((q) => q.h)) + LIFT + 0.01, 0.42, -side * 0.21), hw ? this.hwEdgeMat : this.edgeMat);
             km.receiveShadow = true;
             extra.push(km);
           }
@@ -295,7 +337,7 @@ export class Roads3D {
       for (let i = 1; i < pts.length; i++) ss.push(ss[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
       const geo = ribbon(pts, hs, ss, halfW, LIFT, lanes, undefined, ng.curve.median);
       // no one-way chevrons on the curve: the straights either side already point the way, and they'd clip at the joins
-      const surface = new THREE.Mesh(geo, this.ringSurface.mat);
+      const surface = new THREE.Mesh(geo, this.hwNode(id) ? this.hwRing.mat : this.ringSurface.mat);
       surface.receiveShadow = true;
       out.push(surface);
       // the curve runs from the arm whose lanes come in: tint each half like that arm's two directions
@@ -312,7 +354,7 @@ export class Roads3D {
       return;
     }
     const y = n.h + LIFT + 0.012;
-    const m = new THREE.Mesh(plainPoly(ng.poly, y), this.plain.mat);
+    const m = new THREE.Mesh(plainPoly(ng.poly, y), this.hwNode(id) ? this.hwPlain.mat : this.plain.mat);
     m.receiveShadow = true;
     if (n.h > 0.3) {
       const deck = new THREE.Mesh(polyDeck(ng.poly, y), this.deckMat);
@@ -325,7 +367,7 @@ export class Roads3D {
     for (const k of ng.kerbs) {
       if (k.length < 2) continue;
       // the line is the road's outer edge; draw the band just inside it, like the segment shader does
-      const km = new THREE.Mesh(kerbStrip(k, y + 0.01, n.p), this.edgeMat);
+      const km = new THREE.Mesh(kerbStrip(k, y + 0.01, n.p), this.hwNode(id) ? this.hwEdgeMat : this.edgeMat);
       km.receiveShadow = true;
       out.push(km);
     }

@@ -211,6 +211,44 @@ export class Router {
     return { keys, time: bestCost, freeFlow: ff.get(-bestGoal - 1) ?? bestCost };
   }
 
+  /**
+   * Every seg a vehicle leaving `from` can reach within `maxT` seconds at the speed limits (with the same turn
+   * and signal costs as routing): seg -> soonest arrival at its far end. A service's coverage area.
+   */
+  reach(from: Access, maxT: number): Map<number, number> {
+    const out = new Map<number, number>();
+    if (!this.net.segs.has(from.seg)) return out;
+    const g = new Map<number, number>();
+    const heap = new Heap();
+    for (const d of [1, -1] as const) {
+      if (!this.hasLanes(from.seg, d)) continue;
+      const k = dkey(from.seg, d);
+      const L = this.segLen(k) || 1;
+      const t = (L - this.along(from.seg, d, from.s)) / this.limit(k);
+      g.set(k, t);
+      heap.push(k, t);
+    }
+    out.set(from.seg, 0);
+    const closed = new Set<number>();
+    while (heap.size) {
+      const k = heap.pop();
+      if (closed.has(k)) continue; // a stale entry: this key was already settled at a lower cost
+      closed.add(k);
+      const gk = g.get(k)!;
+      if (gk > maxT) continue;
+      const seg = dkSeg(k);
+      // the whole seg is reachable once its far end is; its near end a bit sooner, so keep the better estimate
+      const near = Math.max(0, gk - this.segLen(k) / this.limit(k));
+      if (near < (out.get(seg) ?? Infinity)) out.set(seg, near);
+      for (const sc of this.succ(k)) {
+        const step = (sc.turn === "L" ? 2.5 : sc.turn === "U" ? 9 : sc.turn === "R" ? 1 : 0.3) + (sc.signal ? 4 : 0);
+        const ng = gk + step + this.segLen(sc.k) / this.limit(sc.k);
+        if (ng < (g.get(sc.k) ?? Infinity)) { g.set(sc.k, ng); heap.push(sc.k, ng); }
+      }
+    }
+    return out;
+  }
+
   /** Route from the end of a directed seg (vehicle already on it, about to leave it) to a destination. */
   routeFromKey(k: number, to: Access): number[] | null {
     const seg = dkSeg(k), d = dkDir(k);

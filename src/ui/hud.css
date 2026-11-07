@@ -83,6 +83,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ov-landvalue { background: linear-gradient(90deg, #e5484d, #f5b82e 50%, #4cc46a); }
 .ov-level { background: linear-gradient(90deg, #dfe8f1, #2a5fa8); }
 .ov-problems { background: #e5484d; }
+.ov-garbage, .ov-health, .ov-fire, .ov-police, .ov-school, .ov-parks { background: linear-gradient(90deg, #c4c4c4 0 35%, #b4e09c 35% 65%, #2ea64c 65%); }
+.svc-tag { display: inline-flex; width: 22px; height: 22px; margin-right: 8px; vertical-align: -5px; }
+.svc-tag svg { width: 22px; height: 22px; }
 .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 8px; padding: 10px 2px 0; color: var(--ink-2); font-size: 11px; }
 .legend:empty { display: none; }
 .legend .lg { grid-column: 1 / 3; height: 7px; border-radius: 2px; }
@@ -91,6 +94,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .lg-sat { background: linear-gradient(90deg, #e5484d, #f5b82e 50%, #4cc46a); }
 .lg-level { background: linear-gradient(90deg, #dfe8f1, #2a5fa8); }
 .lg-prob { background: linear-gradient(90deg, #e5484d 0 50%, #cfd3cc 50%); }
+.lg-cov { background: linear-gradient(90deg, #c4c4c4 0 20%, #b4e09c 20%, #2ea64c); }
 .lg-key { display: flex; align-items: center; gap: 5px; }
 .lg-key i { width: 10px; height: 10px; border-radius: 2px; }
 
@@ -367,6 +371,14 @@ kbd { font: inherit; font-size: 11px; font-weight: 500; padding: 1px 5px; border
 
 /* place names on the map: atlas style, text with a halo */
 .map-labels { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
+.map-icons { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
+.map-icon { position: absolute; left: 0; top: 0; width: 22px; height: 22px; padding: 3px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 3px rgba(20, 22, 26, 0.35); }
+.map-icon svg { width: 16px; height: 16px; display: block; }
+.map-icon::after { content: ""; position: absolute; left: 50%; bottom: -4px; margin-left: -4px; border: 4px solid transparent; border-bottom: 0; border-top-color: #fff; }
+.map-icon.urgent { animation: icon-bob 0.9s ease-in-out infinite alternate; }
+@keyframes icon-bob { to { margin-top: -4px; } }
+@media (prefers-reduced-motion: reduce) { .map-icon.urgent { animation: none; } }
 .map-label { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; white-space: nowrap; color: #2f3136;
   text-shadow: 0 0 2px #f6f4ee, 0 0 3px #f6f4ee, 0 0 5px #f6f4ee; will-change: transform; }
 .map-label b { font-weight: 600; font-size: 14px; letter-spacing: 0.02em; }

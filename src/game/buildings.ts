@@ -41,6 +41,19 @@ export interface Building {
   prodT: number;
   visits: number; // decaying count of customers
   born: number; // sim time it appeared
+  // city services (see game/services.ts)
+  /** A placed service building (fire station, school...). */
+  svc?: boolean;
+  /** Service vehicles out on a call (service buildings). */
+  busy?: number;
+  /** Students or patients (schools, clinics). */
+  users?: number;
+  /** Garbage waiting for collection (any building in use). */
+  garbage?: number;
+  /** Crime build-up. */
+  crime?: number;
+  /** Sim time a fire broke out; 0 = not burning. */
+  fire?: number;
 }
 
 export interface BuildingMove {
@@ -58,6 +71,8 @@ export interface Placement {
   access: Access | null;
   side: 1 | -1;
   blockers: number[];
+  /** Zoned buildings the new one would replace (service buildings clear growables, as in CS2). */
+  clears?: number[];
 }
 
 export interface PlaceWorld {
@@ -79,7 +94,7 @@ export class Buildings {
   }
 
   /** Where a building of `kind` would go near p: facing the closest road that allows driveways. */
-  placement(kind: BuildingKind, p: V2, world: PlaceWorld): Placement | null {
+  placement(kind: BuildingKind, p: V2, world: PlaceWorld, soft?: (o: Building) => boolean): Placement | null {
     const T = BUILDING_TYPES[kind];
     const net = this.net;
     let best: { seg: number; t: number; d: number; q: V2 } | null = null;
@@ -146,8 +161,10 @@ export class Buildings {
       for (const k of samples) if (world.isMountain(k)) return fail("Mountain in the way");
     }
     // other buildings
-    const hit = this.list.filter((o) => obbOverlap(c, hw + 0.3, hd + 0.3, rot, o.c, o.hw, o.hd, o.rot)).map((o) => o.id);
+    const over = this.list.filter((o) => obbOverlap(c, hw + 0.3, hd + 0.3, rot, o.c, o.hw, o.hd, o.rot));
+    const hit = over.filter((o) => !soft?.(o)).map((o) => o.id);
     if (hit.length) return fail("Another building is here", hit);
+    pl.clears = over.filter((o) => soft?.(o)).map((o) => o.id);
     // roads (any level below clearance): the lot must not cover a road surface
     for (const id of net.segsNear(c.x - hw - hd, c.y - hw - hd, c.x + hw + hd, c.y + hw + hd)) {
       const gg = net.segGeom.get(id)!;

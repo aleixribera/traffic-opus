@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type { Traffic, Vehicle } from "../sim/traffic";
-import type { ModelSet, VehicleKind } from "./models";
+import { VEHICLE_MODELS, type ModelSet, type VehicleKind } from "./models";
 import { CARGO_COLOR } from "./palette";
 
 interface Batch {
@@ -25,7 +25,7 @@ export class Vehicles3D {
   private S = new THREE.Vector3();
 
   constructor(private models: ModelSet) {
-    for (const k of ["car", "van", "truck"] as VehicleKind[]) this.batches.set(k, this.makeBatch(k, 256));
+    for (const k of VEHICLE_MODELS) this.batches.set(k, this.makeBatch(k, k === "car" || k === "van" || k === "truck" ? 256 : 16));
   }
 
   private makeBatch(kind: VehicleKind, cap: number): Batch {
@@ -52,6 +52,8 @@ export class Vehicles3D {
   }
 
   static kindOf(v: Vehicle): VehicleKind {
+    const run = v.trip.run;
+    if (run) return run.svc === "garbage" ? "garbagetruck" : run.svc === "fire" ? "firetruck" : run.svc === "health" ? "ambulance" : "policecar";
     if (v.truck) return "truck";
     return v.id % 6 === 0 ? "van" : "car";
   }
@@ -67,9 +69,10 @@ export class Vehicles3D {
   }
 
   update(traffic: Traffic, alpha: number) {
-    const lists: Record<VehicleKind, Vehicle[]> = { car: [], van: [], truck: [] };
+    const lists = {} as Record<VehicleKind, Vehicle[]>;
+    for (const k of VEHICLE_MODELS) lists[k] = [];
     for (const v of traffic.vehicles) lists[Vehicles3D.kindOf(v)].push(v);
-    for (const kind of ["car", "van", "truck"] as VehicleKind[]) {
+    for (const kind of VEHICLE_MODELS) {
       const vs = lists[kind];
       const b = this.ensure(kind, vs.length);
       for (const { mesh } of b.meshes) mesh.count = vs.length;

@@ -11,7 +11,7 @@ export const MIN_ARM_ANGLE = (24 * Math.PI) / 180;
 export const NODE_SNAP_PX = 18;
 export const ROAD_SNAP_PX = 14;
 
-export type RoadTypeId = "street" | "avenue" | "boulevard" | "streetM" | "avenueM" | "boulevardM" | "one1" | "one2" | "hw2" | "one3" | "one4";
+export type RoadTypeId = "street" | "avenue" | "boulevard" | "streetM" | "avenueM" | "boulevardM" | "one1" | "one2" | "hw1" | "hw2" | "one3" | "one4";
 
 export interface RoadType {
   id: RoadTypeId;
@@ -38,14 +38,18 @@ export const ROAD_TYPES: Record<RoadTypeId, RoadType> = {
   streetM: { id: "streetM", name: "Divided street", short: "1|1", fwd: 1, bwd: 1, speed: kmh(50), costPerM: 9, minRadius: 10, allowsAccess: true, rank: 1, median: 2.5, hint: "One lane each way split by a planted median. No turning across it: cars U-turn at junctions." },
   avenueM: { id: "avenueM", name: "Divided avenue", short: "2|2", fwd: 2, bwd: 2, speed: kmh(60), costPerM: 17, minRadius: 16, allowsAccess: true, rank: 2, median: 3.5, hint: "Two lanes each way with a median. Safer and faster than an avenue; buildings get right-in, right-out." },
   boulevardM: { id: "boulevardM", name: "Divided boulevard", short: "3|3", fwd: 3, bwd: 3, speed: kmh(70), costPerM: 26, minRadius: 22, allowsAccess: false, rank: 3, median: 5, hint: "Three lanes each way either side of a wide median. A city's main artery." },
-  one1: { id: "one1", name: "One-way", short: "1", fwd: 1, bwd: 0, speed: kmh(50), costPerM: 4, minRadius: 8, allowsAccess: true, rank: 1, hint: "One lane, drawn direction only. Ideal for ramps and loops." },
+  one1: { id: "one1", name: "One-way", short: "1", fwd: 1, bwd: 0, speed: kmh(50), costPerM: 4, minRadius: 8, allowsAccess: true, rank: 1, hint: "One-lane town street, drawn direction only. Houses and shops can face it." },
   one2: { id: "one2", name: "One-way 2", short: "2", fwd: 2, bwd: 0, speed: kmh(70), costPerM: 9, minRadius: 16, allowsAccess: true, rank: 2, hint: "Two lanes, drawn direction only." },
+  hw1: { id: "hw1", name: "Highway 1", short: "1", fwd: 1, bwd: 0, speed: kmh(80), costPerM: 8, minRadius: 25, allowsAccess: false, rank: 2, hint: "One-lane highway ramp. Links carriageways and loops through interchanges; merging traffic gives way." },
   hw2: { id: "hw2", name: "Highway 2", short: "2", fwd: 2, bwd: 0, speed: kmh(100), costPerM: 12, minRadius: 60, allowsAccess: false, rank: 3, hint: "Two-lane motorway carriageway. Build pairs, link with ramps." },
   one3: { id: "one3", name: "Highway 3", short: "3", fwd: 3, bwd: 0, speed: kmh(90), costPerM: 15, minRadius: 30, allowsAccess: false, rank: 3, hint: "Three-lane carriageway. Build pairs for a motorway." },
   one4: { id: "one4", name: "Highway 4", short: "4", fwd: 4, bwd: 0, speed: kmh(100), costPerM: 21, minRadius: 40, allowsAccess: false, rank: 4, hint: "Four-lane carriageway for the heaviest flows." },
 };
 
-export const ROAD_ORDER: RoadTypeId[] = ["one1", "street", "streetM", "one2", "avenue", "avenueM", "hw2", "one3", "boulevard", "boulevardM", "one4"];
+export const ROAD_ORDER: RoadTypeId[] = ["one1", "street", "streetM", "one2", "avenue", "avenueM", "hw1", "hw2", "one3", "boulevard", "boulevardM", "one4"];
+
+/** Motorway carriageways and ramps: one-way and closed to driveways. Drawn in darker asphalt with solid edge lines. */
+export const isHighway = (t: RoadType): boolean => t.bwd === 0 && !t.allowsAccess;
 
 export function roadWidth(t: RoadType): number {
   return (t.fwd + t.bwd) * LANE_W + SHOULDER * 2 + (t.median ?? 0);
@@ -63,8 +67,10 @@ export type BuildingKind =
   | "house" | "terrace" | "apartments"
   | "shop" | "store" | "mall"
   | "office" | "tower"
-  | "mine" | "farm" | "works" | "foodplant";
-export type Zone = "res" | "com" | "work" | "ind";
+  | "mine" | "farm" | "works" | "foodplant"
+  // city services (placed by the player, see game/services.ts)
+  | "garbage" | "firestation" | "police" | "clinic" | "hospital" | "school" | "highschool" | "university" | "park" | "parklarge";
+export type Zone = "res" | "com" | "work" | "ind" | "svc";
 export type Cargo = "ore" | "food" | "goods";
 
 export interface BuildingType {
@@ -96,9 +102,19 @@ export const BUILDING_TYPES: Record<BuildingKind, BuildingType> = {
   farm: { kind: "farm", name: "Farm", zone: "ind", w: 40, d: 40, residents: 0, jobs: 4, produces: "food", pollution: 0, parking: 2, blurb: "Grows food for Food Plants. Dislikes pollution." },
   works: { kind: "works", name: "Copper Works", zone: "ind", w: 36, d: 32, residents: 0, jobs: 14, consumes: "ore", produces: "goods", pollution: 130, parking: 4, blurb: "Turns copper ore into consumer goods. Polluting." },
   foodplant: { kind: "foodplant", name: "Food Plant", zone: "ind", w: 32, d: 30, residents: 0, jobs: 12, consumes: "food", produces: "goods", pollution: 90, parking: 4, blurb: "Turns food into consumer goods." },
+  garbage: { kind: "garbage", name: "Waste Transfer Station", zone: "svc", w: 36, d: 32, residents: 0, jobs: 8, pollution: 60, parking: 3, blurb: "Garbage trucks collect from every building they can reach." },
+  firestation: { kind: "firestation", name: "Fire Station", zone: "svc", w: 26, d: 24, residents: 0, jobs: 8, pollution: 0, parking: 3, blurb: "Fire engines put out fires before buildings burn down." },
+  police: { kind: "police", name: "Police Station", zone: "svc", w: 24, d: 22, residents: 0, jobs: 8, pollution: 0, parking: 3, blurb: "Patrol cars answer crime calls." },
+  clinic: { kind: "clinic", name: "Medical Clinic", zone: "svc", w: 26, d: 24, residents: 0, jobs: 8, pollution: 0, parking: 3, blurb: "Ambulances bring sick residents in for treatment." },
+  hospital: { kind: "hospital", name: "Hospital", zone: "svc", w: 46, d: 40, residents: 0, jobs: 30, pollution: 0, parking: 5, blurb: "A large hospital with many ambulances and beds." },
+  school: { kind: "school", name: "Elementary School", zone: "svc", w: 40, d: 34, residents: 0, jobs: 10, pollution: 0, parking: 4, blurb: "Children are driven here every morning." },
+  highschool: { kind: "highschool", name: "High School", zone: "svc", w: 52, d: 42, residents: 0, jobs: 18, pollution: 0, parking: 5, blurb: "Adults study here and graduate with a high-school education." },
+  university: { kind: "university", name: "University", zone: "svc", w: 70, d: 56, residents: 0, jobs: 40, pollution: 0, parking: 6, blurb: "Graduates are the educated workers offices need." },
+  park: { kind: "park", name: "Small Park", zone: "svc", w: 24, d: 24, residents: 0, jobs: 0, pollution: 0, parking: 0, blurb: "Raises land value nearby. Residents come for an outing." },
+  parklarge: { kind: "parklarge", name: "Large Park", zone: "svc", w: 48, d: 48, residents: 0, jobs: 2, pollution: 0, parking: 0, blurb: "A big park with a pond. Raises land value across the neighbourhood." },
 };
 
-export const ZONE_LABEL: Record<Zone, string> = { res: "Residential", com: "Commercial", work: "Workplace", ind: "Industry" };
+export const ZONE_LABEL: Record<Zone, string> = { res: "Residential", com: "Commercial", work: "Workplace", ind: "Industry", svc: "City service" };
 export const CARGO_LABEL: Record<Cargo, string> = { ore: "copper ore", food: "food", goods: "consumer goods" };
 
 // ---------- Simulation ----------
