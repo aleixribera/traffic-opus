@@ -1,7 +1,8 @@
 // The company's industry: extractors on deposits, plants that turn one product into another, and each building's
 // own trucks, which carry every load over the player's roads (see docs/design.md, "Chains" and "Freight").
 // Nothing here draws a route: a loaded truck goes to the customer worth most to the company, own plants short of
-// an input first, then the towns' shops.
+// an input first, then the shops of towns that still need the product today (see towns.ts), nearest and neediest
+// first. The company is paid only for loads delivered to a town.
 
 import type { V2 } from "../core/math";
 import type { Building, Buildings } from "./buildings";
@@ -22,8 +23,8 @@ export interface ProductDef {
 export const PRODUCTS: Record<Product, ProductDef> = {
   crops: { name: "Crops", price: 0, color: 0xd9b44a },
   logs: { name: "Logs", price: 0, color: 0x8a5a33 },
-  food: { name: "Food", price: 300, color: 0xe2704a },
-  planks: { name: "Planks", price: 260, color: 0xe8cf8f },
+  food: { name: "Food", price: 450, color: 0xe2704a },
+  planks: { name: "Planks", price: 400, color: 0xe8cf8f },
 };
 
 export type PlantKind = "farm" | "loggingcamp" | "foodplant" | "sawmill";
@@ -123,6 +124,12 @@ export interface IndustryHost {
   workersAt(id: number): number;
   /** buildings that sell to a town's residents */
   readonly shops: Building[];
+  /** the town a shop belongs to (null: none) */
+  townOf(b: Building): number | null;
+  /** loads of a product a town still wants today (0 or less: it has enough; -Infinity: it doesn't use it) */
+  want(town: number, p: Product): number;
+  /** a load reached one of a town's shops */
+  sold(town: number, p: Product, n: number): void;
   request(p: PendingSpawn): void;
   /** vehicles on the road and trips waiting to set off */
   trips(): Iterable<Trip>;
@@ -221,14 +228,22 @@ export class Industry {
       if (room < 1) continue;
       out.push({ b: o, value: 10000 + room * 100 - km(o) * FUEL_PER_KM * 2 });
     }
-    // the towns' shops buy finished products
+    // the towns' shops buy finished products, as much as each town uses in a day
     const price = PRODUCTS[product].price;
     if (price > 0) {
+      // what each town still wants today, less what is already on its way to any of its shops
+      const left = new Map<number, number>();
+      for (const o of this.h.shops) {
+        const t = this.h.townOf(o);
+        if (t !== null) left.set(t, (left.get(t) ?? this.h.want(t, product)) - on(o.id));
+      }
       for (const o of this.h.shops) {
         if (!o.access || o.abandoned || o.built < 1 || !this.h.connected(seg, o.access.seg)) continue;
-        // TODO(towns): each town has its own needs; until then a shop takes any finished product as stock
-        if (o.stock + 3 * on(o.id) >= 3) continue;
-        out.push({ b: o, value: price - km(o) * FUEL_PER_KM * 2 });
+        const t = this.h.townOf(o);
+        const l = t === null ? 0 : left.get(t)!;
+        if (l < 1) continue;
+        // nearest first; a town further short of its need, and a shop with emptier shelves, a little ahead
+        out.push({ b: o, value: price - km(o) * FUEL_PER_KM * 2 + Math.min(3, l) * 15 - (product === "food" ? o.stock * 15 : 0) });
       }
     }
     out.sort((a, b) => b.value - a.value);
@@ -244,7 +259,7 @@ export class Industry {
       while (free > 0 && (P.out[p] ?? 0) >= 1) {
         const c = this.customers(b, p, coming)[0];
         if (!c) {
-          if ((P.out[p] ?? 0) >= 2 && b.problem !== "No road access") b.problem = `Nobody your roads reach buys ${PRODUCTS[p].name.toLowerCase()}`;
+          if ((P.out[p] ?? 0) >= 2 && b.problem !== "No road access") b.problem = this.noBuyer(b, p);
           break;
         }
         this.send(b, c.b, p, 1);
@@ -256,6 +271,25 @@ export class Industry {
         m.set(p, (m.get(p) ?? 0) + 1);
       }
     }
+  }
+
+  /** Why a load has nowhere to go: no town on its roads uses it, or they all have enough for today. */
+  private noBuyer(from: Building, p: Product): string {
+    const name = PRODUCTS[p].name.toLowerCase();
+    const seg = from.access?.seg;
+    if (seg !== undefined) {
+      for (const o of this.h.buildings.list) {
+        if (o.plant && o.access && PLANTS[o.kind as PlantKind].inputs[p] && this.h.connected(seg, o.access.seg)) return `Your plants that use ${name} have all they can store`;
+      }
+    }
+    if (PRODUCTS[p].price > 0 && seg !== undefined) {
+      for (const o of this.h.shops) {
+        if (!o.access || !this.h.connected(seg, o.access.seg)) continue;
+        const t = this.h.townOf(o);
+        if (t !== null && Number.isFinite(this.h.want(t, p))) return `Towns on your roads have all the ${name} they need today`;
+      }
+    }
+    return `Nobody your roads reach buys ${name}`;
   }
 
   private send(from: Building, to: Building, product: Product, n: number) {
@@ -279,6 +313,8 @@ export class Industry {
     const to = this.h.buildings.byId.get(r.dest);
     const home = this.h.buildings.byId.get(r.plant);
     if (to) this.deliver(to, r.product, r.n, home);
+    // (the buyer was pulled down while the truck was on its way: the load goes back to the yard, to be sold elsewhere)
+    else if (home?.plant) home.plant.out[r.product] = (home.plant.out[r.product] ?? 0) + r.n;
     if (to?.access && home?.access) {
       this.h.request({
         from: to.access, fromSide: to.side, to: home.access, toSide: home.side, truck: true, tries: 0, wait: 0,
@@ -296,14 +332,17 @@ export class Industry {
     if (r.leg === "out" && home?.plant) home.plant.out[r.product] = (home.plant.out[r.product] ?? 0) + r.n;
   }
 
-  /** Hand a load over: a plant stocks it, a shop pays for it. */
+  /** Hand a load over: a plant stocks it; a shop pays for it and its town counts it toward its need. */
   deliver(to: Building, product: Product, n: number, from?: Building) {
     if (to.plant) {
       to.plant.stock[product] = (to.plant.stock[product] ?? 0) + n;
       return;
     }
     const pay = PRODUCTS[product].price * n;
-    to.stock = Math.min(6, to.stock + 3 * n);
+    // (the shelves hold food; other products go on to the town's builders and homes)
+    if (product === "food") to.stock = Math.min(6, to.stock + 3 * n);
+    const t = this.h.townOf(to);
+    if (t !== null) this.h.sold(t, product, n);
     this.h.earn(pay);
     if (from?.plant) from.plant.now.earned += pay;
   }

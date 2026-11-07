@@ -206,7 +206,10 @@ export class Society {
 
   // ------------------------------------------------------------------ jobs
 
-  /** Match job seekers to open jobs, closest first (with some randomness). Jobs nobody local can fill stay empty. */
+  /**
+   * Match job seekers to open jobs, closest first (with some randomness). Jobs nobody local can fill stay empty. The
+   * company's plants come first: while one is short-handed, people working in the towns' shops move over to it.
+   */
   matchJobs() {
     const g = this.g;
     const open: { b: Building; free: number }[] = [];
@@ -219,11 +222,30 @@ export class Society {
     if (!open.length) return;
     // the player's own buildings are staffed first (they keep the company running)
     open.sort((a, b) => (b.b.placed ? 1 : 0) - (a.b.placed ? 1 : 0));
+    let placedOpen = 0;
+    for (const o of open) if (o.b.placed) placedOpen += o.free;
     const rng = g.rng;
     let budget = 400;
     for (const c of this.citizens.values()) {
       if (budget <= 0) break;
-      if (c.age !== Age.Adult || c.job >= 0) continue;
+      if (c.age !== Age.Adult) continue;
+      if (c.job >= 0) {
+        // (a town job is given up for one at the company's plants, at a quarter-hour's notice)
+        if (placedOpen <= 0 || c.st !== St.Home || g.buildings.byId.get(c.job)?.placed) continue;
+        const home = g.buildings.byId.get(c.home);
+        let to: (typeof open)[number] | null = null;
+        for (const o of open) {
+          if (!o.b.placed || o.free <= 0 || !home?.access || !g.connected(home.access.seg, o.b.access!.seg)) continue;
+          if (!to || o.free / o.b.cap > to.free / to.b.cap) to = o;
+        }
+        if (!to) continue;
+        budget--;
+        this.leaveJob(c);
+        this.takeJob(c, to.b);
+        to.free--;
+        placedOpen--;
+        continue;
+      }
       const home = g.buildings.byId.get(c.home);
       if (!home?.access) continue;
       budget--;
@@ -232,12 +254,14 @@ export class Society {
         const o = open.length <= 48 ? open[k] : open[(rng() * open.length) | 0];
         if (o.free <= 0) continue;
         if (!g.connected(home.access.seg, o.b.access!.seg)) continue;
-        const s = dist(home.c, o.b.c) * (0.8 + rng() * 0.4) - (o.b.placed ? 250 : 0);
+        // (the company's plants first, the most short-handed of them first, so every plant gets a crew)
+        const s = o.b.placed ? -1e6 - (o.free / o.b.cap) * 1e5 + dist(home.c, o.b.c) : dist(home.c, o.b.c) * (0.8 + rng() * 0.4);
         if (s < bs) { bs = s; best = o; }
       }
       if (!best) continue;
       this.takeJob(c, best.b);
       best.free--;
+      if (best.b.placed) placedOpen--;
     }
   }
 
@@ -245,7 +269,7 @@ export class Society {
     c.job = b.id;
     this.staff.set(b.id, this.workersAt(b.id) + 1);
     // industry (and the company's own buildings) runs shifts round the clock; shops open late
-    const grp = b.zone ? ZONE_GROUP[b.zone] : "ind";
+    const grp = b.zone ? ZONE_GROUP[b.zone] : "plant";
     const r = this.g.rng();
     c.shift = grp === "com" ? (r < 0.6 ? 9 : 14) : r < 0.55 ? 7 : r < 0.85 ? 15 : 23;
     if (c.st === St.Home) this.schedule(c, Math.min(c.next, this.leaveFor(c)));
@@ -331,9 +355,12 @@ export class Society {
     this.scheduleFree(c);
   }
 
+  /** Someone with no job to go to: out again later today if the day has hours left, else tomorrow. */
   private scheduleFree(c: Citizen) {
     const rng = this.g.rng;
-    this.schedule(c, this.nextAt(9 + rng() * 9, HOUR * (2 + rng() * 6)));
+    const t = this.now + HOUR * (1.5 + rng() * 3);
+    const h = this.hourOf(t);
+    this.schedule(c, h >= 9 && h < 19 ? t : this.nextAt(9 + rng() * 9, HOUR * 2));
   }
 
   private goHome(c: Citizen) {
@@ -522,8 +549,11 @@ export class Society {
   }
 }
 
-/** Trips shorter than this (straight line, m) between two buildings are walked rather than driven. */
-export const WALK = 400;
+/**
+ * Trips shorter than this (straight line, m) between two buildings are walked rather than driven. (Short: the towns
+ * are small, and a town's own cars going about its streets are much of what makes it look alive.)
+ */
+export const WALK = 200;
 
 /** Rough door-to-door time for a trip that isn't simulated as a car. */
 export function estTime(a: V2, b: V2): number {

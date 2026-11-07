@@ -83,11 +83,9 @@ export const SIGNAL_COST = 300;
 export type BuildingKind =
   | "house" | "terrace" | "apartments"
   | "shop" | "store" | "mall"
-  | "mine" | "farm" | "works" | "foodplant"
-  // placed by the player (see game/placed.ts)
-  | "coalplant";
-export type Zone = "res" | "com" | "ind" | "placed";
-export type Cargo = "ore" | "food" | "goods";
+  // placed by the player (see game/placed.ts): the company's extractors and plants, and power
+  | "farm" | "loggingcamp" | "foodplant" | "sawmill" | "coalplant";
+export type Zone = "res" | "com" | "placed";
 
 export interface BuildingType {
   kind: BuildingKind;
@@ -97,10 +95,9 @@ export interface BuildingType {
   d: number; // depth away from the road
   residents: number;
   jobs: number;
-  produces?: Cargo;
-  consumes?: Cargo;
+  /** keeps food on its shelves, restocked by the company's food trucks (a shop) */
+  shelves?: boolean;
   pollution: number; // radius in metres, 0 = clean
-  needsMountain?: boolean; // rear of the plot must sit in a mountain
   parking: number; // visible parking bays in front
   blurb: string;
 }
@@ -109,18 +106,17 @@ export const BUILDING_TYPES: Record<BuildingKind, BuildingType> = {
   house: { kind: "house", name: "Small Residential", zone: "res", w: 12, d: 15, residents: 2, jobs: 0, pollution: 0, parking: 1, blurb: "A family home. Residents visit shops and commute to work." },
   terrace: { kind: "terrace", name: "Medium Residential", zone: "res", w: 24, d: 17, residents: 5, jobs: 0, pollution: 0, parking: 3, blurb: "A row of townhouses." },
   apartments: { kind: "apartments", name: "Large Residential", zone: "res", w: 30, d: 30, residents: 12, jobs: 0, pollution: 0, parking: 6, blurb: "Apartment block. Lots of trips from one driveway." },
-  shop: { kind: "shop", name: "Small Commercial", zone: "com", w: 18, d: 20, residents: 0, jobs: 3, consumes: "goods", pollution: 0, parking: 4, blurb: "Needs customers, staff and deliveries of goods." },
-  store: { kind: "store", name: "Medium Commercial", zone: "com", w: 30, d: 28, residents: 0, jobs: 7, consumes: "goods", pollution: 0, parking: 8, blurb: "A bigger store that draws customers from further away." },
-  mall: { kind: "mall", name: "Large Commercial", zone: "com", w: 48, d: 40, residents: 0, jobs: 14, consumes: "goods", pollution: 0, parking: 14, blurb: "Shopping centre. Expect heavy traffic at the entrance." },
-  mine: { kind: "mine", name: "Copper Mine", zone: "ind", w: 26, d: 30, residents: 0, jobs: 8, produces: "ore", pollution: 70, needsMountain: true, parking: 2, blurb: "Must be dug into a mountain. Ships copper ore to Copper Works." },
-  farm: { kind: "farm", name: "Farm", zone: "ind", w: 40, d: 40, residents: 0, jobs: 4, produces: "food", pollution: 0, parking: 2, blurb: "Grows food for Food Plants. Dislikes pollution." },
-  works: { kind: "works", name: "Copper Works", zone: "ind", w: 36, d: 32, residents: 0, jobs: 14, consumes: "ore", produces: "goods", pollution: 130, parking: 4, blurb: "Turns copper ore into consumer goods. Polluting." },
-  foodplant: { kind: "foodplant", name: "Food Plant", zone: "ind", w: 32, d: 30, residents: 0, jobs: 12, consumes: "food", produces: "goods", pollution: 90, parking: 4, blurb: "Turns food into consumer goods." },
+  shop: { kind: "shop", name: "Small Commercial", zone: "com", w: 18, d: 20, residents: 0, jobs: 3, shelves: true, pollution: 0, parking: 4, blurb: "Sells the town its food: needs customers, staff and the company's food deliveries." },
+  store: { kind: "store", name: "Medium Commercial", zone: "com", w: 30, d: 28, residents: 0, jobs: 7, shelves: true, pollution: 0, parking: 8, blurb: "A bigger store that draws customers from further away." },
+  mall: { kind: "mall", name: "Large Commercial", zone: "com", w: 48, d: 40, residents: 0, jobs: 14, shelves: true, pollution: 0, parking: 14, blurb: "Shopping centre. Expect heavy traffic at the entrance." },
+  farm: { kind: "farm", name: "Farm", zone: "placed", w: 40, d: 40, residents: 0, jobs: 8, pollution: 0, parking: 2, blurb: "Grows crops on fertile soil. Its trucks take them to your food plants." },
+  loggingcamp: { kind: "loggingcamp", name: "Logging Camp", zone: "placed", w: 36, d: 32, residents: 0, jobs: 8, pollution: 0, parking: 2, blurb: "Fells timber in the forest. Its trucks take the logs to your sawmills." },
+  foodplant: { kind: "foodplant", name: "Food Plant", zone: "placed", w: 32, d: 30, residents: 0, jobs: 12, pollution: 90, parking: 4, blurb: "Turns crops into food. Its trucks sell the food to the towns' shops." },
+  sawmill: { kind: "sawmill", name: "Sawmill", zone: "placed", w: 40, d: 34, residents: 0, jobs: 12, pollution: 60, parking: 3, blurb: "Saws logs into planks. Its trucks sell the planks to the towns." },
   coalplant: { kind: "coalplant", name: "Coal Power Plant", zone: "placed", w: 64, d: 52, residents: 0, jobs: 24, pollution: 140, parking: 5, blurb: "Plenty of power for its price, and smoke that drags land value down for a few hundred metres. Keep homes away." },
 };
 
-export const ZONE_LABEL: Record<Zone, string> = { res: "Residential", com: "Commercial", ind: "Industry", placed: "Company building" };
-export const CARGO_LABEL: Record<Cargo, string> = { ore: "copper ore", food: "food", goods: "consumer goods" };
+export const ZONE_LABEL: Record<Zone, string> = { res: "Residential", com: "Commercial", placed: "Company building" };
 
 // ---------- Simulation ----------
 

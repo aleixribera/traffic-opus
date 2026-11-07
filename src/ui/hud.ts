@@ -3,9 +3,13 @@ import { formatMoney, type V2 } from "../core/math";
 import type { Building } from "../game/buildings";
 import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
 import { MILESTONES } from "../game/progression";
-import { ZONES, ZONE_ORDER, type ZoneGroup, type ZoneId } from "../game/zones";
+import { ZONES } from "../game/zones";
+import { PLANTS, PRODUCTS, MIN_DEPOSIT, isPlantKind, type Product } from "../game/industry";
+import { TOWN_COST, TOWN_SPACING, type Town } from "../game/settlements";
+import { TOWN_SIZES, demandPerDay, needsOf, sizeOf } from "../game/towns";
+import { PAL } from "../render/palette";
 import type { SignalPlan } from "../roads/network";
-import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId, type ZoneMode } from "../app";
+import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId } from "../app";
 import { ROUNDABOUTS, type RoundaboutSize } from "../roads/planner";
 import { ICON, placedIcon, roadIcon } from "./icons";
 import { PLACED, PLACED_TABS, isPlacedKind, type PlacedKind } from "../game/placed";
@@ -22,24 +26,15 @@ export interface Chip {
 
 const OVERLAYS: { id: OverlayId; label: string; blurb: string }[] = [
   { id: "flow", label: "Traffic flow", blurb: "How fast each road moves compared with its speed limit" },
-  { id: "zones", label: "Zoning", blurb: "What each zoned cell allows to grow" },
+  { id: "resources", label: "Resources", blurb: "Fertile soil and forest, where extractors can work" },
   { id: "landvalue", label: "Land value", blurb: "Higher value lets buildings level up" },
   { id: "level", label: "Building level", blurb: "Buildings grow from level 1 to 5" },
-  { id: "problems", label: "Problems", blurb: "Buildings missing workers, goods or customers" },
+  { id: "problems", label: "Problems", blurb: "Plants and buildings with something holding them up" },
   { id: "power", label: "Electricity", blurb: "Buildings with all the power they need" },
 ];
 
-const GROUP_NAME: Record<ZoneGroup, string> = { res: "Residential", com: "Commercial", ind: "Industrial" };
-/** What the player zones more of, for each group ("Zone more homes"). */
-const GROUP_LAND: Record<ZoneGroup, string> = { res: "homes", com: "shops", ind: "industry" };
-/** Demand at which a group with no empty zoned land left is worth telling the player about. */
-const LAND_SHORT = 40;
-const GROUP_LETTER: Record<ZoneGroup, string> = { res: "R", com: "C", ind: "I" };
-const GROUPS: ZoneGroup[] = ["res", "com", "ind"];
-export const BRUSH_SIZES: { r: number; label: string }[] = [{ r: 10, label: "S" }, { r: 22, label: "M" }, { r: 40, label: "L" }];
-
 /** Build categories along the bottom bar, each with its asset tabs. */
-type CatId = "roads" | "zoning" | "power" | "transport";
+type CatId = "roads" | "industry" | "towns" | "transport";
 type Asset =
   | { kind: "road"; id: RoadTypeId }
   | { kind: "placed"; id: PlacedKind }
@@ -48,7 +43,7 @@ type Asset =
   | { kind: "lane" }
   | { kind: "busstop" }
   | { kind: "busline" }
-  | { kind: "zone"; id: ZoneId };
+  | { kind: "town" };
 interface Tab { id: string; label: string; assets: Asset[] }
 const CATS: Record<CatId, { label: string; tabs: Tab[] }> = {
   roads: {
@@ -61,13 +56,13 @@ const CATS: Record<CatId, { label: string; tabs: Tab[] }> = {
       { id: "junctions", label: "Intersections", assets: [1, 2, 3, 4].map((s) => ({ kind: "roundabout", size: s as RoundaboutSize }) as Asset).concat([{ kind: "lane" }, { kind: "junction" }]) },
     ],
   },
-  zoning: {
-    label: "Zoning",
-    tabs: GROUPS.map((gp) => ({ id: gp, label: GROUP_NAME[gp], assets: ZONE_ORDER.filter((z) => ZONES[z].group === gp).map((id) => ({ kind: "zone", id }) as Asset) })),
-  },
-  power: {
-    label: "Power",
+  industry: {
+    label: "Industry",
     tabs: PLACED_TABS.map((t) => ({ id: t.id, label: t.label, assets: t.kinds.map((id) => ({ kind: "placed", id }) as Asset) })),
+  },
+  towns: {
+    label: "Towns",
+    tabs: [{ id: "found", label: "Found a town", assets: [{ kind: "town" }] }],
   },
   transport: {
     label: "Transport",
@@ -77,8 +72,8 @@ const CATS: Record<CatId, { label: string; tabs: Tab[] }> = {
 const catOf = (st: { tool: ToolId }): CatId | null => {
   const t = st.tool;
   if (t === "road" || t === "roundabout" || t === "junction" || t === "lane") return "roads";
-  if (t === "zone") return "zoning";
-  if (t === "place") return "power";
+  if (t === "town") return "towns";
+  if (t === "place") return "industry";
   return t === "transit" ? "transport" : null;
 };
 
@@ -118,7 +113,7 @@ const KEYS: [string, string][] = [
   ["B", "Bulldozer"],
   ["L", "Add lane (Shift or right click removes)"],
   ["M", "Map tiles"],
-  ["P / Z / C / X", "Progression / Economy / City / Transport"],
+  ["P / Z / C / X", "Progression / Economy / Towns / Transport"],
   ["Space, 1 2 3", "Pause, game speed"],
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
   ["F5 / F9", "Quicksave / quickload"],
@@ -134,8 +129,6 @@ export class Hud {
   private moneyBtn = h("button", "cb-money");
   private clockEl = h("span", "cb-clock");
   private speed = h("div", "speed");
-  private demandBtn = h("button", "cb-demand");
-  private demandPop = h("section", "card demand-pop");
   private cats = h("nav", "cats");
   private assets = h("section", "card assets");
   private toolOpts = h("section", "card toolopts");
@@ -155,11 +148,12 @@ export class Hud {
   private redoBtn = h("button", "cat hist");
   private catBtns = new Map<string, HTMLButtonElement>();
   private cat: CatId | null = null;
-  private tab: Record<CatId, string> = { roads: "small", zoning: "res", power: "power", transport: "bus" };
+  private tab: Record<CatId, string> = { roads: "small", industry: "extraction", towns: "found", transport: "bus" };
   private lastRoad: RoadTypeId = "street";
   private winKind: WinId | null = null;
-  private panelKind: "building" | "signal" | "stop" | null = null;
+  private panelKind: "building" | "signal" | "stop" | "town" | null = null;
   private stopId = -1;
+  private townId = -1;
   private panelNode = -1;
   private panelPhase = 0;
   private tutHidden = false;
@@ -192,7 +186,7 @@ export class Hud {
     tlb("info", ICON.layers, "Info views", () => this.toggleWin("info"));
     tlb("progression", ICON.flag, "Progression (P)", () => this.toggleWin("progression"));
     tlb("economy", ICON.coins, "Economy (Z)", () => this.toggleWin("economy"));
-    tlb("city", ICON.chart, "City information (C)", () => this.toggleWin("city"));
+    tlb("city", ICON.chart, "Towns (C)", () => this.toggleWin("city"));
     tlb("transport", ICON.car, "Transportation overview (X)", () => this.toggleWin("transport"));
     tlb("tiles", ICON.tiles, "Map tiles (M)", () => app.setTool({ tool: app.st.tool === "unlock" ? "inspect" : "unlock" }));
     this.compass.innerHTML = ICON.north;
@@ -229,8 +223,8 @@ export class Hud {
     };
     this.cats.append(
       cat("roads", ICON.roadCat, "Roads", "Roads", () => this.toggleCat("roads")),
-      cat("zoning", ICON.zone, "Zoning", "Zoning", () => this.toggleCat("zoning")),
-      cat("power", ICON.power, "Power", "Power plants", () => this.toggleCat("power")),
+      cat("industry", ICON.industry, "Industry", "Industry: extractors, plants and power", () => this.toggleCat("industry")),
+      cat("towns", ICON.town, "Towns", "Towns", () => this.toggleCat("towns")),
       cat("transport", ICON.busCat, "Transport", "Public transport", () => this.toggleCat("transport")),
       h("span", "cat-sep"),
       cat("bulldoze", ICON.bulldoze, "Bulldoze", "Bulldozer (B)", () => app.setTool({ tool: app.st.tool === "bulldoze" ? "inspect" : "bulldoze" })),
@@ -259,21 +253,11 @@ export class Hud {
       b.onclick = fn;
       this.speed.appendChild(b);
     }
-    this.demandBtn.title = "Zone demand: what the city wants built";
-    this.demandBtn.setAttribute("aria-label", "Zone demand");
-    this.demandBtn.setAttribute("aria-expanded", "false");
-    this.demandBtn.innerHTML = GROUPS.map((gp) => `<span class="dm dm-${gp}"><i></i><b>${GROUP_LETTER[gp]}</b></span>`).join("");
-    this.demandBtn.onclick = () => {
-      this.demandPop.hidden = !this.demandPop.hidden;
-      this.demandBtn.setAttribute("aria-expanded", String(!this.demandPop.hidden));
-      this.fillDemand();
-    };
-    this.demandPop.hidden = true;
-    time.append(this.clockEl, this.speed, this.demandBtn);
+    time.append(this.clockEl, this.speed);
     this.bbar.append(city, this.cats, time);
     this.assets.hidden = true;
     this.toolOpts.hidden = true;
-    bottom.append(this.toolOpts, this.assets, this.demandPop, this.bbar);
+    bottom.append(this.toolOpts, this.assets, this.bbar);
 
     this.panel.hidden = true;
     this.modal.hidden = true;
@@ -281,14 +265,7 @@ export class Hud {
     this.rectEl.hidden = true;
     this.tut.hidden = true;
     this.root.append(tl, tr, bottom, this.chipBox, this.toastBox, this.banner, this.rectEl, this.modal);
-    document.addEventListener("pointerdown", (e) => {
-      const tg = e.target as Node;
-      if (!this.demandPop.hidden && !this.demandPop.contains(tg) && !this.demandBtn.contains(tg)) {
-        this.demandPop.hidden = true;
-        this.demandBtn.setAttribute("aria-expanded", "false");
-      }
-      this.sfx.unlock();
-    });
+    document.addEventListener("pointerdown", () => this.sfx.unlock());
   }
 
   // ---------------------------------------------------------------- categories
@@ -307,12 +284,12 @@ export class Hud {
     else if (c === "transport") {
       if (app.game.featureUnlocked("transit")) app.setTool({ tool: "transit" });
       else this.refresh();
-    } else if (c === "power") {
+    } else if (c === "industry") {
       // hold the tool only on something already unlocked
       const k = app.game.placedUnlocked(app.st.placed) ? app.st.placed : PLACED_TABS.flatMap((t) => t.kinds).find((x) => app.game.placedUnlocked(x));
       if (k) app.setTool({ tool: "place", placed: k });
       else this.refresh();
-    } else app.setTool({ tool: "zone", erase: false });
+    } else app.setTool({ tool: "town" });
   }
 
   private pick(a: Asset) {
@@ -324,7 +301,7 @@ export class Hud {
     else if (a.kind === "placed") app.setTool({ tool: "place", placed: a.id });
     else if (a.kind === "busstop") app.setTool({ tool: "transit", transitMode: "stop" });
     else if (a.kind === "busline") app.setTool({ tool: "transit", transitMode: "line" });
-    else app.setTool({ tool: "zone", zone: a.id, erase: false });
+    else app.setTool({ tool: "town" });
     this.sfx.play("click");
   }
 
@@ -337,7 +314,7 @@ export class Hud {
     if (st.tool === "lane") return { kind: "lane" };
     if (st.tool === "place") return { kind: "placed", id: st.placed };
     if (st.tool === "transit") return { kind: st.transitMode === "stop" ? "busstop" : "busline" };
-    if (st.tool === "zone") return st.erase ? null : { kind: "zone", id: st.zone };
+    if (st.tool === "town") return { kind: "town" };
     return null;
   }
 
@@ -358,6 +335,12 @@ export class Hud {
       const S = PLACED[a.id], T = BUILDING_TYPES[a.id];
       const locked = g.placedUnlocked(a.id) ? undefined : MILESTONES[S.unlock];
       const amt = S.out && S.utility ? `${fmtNum(S.out)} ${UNIT[S.utility]}` : "";
+      if (isPlantKind(a.id)) {
+        return {
+          key: "placed:" + a.id, icon: placedIcon(a.id), name: T.name, sub: `${formatMoney(S.cost)} · ${formatMoney(S.upkeep)}/h`,
+          title: `${T.name}: ${chainText(a.id)}. ${T.blurb} Costs ${formatMoney(S.cost)}; upkeep ${formatMoney(S.upkeep)} an hour plus its ${T.jobs} workers' wages.`, locked,
+        };
+      }
       return {
         key: "placed:" + a.id, icon: placedIcon(a.id), name: T.name, sub: amt ? `${formatMoney(S.cost)} · ${amt}` : `${formatMoney(S.cost)} · ${formatMoney(S.upkeep)}/h`,
         title: `${T.name}: ${T.blurb}${amt ? ` Makes ${amt} with full staff.` : ""}${S.shore ? " Has to stand on a shore." : ""} Costs ${formatMoney(S.cost)}, upkeep ${formatMoney(S.upkeep)} an hour.`, locked,
@@ -379,9 +362,10 @@ export class Hud {
       const locked = g.featureUnlocked("signals") ? undefined : unlockAt((m) => m.features.includes("signals"));
       return { key: "junction", icon: ICON.junction, name: "Traffic lights", sub: formatMoney(SIGNAL_COST), title: "Traffic lights: click a junction to add lights or edit their phases", locked };
     }
-    const Z = ZONES[a.id];
-    const locked = g.zonesUnlocked.has(a.id) ? undefined : unlockAt((m) => m.zones.includes(a.id));
-    return { key: "zone:" + a.id, icon: `<i class="swatch" style="background:${hex(Z.color)}"></i>`, name: Z.short, sub: Z.high ? "High density" : "Low density", title: Z.name, locked };
+    return {
+      key: "town", icon: ICON.town, name: "Found town", sub: formatMoney(TOWN_COST),
+      title: `Found a town for ${formatMoney(TOWN_COST)}: on open land at least ${km(TOWN_SPACING)} from other towns, near one of your roads. It lays its own streets and grows while you keep it supplied.`,
+    };
   }
 
   private renderAssets() {
@@ -557,15 +541,13 @@ export class Hud {
         }
         items.push(sec("Snapping", snap));
       }
-    } else if (st.tool === "zone") {
-      const ZMODE: Record<ZoneMode, { icon: string; title: string }> = {
-        fill: { icon: ICON.fill, title: "Fill: click to zone a whole block of empty cells" },
-        brush: { icon: ICON.brush, title: "Paint: drag over cells" },
-        marquee: { icon: ICON.marquee, title: "Marquee: drag a rectangle" },
-      };
-      items.push(sec("Mode", seg((["fill", "brush", "marquee"] as ZoneMode[]).map((m) => ({ html: ZMODE[m].icon, on: st.zoneMode === m, title: ZMODE[m].title, fn: () => app.setTool({ zoneMode: m }) })))));
-      if (st.zoneMode === "brush") items.push(sec("Size", seg(BRUSH_SIZES.map((s) => ({ html: s.label, on: st.brush === s.r, title: `Brush size ${s.label}`, fn: () => app.setTool({ brush: s.r }) })))));
-      items.push(sec("Unzone", seg([{ html: ICON.erase, on: st.erase, title: "Unzone (or use the right mouse button)", fn: () => app.setTool({ erase: !st.erase }) }])));
+    } else if (st.tool === "town") {
+      items.push(h("p", "to-text", `Click open land at least ${km(TOWN_SPACING)} from other towns, with one of your roads near. The town lays its own streets, and grows while you keep its needs supplied.`));
+    } else if (st.tool === "place" && isPlantKind(st.placed)) {
+      const D = PLANTS[st.placed];
+      items.push(h("p", "to-text", D.deposit
+        ? `Place it beside a road where at least ${Math.round(MIN_DEPOSIT * 100)}% of the lot is ${D.deposit.name}: the ground shows it while you place. More of it, faster work.`
+        : `Your extractors' trucks bring it ${productList(D.inputs)}; its own trucks sell the ${productList(D.outputs)} to the towns on your roads.`));
     } else if (st.tool === "roundabout") {
       items.push(elevation());
     } else if (st.tool === "bulldoze") {
@@ -616,10 +598,8 @@ export class Hud {
     const hr = g.hour, mm = Math.floor((hr % 1) * 60 / 10) * 10;
     this.clockEl.innerHTML = `<b>${String(Math.floor(hr)).padStart(2, "0")}:${String(mm).padStart(2, "0")}</b><span class="cb-day">Day ${g.day}</span>`;
     this.clockEl.classList.toggle("night", hr < 6 || hr >= 21);
-    const bars = this.demandBtn.querySelectorAll<HTMLElement>(".dm i");
-    GROUPS.forEach((gp, i) => bars[i].style.setProperty("--v", String(g.demand[gp].v / 100)));
-    if (!this.demandPop.hidden) this.fillDemand();
     this.renderTips();
+    if (this.panelKind === "town") this.fillTown();
     if (this.panelKind === "stop") {
       if (!g.transit.stops.has(this.stopId)) this.closeSelection();
       else this.fillStop();
@@ -629,21 +609,6 @@ export class Hud {
       else this.fillBuilding(this.app.selected);
     }
     if (this.winKind) this.fillWin();
-  }
-
-  private fillDemand() {
-    const g = this.app.game;
-    const html = GROUPS.map((gp) => {
-      const d = g.demand[gp];
-      let fs = d.factors.filter((f) => f.v !== 0).map((f) =>
-        `<li><span>${f.label}</span><b class="${f.v > 0 ? "good" : f.v < 0 ? "bad" : ""}">${f.v > 0 ? "+" : f.v < 0 ? "−" : ""}${Math.abs(f.v) || ""}</b></li>`).join("");
-      if (d.v >= LAND_SHORT && g.freeLand(gp) === 0) fs += `<li class="short"><span>No empty ${GROUP_LAND[gp]} zones: zone more</span></li>`;
-      return `<div class="dp-row"><div class="dp-head"><i class="dm-${gp}"></i><span>${GROUP_NAME[gp]}</span><span class="dp-bar"><i class="dm-${gp}" style="width:${d.v}%"></i></span><b>${d.v}</b></div><ul>${fs}</ul></div>`;
-    }).join("");
-    if (this.demandPop.dataset.h !== html) {
-      this.demandPop.dataset.h = html;
-      this.demandPop.innerHTML = `<header>Zone demand</header><p class="muted small">Zone more of whatever is high: buildings only grow where there is demand.</p>${html}`;
-    }
   }
 
   private renderTips() {
@@ -665,19 +630,18 @@ export class Hud {
 
   private tipFor(): { key: string; html: string; cat?: string } | null {
     const g = this.app.game;
-    let own = 0;
-    for (const s of g.net.segs.values()) if (ROAD_TYPES[s.type].allowsAccess) { own++; break; }
-    if (!own) return { key: "roads", cat: "roads", html: "<b>Lay your first street.</b> Open <b>Roads</b>, pick <b>Street</b>, click to start and click again to end it." };
-    let zoned = 0, jobsZoned = 0;
-    for (const c of g.zones.allCells()) if (c.zone) { zoned++; if (ZONE_GROUP[c.zone] !== "res") jobsZoned++; if (zoned > 40 && jobsZoned > 20) break; }
-    if (zoned < 10) return { key: "zone", cat: "zoning", html: "<b>Zone homes.</b> Open <b>Zoning</b>, pick <b>Low homes</b> and click beside your street. Houses grow when there is demand." };
-    if (jobsZoned < 8) return { key: "jobs", cat: "zoning", html: "<b>Zone jobs.</b> New residents need work and shops. Zone some <b>Industry</b> and <b>Low shops</b>, away from homes if you can: factories lower land value." };
-    // demand nothing can meet: everything zoned for it is built
-    for (const gp of GROUPS) {
-      if (g.demand[gp].v >= LAND_SHORT && g.freeLand(gp) === 0) return { key: "land-" + gp, cat: "zoning", html: `<b>Zone more ${GROUP_LAND[gp]}.</b> Demand is high, but every lot zoned for ${GROUP_LAND[gp]} is built: nothing more can grow until you zone more land.` };
-    }
-    if (g.people.stats.population < 60) return { key: "grow", html: "<b>Watch the demand bars</b> at the bottom right. Zone more of whatever is high. Factories truck goods to your shops; keep the roads between them flowing." };
-    if (g.milestone === 0) return { key: "ms", html: `<b>Grow to ${MILESTONES[1].pop} people</b> to reach ${MILESTONES[1].name}: it unlocks avenues, roundabouts and traffic lights. Progression (P) shows what's next.` };
+    const plants = g.buildings.list.filter((b) => b.plant);
+    const has = (k: string) => plants.some((b) => b.kind === k);
+    const home = g.towns.list[0];
+    const name = home ? escapeHtml(home.name) : "your town";
+    if (!has("farm")) return { key: "farm", cat: "industry", html: `<b>Start a food chain.</b> ${name} needs food. Lay a road out to fertile soil, then open <b>Industry</b> and place a <b>Farm</b> beside it: the ground shows the soil while you place.` };
+    if (!has("foodplant")) return { key: "foodplant", cat: "industry", html: `<b>Build a food plant</b> (Industry › Processing) on a road between your farm and ${name}. Farm trucks bring it crops; its own trucks sell the food to the town's shops.` };
+    const stuck = plants.find((b) => b.built >= 1 && b.problem?.startsWith("Nobody your roads reach"));
+    if (stuck) return { key: "connect-" + stuck.id, cat: "roads", html: `<b>Your ${BUILDING_TYPES[stuck.kind].name.toLowerCase()} has nobody to sell to.</b> Join it by road to a plant or a town that uses what it makes.` };
+    if (home && sizeOf(home.pop) === 0 && !has("sawmill")) return { key: "grow", html: `<b>Keep ${name} fed.</b> It grows while it gets the food it needs; at ${TOWN_SIZES[1].pop} people it becomes a Village and wants planks too. Towns (C) shows how well each town is supplied.` };
+    if (!has("loggingcamp") || !has("sawmill")) return { key: "planks", cat: "industry", html: `<b>Villages need planks.</b> Place a <b>Logging camp</b> in the forest and a <b>Sawmill</b>, and join them by road to your towns.` };
+    if (g.towns.list.length < 2) return { key: "town2", cat: "towns", html: `<b>Found a second town</b> (Towns › Found town, ${formatMoney(TOWN_COST)}) at least ${km(TOWN_SPACING)} away and near your roads: more towns, more customers.` };
+    if (g.milestone === 0) return { key: "ms", html: `<b>Grow to ${MILESTONES[1].pop} people</b> across your towns to reach ${MILESTONES[1].name}: it unlocks avenues, roundabouts and traffic lights. Progression (P) shows what's next.` };
     return null;
   }
 
@@ -724,7 +688,7 @@ export class Hud {
   /** A milestone was reached: what it unlocks, and the grant. */
   milestone(index: number) {
     const M = MILESTONES[index];
-    const unl: string[] = [...M.roads.map((r) => ROAD_TYPES[r].name), ...M.zones.map((z) => ZONES[z].name), ...M.features.map((f) => FEATURE_NAME[f]), ...placedAt(index)];
+    const unl: string[] = [...M.roads.map((r) => ROAD_TYPES[r].name), ...M.features.map((f) => FEATURE_NAME[f]), ...placedAt(index)];
     this.banner.innerHTML = `<header>${M.name}</header>
       <p class="sub">Milestone reached · ${fmtNum(M.pop)} people</p>
       ${unl.length ? `<p class="gifts">Unlocked: ${unl.join(" · ")}</p>` : ""}
@@ -751,7 +715,6 @@ export class Hud {
   }
 
   back(): boolean {
-    if (!this.demandPop.hidden) { this.demandPop.hidden = true; this.demandBtn.setAttribute("aria-expanded", "false"); return true; }
     if (!this.banner.hidden) { this.banner.hidden = true; return true; }
     if (!this.modal.hidden) { this.closeModal(); return true; }
     if (this.panelKind) { this.closeSelection(); this.app.selected = null; return true; }
@@ -847,26 +810,37 @@ export class Hud {
     if (o === "landvalue") return `<span class="lg lg-sat"></span><span>Low</span><span>High</span>`;
     if (o === "level") return `<span class="lg lg-level"></span><span>Level 1</span><span>Level 5</span>`;
     if (o === "problems") return `<span class="lg lg-prob"></span><span>Has a problem</span><span>Fine</span>`;
-    if (o === "zones") return GROUPS.map((gp) => `<span class="lg-key"><i class="dm-${gp}"></i>${GROUP_NAME[gp]}</span>`).join("");
+    if (o === "resources") return ([["Fertile soil", PAL.resFert], ["Forest", PAL.resForest]] as [string, number][]).map(([k, c]) => `<span class="lg-key"><i style="background:${hex(c)}"></i>${k}</span>`).join("");
     if (o === "power") return `<span class="lg lg-util"></span><span>Short</span><span>Supplied</span>`;
     return "";
   }
 
   private fillEconomy() {
     const g = this.app.game;
-    const B = g.budget;
-    const inc = GROUPS.map((gp) => [GROUP_NAME[gp], B.income[gp]] as [string, number]);
-    const totalIn = inc.reduce((a, [, v]) => a + v, 0) + B.income.transit;
-    const totalOut = B.expense.roads + B.expense.transit + B.expense.utilities + B.expense.loans;
-    const spark = sparkline(g.history.map((x) => x.money), "Money");
-    const html = `<p class="win-sub">Per game hour</p>
-      <dl class="facts money-rows">${inc.map(([k, v]) => `<dt>${k} income</dt><dd class="good">${signed(v)}</dd>`).join("")}
-      <dt>Road upkeep</dt><dd class="bad">${signed(-B.expense.roads)}</dd>
-      ${B.expense.utilities ? `<dt>Power plant upkeep</dt><dd class="bad">${signed(-B.expense.utilities)}</dd>` : ""}
-      ${B.expense.loans ? `<dt>Loan repayments</dt><dd class="bad">${signed(-B.expense.loans)}</dd>` : ""}
-      ${B.income.transit || B.expense.transit ? `<dt>Bus fares</dt><dd class="good">${signed(B.income.transit)}</dd><dt>Bus upkeep</dt><dd class="bad">${signed(-B.expense.transit)}</dd>` : ""}
-      <dt class="tot">Balance</dt><dd class="tot ${totalIn - totalOut >= 0 ? "good" : "bad"}">${signed(totalIn - totalOut)}</dd></dl>
-      ${spark}`;
+    const B = g.budgetAvg;
+    const rows: [string, number, boolean][] = [
+      ["Sales to towns", B.income.sales, true],
+      ["Bus fares", B.income.transit, false],
+      ["Wages", -B.expense.wages, true],
+      ["Plant upkeep", -B.expense.upkeep, true],
+      ["Truck fuel", -B.expense.fuel, true],
+      ["Road upkeep", -B.expense.roads, true],
+      ["Power plant upkeep", -B.expense.utilities, false],
+      ["Bus upkeep", -B.expense.transit, false],
+      ["Loan repayments", -B.expense.loans, false],
+    ];
+    const total = rows.reduce((a, [, v]) => a + v, 0);
+    const n = Math.max(1, g.budgetLog.length);
+    // each plant's own books over the last hour
+    const plants = g.industry.plants().map((b) => {
+      const L = b.plant!.last, net = L.earned - L.spent;
+      return `<dt>${BUILDING_TYPES[b.kind].name}</dt><dd class="${net >= 0 ? "good" : "bad"}">${signed(net)}</dd>`;
+    }).join("");
+    const html = `<p class="win-sub">Average hour, last ${n} hour${n === 1 ? "" : "s"}</p>
+      <dl class="facts money-rows">${rows.filter(([, v, always]) => always || Math.abs(v) >= 0.5).map(([k, v]) => `<dt>${k}</dt><dd class="${v > 0 ? "good" : v < 0 ? "bad" : ""}">${signed(v)}</dd>`).join("")}
+      <dt class="tot">Balance</dt><dd class="tot ${total >= 0 ? "good" : "bad"}">${signed(total)}</dd></dl>
+      ${plants ? `<h3 class="sub-h">Your plants, last hour</h3><dl class="facts">${plants}</dl>` : ""}
+      ${sparkline(g.history.map((x) => x.money), "Money")}`;
     this.setWin("Economy", html);
   }
 
@@ -877,7 +851,7 @@ export class Hud {
       const i = k + 1;
       const done = g.milestone >= i;
       const cur = i === g.milestone + 1;
-      const unl = [...M.roads.map((r) => ROAD_TYPES[r].name), ...M.zones.map((z) => ZONES[z].short), ...M.features.map((f) => FEATURE_NAME[f]), ...placedAt(i)];
+      const unl = [...M.roads.map((r) => ROAD_TYPES[r].name), ...M.features.map((f) => FEATURE_NAME[f]), ...placedAt(i)];
       const p = cur ? Math.min(1, pop / M.pop) : done ? 1 : 0;
       return `<li class="${done ? "done" : cur ? "cur" : ""}">
         <div class="ms-top">${done ? ICON.check : ICON.open}<b>${M.name}</b><span class="muted">${fmtNum(M.pop)} people</span></div>
@@ -887,21 +861,30 @@ export class Hud {
     this.setWin("Progression", `<ul class="ms-list">${rows}</ul>`);
   }
 
+  /** The Towns window: every town, how big it is and which way it's heading. */
   private fillCity() {
     const g = this.app.game;
     const s = g.people.stats;
-    let jobs = 0, homes = 0;
-    for (const b of g.buildings.list) { if (!b.zone || b.built < 1) continue; if (ZONE_GROUP[b.zone] === "res") homes += b.cap; else jobs += b.cap; }
+    const rows = g.towns.list.map((t) => {
+      const tr = trendOf(t);
+      return `<li><button class="tw-row" data-id="${t.id}"><span class="tw-name"><b>${escapeHtml(t.name)}</b><span class="small muted">${g.towns.sizeName(t)} · ${fmtNum(t.pop)} people</span></span><span class="tw-trend ${tr.cls}">${tr.short}</span></button></li>`;
+    }).join("");
     const html = `<dl class="facts">
-        <dt>Population</dt><dd>${fmtNum(s.population)}</dd>
-        <dt>Households</dt><dd>${fmtNum(s.households)} <span class="muted">of ${fmtNum(homes)} homes</span></dd>
-        <dt>Children · adults · seniors</dt><dd>${s.children} · ${s.adults} · ${s.seniors}</dd>
-        <dt>Employed</dt><dd>${fmtNum(s.employed)} <span class="muted">of ${fmtNum(s.workers)}</span></dd>
-        <dt>Unemployed</dt><dd class="${s.unemployed > s.workers * 0.1 ? "bad" : ""}">${fmtNum(s.unemployed)}</dd>
-        <dt>Jobs</dt><dd>${fmtNum(jobs)}</dd>
+        <dt>People in your towns</dt><dd>${fmtNum(s.population)}</dd>
+        <dt>Working at your plants</dt><dd>${fmtNum(g.industry.plants().reduce((a, b) => a + g.people.workersAt(b.id), 0))}</dd>
       </dl>
+      <ul class="tw-list">${rows}</ul>
       ${sparkline(g.history.map((x) => x.pop), "Population")}`;
-    this.setWin("City information", html);
+    if (!this.setWin("Towns", html)) return;
+    for (const b of this.win.querySelectorAll<HTMLButtonElement>(".tw-row")) b.onclick = () => { this.sfx.play("click"); this.showTown(+b.dataset.id!); };
+  }
+
+  /** Look at a town and open its panel. */
+  showTown(id: number) {
+    const t = this.app.game.towns.byId.get(id);
+    if (!t) return;
+    this.app.lookAt(t.c, Math.max(220, t.reach * 1.2));
+    this.openTown(id);
   }
 
   private fillTransport() {
@@ -1037,6 +1020,41 @@ export class Hud {
     return true;
   }
 
+  openTown(id: number) {
+    this.panelKind = "town";
+    this.townId = id;
+    this.app.selected = null;
+    this.lastPanel = "";
+    this.panel.hidden = false;
+    this.fillTown();
+  }
+
+  private fillTown() {
+    const g = this.app.game, t = g.towns.byId.get(this.townId);
+    if (!t) { this.closeSelection(); return; }
+    const si = sizeOf(t.pop), next = TOWN_SIZES[si + 1];
+    const needs = needsOf(t.pop).map((p) => {
+      const share = t.supply[p];
+      const today = t.today[p] ?? 0, want = demandPerDay(p, t.pop);
+      const pct = share === undefined ? null : Math.round(share * 100);
+      const col = share === undefined ? "" : share >= 0.8 ? "ok" : share >= 0.5 ? "mid" : "low";
+      return `<dt>${PRODUCTS[p].name}</dt><dd><span class="bar need ${col}"><i style="width:${Math.max(2, pct ?? 0)}%"></i></span><span class="num">${pct === null ? "new" : pct + "%"}</span></dd>
+        <dd class="need-sub small muted">${fmtLoads(today)} of ${fmtLoads(want)} loads today</dd>`;
+    }).join("");
+    const tr = trendOf(t);
+    const html = `<header><span class="svc-tag">${ICON.town}</span>${escapeHtml(t.name)}<span class="muted head-sub">${TOWN_SIZES[si].name}</span></header>
+      <p class="status ${tr.cls}">${tr.long}</p>
+      <dl class="facts">
+        <dt>Population</dt><dd>${fmtNum(t.pop)}</dd>
+        <dt>Households</dt><dd>${fmtNum(t.households)} <span class="muted">· heading for ${fmtNum(Math.round(t.target))}</span></dd>
+        <dt>Shops</dt><dd>${t.shops}</dd>
+      </dl>
+      <h3 class="sub-h">Needs, supplied yesterday</h3>
+      <dl class="facts needs">${needs}</dl>
+      ${next ? `<p class="small muted">${next.name} at ${fmtNum(next.pop)} people${next.adds.length ? `: needs ${next.adds.map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ")} as well` : ""}.</p>` : ""}`;
+    this.setPanel(html);
+  }
+
   openBuilding(b: Building) {
     this.panelKind = "building";
     this.lastPanel = "";
@@ -1049,6 +1067,37 @@ export class Hud {
     const T = BUILDING_TYPES[b.kind];
     const rows: [string, string][] = [];
     let status = "", statusCls = "";
+    if (b.plant && isPlantKind(b.kind)) {
+      const D = PLANTS[b.kind], P = b.plant;
+      let busy = 0;
+      for (const tr of g.trips()) if (tr.haul && !tr.haul.done && tr.haul.plant === b.id) busy++;
+      if (b.built < 1) { status = `Under construction · ${Math.round(b.built * 100)}%`; }
+      else if (b.problem) { status = b.problem; statusCls = "bad"; }
+      else { status = "Working normally"; statusCls = "good"; }
+      const stock = (p: Product, n: number) => `<dt>${PRODUCTS[p].name}</dt><dd>${stockBar(n, D.store, PRODUCTS[p].color)}<span class="num">${Math.floor(n)}</span></dd>`;
+      const ins = (Object.keys(D.inputs) as Product[]).map((p) => stock(p, P.stock[p] ?? 0)).join("");
+      const outs = (Object.keys(D.outputs) as Product[]).map((p) => stock(p, P.out[p] ?? 0)).join("");
+      const L = P.last;
+      const html = `<header><span class="svc-tag">${placedIcon(b.kind)}</span>${T.name}</header>
+        <p class="muted small">${chainText(b.kind)}</p>
+        <p class="status ${statusCls}">${status}</p>
+        ${ins ? `<h3 class="sub-h">In the yard</h3><dl class="facts">${ins}</dl>` : ""}
+        <h3 class="sub-h">Ready to ship</h3><dl class="facts">${outs}</dl>
+        <dl class="facts">
+          <dt>Trucks out</dt><dd>${busy} of ${P.trucks}</dd>
+          <dt>Staff</dt><dd>${g.people.workersAt(b.id)} / ${b.cap}</dd>
+          ${D.deposit ? `<dt>${cap(D.deposit.name)}</dt><dd>${Math.round(P.yld * 100)}% of full yield</dd>` : ""}
+        </dl>
+        <h3 class="sub-h">Last hour</h3>
+        <dl class="facts">
+          <dt>Made</dt><dd>${L.made} load${L.made === 1 ? "" : "s"}</dd>
+          <dt>Earned</dt><dd class="${L.earned > 0 ? "good" : ""}">${signed(L.earned)}</dd>
+          <dt>Spent</dt><dd class="${L.spent > 0 ? "bad" : ""}">${signed(-L.spent)}</dd>
+        </dl>
+        <button class="btn quiet danger demolish">Demolish</button>`;
+      if (this.setPanel(html)) this.bindDemolish(b);
+      return;
+    }
     if (b.placed && isPlacedKind(b.kind)) {
       const S = PLACED[b.kind];
       const w = g.people.workersAt(b.id);
@@ -1100,23 +1149,26 @@ export class Hud {
       const w = g.people.workersAt(b.id);
       rows.push(["Workers", `${w} / ${b.cap}`]);
       if (grp === "com") {
-        rows.push(["Goods in stock", stockBar(b.stock, 6)]);
+        rows.push(["Food on the shelves", stockBar(b.stock, 6)]);
         rows.push(["Customers", b.custDay !== undefined ? `${fmtNum(b.custDay)} <span class="muted">yesterday</span>` : `${fmtNum(b.custToday ?? 0)} <span class="muted">so far</span>`]);
-      } else if (grp === "ind") {
-        rows.push(["Goods to ship", stockBar(b.out, 6)]);
       }
       if (b.built >= 1 && !b.abandoned) rows.push(["Efficiency", `${Math.round(health * 100)}%`]);
     }
     const next = b.level < 5 ? LEVEL_LV[b.level + 1] : null;
     const lvBar = `<span class="bar lv"><i style="width:${Math.max(3, b.lv)}%"></i>${next ? `<em style="left:${next}%"></em>` : ""}</span>`;
     rows.push(["Land value", `${lvBar}<span class="num">${Math.round(b.lv)}</span>`]);
+    const town = b.town !== undefined ? g.towns.byId.get(b.town) : undefined;
+    if (town) rows.unshift(["Town", `<button class="link town-link">${escapeHtml(town.name)}</button>`]);
     const stars = Array.from({ length: 5 }, (_, i) => `<i class="${i < b.level ? "on" : ""}"></i>`).join("");
     const html = `<header><span class="zone-tag" style="background:${hex(Z.color)}">${Z.short}</span>${Z.name}</header>
       <div class="lvl-row"><span class="stars" role="img" aria-label="Level ${b.level} of 5">${stars}</span><span class="muted">Level ${b.level}${next ? ` · next at land value ${next}` : " · top level"}</span></div>
       <p class="status ${statusCls}">${status}</p>
       <dl class="facts">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
       <button class="btn quiet danger demolish">Demolish</button>`;
-    if (this.setPanel(html)) this.bindDemolish(b);
+    if (!this.setPanel(html)) return;
+    this.bindDemolish(b);
+    const link = this.panel.querySelector(".town-link") as HTMLButtonElement | null;
+    if (link && town) link.onclick = () => { this.sfx.play("click"); this.showTown(town.id); };
   }
 
   private bindDemolish(b: Building) {
@@ -1229,7 +1281,7 @@ export class Hud {
         <button class="pm load">Load game</button>
         <button class="pm keys">Controls</button>
         <button class="pm home">Main menu</button>
-        <button class="pm new">New city</button>
+        <button class="pm new">New company</button>
       </div>`, "Pause menu");
     dlg.classList.add("pause");
     const on = (s: string, fn: () => void) => { (dlg.querySelector(s) as HTMLButtonElement).onclick = () => { this.sfx.play("click"); fn(); }; };
@@ -1245,14 +1297,14 @@ export class Hud {
     });
     on(".new", () => {
       const b = dlg.querySelector(".new") as HTMLButtonElement;
-      if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Start a new city? Your city is autosaved"; b.classList.add("danger"); return; }
+      if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Start a new company? This one is autosaved"; b.classList.add("danger"); return; }
       if (app.mode === "play") app.saves.autosave(app.game);
       app.newGame(1 + Math.floor(Math.random() * 9999));
       app.setMode("play");
       this.resumeOnClose = false;
       this.closeModal();
       this.tutHidden = false;
-      this.toast(app.saves.latest() ? "New city. Your last one is in the autosaves." : "New city");
+      this.toast(app.saves.latest() ? "New company. Your last one is in the autosaves." : "New company");
     });
     requestAnimationFrame(() => (dlg.querySelector(".resume") as HTMLButtonElement).focus());
   }
@@ -1341,9 +1393,34 @@ function rbIcon(size: RoundaboutSize): string {
   return `<svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true" focusable="false"><path d="M14 1 v${14 - r - 1} M14 ${14 + r + 1} V27 M1 14 h${14 - r - 1} M${14 + r + 1} 14 H27" stroke="#8d939a" stroke-width="3"/><circle cx="14" cy="14" r="${r}" fill="#cfe6b8" stroke="#5b6168" stroke-width="${w}"/></svg>`;
 }
 
-function stockBar(n: number, max: number): string {
-  const k = Math.max(0, Math.min(max, Math.round(n)));
-  return `<span class="pips" role="img" aria-label="${k} of ${max}">${Array.from({ length: max }, (_, i) => `<i class="${i < k ? "on" : ""}"></i>`).join("")}</span>`;
+function stockBar(n: number, max: number, color?: number): string {
+  const k = Math.max(0, Math.min(max, Math.floor(n)));
+  const st = color === undefined ? "" : ` style="--pc:${hex(color)}"`;
+  return `<span class="pips" role="img" aria-label="${k} of ${max}"${st}>${Array.from({ length: max }, (_, i) => `<i class="${i < k ? "on" : ""}"></i>`).join("")}</span>`;
+}
+
+const km = (m: number) => `${(m / 1000).toFixed(1)} km`;
+const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
+const fmtLoads = (n: number) => (n < 10 && n % 1 ? n.toFixed(1) : String(Math.round(n)));
+
+function productList(o: Partial<Record<Product, number>>): string {
+  return (Object.keys(o) as Product[]).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ");
+}
+
+/** What a plant takes and makes: "Fertile soil → crops", "Crops → food". */
+function chainText(k: keyof typeof PLANTS): string {
+  const D = PLANTS[k];
+  const from = D.deposit ? cap(D.deposit.name) : cap(productList(D.inputs));
+  return `${from} → ${productList(D.outputs)}`;
+}
+
+/** Which way a town is heading, short (the Towns list) and long (its panel). */
+function trendOf(t: Town): { short: string; long: string; cls: string } {
+  if (t.pop < 60) return { short: "Settling", long: "Settling in: its first homes go up on their own", cls: "" };
+  const short = needsOf(t.pop).filter((p) => (t.supply[p] ?? 1) < 0.5).map((p) => PRODUCTS[p].name.toLowerCase());
+  if (t.trend >= 0.5) return { short: `+${Math.round(t.trend)}/day`, long: `Growing: about ${Math.round(t.trend)} more households a day`, cls: "good" };
+  if (t.trend <= -0.5) return { short: `${Math.round(t.trend)}/day`, long: `Shrinking: short of ${short.join(" and ") || "supplies"}`, cls: "bad" };
+  return { short: "Steady", long: short.length ? `Not growing: short of ${short.join(" and ")}` : "Holding steady", cls: short.length ? "bad" : "" };
 }
 
 function clonePlan(p: SignalPlan): SignalPlan {

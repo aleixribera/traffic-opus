@@ -41,8 +41,8 @@ export function needsOf(pop: number): Product[] {
  * there being more residents: demand climbs exponentially through the sizes, as the design asks.
  */
 export function demandPerDay(p: Product, pop: number): number {
-  const per: Partial<Record<Product, number>> = { food: 1 / 40, planks: 1 / 90 };
-  const base = per[p] ?? 1 / 120;
+  const per: Partial<Record<Product, number>> = { food: 1 / 12, planks: 1 / 30 };
+  const base = per[p] ?? 1 / 40;
   return Math.max(1, pop * base * Math.pow(1.6, sizeOf(pop)));
 }
 

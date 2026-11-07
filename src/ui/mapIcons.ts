@@ -4,10 +4,12 @@ import type { View } from "../render/view";
 /** What a problem looks like on the map: the pictogram and how urgent it is (urgent ones bounce). */
 function iconFor(p: string): { key: string; svg: string; urgent: boolean } {
   if (p === "No road access" || p.startsWith("Trips can't") || p.startsWith("Not connected")) return { key: "road", svg: ROAD, urgent: false };
+  if (p.startsWith("Full of") || p.startsWith("Waiting for") || p.startsWith("Nobody") || p.startsWith("Towns on your roads") || p.startsWith("Your plants") || p === "Out of food") return { key: "cargo", svg: CARGO, urgent: false };
   return { key: "warn", svg: WARN, urgent: false };
 }
 
 const WARN = `<svg viewBox="0 0 28 28" aria-hidden="true"><path d="M14 3 L26 24 H2 Z" fill="#f2a33a"/><path d="M14 10 v7" stroke="#fff" stroke-width="3" stroke-linecap="round"/><circle cx="14" cy="20.6" r="1.6" fill="#fff"/></svg>`;
+const CARGO = `<svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14" r="11" fill="#f2a33a"/><rect x="8" y="9" width="12" height="10" rx="1" fill="#fff"/><path d="M8 13 H20 M14 9 V13" stroke="#f2a33a" stroke-width="1.6"/></svg>`;
 const ROAD = `<svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14" r="11" fill="#e5484d"/><path d="M10 21 L12 7 M18 21 L16 7" stroke="#fff" stroke-width="2" stroke-linecap="round"/><path d="M7 7 L21 21" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg>`;
 
 /**

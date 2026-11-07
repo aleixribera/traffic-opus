@@ -23,7 +23,6 @@ export const ZONE_LOTS: Record<ZoneId, LotTemplate[]> = {
   resHigh: [{ w: 5, d: 5, model: "apartments", tall: [1.8, 3.2] }, { w: 4, d: 4, model: "apartments", tall: [1.6, 2.6] }, { w: 3, d: 3, model: "apartments", tall: [1.5, 2.2] }, { w: 2, d: 2, model: "apartments", tall: [1.6, 2.4] }],
   comLow: [{ w: 4, d: 4, model: "store" }, { w: 3, d: 3, model: "shop" }, { w: 2, d: 2, model: "shop" }],
   comHigh: [{ w: 6, d: 5, model: "mall" }, { w: 4, d: 4, model: "store", tall: [1.6, 2.4] }, { w: 3, d: 3, model: "store", tall: [1.4, 2] }, { w: 2, d: 2, model: "shop", tall: [1.6, 2.2] }],
-  ind: [{ w: 5, d: 4, model: "works" }, { w: 4, d: 4, model: "foodplant" }, { w: 3, d: 3, model: "foodplant" }, { w: 2, d: 2, model: "works" }],
 };
 
 /** Households (residential) or jobs (everything else) per lot cell at level 1. */
@@ -34,12 +33,11 @@ const PER_CELL: Record<ZoneId, number> = {
   resHigh: 1.7,
   comLow: 0.45,
   comHigh: 0.9,
-  ind: 0.7,
 };
 
 export const ZONE_GROUP: Record<ZoneId, ZoneGroup> = {
   resLow: "res", resRow: "res", resMed: "res", resHigh: "res",
-  comLow: "com", comHigh: "com", ind: "ind",
+  comLow: "com", comHigh: "com",
 };
 
 /** Households or jobs on a lot of w x d cells at a level (1-5). */

@@ -3,9 +3,9 @@ import type { App } from "../app";
 import type { Game } from "../game/city";
 import type { Hud } from "./hud";
 import { cubicClosest } from "../roads/planner";
-import { cubicTangent, norm, scale, sub, v2, type V2 } from "../core/math";
+import { cubicTangent, formatMoney, norm, scale, sub, v2, type V2 } from "../core/math";
 import { ROAD_TYPES } from "../config";
-import { SAVE_V } from "../game/city";
+import { SAVE_V, START_MONEY } from "../game/city";
 
 type SaveData = ReturnType<Game["serialize"]>;
 
@@ -131,13 +131,13 @@ export class MainMenu {
       <nav class="card mm-card" aria-label="Main menu">
         <header class="mm-head">
           <h1 class="mm-title">Kilometre Zero</h1>
-          <p class="mm-tag">Claim the land, build the roads, keep every truck moving.</p>
+          <p class="mm-tag">Farms, mills and the roads between them. Keep the towns supplied and they grow.</p>
         </header>
         <div class="mm-list">
           ${meta ? `<button class="mm-item primary" data-a="continue"><span class="mm-l">Continue</span><span class="mm-s">${esc(meta.name.replace(/, autosave$/, ""))} · ${fmtNum(meta.residents)} people · ${ago(meta.savedAt)}</span></button>` : ""}
-          <button class="mm-item${meta ? "" : " primary"}" data-a="new"><span class="mm-l">New city</span>${meta ? "" : `<span class="mm-s">Start on open land with $60,000</span>`}</button>
-          <button class="mm-item" data-a="load"><span class="mm-l">Load city</span></button>
-          <button class="mm-item" data-a="explore"><span class="mm-l">Explore ${esc(name)}</span><span class="mm-s">The city behind this menu. Look round, try the tools; nothing is saved</span></button>
+          <button class="mm-item${meta ? "" : " primary"}" data-a="new"><span class="mm-l">New company</span>${meta ? "" : `<span class="mm-s">A hamlet, a road out of it and ${formatMoney(START_MONEY)}</span>`}</button>
+          <button class="mm-item" data-a="load"><span class="mm-l">Load game</span></button>
+          <button class="mm-item" data-a="explore"><span class="mm-l">Explore ${esc(name)}</span><span class="mm-s">The company behind this menu. Look round, try the tools; nothing is saved</span></button>
           <button class="mm-item" data-a="keys"><span class="mm-l">Controls</span></button>
         </div>
       </nav>`;

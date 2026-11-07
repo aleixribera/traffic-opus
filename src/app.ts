@@ -8,8 +8,9 @@ import {
   type CurveMode, type Plan, type RoundaboutSize, type Snap, type SnapOpts,
 } from "./roads/planner";
 import { Buildings3D } from "./render/buildings3d";
-import { Zones3D } from "./render/zones3d";
-import { ZONES, type Cell, type ZoneId } from "./game/zones";
+import { ZONES } from "./game/zones";
+import { MIN_DEPOSIT, PLANTS, isPlantKind } from "./game/industry";
+import { TOWN_COST, TOWN_SPACING } from "./game/settlements";
 import type { ModelSet } from "./render/models";
 import { Preview3D } from "./render/preview3d";
 import { Roads3D } from "./render/roads3d";
@@ -25,15 +26,13 @@ import { Saves } from "./game/saves";
 import { PLACED, type PlacedKind } from "./game/placed";
 import type { Hud, Chip } from "./ui/hud";
 
-export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "zone" | "unlock" | "place" | "transit";
+export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "town" | "unlock" | "place" | "transit";
 /** The bus tool: put stops on the kerb, or click stops in order to make a line. */
 export type TransitMode = "stop" | "line";
-/** Zoning tool modes (CS2): fill one side of a street, paint with a brush, or drag a rectangle. */
-export type ZoneMode = "fill" | "brush" | "marquee";
 /** Road tool modes, as in CS2: the four drawing modes, a 3-click grid, and Replace (change type / reverse). */
 export type RoadMode = CurveMode | "grid" | "replace";
 export const ROAD_MODES: RoadMode[] = ["straight", "curve", "complex", "continuous", "grid", "replace"];
-export type OverlayId = "none" | "flow" | "zones" | "landvalue" | "level" | "problems" | "power";
+export type OverlayId = "none" | "flow" | "resources" | "landvalue" | "level" | "problems" | "power";
 
 export interface ToolState {
   tool: ToolId;
@@ -49,10 +48,6 @@ export interface ToolState {
   snapLength: boolean;
   /** Straight pieces turn in 15° steps (off the world grid or the road they start from); Shift frees them. */
   angleLock: boolean;
-  zone: ZoneId;
-  zoneMode: ZoneMode;
-  brush: number; // brush radius, m
-  erase: boolean; // zoning tool removes zoning
   bdzLevel: number | null; // bulldozer elevation filter (null = all)
   reverse: boolean; // upgrade tool flips one-ways instead
   placed: PlacedKind; // building being placed
@@ -69,6 +64,7 @@ export class App {
   labels = new MapLabels();
   icons = new MapIcons();
   private iconT = 0;
+  private labelKey = "";
   vehicles!: Vehicles3D;
   buildings3d!: Buildings3D;
   terrain3d!: Terrain3D;
@@ -77,8 +73,8 @@ export class App {
   hud!: Hud;
   st: ToolState = {
     tool: "inspect", roadType: "street", mode: "straight", level: 0, rbSize: 1, parallel: false, parOffset: null,
-    snapOff: { geometry: false, guides: false, netSide: false }, snapLength: true, angleLock: true, zone: "resLow", zoneMode: "fill", brush: 22, erase: false, bdzLevel: null, reverse: false,
-    placed: "coalplant", transitMode: "stop",
+    snapOff: { geometry: false, guides: false, netSide: false }, snapLength: true, angleLock: true, bdzLevel: null, reverse: false,
+    placed: "farm", transitMode: "stop",
   };
   /** stops clicked so far for the bus line being drawn */
   lineDraft: number[] = [];
@@ -90,7 +86,6 @@ export class App {
   openMenu?: () => void;
   private modeListeners: ((m: App["mode"]) => void)[] = [];
   overlay: OverlayId = "none";
-  zones3d!: Zones3D;
   selected: Building | null = null;
   private worldRoot = new THREE.Group();
   private cursor: V2 = v2(0, 0);
@@ -108,8 +103,6 @@ export class App {
   private pointers = new Map<number, PointerInfo>();
   /** Bulldozer marquee, in screen pixels (the view may be turned). */
   private dragRect: { a: V2; b: V2 } | null = null;
-  /** A zoning brush or marquee stroke in progress. */
-  private zoneStroke: { erase: boolean; cells: Set<Cell>; last: V2; a: V2; b: V2; pointer: number } | null = null;
   private pinch: { d: number; mid: V2; ang: number } | null = null;
   private keys = new Set<string>();
   private last = performance.now();
@@ -158,11 +151,14 @@ export class App {
   }
 
   newGame(seed = 7) {
-    this.setGame(new Game(seed));
-    // open on the town site
-    this.view.cx = 0;
-    this.view.cy = 0;
-    this.view.halfH = 170;
+    const g = new Game(seed);
+    g.start();
+    this.setGame(g);
+    // open on the starting hamlet
+    const t = g.towns.list[0];
+    this.view.cx = t?.c.x ?? 0;
+    this.view.cy = t?.c.y ?? 0;
+    this.view.halfH = 260;
   }
 
   loadGame(data: ReturnType<Game["serialize"]>) {
@@ -186,16 +182,16 @@ export class App {
     this.roads = new Roads3D(g.net);
     this.roadsFar = new RoadsFar(g.net);
     this.labels.set([]);
+    this.labelKey = "";
     this.vehicles = new Vehicles3D(this.models);
     this.buildings3d = new Buildings3D(this.models);
     this.vehicles.lotOf = (id) => { const b = g.buildings.byId.get(id); return b ? this.buildings3d.lotWay(b) : null; };
-    this.zones3d = new Zones3D(g.zones);
-    this.zones3d.setGrid(this.st.tool === "zone" || this.overlay === "zones");
     this.transit3d = new Transit3D(this.models.props.get("busstop"));
-    this.worldRoot.add(this.terrain3d.group, this.zones3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group);
+    this.worldRoot.add(this.terrain3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group);
     this.roads.rebuildAll();
     this.buildings3d.rebuild(g.buildings.list);
     this.terrain3d.setTiles(g.tiles);
+    this.groundOverlay();
     g.on((e) => {
       if (e.t === "roads") { this.roads.apply(e.cs); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
       else if (e.t === "buildings") { this.buildings3d.rebuild(g.buildings.list); this.applyTint(); this.dirtyPreview = true; }
@@ -220,11 +216,11 @@ export class App {
     // locked road types can't be picked (keyboard, saved state)
     if (!this.game.roadsUnlocked.has(this.st.roadType)) this.st.roadType = "street";
     if ((this.st.tool === "roundabout" && !this.game.featureUnlocked("roundabout"))) this.st.tool = "inspect";
-    if (!this.game.zonesUnlocked.has(this.st.zone)) this.st.zone = "resLow";
     if (this.st.tool === "place" && !this.game.placedUnlocked(this.st.placed)) this.st.tool = "inspect";
     if (this.buildings3d) this.applyTint();
-    this.zones3d?.setGrid(this.st.tool === "zone" || this.overlay === "zones");
-    if (this.st.tool !== "zone") { this.zoneStroke = null; this.zones3d?.highlight([], null); }
+    this.groundOverlay();
+    // town names are buttons only for looking round: with a tool in hand a click on the town centre goes to the map
+    this.labels.passive(this.st.tool !== "inspect");
     if (this.st.tool !== "inspect") { this.selected = null; this.hud?.closePanels(); }
     this.dirtyPreview = true;
     this.hud?.refresh();
@@ -237,9 +233,16 @@ export class App {
   setOverlay(o: OverlayId) {
     this.overlay = this.overlay === o ? "none" : o;
     this.roads.flowMode = this.overlay === "flow";
-    this.zones3d?.setGrid(this.st.tool === "zone" || this.overlay === "zones");
+    this.groundOverlay();
     this.applyTint();
     this.hud?.refresh();
+  }
+
+  /** The ground shows where the deposits are in the Resources view, and while an extractor is being placed. */
+  private groundOverlay() {
+    const k = this.st.placed;
+    const extractor = this.st.tool === "place" && isPlantKind(k) && !!PLANTS[k].deposit;
+    this.terrain3d?.setOverlay(this.overlay === "resources" || extractor ? "resources" : "none");
   }
 
   /** The utility on show: its info view, or the one whose plant is being placed. */
@@ -266,10 +269,10 @@ export class App {
       });
       return;
     }
-    if (mode === "none" || mode === "flow") { this.buildings3d.tint(null); return; }
+    if (mode === "none" || mode === "flow" || mode === "resources") { this.buildings3d.tint(null); return; }
     this.buildings3d.tint((b) => {
+      if (mode === "problems" && b.plant) return b.problem ? 0xe5484d : 0x2f86e0;
       if (!b.zone) return 0xb5b5b5;
-      if (mode === "zones") return ZONES[b.zone].color;
       if (mode === "landvalue") return ramp(b.lv / 80);
       if (mode === "level") return ramp((b.level - 1) / 4);
       // problems
@@ -286,9 +289,7 @@ export class App {
     this.parFrom = undefined;
     this.plan = null;
     this.dragRect = null;
-    this.zoneStroke = null;
     this.lineDraft = [];
-    this.zones3d?.highlight([], null);
     this.dirtyPreview = true;
     this.hud?.rect(null);
   }
@@ -332,16 +333,9 @@ export class App {
       this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mid: v2((a.x + b.x) / 2, (a.y + b.y) / 2), ang: Math.atan2(b.y - a.y, b.x - a.x) };
       this.dragRect = null;
       this.hud?.rect(null);
-      if (this.zoneStroke) { this.zoneStroke = null; this.zones3d.highlight([], null); this.hud?.rect(null); }
       return;
     }
     this.updateCursor(p);
-    if (this.st.tool === "zone" && this.st.zoneMode !== "fill" && (e.button === 0 || e.button === 2)) {
-      this.zoneStroke = { erase: e.button === 2 || this.st.erase, cells: new Set(), last: this.cursor, a: p, b: p, pointer: e.pointerId };
-      if (this.st.zoneMode === "brush") this.brushTo(this.cursor);
-      this.dirtyPreview = true;
-      return;
-    }
     if (e.button === 0 && e.pointerType !== "touch" && this.st.tool === "bulldoze") this.dragRect = { a: p, b: p };
   }
 
@@ -351,51 +345,6 @@ export class App {
     const lots = this.game.lotsUnder(plan);
     for (const b of lots) this.preview.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
     if (lots.length) chips.push({ text: `${lots.length} building${lots.length === 1 ? "" : "s"} demolished`, kind: "error" });
-  }
-
-  /** Brush stroke: add the cells swept from the last point to p. */
-  private brushTo(p: V2) {
-    const zs = this.zoneStroke!;
-    const r = this.st.brush;
-    const d = dist(zs.last, p);
-    const n = Math.max(1, Math.ceil(d / (r * 0.5)));
-    for (let k = d < 0.01 ? n : 1; k <= n; k++) {
-      const q = v2(zs.last.x + ((p.x - zs.last.x) * k) / n, zs.last.y + ((p.y - zs.last.y) * k) / n);
-      for (const c of this.game.zones.near(q, r)) if (c.ok) zs.cells.add(c);
-    }
-    zs.last = p;
-  }
-
-  /** Cells inside a screen rectangle (marquee zoning; the view may be turned). */
-  private cellsInScreenRect(a: V2, b: V2): Cell[] {
-    const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
-    const poly = [this.view.toWorld(x0, y0), this.view.toWorld(x1, y0), this.view.toWorld(x1, y1), this.view.toWorld(x0, y1)];
-    return this.game.zones.inPoly(poly).filter((c) => c.ok);
-  }
-
-  /** The cells a fill click at p would change: the run of same-zoned cells on that side of the street. */
-  private fillCells(p: V2, erase: boolean): Cell[] {
-    const c = this.game.zones.cellAt(p);
-    if (!c || !c.ok) return [];
-    const want = c.zone;
-    if (erase && !want) return [];
-    return c.block.cells.filter((x) => x.ok && x.zone === want);
-  }
-
-  private finishZoneStroke() {
-    const zs = this.zoneStroke!;
-    this.zoneStroke = null;
-    this.hud?.rect(null);
-    this.zones3d.highlight([], null);
-    const cells = this.st.zoneMode === "marquee" ? this.cellsInScreenRect(zs.a, zs.b) : [...zs.cells];
-    this.paintZone(cells, zs.erase);
-  }
-
-  private paintZone(cells: Cell[], erase: boolean) {
-    if (!cells.length) return;
-    const n = this.game.zonePaint(cells, erase ? null : this.st.zone);
-    if (n) this.hud?.sound(erase ? "remove" : "place");
-    this.dirtyPreview = true;
   }
 
   private onMove(e: PointerEvent) {
@@ -415,16 +364,6 @@ export class App {
       if (Math.abs(da) < 0.5) this.view.rotateAt(mid.x, mid.y, -da);
       this.pinch = { d, mid, ang };
       this.clampView();
-      return;
-    }
-    if (pi && this.zoneStroke && this.zoneStroke.pointer === pi.id) {
-      if (Math.hypot(p.x - pi.sx, p.y - pi.sy) > 4) pi.moved = true;
-      pi.x = p.x; pi.y = p.y;
-      this.updateCursor(p);
-      const zs = this.zoneStroke;
-      zs.b = p;
-      if (this.st.zoneMode === "brush") this.brushTo(this.cursor);
-      else if (pi.moved) this.hud?.rect([zs.a, zs.b]);
       return;
     }
     if (pi) {
@@ -459,11 +398,6 @@ export class App {
     if (this.pinch) { if (this.pointers.size < 2) this.pinch = null; return; }
     if (!pi) return;
     const p = this.local(e);
-    if (this.zoneStroke && this.zoneStroke.pointer === pi.id) {
-      this.zoneStroke.b = p;
-      this.finishZoneStroke();
-      return;
-    }
     if (this.dragRect && pi.moved && pi.button === 0) {
       this.finishRect();
       return;
@@ -473,8 +407,6 @@ export class App {
     if (pi.moved) return;
     this.updateCursor(p);
     if (pi.button === 2) {
-      // zoning: right-click unzones that side of the street (CS2)
-      if (this.st.tool === "zone") { this.paintZone(this.fillCells(this.cursor, true), true); return; }
       // add lane: right-click takes a turn lane away
       if (this.st.tool === "lane") {
         const lp = planAddLane(this.game.net, this.game.world, this.cursor, true);
@@ -730,11 +662,12 @@ export class App {
       this.dirtyPreview = true;
       return;
     }
-    if (t === "zone") {
-      if (this.st.zoneMode !== "fill") return;
-      const cells = this.fillCells(c, this.st.erase);
-      if (!cells.length) { if (!g.zones.cellAt(c)) this.reject("Zone beside a street, avenue or one-way road"); return; }
-      this.paintZone(cells, this.st.erase);
+    if (t === "town") {
+      const town = g.towns.found(c);
+      if (typeof town === "string") { this.reject(town); return; }
+      this.hud?.sound("build");
+      this.hud?.toast(`${town.name} founded for ${formatMoney(TOWN_COST)}`);
+      this.dirtyPreview = true;
       return;
     }
     if (t === "inspect") {
@@ -961,13 +894,12 @@ export class App {
     this.dirtyPreview = false;
     const pv = this.preview;
     pv.clear();
-    if (!this.hasCursor) { if (pv.ghost) pv.ghost.visible = false; this.zones3d.highlight(this.zoneStroke ? [...this.zoneStroke.cells] : [], this.zoneStroke?.erase ? null : this.st.zone); this.hud?.chips(null); return; }
+    if (!this.hasCursor) { if (pv.ghost) pv.ghost.visible = false; this.hud?.chips(null); return; }
     const g = this.game;
     const c = this.cursor;
     const t = this.st.tool;
     const chips: Chip[] = [];
     if (pv.ghost) pv.ghost.visible = false;
-    if (t !== "zone") this.zones3d.highlight([], null);
     if (t === "road" && this.st.mode === "replace") {
       const id = segAt(g.net, c, 2, null);
       if (id !== null) {
@@ -1095,24 +1027,18 @@ export class App {
           }
         }
       }
-    } else if (t === "zone") {
-      const zs = this.zoneStroke;
-      const erase = zs ? zs.erase : this.st.erase;
-      let cells: Cell[];
-      if (zs) cells = this.st.zoneMode === "marquee" ? (this.pointers.get(zs.pointer)?.moved ? this.cellsInScreenRect(zs.a, zs.b) : []) : [...zs.cells];
-      else if (this.st.zoneMode === "brush") cells = g.zones.near(c, this.st.brush).filter((x) => x.ok);
-      else if (this.st.zoneMode === "fill") cells = this.fillCells(c, erase);
-      else cells = [];
-      const Z = ZONES[this.st.zone];
-      const to = erase ? null : this.st.zone;
-      this.zones3d.highlight(cells, to);
-      chips.push({ text: erase ? "Unzone" : Z.short, kind: "info" });
-      if (cells.length) {
-        const change = cells.filter((x) => x.zone !== to).length;
-        chips.push({ text: `${change} cell${change === 1 ? "" : "s"}`, kind: "info" });
-        const built = new Set(cells.filter((x) => x.lot && x.zone !== to).map((x) => x.lot)).size;
-        if (built) chips.push({ text: `${built} building${built === 1 ? "" : "s"} demolished`, kind: "error" });
-      } else if (!zs && !g.zones.cellAt(c)) chips.push({ text: "Zone beside a street", kind: "info" });
+    } else if (t === "town") {
+      // the new town's first blocks, and how close the other towns let it come
+      const why = g.towns.foundBlock(c);
+      const ring = (q: V2, r: number) => Array.from({ length: 48 }, (_, k) => v2(q.x + Math.cos((k / 48) * Math.PI * 2) * r, q.y + Math.sin((k / 48) * Math.PI * 2) * r));
+      for (const o of g.towns.list) if (dist(o.c, c) < TOWN_SPACING * 1.6) pv.footprint(ring(o.c, TOWN_SPACING), 0x888888);
+      pv.footprint(ring(c, 150), why ? 0xe5484d : 0x58c8e6);
+      chips.push({ text: "Found a town", kind: "info" });
+      if (why) chips.push({ text: why, kind: "error" });
+      else {
+        chips.push({ text: formatMoney(TOWN_COST), kind: "cost" });
+        if (g.towns.cutOff(c)) chips.push({ text: "None of your roads near: it starts cut off", kind: "error" });
+      }
     } else if (t === "lane") {
       const lp = planAddLane(g.net, g.world, c, this.keys.has("Shift"));
       if (lp) {
@@ -1167,6 +1093,8 @@ export class App {
           const o = g.buildings.byId.get(id);
           if (o) pv.footprint(rectCorners(o.c, o.hw, o.hd, o.rot), 0xf2a33a, !!gh);
         }
+        // (the deposit share; a lot refused for too little of it gives the share in its reason instead)
+        if (pl.deposit && pl.deposit.share >= MIN_DEPOSIT) chips.push({ text: `${pl.deposit.name[0].toUpperCase()}${pl.deposit.name.slice(1)} ${Math.round(pl.deposit.share * 100)}%`, kind: "info" });
         if (!pl.ok) chips.push({ text: pl.reason ?? "Can't build here", kind: "error" });
         else {
           chips.push({ text: formatMoney(pl.cost), kind: pl.cost > g.money ? "error" : "cost" });
@@ -1177,7 +1105,7 @@ export class App {
       }
     } else if (t === "inspect") {
       const b = g.buildings.at(c);
-      if (b) chips.push({ text: b.zone ? `${ZONES[b.zone].short} · level ${b.level}` : BUILDING_TYPES[b.kind].name, kind: "info" });
+      if (b) chips.push({ text: b.zone ? `${ZONES[b.zone].short} · ${b.town !== undefined ? g.towns.byId.get(b.town)?.name ?? "" : "level " + b.level}` : BUILDING_TYPES[b.kind].name, kind: "info" });
     }
     this.hud?.chips(chips.length ? this.cursorPx : null, chips);
   }
@@ -1213,7 +1141,6 @@ export class App {
     this.transit3d.update(g.transit, g.net, this.st.tool === "transit" || !!this.hud?.linesShown, this.view.mpp, this.view.rot);
     this.flowT += dt;
     const flowOn = this.overlay === "flow";
-    this.zones3d.update();
     this.roads.update(g.traffic, flowOn && this.flowT > 0.5);
     if (this.flowT > 0.5) this.flowT = 0;
     if (this.dirtyPreview) {
@@ -1241,12 +1168,26 @@ export class App {
     this.roadsFar.update(this.view.mpp, this.view.w, this.view.h);
     this.labels.update(this.view);
     this.iconT += dt;
-    if (this.iconT > 0.4) { this.iconT = 0; this.icons.set(this.uiHidden || this.mode === "menu" ? [] : g.buildings.list, this.view); }
+    if (this.iconT > 0.4) { this.iconT = 0; this.icons.set(this.uiHidden || this.mode === "menu" ? [] : g.buildings.list, this.view); this.townLabels(); }
     else this.icons.update(this.view);
     this.hud?.compassAngle(this.view.rot);
     this.view.render();
     requestAnimationFrame(this.frame);
   };
+
+  /** The towns' names on the map, with their size; click one to open its panel. */
+  private townLabels() {
+    const g = this.game;
+    const hide = this.uiHidden || this.mode === "menu";
+    const key = hide ? "" : g.towns.list.map((t) => `${t.id}:${t.name}:${g.towns.sizeName(t)}:${t.pop}`).join("|");
+    if (key === this.labelKey) return;
+    this.labelKey = key;
+    this.labels.set(hide ? [] : g.towns.list.map((t) => ({
+      p: t.c, name: t.name, sub: `${g.towns.sizeName(t)} · ${t.pop}`, minHalfH: 160,
+      title: `${t.name}, ${g.towns.sizeName(t)} of ${t.pop} people. Open the town`,
+      onClick: () => { this.setTool({ tool: "inspect" }); this.hud?.openTown(t.id); },
+    })));
+  }
 
   start() {
     requestAnimationFrame(this.frame);

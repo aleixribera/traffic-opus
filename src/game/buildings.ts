@@ -1,4 +1,4 @@
-import { BUILDING_TYPES, ROAD_TYPES, type BuildingKind, type Cargo } from "../config";
+import { BUILDING_TYPES, ROAD_TYPES, type BuildingKind } from "../config";
 import { type V2, add, angleOf, cubicTangent, dist, dot, norm, rectCorners, rectDistance, right, scale, sub } from "../core/math";
 import type { RoadNetwork } from "../roads/network";
 import { cubicClosest } from "../roads/planner";
@@ -15,6 +15,8 @@ export interface Lot {
 
 export interface Building {
   id: number;
+  /** the town it belongs to (homes and shops: the town whose streets it fronts) */
+  town?: number;
   kind: BuildingKind; // model
   c: V2; // footprint centre
   rot: number; // angle of the frontage (road tangent)
@@ -38,7 +40,6 @@ export interface Building {
   problem: string | null; // what's wrong, for the inspector and icons
   // simulation state
   stock: number; // goods in stock (cargo units)
-  out: number; // produced cargo waiting to ship
   prodT: number;
   visits: number; // decaying count of customers
   /** shops: customers so far today, and over the last full day */
@@ -144,17 +145,8 @@ export class Buildings {
       if (!world.unlocked(k)) return fail("Area not unlocked yet");
       if (world.isWater(k)) return fail("Can't build on water");
     }
-    // mountains: only mines, and their back must be dug into the slope
-    const frontMid = add(c, scale(nn, -side * hd * 0.9));
-    if (T.needsMountain) {
-      // the shaft may start a few metres behind the lot: forgiving, so a road needn't hug the cliff
-      const tan2 = norm(cubicTangent(s.c, best.t));
-      const probes = [0.8, 1.15, 1.5].flatMap((k) => [-0.5, 0, 0.5].map((a) => add(add(c, scale(nn, side * hd * k)), scale(tan2, a * hw))));
-      if (!probes.some((k) => world.isMountain(k))) return fail("Mines must back onto a mountain");
-      if (world.isMountain(frontMid)) return fail("Entrance is inside the mountain");
-    } else {
-      for (const k of samples) if (world.isMountain(k)) return fail("Mountain in the way");
-    }
+    // mountains
+    for (const k of samples) if (world.isMountain(k)) return fail("Mountain in the way");
     // other buildings
     const over = this.list.filter((o) => obbOverlap(c, hw + 0.3, hd + 0.3, rot, o.c, o.hw, o.hd, o.rot));
     const hit = over.filter((o) => !soft?.(o)).map((o) => o.id);
@@ -180,7 +172,7 @@ export class Buildings {
     return this.insert({
       id: this.nextId++, kind, c: pl.c, rot: pl.rot, hw: T.w / 2, hd: T.d / 2, front: pl.front, access: pl.access, side: pl.side,
       level: 1, cap: T.jobs, fit: 1, tall: 1, built: 1, abandoned: 0, lv: 0, upT: 0, badT: 0, problem: null,
-      stock: T.consumes ? 1 : 0, out: 0, prodT: 0, visits: 0, born: now,
+      stock: T.shelves ? 1 : 0, prodT: 0, visits: 0, born: now,
     });
   }
 
@@ -260,7 +252,7 @@ export class Buildings {
     for (const id of ids) {
       const b = this.byId.get(id);
       if (!b) continue;
-      if (b.access?.seg !== segId || BUILDING_TYPES[b.kind].needsMountain) { stuck.push(id); continue; }
+      if (b.access?.seg !== segId) { stuck.push(id); continue; }
       const rc = cubicClosest(s.c, b.c);
       const n = norm(sub(b.c, rc.p));
       const mv = halfW + 2.2 + b.hd - rc.d;
@@ -302,10 +294,6 @@ export class Buildings {
       b.c = to ? m.c1 : m.c0;
       b.front = to ? m.f1 : m.f0;
     }
-  }
-
-  produces(b: Building): Cargo | undefined {
-    return BUILDING_TYPES[b.kind].produces;
   }
 }
 
