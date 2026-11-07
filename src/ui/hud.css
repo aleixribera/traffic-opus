@@ -11,7 +11,6 @@
   --accent: #1677b3;
   --good: #1f7a36; /* 5.4:1 on the cards */
   --bad: #c0332e; /* 5.6:1 */
-  --purple: #7b5dd0;
   --res: #4fae5c;
   --com: #3d8ee0;
   --ind: #d9a52c;
@@ -123,8 +122,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .cat.hist { width: 48px; }
 .cat.hist svg { width: 22px; height: 22px; }
 .cat-sep { width: 1px; margin: 6px 4px; background: var(--line-2); }
-.cat.hint:not(.on) { border-color: var(--purple); box-shadow: 0 0 0 2px rgba(123, 93, 208, 0.35); animation: hint 1.4s ease-in-out infinite; }
-@keyframes hint { 50% { box-shadow: 0 0 0 4px rgba(123, 93, 208, 0.15); } }
+.cat.hint:not(.on) { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(22, 119, 179, 0.32); animation: hint 1.4s ease-in-out infinite; }
+@keyframes hint { 50% { box-shadow: 0 0 0 4px rgba(22, 119, 179, 0.12); } }
+@media (prefers-reduced-motion: reduce) { .cat.hint:not(.on) { animation: none; } }
 
 .cb-clock { display: flex; flex-direction: column; align-items: flex-end; font-variant-numeric: tabular-nums; line-height: 1.15; }
 .cb-clock b { font-size: 14px; font-weight: 600; }
@@ -183,7 +183,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .snap-row input { width: 14px; height: 14px; accent-color: var(--accent); margin: 0; flex: none; }
 
 /* ------------------------------------------------------------ tips + selection panel (top right) */
-.tutorial { width: 100%; background: var(--purple); border-color: #6849bf; color: #fff; padding: 8px 28px 8px 10px; position: relative; line-height: 1.45; }
+.tutorial { width: 100%; color: var(--ink); padding: 8px 30px 10px 12px; position: relative; line-height: 1.45; }
+.tutorial::before { content: "Next step"; display: block; margin-bottom: 2px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--accent); }
 .tutorial[hidden] { display: none; }
 .tutorial p { margin: 0; }
 .tutorial b { font-weight: 600; }
@@ -364,10 +366,11 @@ kbd { font: inherit; font-size: 11px; font-weight: 500; padding: 1px 5px; border
 .map-icon.urgent { animation: icon-bob 0.9s ease-in-out infinite alternate; }
 @keyframes icon-bob { to { margin-top: -4px; } }
 @media (prefers-reduced-motion: reduce) { .map-icon.urgent { animation: none; } }
-.map-label { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; white-space: nowrap; color: #2f3136;
-  text-shadow: 0 0 2px #f6f4ee, 0 0 3px #f6f4ee, 0 0 5px #f6f4ee; will-change: transform; }
-.map-label b { font-weight: 600; font-size: 14px; letter-spacing: 0.02em; }
-.map-label span { font-size: 10.5px; color: #5d6168; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 1px; }
+.map-label { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; white-space: nowrap; color: #232529;
+  /* a solid halo, so the name reads over dark asphalt as well as over grass */
+  -webkit-text-stroke: 3.5px #f6f4ee; paint-order: stroke fill; text-shadow: 0 0 6px rgba(246, 244, 238, 0.85); will-change: transform; }
+.map-label b { font-weight: 650; font-size: 14.5px; letter-spacing: 0.02em; }
+.map-label span { font-size: 11px; font-weight: 600; color: #3b3e44; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 1px; }
 .seg-btn svg { width: 20px; height: 20px; }
 .to-sec .seg-btn { padding: 0 4px; min-width: 30px; }
 .bl-del.armed { width: auto; padding: 0 8px; color: #fff; background: var(--bad, #c8443a); border-radius: 6px; font-weight: 600; font-size: 12px; }
