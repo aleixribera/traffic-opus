@@ -1,30 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, it, expect } from "vitest";
 import { Game } from "../src/game/city";
-import { planRoad, snap, type Snap } from "../src/roads/planner";
-import { v2, type V2 } from "../src/core/math";
-import { HOUR } from "../src/game/society";
+import { v2 } from "../src/core/math";
 import { ZONE_GROUP } from "../src/game/growables";
 import type { Building } from "../src/game/buildings";
 import type { PlacedKind } from "../src/game/placed";
+import { okCells, road, run, zoneFor } from "./helpers";
 
-const free = (p: V2): Snap => ({ p, h: 0, guides: [] });
-
-function road(g: Game, a: V2, b: V2, type: any = "street") {
-  const sa = snap(g.net, a, { mpp: 0.5, level: 0, type });
-  const sb = snap(g.net, b, { mpp: 0.5, level: 0, type });
-  const plan = planRoad(g.net, g.world, {
-    start: sa.node !== undefined || sa.seg !== undefined ? sa : free(a),
-    end: sb.node !== undefined || sb.seg !== undefined ? sb : free(b), mode: "straight", type,
-  });
-  expect(plan.errors.map((e) => e.msg)).toEqual([]);
-  expect(g.build(plan)).toBe(true);
-}
-
-function run(g: Game, hours: number) {
-  for (let i = 0; i < hours * HOUR * 30; i++) g.step(1 / 30);
-}
-
-/** A small town on seed 7: homes, shops and industry off a long street in to the origin. */
+/** A small town on seed 7: homes and shops off a long street in to the origin. */
 function town(g: Game) {
   road(g, v2(366, 473), v2(0, 0));
   road(g, v2(-200, 0), v2(0, 0));
@@ -32,10 +14,9 @@ function town(g: Game) {
   road(g, v2(-200, 0), v2(-200, -300));
   road(g, v2(-200, -300), v2(0, -300));
   road(g, v2(-200, -150), v2(0, -150));
-  const cells = [...g.zones.allCells()].filter((c) => c.ok);
-  g.zonePaint(cells.filter((c) => c.c.y < -150), "resLow");
-  g.zonePaint(cells.filter((c) => c.c.y >= -150 && c.c.x < -100), "comLow");
-  g.zonePaint(cells.filter((c) => c.c.y >= -150 && c.c.x >= -100), "ind");
+  const cells = okCells(g);
+  zoneFor(g, cells.filter((c) => c.c.y < -150), "resLow", 40);
+  zoneFor(g, cells.filter((c) => c.c.y >= -150 && c.c.x < -100), "comLow");
 }
 
 /** A plant beside the long street in (not zoned), or anywhere along a given street. */
@@ -77,14 +58,13 @@ describe("Electricity", () => {
     expect(g.budget.expense.utilities).toBe(330);
   });
 
-  it("a power shortage doesn't hurt homes or shops (no problem, no lost demand, nobody leaves)", () => {
+  it("a power shortage doesn't hurt homes or shops (no problem, nobody leaves)", () => {
     const g = new Game(7);
     town(g);
     g.money = 1e6;
     run(g, 24);
     expect(g.utilities.stats.power.short).toBeGreaterThan(0);
     for (const b of g.buildings.list) expect(b.problem ?? "").not.toMatch(/electric|power/i);
-    for (const gp of ["res", "com", "ind"] as const) expect(g.demand[gp].factors.some((f) => /electric|power|utilit/i.test(f.label))).toBe(false);
     expect(g.buildings.list.some((b) => b.abandoned)).toBe(false);
   });
 

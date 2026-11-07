@@ -21,6 +21,10 @@ function world() {
     connected: (a, b) => a === b,
     workersAt: (id) => staff.get(id) ?? byId.get(id)!.cap,
     get shops() { return list.filter((b) => !b.plant); },
+    // (every shop its own town, always wanting more)
+    townOf: (b) => b.id,
+    want: () => 10,
+    sold: () => {},
     request: (p) => { pending.push(p); },
     trips: () => pending.map((p) => p.trip),
     earn: (v) => { money += v; },

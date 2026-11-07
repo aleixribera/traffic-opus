@@ -58,4 +58,5 @@ export const CAR_COLORS = [
   0xf1f1ee, 0xe4e5e3, 0xbfc2c5, 0x8d9095, 0x2a2c30, 0x45484e, 0xa8302c, 0x263f6b, 0x4c6f99, 0xc8b48c, 0x3e5640, 0xd6d8da,
 ];
 
-export const CARGO_COLOR: Record<string, number> = { ore: 0xf07a2a, food: 0x7cc84a, goods: 0x4f8fe8 };
+/** Load colours on the trucks (match PRODUCTS in game/industry.ts). */
+export const CARGO_COLOR: Record<string, number> = { crops: 0xd9b44a, logs: 0x8a5a33, food: 0xe2704a, planks: 0xe8cf8f };

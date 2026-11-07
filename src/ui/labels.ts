@@ -7,6 +7,10 @@ export interface MapLabel {
   sub?: string;
   /** Only shown when the view is at least this zoomed out (half-height in metres). */
   minHalfH?: number;
+  /** Clickable: the label is a button (a town's name opens its panel). */
+  onClick?: () => void;
+  /** what the button says to a screen reader */
+  title?: string;
 }
 
 /** Place names drawn over the map, like a road atlas. Plain text with a halo, no boxes. */
@@ -19,11 +23,17 @@ export class MapLabels {
     document.body.appendChild(this.el);
   }
 
+  /** Passive: clickable labels let clicks through to the map (a tool is in hand). */
+  passive(on: boolean) {
+    this.el.classList.toggle("passive", on);
+  }
+
   set(labels: MapLabel[]) {
     this.el.replaceChildren();
     this.items = labels.map((l) => {
-      const e = document.createElement("div");
-      e.className = "map-label";
+      const e = document.createElement(l.onClick ? "button" : "div");
+      e.className = "map-label" + (l.onClick ? " click" : "");
+      if (l.onClick) { e.onclick = l.onClick; e.title = l.title ?? l.name; e.setAttribute("aria-label", l.title ?? l.name); }
       e.innerHTML = `<b></b>${l.sub ? "<span></span>" : ""}`;
       e.querySelector("b")!.textContent = l.name;
       if (l.sub) e.querySelector("span")!.textContent = l.sub;

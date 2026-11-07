@@ -54,12 +54,8 @@ export function buildingIcon(kind: BuildingKind, zone: string): string {
       return svg(28, 28, `<rect x="3" y="7" width="12" height="15" fill="${f}"/><rect x="15" y="10" width="10" height="12" fill="#3b93ea"/><path d="M3 11 h12 M3 15 h12 M15 14 h10" stroke="#1d6bbd"/>`);
     case "mall":
       return svg(28, 28, `<rect x="2" y="6" width="24" height="17" fill="${f}"/><rect x="5" y="9" width="5" height="4" fill="#dfe9f6"/><rect x="12" y="9" width="5" height="4" fill="#dfe9f6"/><rect x="19" y="9" width="4" height="4" fill="#dfe9f6"/>`);
-    case "mine":
-      return svg(28, 28, `<path d="M3 23 L11 9 L16 15 L19 11 L26 23 Z" fill="#7c7b72"/><rect x="8" y="16" width="10" height="7" fill="${f}"/><rect x="8" y="16" width="10" height="2.5" fill="#f07a2a"/>`);
     case "farm":
       return svg(28, 28, `<rect x="3" y="4" width="22" height="20" fill="#cfe59a"/><path d="M3 9 h22 M3 14 h22 M3 19 h22" stroke="#8cc152" stroke-width="2"/><rect x="16" y="15" width="7" height="7" fill="${f}"/>`);
-    case "works":
-      return svg(28, 28, `<rect x="3" y="11" width="22" height="12" fill="${f}"/><rect x="6" y="4" width="3" height="8" fill="#6d7178"/><rect x="12" y="6" width="3" height="6" fill="#6d7178"/><path d="M3 15 h22" stroke="#f07a2a" stroke-width="2.4"/>`);
     case "foodplant":
       return svg(28, 28, `<rect x="3" y="11" width="16" height="12" fill="${f}"/><circle cx="22" cy="15" r="4" fill="#d9dbdd"/><path d="M3 15 h16" stroke="#f2c230" stroke-width="2.4"/>`);
     default:
@@ -70,6 +66,18 @@ export function buildingIcon(kind: BuildingKind, zone: string): string {
 /** Pictograms of the buildings the player places (build menu and inspector). */
 export function placedIcon(kind: string): string {
   switch (kind) {
+    case "farm":
+      // a field in rows and a barn
+      return svg(28, 28, `<rect x="2" y="12" width="24" height="13" rx="1" fill="#d9b44a"/><path d="M4 15 H24 M4 18.5 H24 M4 22 H24" stroke="#a9862b" stroke-width="1.2"/><path d="M5 12 V7 L10 3.5 L15 7 V12 Z" fill="#b2473a"/><rect x="8.5" y="8" width="3" height="4" fill="#fff"/>`);
+    case "loggingcamp":
+      // two firs and a stack of logs
+      return svg(28, 28, `<path d="M8 2 L13 12 H3 Z M8 7 L14 17 H2 Z" fill="#2f7a3a"/><rect x="7" y="17" width="2" height="4" fill="#6b4a2b"/><path d="M19 4 L23 12 H15 Z M19 8 L24 16 H14 Z" fill="#3b8a45"/><circle cx="14" cy="23" r="2.6" fill="#8a5a33"/><circle cx="19.5" cy="23" r="2.6" fill="#8a5a33"/><circle cx="24.5" cy="23" r="2.6" fill="#8a5a33"/><circle cx="14" cy="23" r="1" fill="#d6b98a"/><circle cx="19.5" cy="23" r="1" fill="#d6b98a"/><circle cx="24.5" cy="23" r="1" fill="#d6b98a"/>`);
+    case "foodplant":
+      // a works shed with a silo, and a crate of food
+      return svg(28, 28, `<rect x="3" y="11" width="15" height="13" fill="#7d8790"/><path d="M3 11 L7.5 7 L12 11 L16.5 7 L18 8.5 V11 Z" fill="#5b6168"/><rect x="19" y="5" width="6" height="19" rx="3" fill="#c9cdd2"/><rect x="6" y="16" width="9" height="8" fill="#e2704a"/><path d="M6 19.5 H15" stroke="#fff" stroke-width="1"/>`);
+    case "sawmill":
+      // a long shed, a saw blade and planks
+      return svg(28, 28, `<rect x="2" y="9" width="17" height="14" fill="#8a6a45"/><path d="M2 9 L10.5 4 L19 9 Z" fill="#5b4630"/><circle cx="22" cy="12" r="4.4" fill="#c9cdd2" stroke="#6d737a" stroke-width="1"/><circle cx="22" cy="12" r="1.2" fill="#6d737a"/><rect x="5" y="18" width="21" height="2.4" fill="#e8cf8f" stroke="#a9862b" stroke-width="0.6"/><rect x="7" y="21" width="19" height="2.4" fill="#e8cf8f" stroke="#a9862b" stroke-width="0.6"/>`);
     case "coalplant":
       return svg(28, 28, `<path d="M17 24 C17.8 18 18.5 13 17.2 8 H24.8 C23.5 13 24.2 18 25 24 Z" fill="#9aa0a6"/><rect x="3" y="14" width="13" height="10" fill="#6d737a"/><rect x="7" y="5" width="3" height="9" fill="#545a61"/><circle cx="9" cy="3.6" r="2" fill="#c9cdd2"/><circle cx="12" cy="2.6" r="1.5" fill="#dde0e3"/>`);
     default:
@@ -112,13 +120,11 @@ export const ICON = {
   magnet: svg(18, 18, `<path d="M4 3 V9 a5 5 0 0 0 10 0 V3" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M2.8 4.5 h2.4 M12.8 4.5 h2.4" stroke="#fff" stroke-width="1.2"/>`),
   north: svg(22, 22, `<path d="M11 2 L15 12 H7 Z" fill="#d6453d"/><path d="M7 12 H15 L11 20 Z" fill="#9aa0a6"/>`),
   angle: svg(12, 12, `<path d="M2 10 H10 M2 10 L8 3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>`),
-  zone: svg(28, 28, `<rect x="4" y="5" width="9" height="8" fill="#6cc56a"/><rect x="15" y="5" width="9" height="8" fill="#4f9be8"/><rect x="4" y="15" width="9" height="8" fill="#e2b23a"/><rect x="15" y="15" width="9" height="8" fill="#6cc56a"/>`),
+  // the build bar's company categories: a factory with a chimney, and a town of roofs round a centre
+  industry: svg(28, 28, `<path d="M3 25 V13 L9 9 V13 L15 9 V13 L21 9 V25 Z" fill="#6d737a"/><rect x="21" y="4" width="4" height="21" fill="#545a61"/><rect x="6" y="17" width="3" height="3" fill="#f2c94c"/><rect x="12" y="17" width="3" height="3" fill="#f2c94c"/><circle cx="23" cy="2.6" r="1.6" fill="#c9cdd2"/>`),
+  town: svg(28, 28, `<path d="M2 25 V15 L7 11 L12 15 V25 Z" fill="#c9875a"/><path d="M10 25 V10 L15.5 5 L21 10 V25 Z" fill="#b2473a"/><path d="M18 25 V16 L22 12.5 L26 16 V25 Z" fill="#d9a066"/><rect x="13.5" y="16" width="4" height="9" fill="#fff"/><rect x="5" y="18" width="3" height="3" fill="#fff"/>`),
   people: svg(14, 14, `<circle cx="7" cy="4.3" r="2.6" fill="currentColor"/><path d="M2 13 a5 5 0 0 1 10 0 Z" fill="currentColor"/>`),
   lock: svg(10, 12, `<rect x="1" y="5" width="8" height="6.5" rx="1" fill="currentColor"/><path d="M3 5 V3.6 a2 2 0 0 1 4 0 V5" fill="none" stroke="currentColor" stroke-width="1.4"/>`),
-  fill: svg(22, 22, `<path d="M5 10 L11 4 L18 11 L12 17 Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M5 10 h13" stroke="currentColor" stroke-width="1.2"/><path d="M18.5 14 q1.6 2.4 0 3.6 q-1.6 -1.2 0 -3.6 Z" fill="currentColor"/>`),
-  brush: svg(22, 22, `<circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-dasharray="2.6 2"/><circle cx="11" cy="11" r="2.4" fill="currentColor"/>`),
-  marquee: svg(22, 22, `<rect x="4" y="5" width="14" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-dasharray="3 2"/>`),
-  erase: svg(22, 22, `<path d="M4 15 L12 7 L17 12 L10 19 H6 Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M8 11 L13 16" stroke="currentColor" stroke-width="1.5"/><path d="M10 19 H18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>`),
   land: svg(28, 28, `<path d="M4 9 L14 4 L24 9 L24 20 L14 25 L4 20 Z" fill="#e8e4d5" stroke="#8d939a" stroke-width="1.3"/><path d="M14 10 v9 M9.5 14.5 h9" stroke="#2f86e0" stroke-width="2.4" stroke-linecap="round"/>`),
   layers: svg(18, 18, `<path d="M9 2.5 L16 6 L9 9.5 L2 6 Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M2 9.5 L9 13 L16 9.5 M2 12.5 L9 16 L16 12.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>`),
   flag: svg(18, 18, `<path d="M4 16 V2.5 M4 3 H14 L11.5 6.5 L14 10 H4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>`),

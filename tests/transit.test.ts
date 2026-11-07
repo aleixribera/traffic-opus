@@ -1,33 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { Game } from "../src/game/city";
-import { planRoad, snap, type Snap } from "../src/roads/planner";
-import { v2, type V2 } from "../src/core/math";
-import { HOUR } from "../src/game/society";
+import { v2 } from "../src/core/math";
 import type { Lane } from "../src/roads/network";
+import { okCells, road, run, zoneFor } from "./helpers";
 
-const free = (p: V2): Snap => ({ p, h: 0, guides: [] });
-
-function road(g: Game, a: V2, b: V2, type: any = "street") {
-  const sa = snap(g.net, a, { mpp: 0.5, level: 0, type });
-  const sb = snap(g.net, b, { mpp: 0.5, level: 0, type });
-  const plan = planRoad(g.net, g.world, {
-    start: sa.node !== undefined || sa.seg !== undefined ? sa : free(a),
-    end: sb.node !== undefined || sb.seg !== undefined ? sb : free(b), mode: "straight", type,
-  });
-  expect(plan.errors.map((e) => e.msg)).toEqual([]);
-  expect(g.build(plan)).toBe(true);
-}
-
-function run(g: Game, hours: number, each?: () => void) {
-  for (let i = 0; i < hours * HOUR * 30; i++) {
-    g.step(1 / 30);
-    if (each) each();
-  }
-}
-
-const okCells = (g: Game) => [...g.zones.allCells()].filter((c) => c.ok);
-
-/** Seed 7: shops and industry by the long street in, and a suburb a kilometre up the road (too far to walk). */
+/** Seed 7: shops and workplaces by the long street in, and a suburb a kilometre up the road (too far to walk). */
 function town(g: Game) {
   road(g, v2(366, 473), v2(0, 0));
   road(g, v2(-200, 0), v2(0, 0));
@@ -40,10 +17,8 @@ function town(g: Game) {
   road(g, v2(0, -1000), v2(0, -850));
   road(g, v2(-200, -850), v2(0, -850));
   const cells = okCells(g);
-  g.zonePaint(cells.filter((c) => c.c.y < -800), "resLow");
-  g.zonePaint(cells.filter((c) => c.c.y >= -300 && c.c.y < -150), "comLow");
-  g.zonePaint(cells.filter((c) => c.c.y >= -150 && c.c.x < -100), "comLow");
-  g.zonePaint(cells.filter((c) => c.c.y >= -150 && c.c.x >= -100), "ind");
+  zoneFor(g, cells.filter((c) => c.c.y < -800), "resLow");
+  zoneFor(g, cells.filter((c) => c.c.y >= -300), "comLow");
 }
 
 describe("Buses", () => {

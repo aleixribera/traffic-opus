@@ -1787,7 +1787,7 @@ export function commitRoundabout(net: RoadNetwork, plan: Plan): void {
       const a = pa !== null && net.nodes.has(pa) ? pa : net.addNode(sub1.p0, ha);
       const b = pb !== null && net.nodes.has(pb) ? pb : net.addNode(sub1.p3, hb);
       if (!net.nodes.has(a)) continue;
-      net.addSeg(a, b, type, sub1, ring);
+      net.addSeg(a, b, type, sub1, ring, s.town); // (a town street trimmed for the ring is still the town's)
     }
   }
   for (const n of plan.removeNodes ?? []) if (net.nodes.has(n)) net.removeNode(n);

@@ -41,6 +41,8 @@ export interface RSeg {
   ring: number; // roundabout id (0 = none); ring roads have priority at their junctions
   /** turn pockets: extra lanes for the traffic arriving at that end, opening out of the road before the junction */
   pk?: { a?: Pocket; b?: Pocket };
+  /** a town's own street (the town laid it; the company doesn't pay its upkeep) */
+  town?: number;
 }
 
 /**
@@ -427,12 +429,13 @@ export class RoadNetwork {
     return node.id;
   }
 
-  addSeg(a: number, b: number, type: RoadTypeId, c: Cubic, ring = 0): number {
+  addSeg(a: number, b: number, type: RoadTypeId, c: Cubic, ring = 0, town?: number): number {
     const na = this.nodes.get(a)!, nb = this.nodes.get(b)!;
     const seg: RSeg = {
       id: this.nextId++, a, b, type, ring,
       c: { p0: { ...na.p }, p1: { ...c.p1 }, p2: { ...c.p2 }, p3: { ...nb.p } },
     };
+    if (town) seg.town = town;
     this.insertSeg(seg);
     this.log({ t: "addSeg", seg: clone(seg) });
     return seg.id;
@@ -515,8 +518,8 @@ export class RoadNetwork {
     const nid = this.addNode(c1.p3, h);
     const total = g ? g.center.length : dist(s.c.p0, s.c.p3);
     this.removeSeg(id, false);
-    const s1 = this.addSeg(s.a, nid, s.type, c1, s.ring);
-    const s2 = this.addSeg(nid, s.b, s.type, c2, s.ring);
+    const s1 = this.addSeg(s.a, nid, s.type, c1, s.ring, s.town);
+    const s2 = this.addSeg(nid, s.b, s.type, c2, s.ring, s.town);
     // turn pockets stay before their junctions
     if (s.pk?.a) this.setPocket(s1, "a", s.pk.a);
     if (s.pk?.b) this.setPocket(s2, "b", s.pk.b);

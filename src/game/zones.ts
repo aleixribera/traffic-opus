@@ -12,8 +12,8 @@ export const DEPTH = 6;
 /** The shallowest lot any zone grows (cells): shallower strips aren't zoneable. */
 export const MIN_LOT_DEPTH = 2;
 
-export type ZoneId = "resLow" | "resRow" | "resMed" | "resHigh" | "comLow" | "comHigh" | "ind";
-export type ZoneGroup = "res" | "com" | "ind";
+export type ZoneId = "resLow" | "resRow" | "resMed" | "resHigh" | "comLow" | "comHigh";
+export type ZoneGroup = "res" | "com";
 
 export interface ZoneDef {
   id: ZoneId;
@@ -31,9 +31,8 @@ export const ZONES: Record<ZoneId, ZoneDef> = {
   resHigh: { id: "resHigh", name: "Residential high density", short: "High homes", group: "res", high: true, color: 0x1d7a3c },
   comLow: { id: "comLow", name: "Commercial low density", short: "Low shops", group: "com", high: false, color: 0x4f9be8 },
   comHigh: { id: "comHigh", name: "Commercial high density", short: "High shops", group: "com", high: true, color: 0x2a6fcf },
-  ind: { id: "ind", name: "Industrial", short: "Industry", group: "ind", high: false, color: 0xe2b23a },
 };
-export const ZONE_ORDER: ZoneId[] = ["resLow", "resRow", "resMed", "resHigh", "comLow", "comHigh", "ind"];
+export const ZONE_ORDER: ZoneId[] = ["resLow", "resRow", "resMed", "resHigh", "comLow", "comHigh"];
 
 export interface Cell {
   c: V2; // centre

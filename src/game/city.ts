@@ -5,15 +5,19 @@ import { add, dist, rectCorners, scale, sub, type V2 } from "../core/math";
 import { mulberry32 } from "../core/noise";
 import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/network";
 import {
-  applyTrim, chainPoints, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type LanePlan, type Plan, type PlanError,
+  applyTrim, chainPoints, planRoad, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type LanePlan, type Plan, type PlanError,
 } from "../roads/planner";
 import { Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import { Terrain } from "../world/terrain";
 import { Buildings, obbOverlap, type Building, type BuildingMove } from "./buildings";
 import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, type LotTemplate } from "./growables";
-import { MILESTONES, milestoneFor, tilePrice, tileSlots, unlockedFeature, unlockedRoads, unlockedZones, type Milestone } from "./progression";
-import { DAY, HOUR, Society, estTime } from "./society";
+import { MILESTONES, milestoneFor, tilePrice, tileSlots, unlockedFeature, unlockedRoads, type Milestone } from "./progression";
+import { DAY, HOUR, Society } from "./society";
 import { PLACED, SHORE_REACH, type PlacedKind } from "./placed";
+import { Industry, MIN_DEPOSIT, PLANTS, isPlantKind } from "./industry";
+import { TownSystem } from "./settlements";
+import { BLOCK, gridPt } from "./towns";
+import { F } from "../world/gen";
 import { Transit } from "./transit";
 import { Utilities } from "./utilities";
 import type { Placement } from "./buildings";
@@ -26,7 +30,6 @@ interface UndoEntry {
   added: Building[];
   removed: Building[];
   moved?: BuildingMove[]; // lots pushed back by a road widening
-  zones?: { p: V2; from: ZoneId | null; to: ZoneId | null }[];
 }
 
 export type GameEvent =
@@ -38,27 +41,17 @@ export type GameEvent =
   | { t: "tiles" }
   | { t: "toast"; msg: string };
 
-export interface DemandFactor { label: string; v: number }
-export interface Demand { v: number; factors: DemandFactor[] }
-
+/** The company's books for an hour. Income comes only from loads delivered to towns (and bus fares). */
 export interface Budget {
-  income: Record<"res" | "com" | "ind" | "transit", number>;
-  expense: Record<"roads" | "transit" | "utilities" | "loans", number>;
+  income: Record<"sales" | "transit", number>;
+  expense: Record<"roads" | "wages" | "upkeep" | "fuel" | "transit" | "utilities" | "loans", number>;
 }
 
-/** A truck load not simulated as a vehicle, arriving at a set time. */
-interface VirtualCargo { t: number; to: number; cargo: "goods" }
+/** Save format: 4 = the industrial company (plants, towns that grow themselves, no player zoning). */
+export const SAVE_V = 4;
 
-/** Save format: 3 = no city services, utilities beyond power, taxes or outside world. */
-export const SAVE_V = 3;
-
-/**
- * What each worker earns the city an hour, by zone group (residents: per employed resident).
- * TODO(industry): replaced by delivery income. Fixed at what the old default 10% tax produced.
- */
-const INCOME_RATE: Record<ZoneGroup, number> = { res: 0.9, com: 0.8, ind: 0.7 };
-
-const GROUPS: ZoneGroup[] = ["res", "com", "ind"];
+/** Money a new company starts with: a farm, a food plant and some road, with a little to spare. */
+export const START_MONEY = 80000;
 
 export class Game {
   seed: number;
@@ -70,6 +63,8 @@ export class Game {
   people: Society;
   transit: Transit;
   utilities: Utilities;
+  industry: Industry;
+  towns: TownSystem;
   money = 0;
   tiles = new Set<string>();
   time = 0;
@@ -79,10 +74,11 @@ export class Game {
   readonly dt = SIM.dt;
   milestone = 0;
   cityName = "Larkfield";
-  demand: Record<ZoneGroup, Demand> = { res: { v: 0, factors: [] }, com: { v: 0, factors: [] }, ind: { v: 0, factors: [] } };
   /** Per game hour: last complete hour, and the one being counted. */
   budget: Budget = emptyBudget();
   private budgetNow: Budget = emptyBudget();
+  /** the books of the last day's hours (deliveries come in lumps: the average says more than one hour) */
+  budgetLog: Budget[] = [];
   /** Money at the end of each of the last 48 hours. */
   history: { money: number; pop: number; jobs: number }[] = [];
   rng: () => number;
@@ -92,17 +88,16 @@ export class Game {
   private listeners: ((e: GameEvent) => void)[] = [];
   private tickT = 0;
   private hourT = 0;
-  private cargoQ: VirtualCargo[] = [];
-  /** the day number the shops last closed their books on */
+  /** the day number the shops and towns last closed their books on */
   private dayN = -1;
-  private ordered = new Map<number, number>(); // building id -> loads on their way
   failedTrips = 0;
   readonly world: BuildWorld;
   private comp = new Map<number, number>(); // node id -> connected component
   private compVersion = -1;
   private shopCache: Building[] | null = null;
-  private candCache = new Map<ZoneGroup, Cell[]>();
-  private freeCache = new Map<ZoneGroup, number>();
+  /** empty zoned front-row cells where a lot could start, per town and group ("town:group") */
+  private candCache = new Map<string, Cell[]>();
+  private freeCache = new Map<string, number>();
   private midRebuilds: ChangeSet[] = []; // rebuilds part-way through the edit being applied (see autoLights)
   private candVersion = -1;
   /** Roads whose use is blocked (no route); shown as notifications. */
@@ -119,12 +114,30 @@ export class Game {
       busAt: (v) => this.transit.busAt(v),
     });
     for (const [i, j] of START_TILES) this.tiles.add(`${i},${j}`);
-    this.money = 60000;
+    this.money = START_MONEY;
     const t = this.terrain;
-    this.zones = new ZoneMap(this.net, { isWater: (p) => t.isWater(p), isMountain: (p) => t.isMountain(p), owned: (p) => this.unlocked(p) });
+    // (towns grow on any land: only the company's own buildings need owned tiles)
+    this.zones = new ZoneMap(this.net, { isWater: (p) => t.isWater(p), isMountain: (p) => t.isMountain(p), owned: () => true });
     this.people = new Society(this);
     this.transit = new Transit(this);
     this.utilities = new Utilities(this);
+    this.towns = new TownSystem(this);
+    const game = this;
+    this.industry = new Industry({
+      get time() { return game.time; },
+      buildings: this.buildings,
+      has: (f, p) => t.has(f, p),
+      connected: (a, b) => this.connected(a, b),
+      workersAt: (id) => this.people.workersAt(id),
+      get shops() { return game.shops; },
+      townOf: (b) => b.town ?? null,
+      want: (town, p) => this.towns.want(town, p),
+      sold: (town, p, n) => this.towns.sold(town, p, n),
+      request: (sp) => this.traffic.request(sp),
+      trips: () => this.trips(),
+      earn: (v) => { this.money += v; this.budgetNow.income.sales += v; },
+      spend: (v, what) => { this.money -= v; this.budgetNow.expense[what] += v; },
+    });
     this.world = {
       isWater: (p) => t.isWater(p),
       isMountain: (p) => t.isMountain(p),
@@ -134,6 +147,76 @@ export class Game {
       money: () => this.money,
     };
     this.zones.rebuildAll();
+  }
+
+  /**
+   * A new company: one hamlet founded near the start, on open land with fertile soil within reach and its grid
+   * turned toward it, and a few hundred metres of road leading out of it toward the farmland.
+   */
+  start() {
+    const t = this.terrain;
+    const fert = (p: V2) => t.has(F.fert, p);
+    const clear = (p: V2) => this.towns.foundBlock(p, true) === null;
+    // the nearest open spot to the origin with fertile soil 300 m - 1 km away (and none under the town itself)
+    let site: V2 | null = null, fallback: V2 | null = null, toward = { x: 1, y: 0 };
+    for (let r = 0; r <= 1400 && !site; r += 80) {
+      const n = Math.max(1, Math.round((2 * Math.PI * r) / 160));
+      for (let k = 0; k < n && !site; k++) {
+        const a = (k / n) * Math.PI * 2;
+        const p = { x: Math.cos(a) * r, y: Math.sin(a) * r };
+        if (!clear(p) || fert(p)) continue;
+        fallback ??= p;
+        let best: V2 | null = null, bd = Infinity;
+        for (let d = 300; d <= 1000; d += 100) for (let q = 0; q < 16; q++) {
+          const b = (q / 16) * Math.PI * 2;
+          const f = { x: p.x + Math.cos(b) * d, y: p.y + Math.sin(b) * d };
+          if (fert(f) && d < bd) { bd = d; best = f; }
+        }
+        if (best) { site = p; toward = { x: best.x - p.x, y: best.y - p.y }; }
+      }
+    }
+    // (no farmland near anywhere open: the nearest open spot, however far out, so a company always has its town)
+    site ??= fallback;
+    for (let r = 1400; !site && r <= 6000; r += 80) {
+      for (let k = 0; k < 64; k++) {
+        const p = { x: Math.cos((k / 64) * Math.PI * 2) * r, y: Math.sin((k / 64) * Math.PI * 2) * r };
+        if (clear(p)) { site = p; break; }
+      }
+    }
+    site ??= { x: 0, y: 0 };
+    const ang = Math.atan2(toward.y, toward.x);
+    const town = this.towns.found(site, { free: true, ang });
+    if (typeof town === "string") return;
+    this.cityName = town.name;
+    town.target = 12; // (enough hands to crew a first farm and food plant between them)
+    // the road out of town, from the end of its main street
+    const a = gridPt(town.c, ang, 1, 0), b = gridPt(town.c, ang, 1 + 320 / BLOCK, 0);
+    const plan = planRoad(this.net, this.world, { start: { p: a, h: 0, guides: [], node: this.nodeAt(a) }, end: { p: b, h: 0, guides: [] }, mode: "straight", type: "street" });
+    if (!plan.errors.length) this.buildFree(plan);
+    // it has stood a while: its first homes and its shop are up and lived in
+    for (let k = 0; k < 10; k++) {
+      this.towns.tick();
+      for (const b of this.buildings.list) b.built = 1;
+    }
+    this.undoStack = [];
+    this.redoStack = [];
+  }
+
+  private nodeAt(p: V2): number | undefined {
+    for (const [id, n] of this.net.nodes) if (dist(n.p, p) < 0.5) return id;
+    return undefined;
+  }
+
+  /** Every trip asked for: vehicles on the road and ones waiting to set off. */
+  *trips(): Iterable<Trip> {
+    for (const v of this.traffic.vehicles) yield v.trip;
+    for (const p of this.traffic.pending) yield p.trip;
+  }
+
+  /** Pay for something that isn't part of the hourly books (a building, a new town). */
+  charge(v: number) {
+    this.money -= v;
+    this.emit({ t: "money" });
   }
 
   on(fn: (e: GameEvent) => void) {
@@ -197,7 +280,6 @@ export class Game {
   // ---------------------------------------------------------------- unlocks
 
   get roadsUnlocked(): Set<RoadTypeId> { return unlockedRoads(this.milestone); }
-  get zonesUnlocked(): Set<ZoneId> { return unlockedZones(this.milestone); }
   featureUnlocked(f: Milestone["features"][number]): boolean { return unlockedFeature(this.milestone, f); }
   placedUnlocked(k: PlacedKind): boolean { return this.milestone >= PLACED[k].unlock; }
 
@@ -399,6 +481,50 @@ export class Game {
     return true;
   }
 
+  /**
+   * Build a plan for free and with no undo entry: a town's own street (town = its id: the new pieces are tagged as
+   * the town's) or the start's road. Undo entries that the edit invalidated (they touch a road or junction it
+   * changed) are dropped, with everything older than them.
+   */
+  buildFree(plan: Plan, town?: number): boolean {
+    if (plan.errors.length) return false;
+    const ops = this.applyRoads(() => {
+      for (const st of plan.strokes) {
+        const laid = commitStrokes(this.net, [st]);
+        // the streets it laid are the town's (the pieces of a road it split keep whose road it was)
+        if (town) for (const id of laid) { const sg = this.net.segs.get(id); if (sg) sg.town = town; }
+        if (plan.strokes.length > 1) {
+          const cs = this.net.rebuild();
+          this.midRebuilds.push(cs);
+          this.traffic.onNetworkChange(cs);
+          this.zones.onNetworkChange(cs);
+          this.emit({ t: "roads", cs });
+        }
+      }
+    });
+    if (!ops.length) return false;
+    // ids the edit removed or changed (a road it split, a junction it joined)
+    const hit = new Set<number>();
+    for (const op of ops) {
+      if (op.t === "delSeg") hit.add(op.seg.id);
+      // (a new street on an existing junction: undoing the road that made the junction would take it from under it)
+      else if (op.t === "addSeg") { hit.add(-op.seg.a - 1); hit.add(-op.seg.b - 1); }
+      else if (op.t === "delNode") hit.add(-op.node.id - 1);
+      else if (op.t !== "addNode") hit.add(op.t === "setType" || op.t === "flip" || op.t === "setPocket" ? op.id : -op.id - 1);
+    }
+    const touches = (e: UndoEntry) => e.ops.some((op) =>
+      op.t === "addSeg" || op.t === "delSeg" ? hit.has(op.seg.id) || hit.has(-op.seg.a - 1) || hit.has(-op.seg.b - 1)
+      : op.t === "addNode" || op.t === "delNode" ? hit.has(-op.node.id - 1)
+      : op.t === "setType" || op.t === "flip" || op.t === "setPocket" ? hit.has(op.id) : hit.has(-op.id - 1));
+    let last = -1;
+    for (let i = 0; i < this.undoStack.length; i++) if (touches(this.undoStack[i])) last = i;
+    if (last >= 0) this.undoStack.splice(0, last + 1);
+    this.redoStack = [];
+    this.clearRoadsOverLots();
+    this.emit({ t: "buildings" });
+    return true;
+  }
+
   /** Add lane: a turn pocket set (or taken away) before a junction, or a motorway slip lane lengthened. */
   addLane(lp: LanePlan): boolean {
     if (lp.errors.length) return false;
@@ -523,22 +649,20 @@ export class Game {
     return { phases };
   }
 
-  // ---------------------------------------------------------------- zoning
+  // ---------------------------------------------------------------- zoning (done by the towns)
 
-  /** Paint (or clear, zone = null) cells. Buildings standing on repainted cells of another zone are demolished. */
-  zonePaint(cells: Iterable<Cell>, zone: ZoneId | null): number {
-    if (zone && !this.zonesUnlocked.has(zone)) return 0;
+  /** Set the zone of cells (zone = null clears it). Buildings standing on cells of another zone are demolished. */
+  zoneCells(cells: Iterable<Cell>, zone: ZoneId | null): number {
     const ch = this.zones.paint(cells, zone);
     if (!ch.length) return 0;
-    const removed: Building[] = [];
+    let removed = false;
     for (const { cell } of ch) {
       if (!cell.lot) continue;
       const b = this.buildings.byId.get(cell.lot);
-      if (b && !b.placed && b.zone !== zone) { removed.push(b); this.removeBuildingRaw(b); }
+      if (b && !b.placed && b.zone !== zone) { this.removeBuildingRaw(b); removed = true; }
     }
-    this.pushUndo({ label: "zone", ops: [], money: 0, added: [], removed, zones: ch.map((c) => ({ p: c.cell.c, from: c.from, to: zone })) });
     this.emit({ t: "zones" });
-    if (removed.length) this.emit({ t: "buildings" });
+    if (removed) this.emit({ t: "buildings" });
     return ch.length;
   }
 
@@ -553,7 +677,6 @@ export class Game {
       this.net.undo(e.ops);
       this.afterRoads(this.net.rebuild());
     }
-    if (e.zones) this.zones.paintAt(e.zones.map((z) => ({ p: z.p, zone: z.from })));
     this.money += e.money; // undo refunds 100%
     for (const b of e.added) this.removeBuildingRaw(this.buildings.byId.get(b.id) ?? b);
     for (const b of e.removed) this.restoreBuilding(b);
@@ -571,7 +694,6 @@ export class Game {
       this.net.redo(e.ops);
       this.afterRoads(this.net.rebuild());
     }
-    if (e.zones) this.zones.paintAt(e.zones.map((z) => ({ p: z.p, zone: z.to })));
     this.money -= e.money;
     for (const b of e.added) {
       if (b.placed) {
@@ -596,7 +718,7 @@ export class Game {
   // ---------------------------------------------------------------- buildings
 
   /** Where a placed building would go near p, and what it would cost and replace. */
-  placedPlan(kind: PlacedKind, p: V2): (Placement & { cost: number }) | null {
+  placedPlan(kind: PlacedKind, p: V2): (Placement & { cost: number; deposit?: { name: string; share: number } }) | null {
     const world = { ...this.world, unlocked: (q: V2) => this.unlocked(q) };
     const pl = this.buildings.placement(kind, p, world, (o) => !!o.zone);
     if (!pl) return null;
@@ -605,8 +727,15 @@ export class Game {
     if (pl.ok && !this.placedUnlocked(kind)) return { ...pl, ok: false, reason: "Not unlocked yet", cost };
     if (pl.ok && D.unique && this.buildings.list.some((b) => b.kind === kind)) return { ...pl, ok: false, reason: "Only one per city", cost };
     if (pl.ok && D.shore && !this.nearWater(pl.c, pl.rot, BUILDING_TYPES[kind].w / 2, BUILDING_TYPES[kind].d / 2)) return { ...pl, ok: false, reason: "Has to be on a shore", cost };
-    if (pl.ok && this.money < cost) return { ...pl, ok: false, reason: "Not enough money", cost };
-    return { ...pl, cost };
+    const dep = isPlantKind(kind) ? PLANTS[kind].deposit : undefined;
+    let deposit: { name: string; share: number } | undefined;
+    if (dep) {
+      const T = BUILDING_TYPES[kind];
+      deposit = { name: dep.name, share: this.industry.depositShare(dep.field, pl.c, pl.rot, T.w / 2, T.d / 2) };
+      if (pl.ok && deposit.share < MIN_DEPOSIT) return { ...pl, ok: false, reason: `Needs ${dep.name.toLowerCase()}: ${Math.round(deposit.share * 100)}% here, ${Math.round(MIN_DEPOSIT * 100)}% at least`, cost, deposit };
+    }
+    if (pl.ok && this.money < cost) return { ...pl, ok: false, reason: "Not enough money", cost, deposit };
+    return { ...pl, cost, deposit };
   }
 
   /** Is there water within SHORE_REACH of a lot (centre c, turned rot, half sizes hw x hd)? */
@@ -639,6 +768,7 @@ export class Game {
     }
     const b = this.buildings.add(kind, pl, this.time);
     b.placed = true;
+    if (isPlantKind(kind)) this.industry.init(b, kind, pl.deposit ? Math.min(1, pl.deposit.share / 0.8) : 1);
     for (const c of this.lotCells(b)) c.lot = b.id;
     this.candVersion = -1;
     this.money -= pl.cost;
@@ -652,8 +782,6 @@ export class Game {
     if (!this.buildings.byId.has(b.id)) return;
     this.buildings.remove(b.id);
     this.people.onBuildingRemoved(b.id);
-    this.ordered.delete(b.id);
-    this.cargoQ = this.cargoQ.filter((c) => c.to !== b.id);
     for (const c of this.lotCells(b)) if (c.lot === b.id) c.lot = 0;
     this.shopCache = null;
     this.candVersion = -1;
@@ -679,10 +807,16 @@ export class Game {
     return this.shopCache;
   }
 
-  /** How many empty zoned roadside cells a group has where a lot could still start (0: nothing more can grow). */
-  freeLand(group: ZoneGroup): number {
-    const cands = this.candidates(group);
-    const hit = this.freeCache.get(group);
+  /** The town a zoned roadside cell belongs to: the one whose street it fronts (or whose land it is on). */
+  private cellTown(c: Cell): number | null {
+    return this.net.segs.get(c.block.seg)?.town ?? this.towns.townAt(c.c)?.id ?? null;
+  }
+
+  /** How many places a town has where a lot of a group could still start (0: it needs more streets). */
+  freeLots(town: number, group: ZoneGroup): number {
+    const key = `${town}:${group}`;
+    const cands = this.candidates(key);
+    const hit = this.freeCache.get(key);
     if (hit !== undefined) return hit;
     let n = 0;
     for (const c of cands) {
@@ -693,25 +827,71 @@ export class Game {
         if (col0 >= 0 && col0 + t.w <= c.block.cols && this.lotFits(c.block, col0, t, c.zone)) { n++; break; }
       }
     }
-    this.freeCache.set(group, n);
+    this.freeCache.set(key, n);
     return n;
   }
 
-  /** Empty, zoned front-row cells of a group, where a new lot could start. */
-  private candidates(group: ZoneGroup): Cell[] {
+  /** Empty, zoned front-row cells where a new lot could start, per "town:group". */
+  private candidates(key: string): Cell[] {
     if (this.candVersion !== this.zones.version) {
       this.candCache.clear();
-      for (const gp of GROUPS) this.candCache.set(gp, []);
       this.freeCache.clear();
-      for (const c of this.zones.allCells()) if (c.row === 0 && c.ok && c.zone && !c.lot) this.candCache.get(ZONE_GROUP[c.zone])!.push(c);
+      for (const c of this.zones.allCells()) {
+        if (c.row !== 0 || !c.ok || !c.zone || c.lot) continue;
+        const t = this.cellTown(c);
+        if (t === null) continue;
+        const k = `${t}:${ZONE_GROUP[c.zone]}`;
+        let L = this.candCache.get(k);
+        if (!L) this.candCache.set(k, (L = []));
+        L.push(c);
+      }
       this.candVersion = this.zones.version;
     }
-    return this.candCache.get(group)!;
+    return this.candCache.get(key) ?? [];
   }
 
-  /** Try to grow a building on zoned land of a group. */
-  private grow(group: ZoneGroup): Building | null {
-    const cands = this.candidates(group);
+  /** inside tick(): what towns grow is announced once, at its end (a rebuild of every building per new home is slow) */
+  private ticking = false;
+  private grew = false;
+
+  /** A town grows a home or a shop on its zoned land. */
+  growIn(town: number, group: ZoneGroup): Building | null {
+    const b = this.grow(this.candidates(`${town}:${group}`));
+    if (b) { b.town = town; if (this.ticking) this.grew = true; else this.emit({ t: "buildings" }); }
+    return b;
+  }
+
+  /** Up to n households move into a town's homes with room. */
+  moveInto(town: number, n: number): number {
+    const homes = this.buildings.list.filter((b) => b.town === town && b.zone && ZONE_GROUP[b.zone] === "res" && b.built >= 1 && !b.abandoned && b.access && this.people.householdsIn(b.id) < b.cap);
+    let moved = 0;
+    while (moved < n && homes.length) {
+      const i = (this.rng() * homes.length) | 0, h = homes[i];
+      this.people.moveIn(h);
+      moved++;
+      if (this.people.householdsIn(h.id) >= h.cap) homes.splice(i, 1);
+    }
+    return moved;
+  }
+
+  /** A household leaves a town (one in a home on its outskirts, so the centre stays full). */
+  moveOutOf(town: number): boolean {
+    const t = this.towns.byId.get(town);
+    let best: { hh: ReturnType<Society["moveIn"]>; d: number } | null = null;
+    for (const b of this.buildings.list) {
+      if (b.town !== town || !b.zone || ZONE_GROUP[b.zone] !== "res") continue;
+      const L = this.people.hhAt.get(b.id);
+      if (!L?.length) continue;
+      const d = t ? dist(b.c, t.c) : 0;
+      if (!best || d > best.d) best = { hh: L[L.length - 1], d };
+    }
+    if (!best) return false;
+    this.people.moveOut(best.hh);
+    return true;
+  }
+
+  /** Try to grow a building on one of these candidate cells. */
+  private grow(cands: Cell[]): Building | null {
     if (!cands.length) return null;
     for (let attempt = 0; attempt < 6; attempt++) {
       const c = cands[(this.rng() * cands.length) | 0];
@@ -805,12 +985,13 @@ export class Game {
     const front = add(c, scale(away, -(depth * CELL) / 2));
     const M = BUILDING_TYPES[t.model];
     const tall = t.tall ? t.tall[0] + this.rng() * (t.tall[1] - t.tall[0]) : 1;
+    const seg = this.net.segs.get(b.seg);
     const bl: Building = {
-      id: this.buildings.nextId++, kind: t.model, c, rot, hw: (t.w * CELL) / 2, hd: (depth * CELL) / 2, front,
+      id: this.buildings.nextId++, town: seg?.town ?? this.towns.townAt(c)?.id, kind: t.model, c, rot, hw: (t.w * CELL) / 2, hd: (depth * CELL) / 2, front,
       access: { seg: b.seg, s: sMid, p: front }, side: b.side, zone, lot: { block: b.key, col0, w: t.w, d: depth },
       // deeper lots hold a bit more (the back is yard, parking or storage)
       level: 1, cap: capacity(zone, t.w, t.d + (depth - t.d) * 0.5, 1, tall), fit: modelFit(t, M.w, M.d), tall, built: 0, abandoned: 0, lv: 0, upT: 0, badT: 0,
-      problem: null, stock: ZONE_GROUP[zone] === "com" ? 2 : 0, out: 0, prodT: 0, visits: 0, born: this.time,
+      problem: null, stock: ZONE_GROUP[zone] === "com" ? 2 : 0, prodT: 0, visits: 0, born: this.time,
     };
     this.buildings.insert(bl);
     for (const cc of cells) cc.lot = bl.id;
@@ -898,9 +1079,6 @@ export class Game {
     this.time += dt;
     this.traffic.step(dt);
     this.people.step();
-    // virtual cargo arrivals
-    // (kept in arrival order: see queueCargo)
-    while (this.cargoQ.length && this.cargoQ[0].t <= this.time) this.deliver(this.cargoQ.shift()!.to);
     this.tickT += dt;
     const TICK = HOUR / 8;
     if (this.tickT >= TICK) {
@@ -914,15 +1092,15 @@ export class Game {
     }
   }
 
-  /** Every 1/8 game hour: construction, demand, growth, move-ins, businesses. */
+  /** Every 1/8 game hour: construction, the towns, the company's plants and trucks, businesses. */
   private tick(span: number) {
-    // a new day: shops close the books on yesterday's customers
+    // a new day: shops close the books on yesterday's customers, the towns on yesterday's deliveries
     const day = Math.floor(this.time / DAY);
     if (day !== this.dayN) {
+      if (this.dayN >= 0) this.towns.daily();
       this.dayN = day;
       for (const b of this.shops) { b.custDay = b.custToday ?? 0; b.custToday = 0; }
     }
-    this.computeDemand();
     let changed = false;
     for (const b of this.buildings.list) {
       if (b.built < 1) {
@@ -930,40 +1108,21 @@ export class Game {
         if (b.built >= 1) changed = true;
       }
     }
-    // growth: more demand, more buildings at once
-    for (const gp of GROUPS) {
-      const d = this.demand[gp].v;
-      if (d <= 8) continue;
-      const pop = this.people.stats.population;
-      let n = (d / 100) * (0.7 + Math.min(4, pop / 1500));
-      while (n > 0) {
-        if (this.rng() < Math.min(1, n)) { if (this.grow(gp)) changed = true; }
-        n -= 1;
-      }
-    }
-    this.moveIns();
+    this.ticking = true;
+    this.grew = false;
+    try { this.towns.tick(); } finally { this.ticking = false; }
+    if (this.grew) changed = true;
+    this.industry.tick(span);
     this.utilities.tick(span);
     this.transit.tick();
     for (const b of [...this.buildings.list]) this.stepBuilding(b, span);
     if (changed) this.emit({ t: "buildings" });
   }
 
-  private moveIns() {
-    const R = this.demand.res.v;
-    if (R <= 0) return;
-    let n = Math.ceil((R / 100) * (1.5 + this.people.stats.households * 0.01));
-    const homes = this.buildings.list.filter((b) => b.zone && ZONE_GROUP[b.zone] === "res" && b.built >= 1 && !b.abandoned && b.access);
-    if (!homes.length) return;
-    for (let k = 0; k < homes.length * 2 && n > 0; k++) {
-      const h = homes[(this.rng() * homes.length) | 0];
-      if (this.people.householdsIn(h.id) >= h.cap) continue;
-      this.people.moveIn(h);
-      n--;
-    }
-  }
-
   private stepBuilding(b: Building, span: number) {
     // placed buildings: a plant's own trouble (no road, nobody on its roads, no staff)
+    // (the company's plants report their own trouble: see Industry)
+    if (b.plant) return;
     if (b.placed) { b.problem = b.built >= 1 && PLACED[b.kind as PlacedKind]?.utility ? this.utilities.plantProblem(b) : null; return; }
     if (!b.zone || b.built < 1) return;
     const grp = ZONE_GROUP[b.zone];
@@ -983,21 +1142,11 @@ export class Game {
       const staff = b.cap ? this.people.workersAt(b.id) / b.cap : 1;
       health = Math.min(1, staff * 1.25);
       if (staff < 0.5) problem = "Not enough workers";
+      if (grp === "com" && b.stock <= 0) { health *= 0.5; problem = "Out of food"; }
       if (grp === "com") {
-        if (b.stock <= 0) { health *= 0.4; problem = "Out of goods to sell"; }
         // judged on a whole day's custom (yesterday's, or today's once it's caught up): a quiet morning is no sign
         const customers = Math.max(b.custDay ?? 0, b.custToday ?? 0) / Math.max(1, b.cap * 3.2);
         if (this.time - b.born > DAY * 2 && customers < 0.2) { health *= 0.6 + customers * 2; problem ??= "Not enough customers"; }
-        // (counting what is already on its way)
-        if (b.stock + 3 * this.inFlight(b) < 3) this.order(b);
-      } else if (grp === "ind") {
-        // TODO(industry): a bridge until the new chains replace zoned industry. Factories make goods from nothing
-        // (there is nowhere to buy materials any more) and only the town's own shops take them; a factory whose
-        // store is full just waits for a shop to order.
-        if (b.out < 6) {
-          b.prodT += span * staff;
-          if (b.prodT >= HOUR * 2) { b.prodT = 0; b.out++; }
-        }
       }
     }
     if (this.noRouteAt.has(b.id) && this.time - this.noRouteAt.get(b.id)! < HOUR * 2) problem ??= "Trips can't find a route";
@@ -1032,141 +1181,27 @@ export class Game {
     if (b.prodT >= 8) { b.prodT = 0; b.stock = Math.max(0, b.stock - 1); }
   }
 
-  // ---------------------------------------------------------------- cargo
-
-  /** Order a load of goods for a shop from the nearest local factory that has some (none: it waits). */
-  private order(b: Building) {
-    const n = this.inFlight(b);
-    if (n >= 2) return;
-    let from: Building | null = null, bd = Infinity;
-    for (const o of this.buildings.list) {
-      if (o.out <= 0 || o.zone !== "ind" || !o.access || o.abandoned) continue;
-      if (!this.connected(o.access.seg, b.access!.seg)) continue;
-      const d = dist(o.c, b.c);
-      if (d < bd) { bd = d; from = o; }
-    }
-    if (!from) return;
-    from.out--;
-    this.ordered.set(b.id, n + 1);
-    this.truck(from, b, "goods");
-  }
-
-  /** Loads on their way to a building. */
-  private inFlight(b: Building): number {
-    return this.ordered.get(b.id) ?? 0;
-  }
-
-  /** A load arrived or was lost. */
-  private unorder(id: number) {
-    const n = (this.ordered.get(id) ?? 0) - 1;
-    if (n > 0) this.ordered.set(id, n);
-    else this.ordered.delete(id);
-  }
-
-  private truck(from: Building, to: Building, cargo: "goods") {
-    const a = from.access, b = to.access;
-    if (!a || !b) { this.unorder(to.id); return; }
-    const real = this.rng() * Math.max(1, this.tripScale / 2) < 1;
-    if (real) {
-      this.traffic.request({
-        from: a, fromSide: from.side, to: b, toSide: to.side,
-        trip: { kind: "cargo", from: from.id, to: to.id, resident: -1, cargo, startT: this.time, freeFlow: 0 },
-        truck: true, tries: 0, wait: 0,
-      });
-    } else {
-      this.queueCargo({ t: this.time + estTime(from.c, to.c), to: to.id, cargo });
-    }
-  }
-
-  /** A virtual load, kept in arrival order (a short run doesn't wait behind a long one). */
-  private queueCargo(c: VirtualCargo) {
-    let i = this.cargoQ.length;
-    while (i > 0 && this.cargoQ[i - 1].t > c.t) i--;
-    this.cargoQ.splice(i, 0, c);
-  }
-
-  private deliver(to: number) {
-    this.unorder(to);
-    const b = this.buildings.byId.get(to);
-    if (b) b.stock = Math.min(6, b.stock + 3);
-  }
-
   private onArrive(v: Vehicle, now: number) {
     const trip = v.trip;
     if (trip.bus) { this.transit.onGone(trip.bus, { x: v.x, y: v.y }); return; }
     this.traffic.recordTrip(trip.freeFlow, now - trip.startT);
-    if (trip.kind === "cargo") {
-      if (trip.to >= 0) this.deliver(trip.to);
-      return;
-    }
+    if (trip.haul) { this.industry.onArrive(v); return; }
+    if (trip.kind === "cargo" || trip.kind === "empty") return;
     this.people.onArrive(v);
   }
 
   private onFail(trip: Trip, reason: string) {
     if (trip.bus) { this.transit.onGone(trip.bus); return; }
     this.failedTrips++;
-    if (trip.kind === "cargo") {
-      if (trip.to >= 0) this.unorder(trip.to);
-      const from = this.buildings.byId.get(trip.from);
-      if (from && from.zone === "ind") from.out = Math.min(6, from.out + 1);
-      const to = this.buildings.byId.get(trip.to);
+    if (trip.haul) {
+      this.industry.onFail(trip);
+      const from = this.buildings.byId.get(trip.from), to = this.buildings.byId.get(trip.to);
       // (held up in traffic is not "no road there": that warning is for real dead ends)
-      if (reason === "no route" || reason === "missed its turn" || reason === "road removed") this.noRoute(to ?? from ?? null);
+      if (reason === "no route" || reason === "missed its turn" || reason === "road removed") this.noRoute(from ?? to ?? null);
       return;
     }
+    if (trip.kind === "cargo" || trip.kind === "empty") return;
     this.people.onFail(trip);
-  }
-
-  // ---------------------------------------------------------------- demand
-
-  private computeDemand() {
-    const st = this.people.stats;
-    const jobs: Record<ZoneGroup, number> = { res: 0, com: 0, ind: 0 };
-    let homes = 0, homesBuilding = 0, placedJobs = 0;
-    for (const b of this.buildings.list) {
-      if (b.placed) placedJobs += b.cap;
-      if (!b.zone || b.abandoned) continue;
-      const gp = ZONE_GROUP[b.zone];
-      if (gp === "res") { if (b.built >= 1) homes += b.cap; else homesBuilding += b.cap; }
-      else jobs[gp] += b.cap;
-    }
-    const totalJobs = jobs.com + jobs.ind + placedJobs;
-    const pop = st.population;
-    const workers = Math.max(1, st.workers);
-    const freeJobs = totalJobs - st.employed;
-    const vacant = homes + homesBuilding - st.households;
-    const unemp = st.workers ? st.unemployed / st.workers : 0;
-    const clamp = (x: number) => Math.max(0, Math.min(100, Math.round(x)));
-    // residential
-    {
-      const f: DemandFactor[] = [];
-      f.push({ label: "Region attractiveness", v: pop < 150 ? 60 : 30 });
-      if (totalJobs > 0) f.push({ label: "Available jobs", v: Math.round(Math.max(-30, Math.min(45, (freeJobs / Math.max(5, workers * 0.12)) * 25))) });
-      if (unemp > 0.04) f.push({ label: "Unemployment", v: -Math.round(Math.min(60, (unemp - 0.04) * 250)) });
-      if (vacant > 0) f.push({ label: "Empty homes", v: -Math.round(Math.min(50, (vacant / Math.max(3, (homes + homesBuilding) * 0.1)) * 25)) });
-      this.demand.res = { v: clamp(f.reduce((a, x) => a + x.v, 0)), factors: f };
-    }
-    // jobs follow the workforce: shared out between shops and industry
-    const share: Record<ZoneGroup, number> = { res: 0, com: 0.28, ind: 0.72 };
-    const labour = st.workers * 0.97 + Math.max(0, this.demand.res.v - 30) * 0.15 + 10;
-    const need = (gp: ZoneGroup, label: string) => {
-      const want = labour * share[gp];
-      return { label, v: Math.round(Math.max(-60, Math.min(60, ((want - jobs[gp]) / Math.max(5, want * 0.3)) * 50))) };
-    };
-    const lack = unemp < 0.03 && freeJobs > workers * 0.12 ? { label: "Not enough workers", v: -40 } : null;
-    // commercial: shoppers
-    {
-      const f: DemandFactor[] = [{ label: "Base", v: 40 }, need("com", "Shoppers")];
-      if (pop < 30) f.push({ label: "Too few residents", v: -60 });
-      if (lack) f.push(lack);
-      this.demand.com = { v: clamp(f.reduce((a, x) => a + x.v, 0)), factors: f };
-    }
-    // industrial: goods for the shops
-    {
-      const f: DemandFactor[] = [{ label: "Base", v: 45 }, need("ind", "Workers looking for jobs")];
-      if (lack) f.push(lack);
-      this.demand.ind = { v: clamp(f.reduce((a, x) => a + x.v, 0)), factors: f };
-    }
   }
 
   // ---------------------------------------------------------------- hourly: economy, land value, milestones
@@ -1174,58 +1209,46 @@ export class Game {
   private hourly() {
     const st = this.people.stats;
     const B = this.budgetNow;
-    // TODO(industry): replaced by delivery income
-    B.income.res += st.employed * INCOME_RATE.res;
-    for (const b of this.buildings.list) {
-      if (!b.zone || b.abandoned || b.built < 1) continue;
-      const gp = ZONE_GROUP[b.zone];
-      if (gp === "res") continue;
-      const h = (b as Building & { health?: number }).health ?? 1;
-      const w = this.people.workersAt(b.id);
-      B.income[gp] += w * INCOME_RATE[gp] * h;
-    }
+    // wages, plant upkeep and the plants' books (deliveries and fuel are booked as they happen)
+    this.industry.hourly();
+    // the company keeps up its own roads; the towns look after their streets
     let roads = 0;
     for (const s of this.net.segs.values()) {
+      if (s.town) continue;
       const g = this.net.segGeom.get(s.id);
-      if (g) roads += g.center.length * ROAD_TYPES[s.type].costPerM * 0.004;
+      if (g) roads += g.center.length * ROAD_TYPES[s.type].costPerM * 0.002;
     }
     B.expense.roads += roads;
     B.expense.utilities += this.utilities.upkeep();
     const tr = this.transit.hourly();
     B.income.transit += tr.fares;
     B.expense.transit += tr.upkeep;
-    const net = sum(B.income) - sum(B.expense);
-    this.money += net;
+    // (sales, wages, upkeep and fuel have already moved the money)
+    this.money += B.income.transit - B.expense.roads - B.expense.utilities - B.expense.transit - B.expense.loans;
     this.budget = B;
+    this.budgetLog.push(B);
+    if (this.budgetLog.length > 24) this.budgetLog.shift();
     this.budgetNow = emptyBudget();
     let jobs = 0;
     for (const b of this.buildings.list) if ((b.placed || (b.zone && ZONE_GROUP[b.zone] !== "res")) && !b.abandoned) jobs += b.cap;
     this.history.push({ money: this.money, pop: st.population, jobs });
     if (this.history.length > 72) this.history.shift();
     this.landValue();
-    // households with nobody working for two days leave
-    for (const hh of [...this.people.households.values()]) {
-      const adults = hh.members.filter((c) => c.age === 1);
-      if (!adults.length || adults.some((c) => c.job >= 0)) continue;
-      if (adults.every((c) => this.time - c.jobless > DAY * 2) && this.rng() < 0.15) this.people.moveOut(hh);
-    }
     for (const [id, t] of this.noRouteAt) if (this.time - t > HOUR * 3) this.noRouteAt.delete(id);
     // milestones
     const m = milestoneFor(st.population);
     if (m > this.milestone) {
       for (let k = this.milestone + 1; k <= m; k++) this.money += MILESTONES[k].grant;
       this.milestone = m;
-      this.zones.rebuildAll();
       this.emit({ t: "milestone", index: m });
-      this.emit({ t: "zones" });
     }
     this.emit({ t: "money" });
   }
 
-  /** Land value from road access, nearby shops and jobs, minus industrial pollution and busy-road noise. */
+  /** Land value from road access and nearby shops, minus the company's dirty plants nearby. */
   private landValue() {
     const list = this.buildings.list.filter((b) => b.zone && !b.abandoned);
-    const ind = list.filter((b) => b.zone === "ind");
+    const ind = this.buildings.list.filter((b) => b.plant && BUILDING_TYPES[b.kind].pollution > 0);
     const shops = list.filter((b) => b.zone && ZONE_GROUP[b.zone] === "com");
     const pop = this.people.stats.population;
     for (const b of list) {
@@ -1240,8 +1263,8 @@ export class Game {
         for (const o of shops) if (dist(o.c, b.c) < 320) near++;
         lv += Math.min(12, near * 3);
         for (const o of ind) {
-          const d = dist(o.c, b.c);
-          if (d < 180) lv -= 22 * (1 - d / 180);
+          const r = BUILDING_TYPES[o.kind].pollution * 2, d = dist(o.c, b.c);
+          if (d < r) lv -= 22 * (1 - d / r);
         }
       } else if (grp === "com") lv += Math.min(10, b.visits / Math.max(1, b.cap * 4));
       lv += this.utilities.landValueOf(b);
@@ -1256,7 +1279,8 @@ export class Game {
       v: SAVE_V,
       seed: this.seed,
       net: this.net.toJSON(),
-      buildings: this.buildings.list.map((b) => ({ ...b, access: null })),
+      // (trucks on the road aren't saved: a load out on delivery goes back to its plant's yard)
+      buildings: this.buildings.list.map((b) => ({ ...b, access: null, plant: b.plant && this.plantSaved(b) })),
       nextBuilding: this.buildings.nextId,
       zones: [...this.zones.allCells()].filter((c) => c.zone).map((c) => [Math.round(c.c.x * 10) / 10, Math.round(c.c.y * 10) / 10, c.zone]),
       zoneAges: this.zones.agesJSON(),
@@ -1265,8 +1289,7 @@ export class Game {
       money: this.money,
       milestone: this.milestone,
       tiles: [...this.tiles],
-      /** loads sent as estimates (real trucks on the road aren't saved: their orders lapse and are placed again) */
-      cargo: this.cargoQ as VirtualCargo[] | undefined,
+      towns: this.towns.toJSON(),
       budget: this.budget as Budget | undefined,
       time: this.time,
       playtime: this.playtime,
@@ -1284,6 +1307,7 @@ export class Game {
     if (data.budget) {
       const e = emptyBudget();
       g.budget = { income: { ...e.income, ...data.budget.income }, expense: { ...e.expense, ...data.budget.expense } };
+      g.budgetLog = [g.budget];
     }
     g.time = data.time;
     g.dayN = Math.floor(g.time / DAY); // (a loaded city carries on with the day it was saved in)
@@ -1317,14 +1341,19 @@ export class Game {
     for (const b of g.shops) if (b.custDay === undefined) b.custDay = Math.round(b.visits * 4);
     g.people.load(data.people);
     g.transit.load(data.transit);
-    for (const c of data.cargo ?? []) {
-      if (!g.buildings.byId.has(c.to)) continue;
-      g.queueCargo({ ...c });
-      g.ordered.set(c.to, (g.ordered.get(c.to) ?? 0) + 1);
-    }
+    g.towns.load(data.towns);
     g.utilities.tick(0);
-    g.computeDemand();
     return g;
+  }
+
+  /** A plant's state as saved: loads its trucks are carrying count as still in its yard. */
+  private plantSaved(b: Building) {
+    const P = structuredClone(b.plant!);
+    for (const t of this.trips()) {
+      const r = t.haul;
+      if (r && !r.done && r.leg === "out" && r.plant === b.id) P.out[r.product] = (P.out[r.product] ?? 0) + r.n;
+    }
+    return P;
   }
 
   segCost(id: number) {
@@ -1339,14 +1368,26 @@ export class Game {
     return BULLDOZE_REFUND;
   }
 
-  /** Hourly net income (last full hour). */
+  /** The average hour's books over the last day (or as many hours as have passed). */
+  get budgetAvg(): Budget {
+    const L = this.budgetLog.length ? this.budgetLog : [this.budget];
+    const out = emptyBudget();
+    for (const b of L) {
+      for (const k in b.income) out.income[k as keyof Budget["income"]] += b.income[k as keyof Budget["income"]] / L.length;
+      for (const k in b.expense) out.expense[k as keyof Budget["expense"]] += b.expense[k as keyof Budget["expense"]] / L.length;
+    }
+    return out;
+  }
+
+  /** Net income per hour, averaged over the last day. */
   get netIncome(): number {
-    return sum(this.budget.income) - sum(this.budget.expense);
+    const B = this.budgetAvg;
+    return sum(B.income) - sum(B.expense);
   }
 }
 
 function emptyBudget(): Budget {
-  return { income: { res: 0, com: 0, ind: 0, transit: 0 }, expense: { roads: 0, transit: 0, utilities: 0, loans: 0 } };
+  return { income: { sales: 0, transit: 0 }, expense: { roads: 0, wages: 0, upkeep: 0, fuel: 0, transit: 0, utilities: 0, loans: 0 } };
 }
 
 function sum(o: Record<string, number>): number {

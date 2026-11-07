@@ -1,23 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, it, expect } from "vitest";
 import { Game } from "../src/game/city";
-import { planRoad, snap, type Snap } from "../src/roads/planner";
-import { v2, type V2 } from "../src/core/math";
+import { v2 } from "../src/core/math";
 import { HOUR } from "../src/game/society";
-
-const free = (p: V2): Snap => ({ p, h: 0, guides: [] });
-
-function road(g: Game, a: V2, b: V2, type: any = "street") {
-  const sa = snap(g.net, a, { mpp: 0.5, level: 0, type });
-  const sb = snap(g.net, b, { mpp: 0.5, level: 0, type });
-  const plan = planRoad(g.net, g.world, {
-    start: sa.node !== undefined || sa.seg !== undefined ? sa : free(a),
-    end: sb.node !== undefined || sb.seg !== undefined ? sb : free(b), mode: "straight", type,
-  });
-  expect(plan.errors.map((e) => e.msg)).toEqual([]);
-  expect(g.build(plan)).toBe(true);
-}
-
-const run = (g: Game, hours: number) => { for (let i = 0; i < hours * HOUR * 30; i++) g.step(1 / 30); };
+import { okCells, road, run, stockShops, zoneFor } from "./helpers";
 
 describe("Shops", () => {
   it("judge their custom over the day, not by how quiet the morning is", () => {
@@ -28,18 +13,17 @@ describe("Shops", () => {
     road(g, v2(-200, 0), v2(-200, -300));
     road(g, v2(-200, -300), v2(0, -300));
     road(g, v2(-200, -150), v2(0, -150));
-    const cells = [...g.zones.allCells()].filter((c) => c.ok);
-    g.zonePaint(cells.filter((c) => c.c.y < -150), "resLow");
-    g.zonePaint(cells.filter((c) => c.c.y >= -150 && c.c.x < -100), "comLow");
-    g.zonePaint(cells.filter((c) => c.c.y >= -150 && c.c.x >= -100), "ind");
+    const cells = okCells(g);
+    zoneFor(g, cells.filter((c) => c.c.y < -150), "resLow", 60);
+    zoneFor(g, cells.filter((c) => c.c.y >= -150 && c.c.x < -100), "comLow");
     g.money = 1e6;
-    run(g, 60);
+    run(g, 60, () => stockShops(g));
     // the same shops, sampled every hour for a day: a shop doing fine doesn't look starved each morning
     const shops = g.buildings.list.filter((b) => b.zone === "comLow" && b.built >= 1 && g.time - b.born > 2 * 24 * HOUR);
     expect(shops.length).toBeGreaterThan(1);
     const starved: number[] = [];
     for (let h = 0; h < 24; h++) {
-      run(g, 1);
+      run(g, 1, () => stockShops(g));
       starved.push(shops.filter((b) => b.problem === "Not enough customers").length);
     }
     expect(Math.max(...starved) - Math.min(...starved)).toBeLessThanOrEqual(1);

@@ -1,29 +1,29 @@
-// Milestones by population, the CS2 way: each one unlocks road types, zones and land, and pays a grant.
+// Milestones. Each one unlocks road types, features and land, and pays a grant. The company's tier-1 extractors and
+// plants, founding towns and the basic roads are open from the start (see placed.ts for each building's unlock).
+// TODO(milestones): still reached by total population; the design's achievement ladder replaces this list.
 
 import type { RoadTypeId } from "../config";
-import type { ZoneId } from "./zones";
 
 export interface Milestone {
   pop: number;
   name: string;
   roads: RoadTypeId[];
-  zones: ZoneId[];
   features: ("roundabout" | "signals" | "grid" | "parallel" | "transit")[];
   tiles: number; // tile slots granted (total ownable tiles grows by this)
   grant: number;
 }
 
 export const MILESTONES: Milestone[] = [
-  { pop: 0, name: "Crossroads", roads: ["street", "one1", "hw1", "hw2"], zones: ["resLow", "resRow", "comLow", "ind"], features: ["grid", "parallel"], tiles: 9, grant: 0 },
-  { pop: 120, name: "Hamlet", roads: ["avenue", "one2", "streetM"], zones: [], features: ["roundabout", "signals"], tiles: 2, grant: 8000 },
-  { pop: 400, name: "Village", roads: ["one3", "avenueM"], zones: ["resMed"], features: ["transit"], tiles: 2, grant: 15000 },
-  { pop: 1000, name: "Small town", roads: ["boulevard", "boulevardM"], zones: ["comHigh"], features: [], tiles: 3, grant: 30000 },
-  { pop: 2500, name: "Town", roads: ["one4"], zones: ["resHigh"], features: [], tiles: 3, grant: 60000 },
-  { pop: 5000, name: "Large town", roads: [], zones: [], features: [], tiles: 4, grant: 100000 },
-  { pop: 10000, name: "City", roads: [], zones: [], features: [], tiles: 5, grant: 180000 },
-  { pop: 20000, name: "Large city", roads: [], zones: [], features: [], tiles: 6, grant: 300000 },
-  { pop: 40000, name: "Metropolis", roads: [], zones: [], features: [], tiles: 8, grant: 500000 },
-  { pop: 80000, name: "Megalopolis", roads: [], zones: [], features: [], tiles: 10, grant: 800000 },
+  { pop: 0, name: "Crossroads", roads: ["street", "one1", "hw1", "hw2"], features: ["grid", "parallel"], tiles: 9, grant: 0 },
+  { pop: 120, name: "Hamlet", roads: ["avenue", "one2", "streetM"], features: ["roundabout", "signals"], tiles: 2, grant: 8000 },
+  { pop: 400, name: "Village", roads: ["one3", "avenueM"], features: ["transit"], tiles: 2, grant: 15000 },
+  { pop: 1000, name: "Small town", roads: ["boulevard", "boulevardM"], features: [], tiles: 3, grant: 30000 },
+  { pop: 2500, name: "Town", roads: ["one4"], features: [], tiles: 3, grant: 60000 },
+  { pop: 5000, name: "Large town", roads: [], features: [], tiles: 4, grant: 100000 },
+  { pop: 10000, name: "City", roads: [], features: [], tiles: 5, grant: 180000 },
+  { pop: 20000, name: "Large city", roads: [], features: [], tiles: 6, grant: 300000 },
+  { pop: 40000, name: "Metropolis", roads: [], features: [], tiles: 8, grant: 500000 },
+  { pop: 80000, name: "Megalopolis", roads: [], features: [], tiles: 10, grant: 800000 },
 ];
 
 export function milestoneFor(pop: number): number {
@@ -34,10 +34,6 @@ export function milestoneFor(pop: number): number {
 
 export function unlockedRoads(m: number): Set<RoadTypeId> {
   return new Set(MILESTONES.slice(0, m + 1).flatMap((x) => x.roads));
-}
-
-export function unlockedZones(m: number): Set<ZoneId> {
-  return new Set(MILESTONES.slice(0, m + 1).flatMap((x) => x.zones));
 }
 
 export function unlockedFeature(m: number, f: Milestone["features"][number]): boolean {
