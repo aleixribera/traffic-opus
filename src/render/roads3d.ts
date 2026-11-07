@@ -514,9 +514,16 @@ export class Roads3D {
     this.nodes.set(id, out);
   }
 
+  /** Does this arm of a signalled town junction have a zebra crossing (pavements, not a highway)? */
+  private crossing(id: number, seg: number): boolean {
+    const n = this.net.nodes.get(id), s = this.net.segs.get(seg);
+    return !!n?.signal && !!s && !s.ring && !isHighway(ROAD_TYPES[s.type]) && n.h < 0.3 && this.nodeWalk(id) > 0;
+  }
+
   /**
    * Stop lines at a junction: a thick one across every lane coming in on a stop arm, with a sign beside the kerb
-   * lane's line, and a thinner one where lights control the arm.
+   * lane's line, and a thinner one where lights control the arm. Lit arms in town get a zebra crossing between the
+   * line and the junction, across the whole road.
    */
   private stopMarks(id: number): THREE.Object3D[] {
     const n = this.net.nodes.get(id), ng = this.net.nodeGeom.get(id);
@@ -529,6 +536,24 @@ export class Roads3D {
       if (!stop && !sig) continue;
       const g = this.net.segGeom.get(a.seg);
       if (!g) continue;
+      const cross = !stop && this.crossing(id, a.seg);
+      if (cross) {
+        // the stripes run with the traffic, across every lane of the road, both ways
+        for (const l of g.lanes) {
+          if (l.seg !== a.seg || (l.to !== id && l.from !== id)) continue;
+          // from the lane's mouth on into the junction, past the stop line where cars wait
+          const inward = l.to === id, L = l.pl.length;
+          const m = polyAt(l.pl, inward ? L : 0), dl = polyDir(l.pl, inward ? L : 0);
+          const d = inward ? dl : { x: -dl.x, y: -dl.y }, r = right(dl);
+          const p = { x: m.x + d.x * (CROSS_START + CROSS_END) / 2, y: m.y + d.y * (CROSS_START + CROSS_END) / 2 };
+          const h = n.h + LIFT + 0.017, half = (CROSS_END - CROSS_START) / 2;
+          const c = (x: number, y: number) => [p.x + r.x * x + d.x * y, h, p.y + r.y * x + d.y * y];
+          for (let k = 0; k < 4; k++) {
+            const x0 = -1.5 + k * 0.85, x1 = x0 + 0.45;
+            pos.push(...c(x0, -half), ...c(x1, -half), ...c(x1, half), ...c(x0, -half), ...c(x1, half), ...c(x0, half));
+          }
+        }
+      }
       const inn = g.lanes.filter((l) => l.to === id && l.seg === a.seg && (a.end === "b" ? l.dir === 1 : l.dir === -1));
       let kerb: (typeof inn)[number] | null = null;
       for (const l of inn) {
@@ -1121,6 +1146,9 @@ export function arcsBetween(gaps: [number, number][]): [number, number][] {
 const glyphs = new Map<string, number[][]>();
 
 /** A painted arrow for a set of turns ("S", "L", "R", "LS", "RS", "LR", "LRS"): triangle corners, upward-facing. */
+/** A zebra crossing spans this stretch past each lane's mouth, into the junction (m). */
+const CROSS_START = 0.4, CROSS_END = 3.4;
+
 function arrowGlyph(key: string): number[][] {
   const hit = glyphs.get(key);
   if (hit) return hit;
