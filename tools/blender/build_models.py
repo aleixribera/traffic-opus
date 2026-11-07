@@ -2431,6 +2431,204 @@ def b_machineworks(M, P):
         box(M, 22.4, 25.4, y0 + 0.5 + i * 2.6, y0 + 2.6 + i * 2.6, PAD_H, 1.6 + 0.4 * (i % 2), P["wood"], bevel=0.04)
     return L
 
+# ------------------------------------------------------------------ industry site support buildings
+# Each stands on its own pad with its apron facing one of the site's internal roads (see docs/design.md,
+# "Industry sites"). The kind's own model is a site's core; these fill the rest of the plot as it grows.
+
+def b_site_truckyard(M, P):
+    """Truck yard by the gate: a deep asphalt apron with truck bays, a weighbridge, the gatehouse and a row of
+    parked trailers at the back."""
+    L = lot(M, P, 44, 30, bay_row(8, -4.0))
+    y0, y1 = L.y0, L.y1
+    box(M, -21.6, 21.6, L.yf + PARK_DEPTH, y1 - 7.0, PAD_H, PAD_H + 0.02, P["asphalt"])
+    for x in (-12.0, 0.0, 12.0):
+        box(M, x - 0.08, x + 0.08, y0 + 1.0, y1 - 8.0, PAD_H + 0.02, PAD_H + 0.032, P["line"])
+    # weighbridge: a steel deck with yellow kerbs, at the right
+    box(M, 14.5, 19.0, L.yf + 1.0, y0 + 9.0, PAD_H, 0.28, P["ind_steel"])
+    for x in (14.4, 19.0):
+        box(M, x, x + 0.25, L.yf + 1.0, y0 + 9.0, 0.28, 0.5, P["ind_yellow"])
+    flat_block(M, 19.6, 21.6, y0 + 1.0, y0 + 4.0, 3.0, P["work_wall"], P["work_roof"])
+    band(M, 19.6, 21.6, y0 + 1.0, y0 + 4.0, 1.4, 2.3, P["work_glass"], o=0.04)
+    # parked trailers along the back
+    for i in range(5):
+        x = -17.0 + i * 7.0
+        box(M, x - 1.2, x + 1.2, y1 - 6.4, y1 - 0.4, 0.0, 0.9, P["ind_dark"])
+        box(M, x - 1.25, x + 1.25, y1 - 6.5, y1 - 0.5, 0.9, 3.6, P["tb_white"] if i % 2 else P["tb_grey"], bevel=0.05)
+    return L
+
+
+def b_site_hall_l(M, P):
+    """A big steel production / storage hall: two-tone pitched roof with rooflights, roller doors on the apron."""
+    L = lot(M, P, 60, 34, [])
+    y0, y1 = L.y0, L.y1
+    x0, x1 = -28.5, 28.5
+    box(M, x0, x1, y0, y1, 0, 9.0, P["ind_wall"])
+    band(M, x0, x1, y0, y1, 7.6, 8.2, P["ind_dark"], o=0.05)
+    gable2(M, x0, x1, y0, y1, 9.0, 12.0, P["ind_roof"], P["work_roof"], P["ind_wall"], ridge=P["ind_steel"], oh=0.5)
+    for x in (-20.0, -8.0, 4.0, 16.0):
+        box(M, x - 2.4, x + 2.4, y0 - 0.06, y0, 0, 6.0, P["ind_dark"])
+    return L
+
+
+def b_site_hall_m(M, P):
+    """A mid-size flat-roofed hall with roof ribs, a loading canopy and a side lean-to."""
+    L = lot(M, P, 40, 26, [])
+    y0, y1 = L.y0, L.y1
+    x0, x1 = -18.5, 12.0
+    top = flat_block(M, x0, x1, y0, y1, 8.0, P["ind_wall"], P["ind_roof"])
+    ribs(M, x0 + 1.0, x1 - 1.0, y0 + 1.0, y1 - 1.0, top, P["ind_steel"], 5, along="y", wd=0.8, h=0.16)
+    box(M, -14.0, -2.0, y0 - 2.4, y0, 4.2, 4.5, P["ind_roof"])
+    for x in (-12.0, -4.0):
+        box(M, x - 2.0, x + 2.0, y0 - 0.06, y0, 0, 4.0, P["ind_dark"])
+    box(M, x1, 18.5, y0 + 2.0, y1 - 2.0, 0, 4.6, P["ind_wall"])
+    extrude_profile(M, [(x1, 5.4), (18.9, 4.4), (18.9, 4.62), (x1, 5.62)], "y", y0 + 1.6, y1 - 1.6, P["work_roof"])
+    return L
+
+
+def b_site_silos(M, P):
+    """Four tall silos with a bucket-elevator tower and the walkway across their tops."""
+    L = lot(M, P, 24, 22, [])
+    y0, y1 = L.y0, L.y1
+    cy = (y0 + y1) / 2 + 0.5
+    for i in range(4):
+        x = -8.4 + i * 4.6
+        revolve(M, x, cy, [(0.5, 2.5), (2.2, 4.5), (2.2, 18.0), (0.0, 18.9)], P["silo"], n=12)
+        for dx in (-1.6, 1.6):
+            box(M, x + dx - 0.15, x + dx + 0.15, cy - 0.15, cy + 0.15, 0, 4.5, P["ind_dark"])
+        cyl(M, x, cy, 2.25, 15.0, 15.5, P["ind_steel"], n=12)
+    box(M, -10.0, 6.0, cy - 0.4, cy + 0.4, 18.9, 19.3, P["ind_steel"])
+    box(M, 8.0, 10.5, cy - 1.2, cy + 1.2, 0, 22.0, P["ind_steel"])
+    box(M, 7.8, 10.7, cy - 1.4, cy + 1.4, 22.0, 22.4, P["ind_roof"])
+    return L
+
+
+def b_site_tanks(M, P):
+    """Three storage tanks in a concrete bund, joined by a pipe."""
+    L = lot(M, P, 36, 24, [])
+    y0, y1 = L.y0, L.y1
+    cy = (y0 + y1) / 2
+    frame(M, -17.0, 17.0, y0, y1, 0, 0.9, 0.45, P["concrete"])
+    for x in (-10.5, 0.0, 10.5):
+        tank(M, P, x, cy, 4.6, 7.5, P["ind_tank"])
+    pipe_x(M, y0 + 0.9, 1.4, 0.35, -15.0, 15.0, P["ind_steel"], n=6)
+    return L
+
+
+def b_site_office(M, P):
+    """The site office: a two-storey block with ribbon windows, a canteen wing and a little lawn."""
+    L = lot(M, P, 26, 18, [])
+    y0, y1 = L.y0, L.y1
+    top = flat_block(M, -12.0, 3.0, y0, y1, 7.0, P["work_wall"], P["work_roof"], parapet=P["work_trim"])
+    for z in (1.2, 4.4):
+        band(M, -12.0, 3.0, y0, y1, z, z + 1.3, P["work_glass"], o=0.04)
+    ac_unit(M, -7.0, (y0 + y1) / 2, top, P)
+    flat_block(M, 3.0, 9.5, y0 + 1.0, y1 - 1.0, 3.8, P["res_trim"], P["work_roof"])
+    box(M, 9.5, 12.5, y0, y1, PAD_H, PAD_H + 0.03, P["grass"])
+    for y in (y0 + 1.5, y1 - 1.5):
+        conifer(M, P, 11.0, y, s=0.7)
+    return L
+
+
+def b_site_workshop(M, P):
+    """Maintenance workshop: a pitched shed with big doors and yard machines parked beside it."""
+    L = lot(M, P, 30, 22, [])
+    y0, y1 = L.y0, L.y1
+    box(M, -14.0, 3.0, y0, y1, 0, 6.0, P["ind_wall"])
+    gable(M, -14.0, 3.0, y0, y1, 6.0, 8.0, "x", P["sm_roof"], P["ind_wall"], oh_u=(0.4, 0.4), oh_a=(0.4, 0.4))
+    for x in (-10.0, -3.5):
+        box(M, x - 2.3, x + 2.3, y0 - 0.06, y0, 0, 4.6, P["ind_dark"])
+    box(M, 4.0, 14.0, y0, y1, PAD_H, PAD_H + 0.03, P["gravel"])
+    for k, y in enumerate((y0 + 3.0, y1 - 3.5)):
+        x = 8.0 + 2.0 * k
+        box(M, x - 1.3, x + 1.3, y - 2.0, y + 2.0, PAD_H, 1.8, P["ind_yellow"], bevel=0.05)
+        box(M, x - 1.0, x + 0.8, y - 1.4, y + 0.6, 1.8, 3.0, P["ind_dark"])
+    return L
+
+
+def _field(M, P, a, b):
+    """A crop field in rows (colours a, b alternating), with a farm track along its front."""
+    L = lot(M, P, 64, 64, [], asphalt=(-32.0, -26.0))
+    y0, y1 = L.yf + PARK_DEPTH, L.y1 + 0.6
+    box(M, -31.6, 31.6, y0, y1, PAD_H, PAD_H + 0.02, P["soil"])
+    n = 16
+    w = (63.2 - 0.8) / n
+    for i in range(n):
+        x = -31.2 + i * w
+        box(M, x + 0.25, x + w - 0.25, y0 + 0.6, y1 - 0.6, PAD_H + 0.02, PAD_H + 0.34 + 0.06 * (i % 2), a if i % 2 else b)
+    return L
+
+
+def b_site_field_g(M, P):
+    return _field(M, P, P["crop_g1"], P["crop_g2"])
+
+
+def b_site_field_w(M, P):
+    return _field(M, P, P["crop_w1"], P["crop_w2"])
+
+
+def b_site_barn(M, P):
+    """A big barn with a pale ridge, two feed silos and a machinery lean-to."""
+    L = lot(M, P, 30, 24, [])
+    y0, y1 = L.y0, L.y1
+    box(M, -13.5, 5.0, y0, y1, 0, 5.5, P["res_wall2"])
+    gable(M, -13.5, 5.0, y0, y1, 5.5, 9.0, "x", P["barn_roof"], P["res_wall2"], oh_u=(0.5, 0.5), oh_a=(0.4, 0.4))
+    box(M, -7.5, -2.5, y0 - 0.06, y0, 0, 4.4, P["cabin_dark"])
+    for i, y in enumerate((y0 + 3.0, y1 - 3.0)):
+        revolve(M, 10.0, y, [(2.3, 0.0), (2.3, 11.0 - i), (0.0, 12.6 - i)], P["silo"], n=12)
+    return L
+
+
+def b_site_logyard(M, P):
+    """A log yard: long stacked log piles in rows on bare ground, a log loader working them."""
+    L = lot(M, P, 40, 30, [])
+    y0, y1 = L.y0, L.y1
+    box(M, -19.6, 19.6, y0 - 0.6, y1 + 0.6, PAD_H, PAD_H + 0.02, P["lg_yard"])
+    for k, y in enumerate((y0 + 2.6, y0 + 8.4, y0 + 14.2)):
+        log_stack(M, P, "x", -17.5, -5.0, y, PAD_H + 0.02, 0.6, (4, 3, 2), seed=k)
+        if k < 2:
+            log_stack(M, P, "x", -3.5, 9.0, y, PAD_H + 0.02, 0.6, (4, 3) if k else (4, 3, 2), seed=k + 7)
+    x, y = 14.0, y0 + 9.0
+    box(M, x - 1.4, x + 1.4, y - 2.4, y + 2.0, PAD_H, 2.0, P["ind_yellow"], bevel=0.05)
+    box(M, x - 1.0, x + 1.0, y - 1.6, y + 0.4, 2.0, 3.4, P["ind_dark"])
+    bar(M, (x, y - 2.4), (x - 1.0, y - 6.0), 0.7, 1.8, 2.4, P["ind_dark"])
+    return L
+
+
+def _heap(M, P, m, m2):
+    """An open stockpile bay: two long heaps between low concrete walls, a stacker belt over them."""
+    L = lot(M, P, 30, 24, [])
+    y0, y1 = L.y0, L.y1
+    box(M, -14.6, 14.6, y0, y1, PAD_H, PAD_H + 0.03, P["gravel"])
+    for x in (-14.6, 14.0):
+        box(M, x, x + 0.6, y0, y1, 0, 1.8, P["concrete"])
+    box(M, -14.6, 14.6, y1 - 0.6, y1, 0, 1.8, P["concrete"])
+    pile(M, -6.5, (y0 + y1) / 2, 6.5, (y1 - y0) / 2 - 1.2, 5.6, m)
+    pile(M, 6.5, (y0 + y1) / 2, 6.5, (y1 - y0) / 2 - 1.2, 4.8, m2)
+    bar(M, (0.0, y0 + 0.5), (0.0, y1 - 1.0), 1.0, 6.4, 6.9, P["ind_steel"])
+    for y in (y0 + 0.5, y1 - 1.0):
+        box(M, -0.3, 0.3, y - 0.3, y + 0.3, 0, 6.4, P["ind_dark"])
+    return L
+
+
+def b_site_heap_ore(M, P):
+    return _heap(M, P, P["ore_pile"], P["ore_pile2"])
+
+
+def b_site_heap_coal(M, P):
+    return _heap(M, P, P["coal"], P["cm_roof"])
+
+
+def b_site_heap_lime(M, P):
+    return _heap(M, P, P["lime"], P["lime2"])
+
+
+def b_site_heap_sand(M, P):
+    return _heap(M, P, P["sand_pile"], P["sand_pile2"])
+
+
+def b_site_heap_cu(M, P):
+    return _heap(M, P, P["cu_ore"], P["cu_rock2"])
+
 
 SERVICES = ("garbage", "firestation", "police", "clinic", "hospital", "school", "highschool", "university",
             "park", "parklarge", "windturbine", "coalplant", "solarfarm", "waterpump", "sewageoutlet",
@@ -2467,6 +2665,22 @@ BUILDINGS = {
     "coppersmelter": (b_coppersmelter, 50, 42, 4),
     "electronics": (b_electronics, 44, 36, 5),
     "machineworks": (b_machineworks, 52, 44, 5),
+    "site_truckyard": (b_site_truckyard, 44, 30, 8),
+    "site_hall_l": (b_site_hall_l, 60, 34, 0),
+    "site_hall_m": (b_site_hall_m, 40, 26, 0),
+    "site_silos": (b_site_silos, 24, 22, 0),
+    "site_tanks": (b_site_tanks, 36, 24, 0),
+    "site_office": (b_site_office, 26, 18, 0),
+    "site_workshop": (b_site_workshop, 30, 22, 0),
+    "site_field_g": (b_site_field_g, 64, 64, 0),
+    "site_field_w": (b_site_field_w, 64, 64, 0),
+    "site_barn": (b_site_barn, 30, 24, 0),
+    "site_logyard": (b_site_logyard, 40, 30, 0),
+    "site_heap_ore": (b_site_heap_ore, 30, 24, 0),
+    "site_heap_coal": (b_site_heap_coal, 30, 24, 0),
+    "site_heap_lime": (b_site_heap_lime, 30, 24, 0),
+    "site_heap_sand": (b_site_heap_sand, 30, 24, 0),
+    "site_heap_cu": (b_site_heap_cu, 30, 24, 0),
     # services
     "garbage": (b_garbage, 36, 32, 3),
     "firestation": (b_firestation, 26, 24, 3),
