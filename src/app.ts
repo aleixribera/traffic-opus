@@ -182,6 +182,19 @@ export class App {
     this.setGame(Game.load(data));
   }
 
+  /** Gateway city names on the map, marked when the roads link them. */
+  private gatewayLabels() {
+    const g = this.game;
+    this.labels.set(g.gateways.map((gw) => ({ p: gw.p, name: gw.name, sub: `${GATEWAY_LABEL[gw.kind]}${g.linked.has(gw.id) ? " · linked" : ""}`, minHalfH: 900 })));
+  }
+
+  /** Point the camera at a place, zoomed out to at least `halfH`. */
+  lookAt(p: V2, halfH: number) {
+    this.view.cx = p.x;
+    this.view.cy = p.y;
+    this.view.halfH = Math.min(this.view.maxHalfH, Math.max(this.view.halfH, halfH));
+  }
+
   private setGame(g: Game) {
     this.game = g;
     this.view.rot = 0;
@@ -192,7 +205,7 @@ export class App {
     this.roads = new Roads3D(g.net);
     this.roadsFar = new RoadsFar(g.net);
     this.terrain3d.setGateways(g.gateways);
-    this.labels.set(g.gateways.map((gw) => ({ p: gw.p, name: gw.name, sub: GATEWAY_LABEL[gw.kind], minHalfH: 900 })));
+    this.gatewayLabels();
     this.vehicles = new Vehicles3D(this.models);
     this.buildings3d = new Buildings3D(this.models);
     this.vehicles.lotOf = (id) => { const b = g.buildings.byId.get(id); return b ? this.buildings3d.lotWay(b) : null; };
@@ -204,6 +217,7 @@ export class App {
     this.buildings3d.rebuild(g.buildings.list);
     this.terrain3d.setTiles(g.tiles);
     g.on((e) => {
+      if (e.t === "trade") this.gatewayLabels();
       if (e.t === "roads") { this.roads.apply(e.cs); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
       else if (e.t === "buildings") { this.buildings3d.rebuild(g.buildings.list); this.applyTint(); this.dirtyPreview = true; }
       else if (e.t === "tiles") this.terrain3d.setTiles(g.tiles);
@@ -573,6 +587,7 @@ export class App {
     else if (k === "x") this.hud?.toggleWin("transport");
     else if (k === "u") this.hud?.toggleWin("utilities");
     else if (k === "k") this.hud?.toggleWin("policies");
+    else if (k === "t") this.hud?.toggleWin("trade");
     else if (k === "[" || k === "]") this.nudgeParallel(k === "]" ? 1 : -1);
     else if (k === "`" || e.code === "Backquote") this.toggleUi();
     else if (k === "F5") { e.preventDefault(); this.quickSave(); }
@@ -1326,7 +1341,7 @@ export class App {
   }
 }
 
-const GATEWAY_LABEL: Record<string, string> = {
+export const GATEWAY_LABEL: Record<string, string> = {
   port: "Port city", capital: "Capital", industry: "Industrial city", farm: "Farm town", mining: "Mining town", tech: "Tech city",
 };
 

@@ -11,6 +11,7 @@ import { ICON, roadIcon, serviceIcon } from "./icons";
 import { SERVICES, SERVICE_TABS, UTILITY_TABS, isUtilityId, type ServiceKind, type UtilityId } from "../game/services";
 import { EXPORT_PRICE, IMPORT_CAP, IMPORT_PRICE, UNIT, UTILITIES, UTILITY_NAME } from "../game/utilities";
 import { POLICIES, POLICY_IDS, type PolicyId } from "../game/policies";
+import { TRADE } from "../game/trade";
 import { BUS_UPKEEP, STOP_COST } from "../game/transit";
 import { Sfx } from "./sfx";
 
@@ -94,7 +95,7 @@ const catOf = (st: { tool: ToolId; service: ServiceKind }): CatId | null => {
   return t === "transit" ? "transport" : null;
 };
 
-type WinId = "info" | "progression" | "economy" | "city" | "transport" | "utilities" | "policies";
+type WinId = "info" | "progression" | "economy" | "city" | "transport" | "utilities" | "policies" | "trade";
 
 const h = <K extends keyof HTMLElementTagNameMap>(tag: K, cls = "", html = ""): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag);
@@ -115,6 +116,8 @@ const hex = (c: number) => "#" + c.toString(16).padStart(6, "0");
 type Milestone = (typeof MILESTONES)[number];
 const unlockAt = (test: (m: Milestone) => boolean): Milestone | undefined => MILESTONES.find(test);
 const servicesAt = (i: number) => (Object.values(SERVICES)).filter((s) => s.unlock === i).map((s) => BUILDING_TYPES[s.kind].name);
+const plural = (n: number, w: string) => `${fmtNum(n)} ${w}${n === 1 ? "" : "s"}`;
+const GATEWAY_KIND: Record<string, string> = { port: "Port city", capital: "Capital", industry: "Industrial city", farm: "Farm town", mining: "Mining town", tech: "Tech city" };
 const policiesAt = (i: number) => POLICY_IDS.filter((p) => POLICIES[p].unlock === i).map((p) => `${POLICIES[p].name} policy`);
 const FEATURE_NAME = { roundabout: "Roundabouts", signals: "Traffic lights", grid: "Grid tool", parallel: "Parallel roads", transit: "Buses" } as const;
 
@@ -132,7 +135,7 @@ const KEYS: [string, string][] = [
   ["L", "Add lane (Shift or right click removes)"],
   ["M", "Map tiles"],
   ["P / Z / C / X", "Progression / Economy / City / Transport"],
-  ["U / K", "Utilities / Policies"],
+  ["U / K / T", "Utilities / Policies / Trade"],
   ["Space, 1 2 3", "Pause, game speed"],
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
   ["F5 / F9", "Quicksave / quickload"],
@@ -210,6 +213,7 @@ export class Hud {
     tlb("transport", ICON.car, "Transportation overview (X)", () => this.toggleWin("transport"));
     tlb("utilities", ICON.utilitiesWin, "Utilities overview (U)", () => this.toggleWin("utilities"));
     tlb("policies", ICON.policiesWin, "Policies (K)", () => this.toggleWin("policies"));
+    tlb("trade", ICON.tradeWin, "Trade (T)", () => this.toggleWin("trade"));
     tlb("tiles", ICON.tiles, "Map tiles (M)", () => app.setTool({ tool: app.st.tool === "unlock" ? "inspect" : "unlock" }));
     this.compass.innerHTML = ICON.north;
     this.compass.title = "North up (the map is turned: Q / E or middle-drag)";
@@ -876,6 +880,7 @@ export class Hud {
     else if (k === "transport") this.fillTransport();
     else if (k === "utilities") this.fillUtilities();
     else if (k === "policies") this.fillPolicies();
+    else if (k === "trade") this.fillTrade();
   }
 
   private fillInfo() {
@@ -991,6 +996,42 @@ export class Hud {
         if (!g.policies.set(id, !g.policies.has(id))) return;
         this.sfx.play("click");
         this.fillPolicies();
+      };
+    }
+  }
+
+  private fillTrade() {
+    const g = this.app.game;
+    const pct = (x: number) => `${x >= 1 ? "+" : "−"}${Math.round(Math.abs(x - 1) * 100)}%`;
+    const ZN: Record<string, string> = { res: "residential", com: "commercial", ind: "industrial", off: "office" };
+    const far = (p: { x: number; y: number }) => Math.hypot(p.x, p.y); // (from the start, where the motorway first meets the land)
+    const gws = [...g.gateways].sort((a, b) => far(a.p) - far(b.p));
+    let sold = 0, earned = 0, bought = 0;
+    for (const t of g.trade.values()) { sold += t.exports; earned += t.earned; bought += t.imports; }
+    const row = (gw: (typeof gws)[number]) => {
+      const T = TRADE[gw.kind], on = g.linked.has(gw.id), t = g.trade.get(gw.id);
+      const dem = Object.entries(T.demand).map(([k, v]) => `+${v} ${ZN[k]}`).join(", ");
+      const last = on ? (t && (t.exports || t.imports) ? `Last hour: ${t.exports} sold (${signed(t.earned)}), ${t.imports} bought` : "No trade in the last hour") : "";
+      return `<li class="gw${on ? " on" : ""}"><span class="gw-txt"><b>${gw.name}</b><span class="small muted">${GATEWAY_KIND[gw.kind]} · ${(far(gw.p) / 1000).toFixed(1)} km${on ? "" : " · not linked"}</span>
+        <span class="small">Goods <span class="${T.goods >= 1 ? "good" : "bad"}">${pct(T.goods)}</span> · materials <span class="${T.materials <= 1 ? "good" : "bad"}">${pct(T.materials)}</span>${dem ? ` · ${dem} demand` : ""}</span>
+        <span class="small muted">${T.blurb}${last ? ` ${last}.` : ""}</span></span>
+        <button class="gw-go" data-id="${gw.id}" aria-label="Show ${gw.name} on the map">Show</button></li>`;
+    };
+    const on = gws.filter((x) => g.linked.has(x.id)), off = gws.filter((x) => !g.linked.has(x.id));
+    const mp = g.materialsPrice, mf = g.materialsFactor;
+    const html = `<p class="win-sub">Gateway cities your roads reach are your trading partners.</p>
+      <dl class="facts"><dt>Goods sold last hour</dt><dd>${sold ? `${plural(sold, "load")} · <span class="good">${signed(earned)}</span>` : "None"}</dd>
+      <dt>Materials bought</dt><dd>${bought ? plural(bought, "load") : "None"}</dd>
+      <dt>Materials cost factories</dt><dd class="${mp <= 1 ? "good" : "bad"}">${pct(mp)}</dd>
+      <dt>Industry taxes from that</dt><dd class="${mf >= 1 ? "good" : "bad"}">${pct(mf)}</dd></dl>
+      <h3 class="sub-h">Linked</h3>${on.length ? `<ul class="gw-list">${on.map(row).join("")}</ul>` : `<p class="small muted">None: join your roads to the motorway.</p>`}
+      <h3 class="sub-h">Not linked yet</h3><ul class="gw-list">${off.map(row).join("")}</ul>
+      <p class="small muted">Build a road into a gateway city to open it. Factories sell to the partners their roads reach, most to the best payers, and buy materials where they're cheapest. Each carriageway of the motorway leads to a different city: link both.</p>`;
+    if (!this.setWin("Trade", html)) return;
+    for (const b of this.win.querySelectorAll<HTMLButtonElement>(".gw-go")) {
+      b.onclick = () => {
+        const gw = g.gatewayOf(Number(b.dataset.id));
+        if (gw) this.app.lookAt(gw.p, Math.max(gw.r * 1.8, 1500));
       };
     }
   }
@@ -1222,7 +1263,7 @@ export class Hud {
       rows.push(["Workers", `${w} / ${b.cap}${grp === "off" ? ` <span class="muted">· needs high school</span>` : ""}`]);
       if (grp === "com") {
         rows.push(["Goods in stock", stockBar(b.stock, 6)]);
-        rows.push(["Customers", `${Math.round(b.visits)} <span class="muted">recently</span>`]);
+        rows.push(["Customers", b.custDay !== undefined ? `${fmtNum(b.custDay)} <span class="muted">yesterday</span>` : `${fmtNum(b.custToday ?? 0)} <span class="muted">so far</span>`]);
       } else if (grp === "ind") {
         rows.push(["Materials", stockBar(b.stock, 6)]);
         rows.push(["Goods to ship", stockBar(b.out, 6)]);

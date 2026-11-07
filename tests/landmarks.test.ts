@@ -81,8 +81,8 @@ describe("Landmarks", () => {
     for (const b of near) expect(g.services.happiness(b)).toBeGreaterThan(before.get(b.id)! - 1e-9);
     expect(near.some((b) => g.services.happiness(b) > before.get(b.id)! + 0.01)).toBe(true);
     expect(g.demand.com.factors.some((f) => f.label === "Visitors to landmarks" && f.v > 0)).toBe(true);
-    // residents drive over to see it
-    run(g, 16);
+    // residents drive over to see it (a full day: new hires only start their evenings out on their second day)
+    run(g, 30);
     expect(hall!.visits).toBeGreaterThan(0);
   });
 });

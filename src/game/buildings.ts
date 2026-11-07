@@ -40,6 +40,9 @@ export interface Building {
   out: number; // produced cargo waiting to ship
   prodT: number;
   visits: number; // decaying count of customers
+  /** shops: customers so far today, and over the last full day */
+  custToday?: number;
+  custDay?: number;
   born: number; // sim time it appeared
   // city services (see game/services.ts)
   /** A placed service building (fire station, school...). */

@@ -601,6 +601,7 @@ export class Society {
       this.schedule(c, this.nextAt(c.age === Age.Child ? 15 : 16, HOUR * 2));
     } else {
       to.visits += 1;
+      to.custToday = (to.custToday ?? 0) + 1;
       if (!to.svc) g.sale(to);
       this.schedule(c, this.now + HOUR * (0.6 + g.rng() * 1.4));
     }
