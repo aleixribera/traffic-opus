@@ -37,7 +37,7 @@ export interface Building {
   badT: number; // seconds the place has been failing
   problem: string | null; // what's wrong, for the inspector and icons
   // simulation state
-  stock: number; // goods or materials in stock (cargo units)
+  stock: number; // goods in stock (cargo units)
   out: number; // produced cargo waiting to ship
   prodT: number;
   visits: number; // decaying count of customers
@@ -45,21 +45,10 @@ export interface Building {
   custToday?: number;
   custDay?: number;
   born: number; // sim time it appeared
-  // city services (see game/services.ts)
   /** One of the company's extractors or plants (see game/industry.ts). */
   plant?: PlantState;
-  /** A placed service building (fire station, school...). */
-  svc?: boolean;
-  /** Service vehicles out on a call (service buildings). */
-  busy?: number;
-  /** Students or patients (schools, clinics). */
-  users?: number;
-  /** Garbage waiting for collection (any building in use). */
-  garbage?: number;
-  /** Crime build-up. */
-  crime?: number;
-  /** Sim time a fire broke out; 0 = not burning. */
-  fire?: number;
+  /** Placed by the player (see game/placed.ts), not grown on zoned land. */
+  placed?: boolean;
 }
 
 export interface BuildingMove {
@@ -77,7 +66,7 @@ export interface Placement {
   access: Access | null;
   side: 1 | -1;
   blockers: number[];
-  /** Zoned buildings the new one would replace (service buildings clear growables, as in CS2). */
+  /** Zoned buildings the new one would replace (placed buildings clear growables, as in CS2). */
   clears?: number[];
 }
 

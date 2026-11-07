@@ -90,8 +90,6 @@ export class Vehicles3D {
   }
 
   static kindOf(v: Vehicle): VehicleKind {
-    const run = v.trip.run;
-    if (run) return run.svc === "garbage" ? "garbagetruck" : run.svc === "fire" ? "firetruck" : run.svc === "health" ? "ambulance" : "policecar";
     if (v.trip.bus) return "bus";
     if (v.truck) return "truck";
     return v.look % 6 === 0 ? "van" : "car";
@@ -114,7 +112,7 @@ export class Vehicles3D {
     for (const [id, v] of this.seen) {
       if (live.has(id)) continue;
       this.seen.delete(id);
-      if (!this.lotOf || !v.arrived || v.exit || v.trip.run || v.trip.to < 0 || v.edge.kind !== "lane") continue;
+      if (!this.lotOf || !v.arrived || v.exit || v.trip.to < 0 || v.edge.kind !== "lane") continue;
       const w = this.lotOf(v.trip.to);
       if (!w) continue;
       const P = { x: v.x, y: v.y }, d0 = { x: Math.cos(v.ang), y: Math.sin(v.ang) };

@@ -1,16 +1,14 @@
 // Every resident is simulated: households move into homes that grow on zoned land, adults find jobs by commute
-// distance (in any city, or outside the region), and everyone keeps a daily schedule: staggered work shifts give
+// distance, and everyone keeps a daily schedule: staggered work shifts give
 // morning and evening rush hours, and shopping and leisure trips fill the rest of the day. Each trip is a car on
 // the player's roads; in big cities one car can stand for several trips (`tripScale`), the rest resolve with an
 // estimated travel time.
 
 import { dist, type V2 } from "../core/math";
-import type { Access } from "../sim/router";
 import type { Trip, TripKind, Vehicle } from "../sim/traffic";
 import type { Building } from "./buildings";
 import type { Game } from "./city";
 import { ZONE_GROUP } from "./growables";
-import { EFFECT } from "./policies";
 
 /** Sim seconds per game hour; the clock starts at 06:00 on day 1. */
 export const HOUR = 40;
@@ -22,41 +20,25 @@ export const enum St { Home = 0, Travel = 1, Away = 2, Gone = 3 }
 
 export interface Citizen {
   id: number;
-  hh: number; // household id; -1 for commuters from outside
-  home: number; // building id; -1 = lives outside the region
-  gate: number; // outside connection used by a commuter (-1 = local)
+  hh: number; // household id
+  home: number; // building id
   age: Age;
-  edu: number; // 0 none, 1 high school, 2 college
   job: number; // building id, -1 = none
   shift: number; // hour the shift starts
   st: St;
-  at: number; // building id while away (or heading to); -1 = outside
+  at: number; // building id while away (or heading to)
   kind: TripKind;
   next: number; // sim time of the next decision; Infinity = none
   commute: number; // EWMA seconds, -1 = unknown
   tStart: number; // sim time the current trip started
   jobless: number; // sim time they became unemployed (adults)
-  /** School or college they attend (building id), -1 = none. */
-  school: number;
-  /** Days of classes done at the current school (high school and university graduate after a few). */
-  studied: number;
-  /** Sim time they fell ill; 0 = healthy. */
-  sick: number;
 }
 
 export interface Household {
   id: number;
   home: number;
   members: Citizen[];
-  arrived: boolean; // false while the moving van is on its way
   since: number;
-}
-
-/** A point where vehicles enter or leave the region (on the pre-built motorway, as in CS2's map edge). */
-export interface Port {
-  gate: number; // gateway city it leads to
-  a: Access;
-  side: 1 | -1;
 }
 
 class Heap {
@@ -106,9 +88,6 @@ export interface PeopleStats {
   workers: number; // adults who want work
   employed: number;
   unemployed: number;
-  commuters: number; // workers living outside the region
-  movingIn: number;
-  edu: [number, number, number];
 }
 
 export class Society {
@@ -130,7 +109,7 @@ export class Society {
   constructor(private g: Game) {}
 
   private emptyStats(): PeopleStats {
-    return { population: 0, households: 0, adults: 0, children: 0, seniors: 0, workers: 0, employed: 0, unemployed: 0, commuters: 0, movingIn: 0, edu: [0, 0, 0] };
+    return { population: 0, households: 0, adults: 0, children: 0, seniors: 0, workers: 0, employed: 0, unemployed: 0 };
   }
 
   get now() { return this.g.time; }
@@ -152,10 +131,10 @@ export class Society {
 
   // ------------------------------------------------------------------ households
 
-  /** A household moves into `home`; it drives in from outside (or appears at once with no link). */
-  moveIn(home: Building, link: Port | null): Household {
+  /** A household moves into `home` (it appears there at once). */
+  moveIn(home: Building): Household {
     const rng = this.g.rng;
-    const hh: Household = { id: this.nextH++, home: home.id, members: [], arrived: false, since: this.now };
+    const hh: Household = { id: this.nextH++, home: home.id, members: [], since: this.now };
     const high = home.zone === "resHigh" || home.zone === "resMed";
     const r = rng();
     const adults = r < 0.3 ? 1 : 2;
@@ -167,25 +146,15 @@ export class Society {
     let L = this.hhAt.get(home.id);
     if (!L) this.hhAt.set(home.id, (L = []));
     L.push(hh);
-    // the moving van
-    const lead = hh.members[0];
-    if (link && home.access) {
-      lead.st = St.Travel;
-      lead.kind = "move";
-      lead.at = home.id;
-      lead.tStart = this.now;
-      this.travel(lead, null, home, "move");
-    } else this.arrive(lead);
+    for (const m of hh.members) this.arriveHome(m);
     return hh;
   }
 
-  private newCitizen(hh: Household | null, home: number, age: Age): Citizen {
+  private newCitizen(hh: Household, home: number, age: Age): Citizen {
     const rng = this.g.rng;
-    const e = rng();
     const c: Citizen = {
-      id: this.nextC++, hh: hh ? hh.id : -1, home, gate: -1, age, edu: age === Age.Child ? 0 : e < 0.4 ? 0 : e < 0.83 ? 1 : 2,
+      id: this.nextC++, hh: hh.id, home, age,
       job: -1, shift: pickShift(rng), st: St.Home, at: -1, kind: "home", next: Infinity, commute: -1, tStart: 0, jobless: this.now,
-      school: -1, studied: 0, sick: 0,
     };
     this.citizens.set(c.id, c);
     return c;
@@ -205,8 +174,6 @@ export class Society {
 
   private dropCitizen(c: Citizen) {
     if (c.job >= 0) this.leaveJob(c);
-    this.leaveSchool(c);
-    if (c.sick && c.kind === "service" && c.st === St.Away) this.g.services.discharged(this.g.buildings.byId.get(c.at));
     c.st = St.Gone;
     c.next = Infinity;
     this.citizens.delete(c.id);
@@ -218,21 +185,6 @@ export class Society {
     else this.staff.delete(c.job);
     c.job = -1;
     c.jobless = this.now;
-    if (c.home < 0) this.dropCitizen(c); // commuters only come for the job
-  }
-
-  private leaveSchool(c: Citizen) {
-    if (c.school < 0) return;
-    const st = this.g.buildings.byId.get(c.school);
-    if (st) st.users = Math.max(0, (st.users ?? 0) - 1);
-    c.school = -1;
-    c.studied = 0;
-  }
-
-  private enrol(c: Citizen, st: Building) {
-    c.school = st.id;
-    c.studied = 0;
-    st.users = (st.users ?? 0) + 1;
   }
 
   /** A building is gone: its households leave, its workers lose their jobs, visitors go home. */
@@ -240,11 +192,7 @@ export class Society {
     for (const hh of [...(this.hhAt.get(id) ?? [])]) this.moveOut(hh);
     for (const c of [...this.citizens.values()]) {
       if (c.job === id) this.leaveJob(c);
-      if (c.school === id) { c.school = -1; c.studied = 0; }
-      if (c.st === St.Away && c.at === id && c.home !== id) {
-        if (c.kind === "service" && c.sick) c.sick = this.now;
-        this.goHome(c);
-      }
+      if (c.st === St.Away && c.at === id && c.home !== id) this.goHome(c);
     }
   }
 
@@ -258,75 +206,49 @@ export class Society {
 
   // ------------------------------------------------------------------ jobs
 
-  /** Match job seekers to open jobs, closest first (with some randomness), across every city. */
+  /** Match job seekers to open jobs, closest first (with some randomness). Jobs nobody local can fill stay empty. */
   matchJobs() {
     const g = this.g;
-    const open: { b: Building; free: number; office: boolean }[] = [];
+    const open: { b: Building; free: number }[] = [];
     for (const b of g.buildings.list) {
       if (!b.access || b.built < 1 || b.abandoned) continue;
-      if (b.zone ? ZONE_GROUP[b.zone] === "res" : !b.svc) continue;
+      if (b.zone ? ZONE_GROUP[b.zone] === "res" : !b.placed) continue;
       const free = b.cap - this.workersAt(b.id);
-      if (free > 0) open.push({ b, free, office: !!b.zone && ZONE_GROUP[b.zone] === "off" });
+      if (free > 0) open.push({ b, free });
     }
     if (!open.length) return;
-    // public services are staffed first (their jobs are secure and they keep the city running)
-    open.sort((a, b) => (b.b.svc ? 1 : 0) - (a.b.svc ? 1 : 0));
+    // the player's own buildings are staffed first (they keep the company running)
+    open.sort((a, b) => (b.b.placed ? 1 : 0) - (a.b.placed ? 1 : 0));
     const rng = g.rng;
     let budget = 400;
     for (const c of this.citizens.values()) {
       if (budget <= 0) break;
-      if (c.age !== Age.Adult || c.job >= 0 || c.home < 0 || c.school >= 0) continue;
-      const hh = this.households.get(c.hh);
-      if (!hh?.arrived) continue;
+      if (c.age !== Age.Adult || c.job >= 0) continue;
       const home = g.buildings.byId.get(c.home);
       if (!home?.access) continue;
       budget--;
       let best: (typeof open)[number] | null = null, bs = Infinity;
       for (let k = 0; k < Math.min(open.length, 48); k++) {
         const o = open.length <= 48 ? open[k] : open[(rng() * open.length) | 0];
-        if (o.free <= 0 || (o.office && c.edu < 1)) continue;
+        if (o.free <= 0) continue;
         if (!g.connected(home.access.seg, o.b.access!.seg)) continue;
-        const s = dist(home.c, o.b.c) * (0.8 + rng() * 0.4) - c.edu * (o.office ? 150 : 0) - (o.b.svc ? 250 : 0);
+        const s = dist(home.c, o.b.c) * (0.8 + rng() * 0.4) - (o.b.placed ? 250 : 0);
         if (s < bs) { bs = s; best = o; }
       }
       if (!best) continue;
       this.takeJob(c, best.b);
       best.free--;
     }
-    // jobs nobody local can fill are taken by commuters from outside the region (up to a share of all jobs)
-    if (!g.entries.length) return;
-    const totalJobs = open.reduce((a, o) => a + o.free, 0);
-    if (totalJobs <= 0 || this.stats.unemployed > Math.max(3, this.stats.workers * 0.04)) return;
-    const cap = Math.max(4, Math.round((this.stats.employed + this.stats.commuters) * 0.3));
-    let room = Math.min(12, cap - this.stats.commuters);
-    // public services also hire from outside beyond that share, so a small town can still run its stations
-    let svcRoom = 4;
-    for (const o of open) {
-      if (room <= 0 && (svcRoom <= 0 || !o.b.svc)) continue;
-      if (o.free <= 0 || !g.entryFor(o.b.access!.seg) || !g.exitFor(o.b.access!.seg)) continue;
-      const fromSvc = room <= 0;
-      const n = Math.min(o.free, fromSvc ? svcRoom : room, 2);
-      for (let i = 0; i < n; i++) {
-        const c = this.newCitizen(null, -1, Age.Adult);
-        c.edu = 1 + (rng() < 0.4 ? 1 : 0);
-        c.gate = g.entryFor(o.b.access!.seg)!.gate;
-        this.takeJob(c, o.b);
-        // first commute: drive in at the next shift
-        this.schedule(c, this.leaveFor(c));
-      }
-      o.free -= n;
-      if (fromSvc) svcRoom -= n; else room -= n;
-    }
   }
 
   private takeJob(c: Citizen, b: Building) {
     c.job = b.id;
     this.staff.set(b.id, this.workersAt(b.id) + 1);
-    // industry runs shifts round the clock; shops open late; offices keep office hours
-    const grp = b.zone ? ZONE_GROUP[b.zone] : b.kind === "school" || b.kind === "highschool" || b.kind === "university" ? "off" : "ind";
+    // industry (and the company's own buildings) runs shifts round the clock; shops open late
+    const grp = b.zone ? ZONE_GROUP[b.zone] : "ind";
     const r = this.g.rng();
-    c.shift = grp === "off" ? 8 + (r < 0.5 ? 0 : 1) : grp === "com" ? (r < 0.6 ? 9 : 14) : r < 0.55 ? 7 : r < 0.85 ? 15 : 23;
-    if (c.st === St.Home && c.home >= 0) this.schedule(c, Math.min(c.next, this.leaveFor(c)));
+    c.shift = grp === "com" ? (r < 0.6 ? 9 : 14) : r < 0.55 ? 7 : r < 0.85 ? 15 : 23;
+    if (c.st === St.Home) this.schedule(c, Math.min(c.next, this.leaveFor(c)));
   }
 
   /** When to leave home to start the next shift on time. */
@@ -359,13 +281,6 @@ export class Society {
     const h = this.hourOf();
     const rng = g.rng;
     if (c.st === St.Away) {
-      // treated: back home
-      if (c.kind === "service") {
-        c.sick = 0;
-        g.services.discharged(g.buildings.byId.get(c.at));
-        this.goHome(c);
-        return;
-      }
       // at work until the shift ends; shoppers browse a while, then maybe one more stop
       if (c.kind === "work" && c.job >= 0 && c.at === c.job) {
         // a stop at the shops on the way home now and then
@@ -377,33 +292,17 @@ export class Society {
       }
       if ((c.kind === "shop" || c.kind === "leisure") && rng() < 0.18) {
         const from = g.buildings.byId.get(c.at);
-        const to = from && (c.kind === "leisure" ? this.pickLeisure(from) : this.pickShop(from));
+        const to = from && this.pickShop(from);
         if (from && to && to.id !== from.id) { this.travel(c, from, to, "shop"); return; }
       }
       this.goHome(c);
       return;
     }
     // at home
-    const home = c.home >= 0 ? g.buildings.byId.get(c.home) : null;
-    if (c.home >= 0 && !home) return;
-    // ill: stays in until an ambulance comes
-    if (c.sick) { this.schedule(c, this.now + HOUR * 2); return; }
-    if (c.age === Age.Child) {
-      // a parent drives them to elementary school in the morning (children need a school place within reach)
-      if (home && c.school < 0) { const st = g.services.schoolFor(home, 0); if (st) this.enrol(c, st); }
-      const st = c.school >= 0 ? g.buildings.byId.get(c.school) : undefined;
-      if (home && st?.access && h >= 7 && h < 9.5) { this.travel(c, home, st, "school"); return; }
-      this.schedule(c, this.nextAt(7 + rng() * 1.2));
-      return;
-    }
-    // students go to classes instead of looking for work
-    if (c.school >= 0 && c.job < 0) {
-      const st = g.buildings.byId.get(c.school);
-      if (!st) { this.leaveSchool(c); this.scheduleFree(c); return; }
-      if (home && st.access && h >= 7.5 && h < 10) { this.travel(c, home, st, "school"); return; }
-      this.schedule(c, this.nextAt(7.6 + rng() * 1.2));
-      return;
-    }
+    const home = g.buildings.byId.get(c.home);
+    if (!home) return;
+    // children stay home (they make no trips of their own)
+    if (c.age === Age.Child) return;
     if (c.job >= 0) {
       const job = g.buildings.byId.get(c.job);
       if (!job) { this.leaveJob(c); this.scheduleFree(c); return; }
@@ -412,50 +311,24 @@ export class Society {
       const early = 24 - late; // hours until it begins
       const est = (c.commute > 0 ? c.commute : 60) / HOUR;
       if (early <= est + 1.5 || late < 2) {
-        if (job.access && job.built >= 1 && !job.abandoned) { this.travel(c, home ?? null, job, "work"); return; }
+        if (job.access && job.built >= 1 && !job.abandoned) { this.travel(c, home, job, "work"); return; }
       }
       // an evening out on the way through the day
-      if (home && h >= 16 && h < 21 && rng() < 0.4) {
-        const shop = this.pickLeisure(home);
+      if (h >= 16 && h < 21 && rng() < 0.4) {
+        const shop = this.pickShop(home);
         if (shop) { this.travel(c, home, shop, "leisure"); return; }
       }
       // look again in a while (evening outings), never later than the time to leave for work
       this.schedule(c, Math.min(this.leaveFor(c), this.now + HOUR * (1.5 + rng() * 2.5)));
       return;
     }
-    if (c.home < 0) { c.st = St.Gone; return; }
-    // out of work a while: go back to school for a better job, if there is a place within reach
-    if (home && c.age === Age.Adult && c.edu < 2 && this.now - c.jobless > HOUR * 10 && rng() < 0.35) {
-      const st = g.services.schoolFor(home, (c.edu + 1) as 1 | 2);
-      if (st) { this.enrol(c, st); this.schedule(c, this.nextAt(7.6 + rng() * 1.2)); return; }
-    }
     // no job: errands in the daytime
-    if (home && h >= 9 && h < 19 && rng() < 0.55) {
+    if (h >= 9 && h < 19 && rng() < 0.55) {
       const senior = c.age === Age.Senior;
-      const shop = senior ? this.pickLeisure(home) : this.pickShop(home);
+      const shop = this.pickShop(home);
       if (shop) { this.travel(c, home, shop, senior ? "leisure" : "shop"); return; }
     }
     this.scheduleFree(c);
-  }
-
-  /** Somewhere for an outing: a park or a landmark within reach now and then, else the shops. */
-  pickLeisure(near: Building): Building | undefined {
-    const g = this.g;
-    const rng = g.rng;
-    if (rng() < 0.4) {
-      let best: Building | undefined, bs = Infinity;
-      for (const b of g.services.stations()) {
-        const pull = OUTING_PULL[b.kind];
-        if (!pull || !b.access || b.built < 1) continue;
-        const d = dist(b.c, near.c);
-        if (d > pull.reach) continue;
-        if (near.access && !g.connected(near.access.seg, b.access.seg)) continue;
-        const s = (d * (0.6 + rng() * 0.8)) / pull.draw;
-        if (s < bs) { bs = s; best = b; }
-      }
-      if (best) return best;
-    }
-    return this.pickShop(near);
   }
 
   private scheduleFree(c: Citizen) {
@@ -466,11 +339,6 @@ export class Society {
   private goHome(c: Citizen) {
     const g = this.g;
     const from = c.at >= 0 ? g.buildings.byId.get(c.at) ?? null : null;
-    if (c.home < 0) {
-      if (!from) { c.st = St.Home; c.at = -1; this.schedule(c, this.leaveFor(c)); return; }
-      this.travel(c, from, null, "home");
-      return;
-    }
     const home = g.buildings.byId.get(c.home);
     if (!home) return;
     if (!from) { this.arriveHome(c); return; }
@@ -497,36 +365,33 @@ export class Society {
 
   // ------------------------------------------------------------------ trips
 
-  /** Start a trip. `from`/`to` null = outside the region (through the nearest connected motorway border). */
-  private travel(c: Citizen, from: Building | null, to: Building | null, kind: TripKind) {
+  /** Start a trip. */
+  private travel(c: Citizen, from: Building, to: Building, kind: TripKind) {
     const g = this.g;
-    const inP = !from && to?.access ? g.entryFor(to.access.seg) : null;
-    const outP = !to && from?.access ? g.exitFor(from.access.seg) : null;
-    const a = from ? from.access : inP?.a;
-    const b = to ? to.access : outP?.a;
+    const a = from.access;
+    const b = to.access;
     if (!a || !b || !g.connected(a.seg, b.seg)) {
       // no way there: try again later
-      if (kind === "move") { this.arrive(c); return; }
-      c.st = from ? (from.id === c.home ? St.Home : St.Away) : St.Home;
+      c.st = from.id === c.home ? St.Home : St.Away;
       this.schedule(c, this.now + HOUR * (1 + g.rng()));
-      g.noRoute(to ?? from);
+      g.noRoute(to);
       return;
     }
     c.st = St.Travel;
     c.kind = kind;
-    c.at = to ? to.id : -1;
+    c.at = to.id;
     c.tStart = this.now;
     this.allTrips++;
-    const fromP = from ? from.c : a.p, toP = to ? to.c : b.p;
-    // round the corner to work, the shops, the school or a park: people walk
-    const walk = !!from && !!to && kind !== "move" && dist(fromP, toP) < WALK;
+    const fromP = from.c, toP = to.c;
+    // round the corner to work or the shops: people walk
+    const walk = dist(fromP, toP) < WALK;
     // a bus that goes their way, about as quick as driving: they take it (and leave the car at home)
-    if (!walk && from && to && kind !== "move" && g.transit.lines.size) {
+    if (!walk && g.transit.lines.size) {
       // (about one household in four has no car; more in flats)
       const home = g.buildings.byId.get(c.home);
       const carless = c.hh >= 0 && (c.hh * 7919) % 100 < (home?.zone === "resHigh" || home?.zone === "resMed" ? 40 : 22);
       const bus = g.transit.plan(fromP, toP, carless);
-      if (bus && g.rng() < Math.min(0.95, bus.p * (g.policies.has("freebus") ? EFFECT.freeBus : 1))) {
+      if (bus && g.rng() < Math.min(0.95, bus.p)) {
         this.busTrips++;
         g.transit.wait(c.id, bus);
         c.next = Infinity;
@@ -537,9 +402,9 @@ export class Society {
     if (real) {
       this.carTrips++;
       g.traffic.request({
-        from: a, fromSide: from ? from.side : inP!.side, to: b, toSide: to ? to.side : outP!.side,
-        trip: { kind, from: from ? from.id : -1, to: to ? to.id : -1, resident: c.id, startT: this.now, freeFlow: 0 },
-        truck: kind === "move", tries: 0, wait: 0, through: !from, exit: !to,
+        from: a, fromSide: from.side, to: b, toSide: to.side,
+        trip: { kind, from: from.id, to: to.id, resident: c.id, startT: this.now, freeFlow: 0 },
+        truck: false, tries: 0, wait: 0,
       });
       c.next = Infinity;
     } else {
@@ -565,7 +430,6 @@ export class Society {
   onFail(trip: Trip) {
     const c = this.citizens.get(trip.resident);
     if (!c || c.st !== St.Travel) return;
-    if (trip.kind === "move") { this.arrive(c); return; }
     // give up and resolve the trip as a slow one
     this.schedule(c, this.now + 30);
   }
@@ -574,15 +438,7 @@ export class Society {
     const g = this.g;
     const dur = this.now - c.tStart;
     const kind = c.kind;
-    if (kind === "move") {
-      const hh = this.households.get(c.hh);
-      if (hh && !hh.arrived) {
-        hh.arrived = true;
-        for (const m of hh.members) this.arriveHome(m);
-      }
-      return;
-    }
-    if (kind === "home" || c.at < 0 && c.home < 0) { this.arriveHome(c); return; }
+    if (kind === "home") { this.arriveHome(c); return; }
     const to = g.buildings.byId.get(c.at);
     if (!to) { this.goHome(c); return; }
     c.st = St.Away;
@@ -592,17 +448,10 @@ export class Society {
       const sinceStart = (((this.hourOf() - c.shift) % 24) + 24) % 24;
       const left = sinceStart < 10 ? 8 - sinceStart : 8;
       this.schedule(c, this.now + Math.max(0.5, left) * HOUR);
-    } else if (kind === "school") {
-      // a day of classes; older students graduate after a few
-      if (c.age === Age.Adult && c.school === to.id) {
-        c.studied++;
-        if (c.studied >= g.services.studyDays(to)) { c.edu = Math.min(2, c.edu + 1); this.leaveSchool(c); c.jobless = this.now; }
-      }
-      this.schedule(c, this.nextAt(c.age === Age.Child ? 15 : 16, HOUR * 2));
     } else {
       to.visits += 1;
       to.custToday = (to.custToday ?? 0) + 1;
-      if (!to.svc) g.sale(to);
+      if (!to.placed) g.sale(to);
       this.schedule(c, this.now + HOUR * (0.6 + g.rng() * 1.4));
     }
   }
@@ -611,27 +460,8 @@ export class Society {
     c.st = St.Home;
     c.at = c.home;
     c.kind = "home";
-    if (c.home < 0) { this.schedule(c, this.leaveFor(c)); return; }
     if (c.job >= 0) this.schedule(c, Math.min(this.leaveFor(c), this.now + HOUR * (0.5 + this.g.rng() * 2)));
-    else if (c.age === Age.Child || c.school >= 0) this.schedule(c, this.nextAt(7 + this.g.rng() * 1.2, HOUR * 2));
-    else this.scheduleFree(c);
-  }
-
-  /** An ambulance picked a patient up: they ride along (no trip of their own). */
-  hold(c: Citizen) {
-    c.st = St.Travel;
-    c.kind = "service";
-    c.at = -1;
-    c.next = Infinity;
-  }
-
-  /** The ambulance is back: the patient stays at the clinic for treatment, then goes home. */
-  release(c: Citizen, st: Building | null, dur: number) {
-    if (!st) { c.sick = 0; this.arriveHome(c); return; }
-    c.st = St.Away;
-    c.kind = "service";
-    c.at = st.id;
-    this.schedule(c, this.now + dur);
+    else if (c.age !== Age.Child) this.scheduleFree(c);
   }
 
   // ------------------------------------------------------------------ statistics
@@ -639,7 +469,6 @@ export class Society {
   refreshStats() {
     const s = this.emptyStats();
     for (const hh of this.households.values()) {
-      if (!hh.arrived) { s.movingIn++; continue; }
       s.households++;
       for (const c of hh.members) {
         s.population++;
@@ -648,13 +477,11 @@ export class Society {
         else {
           s.adults++;
           s.workers++;
-          s.edu[c.edu]++;
           if (c.job >= 0) s.employed++;
           else s.unemployed++;
         }
       }
     }
-    for (const c of this.citizens.values()) if (c.home < 0) s.commuters++;
     this.stats = s;
   }
 
@@ -662,22 +489,19 @@ export class Society {
 
   toJSON() {
     const hhs = [...this.households.values()].map((h) => ({
-      id: h.id, home: h.home, arrived: h.arrived, since: h.since,
-      m: h.members.map((c) => [c.id, c.age, c.edu, c.job, c.shift, c.school, c.studied]),
+      id: h.id, home: h.home, since: h.since,
+      m: h.members.map((c) => [c.id, c.age, c.job, c.shift]),
     }));
-    const commuters = [...this.citizens.values()].filter((c) => c.home < 0).map((c) => [c.id, c.edu, c.job, c.shift, c.gate]);
-    return { hhs, commuters, nextC: this.nextC, nextH: this.nextH };
+    return { hhs, nextC: this.nextC, nextH: this.nextH };
   }
 
   load(d: ReturnType<Society["toJSON"]>) {
     this.citizens.clear(); this.households.clear(); this.staff.clear(); this.hhAt.clear(); this.q.clear();
     const rng = this.g.rng;
     for (const h of d.hhs) {
-      const hh: Household = { id: h.id, home: h.home, members: [], arrived: true, since: h.since };
-      for (const [id, age, edu, job, shift, school, studied] of h.m) {
-        const c: Citizen = { id, hh: h.id, home: h.home, gate: -1, age: age as Age, edu, job: -1, shift, st: St.Home, at: h.home, kind: "home", next: Infinity, commute: -1, tStart: 0, jobless: 0, school: -1, studied: 0, sick: 0 };
-        const sb = school !== undefined && school >= 0 ? this.g.buildings.byId.get(school) : undefined;
-        if (sb) { this.enrol(c, sb); c.studied = studied ?? 0; }
+      const hh: Household = { id: h.id, home: h.home, members: [], since: h.since };
+      for (const [id, age, job, shift] of h.m) {
+        const c: Citizen = { id, hh: h.id, home: h.home, age: age as Age, job: -1, shift, st: St.Home, at: h.home, kind: "home", next: Infinity, commute: -1, tStart: 0, jobless: 0 };
         this.citizens.set(id, c);
         hh.members.push(c);
         if (job >= 0 && this.g.buildings.byId.has(job)) { c.job = job; this.staff.set(job, this.workersAt(job) + 1); }
@@ -687,17 +511,10 @@ export class Society {
       if (!L) this.hhAt.set(hh.home, (L = []));
       L.push(hh);
       for (const c of hh.members) {
-        if (c.age === Age.Child || c.school >= 0) this.schedule(c, this.nextAt(7 + rng() * 1.2));
-        else if (c.job >= 0) this.schedule(c, this.now + rng() * HOUR * 3);
+        if (c.age === Age.Child) continue;
+        if (c.job >= 0) this.schedule(c, this.now + rng() * HOUR * 3);
         else this.scheduleFree(c);
       }
-    }
-    for (const [id, edu, job, shift, gate] of d.commuters) {
-      if (!this.g.buildings.byId.has(job)) continue;
-      const c: Citizen = { id, hh: -1, home: -1, gate, age: Age.Adult, edu, job, shift, st: St.Home, at: -1, kind: "home", next: Infinity, commute: -1, tStart: 0, jobless: 0, school: -1, studied: 0, sick: 0 };
-      this.citizens.set(id, c);
-      this.staff.set(job, this.workersAt(job) + 1);
-      this.schedule(c, this.now + rng() * HOUR * 3);
     }
     this.nextC = d.nextC;
     this.nextH = d.nextH;
@@ -709,13 +526,6 @@ export class Society {
 export const WALK = 400;
 
 /** Rough door-to-door time for a trip that isn't simulated as a car. */
-/** Places people go for an outing: how far they will drive (m) and how strongly each draws them. */
-const OUTING_PULL: Partial<Record<string, { reach: number; draw: number }>> = {
-  park: { reach: 450, draw: 1 }, parklarge: { reach: 900, draw: 1.8 },
-  townhall: { reach: 1600, draw: 2.2 }, stadium: { reach: 2600, draw: 3.2 }, obstower: { reach: 2600, draw: 3 },
-  concerthall: { reach: 2600, draw: 3 }, skytower: { reach: 3000, draw: 3.4 },
-};
-
 export function estTime(a: V2, b: V2): number {
   return 12 + (dist(a, b) * 1.35) / 11;
 }

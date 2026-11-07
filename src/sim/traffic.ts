@@ -4,7 +4,7 @@ import type { ChangeSet, Connector, Edge, Lane, RoadNetwork, SignalPhase, Signal
 import { Router, dkey, dkDir, dkSeg, type Access } from "./router";
 import type { HaulRun } from "../game/industry";
 
-export type TripKind = "shop" | "leisure" | "work" | "home" | "cargo" | "move" | "empty" | "school" | "service" | "bus";
+export type TripKind = "shop" | "leisure" | "work" | "home" | "cargo" | "empty" | "bus";
 /** A bus going round its line: the stop it is heading for (index into the line) and who is aboard. */
 export interface BusRun {
   line: number; i: number; pax: { c: number; to: number; walk: number }[];
@@ -13,8 +13,6 @@ export interface BusRun {
   /** the stop it was driving to was taken away: where it pulls up is no stop, it just goes on to stop i */
   detour?: boolean;
 }
-/** What a service vehicle is doing: driving out to a call, or back to its station (see game/services.ts). */
-export interface ServiceRun { svc: string; station: number; target: number; leg: "out" | "back"; patient?: number; /** the leg ended (arrived or failed) */ done?: boolean; /** a garbage truck's load so far on its round */ load?: number; /** route index a garbage truck has emptied bins up to */ swept?: number }
 
 export interface Trip {
   kind: TripKind;
@@ -24,7 +22,6 @@ export interface Trip {
   cargo?: string;
   startT: number;
   freeFlow: number;
-  run?: ServiceRun;
   bus?: BusRun;
   /** one of the company's trucks (see game/industry.ts) */
   haul?: HaulRun;
@@ -86,7 +83,7 @@ export interface Vehicle {
   constrained: boolean; // held up by another vehicle, a stop line or a signal this step
   /** Leaves the map at its destination (outside connection): drives through at speed instead of turning in. */
   exit?: boolean;
-  /** Missed its way and can't get back (its trip already counted as failed): drives out of the region, or just leaves. */
+  /** Missed its way and can't get back (its trip already counted as failed): leaves the road at the end of its lane. */
   lost?: boolean;
   /** A bus standing at its stop: seconds left before it pulls out again. */
   dwell?: number;
@@ -117,8 +114,8 @@ export interface PendingSpawn {
 
 /** Seconds a car takes to come out of its lot to the kerb before it joins the road (drawn by the renderer). */
 export const EMERGE = 2.6;
-/** Whether a trip starts in a building's lot (and so rolls out of it first): not service runs or outside traffic. */
-export const fromLot = (p: PendingSpawn) => !p.through && !p.trip.run && !p.trip.bus;
+/** Whether a trip starts in a building's lot (and so rolls out of it first): not buses or traffic driving in at speed. */
+export const fromLot = (p: PendingSpawn) => !p.through && !p.trip.bus;
 /** Whether phase `ph` lets traffic from arm `seg` turning `turn` go (a left-turn phase: only left turns and U-turns). */
 export const goesIn = (ph: SignalPhase, seg: number, turn?: string) => ph.arms.includes(seg) && (!ph.left || turn === "L" || turn === "U");
 
@@ -131,8 +128,6 @@ const CAR_COLORS = [0xf1f1ee, 0xe4e5e3, 0xbfc2c5, 0x8d9095, 0x2a2c30, 0x45484e, 
 export interface TrafficEvents {
   arrive(v: Vehicle, now: number): void;
   fail(trip: Trip, reason: string, now: number): void;
-  /** Where cars leave the region (a car that lost its way heads for one). */
-  exits?(): Access[];
   /** A bus reached its stop: where it goes next and how long it stands here first (null: it leaves the road). */
   busAt?(v: Vehicle): { to: Access; dwell: number } | null;
 }
@@ -1601,7 +1596,7 @@ export class Traffic {
 
   /**
    * A car on the last road of its plan that isn't its destination (it was squeezed into the wrong exit):
-   * plan again from here; if there's no way back, give up the trip and drive out of the region instead.
+   * plan again from here; if there's no way back, give up the trip and leave the road.
    * Returns true when it has a road to go on to.
    */
   private findWay(v: Vehicle, lane: Lane): boolean {
@@ -1613,8 +1608,8 @@ export class Traffic {
   /**
    * Plan again from the end of the current lane. A plan from a lane end always has at least one more road in it,
    * so this never lands back on a final lane it has already overshot. With no way to the destination at all
-   * (a dead-end one-way, a road removed behind it) the trip is given up and the car heads out of the region;
-   * if it can't even do that it leaves the road at the end of this lane instead of parking there.
+   * (a dead-end one-way, a road removed behind it) the trip is given up and the car leaves the road at the end of
+   * this lane instead of parking there.
    */
   private reroute(v: Vehicle) {
     const e = v.edge;
@@ -1632,14 +1627,6 @@ export class Traffic {
     if (v.lost) return;
     this.ev.fail(v.trip, "missed its turn", this.time);
     v.lost = true;
-    for (const a of this.ev.exits?.() ?? []) {
-      const r2 = this.router.routeFromKey(k, a);
-      if (!r2) continue;
-      v.dest = a;
-      v.exit = true;
-      v.route = r2;
-      return;
-    }
   }
 
   /** Keep route[0..from] and plan the rest from route[from]. */

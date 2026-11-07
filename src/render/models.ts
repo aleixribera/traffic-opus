@@ -16,12 +16,9 @@ export interface VehicleModel {
 }
 
 export const BUILDING_MODELS: BuildingKind[] = [
-  "house", "terrace", "apartments", "shop", "store", "mall", "office", "tower", "mine", "farm", "works", "foodplant",
-  "garbage", "firestation", "police", "clinic", "hospital", "school", "highschool", "university", "park", "parklarge",
-  "windturbine", "coalplant", "solarfarm", "waterpump", "sewageoutlet",
-  "townhall", "stadium", "obstower", "concerthall", "skytower",
+  "house", "terrace", "apartments", "shop", "store", "mall", "mine", "farm", "works", "foodplant", "coalplant",
 ];
-export const VEHICLE_MODELS = ["car", "van", "truck", "bus", "garbagetruck", "firetruck", "ambulance", "policecar"] as const;
+export const VEHICLE_MODELS = ["car", "van", "truck", "bus"] as const;
 /** Street furniture, drawn on its own (not a lot). */
 export const PROP_MODELS = ["busstop"] as const;
 export type VehicleKind = (typeof VEHICLE_MODELS)[number];

@@ -20,19 +20,20 @@ function road(g: Game, a: V2, b: V2, type: any = "street") {
   expect(g.build(plan)).toBe(true);
 }
 
-/** Run the sim for some game hours, tracking the longest any car stood still. */
+/** Run the sim for some game hours, tracking the longest any car stood still (and how many cars took to the road). */
 function run(g: Game, hours: number) {
   let worst = 0;
+  const seen = new Set<number>();
   for (let i = 0; i < hours * HOUR * 30; i++) {
     g.step(1 / 30);
-    if (i % 30 === 0) for (const v of g.traffic.vehicles) worst = Math.max(worst, v.stuck);
+    if (i % 30 === 0) for (const v of g.traffic.vehicles) { worst = Math.max(worst, v.stuck); seen.add(v.id); }
   }
-  return worst;
+  return { worst, cars: seen.size };
 }
 
 const okCells = (g: Game) => [...g.zones.allCells()].filter((c) => c.ok);
 
-/** A small town on seed 7: a street from the motorway to the origin and a grid, zoned homes / shops / industry. */
+/** A small town on seed 7: a long street in to the origin and a grid, zoned homes / shops / industry. */
 function town(g: Game) {
   road(g, v2(366, 473), v2(0, 0));
   road(g, v2(-200, 0), v2(0, 0));
@@ -50,7 +51,7 @@ describe("Zoning", () => {
   it("makes cells only beside roads that allow driveways, both sides, and paints are undoable", () => {
     const g = new Game(7);
     const before = okCells(g).length;
-    expect(before).toBe(0); // the motorway gets no zoning
+    expect(before).toBe(0); // no roads yet, no zoning
     road(g, v2(0, 0), v2(200, 0));
     const cells = okCells(g);
     // 200 m of street: about 24 columns a side, 6 deep
@@ -84,14 +85,13 @@ describe("Zoning", () => {
 });
 
 describe("Growth, people and money", () => {
-  it("grows a town: households move in by the highway, find work, shops get goods, taxes come in", () => {
+  it("grows a town: households move in, find work, shops get goods, income comes in", () => {
     const g = new Game(7);
     town(g);
-    expect(g.entries.length).toBeGreaterThan(0);
     const m0 = g.money;
-    const worst = run(g, 48);
+    const { worst } = run(g, 48);
     const s = g.people.stats;
-    const by = { res: 0, com: 0, ind: 0, off: 0 };
+    const by = { res: 0, com: 0, ind: 0 };
     for (const b of g.buildings.list) by[ZONE_GROUP[b.zone!]]++;
     expect(s.population, JSON.stringify(s)).toBeGreaterThan(80);
     expect(by.res).toBeGreaterThan(10);
@@ -107,14 +107,15 @@ describe("Growth, people and money", () => {
     expect(lonely).toBeLessThanOrEqual(Math.ceil(shops.length / 3));
   }, 120000);
 
-  it("a city cut off from the highway gets no residents", () => {
+  it("households move straight into new homes: no highway or outside world needed", () => {
     const g = new Game(7);
     road(g, v2(-200, 0), v2(0, 0));
     road(g, v2(0, 0), v2(0, -300));
     g.zonePaint(okCells(g), "resLow");
     run(g, 12);
-    expect(g.demand.res.factors.some((f) => f.label === "No highway connection") || g.people.stats.population === 0).toBe(true);
-    expect(g.people.stats.population).toBe(0);
+    expect(g.people.stats.population).toBeGreaterThan(0);
+    // nobody is left on the road with nowhere to go: every household is home
+    for (const hh of g.people.households.values()) expect(g.buildings.byId.has(hh.home)).toBe(true);
   }, 60000);
 
   it("repainting a lot demolishes its building, and undo brings it back", () => {
@@ -189,7 +190,8 @@ describe("Growth, people and money", () => {
     expect(okCells(h).filter((c) => c.zone).length).toBe(okCells(g).filter((c) => c.zone).length);
     expect(h.people.citizens.size).toBe(g.people.citizens.size);
     expect(Math.round(h.money)).toBe(Math.round(g.money));
-    expect(() => Game.load({ ...json, v: 1 })).toThrow();
+    // saves from before the city-builder systems came out (v2, with taxes, services and gateways) are refused, clearly
+    for (const v of [1, 2, undefined]) expect(() => Game.load({ ...json, v } as typeof json)).toThrow(/older version/);
     run(h, 2); // and it keeps running
   }, 60000);
 });
@@ -207,12 +209,15 @@ describe("Traffic in a growing city", () => {
       const plan = planRoad(g.net, g.world, { start: snap(g.net, v2(x, y), { mpp: 0.5, level: 0, type: "street" }).node !== undefined ? snap(g.net, v2(x, y), { mpp: 0.5, level: 0, type: "street" }) : from, end, mode: "straight", type: "street" });
       if (!plan.errors.length) g.build(plan);
     }
+    // homes on a street out south, too far from the jobs round the ring to walk: commuters drive through it
+    road(g, v2(0, -160), v2(0, -760));
     const cells = okCells(g);
-    g.zonePaint(cells.filter((c) => c.c.y < -30), "resLow");
+    g.zonePaint(cells.filter((c) => c.c.y < -460), "resLow");
     g.zonePaint(cells.filter((c) => c.c.y >= -30 && c.c.x < 0), "comLow");
     g.zonePaint(cells.filter((c) => c.c.y >= -30 && c.c.x >= 0), "ind");
-    const worst = run(g, 36);
+    const { worst, cars } = run(g, 36);
     expect(g.people.stats.population).toBeGreaterThan(30);
+    expect(cars).toBeGreaterThan(40);
     expect(worst).toBeLessThan(90);
   }, 120000);
 
@@ -222,17 +227,16 @@ describe("Traffic in a growing city", () => {
     const grid = planGrid(g.net, g.world, v2(-110, -110), v2(110, 110), v2(1, 0), "street", 0);
     expect(grid.errors.map((e) => e.msg)).toEqual([]);
     expect(g.build(grid)).toBe(true);
-    // link the grid to the motorway
-    const mw = [...g.net.nodes.values()].filter((n) => [...g.net.segs.values()].some((s) => (s.a === n.id || s.b === n.id) && s.type === "hw2"))
-      .sort((a, b) => Math.hypot(a.p.x, a.p.y) - Math.hypot(b.p.x, b.p.y))[0];
-    road(g, mw.p, v2(110, 110));
-    expect(g.entries.length && g.entryFor([...g.net.segs.keys()].pop()!)).toBeTruthy();
+    // suburbs up streets north and south, too far to walk: their commuters drive into the grid
+    road(g, v2(0, 110), v2(0, 760));
+    road(g, v2(0, -110), v2(0, -760));
     const cells = okCells(g);
-    g.zonePaint(cells, "resLow");
-    g.zonePaint(cells.filter((c) => c.c.x > 40), "ind");
-    g.zonePaint(cells.filter((c) => c.c.x < -40 && c.c.y < 0), "comLow");
-    const worst = run(g, 48);
+    g.zonePaint(cells.filter((c) => Math.abs(c.c.y) > 480), "resLow");
+    g.zonePaint(cells.filter((c) => Math.abs(c.c.y) <= 120 && c.c.x > 0), "ind");
+    g.zonePaint(cells.filter((c) => Math.abs(c.c.y) <= 120 && c.c.x <= 0), "comLow");
+    const { worst, cars } = run(g, 48);
     expect(g.people.stats.population).toBeGreaterThan(60);
+    expect(cars).toBeGreaterThan(60);
     expect(worst).toBeLessThan(90);
     expect(g.traffic.flowScore()).toBeGreaterThan(0.6);
   }, 180000);
@@ -257,15 +261,15 @@ describe("Zoned land fills up", () => {
     expect(cells.filter((c) => c.zone && !c.lot).length).toBe(0);
   }, 120000);
 
-  it("so do industry, shops and offices: every zone has a lot small enough for the leftovers between blocks", () => {
+  it("so do industry and shops: every zone has a lot small enough for the leftovers between blocks", () => {
     const g = new Game(3);
     (g as { money: number }).money = 1e7;
     expect(g.build(planGrid(g.net, g.world, v2(-110, -110), v2(110, 110), v2(1, 0), "street", 0))).toBe(true);
     const cells = okCells(g);
     g.zonePaint(cells.filter((c) => c.c.x > 30), "ind");
     g.zonePaint(cells.filter((c) => c.c.x <= 30 && c.c.y < 0), "comLow");
-    g.zonePaint(cells.filter((c) => c.c.x <= 30 && c.c.y >= 0), "offLow");
-    for (let i = 0; i < 4000; i++) for (const gp of ["ind", "com", "off"]) (g as any).grow(gp);
+    g.zonePaint(cells.filter((c) => c.c.x <= 30 && c.c.y >= 0), "resLow");
+    for (let i = 0; i < 4000; i++) for (const gp of ["ind", "com", "res"]) (g as any).grow(gp);
     const left = cells.filter((c) => c.zone && !c.lot);
     // (a lone column between two zones painted side by side is the player's doing: allow a few)
     expect(left.length).toBeLessThan(cells.length * 0.04);

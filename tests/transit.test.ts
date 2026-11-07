@@ -27,7 +27,7 @@ function run(g: Game, hours: number, each?: () => void) {
 
 const okCells = (g: Game) => [...g.zones.allCells()].filter((c) => c.ok);
 
-/** Seed 7: shops and industry down by the motorway link, and a suburb a kilometre up the road (too far to walk). */
+/** Seed 7: shops and industry by the long street in, and a suburb a kilometre up the road (too far to walk). */
 function town(g: Game) {
   road(g, v2(366, 473), v2(0, 0));
   road(g, v2(-200, 0), v2(0, 0));

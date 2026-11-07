@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { BUILDING_TYPES, LEVEL_H, TILE, MAX_LEVEL, ROAD_TYPES, SIM, roadWidth, type RoadTypeId } from "./config";
-import { cubicAt, dist, dot, formatMoney, norm, rectCorners, right, sub, v2, type V2 } from "./core/math";
+import { dist, dot, formatMoney, norm, rectCorners, right, sub, v2, type V2 } from "./core/math";
 import type { Building } from "./game/buildings";
 import { Game } from "./game/city";
 import {
@@ -22,10 +22,10 @@ import { Transit3D, legPoints } from "./render/transit3d";
 import { STOP_COST } from "./game/transit";
 import { View } from "./render/view";
 import { Saves } from "./game/saves";
-import { SERVICES, isUtilityId, type Coverage, type ServiceId, type ServiceKind } from "./game/services";
+import { PLACED, type PlacedKind } from "./game/placed";
 import type { Hud, Chip } from "./ui/hud";
 
-export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "zone" | "unlock" | "service" | "transit";
+export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "zone" | "unlock" | "place" | "transit";
 /** The bus tool: put stops on the kerb, or click stops in order to make a line. */
 export type TransitMode = "stop" | "line";
 /** Zoning tool modes (CS2): fill one side of a street, paint with a brush, or drag a rectangle. */
@@ -33,8 +33,7 @@ export type ZoneMode = "fill" | "brush" | "marquee";
 /** Road tool modes, as in CS2: the four drawing modes, a 3-click grid, and Replace (change type / reverse). */
 export type RoadMode = CurveMode | "grid" | "replace";
 export const ROAD_MODES: RoadMode[] = ["straight", "curve", "complex", "continuous", "grid", "replace"];
-export type OverlayId = "none" | "flow" | "zones" | "landvalue" | "level" | "problems" | ServiceId;
-const SERVICE_VIEWS: OverlayId[] = ["garbage", "fire", "police", "health", "school", "parks", "landmark"];
+export type OverlayId = "none" | "flow" | "zones" | "landvalue" | "level" | "problems" | "power";
 
 export interface ToolState {
   tool: ToolId;
@@ -56,7 +55,7 @@ export interface ToolState {
   erase: boolean; // zoning tool removes zoning
   bdzLevel: number | null; // bulldozer elevation filter (null = all)
   reverse: boolean; // upgrade tool flips one-ways instead
-  service: ServiceKind; // service building being placed
+  placed: PlacedKind; // building being placed
   transitMode: TransitMode;
 }
 
@@ -79,7 +78,7 @@ export class App {
   st: ToolState = {
     tool: "inspect", roadType: "street", mode: "straight", level: 0, rbSize: 1, parallel: false, parOffset: null,
     snapOff: { geometry: false, guides: false, netSide: false }, snapLength: true, angleLock: true, zone: "resLow", zoneMode: "fill", brush: 22, erase: false, bdzLevel: null, reverse: false,
-    service: "garbage", transitMode: "stop",
+    placed: "coalplant", transitMode: "stop",
   };
   /** stops clicked so far for the bus line being drawn */
   lineDraft: number[] = [];
@@ -119,10 +118,6 @@ export class App {
   private saveT = 0;
   private dirtyPreview = true;
   private shake = 0;
-  /** What a service building placed at the cursor would cover (seg -> level), keyed by where it would stand. */
-  private svcReach: { key: string; cov: Map<number, number> } | null = null;
-  private covShown = false;
-  private covT = 0;
 
   constructor(canvas: HTMLCanvasElement, private models: ModelSet) {
     this.view = new View(canvas);
@@ -164,28 +159,14 @@ export class App {
 
   newGame(seed = 7) {
     this.setGame(new Game(seed));
-    // open on the town site with the motorway you connect to in view
-    let best = v2(0, 0), bd = Infinity;
-    for (const s of this.game.net.segs.values()) {
-      for (let i = 0; i <= 16; i++) {
-        const p = cubicAt(s.c, i / 16), d = Math.hypot(p.x, p.y);
-        if (d < bd) { bd = d; best = p; }
-      }
-    }
-    const far = bd < 900;
-    this.view.cx = far ? best.x * 0.5 : 0;
-    this.view.cy = far ? best.y * 0.5 : 0;
-    this.view.halfH = far ? Math.max(170, bd * 0.62) : 170;
+    // open on the town site
+    this.view.cx = 0;
+    this.view.cy = 0;
+    this.view.halfH = 170;
   }
 
   loadGame(data: ReturnType<Game["serialize"]>) {
     this.setGame(Game.load(data));
-  }
-
-  /** Gateway city names on the map, marked when the roads link them. */
-  private gatewayLabels() {
-    const g = this.game;
-    this.labels.set(g.gateways.map((gw) => ({ p: gw.p, name: gw.name, sub: `${GATEWAY_LABEL[gw.kind]}${g.linked.has(gw.id) ? " · linked" : ""}`, minHalfH: 900 })));
   }
 
   /** Point the camera at a place, zoomed out to at least `halfH`. */
@@ -204,8 +185,7 @@ export class App {
     this.terrain3d = new Terrain3D(g.terrain, small);
     this.roads = new Roads3D(g.net);
     this.roadsFar = new RoadsFar(g.net);
-    this.terrain3d.setGateways(g.gateways);
-    this.gatewayLabels();
+    this.labels.set([]);
     this.vehicles = new Vehicles3D(this.models);
     this.buildings3d = new Buildings3D(this.models);
     this.vehicles.lotOf = (id) => { const b = g.buildings.byId.get(id); return b ? this.buildings3d.lotWay(b) : null; };
@@ -217,7 +197,6 @@ export class App {
     this.buildings3d.rebuild(g.buildings.list);
     this.terrain3d.setTiles(g.tiles);
     g.on((e) => {
-      if (e.t === "trade") this.gatewayLabels();
       if (e.t === "roads") { this.roads.apply(e.cs); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
       else if (e.t === "buildings") { this.buildings3d.rebuild(g.buildings.list); this.applyTint(); this.dirtyPreview = true; }
       else if (e.t === "tiles") this.terrain3d.setTiles(g.tiles);
@@ -242,9 +221,7 @@ export class App {
     if (!this.game.roadsUnlocked.has(this.st.roadType)) this.st.roadType = "street";
     if ((this.st.tool === "roundabout" && !this.game.featureUnlocked("roundabout"))) this.st.tool = "inspect";
     if (!this.game.zonesUnlocked.has(this.st.zone)) this.st.zone = "resLow";
-    if (this.st.tool === "service" && !this.game.serviceUnlocked(this.st.service)) this.st.tool = "inspect";
-    if (this.st.tool !== "service") this.svcReach = null;
-    this.covT = 1; // refresh the coverage view now
+    if (this.st.tool === "place" && !this.game.placedUnlocked(this.st.placed)) this.st.tool = "inspect";
     if (this.buildings3d) this.applyTint();
     this.zones3d?.setGrid(this.st.tool === "zone" || this.overlay === "zones");
     if (this.st.tool !== "zone") { this.zoneStroke = null; this.zones3d?.highlight([], null); }
@@ -260,42 +237,16 @@ export class App {
   setOverlay(o: OverlayId) {
     this.overlay = this.overlay === o ? "none" : o;
     this.roads.flowMode = this.overlay === "flow";
-    this.covShown = false;
-    this.covT = 1;
     this.zones3d?.setGrid(this.st.tool === "zone" || this.overlay === "zones");
     this.applyTint();
     this.hud?.refresh();
   }
 
-  /** The service whose coverage is on show: its info view, or the one being placed (CS2 shows it while placing). */
-  coverageView(): ServiceId | null {
-    if (SERVICE_VIEWS.includes(this.overlay)) return this.overlay as ServiceId;
-    if (this.overlay === "none" && this.st.tool === "service" && !isUtilityId(SERVICES[this.st.service].svc)) return SERVICES[this.st.service].svc;
+  /** The utility on show: its info view, or the one whose plant is being placed. */
+  utilityView(): "power" | null {
+    if (this.overlay === "power") return "power";
+    if (this.overlay === "none" && this.st.tool === "place" && PLACED[this.st.placed].utility === "power") return "power";
     return null;
-  }
-
-  /** The utility on show: its info view, or the one whose plant is being placed. Water also shows sewage. */
-  utilityView(): "power" | "water" | null {
-    if (this.overlay === "power" || this.overlay === "water") return this.overlay;
-    if (this.overlay === "none" && this.st.tool === "service") {
-      const s = SERVICES[this.st.service].svc;
-      if (isUtilityId(s)) return s === "power" ? "power" : "water";
-    }
-    return null;
-  }
-
-  /** Roads tinted by coverage (plus what the building at the cursor would add). */
-  private updateCoverage() {
-    const svc = this.coverageView();
-    // (parks and landmarks reach by distance, not along the roads: their view tints buildings only)
-    if (!svc || svc === "parks" || svc === "landmark") {
-      if (this.covShown) { this.roads.coverage(null); this.roads.flowMode = this.overlay === "flow"; this.covShown = false; }
-      return;
-    }
-    const cov = this.game.services.segCoverage(svc);
-    if (this.svcReach) for (const [s, l] of this.svcReach.cov) if (l > (cov.get(s) ?? 0)) cov.set(s, l);
-    this.roads.coverage(cov);
-    this.covShown = true;
   }
 
   /** Building colours for overlays. */
@@ -306,25 +257,12 @@ export class App {
     if (uv) {
       // supply: buildings that get all they need go green, short ones orange to red; the plants stand out
       this.buildings3d.tint((b) => {
-        if (b.svc) {
-          const s = SERVICES[b.kind as ServiceKind]?.svc;
-          return s === uv || (uv === "water" && s === "sewage") ? 0x2f86e0 : 0xc9c9c9;
-        }
+        if (b.placed) return PLACED[b.kind as PlacedKind]?.utility === uv ? 0x2f86e0 : 0xc9c9c9;
         if (!b.zone || b.built < 1) return 0xc4c4c4;
         if (!b.access) return 0xe5484d;
         const s = g.utilities.supplyOf(b);
-        const v = uv === "power" ? s.power : Math.min(s.water, s.sewage);
+        const v = s.power;
         return v >= 0.999 ? 0x3faa5a : v > 0.6 ? 0xf0a33a : 0xe5484d;
-      });
-      return;
-    }
-    const cv = this.coverageView();
-    if (cv) {
-      // coverage: buildings in reach go green (darker = better served), the rest grey; the service's own buildings stand out
-      this.buildings3d.tint((b) => {
-        if (b.svc) return SERVICES[b.kind as ServiceKind]?.svc === cv ? 0x2f86e0 : 0xc9c9c9;
-        const c = g.services.cov.get(b.id)?.[cv as keyof Coverage] ?? 0;
-        return c <= 0 ? 0xc4c4c4 : covRamp(c);
       });
       return;
     }
@@ -585,9 +523,6 @@ export class App {
     else if (k === "z") this.hud?.toggleWin("economy");
     else if (k === "c") this.hud?.toggleWin("city");
     else if (k === "x") this.hud?.toggleWin("transport");
-    else if (k === "u") this.hud?.toggleWin("utilities");
-    else if (k === "k") this.hud?.toggleWin("policies");
-    else if (k === "t") this.hud?.toggleWin("trade");
     else if (k === "[" || k === "]") this.nudgeParallel(k === "]" ? 1 : -1);
     else if (k === "`" || e.code === "Backquote") this.toggleUi();
     else if (k === "F5") { e.preventDefault(); this.quickSave(); }
@@ -626,7 +561,7 @@ export class App {
   quickLoad() {
     const d = this.saves.load("quick");
     if (!d) { this.reject("No quicksave yet (F5 saves)"); return; }
-    this.loadGame(d);
+    try { this.loadGame(d); } catch (e) { this.reject(String(e).includes("older version") ? "That quicksave is from an older version" : "Couldn't load the quicksave"); return; }
     this.hud?.toast("Quickload");
   }
 
@@ -783,16 +718,15 @@ export class App {
       return;
     }
     if (t === "transit") { this.transitClick(); return; }
-    if (t === "service") {
-      const k = this.st.service;
-      const pl = g.servicePlan(k, c);
+    if (t === "place") {
+      const k = this.st.placed;
+      const pl = g.placedPlan(k, c);
       if (!pl) { this.reject("Place it beside a street"); return; }
       if (!pl.ok) { this.reject(pl.reason ?? "Can't build here"); return; }
-      const b = g.placeService(k, c);
+      const b = g.place(k, c);
       if (!b) { this.reject("Can't build here"); return; }
       this.hud?.sound("build");
       this.hud?.toast(`${BUILDING_TYPES[k].name} built for ${formatMoney(pl.cost)}`);
-      this.covT = 1;
       this.dirtyPreview = true;
       return;
     }
@@ -1217,14 +1151,13 @@ export class App {
       }
     } else if (t === "transit") {
       this.transitPreview(pv, chips);
-    } else if (t === "service") {
-      const k = this.st.service;
-      const pl = g.servicePlan(k, c);
+    } else if (t === "place") {
+      const k = this.st.placed;
+      const pl = g.placedPlan(k, c);
       const T = BUILDING_TYPES[k];
       chips.push({ text: T.name, kind: "info" });
       if (!pl) {
         chips.push({ text: "Place it beside a street", kind: "info" });
-        if (this.svcReach) { this.svcReach = null; this.covT = 1; }
       } else {
         const corners = rectCorners(pl.c, T.w / 2, T.d / 2, pl.rot);
         const gh = this.buildings3d.ghost(k, pl.c, pl.rot, pl.side);
@@ -1237,14 +1170,9 @@ export class App {
         if (!pl.ok) chips.push({ text: pl.reason ?? "Can't build here", kind: "error" });
         else {
           chips.push({ text: formatMoney(pl.cost), kind: pl.cost > g.money ? "error" : "cost" });
-          chips.push({ text: `${formatMoney(SERVICES[k].upkeep)}/h upkeep`, kind: "info" });
+          chips.push({ text: `${formatMoney(PLACED[k].upkeep)}/h upkeep`, kind: "info" });
           const n = pl.clears?.length ?? 0;
           if (n) chips.push({ text: `${n} building${n === 1 ? "" : "s"} replaced`, kind: "error" });
-        }
-        const key = pl.access ? `${pl.access.seg}:${Math.round(pl.access.s / 8)}:${g.net.version}` : "";
-        if (!this.svcReach || this.svcReach.key !== key) {
-          this.svcReach = { key, cov: pl.access ? g.services.previewReach(k, pl.access) : new Map() };
-          this.covT = 1;
         }
       }
     } else if (t === "inspect") {
@@ -1297,11 +1225,8 @@ export class App {
       this.hudT = 0;
       this.hud?.tick();
       this.buildings3d.updateConstruction();
-      if ((this.overlay !== "none" && this.overlay !== "flow") || this.st.tool === "service") this.applyTint();
-      else if (this.covShown) this.applyTint();
+      if ((this.overlay !== "none" && this.overlay !== "flow") || this.st.tool === "place") this.applyTint();
     }
-    this.covT += dt;
-    if (this.covT > 0.5) { this.covT = 0; this.updateCoverage(); }
     this.saveT += dt;
     if (this.saveT > 60) { this.saveT = 0; if (this.mode === "play") this.saves.autosave(g); }
     if (this.shake > 0) {
@@ -1341,18 +1266,7 @@ export class App {
   }
 }
 
-export const GATEWAY_LABEL: Record<string, string> = {
-  port: "Port city", capital: "Capital", industry: "Industrial city", farm: "Farm town", mining: "Mining town", tech: "Tech city",
-};
-
 /** red -> amber -> green ramp for 0..1 */
-/** Coverage colour: pale to deep green. */
-function covRamp(v: number): number {
-  const t = Math.max(0, Math.min(1, (v - 0.4) / 0.6));
-  const r = Math.round(0xb4 + (0x2e - 0xb4) * t), gg = Math.round(0xe0 + (0xa6 - 0xe0) * t), b = Math.round(0x9c + (0x4c - 0x9c) * t);
-  return (r << 16) | (gg << 8) | b;
-}
-
 export function ramp(v: number): number {
   const c = new THREE.Color();
   const t = Math.max(0, Math.min(1, v));

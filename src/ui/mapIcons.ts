@@ -1,13 +1,8 @@
 import type { Building } from "../game/buildings";
 import type { View } from "../render/view";
-import { serviceIcon } from "./icons";
 
 /** What a problem looks like on the map: the pictogram and how urgent it is (urgent ones bounce). */
 function iconFor(p: string): { key: string; svg: string; urgent: boolean } {
-  if (p === "On fire!") return { key: "fire", svg: serviceIcon("firestation"), urgent: true };
-  if (p === "Garbage piling up") return { key: "garbage", svg: serviceIcon("garbage"), urgent: false };
-  if (p === "High crime") return { key: "crime", svg: serviceIcon("crime"), urgent: false };
-  if (p.startsWith("Sick")) return { key: "sick", svg: serviceIcon("sick"), urgent: true };
   if (p === "No road access" || p.startsWith("Trips can't") || p.startsWith("Not connected")) return { key: "road", svg: ROAD, urgent: false };
   return { key: "warn", svg: WARN, urgent: false };
 }
@@ -16,8 +11,8 @@ const WARN = `<svg viewBox="0 0 28 28" aria-hidden="true"><path d="M14 3 L26 24 
 const ROAD = `<svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14" r="11" fill="#e5484d"/><path d="M10 21 L12 7 M18 21 L16 7" stroke="#fff" stroke-width="2" stroke-linecap="round"/><path d="M7 7 L21 21" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg>`;
 
 /**
- * Problem icons floating over buildings (CS2's notification icons): fire, garbage, crime, sick residents, no
- * road, and a generic warning for business trouble. Only the closest few hundred on screen, and only zoomed in.
+ * Problem icons floating over buildings (CS2's notification icons): no road, and a generic warning for business
+ * trouble. Only the closest few hundred on screen, and only zoomed in.
  */
 export class MapIcons {
   readonly el = document.createElement("div");
