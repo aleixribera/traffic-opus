@@ -1,11 +1,11 @@
 import * as THREE from "three";
-import { BUILDING_TYPES, LEVEL_H, ROAD_ORDER, TILE, MAX_LEVEL, ROAD_TYPES, type BuildingKind, type RoadTypeId } from "./config";
-import { cubicTangent, dist, formatMoney, norm, rectCorners, v2, type V2 } from "./core/math";
+import { BUILDING_TYPES, LEVEL_H, TILE, MAX_LEVEL, ROAD_TYPES, roadWidth, type BuildingKind, type RoadTypeId } from "./config";
+import { dist, dot, formatMoney, norm, rectCorners, right, sub, v2, type V2 } from "./core/math";
 import type { Building } from "./game/buildings";
 import { Game } from "./game/city";
 import {
-  cubicClosest, planGrid, planRoad, planRoundabout, removalRefund, segAt, segsInRect, snap,
-  type CurveMode, type Plan, type Snap,
+  parallelSpacing, planGrid, planRoad, planRoundabout, removalRefund, segAt, snap,
+  type CurveMode, type Plan, type RoundaboutSize, type Snap, type SnapOpts,
 } from "./roads/planner";
 import { Buildings3D, lotMatrix } from "./render/buildings3d";
 import type { ModelSet } from "./render/models";
@@ -19,16 +19,25 @@ import { View } from "./render/view";
 import { Saves } from "./game/saves";
 import type { Hud, Chip } from "./ui/hud";
 
-export type ToolId = "inspect" | "road" | "grid" | "roundabout" | "junction" | "upgrade" | "bulldoze" | "building" | "unlock";
+export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "bulldoze" | "building" | "unlock";
+/** Road tool modes, as in CS2: the four drawing modes, a 3-click grid, and Replace (change type / reverse). */
+export type RoadMode = CurveMode | "grid" | "replace";
+export const ROAD_MODES: RoadMode[] = ["straight", "curve", "complex", "continuous", "grid", "replace"];
 export type OverlayId = "none" | "flow" | "sat" | "commercial" | "work" | "staff" | "input" | "pollution" | "noise";
 export type FocusId = "trips" | "sat" | "flow" | null;
 
 export interface ToolState {
   tool: ToolId;
   roadType: RoadTypeId;
-  curve: CurveMode;
+  mode: RoadMode;
   level: number;
-  rbLanes: 1 | 2;
+  rbSize: RoundaboutSize;
+  /** Also build a parallel road; offset in metres (null = side by side with a 4 m median). */
+  parallel: boolean;
+  parOffset: number | null;
+  /** Snapping menu: which kinds are switched off, and 8 m length steps. */
+  snapOff: { geometry: boolean; guides: boolean; netSide: boolean };
+  snapLength: boolean;
   kind: BuildingKind | null;
   bdzLevel: number | null; // bulldozer elevation filter (null = all)
   reverse: boolean; // upgrade tool flips one-ways instead
@@ -48,7 +57,11 @@ export class App {
   preview = new Preview3D();
   saves = new Saves();
   hud!: Hud;
-  st: ToolState = { tool: "inspect", roadType: "street", curve: "straight", level: 0, rbLanes: 1, kind: null, bdzLevel: null, reverse: false };
+  st: ToolState = {
+    tool: "inspect", roadType: "street", mode: "straight", level: 0, rbSize: 1, parallel: false, parOffset: null,
+    snapOff: { geometry: false, guides: false, netSide: false }, snapLength: false, kind: null, bdzLevel: null, reverse: false,
+  };
+  uiHidden = false;
   overlay: OverlayId = "none";
   focus: FocusId = null;
   selected: Building | null = null;
@@ -60,11 +73,15 @@ export class App {
   private anchor: Snap | null = null;
   private startTangent: V2 | undefined;
   private ctrl: V2 | null = null;
+  private ctrl2: V2 | null = null;
+  /** Where the parallel road's last piece ended (to carry on from it). */
+  private parFrom: Snap | undefined;
   private plan: Plan | null = null;
   // drag state
   private pointers = new Map<number, PointerInfo>();
+  /** Bulldozer marquee, in screen pixels (the view may be turned). */
   private dragRect: { a: V2; b: V2 } | null = null;
-  private pinch: { d: number; mid: V2 } | null = null;
+  private pinch: { d: number; mid: V2; ang: number } | null = null;
   private keys = new Set<string>();
   private last = performance.now();
   private hudT = 0;
@@ -127,9 +144,9 @@ export class App {
   // ---------------------------------------------------------------- tools
 
   setTool(p: Partial<ToolState>) {
-    const prev = this.st.tool;
+    const prev = this.st.tool, prevMode = this.st.mode;
     Object.assign(this.st, p);
-    if (p.tool && p.tool !== prev) this.cancelStroke();
+    if ((p.tool && p.tool !== prev) || (p.mode && p.mode !== prevMode)) this.cancelStroke();
     if (this.st.tool === "building" && this.st.kind) {
       this.preview.setGhost(this.buildings3d.ghost(this.st.kind));
     } else this.preview.setGhost(null);
@@ -184,6 +201,8 @@ export class App {
     this.anchor = null;
     this.startTangent = undefined;
     this.ctrl = null;
+    this.ctrl2 = null;
+    this.parFrom = undefined;
     this.plan = null;
     this.dragRect = null;
     this.dirtyPreview = true;
@@ -220,20 +239,17 @@ export class App {
 
   private onDown(e: PointerEvent) {
     const p = this.local(e);
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    try { (e.target as HTMLElement).setPointerCapture?.(e.pointerId); } catch { /* pointer already gone */ }
     this.pointers.set(e.pointerId, { id: e.pointerId, x: p.x, y: p.y, sx: p.x, sy: p.y, button: e.button, moved: false, t: performance.now() });
     if (this.pointers.size === 2) {
       const [a, b] = [...this.pointers.values()];
-      this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mid: v2((a.x + b.x) / 2, (a.y + b.y) / 2) };
+      this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mid: v2((a.x + b.x) / 2, (a.y + b.y) / 2), ang: Math.atan2(b.y - a.y, b.x - a.x) };
       this.dragRect = null;
       this.hud?.rect(null);
       return;
     }
     this.updateCursor(p);
-    if (e.button === 0 && e.pointerType !== "touch") {
-      const t = this.st.tool;
-      if (t === "grid" || (t === "bulldoze")) this.dragRect = { a: this.cursor, b: this.cursor };
-    }
+    if (e.button === 0 && e.pointerType !== "touch" && this.st.tool === "bulldoze") this.dragRect = { a: p, b: p };
   }
 
   private onMove(e: PointerEvent) {
@@ -244,31 +260,39 @@ export class App {
       const [a, b] = [...this.pointers.values()];
       const d = Math.hypot(a.x - b.x, a.y - b.y);
       const mid = v2((a.x + b.x) / 2, (a.y + b.y) / 2);
-      const m = this.view.mpp;
-      this.view.cx -= (mid.x - this.pinch.mid.x) * m;
-      this.view.cy -= (mid.y - this.pinch.mid.y) * m;
+      const ang = Math.atan2(b.y - a.y, b.x - a.x);
+      this.view.pan(mid.x - this.pinch.mid.x, mid.y - this.pinch.mid.y);
       this.view.zoomAt(mid.x, mid.y, this.pinch.d / Math.max(d, 1));
-      this.pinch = { d, mid };
+      // two-finger twist turns the map with the fingers
+      const da = Math.atan2(Math.sin(ang - this.pinch.ang), Math.cos(ang - this.pinch.ang));
+      if (Math.abs(da) < 0.5) this.view.rotateAt(mid.x, mid.y, -da);
+      this.pinch = { d, mid, ang };
       this.clampView();
       return;
     }
     if (pi) {
       const dx = p.x - pi.x, dy = p.y - pi.y;
       if (Math.hypot(p.x - pi.sx, p.y - pi.sy) > (e.pointerType === "touch" ? 10 : 5)) pi.moved = true;
-      const panning = pi.button === 1 || pi.button === 2 || (pi.button === 0 && !this.dragRect && (this.st.tool === "inspect" || e.pointerType === "touch" || this.keys.has(" ")));
+      // CS2 mouse: right-drag moves the map, middle-drag turns it; left-drag also moves it outside of drawing
+      if (pi.button === 1) {
+        if (pi.moved) this.view.rotateAt(this.view.w / 2, this.view.h / 2, -dx * 0.006);
+        pi.x = p.x; pi.y = p.y;
+        this.updateCursor(p);
+        return;
+      }
+      const panning = pi.button === 2 || (pi.button === 0 && !this.dragRect && (this.st.tool === "inspect" || e.pointerType === "touch" || this.keys.has(" ")));
       if (panning && pi.moved) {
-        this.view.cx -= dx * this.view.mpp;
-        this.view.cy -= dy * this.view.mpp;
+        this.view.pan(dx, dy);
         this.clampView();
       }
       pi.x = p.x; pi.y = p.y;
-      if (panning) return;
+      if (panning) { this.updateCursor(p); return; }
     }
     if (e.target !== this.view.canvas && !pi) { return; }
     this.updateCursor(p);
     if (this.dragRect) {
-      this.dragRect.b = this.cursor;
-      this.hud?.rect([this.view.toScreen(this.dragRect.a), this.view.toScreen(this.dragRect.b)]);
+      this.dragRect.b = p;
+      if (pi?.moved) this.hud?.rect([this.dragRect.a, this.dragRect.b]);
     }
   }
 
@@ -286,7 +310,7 @@ export class App {
     this.hud?.rect(null);
     if (pi.moved) return;
     this.updateCursor(p);
-    if (pi.button === 2) { this.onRightClick(); return; }
+    if (pi.button === 2) { this.stepBack(); return; }
     if (pi.button === 0) this.onClick(e.shiftKey);
   }
 
@@ -295,26 +319,72 @@ export class App {
     if (tag === "INPUT" || tag === "TEXTAREA") return;
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     if (down) this.keys.add(k); else { this.keys.delete(k); return; }
-    if (e.ctrlKey || e.metaKey) {
+    // AltGr arrives as Ctrl+Alt: leave it to the plain keys ([ and ] need it on many layouts)
+    if ((e.ctrlKey || e.metaKey) && !e.altKey) {
       if (k === "z" && !e.shiftKey) { e.preventDefault(); this.undo(); }
       else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); this.redo(); }
       else if (k === "s") { e.preventDefault(); this.hud?.openSaves(); }
       return;
     }
-    if (k === "Escape") { if (this.anchor || this.dragRect) this.cancelStroke(); else if (this.hud?.closePanels()) {} else this.setTool({ tool: "inspect" }); }
+    if (k === "Escape") {
+      if (this.hud?.closeMenu() || this.hud?.closePanels()) { /* closed a menu or panel */ }
+      else if (this.st.tool !== "inspect") this.setTool({ tool: "inspect" });
+      else this.cancelStroke();
+    }
     else if (k === " ") { e.preventDefault(); if (!e.repeat) this.togglePause(); }
-    else if (k === "r" && !e.repeat) this.setLevel(this.st.level + 1);
-    else if (k === "f" && !e.repeat) this.setLevel(this.st.level - 1);
-    else if (k === "Tab") { e.preventDefault(); const order: CurveMode[] = ["straight", "arc", "smooth"]; this.setTool({ curve: order[(order.indexOf(this.st.curve) + 1) % 3] }); }
+    else if (k === "1") this.setSpeed(1);
+    else if (k === "2") this.setSpeed(2);
+    else if (k === "3") this.setSpeed(4);
+    else if (k === "PageUp") { e.preventDefault(); this.setLevel(this.st.level + 1); }
+    else if (k === "PageDown") { e.preventDefault(); this.setLevel(this.st.level - 1); }
+    else if (k === "Tab") {
+      e.preventDefault();
+      const order = ROAD_MODES;
+      const i = order.indexOf(this.st.mode);
+      this.setTool({ tool: "road", mode: order[(i + (e.shiftKey ? order.length - 1 : 1)) % order.length] });
+    }
     else if (k === "b") this.setTool({ tool: "bulldoze" });
-    else if (k === "u") this.setTool({ tool: "upgrade" });
-    else if (k === "g") this.setTool({ tool: "grid" });
-    else if (k === "j") this.setTool({ tool: "junction" });
-    else if (k === "o") this.setTool({ tool: "roundabout" });
-    else if (/^[1-8]$/.test(k)) {
-      this.setTool({ tool: this.st.tool === "upgrade" || this.st.tool === "grid" ? this.st.tool : "road", roadType: ROAD_ORDER[+k - 1] });
-    } else if (k === "=" || k === "+") this.setSpeed(Math.min(4, this.game.speed * 2));
-    else if (k === "-") this.setSpeed(Math.max(1, this.game.speed / 2));
+    else if (k === "m") this.setTool({ tool: "unlock" });
+    else if (k === "[" || k === "]") this.nudgeParallel(k === "]" ? 1 : -1);
+    else if (k === "`" || e.code === "Backquote") this.toggleUi();
+    else if (k === "F5") { e.preventDefault(); this.quickSave(); }
+    else if (k === "F9") { e.preventDefault(); this.quickLoad(); }
+  }
+
+  /** Parallel road spacing for the current type. */
+  parallelOffset(): number {
+    // a spacing set for a narrower road never lets a wider one overlap its twin
+    const min = roadWidth(ROAD_TYPES[this.st.roadType]) + 0.5;
+    return Math.max(min, this.st.parOffset ?? parallelSpacing(this.st.roadType));
+  }
+
+  /** Turn the map back north-up (the north arrow). */
+  resetNorth() {
+    this.view.rot = 0;
+    if (this.hasCursor) this.updateCursor(this.cursorPx);
+    this.dirtyPreview = true;
+  }
+
+  nudgeParallel(dir: number) {
+    const min = roadWidth(ROAD_TYPES[this.st.roadType]) + 0.5;
+    this.setTool({ parallel: true, parOffset: Math.max(min, Math.min(200, Math.round(this.parallelOffset()) + dir)) });
+  }
+
+  toggleUi() {
+    this.uiHidden = !this.uiHidden;
+    document.body.classList.toggle("ui-hidden", this.uiHidden);
+  }
+
+  quickSave() {
+    if (this.saves.save(this.game, "Quicksave", "quick")) this.hud?.toast("Quicksaved (F9 to load)");
+    else this.reject("Couldn't save: browser storage is full");
+  }
+
+  quickLoad() {
+    const d = this.saves.load("quick");
+    if (!d) { this.reject("No quicksave yet (F5 saves)"); return; }
+    this.loadGame(d);
+    this.hud?.toast("Quickload");
   }
 
   togglePause() {
@@ -343,19 +413,40 @@ export class App {
     this.dirtyPreview = true;
   }
 
-  private snapOpts(from?: Snap) {
+  private snapOpts(from?: Snap): SnapOpts {
     return {
       mpp: this.view.mpp, level: this.st.level, type: this.st.roadType,
       from: from ? { p: from.p, tangent: this.startTangent ?? from.tangent } : undefined,
       angleStep: this.keys.has("Shift"),
+      off: this.st.snapOff,
+      lengthStep: this.st.snapLength ? 8 : 0,
     };
+  }
+
+  /** A free point (bend handle, grid side) with guides and angle snapping but never stuck onto a road. */
+  private snapFree(from: Snap | null): Snap {
+    const o = this.snapOpts(from ?? undefined);
+    return snap(this.game.net, this.cursor, { ...o, off: { ...this.st.snapOff, geometry: true }, lengthStep: 0 });
+  }
+
+  /** How many clicks the current road mode still needs before it builds. */
+  private roadStep(): "start" | "ctrl" | "ctrl2" | "end" {
+    if (!this.anchor) return "start";
+    const m = this.st.mode;
+    if ((m === "curve" || m === "complex" || m === "grid") && !this.ctrl) return "ctrl";
+    if (m === "complex" && !this.ctrl2) return "ctrl2";
+    return "end";
   }
 
   // ---------------------------------------------------------------- clicks
 
-  private onRightClick() {
-    if (this.anchor || this.ctrl) this.cancelStroke();
-    else if (this.st.tool !== "inspect") this.setTool({ tool: "inspect" });
+  /** Right click (CS2): undo the last click of the road being drawn. */
+  stepBack() {
+    if (this.dragRect) { this.dragRect = null; this.hud?.rect(null); }
+    else if (this.ctrl2) this.ctrl2 = null;
+    else if (this.ctrl) this.ctrl = null;
+    else if (this.anchor) { this.anchor = null; this.startTangent = undefined; this.parFrom = undefined; }
+    this.dirtyPreview = true;
   }
 
   private onClick(shift: boolean) {
@@ -374,45 +465,7 @@ export class App {
       }
       return;
     }
-    if (t === "road") {
-      if (!this.anchor) {
-        const s = snap(g.net, c, this.snapOpts());
-        this.anchor = s;
-        this.startTangent = undefined;
-        this.dirtyPreview = true;
-        return;
-      }
-      if (this.st.curve === "arc" && !this.ctrl && !(this.startTangent ?? this.anchor.tangent)) {
-        this.ctrl = c;
-        return;
-      }
-      const plan = this.computeRoadPlan();
-      if (!plan) return;
-      if (plan.errors.length) { this.reject(plan.errors[0].msg); return; }
-      const endP = plan.strokes[0].chain.length ? plan.strokes[0].chain[plan.strokes[0].chain.length - 1].p3 : c;
-      const endH = plan.strokes[0].h1;
-      if (g.build(plan)) {
-        this.hud?.sound("build");
-        // keep drawing from where this road ended
-        const s = snap(g.net, endP, { ...this.snapOpts(), mpp: 0.05 });
-        this.anchor = s.node !== undefined ? s : { p: endP, h: endH, guides: [] };
-        this.startTangent = plan.endTangent;
-        this.ctrl = null;
-      }
-      return;
-    }
-    if (t === "roundabout") {
-      const plan = this.computeRoundabout();
-      if (!plan) return;
-      if (plan.errors.length) { this.reject(plan.errors[0].msg); return; }
-      if (g.build(plan)) this.hud?.sound("build");
-      return;
-    }
-    if (t === "grid") {
-      this.reject("Drag to draw a grid");
-      return;
-    }
-    if (t === "upgrade") {
+    if (t === "road" && this.st.mode === "replace") {
       const id = segAt(g.net, c, 2, null);
       if (id === null) return;
       if (this.st.reverse || shift) {
@@ -425,6 +478,62 @@ export class App {
       const u = g.upgradePlan(id, this.st.roadType);
       if (u.errors.length) { this.reject(u.errors[0].msg); return; }
       if (g.upgrade(id, this.st.roadType)) this.hud?.sound("build");
+      return;
+    }
+    if (t === "road") {
+      const step = this.roadStep();
+      if (step === "start") {
+        this.anchor = snap(g.net, c, this.snapOpts());
+        this.startTangent = undefined;
+        this.parFrom = undefined;
+        this.dirtyPreview = true;
+        return;
+      }
+      if (step === "ctrl") {
+        const s = this.snapFree(this.anchor);
+        if (dist(s.p, this.anchor!.p) < (this.st.mode === "grid" ? 30 : 4)) { this.reject(this.st.mode === "grid" ? "Make the grid wider" : "Click further away"); return; }
+        this.ctrl = s.p;
+        this.dirtyPreview = true;
+        return;
+      }
+      if (step === "ctrl2") {
+        this.ctrl2 = this.snapFree(this.anchor).p;
+        this.dirtyPreview = true;
+        return;
+      }
+      if (this.st.mode === "grid") {
+        const plan = this.computeGrid();
+        if (!plan) return;
+        if (plan.errors.length) { this.reject(plan.errors[0].msg); return; }
+        if (g.build(plan)) { this.hud?.sound("build"); this.cancelStroke(); }
+        return;
+      }
+      const plan = this.computeRoadPlan();
+      if (!plan) return;
+      if (plan.errors.length) { this.reject(plan.errors[0].msg); return; }
+      const endP = plan.strokes[0].chain.length ? plan.strokes[0].chain[plan.strokes[0].chain.length - 1].p3 : c;
+      const endH = plan.strokes[0].h1;
+      if (g.build(plan)) {
+        this.hud?.sound("build");
+        // keep drawing from where this road ended
+        const s = snap(g.net, endP, { ...this.snapOpts(), mpp: 0.05, off: undefined, lengthStep: 0 });
+        this.anchor = s.node !== undefined ? s : { p: endP, h: endH, guides: [] };
+        this.startTangent = plan.endTangent;
+        this.ctrl = null;
+        this.ctrl2 = null;
+        const pe = plan.parallelEnds?.b;
+        if (pe) {
+          const ps = snap(g.net, pe, { ...this.snapOpts(), mpp: 0.05, off: undefined, lengthStep: 0 });
+          this.parFrom = ps.node !== undefined ? ps : { p: pe, h: endH, guides: [] };
+        } else this.parFrom = undefined;
+      }
+      return;
+    }
+    if (t === "roundabout") {
+      const plan = this.computeRoundabout();
+      if (!plan) return;
+      if (plan.errors.length) { this.reject(plan.errors[0].msg); return; }
+      if (g.build(plan)) this.hud?.sound("build");
       return;
     }
     if (t === "bulldoze") {
@@ -473,19 +582,33 @@ export class App {
     this.dragRect = null;
     this.hud?.rect(null);
     const g = this.game;
-    if (this.st.tool === "grid") {
-      const plan = this.computeGrid(r.a, r.b);
-      if (!plan) return;
-      if (plan.errors.length) { this.reject(plan.errors[0].msg); return; }
-      if (g.build(plan)) this.hud?.sound("build");
-    } else if (this.st.tool === "bulldoze") {
-      const segs = segsInRect(g.net, r.a, r.b, this.st.bdzLevel);
-      const bs = this.buildingsInRect(r.a, r.b).map((b) => b.id);
-      if (!segs.length && !bs.length) return;
-      const refund = g.bulldoze(segs, bs);
-      this.hud?.sound("remove");
-      if (segs.length) this.hud?.toast(`Removed ${segs.length} road${segs.length > 1 ? "s" : ""}, refunded ${formatMoney(refund)}`);
+    if (this.st.tool !== "bulldoze") return;
+    const segs = this.segsInScreenRect(r.a, r.b);
+    const bs = this.buildingsInRect(r.a, r.b).map((b) => b.id);
+    if (!segs.length && !bs.length) return;
+    const refund = g.bulldoze(segs, bs);
+    this.hud?.sound("remove");
+    if (segs.length) this.hud?.toast(`Removed ${segs.length} road${segs.length > 1 ? "s" : ""}, refunded ${formatMoney(refund)}`);
+  }
+
+  /** World box around a screen rectangle (for spatial queries), and a test for "on screen inside it". */
+  private screenRect(a: V2, b: V2) {
+    const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+    const cs = [this.view.toWorld(x0, y0), this.view.toWorld(x1, y0), this.view.toWorld(x1, y1), this.view.toWorld(x0, y1)];
+    const box = { x0: Math.min(...cs.map((q) => q.x)), y0: Math.min(...cs.map((q) => q.y)), x1: Math.max(...cs.map((q) => q.x)), y1: Math.max(...cs.map((q) => q.y)) };
+    const inside = (p: V2) => { const s = this.view.toScreen(p); return s.x >= x0 && s.x <= x1 && s.y >= y0 && s.y <= y1; };
+    return { box, inside };
+  }
+
+  private segsInScreenRect(a: V2, b: V2): number[] {
+    const g = this.game, { box, inside } = this.screenRect(a, b);
+    const lvl = this.st.bdzLevel;
+    const out: number[] = [];
+    for (const id of g.net.segsNear(box.x0, box.y0, box.x1, box.y1)) {
+      const sg = g.net.segGeom.get(id)!;
+      if (sg.center.pts.some((p, i) => inside(p) && (lvl === null || Math.abs(sg.hs[i] - lvl * LEVEL_H) < 1))) out.push(id);
     }
+    return out;
   }
 
   private reject(msg: string) {
@@ -506,9 +629,10 @@ export class App {
     return best;
   }
 
+  /** Buildings whose centre is inside a screen rectangle. */
   private buildingsInRect(a: V2, b: V2): Building[] {
-    const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
-    return this.game.buildings.list.filter((o) => o.c.x > x0 && o.c.x < x1 && o.c.y > y0 && o.c.y < y1);
+    const { inside } = this.screenRect(a, b);
+    return this.game.buildings.list.filter((o) => inside(o.c));
   }
 
   // ---------------------------------------------------------------- plans
@@ -522,9 +646,11 @@ export class App {
       ? snap(g.net, this.anchor.ringRaw, { ...this.snapOpts(), from: { p: end.p } })
       : this.anchor;
     if (end.node !== undefined && end.node === start.node) return null;
+    const mode = this.st.mode === "grid" || this.st.mode === "replace" ? "straight" : this.st.mode;
     const plan = planRoad(g.net, g.world, {
-      start, end, mode: this.st.curve, type: this.st.roadType,
-      startTangent: this.startTangent, ctrl: this.ctrl ?? undefined,
+      start, end, mode, type: this.st.roadType,
+      startTangent: this.startTangent, ctrl: this.ctrl ?? undefined, ctrl2: this.ctrl2 ?? undefined,
+      parallel: this.st.parallel ? { offset: this.parallelOffset(), from: this.parFrom } : undefined,
     });
     (plan as Plan & { snapEnd?: Snap }).snapEnd = end;
     return plan;
@@ -535,21 +661,19 @@ export class App {
     const s = snap(g.net, this.cursor, { ...this.snapOpts(), from: undefined });
     const c = s.node !== undefined ? s.p : this.cursor;
     const h = s.node !== undefined ? g.net.nodes.get(s.node)!.h : this.st.level * LEVEL_H;
-    return planRoundabout(g.net, g.world, c, this.st.rbLanes, Math.round(h / LEVEL_H));
+    return planRoundabout(g.net, g.world, c, this.st.rbSize, Math.round(h / LEVEL_H));
   }
 
-  private computeGrid(a: V2, b: V2): Plan | null {
-    if (dist(a, b) < 20) return null;
+  /** CS2 grid: first corner, a click along one side (sets the direction and width), then the depth. */
+  private computeGrid(): Plan | null {
+    if (!this.anchor || !this.ctrl) return null;
     const g = this.game;
-    // align with a road under the first corner, else the world axes
-    let axis = v2(1, 0);
-    const id = segAt(g.net, a, 6, null);
-    if (id !== null) {
-      const s = g.net.segs.get(id)!;
-      const r = cubicClosest(s.c, a);
-      axis = norm(cubicTangent(s.c, r.t));
-    }
-    return planGrid(g.net, g.world, a, b, axis, this.st.roadType, this.st.level);
+    const a = this.anchor.p, b = this.ctrl;
+    if (dist(a, b) < 20) return null;
+    const ux = norm(sub(b, a)), uy = right(ux);
+    const depth = dot(sub(this.snapFree(this.anchor).p, b), uy);
+    const far = v2(b.x + uy.x * depth, b.y + uy.y * depth);
+    return planGrid(g.net, g.world, a, far, ux, this.st.roadType, this.st.level);
   }
 
   // ---------------------------------------------------------------- per frame
@@ -564,58 +688,7 @@ export class App {
     const t = this.st.tool;
     const chips: Chip[] = [];
     if (pv.ghost) pv.ghost.visible = false;
-    if (t === "road") {
-      if (!this.anchor) {
-        const s = snap(g.net, c, this.snapOpts());
-        pv.marker(s.p, s.h);
-        pv.guides(s.guides);
-        chips.push({ text: `${ROAD_TYPES[this.st.roadType].name}`, kind: "info" });
-        if (this.st.level > 0) chips.push({ text: `Elevation ${this.st.level}`, kind: "info" });
-      } else if (this.st.curve === "arc" && !this.ctrl && !(this.startTangent ?? this.anchor.tangent)) {
-        pv.marker(this.anchor.p, this.anchor.h);
-        chips.push({ text: "Click to set the bend", kind: "info" });
-        const plan = planRoad(g.net, g.world, { start: this.anchor, end: snap(g.net, c, this.snapOpts(this.anchor)), mode: "straight", type: this.st.roadType });
-        pv.plan(plan, this.st.level);
-      } else {
-        const plan = this.computeRoadPlan();
-        this.plan = plan;
-        if (plan) {
-          const end = (plan as Plan & { snapEnd?: Snap }).snapEnd!;
-          pv.plan(plan, this.st.level);
-          pv.guides(end.guides);
-          pv.marker(this.anchor.p, this.anchor.h);
-          pv.marker(end.p, end.h);
-          if (plan.errors.length) {
-            chips.push({ text: plan.errors[0].msg, kind: "error" });
-            for (const e of plan.errors) for (const id of e.buildings ?? []) {
-              const b = g.buildings.byId.get(id);
-              if (b) pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
-            }
-          }
-          chips.push({ text: formatMoney(plan.cost), kind: plan.cost > g.money ? "error" : "cost" });
-          if (plan.angleDeg !== undefined && plan.length > 3) chips.push({ text: `${plan.angleDeg.toFixed(1)}°`, kind: "info", icon: "angle" });
-          chips.push({ text: `${(plan.length / 1000).toFixed(plan.length < 950 ? 2 : 1)} km`, kind: "info" });
-          if (end.label) chips.push({ text: end.label, kind: "info" });
-        }
-      }
-    } else if (t === "roundabout") {
-      const plan = this.computeRoundabout();
-      if (plan) {
-        pv.plan(plan, this.st.level);
-        if (plan.removeSegs?.length) pv.removal(g.net, plan.removeSegs);
-        if (plan.errors.length) chips.push({ text: plan.errors[0].msg, kind: "error" });
-        chips.push({ text: formatMoney(plan.cost), kind: plan.cost > g.money ? "error" : "cost" });
-      }
-    } else if (t === "grid") {
-      if (this.dragRect) {
-        const plan = this.computeGrid(this.dragRect.a, this.dragRect.b);
-        if (plan) {
-          pv.plan(plan, this.st.level);
-          if (plan.errors.length) chips.push({ text: plan.errors[0].msg, kind: "error" });
-          chips.push({ text: formatMoney(plan.cost), kind: plan.cost > g.money ? "error" : "cost" });
-        }
-      } else chips.push({ text: "Drag to lay out a street grid", kind: "info" });
-    } else if (t === "upgrade") {
+    if (t === "road" && this.st.mode === "replace") {
       const id = segAt(g.net, c, 2, null);
       if (id !== null) {
         const s = g.net.segs.get(id)!;
@@ -643,9 +716,78 @@ export class App {
           }
         }
       }
+    } else if (t === "road") {
+      const step = this.roadStep();
+      const mode = this.st.mode;
+      if (step === "start") {
+        const s = snap(g.net, c, this.snapOpts());
+        pv.marker(s.p, s.h);
+        pv.guides(s.guides);
+        chips.push({ text: mode === "grid" ? `${ROAD_TYPES[this.st.roadType].name} grid: click a corner` : `${ROAD_TYPES[this.st.roadType].name}`, kind: "info" });
+        if (this.st.level > 0) chips.push({ text: `Elevation ${this.st.level}`, kind: "info" });
+      } else if (mode === "grid") {
+        pv.marker(this.anchor!.p, this.anchor!.h);
+        if (step === "ctrl") {
+          const s = this.snapFree(this.anchor);
+          pv.guides(s.guides);
+          pv.plan(planRoad(g.net, g.world, { start: this.anchor!, end: { ...s, h: this.anchor!.h }, mode: "straight", type: this.st.roadType }), this.st.level);
+          chips.push({ text: "Click to set the grid's width", kind: "info" }, { text: `${Math.round(dist(s.p, this.anchor!.p))} m`, kind: "info" });
+        } else {
+          const plan = this.computeGrid();
+          if (plan) {
+            pv.plan(plan, this.st.level);
+            if (plan.errors.length) chips.push({ text: plan.errors[0].msg, kind: "error" });
+            chips.push({ text: formatMoney(plan.cost), kind: plan.cost > g.money ? "error" : "cost" });
+          }
+        }
+      } else if (step === "ctrl" || step === "ctrl2") {
+        // placing a bend handle: show the handle lines and the road so far
+        const s = this.snapFree(this.anchor);
+        pv.marker(this.anchor!.p, this.anchor!.h);
+        pv.guides(s.guides);
+        const a = this.anchor!.p;
+        const lines = step === "ctrl" ? [{ a, b: s.p }] : [{ a, b: this.ctrl! }, { a: this.ctrl!, b: s.p }];
+        pv.guides(lines);
+        if (step === "ctrl2") pv.marker(this.ctrl!, this.anchor!.h);
+        chips.push({ text: step === "ctrl" ? "Click to set the bend" : "Click to set the second handle", kind: "info" });
+      } else {
+        const plan = this.computeRoadPlan();
+        this.plan = plan;
+        if (plan) {
+          const end = (plan as Plan & { snapEnd?: Snap }).snapEnd!;
+          pv.plan(plan, this.st.level);
+          pv.guides(end.guides);
+          pv.marker(this.anchor!.p, this.anchor!.h);
+          pv.marker(end.p, end.h);
+          if (this.ctrl) pv.guides(this.ctrl2 ? [{ a: this.anchor!.p, b: this.ctrl }, { a: this.ctrl2, b: end.p }] : [{ a: this.anchor!.p, b: this.ctrl }, { a: this.ctrl, b: end.p }]);
+          if (plan.errors.length) {
+            chips.push({ text: plan.errors[0].msg, kind: "error" });
+            for (const e of plan.errors) for (const id of e.buildings ?? []) {
+              const b = g.buildings.byId.get(id);
+              if (b) pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
+            }
+          }
+          chips.push({ text: formatMoney(plan.cost), kind: plan.cost > g.money ? "error" : "cost" });
+          const L = plan.strokes[0].chain.length ? plan.length / plan.strokes.length : 0;
+          chips.push({ text: L < 950 ? `${Math.round(L)} m` : `${(L / 1000).toFixed(2)} km`, kind: "info" });
+          const dh = plan.strokes[0].h1 - plan.strokes[0].h0;
+          if (Math.abs(dh) > 0.1 && L > 1) chips.push({ text: `${dh > 0 ? "↗" : "↘"} ${(Math.abs(dh) / L * 100).toFixed(1)}%`, kind: "info" });
+          if (plan.angleDeg !== undefined && L > 3) chips.push({ text: `${plan.angleDeg.toFixed(1)}°`, kind: "info", icon: "angle" });
+          if (this.st.parallel) chips.push({ text: `Parallel ${Math.round(this.parallelOffset())} m`, kind: "info" });
+          if (end.label) chips.push({ text: end.label, kind: "info" });
+        }
+      }
+    } else if (t === "roundabout") {
+      const plan = this.computeRoundabout();
+      if (plan) {
+        pv.plan(plan, this.st.level);
+        if (plan.removeSegs?.length) pv.removal(g.net, plan.removeSegs);
+        if (plan.errors.length) chips.push({ text: plan.errors[0].msg, kind: "error" });
+        chips.push({ text: formatMoney(plan.cost), kind: plan.cost > g.money ? "error" : "cost" });
+      }
     } else if (t === "bulldoze") {
-      if (this.dragRect) {
-        const segs = segsInRect(g.net, this.dragRect.a, this.dragRect.b, this.st.bdzLevel);
+      if (this.dragRect && this.pointers.size && [...this.pointers.values()][0].moved) {
+        const segs = this.segsInScreenRect(this.dragRect.a, this.dragRect.b);
         pv.removal(g.net, segs);
         const bs = this.buildingsInRect(this.dragRect.a, this.dragRect.b);
         for (const b of bs) pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
@@ -715,9 +857,17 @@ export class App {
     if (this.keys.has("s") || this.keys.has("ArrowDown")) my += 1;
     if (this.keys.has("a") || this.keys.has("ArrowLeft")) mx -= 1;
     if (this.keys.has("d") || this.keys.has("ArrowRight")) mx += 1;
+    // Q/E turn the view, R/F zoom (CS2)
+    const turn = (this.keys.has("e") ? 1 : 0) - (this.keys.has("q") ? 1 : 0);
+    const zoom = (this.keys.has("f") ? 1 : 0) - (this.keys.has("r") ? 1 : 0);
     if (mx || my) {
-      this.view.cx += mx * pan;
-      this.view.cy += my * pan;
+      const c = Math.cos(this.view.rot), s = Math.sin(this.view.rot);
+      this.view.cx += (mx * c - my * s) * pan;
+      this.view.cy += (mx * s + my * c) * pan;
+    }
+    if (turn) this.view.rotateAt(this.view.w / 2, this.view.h / 2, turn * 1.5 * dt);
+    if (zoom) this.view.zoomAt(this.view.w / 2, this.view.h / 2, Math.exp(zoom * 2.2 * dt));
+    if (mx || my || turn || zoom) {
       this.clampView();
       if (this.hasCursor) this.updateCursor(this.cursorPx);
     }
@@ -747,6 +897,7 @@ export class App {
     this.terrain3d.update(this.view);
     this.roadsFar.update(this.view.mpp, this.view.w, this.view.h);
     this.labels.update(this.view);
+    this.hud?.compassAngle(this.view.rot);
     this.view.render();
     requestAnimationFrame(this.frame);
   };

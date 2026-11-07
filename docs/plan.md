@@ -14,14 +14,15 @@ tagged and pushed. Roads QA runs through every slice: the owner's top rule is no
 - [ ] New road types: rural road (1+1, 80 km/h, no zoning) and motorway (2+2 divided, 100 km/h, no access).
 
 ## Slice 1b: CS2 controls (owner request)
-- [ ] Camera: WASD, Q/E and middle-drag rotation (rotatable top-down view), R/F and wheel zoom, touch
-      pinch/twist.
-- [ ] Hotkeys per design.md (Esc, B, PgUp/PgDn, Space, 1/2/3, panel keys, F5/F9, backtick).
-- [ ] Right mouse goes back one step.
-- [ ] Road modes: Straight, Simple Curve, Complex Curve, Continuous, Grid (3-click), Replace; Parallel toggle with
-      offset; snapping menu.
-- [ ] Cursor readouts: length, slope, angle, cost.
-- [ ] Roundabouts in 4 sizes.
+- [x] Camera: WASD, Q/E and middle-drag rotation (rotatable top-down view), R/F and wheel zoom, touch
+      pinch/twist, north arrow.
+- [x] Hotkeys per design.md (Esc, B, M, PgUp/PgDn, Space, 1/2/3, F5/F9, backtick, Tab for modes). Panel keys
+      P/Z/C/V/X wait for their panels.
+- [x] Right mouse goes back one step.
+- [x] Road modes: Straight, Simple Curve, Complex Curve, Continuous, Grid (3-click), Replace; Parallel toggle with
+      spacing; snapping menu.
+- [x] Cursor readouts: length, slope, angle, cost.
+- [x] Roundabouts in 4 sizes.
 
 ## Slice 2: zoning
 - [ ] Zone blocks per road side (8 m cells, 6 deep, follow curves), oldest-first overlap resolution,
@@ -35,6 +36,11 @@ tagged and pushed. Roads QA runs through every slice: the owner's top rule is no
       leveling 1-5.
 - [ ] Households and workers, job search by commute time (cross-city), shopping and leisure trips.
 - [ ] Time of day, work shifts, rush hours. Vehicle-trip scaling.
+- [ ] Pathfinding the way the top traffic mods fix it (docs/cs2-research.md §1.1): turn delays, a bias towards
+      main roads over side streets, live congestion cost, lane choice several links ahead (no last-second
+      weaving), no U-turns by default. Jams wait and reroute; vehicles never despawn.
+- [ ] Inter-city links have real capacity: every trip between cities is a vehicle on the player's roads.
+      A commuter and freight matrix per city pair.
 
 ## Slice 4: economy
 - [ ] Taxes, rent, wages, upkeep, loans, budget panel. Business profit, abandonment and auto-demolish.

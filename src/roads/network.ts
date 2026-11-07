@@ -397,7 +397,8 @@ export class RoadNetwork {
     const ids = this.segsNear(p.x - r, p.y - r, p.x + r, p.y + r);
     const seen = new Set<number>();
     for (const id of ids) {
-      const s = this.segs.get(id)!;
+      const s = this.segs.get(id);
+      if (!s) continue; // removed earlier in this transaction (the index catches up on rebuild)
       for (const nid of [s.a, s.b]) {
         if (seen.has(nid)) continue;
         seen.add(nid);

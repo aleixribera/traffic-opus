@@ -5,7 +5,7 @@ import { dist, type V2 } from "../core/math";
 import { mulberry32 } from "../core/noise";
 import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/network";
 import {
-  commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type Plan, type PlanError,
+  applyTrim, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type Plan, type PlanError,
 } from "../roads/planner";
 import { Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import { Terrain } from "../world/terrain";
@@ -202,6 +202,13 @@ export class Game {
     const ops = this.applyRoads(() => {
       if (plan.kind === "roundabout") commitRoundabout(this.net, plan);
       else {
+        // a parallel pair turning a corner: cut the old twin back first
+        if (plan.trim) {
+          applyTrim(this.net, plan.trim);
+          const cs = this.net.rebuild();
+          this.traffic.onNetworkChange(cs);
+          this.emit({ t: "roads", cs });
+        }
         for (const st of plan.strokes) {
           commitStrokes(this.net, [st]);
           // later strokes of a grid must see earlier ones

@@ -51,6 +51,10 @@ export interface SnapOpts {
   angleStep?: boolean; // shift held: 15 degree steps
   grid?: number; // grid size in metres (0 = off)
   type: RoadTypeId;
+  /** Snapping switched off in the snapping menu: existing roads, guidelines/right angles, side-by-side roads. */
+  off?: { geometry?: boolean; guides?: boolean; netSide?: boolean };
+  /** Round free lengths to this many metres (CS2's "cell length": 8 m). */
+  lengthStep?: number;
 }
 
 export function cubicClosest(c: Cubic, p: V2): { t: number; d: number; p: V2 } {
@@ -148,7 +152,8 @@ function ringSnap(net: RoadNetwork, raw: V2, o: SnapOpts): Snap | null {
 export function snap(net: RoadNetwork, raw: V2, o: SnapOpts): Snap {
   const guides: Guide[] = [];
   const h = o.level * LEVEL_H;
-  const rs = ringSnap(net, raw, o);
+  const geo = !o.off?.geometry, gd = !o.off?.guides;
+  const rs = geo ? ringSnap(net, raw, o) : null;
   if (rs) return rs;
   // 1) nodes
   const nr = NODE_SNAP_PX * o.mpp;
@@ -158,7 +163,7 @@ export function snap(net: RoadNetwork, raw: V2, o: SnapOpts): Snap {
     const tol = nr + (net.segsAt(n.id).length === 1 ? 4 : 2);
     if (d < tol && (!bestN || d < bestN.d)) bestN = { id: n.id, d };
   }
-  if (bestN) {
+  if (bestN && geo) {
     const n = net.nodes.get(bestN.id)!;
     return { p: { ...n.p }, h: n.h, node: n.id, tangent: deadEndTangent(net, n.id), guides };
   }
@@ -173,7 +178,7 @@ export function snap(net: RoadNetwork, raw: V2, o: SnapOpts): Snap {
     const hw = g.width / 2;
     if (r.d < hw + rr && (!bestS || r.d < bestS.d)) bestS = { seg: s, t: r.t, p: r.p, d: r.d };
   }
-  if (bestS) {
+  if (bestS && geo) {
     const hs = net.heightOnSeg(bestS.seg.id, bestS.t);
     // don't snap onto a road at a different level unless we are free (then take its level)
     if (Math.abs(hs - h) < 0.5 || !o.from) {
@@ -195,7 +200,7 @@ export function snap(net: RoadNetwork, raw: V2, o: SnapOpts): Snap {
         const step = (15 * Math.PI) / 180;
         const k = Math.round((ang - base) / step);
         p = add(f, scale(fromAngle(base + k * step), L));
-      } else {
+      } else if (gd) {
         for (let k = 0; k < 4; k++) cands.push(k * (Math.PI / 2));
         if (o.from.tangent) for (let k = 0; k < 4; k++) cands.push(base + k * (Math.PI / 2));
         const tol = Math.min(0.06, (7 * o.mpp) / L);
@@ -209,14 +214,18 @@ export function snap(net: RoadNetwork, raw: V2, o: SnapOpts): Snap {
         }
       }
     }
+    if (o.lengthStep && o.lengthStep > 0) {
+      const d2 = sub(p, f), L2 = len(d2);
+      if (L2 > 1) p = add(f, scale(d2, Math.max(o.lengthStep, Math.round(L2 / o.lengthStep) * o.lengthStep) / L2));
+    }
     // parallel to a nearby road at a clean offset
-    const par = parallelSnap(net, p, o);
+    const par = o.off?.netSide ? null : parallelSnap(net, p, o);
     if (par) { p = par.p; label = "Parallel"; guides.push(...par.guides); }
   }
   // alignment with nearby node coordinates
   const at = 6 * o.mpp;
   let ax: number | null = null, ay: number | null = null;
-  for (const n of net.nodesNear(p, 400)) {
+  for (const n of gd ? net.nodesNear(p, 400) : []) {
     if (ax === null && Math.abs(n.p.x - p.x) < at && dist(n.p, p) > 4) { ax = n.p.x; guides.push({ a: { x: n.p.x, y: n.p.y - 2000 }, b: { x: n.p.x, y: n.p.y + 2000 } }); }
     if (ay === null && Math.abs(n.p.y - p.y) < at && dist(n.p, p) > 4) { ay = n.p.y; guides.push({ a: { x: n.p.x - 2000, y: n.p.y }, b: { x: n.p.x + 2000, y: n.p.y } }); }
   }
@@ -263,7 +272,12 @@ function parallelSnap(net: RoadNetwork, p: V2, o: SnapOpts): { p: V2; guides: Gu
 // Plans
 // ---------------------------------------------------------------------------------------------
 
-export type CurveMode = "straight" | "arc" | "smooth";
+/**
+ * Road drawing modes (as in CS2): straight (2 clicks), simple curve (start, bend point, end), complex curve
+ * (start, two handles, end) and continuous (each piece carries on smoothly from the last, and meets a road it
+ * ends on at a right angle).
+ */
+export type CurveMode = "straight" | "curve" | "complex" | "continuous";
 
 export interface PlanError {
   msg: string;
@@ -292,6 +306,10 @@ export interface Plan {
   removeSegs?: number[]; // segments replaced (roundabout interior)
   removeNodes?: number[];
   ringCenter?: V2;
+  /** Parallel road ends on the main road's start and end sides. */
+  parallelEnds?: { a: V2; b: V2 };
+  /** Cut the previous parallel piece back first (a pair turning a corner). */
+  trim?: ParallelTrim;
 }
 
 export function chainPoints(chain: Cubic[], step = 2): V2[] {
@@ -304,30 +322,83 @@ export function chainPoints(chain: Cubic[], step = 2): V2[] {
   return pts;
 }
 
-/**
- * Turn the user's input into a stroke.
- * straight: line; arc: circular arc tangent to the start direction (or 3-click quadratic);
- * smooth: S-curve that matches both the start and end direction.
- */
-export function makeChain(mode: CurveMode, a: V2, b: V2, ta?: V2, tb?: V2, ctrl?: V2): Cubic[] {
+/** Turn the user's input into a stroke (see CurveMode). */
+export function makeChain(mode: CurveMode, a: V2, b: V2, ta?: V2, tb?: V2, ctrl?: V2, ctrl2?: V2): Cubic[] {
   if (dist(a, b) < 0.5) return [];
   if (mode === "straight") return [straightCubic(a, b)];
-  if (mode === "arc") {
+  if (mode === "complex" && ctrl && ctrl2) return [{ p0: a, p1: ctrl, p2: ctrl2, p3: b }];
+  if (mode === "curve" || mode === "complex") {
     if (ctrl) return [quadCubic(a, ctrl, b)];
-    if (ta) {
-      const arc = tangentArc(a, ta, b);
-      if (arc.length) return arc;
-    }
     return [straightCubic(a, b)];
   }
-  // smooth
-  const t0 = ta ?? norm(sub(b, a));
-  const t1 = tb ?? t0;
-  const d = dist(a, b);
-  const c = hermiteCubic(a, t0, b, t1, 0.42);
-  // keep the handles sane when the end tangent points back at the start
-  if (dot(t0, t1) < -0.2) return [quadCubic(a, add(a, scale(t0, d * 0.6)), b)];
-  return [c];
+  // continuous: an S-curve when the end has a direction to meet, else an arc on from the start direction
+  if (tb) {
+    const t0 = ta ?? norm(sub(b, a));
+    const d = dist(a, b);
+    // keep the handles sane when the end tangent points back at the start
+    if (dot(t0, tb) < -0.2) return [quadCubic(a, add(a, scale(t0, d * 0.6)), b)];
+    return [hermiteCubic(a, t0, b, tb, 0.42)];
+  }
+  if (ta) {
+    const arc = tangentArc(a, ta, b);
+    if (arc.length) return arc;
+  }
+  return [straightCubic(a, b)];
+}
+
+/**
+ * A cubic shifted sideways by d metres (+ = right of travel). The ends are shifted exactly and keep their
+ * directions; the handle lengths are a least-squares fit to the true offset curve. Splits only where one
+ * cubic can't follow it closely enough, so a parallel road is usually as few pieces as the road it follows.
+ */
+function offsetCubic(c: Cubic, d: number, depth = 0): Cubic[] {
+  const tan = (t: number) => {
+    const v = cubicTangent(c, t);
+    return len(v) > 1e-9 ? norm(v) : norm(sub(c.p3, c.p0));
+  };
+  const t0 = tan(0), t1 = tan(1);
+  const p0 = add(c.p0, scale(right(t0), d)), p3 = add(c.p3, scale(right(t1), d));
+  // start from the handles scaled with the chord (exact for arcs), then fit
+  const chord = dist(c.p0, c.p3);
+  const k = chord > 1e-6 ? dist(p0, p3) / chord : 1;
+  let ha = len(sub(c.p1, c.p0)) * k, hb = len(sub(c.p2, c.p3)) * k;
+  let s11 = 0, s12 = 0, s22 = 0, r1 = 0, r2 = 0;
+  for (const t of [0.15, 0.3, 0.45, 0.55, 0.7, 0.85]) {
+    const u = 1 - t, B0 = u * u * u, B1 = 3 * u * u * t, B2 = 3 * u * t * t, B3 = t * t * t;
+    const want = add(cubicAt(c, t), scale(right(tan(t)), d));
+    const r = sub(want, add(scale(p0, B0 + B1), scale(p3, B2 + B3)));
+    const v1 = scale(t0, B1), v2 = scale(t1, -B2);
+    s11 += dot(v1, v1); s12 += dot(v1, v2); s22 += dot(v2, v2); r1 += dot(v1, r); r2 += dot(v2, r);
+  }
+  const det = s11 * s22 - s12 * s12;
+  if (Math.abs(det) > 1e-9) {
+    const fa = (r1 * s22 - r2 * s12) / det, fb = (s11 * r2 - s12 * r1) / det;
+    if (fa > 0 && fb > 0) { ha = fa; hb = fb; }
+  }
+  const out: Cubic = { p0, p1: add(p0, scale(t0, ha)), p2: add(p3, scale(t1, -hb)), p3 };
+  if (depth < 4) {
+    // how far the fit strays from the true offset, measured as distance to the original curve
+    let err = 0;
+    for (let i = 1; i < 8; i++) err = Math.max(err, Math.abs(cubicClosest(c, cubicAt(out, i / 8)).d - Math.abs(d)));
+    if (err > 0.25) {
+      const [x, y] = splitCubic(c, 0.5);
+      return [...offsetCubic(x, d, depth + 1), ...offsetCubic(y, d, depth + 1)];
+    }
+  }
+  return [out];
+}
+
+export function offsetChain(chain: Cubic[], d: number): Cubic[] {
+  return chain.flatMap((c) => offsetCubic(c, d));
+}
+
+export function reverseChain(chain: Cubic[]): Cubic[] {
+  return chain.slice().reverse().map((c) => ({ p0: c.p3, p1: c.p2, p2: c.p1, p3: c.p0 }));
+}
+
+/** Default centre-to-centre spacing for a parallel road: the two roads side by side with a 4 m median. */
+export function parallelSpacing(type: RoadTypeId): number {
+  return roadWidth(ROAD_TYPES[type]) + 4;
 }
 
 function heightAt(st: Stroke, f: number) {
@@ -364,7 +435,7 @@ interface Crossing {
 }
 
 /** All centreline crossings of a stroke with existing roads at a similar height. */
-function findCrossings(net: RoadNetwork, pts: V2[], cum: number[], hsPlan: number[], ignore: { segs: Set<number>; nodes: Set<number> }) {
+function findCrossings(net: RoadNetwork, pts: V2[], cum: number[], hsPlan: number[], ignore: { segs: Set<number>; nodes: Set<number> }, skip?: (seg: number, p: V2) => boolean) {
   const out: Crossing[] = [];
   const bad: { p: V2; msg: string }[] = [];
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -379,6 +450,7 @@ function findCrossings(net: RoadNetwork, pts: V2[], cum: number[], hsPlan: numbe
         const r = segIntersect(pts[i], pts[i + 1], cp[j], cp[j + 1]);
         if (!r) continue;
         const p = lerpV(pts[i], pts[i + 1], r.t);
+        if (skip?.(id, p)) continue; // that part goes when this is built
         const sPlan = cum[i] + (cum[i + 1] - cum[i]) * r.t;
         const hP = hsPlan[i] + (hsPlan[i + 1] - hsPlan[i]) * r.t;
         const hS = g.hs[j] + (g.hs[j + 1] - g.hs[j]) * r.u;
@@ -412,6 +484,12 @@ export interface PlanInput {
   type: RoadTypeId;
   startTangent?: V2;
   ctrl?: V2;
+  ctrl2?: V2;
+  /**
+   * Also build a parallel road `offset` metres to the left (one-ways run the other way, so a one-way pair is a dual
+   * carriageway). `from` is where the previous parallel piece ended, to carry on from it.
+   */
+  parallel?: { offset: number; from?: Snap };
 }
 
 /** Build and validate a single road stroke. */
@@ -419,7 +497,7 @@ export function planRoad(net: RoadNetwork, world: BuildWorld, inp: PlanInput): P
   const { start, end, type } = inp;
   const ta = inp.startTangent ?? start.tangent;
   let tb: V2 | undefined;
-  if (inp.mode === "smooth") {
+  if (inp.mode === "continuous") {
     if (end.node !== undefined) {
       const t = deadEndTangent(net, end.node);
       if (t) tb = scale(t, -1);
@@ -431,12 +509,37 @@ export function planRoad(net: RoadNetwork, world: BuildWorld, inp: PlanInput): P
       tb = scale(n, -side);
     }
   }
-  const chain = makeChain(inp.mode, start.p, end.p, ta, tb, inp.ctrl);
+  const chain = makeChain(inp.mode, start.p, end.p, ta, tb, inp.ctrl, inp.ctrl2);
   const stroke: Stroke = { chain, h0: start.h, h1: end.h, type };
-  const plan = validateStrokes(net, world, [stroke], "road", [
+  const strokes = [stroke];
+  const anchors: AnchorHint[] = [
     { p: start.p, node: start.node, seg: start.seg },
     { p: end.p, node: end.node, seg: end.seg },
-  ]);
+  ];
+  let par: { a: V2; b: V2 } | undefined;
+  let trim: ParallelTrim | undefined;
+  const extra: PlanError[] = [];
+  if (inp.parallel && chain.length) {
+    const ps = parallelStroke(net, stroke, inp.parallel.offset, start, end, inp.parallel.from);
+    for (const pc of ps.pieces) {
+      strokes.push(pc.stroke);
+      anchors.push(...pc.anchors);
+    }
+    par = { a: ps.a, b: ps.b };
+    trim = ps.trim;
+    extra.push(...ps.errors, ...pairGap(strokes[0], ps.pieces[ps.pieces.length - 1].stroke));
+  }
+  // the end of the old twin that a corner cuts off doesn't count as a road in the way
+  let skip: ((id: number, p: V2) => boolean) | undefined;
+  if (trim) {
+    const tr = trim, dp = net.nodes.get(tr.drop)!.p;
+    const c = lerpV(dp, tr.at, 0.5), r = dist(dp, tr.at) / 2 + roadWidth(ROAD_TYPES[type]);
+    skip = (id, p) => id === tr.seg && dist(p, c) < r;
+  }
+  const plan = validateStrokes(net, world, strokes, "road", anchors, undefined, par ? strokes.map((_, i) => anchors.slice(i * 2, i * 2 + 2)) : undefined, skip);
+  plan.errors.push(...extra);
+  if (par) plan.parallelEnds = par;
+  if (trim) plan.trim = trim;
   if (chain.length) {
     const last = chain[chain.length - 1];
     plan.endTangent = norm(cubicTangent(last, 1));
@@ -447,10 +550,188 @@ export function planRoad(net: RoadNetwork, world: BuildWorld, inp: PlanInput): P
   return plan;
 }
 
+/** The two roads of a parallel pair must not overlap (a tight curve or a narrow spacing would). */
+function pairGap(a: Stroke, b: Stroke): PlanError[] {
+  const pa = chainPoints(a.chain, 2), pb = chainPoints(b.chain, 2);
+  const min = roadWidth(ROAD_TYPES[a.type]) + 0.2;
+  for (const q of pb) {
+    for (let j = 0; j < pa.length - 1; j++) {
+      if (pointSegDist2(q, pa[j], pa[j + 1]).d2 < min * min) return [{ msg: "The two roads would overlap: widen the spacing", p: q }];
+    }
+  }
+  return [];
+}
+
+/** Where a parallel road's end should attach: an existing node, a point on a road, or free. */
+function attachNear(net: RoadNetwork, p: V2, h: number, dir: V2, ref: Snap): AnchorHint {
+  // carry on from a node close by (the previous piece of the pair)
+  let bn: { id: number; d: number } | null = null;
+  for (const n of net.nodesNear(p, 4)) {
+    const d = dist(n.p, p);
+    if (Math.abs(n.h - h) < 0.6 && d < 3 && (!bn || d < bn.d)) bn = { id: n.id, d };
+  }
+  if (bn) return { p: { ...net.nodes.get(bn.id)!.p }, node: bn.id };
+  // the main road starts or ends on a road: put the parallel one on that road too, along its own line
+  // (a dead end is the road being carried on, not a cross street)
+  const segs = ref.node !== undefined ? (net.segsAt(ref.node).length > 1 ? net.segsAt(ref.node).map((s) => s.id) : []) : ref.seg !== undefined ? [ref.seg] : [];
+  let best: { seg: number; p: V2; d: number } | null = null;
+  for (const id of segs) {
+    const g = net.segGeom.get(id);
+    if (!g) continue;
+    const cp = g.center.pts;
+    for (let j = 0; j < cp.length - 1; j++) {
+      const r = segIntersect(add(p, scale(dir, -60)), add(p, scale(dir, 60)), cp[j], cp[j + 1]);
+      if (!r) continue;
+      const q = lerpV(cp[j], cp[j + 1], r.u);
+      const d = dist(q, p);
+      if (d < 40 && (!best || d < best.d)) best = { seg: id, p: q, d };
+    }
+  }
+  if (best) {
+    const s = net.segs.get(best.seg)!;
+    const r = cubicClosest(s.c, best.p);
+    // landing on one of that road's nodes: use the node
+    for (const n of [s.a, s.b]) {
+      const np = net.nodes.get(n)!.p;
+      if (dist(np, r.p) < 3) return { p: { ...np }, node: n };
+    }
+    return { p: r.p, seg: best.seg };
+  }
+  return { p };
+}
+
+const isStraight = (c: Cubic) => {
+  const L = dist(c.p0, c.p3);
+  if (L < 1e-6) return true;
+  const u = scale(sub(c.p3, c.p0), 1 / L);
+  return Math.abs(cross(u, sub(c.p1, c.p0))) < 0.05 && Math.abs(cross(u, sub(c.p2, c.p0))) < 0.05;
+};
+const reverseCubic = (c: Cubic): Cubic => ({ p0: c.p3, p1: c.p2, p2: c.p1, p3: c.p0 });
+/** c with its end moved to p, keeping the end direction. */
+const withEnd = (c: Cubic, p: V2): Cubic => ({ ...c, p2: add(c.p2, sub(p, c.p3)), p3: p });
+const withStart = (c: Cubic, p: V2): Cubic => ({ ...c, p0: p, p1: add(c.p1, sub(p, c.p0)) });
+
+/** Cut the previous parallel piece back to `at` (its dead end `drop` goes), when a pair turns a corner. */
+export interface ParallelTrim { seg: number; drop: number; at: V2 }
+
+/** Apply a ParallelTrim (inside a transaction, geometry up to date). */
+export function applyTrim(net: RoadNetwork, tr: ParallelTrim): void {
+  const s = net.segs.get(tr.seg);
+  if (!s || !net.nodes.has(tr.drop)) return;
+  const r = cubicClosest(s.c, tr.at);
+  const n = net.splitSeg(s.id, r.t);
+  for (const x of net.segsAt(n)) if (x.a === tr.drop || x.b === tr.drop) net.removeSeg(x.id, true);
+}
+
+/**
+ * The parallel twin of `st`, `offset` metres to its left (reversed for one-ways). When it carries on from the
+ * previous piece's twin round a corner, the two twins meet where their offset lines cross: on the inside of the
+ * turn the old twin is cut back to that point (`trim`), on the outside a short piece of the old twin's own type
+ * extends it there. The gap between the carriageways stays even all the way round.
+ */
+function parallelStroke(net: RoadNetwork, st: Stroke, offset: number, start: Snap, end: Snap, from?: Snap) {
+  let chain = offsetChain(st.chain, -offset);
+  const d0 = norm(cubicTangent(st.chain[0], 0)), d1 = norm(cubicTangent(st.chain[st.chain.length - 1], 1));
+  const errors: PlanError[] = [];
+  const oneWay = ROAD_TYPES[st.type].bwd === 0;
+  const out: { stroke: Stroke; anchors: AnchorHint[] }[] = [];
+  let trim: ParallelTrim | undefined;
+  let aHint: AnchorHint | null = null;
+  // `from` is the previous twin's end, across from the corner node this piece starts on
+  const near = !!from && dist(from.p, start.p) < offset * 3;
+  const prev = near && from!.node !== undefined && net.segsAt(from!.node).length === 1 ? net.segsAt(from!.node)[0] : null;
+  if (near && prev) {
+    const fromN = from!.node!;
+    const pc = prev.b === fromN ? prev.c : reverseCubic(prev.c); // runs towards the dead end
+    const tOut = norm(cubicTangent(pc, 1));
+    const den = cross(tOut, d0);
+    const P2 = chain[0].p0, w = sub(P2, from!.p);
+    const sM = Math.abs(den) > 1e-6 ? cross(w, d0) / den : 0, uM = Math.abs(den) > 1e-6 ? cross(w, tOut) / den : 0;
+    const M = add(from!.p, scale(tOut, sM));
+    const fn = net.nodes.get(fromN)!;
+    if (Math.abs(den) < Math.sin((3 * Math.PI) / 180) || Math.abs(sM) < 1.5) {
+      if (dot(tOut, d0) > 0) aHint = { p: from!.p, node: fromN }; // straight on, or near enough
+      else errors.push({ msg: "Corner too sharp for the parallel road", p: from!.p });
+    } else if (dot(tOut, d0) < -0.5) {
+      errors.push({ msg: "Corner too sharp for the parallel road", p: from!.p });
+    } else if (Math.abs(fn.h - st.h0) > 0.1) {
+      errors.push({ msg: "The parallel road turns corners on level ground only", p: from!.p });
+    } else {
+      const prevLen = net.segGeom.get(prev.id)?.center.length ?? dist(pc.p0, pc.p3);
+      const firstLen = makePolyline(sampleCubic(chain[0], 2)).length;
+      if (-sM > prevLen - MIN_SEG_LEN || uM > firstLen - MIN_SEG_LEN) {
+        errors.push({ msg: "Corner too sharp for the parallel road", p: M });
+      } else if (sM < 0) {
+        // inside of the turn: cut the old twin back to M
+        trim = { seg: prev.id, drop: fromN, at: M };
+      } else {
+        // outside of the turn: extend the old twin to M, in its own type and direction. An extension
+        // shorter than a road piece may be starts further back, cutting the old twin back to make room.
+        let k: AnchorHint = { p: from!.p, node: fromN };
+        if (sM < MIN_SEG_LEN) {
+          const back = MIN_SEG_LEN - sM + 0.5;
+          if (back > prevLen - MIN_SEG_LEN) errors.push({ msg: "Corner too sharp for the parallel road", p: M });
+          else {
+            const K = cubicClosest(pc, add(from!.p, scale(tOut, -back))).p;
+            trim = { seg: prev.id, drop: fromN, at: K };
+            k = { p: K };
+          }
+        }
+        const ext = straightCubic(k.p, M);
+        const fwd = prev.b === fromN; // the old twin runs towards its dead end
+        out.push({
+          stroke: { chain: [fwd ? ext : reverseCubic(ext)], h0: fn.h, h1: fn.h, type: prev.type },
+          anchors: fwd ? [k, { p: M }] : [{ p: M }, k],
+        });
+      }
+      if (!aHint && !errors.length) {
+        // the new twin starts at M
+        if (uM > 0) {
+          const r = cubicClosest(chain[0], M);
+          chain = [withStart(subCubic(chain[0], r.t, 1), M), ...chain.slice(1)];
+        } else if (isStraight(chain[0])) chain = [straightCubic(M, chain[0].p3), ...chain.slice(1)];
+        else chain = [straightCubic(M, chain[0].p0), ...chain];
+        aHint = { p: M };
+      }
+    }
+  }
+  if (!aHint) aHint = near && !prev ? { p: from!.p, node: from!.node, seg: from!.seg } : attachNear(net, chain[0].p0, st.h0, d0, start);
+  if (!near && start.node !== undefined && net.segsAt(start.node).length === 1) {
+    // carrying on a road that has no twin yet: the new twin can't start on top of it
+    const g = net.segGeom.get(net.segsAt(start.node)[0].id);
+    const q = chain[0].p0, cp = g?.center.pts ?? [];
+    const lim = roadWidth(ROAD_TYPES[st.type]);
+    for (let j = 0; j < cp.length - 1; j++) {
+      if (pointSegDist2(q, cp[j], cp[j + 1]).d2 < lim * lim) {
+        errors.push({ msg: "The parallel road would start on top of this road: turn the other way, or start the pair afresh", p: q });
+        break;
+      }
+    }
+  }
+  const bHint = attachNear(net, chain[chain.length - 1].p3, st.h1, d1, end);
+  // move the ends onto the attach points (small shifts along the road)
+  chain[0] = withStart(chain[0], aHint.p);
+  chain[chain.length - 1] = withEnd(chain[chain.length - 1], bHint.p);
+  // one-way twins run the other way, unless the twin this carries on was flipped: then follow its flow
+  let against = oneWay;
+  if (oneWay && near && prev && ROAD_TYPES[prev.type].bwd === 0) against = prev.a === from!.node;
+  out.push(against
+    ? { stroke: { chain: reverseChain(chain), h0: st.h1, h1: st.h0, type: st.type }, anchors: [bHint, aHint] }
+    : { stroke: { chain, h0: st.h0, h1: st.h1, type: st.type }, anchors: [aHint, bHint] });
+  return { pieces: out, a: aHint.p, b: bHint.p, trim, errors };
+}
+
 interface AnchorHint { p: V2; node?: number; seg?: number }
 
 /** Validate strokes against the current network and world. */
-export function validateStrokes(net: RoadNetwork, world: BuildWorld, strokes: Stroke[], kind: Plan["kind"], anchors: AnchorHint[] = [], exempt?: { segs: Set<number>; nodes: Set<number> }): Plan {
+export function validateStrokes(
+  net: RoadNetwork, world: BuildWorld, strokes: Stroke[], kind: Plan["kind"], anchors: AnchorHint[] = [],
+  exempt?: { segs: Set<number>; nodes: Set<number> },
+  /** Each stroke's own start and end anchors, for the junction-angle checks (one stroke: `anchors`). */
+  perStroke?: AnchorHint[][],
+  /** Parts of the network that go when this is built: no crossings or overlaps with them. */
+  skip?: (seg: number, p: V2) => boolean,
+): Plan {
   const errors: PlanError[] = [];
   const crossings: V2[] = [];
   let cost = 0, total = 0;
@@ -462,7 +743,8 @@ export function validateStrokes(net: RoadNetwork, world: BuildWorld, strokes: St
       for (const s of net.segsAt(a.node)) ignore.segs.add(s.id);
     }
   }
-  for (const st of strokes) {
+  for (const [si, st] of strokes.entries()) {
+    const own = perStroke ? perStroke[si] ?? [] : strokes.length === 1 ? anchors : [];
     if (!st.chain.length) { errors.push({ msg: "Too short", p: anchors[0]?.p ?? { x: 0, y: 0 } }); continue; }
     const T = ROAD_TYPES[st.type];
     const w = roadWidth(T);
@@ -493,7 +775,7 @@ export function validateStrokes(net: RoadNetwork, world: BuildWorld, strokes: St
     if (out) errors.push({ msg: "Outside the map", p: mid });
     if (locked) errors.push({ msg: "Area not unlocked yet", p: mid });
     if (mountain) errors.push({ msg: "Mountain in the way", p: mid });
-    if (water) errors.push({ msg: "Needs a bridge here: raise it with R", p: mid });
+    if (water) errors.push({ msg: "Needs a bridge here: raise it with Page Up", p: mid });
     // buildings
     // roundabout islands can't be driven through (a bridge high enough over it is fine)
     if (kind !== "roundabout") {
@@ -507,7 +789,7 @@ export function validateStrokes(net: RoadNetwork, world: BuildWorld, strokes: St
     const hit = world.buildingsHit(pts, w / 2 - 0.2);
     if (hit.length) errors.push({ msg: hit.length === 1 ? "Building in the way" : `${hit.length} buildings in the way`, p: mid, buildings: hit });
     // crossings -> junctions
-    const cx = findCrossings(net, pts, pl.cum, hs, ignore);
+    const cx = findCrossings(net, pts, pl.cum, hs, ignore, skip);
     for (const b of cx.bad) errors.push({ msg: b.msg, p: b.p });
     let prevS = -Infinity;
     for (const c of cx.crossings) {
@@ -522,15 +804,14 @@ export function validateStrokes(net: RoadNetwork, world: BuildWorld, strokes: St
         if (d >= 3 && d < 12) errors.push({ msg: "Too close to a junction", p: c.p });
       }
     }
-    if (cx.crossings.length && L - cx.crossings[cx.crossings.length - 1].sPlan < 10 && anchors[1] && anchors[1].node === undefined && anchors[1].seg === undefined) {
+    if (cx.crossings.length && L - cx.crossings[cx.crossings.length - 1].sPlan < 10 && own[1] && own[1].node === undefined && own[1].seg === undefined) {
       errors.push({ msg: "Too close to a junction", p: pts[pts.length - 1] });
     }
     // overlaps: running along an existing road at the same level
-    const ov = overlapCheck(net, pts, hs, w, cx.crossings.map((c) => c.p), anchors.map((a) => a.p), ignore);
+    const ov = overlapCheck(net, pts, hs, w, cx.crossings.map((c) => c.p), anchors.map((a) => a.p), ignore, skip);
     if (ov) errors.push({ msg: "Overlaps an existing road", p: ov });
     // arm angles at anchors
-    for (const [ai, a] of anchors.entries()) {
-      if (strokes.length !== 1) break;
+    for (const [ai, a] of own.entries()) {
       const dirOut = ai === 0 ? norm(cubicTangent(st.chain[0], 0)) : scale(norm(cubicTangent(st.chain[st.chain.length - 1], 1)), -1);
       const arms: V2[] = [];
       const oneWayNew = T.bwd === 0;
@@ -569,10 +850,11 @@ export function validateStrokes(net: RoadNetwork, world: BuildWorld, strokes: St
 
 const fmt = (n: number) => "$" + Math.round(n).toLocaleString("en-US");
 
-function overlapCheck(net: RoadNetwork, pts: V2[], hs: number[], w: number, crossPts: V2[], anchors: V2[], ignore: { segs: Set<number> }): V2 | null {
+function overlapCheck(net: RoadNetwork, pts: V2[], hs: number[], w: number, crossPts: V2[], anchors: V2[], ignore: { segs: Set<number> }, skip?: (seg: number, p: V2) => boolean): V2 | null {
   for (let i = 0; i < pts.length; i += 2) {
     const p = pts[i];
     for (const id of net.segsNear(p.x - 30, p.y - 30, p.x + 30, p.y + 30)) {
+      if (skip?.(id, p)) continue; // goes when this is built
       const g = net.segGeom.get(id)!;
       const lim = (g.width + w) / 2 - 1.0;
       // a quick bbox reject
@@ -823,13 +1105,20 @@ function tAtLength(c: Cubic, s: number): number {
 // Roundabouts
 // ---------------------------------------------------------------------------------------------
 
-export const ROUNDABOUT_R = { 1: 16, 2: 26 } as const;
+/** Roundabout sizes 1-4: ring radius and the one-way type of the ring. */
+export const ROUNDABOUTS = {
+  1: { r: 16, type: "one1", name: "Small" },
+  2: { r: 26, type: "one2", name: "Medium" },
+  3: { r: 36, type: "one2", name: "Large" },
+  4: { r: 50, type: "one3", name: "Huge" },
+} as const satisfies Record<number, { r: number; type: RoadTypeId; name: string }>;
+export type RoundaboutSize = keyof typeof ROUNDABOUTS;
 
 /** Plan a roundabout centred at c. Roads crossing its circle get connected; their inside parts are removed. */
-export function planRoundabout(net: RoadNetwork, world: BuildWorld, c: V2, lanes: 1 | 2, level: number): Plan {
-  const R = ROUNDABOUT_R[lanes];
+export function planRoundabout(net: RoadNetwork, world: BuildWorld, c: V2, size: RoundaboutSize, level: number): Plan {
+  const R: number = ROUNDABOUTS[size].r;
   const h = level * LEVEL_H;
-  const type: RoadTypeId = lanes === 1 ? "one1" : "one2";
+  const type: RoadTypeId = ROUNDABOUTS[size].type;
   // crossings of existing roads with the ring circle
   const hits: { ang: number; seg: number; p: V2 }[] = [];
   const removeSegs = new Set<number>();
@@ -980,7 +1269,7 @@ export function planGrid(net: RoadNetwork, world: BuildWorld, a: V2, b: V2, axis
   const h = level * LEVEL_H;
   const strokes: Stroke[] = [];
   if (W < 30 || H < 30) {
-    return { strokes, cost: 0, length: 0, errors: [{ msg: "Drag a bigger area", p: b }], crossings: [], kind: "grid" };
+    return { strokes, cost: 0, length: 0, errors: [{ msg: "Make the grid bigger: at least 30 m each way", p: b }], crossings: [], kind: "grid" };
   }
   const blockW = 96, blockH = 80;
   const nx = Math.max(1, Math.round(W / blockW)), ny = Math.max(1, Math.round(H / blockH));

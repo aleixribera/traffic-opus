@@ -39,6 +39,7 @@ export class Terrain3D {
     uOwn: { value: null as unknown as THREE.DataTexture },
     uTile: { value: TILE },
     uSun: { value: new THREE.Vector2(-0.56, -0.83) },
+    uRot: { value: new THREE.Vector2(1, 0) },
     uCities: { value: Array.from({ length: MAX_CITIES }, () => new THREE.Vector4(0, 0, 0, 0)) },
   };
 
@@ -83,8 +84,9 @@ export class Terrain3D {
     // node spacing should stay above ~2 screen pixels
     let L = 0;
     while (L < LODS - 1 && RES * 4 ** L < mpp * 2.2) L++;
-    const halfW = view.halfH * (view.w / view.h);
-    const x0 = view.cx - halfW, x1 = view.cx + halfW, y0 = view.cy - view.halfH, y1 = view.cy + view.halfH;
+    const { ex, ey } = view.extents();
+    const x0 = view.cx - ex, x1 = view.cx + ex, y0 = view.cy - ey, y1 = view.cy + ey;
+    this.shared.uRot.value.set(Math.cos(view.rot), Math.sin(view.rot));
     this.queue.length = 0;
     // the wanted level, plus the next coarser one underneath while the fine chunks are still being made
     for (const lod of [L, Math.min(LODS - 1, L + 1)]) {
@@ -194,7 +196,7 @@ const GROUND_GLSL = /* glsl */ `
 varying vec2 vWorld;
 uniform sampler2D uF0; uniform sampler2D uF1; uniform sampler2D uOwn;
 uniform vec4 uCities[${MAX_CITIES}];
-uniform vec2 uOrigin; uniform float uRes; uniform float uOverlay; uniform float uTile; uniform vec2 uSun;
+uniform vec2 uOrigin; uniform float uRes; uniform float uOverlay; uniform float uTile; uniform vec2 uSun; uniform vec2 uRot;
 
 vec4 bsw(float t) {
   float t2 = t * t, t3 = t2 * t;
@@ -301,8 +303,9 @@ vec3 groundColor(vec2 p) {
   vec2 gm = vec2(dFdx(m), dFdy(m));
   float gl = length(gm);
   if (gl > 1e-6) {
-    // screen y runs north, world y south
-    float facing = dot(normalize(vec2(-gm.x, gm.y)), uSun);
+    // screen gradient -> world: screen right is (cos, sin) in world, screen up (gl y) is (sin, -cos)
+    vec2 gw = vec2(gm.x * uRot.x + gm.y * uRot.y, gm.x * uRot.y - gm.y * uRot.x);
+    float facing = dot(normalize(-gw), uSun);
     for (int k = 0; k < 4; k++) {
       float d = (m - steps[k]) / max(gl, 1e-6); // pixels from the edge, inside > 0
       float band = (1.0 - smoothstep(0.0, 4.0, d)) * step(0.0, d);

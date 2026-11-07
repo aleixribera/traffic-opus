@@ -4,7 +4,8 @@ import type { Building } from "../game/buildings";
 import { FACTOR_LABEL } from "../game/city";
 import { levelDef } from "../game/levels";
 import type { SignalPlan } from "../roads/network";
-import type { App, OverlayId, ToolId } from "../app";
+import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId } from "../app";
+import { ROUNDABOUTS, type RoundaboutSize } from "../roads/planner";
 import { ICON, buildingIcon, roadIcon } from "./icons";
 import { Sfx } from "./sfx";
 
@@ -56,6 +57,9 @@ export class Hud {
   private modal = h("div", "modal");
   private rectEl = h("div", "selrect");
   private banner = h("section", "card banner");
+  private snapMenu = h("div", "card snap-menu");
+  private compass = h("button", "btn icon-btn compass");
+  private compassRot = NaN;
   private undoBtn = h("button", "btn icon-btn");
   private redoBtn = h("button", "btn icon-btn");
   private toolBtns = new Map<string, HTMLButtonElement>();
@@ -96,7 +100,12 @@ export class Hud {
       this.overlayList.appendChild(b);
     }
     this.overlayList.appendChild(this.legend);
-    tl.append(menu, this.overlayBtn, this.overlayList);
+    this.compass.innerHTML = ICON.north;
+    this.compass.title = "North up (the map is turned: Q / E or middle-drag)";
+    this.compass.setAttribute("aria-label", "Turn the map north up");
+    this.compass.onclick = () => { app.resetNorth(); this.compassAngle(0); };
+    this.compass.hidden = true;
+    tl.append(menu, this.overlayBtn, this.overlayList, this.compass);
 
     // ---- top centre: money + speed
     const tc = h("div", "corner tc");
@@ -122,7 +131,8 @@ export class Hud {
     // ---- bottom: sub-bar + toolbar
     const bc = h("div", "corner bc");
     this.buildToolbar();
-    bc.append(this.subbar, this.toolbar);
+    this.snapMenu.hidden = true;
+    bc.append(this.snapMenu, this.subbar, this.toolbar);
     // narrow screens: the toolbar scrolls sideways; fade the edge that has more tools behind it
     const edges = () => {
       const t = this.toolbar;
@@ -139,6 +149,8 @@ export class Hud {
     this.rectEl.hidden = true;
     this.root.append(tl, tc, tr, bc, this.chipBox, this.toastBox, this.banner, this.rectEl, this.modal);
     document.addEventListener("pointerdown", (e) => {
+      const tg = e.target as Node;
+      if (!this.snapMenu.hidden && !this.snapMenu.contains(tg) && !(tg instanceof Element && tg.closest(".snap-btn"))) { this.snapMenu.hidden = true; this.renderSubbar(); }
       if (!this.overlayList.contains(e.target as Node) && e.target !== this.overlayBtn && !this.overlayBtn.contains(e.target as Node)) {
         this.overlayList.classList.remove("open");
         this.overlayBtn.setAttribute("aria-expanded", "false");
@@ -159,18 +171,14 @@ export class Hud {
   private buildToolbar() {
     const app = this.app;
     const roads = h("div", "group");
-    ROAD_ORDER.forEach((id, i) => {
+    for (const id of ROAD_ORDER) {
       const T = ROAD_TYPES[id];
-      roads.appendChild(this.toolButton("road:" + id, roadIcon(id), `${T.name} (${i + 1}) · ${T.hint}`, () => {
-        const t = app.st.tool;
-        app.setTool({ tool: t === "upgrade" || t === "grid" ? t : "road", roadType: id });
-      }));
-    });
+      roads.appendChild(this.toolButton("road:" + id, roadIcon(id), `${T.name} · ${T.hint}`, () => app.setTool({ tool: "road", roadType: id })));
+    }
     const shapes = h("div", "group");
     shapes.append(
-      this.toolButton("grid", ICON.grid, "Street grid (G) · drag a rectangle", () => app.setTool({ tool: "grid" })),
-      this.toolButton("roundabout", ICON.roundabout, "Roundabout (O)", () => app.setTool({ tool: "roundabout" })),
-      this.toolButton("junction", ICON.junction, "Junctions and traffic lights (J)", () => app.setTool({ tool: "junction" })),
+      this.toolButton("roundabout", ICON.roundabout, "Roundabout", () => app.setTool({ tool: "roundabout" })),
+      this.toolButton("junction", ICON.junction, "Junctions and traffic lights", () => app.setTool({ tool: "junction" })),
     );
     const kinds = h("div", "group kinds");
     for (const k of KIND_ORDER) {
@@ -181,7 +189,6 @@ export class Hud {
     }
     const edit = h("div", "group");
     edit.append(
-      this.toolButton("upgrade", ICON.upgrade, "Change road type or reverse a one-way (U)", () => app.setTool({ tool: "upgrade" })),
       this.toolButton("bulldoze", ICON.bulldoze, "Bulldozer (B) · click or drag", () => app.setTool({ tool: "bulldoze" })),
       this.toolButton("unlock", ICON.unlock + `<span class="count"></span>`, "Unlock a new area", () => app.setTool({ tool: "unlock" })),
     );
@@ -206,7 +213,7 @@ export class Hud {
     // tools
     for (const [key, b] of this.toolBtns) {
       let on = false;
-      if (key.startsWith("road:")) on = (st.tool === "road" || st.tool === "grid" || st.tool === "upgrade") && st.roadType === key.slice(5) && !(st.tool === "upgrade" && st.reverse);
+      if (key.startsWith("road:")) on = st.tool === "road" && st.roadType === key.slice(5) && !(st.mode === "replace" && st.reverse);
       else if (key.startsWith("kind:")) on = st.tool === "building" && st.kind === key.slice(5);
       else on = st.tool === (key as ToolId);
       b.classList.toggle("on", on);
@@ -244,6 +251,9 @@ export class Hud {
   private renderSubbar() {
     const app = this.app, st = app.st, g = app.game;
     const sb = this.subbar;
+    // the bar is rebuilt on every change: remember which control had keyboard focus
+    const fa = document.activeElement;
+    const focusKey = fa instanceof HTMLElement && sb.contains(fa) ? fa.getAttribute("aria-label") : null;
     sb.innerHTML = "";
     const label = (t: string) => h("span", "sb-label", t);
     const seg = (items: { html: string; on: boolean; title: string; fn: () => void; cls?: string }[]) => {
@@ -261,25 +271,65 @@ export class Hud {
     };
     const elevation = () => [
       label("Height"),
-      seg([0, 1, 2, 3].map((l) => ({ html: String(l), on: st.level === l, title: l === 0 ? "Ground level (F)" : `Bridge level ${l}: passes over roads below (R / F)`, fn: () => app.setLevel(l), cls: "lvl lvl" + l }))),
+      seg([0, 1, 2, 3].map((l) => ({ html: String(l), on: st.level === l, title: l === 0 ? "Ground level (Page Down)" : `Bridge level ${l}: passes over roads below (Page Up / Page Down)`, fn: () => app.setLevel(l), cls: "lvl lvl" + l }))),
     ];
     const items: HTMLElement[] = [];
+    this.snapMenu.hidden = this.snapMenu.hidden || st.tool !== "road" || st.mode === "replace";
     if (st.tool === "road") {
-      items.push(h("span", "sb-name", `${ROAD_TYPES[st.roadType].name} <span class="muted">${ROAD_TYPES[st.roadType].short}</span>`), label("Curve"), seg([
-        { html: ICON.straight, on: st.curve === "straight", title: "Straight (Tab)", fn: () => app.setTool({ curve: "straight" }) },
-        { html: ICON.arc, on: st.curve === "arc", title: "Arc: follows the road you start from, or click a bend point", fn: () => app.setTool({ curve: "arc" }) },
-        { html: ICON.smooth, on: st.curve === "smooth", title: "Smooth: S-curves that meet roads at right angles", fn: () => app.setTool({ curve: "smooth" }) },
-      ]), ...elevation());
-    } else if (st.tool === "grid") {
-      items.push(h("span", "sb-text", `${ROAD_TYPES[st.roadType].name} grid · 96 × 80 m blocks`), ...elevation());
+      const T = ROAD_TYPES[st.roadType];
+      const MODE: Record<RoadMode, { icon: string; title: string }> = {
+        straight: { icon: ICON.straight, title: "Straight: click the start, then the end" },
+        curve: { icon: ICON.curve, title: "Simple curve: start, bend point, end" },
+        complex: { icon: ICON.complex, title: "Complex curve: start, two handles, end" },
+        continuous: { icon: ICON.continuous, title: "Continuous: each click carries the road on smoothly, and it meets roads square" },
+        grid: { icon: ICON.gridMode, title: "Grid: click a corner, the width, then the depth" },
+        replace: { icon: ICON.replace, title: "Replace: click a road to change it to this type" },
+      };
+      items.push(
+        h("span", "sb-name", `${T.name} <span class="muted">${T.short}</span>`),
+        seg(ROAD_MODES.map((m) => ({ html: MODE[m].icon, on: st.mode === m, title: MODE[m].title + " (Tab)", fn: () => app.setTool({ mode: m }) }))),
+      );
+      if (st.mode === "replace") {
+        items.push(seg([
+          { html: "Change type", on: !st.reverse, title: `Turn a road into ${T.name}`, fn: () => app.setTool({ reverse: false }) },
+          { html: "Reverse", on: st.reverse, title: "Flip a one-way road (Shift+click)", fn: () => app.setTool({ reverse: true }) },
+        ]));
+      } else {
+        if (st.mode !== "grid") {
+          const off = Math.round(app.parallelOffset());
+          const par = seg([
+            { html: ICON.parallel, on: st.parallel, title: T.bwd === 0 ? "Parallel: also build the opposite carriageway alongside" : "Parallel: also build a second road alongside", fn: () => app.setTool({ parallel: !st.parallel }) },
+            ...(st.parallel ? [
+              { html: "−", on: false, title: "Closer ([)", fn: () => app.nudgeParallel(-1) },
+              { html: `${off} m`, on: false, title: "Distance between the two road centres (click to reset)", fn: () => app.setTool({ parOffset: null }), cls: "val" },
+              { html: "+", on: false, title: "Further apart (])", fn: () => app.nudgeParallel(1) },
+            ] : []),
+          ]);
+          items.push(par);
+        }
+        const snapBtn = h("button", "seg-btn snap-btn", ICON.magnet + ICON.caret);
+        const anyOff = st.snapOff.geometry || st.snapOff.guides || st.snapOff.netSide;
+        snapBtn.classList.toggle("on", !this.snapMenu.hidden);
+        snapBtn.classList.toggle("partial", anyOff);
+        snapBtn.title = "Snapping";
+        snapBtn.setAttribute("aria-label", "Snapping options");
+        snapBtn.setAttribute("aria-expanded", String(!this.snapMenu.hidden));
+        snapBtn.onclick = () => { this.snapMenu.hidden = !this.snapMenu.hidden; this.renderSubbar(); };
+        if (!this.snapMenu.hidden) requestAnimationFrame(() => {
+          // sit over the snapping button, kept on screen
+          const host = this.snapMenu.parentElement!.getBoundingClientRect(), r = snapBtn.getBoundingClientRect();
+          const w = this.snapMenu.offsetWidth, vw = document.documentElement.clientWidth;
+          const left = Math.max(8, Math.min(vw - w - 8, r.left + r.width / 2 - w / 2));
+          this.snapMenu.style.left = `${left - host.left}px`;
+        });
+        items.push(snapBtn, ...elevation());
+        this.renderSnapMenu();
+      }
     } else if (st.tool === "roundabout") {
-      items.push(label("Lanes"), seg([1, 2].map((n) => ({ html: String(n), on: st.rbLanes === n, title: `${n}-lane roundabout`, fn: () => app.setTool({ rbLanes: n as 1 | 2 }) }))), ...elevation());
-    } else if (st.tool === "upgrade") {
-      items.push(seg([
-        { html: "Change type", on: !st.reverse, title: "Turn the road into the selected type", fn: () => app.setTool({ reverse: false }) },
-        { html: "Reverse", on: st.reverse, title: "Flip a one-way road (Shift+click)", fn: () => app.setTool({ reverse: true }) },
-      ]));
-      if (!st.reverse) items.push(h("span", "sb-text", `to ${ROAD_TYPES[st.roadType].name}`));
+      items.push(label("Size"), seg(([1, 2, 3, 4] as RoundaboutSize[]).map((n) => {
+        const R = ROUNDABOUTS[n];
+        return { html: R.name, on: st.rbSize === n, title: `${R.name}: ${R.r * 2} m across, ${ROAD_TYPES[R.type].fwd}-lane ring`, fn: () => app.setTool({ rbSize: n }) };
+      })), ...elevation());
     } else if (st.tool === "bulldoze") {
       items.push(label("Elevations"), seg([null, 0, 1, 2, 3].map((l) => ({
         html: l === null ? "All" : `${l} only`, on: st.bdzLevel === l, title: l === null ? "Remove roads at any height" : `Only remove roads at elevation ${l}`, fn: () => app.setTool({ bdzLevel: l }),
@@ -294,6 +344,36 @@ export class Hud {
     }
     sb.append(...items);
     sb.hidden = items.length === 0;
+    if (focusKey) [...sb.querySelectorAll<HTMLElement>("[aria-label]")].find((e) => e.getAttribute("aria-label") === focusKey)?.focus();
+  }
+
+  private renderSnapMenu() {
+    const app = this.app, st = app.st;
+    const opts: { k: "geometry" | "guides" | "netSide" | "length"; label: string; on: boolean }[] = [
+      { k: "geometry", label: "Existing roads and junctions", on: !st.snapOff.geometry },
+      { k: "guides", label: "Guidelines and right angles", on: !st.snapOff.guides },
+      { k: "netSide", label: "Alongside other roads", on: !st.snapOff.netSide },
+      { k: "length", label: "Lengths in 8 m steps", on: st.snapLength },
+    ];
+    this.snapMenu.innerHTML = `<div class="sm-head">Snapping</div>` + opts.map((o) =>
+      `<label class="sm-row"><input type="checkbox" data-k="${o.k}" ${o.on ? "checked" : ""}><span>${o.label}</span></label>`).join("") +
+      `<div class="sm-foot">Hold Shift for 15° steps</div>`;
+    for (const cb of this.snapMenu.querySelectorAll<HTMLInputElement>("input")) {
+      cb.onchange = () => {
+        const k = cb.dataset.k!;
+        if (k === "length") app.setTool({ snapLength: cb.checked });
+        else app.setTool({ snapOff: { ...st.snapOff, [k]: !cb.checked } });
+      };
+    }
+  }
+
+  /** Keep the north arrow in step with the view; it only shows while the map is turned. */
+  compassAngle(rot: number) {
+    if (Math.abs(rot - this.compassRot) < 1e-4) return;
+    this.compassRot = rot;
+    const turned = Math.abs(Math.atan2(Math.sin(rot), Math.cos(rot))) > 0.01;
+    this.compass.hidden = !turned;
+    (this.compass.firstElementChild as HTMLElement | null)?.style.setProperty("transform", `rotate(${-rot}rad)`);
   }
 
   /** Cheap periodic update: money, objectives, open panels. */
@@ -351,7 +431,7 @@ export class Hud {
     const g = this.app.game;
     const L = levelDef(g.level);
     if (g.level === 1) {
-      if (g.net.segs.size === 0) return { key: "1a", html: "<b>Draw a street.</b> Pick <b>Street</b> in the toolbar (key 2), click to start and click again to finish. Keep clicking to continue the road." };
+      if (g.net.segs.size === 0) return { key: "1a", html: "<b>Draw a street.</b> Pick <b>Street</b> in the toolbar, click to start and click again to finish. Keep clicking to continue the road; right-click steps back." };
       if (g.remainingToPlace() > 0) return { key: "1b", html: "<b>Place your buildings.</b> Choose a building in the toolbar and click beside a street. Each one gets its own driveway." };
       return { key: "1c", html: "<b>Keep traffic moving.</b> Residents drive to shops and work. Hold all four goals for a few seconds to reach the next level." };
     }
@@ -421,6 +501,14 @@ export class Hud {
   }
 
   // ---------------------------------------------------------------- panels
+
+  /** Close the snapping menu if it is open (Esc). */
+  closeMenu(): boolean {
+    if (this.snapMenu.hidden) return false;
+    this.snapMenu.hidden = true;
+    this.renderSubbar();
+    return true;
+  }
 
   closePanels(): boolean {
     const was = !this.panel.hidden || !this.modal.hidden;

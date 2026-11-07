@@ -126,22 +126,24 @@ height levels shown while drawing, and the instant upgrade preview.
 - W/A/S/D pan; edge scroll is optional.
 - Q/E rotate; middle-mouse drag rotates.
 - R/F and the mouse wheel zoom.
-- U focuses the selection.
-- The view is 2D top-down, so there's no tilt (T/G).
+- Right-drag pans the map (left-drag too while nothing is being drawn).
+- The view is 2D top-down, so there's no tilt (T/G). A north arrow appears while the map is turned; clicking it
+  turns the map back north-up.
 - Touch: one-finger drag pans, two-finger pinch zooms and twists to rotate.
 
 **Tools:**
 - Left mouse applies the tool.
-- Right mouse cancels the current step (a road in progress goes back one click). Right-click on an added road
-  feature removes it.
-- Esc cancels the tool.
+- Right mouse goes back one step (a road in progress loses its last click; with nothing left it ends the chain).
+- Esc closes an open panel, else leaves the tool.
+- Tab / Shift+Tab cycle the road modes.
 - B selects the bulldozer.
 - Page Up/Page Down change elevation, in steps shown as a height in metres.
 
 **Simulation:** Space pauses; 1/2/3 set normal, fast and very fast speed.
 
 **Panels:**
-- P: progression; Z: economy; C: city info; V: statistics; X: transportation; M: map tiles.
+- M: map tiles. P: progression; Z: economy; C: city info; V: statistics; X: transportation, as those panels
+  arrive.
 - F5/F9: quicksave and quickload.
 - ` (backtick): hide the UI.
 - Ctrl+Z / Ctrl+Y: undo and redo. CS2 has none; this is kept from Trafficity.
@@ -154,18 +156,22 @@ height levels shown while drawing, and the instant upgrade preview.
 - Grid: three clicks (corner, width, length).
 - Replace: hover a road and click to change its type or upgrades; right-click a feature to remove it.
 
-**Parallel:** a toggle with an offset that works with every mode. Highways are drawn as two carriageways in one
-stroke.
+**Parallel:** a toggle with a spacing ([ and ] or the − / + buttons; default is the two roads side by side with a
+4 m median) that works with every drawing mode. The twin goes on the left of the drawn direction; one-way twins
+run the other way, so a one-way pair is a dual carriageway in one stroke. Its ends join the road the main stroke
+starts or ends on, and each new piece carries on from the last twin.
 
 **Snapping:**
-- A menu of toggles: existing geometry, guidelines, 90° angles, zone grid and cell length, building sides.
-- Defaults are all on.
+- A menu of toggles: existing roads and junctions, guidelines and right angles, alongside other roads, and 8 m
+  length steps (off by default; the others default on). Zone-grid and building-side snapping come with zoning.
+- Shift gives 15° angle steps.
 
 **Readouts:** next to the cursor while drawing, show length, slope %, angle to the road you connect to, and cost.
 
 **Intersections, roundabouts and ramps:**
 - Roads crossing at the same elevation make intersections automatically.
-- Roundabouts come in four sizes and are placed on an existing junction or on empty ground.
+- Roundabouts come in four sizes (small 1-lane ring, medium and large 2-lane, huge 3-lane) and are placed on an
+  existing junction or on empty ground.
 - Prefab interchanges (trumpet, diamond, cloverleaf) are a later milestone.
 - Ramps are one-way roads that join a carriageway with a merge, not a stop.
 

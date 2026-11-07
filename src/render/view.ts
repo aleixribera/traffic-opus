@@ -3,7 +3,8 @@ import { clamp, type V2 } from "../core/math";
 
 /**
  * Top-down orthographic view. World (x, y) maps to three (x, z); height is three y.
- * Screen up is north (-y). The sun sits up-left so shadows fall down-right like the reference.
+ * The view can turn about the vertical: at rot = 0 screen up is north (-y); positive rot turns the map anticlockwise on screen
+ * by that many radians (screen right = (cos rot, sin rot) in world). The sun stays put in the world.
  */
 export class View {
   readonly renderer: THREE.WebGLRenderer;
@@ -15,6 +16,7 @@ export class View {
   cx = 1200;
   cy = 1200;
   halfH = 160;
+  rot = 0;
   minHalfH = 28;
   maxHalfH = 30000;
   w = 1;
@@ -66,11 +68,12 @@ export class View {
     c.top = this.halfH;
     c.bottom = -this.halfH;
     c.position.set(this.cx, 900, this.cy);
+    c.up.set(Math.sin(this.rot), 0, -Math.cos(this.rot));
     c.lookAt(this.cx, 0, this.cy);
     c.updateProjectionMatrix();
     c.updateMatrixWorld();
     // fit the shadow frustum to what is on screen (+ room for long shadows from off-screen casters)
-    const ext = Math.max(halfW, this.halfH) * 1.25 + 30;
+    const ext = Math.hypot(halfW, this.halfH) * 1.1 + 30;
     const sc = this.sun.shadow.camera;
     sc.left = -ext;
     sc.right = ext;
@@ -89,13 +92,44 @@ export class View {
 
   /** CSS pixel -> world metres. */
   toWorld(px: number, py: number): V2 {
-    const m = this.mpp;
-    return { x: this.cx + (px - this.w / 2) * m, y: this.cy + (py - this.h / 2) * m };
+    const m = this.mpp, c = Math.cos(this.rot), s = Math.sin(this.rot);
+    const dx = (px - this.w / 2) * m, dy = (py - this.h / 2) * m;
+    return { x: this.cx + dx * c - dy * s, y: this.cy + dx * s + dy * c };
   }
 
   toScreen(p: V2): V2 {
-    const m = this.mpp;
-    return { x: (p.x - this.cx) / m + this.w / 2, y: (p.y - this.cy) / m + this.h / 2 };
+    const m = this.mpp, c = Math.cos(this.rot), s = Math.sin(this.rot);
+    const dx = p.x - this.cx, dy = p.y - this.cy;
+    return { x: (dx * c + dy * s) / m + this.w / 2, y: (-dx * s + dy * c) / m + this.h / 2 };
+  }
+
+  /** A screen-space offset in CSS pixels as a world vector (metres). */
+  screenVec(dx: number, dy: number): V2 {
+    const m = this.mpp, c = Math.cos(this.rot), s = Math.sin(this.rot);
+    return { x: (dx * c - dy * s) * m, y: (dx * s + dy * c) * m };
+  }
+
+  /** Move the map with the pointer: drag by (dx, dy) CSS pixels. */
+  pan(dx: number, dy: number) {
+    const v = this.screenVec(dx, dy);
+    this.cx -= v.x;
+    this.cy -= v.y;
+  }
+
+  /** Turn the view by da radians, keeping the world point under pixel (px, py) in place. */
+  rotateAt(px: number, py: number, da: number) {
+    const before = this.toWorld(px, py);
+    this.rot = Math.atan2(Math.sin(this.rot + da), Math.cos(this.rot + da));
+    const after = this.toWorld(px, py);
+    this.cx += before.x - after.x;
+    this.cy += before.y - after.y;
+  }
+
+  /** Half extents of the world-axis box around what is on screen. */
+  extents(): { ex: number; ey: number } {
+    const halfW = this.halfH * (this.w / this.h);
+    const c = Math.abs(Math.cos(this.rot)), s = Math.abs(Math.sin(this.rot));
+    return { ex: c * halfW + s * this.halfH, ey: s * halfW + c * this.halfH };
   }
 
   zoomAt(px: number, py: number, factor: number) {

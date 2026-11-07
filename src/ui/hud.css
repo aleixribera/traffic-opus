@@ -138,6 +138,20 @@ button:focus-visible, input:focus-visible { outline: 2px solid #1677b3; outline-
 .lvl2 { --lc: #4f8fe8; }
 .lvl3 { --lc: #9a6ae0; }
 .sb-name { font-weight: 600; }
+.seg-btn.val { min-width: 44px; font-variant-numeric: tabular-nums; color: var(--ink); }
+.snap-btn { gap: 2px; display: inline-flex; }
+.snap-btn.partial { border-color: #d39b2a; }
+.snap-menu { position: absolute; bottom: calc(100% + 6px); left: 0; padding: 6px 4px 4px; min-width: 248px; display: flex; flex-direction: column; }
+.snap-menu[hidden] { display: none; }
+.sm-head { font-weight: 600; padding: 0 8px 4px; }
+.sm-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 4px; cursor: pointer; }
+.sm-row:hover { background: #f0f0ea; }
+.sm-row input { width: 15px; height: 15px; accent-color: #1677b3; margin: 0; }
+.sm-foot { color: var(--ink-2); padding: 4px 8px 2px; border-top: 1px solid var(--line); margin-top: 4px; font-size: 12px; }
+.compass { width: 30px; height: 30px; padding: 0; justify-content: center; }
+.compass[hidden] { display: none; }
+.compass svg { transition: none; }
+body.ui-hidden .hud > :not(.toasts) { display: none !important; }
 .zone-tag { display: inline-block; padding: 1px 6px; border-radius: 3px; color: #fff; font-weight: 500; margin-right: 6px; font-size: 11px; }
 .z-res.zone-tag { background: #3a8a27; }
 .z-com.zone-tag { background: #2373c4; }
@@ -236,6 +250,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid #1677b3; outline-
   .tool { width: 36px; height: 40px; }
   .hist .icon-btn { width: 32px; height: 40px; }
   .subbar .sb-label { display: none; } /* names live in the tooltips; keeps Height in view */
+  .subbar { flex-wrap: wrap; justify-content: center; white-space: normal; row-gap: 4px; align-self: center; }
+  .subbar .sb-name { flex-basis: 100%; text-align: center; }
   .toasts { bottom: 150px; }
 }
 /* touch: bigger hit areas for the small HUD controls */
