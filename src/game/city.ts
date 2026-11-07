@@ -300,12 +300,15 @@ export class Game {
    * before. Returns how many it lit.
    */
   private autoLights(css: ChangeSet[], before: Map<number, V2[]>): number {
-    if (!this.featureUnlocked("signals")) return 0;
     let lit = 0;
     const ids = new Set<number>();
     for (const cs of css) for (const id of cs.dirtyNodes) ids.add(id);
     for (const id of ids) {
       const n = this.net.nodes.get(id), ng = this.net.nodeGeom.get(id);
+      // a road joining a junction that has lights gets a green too
+      const fixed = this.planWithAllArms(id);
+      if (fixed) { this.net.setSignal(id, fixed); lit++; continue; }
+      if (!this.featureUnlocked("signals")) continue;
       if (!n || !ng || n.signal || n.noAutoLights || ng.kind !== "junction" || ng.arms.length < 3) continue;
       let big = 0, ring = false;
       for (const a of ng.arms) {
@@ -324,6 +327,28 @@ export class Game {
       if (plan) { this.net.setSignal(id, plan); lit++; }
     }
     return lit;
+  }
+
+  /**
+   * The plan of junction `id`'s lights with every approach in it, or null when none is missing: a road that joined
+   * it since goes with the road straight across from it, or gets a phase of its own (otherwise it would never see
+   * green). Arms that are gone are dropped.
+   */
+  planWithAllArms(id: number): SignalPlan | null {
+    const n = this.net.nodes.get(id), ng = this.net.nodeGeom.get(id);
+    if (!n?.signal || !ng || ng.kind !== "junction") return null;
+    const sig = n.signal;
+    const missing = ng.arms.filter((a) => ng.conns.some((c) => c.armIn === a.seg) && !sig.phases.some((p) => p.arms.includes(a.seg)));
+    if (!missing.length) return null;
+    const live = new Set(ng.arms.map((a) => a.seg));
+    const plan: SignalPlan = { phases: sig.phases.map((p) => ({ ...p, arms: p.arms.filter((x) => live.has(x)) })) };
+    for (const a of missing) {
+      const across = ng.arms.find((b) => b.seg !== a.seg && b.dir.x * a.dir.x + b.dir.y * a.dir.y < -0.8 && plan.phases.some((p) => p.arms.includes(b.seg)));
+      const ph = across && plan.phases.find((p) => p.arms.includes(across.seg));
+      if (ph) ph.arms.push(a.seg);
+      else plan.phases.push({ arms: [a.seg], dur: 12 });
+    }
+    return plan;
   }
 
   private afterRoads(cs: ChangeSet) {
@@ -1336,6 +1361,15 @@ export class Game {
     g.cityName = data.cityName ?? g.cityName;
     const cs = g.net.rebuildAll();
     g.traffic.onNetworkChange(cs);
+    // (saves from before lights took in roads added to their junction)
+    g.net.begin();
+    let fixed = 0;
+    for (const id of g.net.nodes.keys()) {
+      const p = g.planWithAllArms(id);
+      if (p) { g.net.setSignal(id, p); fixed++; }
+    }
+    g.net.commit();
+    if (fixed) g.traffic.onNetworkChange(g.net.rebuild());
     if (data.zoneAges) g.zones.loadAges(data.zoneAges);
     g.zones.rebuildAll();
     g.zones.paintAt(data.zones.map(([x, y, z]) => ({ p: { x: x as number, y: y as number }, zone: z as ZoneId })));

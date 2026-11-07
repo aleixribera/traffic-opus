@@ -72,6 +72,23 @@ describe("Traffic lights where bigger roads meet (CS2)", () => {
     expect(g.net.nodes.get(x.id)!.signal).not.toBeNull();
   });
 
+  it("a road added to a junction with lights gets its green, with the road across from it", () => {
+    const g = game();
+    lay(g, v2(0, 0), v2(240, 0), "avenue");
+    lay(g, v2(120, 0), v2(120, -120), "avenue");
+    const t = nodeNear(g, v2(120, 0));
+    expect(t.signal).not.toBeNull();
+    lay(g, v2(120, 0), v2(120, 120), "street");
+    const ng = g.net.nodeGeom.get(t.id)!;
+    const south = ng.arms.find((a) => a.dir.y > 0.9)!.seg, north = ng.arms.find((a) => a.dir.y < -0.9)!.seg;
+    const plan = g.net.nodes.get(t.id)!.signal!;
+    expect(plan.phases.find((p) => p.arms.includes(south))?.arms).toContain(north);
+    // and a save from before the fix heals when loaded
+    g.net.nodes.get(t.id)!.signal = { phases: plan.phases.map((p) => ({ ...p, arms: p.arms.filter((x) => x !== south) })) };
+    const h = Game.load(JSON.parse(JSON.stringify(g.serialize())));
+    expect(h.net.nodes.get(t.id)!.signal!.phases.some((p) => p.arms.includes(south))).toBe(true);
+  });
+
   it("not before lights are unlocked", () => {
     const g = new Game(7);
     g.money = 1e7;
