@@ -186,6 +186,8 @@ export class Roads3D {
   // signal heads drawn as coloured dots at the stop line
   private lights: THREE.InstancedMesh;
   private lightRefs: { node: number; arm: number; x: number; y: number; h: number }[] = [];
+  // turn arrows painted on the lanes coming into a junction
+  private arrowMat = new THREE.MeshLambertMaterial({ color: PAL.lane, side: THREE.DoubleSide });
   // grass islands inside roundabouts
   private islands = new THREE.Group();
   private islandMat = new THREE.MeshLambertMaterial({ color: PAL.grass });
@@ -510,8 +512,46 @@ export class Roads3D {
       km.receiveShadow = true;
       out.push(km);
     }
+    const arrows = this.turnArrows(id);
+    if (arrows) out.push(arrows);
     this.group.add(...out);
     this.nodes.set(id, out);
+  }
+
+  /**
+   * Turn arrows on the approaches to a junction (CS2): on each lane coming in, a little before the stop line, the
+   * ways that lane may go. Only where the choice of lane matters: approaches with more than one lane, or a turn lane.
+   */
+  private turnArrows(id: number): THREE.Mesh | null {
+    const ng = this.net.nodeGeom.get(id);
+    if (!ng || ng.kind !== "junction" || ng.arms.length < 3) return null;
+    const pos: number[] = [];
+    for (const a of ng.arms) {
+      const s = this.net.segs.get(a.seg), g = this.net.segGeom.get(a.seg);
+      if (!s || !g || s.ring || isHighway(ROAD_TYPES[s.type])) continue;
+      const inn = g.lanes.filter((l) => l.to === id && l.seg === a.seg && (a.end === "b" ? l.dir === 1 : l.dir === -1));
+      if (inn.length < 2) continue;
+      for (const l of inn) {
+        const turns = new Set(ng.conns.filter((c) => c.from === l).map((c) => c.turn));
+        if (!turns.size) continue;
+        // (a U-turn shows as a left turn, unless that's all the lane does)
+        if (turns.has("U") && turns.size > 1) turns.delete("U");
+        else if (turns.has("U")) { turns.delete("U"); turns.add("L"); }
+        const L = l.pl.length, at = L - 7;
+        if (at < 3) continue;
+        const p = polyAt(l.pl, at), d = polyDir(l.pl, at), r = right(d);
+        const f = (at / (L || 1)) * (l.hs.length - 1), i0 = Math.floor(f), i1 = Math.min(l.hs.length - 1, i0 + 1);
+        const h = (l.hs[i0] ?? 0) + ((l.hs[i1] ?? 0) - (l.hs[i0] ?? 0)) * (f - i0) + LIFT + 0.016;
+        for (const [gx, gy] of arrowGlyph([...turns].sort().join(""))) pos.push(p.x + r.x * gx + d.x * gy, h, p.y + r.y * gx + d.y * gy);
+      }
+    }
+    if (!pos.length) return null;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, this.arrowMat);
+    m.receiveShadow = true;
+    return m;
   }
 
   /** Roundabouts: one continuous ring surface, a grass island, and flared mouths where roads join. */
@@ -1006,4 +1046,54 @@ export function arcsBetween(gaps: [number, number][]): [number, number][] {
     if (next - end > 1e-3) out.push([end, next - end]);
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------------------------
+// turn arrow glyphs: triangles in lane space (x: metres right of the lane's line, y: metres ahead)
+// ---------------------------------------------------------------------------------------------
+
+const glyphs = new Map<string, number[][]>();
+
+/** A painted arrow for a set of turns ("S", "L", "R", "LS", "RS", "LR", "LRS"): triangle corners, upward-facing. */
+function arrowGlyph(key: string): number[][] {
+  const hit = glyphs.get(key);
+  if (hit) return hit;
+  const tris: number[][] = [];
+  const W = 0.15; // half the stroke
+  // a thick line along pts (mitred joints)
+  const stroke = (pts: number[][]) => {
+    const side: number[][][] = [];
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+      const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
+      const nx = dy / l, ny = -dx / l; // to the right of the way the line runs
+      side.push([[pts[i][0] - nx * W, pts[i][1] - ny * W], [pts[i][0] + nx * W, pts[i][1] + ny * W]]);
+    }
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [l0, r0] = side[i], [l1, r1] = side[i + 1];
+      tris.push(l0, r0, r1, l0, r1, l1);
+    }
+  };
+  // a head: tip, and the two corners of its base
+  const head = (tip: number[], dx: number, dy: number, len = 0.9, half = 0.5) => {
+    const bx = tip[0] - dx * len, by = tip[1] - dy * len;
+    tris.push(tip, [bx - dy * half, by + dx * half], [bx + dy * half, by - dx * half]);
+  };
+  stroke([[0, -2.3], [0, -0.2]]);
+  if (key.includes("S")) { stroke([[0, -0.3], [0, 1.45]]); head([0, 2.3], 0, 1); }
+  for (const sgn of [key.includes("L") ? -1 : 0, key.includes("R") ? 1 : 0]) {
+    if (!sgn) continue;
+    // up from the stem and round to the side
+    const arc: number[][] = [];
+    for (let k = 0; k <= 6; k++) {
+      const t = (k / 6) * (Math.PI / 2);
+      arc.push([sgn * (0.6 - 0.6 * Math.cos(t)), -0.4 + 0.6 * Math.sin(t)]);
+    }
+    arc.push([sgn * 0.75, 0.2]);
+    stroke(arc);
+    // (inside the lane: the tip stays clear of the line beside it)
+    head([sgn * 1.4, 0.2], sgn, 0, 0.75, 0.45);
+  }
+  glyphs.set(key, tris);
+  return tris;
 }
