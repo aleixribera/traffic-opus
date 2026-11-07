@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { RoadNetwork, type Connector } from "../src/roads/network";
+import { RoadNetwork, type Connector, type RSeg } from "../src/roads/network";
 import { Traffic, type Trip } from "../src/sim/traffic";
 import { hermiteCubic, minRadius, polyAt, polyClosest, rampCurve, sampleCubic, straightCubic, v2, type V2 } from "../src/core/math";
 import type { RoadTypeId } from "../src/config";
 import type { Access } from "../src/sim/router";
-import { commitStrokes, commitWiden, planRoad, snap, type BuildWorld } from "../src/roads/planner";
+import { chainPoints, commitStrokes, planRoad, slipLaneEnd, snap, type BuildWorld } from "../src/roads/planner";
 
 const world: BuildWorld = { isWater: () => false, isMountain: () => false, inBounds: () => true, unlocked: () => true, buildingsHit: () => [], money: () => 1e9 };
 const on = (net: RoadNetwork, p: V2) => snap(net, p, { mpp: 0.2, level: 0, type: "one1" });
@@ -156,26 +156,6 @@ describe("Drawing slip roads and lanes", () => {
     net.rebuild();
     expect([...net.nodeGeom.values()].filter((g) => g.kind === "split").length).toBe(1);
   });
-
-  it("adds a lane when a one-way is drawn along the carriageway", () => {
-    const net = carriageway();
-    const plan = planRoad(net, world, { start: on(net, v2(300, 3)), end: on(net, v2(600, 3)), mode: "straight", type: "one1" });
-    expect(plan.errors.map((e) => e.msg)).toEqual([]);
-    expect(plan.note).toBe("Add lane");
-    net.begin();
-    commitWiden(net, plan.widen!);
-    net.commit();
-    net.rebuild();
-    const types = [...net.segs.values()].sort((x, y) => x.c.p0.x - y.c.p0.x).map((s) => s.type);
-    expect(types).toEqual(["hw2", "one3", "hw2"]);
-    expect([...net.nodeGeom.values()].filter((g) => g.kind === "lane").length).toBe(2);
-    // drawn against the traffic: still that stretch of carriageway
-    const back = planRoad(net, world, { start: on(net, v2(900, 3)), end: on(net, v2(700, 3)), mode: "straight", type: "one1" });
-    expect(back.errors.map((e) => e.msg)).toEqual([]);
-    expect(back.widen?.lanes).toBe(3);
-    expect(back.widen!.a.x).toBeCloseTo(700, 2);
-    expect(back.widen!.b.x).toBeCloseTo(900, 2);
-  });
 });
 
 /** Largest heading change between consecutive pieces of a connector (radians). */
@@ -296,200 +276,309 @@ describe("Slip lanes (parallel-type ramps)", () => {
     net.rebuild();
     return net;
   }
-  /** What the game does with a plan: the roads, then the lanes added to the carriageway. */
+  /** What the game does with a plan: a slip lane being redrawn goes first, then the roads. */
   function build(net: RoadNetwork, plan: ReturnType<typeof planRoad>) {
     expect(plan.errors.map((e) => e.msg)).toEqual([]);
     net.begin();
+    for (const id of plan.removeSegs ?? []) net.removeSeg(id, true);
     for (const st of plan.strokes) commitStrokes(net, [st]);
-    if (plan.widen) { if (plan.strokes.length) net.rebuild(); commitWiden(net, plan.widen); }
     net.commit();
-    net.rebuild();
+    return net.rebuild();
   }
-  /** The carriageway along y = 0, west to east: [from x, to x, type]. */
-  const along = (net: RoadNetwork) => [...net.segs.values()].filter((s) => s.type !== "hw1")
-    .sort((x, y) => x.c.p0.x - y.c.p0.x).map((s) => [Math.round(s.c.p0.x), Math.round(s.c.p3.x), s.type]);
-  const exit = (net: RoadNetwork, x: number) => planRoad(net, world, { start: on(net, v2(x, 0)), end: free(v2(x + 220, 110)), mode: "straight", type: "hw1" });
+  const exit = (net: RoadNetwork, x: number, side = 1) => planRoad(net, world, { start: on(net, v2(x, 0)), end: free(v2(x + 220, 110 * side)), mode: "straight", type: "hw1" });
   const entry = (net: RoadNetwork, x: number) => planRoad(net, world, { start: free(v2(x - 220, 110)), end: on(net, v2(x, 0)), mode: "straight", type: "hw1" });
+  /** The carriageway: every piece still a two-lane carriageway exactly on y = 0. */
+  function untouched(net: RoadNetwork) {
+    const cw = [...net.segs.values()].filter((s) => s.type !== "hw1");
+    for (const s of cw) {
+      expect(s.type).toBe("hw2");
+      for (const p of net.segGeom.get(s.id)!.center.pts) expect(Math.abs(p.y)).toBeLessThan(1e-6);
+    }
+    expect(Math.min(...cw.map((s) => s.c.p0.x))).toBe(0);
+    return cw;
+  }
+  const lanes = (net: RoadNetwork) => [...net.segs.values()].filter((s) => slipLaneEnd(net, s.id));
+  const glued = 4.2 + 2.45 - 0.42;
+  /** Lateral distance of a road from y = 0 along x0..x1: every built point within tol of `want`. */
+  function beside(net: RoadNetwork, seg: number, x0: number, x1: number, want = glued, tol = 0.05) {
+    const pts = net.segGeom.get(seg)!.center.pts.filter((p) => p.x >= x0 && p.x <= x1);
+    expect(pts.length).toBeGreaterThan(10);
+    for (const p of pts) expect(Math.abs(p.y - want)).toBeLessThan(tol);
+  }
 
-  it("gives an exit a deceleration lane: the carriageway a lane wider before it, the ramp carrying straight on from it", () => {
+  it("gives an exit a deceleration lane beside the carriageway, which stays as it was", () => {
     const net = carriageway();
     const plan = exit(net, 800);
     expect(plan.note).toBe("160 m slip lane");
-    expect(plan.ghosts?.[0].chain.length).toBeGreaterThan(0);
+    // the preview shows the lane where it will be, beside the carriageway, not over it
+    for (const p of chainPoints(plan.strokes[0].show!, 4)) if (p.x < 800) expect(p.y).toBeGreaterThan(glued - 0.3);
     build(net, plan);
-    expect(along(net)).toEqual([[0, 640, "hw2"], [640, 800, "one3"], [800, 2000, "hw2"]]);
-    const kinds = [...net.nodeGeom.values()].map((g) => g.kind).filter((k) => k !== "end").sort();
-    expect(kinds).toEqual(["lane", "split"]);
-    // at the gore: the kerb lane runs on into the ramp, the two through lanes run on 1:1
-    const gore = [...net.nodeGeom.values()].find((g) => g.kind === "split")!;
-    const ramp = [...net.segs.values()].find((s) => s.type === "hw1")!;
-    const toRamp = gore.conns.filter((c) => c.to.seg === ramp.id);
-    expect(toRamp.map((c) => c.from.idx)).toEqual([0]);
-    expect(maxBend(toRamp[0])).toBeLessThan(0.08);
-    expect(gore.conns.filter((c) => c.to.seg !== ramp.id).map((c) => `${c.from.idx}>${c.to.idx}`).sort()).toEqual(["1>0", "2>1"]);
+    untouched(net);
+    const [lane] = lanes(net);
+    expect(slipLaneEnd(net, lane.id)).toBe("a");
+    expect(net.nodes.get(lane.a)!.p.x).toBeCloseTo(640, 0);
+    // glued beside the carriageway all the way to the gore, where the ramp carries straight on
+    beside(net, lane.id, 641, 799);
+    const ramp = [...net.segs.values()].find((s) => s.type === "hw1" && s.a === lane.b)!;
+    expect(yAt(net, ramp.id, 801)).toBeCloseTo(glued, 0);
+    expect(yAt(net, ramp.id, 950)).toBeGreaterThan(30);
+    // the lane opens off the kerb lane through a taper; the through lanes run on 1:1
+    const ng = net.nodeGeom.get(lane.a)!;
+    expect(ng.kind).toBe("split");
+    const toLane = ng.conns.filter((c) => c.to.seg === lane.id);
+    expect(toLane.map((c) => c.from.idx)).toEqual([0]);
+    expect(maxBend(toLane[0])).toBeLessThan(0.08);
+    expect(ng.conns.filter((c) => c.to.seg !== lane.id).map((c) => `${c.from.idx}>${c.to.idx}`).sort()).toEqual(["0>0", "1>1"]);
+    // the gore is just the ramp carrying on
+    expect(net.nodeGeom.get(lane.b)!.kind).toMatch(/cont|bend/);
   });
 
-  it("gives an entry a longer acceleration lane after it", () => {
+  it("gives an entry a longer acceleration lane, merging into the kerb lane at its end", () => {
     const net = carriageway();
     const plan = entry(net, 800);
     expect(plan.note).toBe("200 m slip lane");
     build(net, plan);
-    expect(along(net)).toEqual([[0, 800, "hw2"], [800, 1000, "one3"], [1000, 2000, "hw2"]]);
+    untouched(net);
+    const [lane] = lanes(net);
+    expect(slipLaneEnd(net, lane.id)).toBe("b");
+    expect(net.nodes.get(lane.b)!.p.x).toBeCloseTo(1000, 0);
+    beside(net, lane.id, 801, 999);
+    const ng = net.nodeGeom.get(lane.b)!;
+    const merge = ng.conns.find((c) => c.from.seg === lane.id)!;
+    expect(merge.to.idx).toBe(0);
+    expect(merge.conflicts.some((k) => k.merge)).toBe(true);
   });
 
-  it("joins an entry's lane to the next exit's when they come close: one lane between them", () => {
+  it("puts a ramp's lane on the side it leaves from", () => {
+    const net = carriageway();
+    build(net, exit(net, 800, -1));
+    untouched(net);
+    const [lane] = lanes(net);
+    beside(net, lane.id, 641, 799, -glued);
+  });
+
+  it("joins an entry's lane to the next exit's when they come close: one lane between them, a weave", () => {
+    const check = (net: RoadNetwork) => {
+      untouched(net);
+      const ls = lanes(net);
+      expect(ls.length).toBe(2);
+      const inn = ls.find((s) => slipLaneEnd(net, s.id) === "b")!, out = ls.find((s) => slipLaneEnd(net, s.id) === "a")!;
+      expect(inn.b).toBe(out.a);
+      const ng = net.nodeGeom.get(inn.b)!;
+      expect(ng.kind).toBe("split");
+      expect(ng.arms.length).toBe(4);
+      // one lane all the way from the entry's gore to the exit's
+      beside(net, inn.id, 601, net.nodes.get(inn.b)!.p.x - 1);
+      beside(net, out.id, net.nodes.get(inn.b)!.p.x + 1, 1099);
+      // through the weave: the slip lane carries on into the exit, or merges into the kerb lane, giving way to the
+      // carriageway's traffic, which never stops (staying on, or moving over into the exit's lane)
+      const through = ng.conns.find((c) => c.from.seg === inn.id && c.to.seg === out.id)!;
+      const merge = ng.conns.find((c) => c.from.seg === inn.id && c.to.seg !== out.id)!;
+      expect(through.free).toBe(false);
+      expect(merge.free).toBe(false);
+      expect(merge.to.idx).toBe(0);
+      expect(maxBend(through)).toBeLessThan(0.01);
+      for (const c of ng.conns.filter((c) => c.from.seg !== inn.id)) expect(c.free).toBe(true);
+    };
     const net = carriageway();
     build(net, entry(net, 600));
     const plan = exit(net, 1100);
     expect(plan.note).toBe("Slip lanes joined");
     build(net, plan);
-    expect(along(net)).toEqual([[0, 600, "hw2"], [600, 800, "one3"], [800, 1100, "one3"], [1100, 2000, "hw2"]]);
-    // and the other way round: an exit drawn first, then the entry before it
+    check(net);
+    // and the other way round: the exit first, then the entry before it
     const net2 = carriageway();
     build(net2, exit(net2, 1100));
-    build(net2, entry(net2, 600));
-    expect(along(net2).map((r) => r[2])).toEqual(["hw2", "one3", "one3", "hw2"]);
-    expect(along(net2)[1][0]).toBe(600);
-    expect(along(net2)[2][1]).toBe(1100);
+    const p2 = entry(net2, 600);
+    expect(p2.note).toBe("Slip lanes joined");
+    build(net2, p2);
+    check(net2);
   });
 
   it("keeps lanes apart when the next ramp is far away", () => {
     const net = carriageway(3000);
     build(net, entry(net, 600));
     build(net, exit(net, 1600));
-    expect(along(net).map((r) => r[2])).toEqual(["hw2", "one3", "hw2", "one3", "hw2"]);
+    untouched(net);
+    const kinds = [...net.nodeGeom.values()].filter((g) => g.kind === "split").map((g) => g.arms.length);
+    expect(kinds).toEqual([3, 3]);
   });
 
-  it("makes a slip lane longer when it is drawn on along the carriageway, either way", () => {
+  it("makes a slip lane longer when drawn on along the carriageway from its start, either way", () => {
     const net = carriageway();
     build(net, exit(net, 800));
+    const [old] = lanes(net);
     // from the lane's start back up the carriageway, against the traffic
-    const plan = planRoad(net, world, { start: on(net, v2(640, 3)), end: on(net, v2(400, 3)), mode: "straight", type: "hw1" });
-    expect(plan.widen?.lanes).toBe(3);
+    const plan = planRoad(net, world, { start: on(net, v2(640, 0)), end: on(net, v2(400, 0)), mode: "straight", type: "hw1" });
+    expect(plan.note).toBe("400 m slip lane");
+    expect(plan.removeSegs).toEqual([old.id]);
+    expect(plan.continueAt?.p.x).toBeCloseTo(400, 0);
     build(net, plan);
-    expect(along(net).map((r) => r[2])).toEqual(["hw2", "one3", "one3", "hw2"]);
-    expect(along(net)[1][0]).toBe(400);
-    // drawn over the lane and on past it: the rest is brought up to match, nothing gets a fourth lane
-    const over = planRoad(net, world, { start: on(net, v2(500, 3)), end: on(net, v2(300, 3)), mode: "straight", type: "hw1" });
-    expect(over.note).toBe("Extend lane");
-    build(net, over);
-    expect(new Set(along(net).map((r) => r[2]))).toEqual(new Set(["hw2", "one3"]));
-    expect(along(net).find((r) => r[2] === "one3")![0]).toBe(300);
-  });
-
-  it("runs a lane drawn just short of a slip lane on to meet it, leaving no sliver between", () => {
-    const net = carriageway();
-    build(net, exit(net, 800));
-    const plan = planRoad(net, world, { start: on(net, v2(600, 3)), end: on(net, v2(400, 3)), mode: "straight", type: "hw1" });
-    expect(plan.note).toBe("Extend lane");
-    build(net, plan);
-    expect(along(net).map((r) => r[2])).toEqual(["hw2", "one3", "one3", "hw2"]);
-    expect(along(net)[1][0]).toBe(400);
-    // but not from far off: that's a lane of its own
+    untouched(net);
+    const [lane] = lanes(net);
+    expect(net.nodes.get(lane.a)!.p.x).toBeCloseTo(400, 0);
+    beside(net, lane.id, 401, 799);
+    // drawn towards it from further up, starting just short of it on the carriageway
+    const p2 = planRoad(net, world, { start: on(net, v2(200, 0)), end: on(net, v2(385, 0)), mode: "straight", type: "hw1" });
+    expect(p2.note).toBe("600 m slip lane");
+    build(net, p2);
+    expect(net.nodes.get(lanes(net)[0].a)!.p.x).toBeCloseTo(200, 0);
+    // an entry's lane drawn on with the traffic
     const net2 = carriageway();
-    build(net2, exit(net2, 800));
-    const far = planRoad(net2, world, { start: on(net2, v2(500, 3)), end: on(net2, v2(300, 3)), mode: "straight", type: "hw1" });
-    expect(far.note).toBe("Add lane");
+    build(net2, entry(net2, 600));
+    const p3 = planRoad(net2, world, { start: on(net2, v2(800, 0)), end: on(net2, v2(1200, 0)), mode: "straight", type: "hw1" });
+    expect(p3.note).toBe("600 m slip lane");
+    build(net2, p3);
+    expect(net2.nodes.get(lanes(net2)[0].b)!.p.x).toBeCloseTo(1200, 0);
   });
 
-  /** A carriageway along y = 0 that climbs onto a bridge (8 m) over a ground road crossing at x = 1000. */
-  function overBridge() {
+  it("joins a slip lane drawn on to the next ramp's lane", () => {
+    const net = carriageway(3000);
+    build(net, entry(net, 600));
+    build(net, exit(net, 1600));
+    const exitStart = net.nodes.get(lanes(net).find((s) => slipLaneEnd(net, s.id) === "a")!.a)!.p.x;
+    const plan = planRoad(net, world, { start: on(net, v2(exitStart, 0)), end: on(net, v2(790, 0)), mode: "straight", type: "hw1" });
+    expect(plan.note).toBe("Slip lanes joined");
+    build(net, plan);
+    untouched(net);
+    expect([...net.nodeGeom.values()].filter((g) => g.kind === "split").map((g) => g.arms.length)).toEqual([4]);
+  });
+
+  it("follows the carriageway's height onto a bridge", () => {
+    // the carriageway climbs from the ground to 8 m between x = 500 and 900, over a street crossing at x = 1000
     const net = new RoadNetwork();
     net.begin();
-    const a = net.addNode(v2(0, 0), 0), m = net.addNode(v2(500, 0), 0), b = net.addNode(v2(900, 0), 8), c = net.addNode(v2(1500, 0), 8);
+    const a = net.addNode(v2(0, 0), 0), m = net.addNode(v2(500, 0), 0), b = net.addNode(v2(900, 0), 8), c = net.addNode(v2(1600, 0), 8);
     road(net, a, m, "hw2");
     road(net, m, b, "hw2");
     road(net, b, c, "hw2");
     road(net, net.addNode(v2(1000, -300), 0), net.addNode(v2(1000, 300), 0), "street");
     net.commit();
     net.rebuild();
-    return net;
-  }
-
-  it("follows the carriageway onto a rising stretch when drawing along it from lower down", () => {
-    const net = overBridge();
-    const start = on(net, v2(300, 0));
-    const end = snap(net, v2(800, 0.5), { mpp: 0.2, level: 0, type: "hw1", from: { p: start.p, on: start } });
-    expect(end.seg).toBeDefined();
-    expect(end.h).toBeGreaterThan(4);
-    const plan = planRoad(net, world, { start, end, mode: "straight", type: "hw1" });
-    expect(plan.widen?.lanes).toBe(3);
-    // a stroke from somewhere else doesn't get pulled up onto it
-    expect(snap(net, v2(800, 0.5), { mpp: 0.2, level: 0, type: "hw1", from: { p: v2(800, 300) } }).seg).toBeUndefined();
-    // aiming at the ground road under the bridge snaps to that road, not up onto the bridge
-    const under = snap(net, v2(1001, 1), { mpp: 0.2, level: 0, type: "hw1", from: { p: start.p, on: start } });
-    expect(under.h).toBe(0);
-    expect(net.segs.get(under.seg!)?.type).toBe("street");
+    // an exit off the bridge, its lane drawn back down the slope
+    const ex = planRoad(net, world, { start: { ...on(net, v2(1300, 0)), h: 8 }, end: { p: v2(1520, 110), h: 8, guides: [] }, mode: "straight", type: "hw1" });
+    build(net, ex);
+    const start = net.nodes.get(lanes(net)[0].a)!;
+    const plan = planRoad(net, world, { start: { p: start.p, h: start.h, node: start.id, guides: [] }, end: snap(net, v2(700, 0.5), { mpp: 0.2, level: 0, type: "hw1", from: { p: start.p, on: { p: start.p, h: start.h, node: start.id, guides: [] } } }), mode: "straight", type: "hw1" });
+    build(net, plan);
+    const [lane] = lanes(net);
+    const g = net.segGeom.get(lane.id)!;
+    const cw = [...net.segs.values()].filter((s) => s.type === "hw2");
+    for (let i = 0; i < g.center.pts.length; i += 5) {
+      const p = g.center.pts[i];
+      const s = cw.find((x) => p.x >= x.c.p0.x && p.x <= x.c.p3.x)!;
+      const t = polyClosest(net.segGeom.get(s.id)!.center, p);
+      expect(Math.abs(g.hs[i] - net.segGeom.get(s.id)!.hs[Math.round(t.s / net.segGeom.get(s.id)!.center.length * (net.segGeom.get(s.id)!.hs.length - 1))])).toBeLessThan(0.3);
+    }
+    // it passes over the street, as the carriageway does: no junction made with it
+    expect([...net.nodeGeom.values()].filter((x) => x.kind === "junction").length).toBe(0);
   });
 
-  it("draws an exit's lane preview in order when the lane runs over a node", () => {
-    const net = new RoadNetwork();
-    net.begin();
-    const a = net.addNode(v2(0, 0), 0), m = net.addNode(v2(1000, 0), 0), b = net.addNode(v2(2000, 0), 0);
-    road(net, a, m, "hw2");
-    road(net, m, b, "hw2");
-    net.commit();
-    net.rebuild();
-    const plan = exit(net, 1100);
-    const xs = plan.ghosts![0].chain.flatMap((c) => [c.p0.x, c.p3.x]);
-    expect(xs[0]).toBeCloseTo(940, 0);
-    expect(xs[xs.length - 1]).toBeCloseTo(1100, 0);
-    for (let i = 1; i < xs.length; i++) expect(xs[i]).toBeGreaterThanOrEqual(xs[i - 1] - 0.5);
-  });
-
-  it("only takes a straight stroke along the carriageway as a lane, and carries on from the cursor's end", () => {
+  it("leaves a carriageway as it is when a road is drawn along it, and town slip roads without a lane", () => {
     const net = carriageway();
-    // a loop road drawn round from the carriageway and back onto it is a road
-    const loop = planRoad(net, world, { start: on(net, v2(700, 0)), end: on(net, v2(300, 0)), mode: "continuous", type: "one1", startTangent: v2(0, 1) });
-    expect(loop.widen).toBeUndefined();
-    expect(loop.strokes.length).toBeGreaterThan(0);
-    // drawn against the traffic, the next stroke starts where the cursor was, on the carriageway
-    const back = planRoad(net, world, { start: on(net, v2(900, 3)), end: on(net, v2(700, 3)), mode: "straight", type: "hw1" });
-    expect(back.continueAt?.p.x).toBeCloseTo(700, 0);
-    expect(back.continueAt?.p.y).toBeCloseTo(0, 3);
-  });
-
-  it("leaves town slip roads and far-side ramps without one", () => {
-    const net = carriageway();
-    const left = planRoad(net, world, { start: on(net, v2(800, 0)), end: free(v2(1020, -110)), mode: "straight", type: "hw1" });
-    expect(left.widen).toBeUndefined();
+    const along = planRoad(net, world, { start: on(net, v2(300, 0)), end: on(net, v2(600, 0)), mode: "straight", type: "hw1" });
+    expect(along.errors.length).toBeGreaterThan(0);
     const town = new RoadNetwork();
     town.begin();
     road(town, town.addNode(v2(0, 0), 0), town.addNode(v2(1000, 0), 0), "one2");
     town.commit();
     town.rebuild();
     const t = planRoad(town, world, { start: on(town, v2(500, 0)), end: free(v2(600, 30)), mode: "straight", type: "one1" });
-    expect(t.widen).toBeUndefined();
+    expect(t.note).toBeUndefined();
+    expect(t.strokes[0].show).toBeUndefined();
   });
 
-  it("drives cars through an interchange with slip lanes without stalls", () => {
+  it("checks a slip lane where it is built, and only treats one stretch of carriageway as 'along' it", () => {
+    // a gap in a carriageway, filled from one dead end to the other, is a road (not "along the carriageway")
+    const gap = new RoadNetwork();
+    gap.begin();
+    road(gap, gap.addNode(v2(0, 0), 0), gap.addNode(v2(800, 0), 0), "hw2");
+    road(gap, gap.addNode(v2(1000, 0), 0), gap.addNode(v2(2000, 0), 0), "hw2");
+    gap.commit();
+    gap.rebuild();
+    const fill = planRoad(gap, world, { start: on(gap, v2(800, 0)), end: on(gap, v2(1000, 0)), mode: "straight", type: "hw2" });
+    expect(fill.errors.map((e) => e.msg)).toEqual([]);
+    // the other carriageway at the usual spacing: no room for a lane on the median side
+    const pair = carriageway();
+    pair.begin();
+    road(pair, pair.addNode(v2(2000, -12.4), 0), pair.addNode(v2(0, -12.4), 0), "hw2");
+    pair.commit();
+    pair.rebuild();
+    const left = planRoad(pair, world, { start: on(pair, v2(800, 0)), end: free(v2(1020, -110)), mode: "straight", type: "hw1" });
+    expect(left.errors.some((e) => e.msg.startsWith("Overlaps"))).toBe(true);
+    // a street running just outside the carriageway: the lane would be built on top of it
+    const st = carriageway();
+    st.begin();
+    road(st, st.addNode(v2(300, 9), 0), st.addNode(v2(700, 9), 0), "street");
+    st.commit();
+    st.rebuild();
+    const over = exit(st, 800);
+    expect(over.errors.some((e) => e.msg.startsWith("Overlaps"))).toBe(true);
+    // nor does a road join a slip lane part-way along it
+    const j = carriageway();
+    build(j, exit(j, 800));
+    const mid = planRoad(j, world, { start: free(v2(720, 80)), end: snap(j, v2(720, glued), { mpp: 0.2, level: 0, type: "street" }), mode: "straight", type: "street" });
+    expect(mid.errors.some((e) => e.msg.startsWith("Can't join a slip lane"))).toBe(true);
+  });
+
+  it("drives cars through slip lanes and a weave smoothly: no jumps, no failed trips", () => {
     const net = carriageway(2400);
-    build(net, exit(net, 700));
-    build(net, entry(net, 1300));
-    const hw1 = [...net.segs.values()].filter((s) => s.type === "hw1");
-    const offRamp = hw1.reduce((m, s) => (dist2(s.c.p3, v2(920, 110)) < dist2(m.c.p3, v2(920, 110)) ? s : m));
-    const onRamp = hw1.reduce((m, s) => (dist2(s.c.p0, v2(1080, 110)) < dist2(m.c.p0, v2(1080, 110)) ? s : m));
-    const first = [...net.segs.values()].find((s) => s.c.p0.x === 0)!, last = [...net.segs.values()].find((s) => Math.round(s.c.p3.x) === 2400)!;
-    const acc = (seg: number, frac: number): { a: Access; side: 1 | -1 } => {
-      const g = net.segGeom.get(seg)!;
-      const s = g.center.length * frac;
-      return { a: { seg, s, p: polyAt(g.center, s) }, side: 1 };
-    };
-    let arrived = 0, failed = 0;
+    build(net, entry(net, 600));
+    build(net, exit(net, 1100));
+    build(net, exit(net, 1900));
+    const segs = [...net.segs.values()];
+    const near = (p: V2) => segs.reduce((m, s) => (dist2(net.segGeom.get(s.id)!.center.pts[0], p) < dist2(net.segGeom.get(m.id)!.center.pts[0], p) ? s : m));
+    const first = near(v2(0, 0)), onR = near(v2(380, 110)), off1 = near(v2(1100 + 30, 20)), off2 = near(v2(1900 + 30, 20));
+    const last = segs.find((s) => Math.round(s.c.p3.x) === 2400)!;
+    const end = (s: RSeg) => (s.type === "hw1" ? segs.find((x) => x.a === s.b) ?? s : s);
+    const acc = (seg: number, frac: number): Access => { const g = net.segGeom.get(seg)!; const s = g.center.length * frac; return { seg, s, p: polyAt(g.center, s) }; };
+    let arrived = 0, failed = 0, jumps = 0;
     const tr = new Traffic(net, { arrive: () => { arrived++; }, fail: () => { failed++; } });
     const trip = (): Trip => ({ kind: "shop", from: 0, to: 0, resident: -1, startT: 0, freeFlow: 0 });
-    const reqs: [ReturnType<typeof acc>, ReturnType<typeof acc>][] = [];
-    for (let i = 0; i < 30; i++) reqs.push(i % 3 === 0 ? [acc(first.id, 0.1), acc(offRamp.id, 0.95)] : i % 3 === 1 ? [acc(onRamp.id, 0.05), acc(last.id, 0.9)] : [acc(first.id, 0.1), acc(last.id, 0.9)]);
-    let i = 0;
+    const routes: [Access, Access][] = [
+      [acc(first.id, 0.05), acc(end(off1).id, 0.9)], [acc(onR.id, 0.05), acc(last.id, 0.9)],
+      [acc(onR.id, 0.05), acc(end(off1).id, 0.9)], [acc(first.id, 0.05), acc(end(off2).id, 0.9)], [acc(first.id, 0.05), acc(last.id, 0.9)],
+    ];
+    let n = 0;
     for (let t = 0; t < 300; t += 1 / 30) {
-      if (i < reqs.length && t > i * 1.5) {
-        const [f, to] = reqs[i++];
-        tr.request({ from: f.a, fromSide: f.side, to: to.a, toSide: to.side, trip: trip(), truck: i % 5 === 0, tries: 0, wait: 0 });
-      }
+      if (n < 50 && t > n * 2) { const [f, to] = routes[n % routes.length]; tr.request({ from: f, fromSide: 1, to, toSide: 1, trip: trip(), truck: n % 5 === 0, tries: 0, wait: 0 }); n++; }
       tr.step(1 / 30);
+      for (const v of tr.vehicles) {
+        if (v.fade < 1 || v.leaving > 0) continue;
+        if (Math.hypot(v.x - v.px, v.y - v.py) > v.v / 30 * 1.6 + 0.12) jumps++;
+      }
     }
     expect(failed).toBe(0);
-    expect(arrived).toBe(30);
+    expect(arrived).toBe(50);
+    expect(jumps).toBe(0);
+  });
+
+  it("lets cars already on the carriageway drive on while a ramp is built under them", () => {
+    const net = carriageway(2400);
+    const cw = [...net.segs.values()][0];
+    const acc = (seg: number, frac: number): Access => { const g = net.segGeom.get(seg)!; const s = g.center.length * frac; return { seg, s, p: polyAt(g.center, s) }; };
+    let arrived = 0, failed = 0, jumps = 0;
+    const tr = new Traffic(net, { arrive: () => { arrived++; }, fail: () => { failed++; } });
+    const trip = (): Trip => ({ kind: "shop", from: 0, to: 0, resident: -1, startT: 0, freeFlow: 0 });
+    for (let i = 0; i < 12; i++) tr.request({ from: acc(cw.id, 0.02), fromSide: 1, to: acc(cw.id, 0.98), toSide: 1, trip: trip(), truck: false, tries: 0, wait: 0 });
+    let built = false;
+    for (let t = 0; t < 200; t += 1 / 30) {
+      if (!built && t > 25) {
+        built = true;
+        const cs = build(net, exit(net, 1200));
+        tr.onNetworkChange(cs);
+        const cs2 = build(net, entry(net, 1500));
+        tr.onNetworkChange(cs2);
+      }
+      tr.step(1 / 30);
+      for (const v of tr.vehicles) {
+        if (v.fade < 1 || v.leaving > 0) continue;
+        if (Math.hypot(v.x - v.px, v.y - v.py) > v.v / 30 * 1.6 + 0.12) jumps++;
+      }
+    }
+    expect(failed).toBe(0);
+    expect(arrived).toBe(12);
+    expect(jumps).toBe(0);
   });
 });
 

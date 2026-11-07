@@ -963,10 +963,10 @@ export class App {
           }
           chips.push({ text: formatMoney(plan.cost), kind: plan.cost > g.money ? "error" : "cost" });
           this.lotWarning(plan, chips);
-          const lead = plan.strokes[0] ?? plan.ghosts![0];
-          const L = lead.chain.length ? plan.length / Math.max(1, plan.strokes.length) : 0;
-          chips.push({ text: L < 950 ? `${Math.round(L)} m` : `${(L / 1000).toFixed(2)} km`, kind: "info" });
-          const dh = lead.h1 - lead.h0;
+          const lead = plan.strokes[0] ?? plan.ghosts?.[0];
+          const L = lead?.chain.length ? plan.length / Math.max(1, plan.strokes.length) : 0;
+          if (lead) chips.push({ text: L < 950 ? `${Math.round(L)} m` : `${(L / 1000).toFixed(2)} km`, kind: "info" });
+          const dh = lead ? lead.h1 - lead.h0 : 0;
           if (Math.abs(dh) > 0.1 && L > 1) chips.push({ text: `${dh > 0 ? "↗" : "↘"} ${(Math.abs(dh) / L * 100).toFixed(1)}%`, kind: "info" });
           if (plan.angleDeg !== undefined && L > 3) chips.push({ text: `${plan.angleDeg.toFixed(1)}°`, kind: "info", icon: "angle" });
           if (this.st.parallel) chips.push({ text: `Parallel ${Math.round(this.parallelOffset())} m`, kind: "info" });
@@ -1107,7 +1107,10 @@ export class App {
     this.zones3d.update();
     this.roads.update(g.traffic, flowOn && this.flowT > 0.5);
     if (this.flowT > 0.5) this.flowT = 0;
-    if (this.dirtyPreview) this.refreshPreview();
+    if (this.dirtyPreview) {
+      // (a preview that can't be drawn must never stop the game)
+      try { this.refreshPreview(); } catch (e) { this.dirtyPreview = false; console.error(e); }
+    }
     this.hudT += dt;
     if (this.hudT > 0.25) {
       this.hudT = 0;

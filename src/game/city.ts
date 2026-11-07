@@ -5,7 +5,7 @@ import { add, dist, polyClosest, rectCorners, scale, sub, type V2 } from "../cor
 import { mulberry32 } from "../core/noise";
 import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/network";
 import {
-  applyTrim, chainPoints, commitRoundabout, commitStrokes, commitWiden, removalRefund, segCost, upgradeCost, type BuildWorld, type Plan, type PlanError,
+  applyTrim, chainPoints, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type Plan, type PlanError,
 } from "../roads/planner";
 import { Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import { Terrain } from "../world/terrain";
@@ -303,7 +303,7 @@ export class Game {
     const out = new Set<Building>();
     for (const st of [...plan.strokes, ...(plan.ghosts ?? [])]) {
       if (st.h0 > 6 && st.h1 > 6) continue; // bridges pass over
-      const pts = chainPoints(st.chain, 2);
+      const pts = chainPoints(st.show ?? st.chain, 2);
       const lim = roadWidth(ROAD_TYPES[st.type]) / 2 - 0.5;
       for (const id of this.buildings.hit(pts, lim)) {
         const b = this.buildings.byId.get(id);
@@ -354,6 +354,8 @@ export class Game {
           this.traffic.onNetworkChange(cs);
           this.emit({ t: "roads", cs });
         }
+        // a slip lane redrawn longer: the old one goes first
+        for (const id of plan.removeSegs ?? []) this.net.removeSeg(id, true);
         for (const st of plan.strokes) {
           commitStrokes(this.net, [st]);
           // later strokes of a grid must see earlier ones
@@ -362,15 +364,6 @@ export class Game {
             this.traffic.onNetworkChange(cs);
             this.emit({ t: "roads", cs });
           }
-        }
-        // the lanes added to the carriageway (drawn along it, or a ramp's slip lane), once the ramp's node is there
-        if (plan.widen) {
-          if (plan.strokes.length) {
-            const cs = this.net.rebuild();
-            this.traffic.onNetworkChange(cs);
-            this.emit({ t: "roads", cs });
-          }
-          commitWiden(this.net, plan.widen);
         }
       }
     });

@@ -61,8 +61,9 @@ vec3 covTint(float r) {
     float med = vMed.x * 0.5; // half the median: both directions start this far out
     float halfW = (f + b) * LW * 0.5 + ${SHOULDER.toFixed(2)} + med;
     // where a taper pulls the surface in on this side, the edge band and line follow it in
-    float halfE = halfW - (u < 0.0 ? vClip.x : vClip.y);
-    float edge = 1.0 - smoothstep(halfE - 0.42 - fwidth(u), halfE - 0.42, abs(u));
+    // (by the distance in from each side's own edge: a deep taper pulls one edge right past the centreline)
+    float de = min(halfW - vClip.y - u, u + halfW - vClip.x);
+    float edge = smoothstep(0.42, 0.42 + fwidth(u), de);
     float dash = step(fract(v / 9.0), 0.5);
     float lanes = 0.0;
     if (b > 0.0) {
@@ -94,7 +95,7 @@ vec3 covTint(float r) {
       }
     }
     // highways: a solid white line along each edge, just inside the shoulder
-    if (uHw > 0.5) lanes = max(lanes, band(abs(u) - (halfE - ${SHOULDER.toFixed(2)} - 0.05), 0.11));
+    if (uHw > 0.5) lanes = max(lanes, band(de - ${SHOULDER.toFixed(2)} - 0.05, 0.11));
     c = mix(c, uLane, lanes);
     if (uFlowMode > 0.5) {
       float r = (b > 0.0 && u < 0.0) ? vFlow.y : vFlow.x;
@@ -389,7 +390,7 @@ export class Roads3D {
     for (const gl of [g.ends.a.glue, g.ends.b.glue]) {
       const ms = gl && this.net.segs.get(gl.seg), mg = gl && this.net.segGeom.get(gl.seg);
       if (!gl || !ms || !mg) continue;
-      const geo = seamGeo(g.center.pts, Array.from(g.hs), mg.center, Math.abs(gl.d), roadWidth(ROAD_TYPES[ms.type]) / 2, g.width / 2, isHighway(T) ? 0.56 : 0.2);
+      const geo = seamGeo(g.center.pts, Array.from(g.hs), gl.line ?? mg.center, Math.abs(gl.d), roadWidth(ROAD_TYPES[ms.type]) / 2, g.width / 2, isHighway(T) ? 0.56 : 0.2);
       if (geo) { const sm = new THREE.Mesh(geo, isHighway(T) ? this.seamHw : this.seamTown); sm.receiveShadow = true; extra.push(sm); }
     }
     const maxH = Math.max(...hs);

@@ -561,8 +561,9 @@ export class Traffic {
     if (ng.kind === "cont" || ng.kind === "bend") return true;
     if (ng.kind === "split" || ng.kind === "lane") {
       // the main line never stops for a slip road: a merging car finds a gap and falls in (car-following does the rest)
-      if (c.turn === "S") return true;
-      for (const cf of c.conflicts) if (cf.merge && !this.mergeOk(v, c, cf.c)) { v.block = "yield"; return false; }
+      // (at a weave the carriageway's traffic is free and the slip lane's gives way, to it crossing over as well)
+      if (c.free || (c.turn === "S" && c.free !== false)) return true;
+      for (const cf of c.conflicts) if ((cf.merge || cf.c.free) && !this.mergeOk(v, c, cf.c)) { v.block = "yield"; return false; }
       return true;
     }
     // two roads meeting (one road changing type, or what's left of a removed crossing): nothing crosses here, so
@@ -1272,7 +1273,13 @@ export class Traffic {
           else {
             const tl = net.lanes.get(c.to.key);
             if (tl) this.moveTo(v, tl, 0.5);
-            else ok = false;
+            else {
+              // the lane it was turning into was replaced (a slip lane redrawn longer): whatever lane is under it now,
+              // or back onto the one it was leaving
+              const near = this.findLaneNear(v, cs) ?? net.lanes.get(c.from.key);
+              if (near) this.moveTo(v, near);
+              else ok = false;
+            }
           }
         }
       }
@@ -1343,8 +1350,14 @@ export class Traffic {
     return best;
   }
 
+  /** Where a car's front bumper is on its edge (v.x, v.y is the middle of its body, which trails behind). */
+  private front(v: Vehicle): V2 {
+    const e = v.edge;
+    return polyAt(e.pl, clamp(v.s, 0, e.pl.length));
+  }
+
   private findLaneNear(v: Vehicle, cs: ChangeSet): Lane | null {
-    const p = { x: v.x, y: v.y };
+    const p = this.front(v);
     const dirNow = { x: Math.cos(v.ang), y: Math.sin(v.ang) };
     let best: Lane | null = null, bd = 2.6;
     for (const id of cs.dirtySegs) {
@@ -1362,8 +1375,8 @@ export class Traffic {
   }
 
   private moveTo(v: Vehicle, e: Edge, fixedS?: number) {
+    const s = fixedS ?? polyClosest(e.pl, this.front(v)).s;
     removeOcc(v.edge, v);
-    const s = fixedS ?? polyClosest(e.pl, { x: v.x, y: v.y }).s;
     v.edge = e;
     v.s = s;
     insertOcc(e, v);

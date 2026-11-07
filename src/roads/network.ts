@@ -83,6 +83,8 @@ export interface Connector extends Edge {
   armIn: number; // seg id of approach
   prio: number; // priority rank of the approach
   holders: unknown[]; // vehicles that reserved this connector (owned by the sim)
+  /** at a split: true = never yields (the carriageway's own traffic at a weave); false = yields even going straight on */
+  free?: boolean;
 }
 
 export interface Arm {
@@ -105,8 +107,10 @@ export type JunctionKind = "end" | "cont" | "bend" | "junction" | "split" | "lan
 export interface EndShape {
   /** centreline moved sideways at this end (+ = right of travel), easing back over the road's first stretch */
   shift: number;
-  /** run beside road `seg` at `d` metres from its centreline (+ = its right) before peeling off on our own line */
-  glue: { seg: number; d: number } | null;
+  /** run beside road `seg` at `d` metres from its centreline (+ = its right) before peeling off on our own line.
+   *  line: that road's centreline and the carriageway it runs on as (set when shaped); full: this road runs beside it
+   *  all the way to its other end (a slip lane), rather than peeling off */
+  glue: { seg: number; d: number; line?: Polyline; full?: boolean } | null;
   /** surface pulled in from one edge at the node, widening to full over clipLen (a taper) */
   clip: number;
   clipSide: 1 | -1;
@@ -148,6 +152,47 @@ export function glueRun(pts: V2[], cum: number[], L: number, end: "a" | "b", mai
 /** How far a ramp of type `ramp` runs from the centreline of the carriageway `main` it is glued beside. */
 export const glueGap = (main: RoadTypeId, ramp: RoadTypeId): number => (roadWidth(ROAD_TYPES[main]) + roadWidth(ROAD_TYPES[ramp])) / 2 - 0.42;
 
+/** A value given per point of `line`, at arc length `sc` along it. */
+function atLen(line: Polyline, vs: ArrayLike<number>, sc: number): number {
+  const cum = line.cum, n = cum.length;
+  if (n === 0) return 0;
+  if (sc <= 0 || n === 1) return vs[0];
+  if (sc >= cum[n - 1]) return vs[n - 1];
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (cum[m] <= sc) lo = m; else hi = m; }
+  const f = (sc - cum[lo]) / ((cum[hi] - cum[lo]) || 1);
+  return vs[lo] + (vs[hi] - vs[lo]) * f;
+}
+
+/** Lateral offset of `p` from `line` (+ = its right), and whether its foot falls inside the line rather than past an end. */
+function lateral(line: Polyline, p: V2): { lat: number; s: number; inside: boolean } {
+  const c = polyClosest(line, p);
+  const lat = dot(sub(p, polyAt(line, c.s)), right(polyDir(line, c.s)));
+  return { lat, s: c.s, inside: c.s > 0.5 && c.s < line.length - 0.5 };
+}
+
+/** A road whose far end already sits beside `line` at `d` (a slip lane drawn along the carriageway, not peeling off it). */
+function besideAll(pts: V2[], line: Polyline, d: number, end: "a" | "b"): boolean {
+  if (pts.length < 2) return false;
+  const far = lateral(line, end === "a" ? pts[pts.length - 1] : pts[0]);
+  return far.inside && Math.abs(far.lat - d) < 1.2;
+}
+
+/**
+ * A slip lane: the whole road runs beside `line` at exactly `d` (+ = its right), the way the carriageway runs. Only at
+ * the far end does it ease onto its own node, which the planner put there anyway.
+ */
+export function glueAll(pts: V2[], cum: number[], L: number, end: "a" | "b", line: Polyline, d: number): V2[] {
+  const farLat = lateral(line, end === "a" ? pts[pts.length - 1] : pts[0]).lat;
+  return pts.map((p, i) => {
+    const sd = end === "a" ? cum[i] : L - cum[i];
+    const c = polyClosest(line, p);
+    const foot = polyAt(line, c.s), nrm = right(polyDir(line, c.s));
+    const k = smoothstep(clamp((sd - (L - 20)) / 20, 0, 1));
+    return add(foot, scale(nrm, d + (farLat - d) * k));
+  });
+}
+
 /** Who is who at a split or lane change (see JunctionKind). */
 export interface SplitRoles {
   trunk: Arm; // the single carriageway on one side
@@ -155,6 +200,8 @@ export interface SplitRoles {
   ramp: Arm | null; // the slip road (none at a lane change)
   diverge: boolean; // trunk comes in (and splits); false = branches come in and join
   side: 1 | -1; // ramp / extra lanes on this side of travel
+  /** a weave: an entry's slip lane running straight on into the next exit's (trunk in, main out, rampIn in, ramp out) */
+  rampIn?: Arm;
 }
 
 /** How far a shifted centreline takes to ease back onto its own line. */
@@ -722,7 +769,7 @@ export class RoadNetwork {
    * alongside it on `side` (+1 = right of travel).
    */
   splitRoles(arms: Arm[], segs: RSeg[]): SplitRoles | null {
-    if (arms.length !== 2 && arms.length !== 3) return null;
+    if (arms.length < 2 || arms.length > 4) return null;
     const segOf = (a: Arm) => segs.find((s) => s.id === a.seg)!;
     if (new Set(arms.map((a) => a.seg)).size !== arms.length) return null;
     for (const a of arms) {
@@ -738,6 +785,7 @@ export class RoadNetwork {
       const gain = lanes(o) > lanes(i);
       return { trunk: gain ? i : o, main: gain ? o : i, ramp: null, diverge: gain, side: 1 };
     }
+    if (arms.length === 4) return this.weaveRoles(arms, segs);
     const diverge = ins.length === 1;
     if (!diverge && outs.length !== 1) return null;
     const trunk = diverge ? ins[0] : outs[0];
@@ -769,6 +817,40 @@ export class RoadNetwork {
     let l = lat(ramp) - lat(main);
     if (Math.abs(l) < 0.05) l = signedAngle(fwd, travel(ramp));
     return { trunk, main, ramp, diverge, side: l >= 0 ? 1 : -1 };
+  }
+
+  /**
+   * Four one-way arms nearly in line, two in and two out: a carriageway running through, with a slip lane beside it
+   * that an entry feeds and the next exit leaves from (a weave). Both slip lanes on the same side.
+   */
+  private weaveRoles(arms: Arm[], segs: RSeg[]): SplitRoles | null {
+    const segOf = (a: Arm) => segs.find((s) => s.id === a.seg)!;
+    const ins = arms.filter((a) => a.end === "b"), outs = arms.filter((a) => a.end === "a");
+    if (ins.length !== 2) return null;
+    const lanes = (a: Arm) => ROAD_TYPES[segOf(a).type].fwd;
+    // the carriageway: the in and out pair most nearly straight through (the same road first, then the wider)
+    let best: [Arm, Arm] | null = null, bs = -Infinity;
+    for (const i of ins) for (const o of outs) {
+      const sc = (segOf(i).type === segOf(o).type ? 100 : 0) + (lanes(i) + lanes(o)) * 10 - Math.acos(clamp(-dot(i.dir, o.dir), -1, 1)) * 30;
+      if (sc > bs) { bs = sc; best = [i, o]; }
+    }
+    const [trunk, main] = best!;
+    const ramp = outs.find((o) => o !== main)!, rampIn = ins.find((i) => i !== trunk)!;
+    const fwd = scale(trunk.dir, -1);
+    const lim = Math.cos((32 * Math.PI) / 180);
+    if (dot(main.dir, fwd) < lim || dot(ramp.dir, fwd) < lim || dot(rampIn.dir, fwd) > -lim) return null;
+    // which side each slip lane is on: its middle against the nearest point of the carriageway piece beside it (a long
+    // lane barely leaves the carriageway's line in its first metres)
+    const off = (a: Arm, ref: Arm) => {
+      const p = cubicAt(segOf(a).c, 0.5), rc = segOf(ref).c;
+      let bt = 0, bd = Infinity;
+      for (let k = 0; k <= 64; k++) { const d = dist(cubicAt(rc, k / 64), p); if (d < bd) { bd = d; bt = k / 64; } }
+      const t = cubicTangent(rc, bt), tl = Math.hypot(t.x, t.y) || 1;
+      return dot(sub(p, cubicAt(rc, bt)), right({ x: t.x / tl, y: t.y / tl }));
+    };
+    const lo = off(ramp, main), li = off(rampIn, trunk);
+    if (Math.abs(lo) < 0.05 || Math.abs(li) < 0.05 || Math.sign(lo) !== Math.sign(li)) return null;
+    return { trunk, main, ramp, diverge: true, side: lo > 0 ? 1 : -1, rampIn };
   }
 
   /** Lane layout across a split or lane change: centreline offsets, glue, tapers and per-lane taper lengths. */
@@ -804,11 +886,19 @@ export class RoadNetwork {
       const posR = (k: number) => Rc - sg * (r / 2 - k - 0.5) * LANE_W;
       const rTrim = new Array(r).fill(0);
       for (let k = 0; k < r; k++) rTrim[idxOf(k, r)] = taper(Math.abs(posR(k) - posT(Math.min(m + k, n - 1))));
-      const clip = Math.max(0, sg * (Rc + sg * rH - (Tc + sg * tH)));
+      const clip = roles.rampIn ? 0 : Math.max(0, sg * (Rc + sg * rH - (Tc + sg * tH)));
       out[arms.indexOf(ramp)] = shape({
         glue: { seg: main.seg, d: Rc - Mc }, laneTrim: rTrim,
         ...(clip > 0.05 ? { clip, clipSide: sg, clipLen: Math.max(...rTrim, taper(clip)) } : {}),
       });
+    }
+    if (roles.rampIn) {
+      // a weave: the entry's slip lane runs on beside the carriageway coming in, and straight on into the exit's
+      const I = typeOf(roles.rampIn), iH = roadWidth(I) / 2, ri = I.fwd;
+      const Ic = Tc + sg * (tH + iH - 0.42);
+      const iTrim = new Array(ri).fill(0);
+      for (let k = 0; k < ri; k++) iTrim[idxOf(k, ri)] = taper(Math.abs(Ic - sg * (ri / 2 - k - 0.5) * LANE_W - posT(n - 1)));
+      out[arms.indexOf(roles.rampIn)] = shape({ glue: { seg: trunk.seg, d: Ic - Tc }, laneTrim: iTrim });
     }
     return out;
   }
@@ -824,6 +914,7 @@ export class RoadNetwork {
     const { a, b } = g.ends;
     const pts0 = g.center.pts, cum = g.center.cum, L = g.center.length;
     let pts = pts0.map((p) => ({ x: p.x, y: p.y }));
+    let beside: { line: Polyline; hs: number[] } | null = null;
     if (a.shift || b.shift) {
       const ld = L < 2 * SHIFT_LEN || (a.shift && b.shift) ? L : SHIFT_LEN; // shifted at both ends: hold it between
       pts = pts.map((p, i) => {
@@ -835,15 +926,20 @@ export class RoadNetwork {
     }
     for (const end of ["a", "b"] as const) {
       const gl = g.ends[end].glue;
-      const mg = gl ? this.segGeom.get(gl.seg) : undefined;
-      if (!gl || !mg) continue;
+      if (!gl || !this.segGeom.get(gl.seg)) continue;
       const other = g.ends[end === "a" ? "b" : "a"];
-      pts = glueRun(pts, cum, L, end, mg.center, gl.d, !!(other.glue || other.shift));
+      const { line, hs: lineH } = this.glueLine(gl.seg, end === "a" ? s.a : s.b, L + 40);
+      const full = !other.glue && !other.shift && besideAll(pts, line, gl.d, end);
+      g.ends = { ...g.ends, [end]: { ...g.ends[end], glue: { ...gl, line, full } } };
+      if (full) beside = { line, hs: lineH };
+      pts = full ? glueAll(pts, cum, L, end, line, gl.d) : glueRun(pts, cum, L, end, line, gl.d, !!(other.glue || other.shift));
     }
     const center = makePolyline(pts);
     const ha = this.nodes.get(s.a)!.h, hb = this.nodes.get(s.b)!.h;
     const hs = new Float32Array(pts.length);
     for (let i = 0; i < pts.length; i++) hs[i] = ha + (hb - ha) * smoothstep(center.cum[i] / (center.length || 1));
+    // a slip lane keeps level with the carriageway beside it all the way (over a rise, onto a bridge)
+    if (beside) for (let i = 0; i < pts.length; i++) hs[i] = atLen(beside.line, beside.hs, polyClosest(beside.line, pts[i]).s);
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const p of pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
     const pad = g.width / 2 + 1;
@@ -852,6 +948,36 @@ export class RoadNetwork {
     g.minR = minRadius(pts);
     g.bbox = { x0: x0 - pad, y0: y0 - pad, x1: x1 + pad, y1: y1 + pad };
     this.indexSeg(id);
+  }
+
+  /**
+   * The centreline a road glued to carriageway `segId` at `node` runs beside: that piece, and the carriageway running
+   * on from it away from the node (through nodes where it simply carries on), to about `len` metres.
+   */
+  glueLine(segId: number, node: number, len: number): { line: Polyline; hs: number[] } {
+    const first = this.segs.get(segId)!;
+    let pts = this.segGeom.get(segId)!.center.pts.slice();
+    let hs = Array.from(this.segGeom.get(segId)!.hs);
+    let total = this.segGeom.get(segId)!.center.length;
+    const fwd = first.a === node; // the line grows on from b (true) or back from a
+    let cur = first;
+    for (let hop = 0; hop < 12 && total < len; hop++) {
+      const n = fwd ? cur.b : cur.a;
+      const t = norm(cubicTangent(cur.c, fwd ? 1 : 0));
+      let next: RSeg | undefined, bd = 0.94;
+      for (const x of this.segsAt(n)) {
+        if (x.id === cur.id || x.ring || ROAD_TYPES[x.type].bwd > 0 || (fwd ? x.a !== n : x.b !== n)) continue;
+        const d = dot(norm(cubicTangent(x.c, fwd ? 0 : 1)), t) + (x.type === cur.type ? 0.01 : 0);
+        if (d > bd) { bd = d; next = x; }
+      }
+      const ng = next && this.segGeom.get(next.id);
+      if (!next || !ng) break;
+      pts = fwd ? pts.concat(ng.center.pts.slice(1)) : ng.center.pts.slice(0, -1).concat(pts);
+      hs = fwd ? hs.concat(Array.from(ng.hs).slice(1)) : Array.from(ng.hs).slice(0, -1).concat(hs);
+      total += ng.center.length;
+      cur = next;
+    }
+    return { line: makePolyline(pts), hs };
   }
 
   private buildLanes(s: RSeg, g: SegGeom): Lane[] {
@@ -898,9 +1024,8 @@ export class RoadNetwork {
     return lanes;
   }
 
-  private heightFromCenter(s: RSeg, g: SegGeom, sc: number): number {
-    const ha = this.nodes.get(s.a)!.h, hb = this.nodes.get(s.b)!.h;
-    return ha + (hb - ha) * smoothstep(clamp(sc / (g.center.length || 1), 0, 1));
+  private heightFromCenter(_s: RSeg, g: SegGeom, sc: number): number {
+    return atLen(g.center, Array.from(g.hs), sc);
   }
 
   private buildJunction(nid: number, arms: Arm[]): NodeGeom {
@@ -1012,6 +1137,20 @@ export class RoadNetwork {
         // more trunk lanes than both branches take: the spare ones run into the outermost branch lane
         const last = rl.length ? { l: rl[rl.length - 1], arm: ramp! } : { l: ml[ml.length - 1], arm: main };
         for (let f = ml.length + rl.length; f < n; f++) link(tl[f], last.l, last.arm, sideTurn);
+      }
+      if (roles.rampIn) {
+        // a weave: the carriageway's traffic never stops (on, or off into the slip lane); traffic in the slip lane
+        // either carries on into the exit or finds a gap in the kerb lane, and gives way to both
+        for (const cn of geom.conns) cn.free = true;
+        const il = byFar(laneOf(roles.rampIn, true));
+        const kerb = ml[ml.length - 1];
+        const otherTurn: Connector["turn"] = side > 0 ? "L" : "R";
+        const prio = prioOf(roles.rampIn);
+        il.forEach((l, k) => {
+          const to = rl[Math.min(k, rl.length - 1)];
+          if (to) { const cn = this.makeConn(nid, l, to, "S", nodeH, roles.rampIn!.seg, prio); cn.free = false; geom.conns.push(cn); }
+          if (kerb) { const cn = this.makeConn(nid, l, kerb, otherTurn, nodeH, roles.rampIn!.seg, prio); cn.free = false; geom.conns.push(cn); }
+        });
       }
       this.computeConflicts(geom.conns);
       return geom;
