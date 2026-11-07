@@ -68,6 +68,9 @@ export interface Conflict {
   sSelf: number;
   sOther: number;
   merge: boolean;
+  /** Merges: where each path comes within a car's width of the other (from there on they're one lane). */
+  jSelf?: number;
+  jOther?: number;
 }
 
 export interface Connector extends Edge {
@@ -1118,14 +1121,20 @@ export class RoadNetwork {
   }
 
   private computeConflicts(conns: Connector[]) {
+    // the first point along `a` within a car's width (plus a little) of path `b`
+    const joinAt = (a: Polyline, b: Polyline) => {
+      for (let i = 0; i < a.pts.length; i++) if (polyClosest(b, a.pts[i]).d < 2.6) return a.cum[i];
+      return Math.max(0, a.length - 1);
+    };
     for (let i = 0; i < conns.length; i++) {
       const a = conns[i];
       for (let j = i + 1; j < conns.length; j++) {
         const b = conns[j];
         if (a.from === b.from) continue; // diverging from the same lane: handled by car-following
         if (a.to === b.to) {
-          a.conflicts.push({ c: b, sSelf: Math.max(0, a.pl.length - 1), sOther: Math.max(0, b.pl.length - 1), merge: true });
-          b.conflicts.push({ c: a, sSelf: Math.max(0, b.pl.length - 1), sOther: Math.max(0, a.pl.length - 1), merge: true });
+          const ja = joinAt(a.pl, b.pl), jb = joinAt(b.pl, a.pl);
+          a.conflicts.push({ c: b, sSelf: Math.max(0, a.pl.length - 1), sOther: Math.max(0, b.pl.length - 1), merge: true, jSelf: ja, jOther: jb });
+          b.conflicts.push({ c: a, sSelf: Math.max(0, b.pl.length - 1), sOther: Math.max(0, a.pl.length - 1), merge: true, jSelf: jb, jOther: ja });
           continue;
         }
         const hit = polyHit(a.pl, b.pl);
