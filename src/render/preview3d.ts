@@ -48,7 +48,7 @@ export class Preview3D {
   /** Ghost of a planned road (or grid / roundabout). */
   plan(plan: Plan, level: number) {
     const bad = plan.errors.length > 0;
-    for (const st of plan.strokes) {
+    for (const st of [...plan.strokes, ...(plan.ghosts ?? [])]) {
       const pts = chainPoints(st.chain, 2);
       if (pts.length < 2) continue;
       const T = ROAD_TYPES[st.type];

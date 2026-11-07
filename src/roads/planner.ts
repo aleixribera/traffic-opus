@@ -47,7 +47,7 @@ export interface Guide {
 export interface SnapOpts {
   mpp: number; // metres per screen pixel
   level: number;
-  from?: { p: V2; tangent?: V2 }; // the point we are drawing from
+  from?: { p: V2; tangent?: V2; on?: Snap }; // the point we are drawing from (on: what it snapped to)
   angleStep?: boolean; // shift held: 15 degree steps
   grid?: number; // grid size in metres (0 = off)
   type: RoadTypeId;
@@ -169,20 +169,28 @@ export function snap(net: RoadNetwork, raw: V2, o: SnapOpts): Snap {
   }
   // 2) roads (centreline), only at a matching height
   const rr = ROAD_SNAP_PX * o.mpp;
-  let bestS: { seg: RSeg; t: number; p: V2; d: number } | null = null;
+  type Cand = { seg: RSeg; t: number; p: V2; d: number; h: number; inside: boolean };
+  let bestS: Cand | null = null, bestLvl: Cand | null = null;
   for (const id of net.segsNear(raw.x - 40, raw.y - 40, raw.x + 40, raw.y + 40)) {
     const s = net.segs.get(id)!;
     const g = net.segGeom.get(id);
     if (!g) continue;
     const r = cubicClosest(s.c, raw);
     const hw = g.width / 2;
-    if (r.d < hw + rr && (!bestS || r.d < bestS.d)) bestS = { seg: s, t: r.t, p: r.p, d: r.d };
+    if (r.d >= hw + rr) continue;
+    const c = { seg: s, t: r.t, p: r.p, d: r.d, h: net.heightOnSeg(id, r.t), inside: r.d < hw };
+    if (!bestS || c.d < bestS.d) bestS = c;
+    if (Math.abs(c.h - h) < 0.5 && (!bestLvl || c.d < bestLvl.d)) bestLvl = c;
   }
-  if (bestS && geo) {
-    const hs = net.heightOnSeg(bestS.seg.id, bestS.t);
-    // don't snap onto a road at a different level unless we are free (then take its level)
-    if (Math.abs(hs - h) < 0.5 || !o.from) {
-      return { p: bestS.p, h: hs, seg: bestS.seg.id, t: bestS.t, guides };
+  if (geo) {
+    // a road at our level; free, the nearest road (taking its level); never onto one at another level, except...
+    const pick = bestLvl ?? (!o.from ? bestS : null);
+    if (pick) return { p: pick.p, h: pick.h, seg: pick.seg.id, t: pick.t, guides };
+    // ...further along the carriageway a one-way stroke started on, drawn along it (lengthening a lane up a slope)
+    const on = o.from?.on;
+    if (bestS && on && bestS.inside && ROAD_TYPES[o.type].bwd === 0) {
+      const here: Snap = { p: bestS.p, h: bestS.h, seg: bestS.seg.id, t: bestS.t, guides };
+      if ((stretchBetween(net, on, here) || stretchBetween(net, here, on)) && alongCarriage(net, on, here)) return here;
     }
   }
   // 3) free point with angle snapping / alignment guides
@@ -310,10 +318,14 @@ export interface Plan {
   parallelEnds?: { a: V2; b: V2 };
   /** Cut the previous parallel piece back first (a pair turning a corner). */
   trim?: ParallelTrim;
-  /** Not a new road: lanes added to the carriageway between two points on it (drawn along its kerb). */
+  /** Lanes added to the carriageway between two points on it: drawn along its kerb, or a ramp's slip lane. */
   widen?: Widen;
+  /** Shown with the preview but not built as roads (the new lane of a Widen). */
+  ghosts?: Stroke[];
   /** Short description shown with the preview ("Add lane"). */
   note?: string;
+  /** Where the next stroke carries on from, when that isn't the end of the first stroke (a lane drawn along a carriageway). */
+  continueAt?: { p: V2; h: number };
 }
 
 export interface Widen {
@@ -321,7 +333,8 @@ export interface Widen {
   b: V2;
   ha: number;
   hb: number;
-  add: number;
+  /** lane count every piece of the stretch is brought up to */
+  lanes: number;
 }
 
 export function chainPoints(chain: Cubic[], step = 2): V2[] {
@@ -584,6 +597,11 @@ function rampChain(net: RoadNetwork, start: Snap, end: Snap, slip: { ta?: V2; tb
   return best;
 }
 
+/** The one-way carriageway a slip road leaves or joins at `sn`. */
+function carriageAt(net: RoadNetwork, sn: Snap): RSeg | undefined {
+  return sn.seg !== undefined ? net.segs.get(sn.seg) : sn.node !== undefined ? net.segsAt(sn.node).find((s) => isOneWayCarriage(s)) : undefined;
+}
+
 /** Total heading change along a chain (radians, unsigned sum). */
 function chainTurn(ch: Cubic[]): number {
   let t = 0;
@@ -595,7 +613,7 @@ function chainTurn(ch: Cubic[]): number {
 function builtMinRadius(net: RoadNetwork, chain: Cubic[], sn: Snap, atStart: boolean, type: RoadTypeId): number {
   let r = Infinity;
   for (const [i, c] of chain.entries()) if (i !== (atStart ? 0 : chain.length - 1)) r = Math.min(r, minRadius(sampleCubic(c, 1.5), 4));
-  const main = sn.seg !== undefined ? net.segs.get(sn.seg) : net.segsAt(sn.node!).find((s) => isOneWayCarriage(s));
+  const main = carriageAt(net, sn);
   const mg = main && net.segGeom.get(main.id);
   if (!main || !mg || !chain.length) return r;
   const piece = atStart ? chain[0] : chain[chain.length - 1];
@@ -611,18 +629,42 @@ function builtMinRadius(net: RoadNetwork, chain: Cubic[], sn: Snap, atStart: boo
 
 function isOneWayCarriage(s: RSeg): boolean { return !s.ring && ROAD_TYPES[s.type].bwd === 0; }
 
+/** The carriageway's heading at a snap on it (a node: the one-way piece there). */
+function carriageHeading(net: RoadNetwork, sn: Snap): V2 | null {
+  const s = carriageAt(net, sn);
+  if (!s) return null;
+  const t = sn.seg !== undefined ? sn.t ?? 0 : s.a === sn.node ? 0 : 1;
+  return norm(cubicTangent(s.c, t));
+}
+
+/** A straight stroke from a to b that runs along the carriageway between them (either way), not across or round from it. */
+function alongCarriage(net: RoadNetwork, a: Snap, b: Snap): boolean {
+  const ta = carriageHeading(net, a), tb = carriageHeading(net, b);
+  const d = sub(b.p, a.p);
+  if (!ta || !tb || len(d) < 1) return false;
+  const m = add(ta, tb); // a chord of an arc runs along the mean of its end headings
+  return len(m) > 0.5 && Math.abs(dot(norm(m), norm(d))) > Math.cos((15 * Math.PI) / 180);
+}
+
 
 /** Where a slip road leaves or joins a carriageway: it may run alongside those roads near there. */
 interface SlipAnchor { p: V2; segs: Set<number> }
 
-/** The one-way road type `add` lanes wider than `t` (closest in speed), if there is one. */
-export function widerType(t: RoadTypeId, add: number): RoadTypeId | null {
+/**
+ * The one-way road type like `t` with `lanes` lanes: the same family (a highway stays a highway, a town street keeps
+ * its kerbside access), closest in speed. null if there's none.
+ */
+export function laneType(t: RoadTypeId, lanes: number): RoadTypeId | null {
   const T = ROAD_TYPES[t];
   if (T.bwd > 0) return null;
-  const c = Object.values(ROAD_TYPES).filter((x) => x.bwd === 0 && x.fwd === T.fwd + add);
+  if (T.fwd === lanes) return t;
+  const c = Object.values(ROAD_TYPES).filter((x) => x.bwd === 0 && x.fwd === lanes && isHighway(x) === isHighway(T));
   c.sort((x, y) => Math.abs(x.speed - T.speed) - Math.abs(y.speed - T.speed));
   return c[0]?.id ?? null;
 }
+
+/** The one-way road type `add` lanes wider than `t`, if there is one. */
+export const widerType = (t: RoadTypeId, add: number): RoadTypeId | null => laneType(t, ROAD_TYPES[t].fwd + add);
 
 /** One-way carriageway pieces leading from node `from` to node `to` in its travel direction (in-line run-ons only). */
 export function carriagewayRun(net: RoadNetwork, from: number, to: number, first?: number): number[] | null {
@@ -646,36 +688,101 @@ export function carriagewayRun(net: RoadNetwork, from: number, to: number, first
   return null;
 }
 
+/** The carriageway piece at `node` going on (dir 1, leaving it) or back (dir -1, entering it): the main line where a slip road also meets it there. */
+function carriageFrom(net: RoadNetwork, node: number, dir: 1 | -1, after?: RSeg): RSeg | undefined {
+  const t = after && norm(cubicTangent(after.c, dir > 0 ? 1 : 0));
+  const cands = net.segsAt(node).filter((s) => s.id !== after?.id && isOneWayCarriage(s) && (dir > 0 ? s.a === node : s.b === node)
+    && (!t || dot(norm(cubicTangent(s.c, dir > 0 ? 0 : 1)), t) > 0.94));
+  if (cands.length <= 1) return cands[0];
+  const ng = net.nodeGeom.get(node);
+  const roles = ng && net.splitRoles(ng.arms, net.segsAt(node));
+  return cands.find((s) => s.id === roles?.main.seg) ?? cands.sort((x, y) => ROAD_TYPES[y.type].fwd - ROAD_TYPES[x.type].fwd)[0];
+}
+
+/** Arc length of a cubic from its start to `t`. */
+const arcTo = (c: Cubic, t: number): number => (t <= 0 ? 0 : makePolyline(sampleCubic(subCubic(c, 0, Math.min(1, t)), 1)).length);
+
+/** A stretch of carriageway walked from a point: seg param ta to tb (in walking order), at distances d0..d1 from the start; node: the node reached at tb. */
+interface Walked { seg: RSeg; ta: number; tb: number; d0: number; d1: number; node?: number }
+
+/** Walk a one-way carriageway from `sn` with its traffic (dir 1) or against it (-1), up to `max` metres, along the main line. */
+function walkCarriage(net: RoadNetwork, sn: Snap, dir: 1 | -1, max: number): Walked[] {
+  const out: Walked[] = [];
+  let seg: RSeg | undefined, t: number;
+  if (sn.seg !== undefined) { seg = net.segs.get(sn.seg); t = sn.t ?? 0; }
+  else if (sn.node !== undefined) { seg = carriageFrom(net, sn.node, dir); t = dir > 0 ? 0 : 1; }
+  else return out;
+  let d = 0;
+  while (seg && isOneWayCarriage(seg) && out.length < 40) {
+    const at = arcTo(seg.c, t), full = arcTo(seg.c, 1);
+    const room = dir > 0 ? full - at : at;
+    if (d + room >= max) {
+      out.push({ seg, ta: t, tb: tAtLength(seg.c, at + dir * (max - d)), d0: d, d1: max });
+      break;
+    }
+    const node = dir > 0 ? seg.b : seg.a;
+    out.push({ seg, ta: t, tb: dir > 0 ? 1 : 0, d0: d, d1: d + room, node });
+    d += room;
+    seg = carriageFrom(net, node, dir, seg);
+    t = dir > 0 ? 0 : 1;
+  }
+  return out;
+}
+
+/** The pieces of carriageway from `from` on to `to` in its travel direction, or null if `to` isn't further along it. */
+function stretchBetween(net: RoadNetwork, from: Snap, to: Snap): { seg: RSeg; t0: number; t1: number }[] | null {
+  if ((from.seg === undefined && from.node === undefined) || (to.seg === undefined && to.node === undefined)) return null;
+  const pieces: { seg: RSeg; t0: number; t1: number }[] = [];
+  let cur = from.seg !== undefined ? net.segs.get(from.seg) : carriageFrom(net, from.node!, 1);
+  let t0 = from.seg !== undefined ? from.t ?? 0 : 0;
+  for (let hop = 0; cur && hop < 40; hop++) {
+    if (!isOneWayCarriage(cur)) return null;
+    if (to.seg === cur.id) {
+      if ((to.t ?? 0) <= t0 + 1e-3) return null;
+      pieces.push({ seg: cur, t0, t1: to.t ?? 1 });
+      return pieces;
+    }
+    pieces.push({ seg: cur, t0, t1: 1 });
+    if (to.node === cur.b) return pieces;
+    cur = carriageFrom(net, cur.b, 1, cur);
+    t0 = 0;
+  }
+  return null;
+}
+
 /**
- * Drawing a one-way road along a one-way carriageway, in its direction, from one point on it to a later one: add
- * that many lanes to the stretch instead (an auxiliary lane, tapering in and out at the ends).
+ * Drawing a one-way road along a one-way carriageway, from one point on it to another: add that many lanes to the
+ * stretch instead (an auxiliary lane, tapering in and out at the ends). Drawn over a stretch that already has a lane
+ * more somewhere (a slip lane), the rest of it is brought up to match: that's how a slip lane is made longer, or
+ * joined up with the next one.
  */
 function planWiden(net: RoadNetwork, world: BuildWorld, start: Snap, end: Snap, type: RoadTypeId): Plan | null {
   const add = ROAD_TYPES[type].fwd;
   if (ROAD_TYPES[type].bwd > 0) return null;
-  // the stretch, as pieces of cubic between the two points
-  const firstSeg = start.seg ?? net.segsAt(start.node ?? -1).find((s) => s.a === start.node)?.id;
-  if (firstSeg === undefined || (start.seg === undefined && start.node === undefined) || (end.seg === undefined && end.node === undefined)) return null;
-  const pieces: { seg: RSeg; t0: number; t1: number }[] = [];
-  let cur = net.segs.get(firstSeg);
-  let t0 = start.seg !== undefined ? start.t ?? 0 : 0;
-  for (let hop = 0; cur && hop < 40; hop++) {
-    if (cur.ring || ROAD_TYPES[cur.type].bwd > 0) return null;
-    if (end.seg === cur.id) {
-      if ((end.t ?? 0) <= t0 + 1e-3) return null;
-      pieces.push({ seg: cur, t0, t1: end.t ?? 1 });
-      break;
+  // either way along it: drawn against the traffic it's still the same stretch
+  let from = start, to = end;
+  let pieces = stretchBetween(net, from, to);
+  if (!pieces) { pieces = stretchBetween(net, end, start); [from, to] = [end, start]; }
+  if (!pieces || !pieces.length || !alongCarriage(net, start, end)) return null;
+  const cursorIsTo = to === end;
+  const lanes = Math.min(...pieces.map((pc) => ROAD_TYPES[pc.seg.type].fwd)) + add;
+  // started or ended just short of a stretch that already has the lane: run on to it rather than leave a sliver between
+  let meets = false;
+  const reach = (sn: Snap, dir: 1 | -1): Snap => {
+    const w = walkCarriage(net, sn, dir, WIDEN_REACH);
+    if (!w.length) return sn;
+    if (ROAD_TYPES[w[0].seg.type].fwd >= lanes) { meets = true; return sn; } // ends right where a lane is
+    for (let i = 1; i < w.length; i++) {
+      const n = w[i - 1].node;
+      if (n !== undefined && ROAD_TYPES[w[i].seg.type].fwd >= lanes) { const nd = net.nodes.get(n)!; return { p: { ...nd.p }, h: nd.h, node: n, guides: [] }; }
     }
-    pieces.push({ seg: cur, t0, t1: 1 });
-    if (end.node === cur.b) break;
-    const prev: RSeg = cur;
-    const t = norm(cubicTangent(prev.c, 1));
-    cur = net.segsAt(prev.b).find((s) => s.a === prev.b && s.id !== prev.id && ROAD_TYPES[s.type].bwd === 0 && dot(norm(cubicTangent(s.c, 0)), t) > 0.94);
-    t0 = 0;
-    if (!cur) return null;
+    return sn;
+  };
+  const [f2, t2] = [reach(from, -1), reach(to, 1)];
+  if (f2 !== from || t2 !== to) {
+    const p2 = stretchBetween(net, f2, t2);
+    if (p2?.length) { pieces = p2; from = f2; to = t2; meets = true; }
   }
-  const last = pieces[pieces.length - 1];
-  if (!last || !(end.seg === last.seg.id || end.node === last.seg.b)) return null;
   const errors: PlanError[] = [];
   let cost = 0, total = 0;
   const chain: Cubic[] = [];
@@ -683,43 +790,122 @@ function planWiden(net: RoadNetwork, world: BuildWorld, start: Snap, end: Snap, 
     const c = subCubic(pc.seg.c, pc.t0, pc.t1);
     const L = makePolyline(sampleCubic(c, 2)).length;
     total += L;
-    const to = widerType(pc.seg.type, add);
-    const mid = cubicAt(c, 0.5);
-    if (!to) {
-      errors.push({ msg: `${ROAD_TYPES[pc.seg.type].name} can't take ${add > 1 ? `${add} more lanes` : "another lane"}`, p: mid });
+    const T = ROAD_TYPES[pc.seg.type];
+    if (T.fwd >= lanes) continue; // already has it
+    const wide = laneType(pc.seg.type, lanes);
+    if (!wide) {
+      errors.push({ msg: `${T.name} can't take ${lanes - T.fwd > 1 ? `${lanes - T.fwd} more lanes` : "another lane"}`, p: cubicAt(c, 0.5) });
       continue;
     }
-    cost += L * Math.max(0, ROAD_TYPES[to].costPerM - ROAD_TYPES[pc.seg.type].costPerM);
+    cost += L * Math.max(0, ROAD_TYPES[wide].costPerM - T.costPerM);
     // drawn where the new lane will be: along the kerb side
-    const T = ROAD_TYPES[pc.seg.type];
-    chain.push(...offsetChain([c], ((T.fwd + add) * LANE_W) / 2));
+    chain.push(...offsetChain([c], (lanes * LANE_W) / 2));
   }
   const mid = chain.length ? cubicAt(chain[Math.floor(chain.length / 2)], 0.5) : start.p;
   if (total < 40) errors.push({ msg: "Lane too short: needs 40 m", p: mid });
   if (cost > world.money() + 0.5) errors.push({ msg: `Not enough money (${fmt(cost)})`, p: mid });
+  const longer = meets || pieces.some((pc) => ROAD_TYPES[pc.seg.type].fwd >= lanes);
   return {
-    strokes: [{ chain, h0: start.h, h1: end.h, type }], cost, length: total, errors, crossings: [], kind: "road",
-    widen: { a: { ...start.p }, b: { ...end.p }, ha: start.h, hb: end.h, add },
-    note: add > 1 ? `Add ${add} lanes` : "Add lane",
+    strokes: [], ghosts: [{ chain, h0: from.h, h1: to.h, type }], cost, length: total, errors, crossings: [], kind: "road",
+    widen: { a: { ...from.p }, b: { ...to.p }, ha: from.h, hb: to.h, lanes },
+    continueAt: cursorIsTo ? { p: { ...to.p }, h: to.h } : { p: { ...from.p }, h: from.h },
+    note: longer ? "Extend lane" : add > 1 ? `Add ${add} lanes` : "Add lane",
   };
 }
 
-/** Apply a Widen (inside a transaction, geometry up to date). */
+/** Apply a Widen (inside a transaction, geometry up to date): every piece of the stretch brought up to its lane count. */
 export function commitWiden(net: RoadNetwork, w: Widen): void {
   const A = resolveAnchor(net, w.a, w.ha), B = resolveAnchor(net, w.b, w.hb);
   const run = carriagewayRun(net, A, B);
   if (!run) return;
   for (const id of run) {
     const s = net.segs.get(id)!;
-    const to = widerType(s.type, w.add);
+    if (ROAD_TYPES[s.type].fwd >= w.lanes) continue;
+    const to = laneType(s.type, w.lanes);
     if (to) net.setType(id, to);
   }
+}
+
+/** How far a widened stretch reaches on to meet a lane already there (no short gap left between them). */
+const WIDEN_REACH = 60;
+
+/** How long a slip lane runs beside the carriageway: before an exit (to slow down) and, a bit longer, after an entry (to speed up). */
+export function slipLaneLength(main: RoadTypeId, exit: boolean): number {
+  const kmh = ROAD_TYPES[main].speed * 3.6;
+  return Math.round(clamp(kmh * 1.6, 100, 200) * (exit ? 1 : 1.25));
+}
+
+/** A slip lane ending this close to the next one (an entry, then an exit) runs on into it as one lane. */
+export const SLIP_JOIN = 250;
+
+/**
+ * The slip lane that comes with a highway ramp (a parallel-type ramp): the carriageway gets an extra lane on the kerb
+ * side for a stretch before the exit (the deceleration lane) or after the entry (the acceleration lane), and the ramp
+ * carries on straight out of it, or into it. If another slip lane is near enough on the same side, the two become one
+ * lane between them. The lane is part of the carriageway (a Widen), so it can be drawn longer later. null: no lane
+ * (a town slip road, a ramp on the far side, or one placed on a stretch that already has its extra lane).
+ */
+function slipLane(net: RoadNetwork, sn: Snap, exit: boolean, type: RoadTypeId, far: V2, t: V2):
+  { widen: Widen; ghost: Stroke; cost: number; note: string } | null {
+  const main = carriageAt(net, sn);
+  if (!main || !isHighway(ROAD_TYPES[main.type]) || !isHighway(ROAD_TYPES[type])) return null;
+  if (dot(sub(far, sn.p), right(t)) <= 0) return null; // lanes are added on the kerb side (right) only
+  const base = ROAD_TYPES[main.type].fwd, lanes = base + ROAD_TYPES[type].fwd;
+  const wide = laneType(main.type, lanes);
+  if (!wide) return null;
+  const dir = exit ? -1 : 1;
+  const L = slipLaneLength(main.type, exit);
+  // already on a stretch with a lane more than the carriageway around it: the ramp leaves (or joins) that lane
+  if (walkCarriage(net, sn, exit ? 1 : -1, 400).some((w) => ROAD_TYPES[w.seg.type].fwd < base)) return null;
+  const walk = walkCarriage(net, sn, dir, L + SLIP_JOIN);
+  if (walk.some((w) => w.d0 < L && ROAD_TYPES[w.seg.type].fwd < base)) return null;
+  let dEnd = Math.min(L, walk.length ? walk[walk.length - 1].d1 : 0), joined = false;
+  for (const w of walk) {
+    if (ROAD_TYPES[w.seg.type].fwd >= lanes) { dEnd = w.d0; joined = true; break; } // a lane already runs on from here
+    if (w.node === undefined) continue;
+    const ng = net.nodeGeom.get(w.node);
+    if (ng && (ng.kind === "cont" || ng.kind === "bend" || ng.kind === "lane")) continue;
+    // another slip road on this side the other way round (an entry before our exit, an exit after our entry): one lane through
+    const roles = ng?.kind === "split" ? net.splitRoles(ng.arms, net.segsAt(w.node)) : null;
+    if (roles?.ramp && roles.side === 1 && roles.diverge === !exit) {
+      const fm = ROAD_TYPES[net.segs.get(roles.main.seg)!.type].fwd, fr = ROAD_TYPES[net.segs.get(roles.ramp.seg)!.type].fwd;
+      if (fm === base && fm + fr === lanes) { dEnd = w.d1; joined = true; break; }
+    }
+    // anything else (a junction, another exit before ours): the lane starts short of it
+    if (w.d1 < L) dEnd = w.d1 - 30;
+    break;
+  }
+  if (dEnd < 1 || (!joined && dEnd < 60)) return null;
+  // where the lane starts (exit) or ends (entry), and the new lane drawn along the kerb for the preview
+  let end: { p: V2; h: number } = { p: sn.p, h: sn.h };
+  const ghost: Cubic[][] = [];
+  let cost = 0;
+  for (const w of walk) {
+    if (w.d0 >= dEnd) break;
+    const whole = w.d1 <= dEnd + 1e-6;
+    const tb = whole ? w.tb : tAtLength(w.seg.c, arcTo(w.seg.c, w.ta) + dir * (dEnd - w.d0));
+    const nd = whole && w.node !== undefined ? net.nodes.get(w.node)! : null;
+    end = nd ? { p: { ...nd.p }, h: nd.h } : { p: cubicAt(w.seg.c, tb), h: net.heightOnSeg(w.seg.id, tb) };
+    if (ROAD_TYPES[w.seg.type].fwd >= lanes) continue;
+    const c = subCubic(w.seg.c, Math.min(w.ta, tb), Math.max(w.ta, tb));
+    cost += makePolyline(sampleCubic(c, 2)).length * Math.max(0, ROAD_TYPES[wide].costPerM - ROAD_TYPES[w.seg.type].costPerM);
+    ghost.push(offsetChain([c], (lanes * LANE_W) / 2));
+  }
+  if (exit) ghost.reverse(); // walked upstream from the gore: drawn in the traffic's direction
+  const g = { p: { ...sn.p }, h: sn.h };
+  const [a, b] = exit ? [end, g] : [g, end];
+  return {
+    widen: { a: { ...a.p }, b: { ...b.p }, ha: a.h, hb: b.h, lanes },
+    ghost: { chain: ghost.flat(), h0: a.h, h1: b.h, type },
+    cost,
+    note: joined ? "Slip lanes joined" : `${Math.round(dEnd)} m slip lane`,
+  };
 }
 
 /** Build and validate a single road stroke. */
 export function planRoad(net: RoadNetwork, world: BuildWorld, inp: PlanInput): Plan {
   const { start, end, type } = inp;
-  if (!inp.parallel && !inp.ctrl) {
+  if (!inp.parallel && !inp.ctrl && inp.mode === "straight") {
     const w = planWiden(net, world, start, end, type);
     if (w) return w;
   }
@@ -792,6 +978,22 @@ export function planRoad(net: RoadNetwork, world: BuildWorld, inp: PlanInput): P
   if (asRamp && !plan.errors.length) {
     const sn = slip.ta ? start : end;
     if (builtMinRadius(net, chain, sn, !!slip.ta, type) < ROAD_TYPES[type].minRadius * 0.98) plan.errors.push({ msg: "Too tight where it merges: draw the slip road longer", p: sn.p });
+  }
+  // a highway ramp comes with its slip lane: an extra lane of the carriageway it leaves out of (or merges into).
+  // (however it was drawn: on its own, or carried on from the ramp's last piece, so long as it meets it in line)
+  const exit = !!slip.ta;
+  const inLine = chain.length > 0 && !slip.ta !== !slip.tb && !inp.parallel
+    && dot(norm(cubicTangent(exit ? chain[0] : chain[chain.length - 1], exit ? 0 : 1)), exit ? slip.ta! : slip.tb!) > 0.995;
+  if (inLine) {
+    const far = exit ? chain[0].p3 : chain[chain.length - 1].p0;
+    const lane = slipLane(net, exit ? start : end, exit, type, far, exit ? slip.ta! : slip.tb!);
+    if (lane) {
+      plan.widen = lane.widen;
+      plan.ghosts = [lane.ghost];
+      plan.cost += lane.cost;
+      plan.note = lane.note;
+      if (lane.cost > 0 && plan.cost > world.money() + 0.5 && !plan.errors.length) plan.errors.push({ msg: `Not enough money (${fmt(plan.cost)})`, p: start.p });
+    }
   }
   if (par) plan.parallelEnds = par;
   if (trim) plan.trim = trim;

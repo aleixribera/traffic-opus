@@ -556,7 +556,7 @@ export class App {
   private snapOpts(from?: Snap): SnapOpts {
     return {
       mpp: this.view.mpp, level: this.st.level, type: this.st.roadType,
-      from: from ? { p: from.p, tangent: this.startTangent ?? from.tangent } : undefined,
+      from: from ? { p: from.p, tangent: this.startTangent ?? from.tangent, on: from } : undefined,
       angleStep: this.keys.has("Shift"),
       off: this.st.snapOff,
       lengthStep: this.st.snapLength ? 8 : 0,
@@ -674,13 +674,14 @@ export class App {
       const plan = this.computeRoadPlan();
       if (!plan) return;
       if (plan.errors.length) { this.reject(plan.errors[0].msg); return; }
-      const endP = plan.strokes[0].chain.length ? plan.strokes[0].chain[plan.strokes[0].chain.length - 1].p3 : c;
-      const endH = plan.strokes[0].h1;
+      const lead = plan.strokes[0] ?? plan.ghosts![0];
+      const endP = plan.continueAt?.p ?? (lead.chain.length ? lead.chain[lead.chain.length - 1].p3 : c);
+      const endH = plan.continueAt?.h ?? lead.h1;
       if (g.build(plan)) {
         this.hud?.sound("build");
         // keep drawing from where this road ended
         const s = snap(g.net, endP, { ...this.snapOpts(), mpp: 0.05, off: undefined, lengthStep: 0 });
-        this.anchor = s.node !== undefined ? s : { p: endP, h: endH, guides: [] };
+        this.anchor = s.node !== undefined || (plan.continueAt && s.seg !== undefined) ? s : { p: endP, h: endH, guides: [] };
         this.startTangent = plan.endTangent;
         this.ctrl = null;
         this.ctrl2 = null;
@@ -924,9 +925,10 @@ export class App {
           }
           chips.push({ text: formatMoney(plan.cost), kind: plan.cost > g.money ? "error" : "cost" });
           this.lotWarning(plan, chips);
-          const L = plan.strokes[0].chain.length ? plan.length / plan.strokes.length : 0;
+          const lead = plan.strokes[0] ?? plan.ghosts![0];
+          const L = lead.chain.length ? plan.length / Math.max(1, plan.strokes.length) : 0;
           chips.push({ text: L < 950 ? `${Math.round(L)} m` : `${(L / 1000).toFixed(2)} km`, kind: "info" });
-          const dh = plan.strokes[0].h1 - plan.strokes[0].h0;
+          const dh = lead.h1 - lead.h0;
           if (Math.abs(dh) > 0.1 && L > 1) chips.push({ text: `${dh > 0 ? "↗" : "↘"} ${(Math.abs(dh) / L * 100).toFixed(1)}%`, kind: "info" });
           if (plan.angleDeg !== undefined && L > 3) chips.push({ text: `${plan.angleDeg.toFixed(1)}°`, kind: "info", icon: "angle" });
           if (this.st.parallel) chips.push({ text: `Parallel ${Math.round(this.parallelOffset())} m`, kind: "info" });

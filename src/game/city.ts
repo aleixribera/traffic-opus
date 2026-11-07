@@ -301,7 +301,7 @@ export class Game {
   /** Zoned buildings a planned road would clear (shown before building, like CS2). */
   lotsUnder(plan: Plan): Building[] {
     const out = new Set<Building>();
-    for (const st of plan.strokes) {
+    for (const st of [...plan.strokes, ...(plan.ghosts ?? [])]) {
       if (st.h0 > 6 && st.h1 > 6) continue; // bridges pass over
       const pts = chainPoints(st.chain, 2);
       const lim = roadWidth(ROAD_TYPES[st.type]) / 2 - 0.5;
@@ -346,7 +346,6 @@ export class Game {
     if (plan.errors.length) return false;
     const ops = this.applyRoads(() => {
       if (plan.kind === "roundabout") commitRoundabout(this.net, plan);
-      else if (plan.widen) commitWiden(this.net, plan.widen);
       else {
         // a parallel pair turning a corner: cut the old twin back first
         if (plan.trim) {
@@ -363,6 +362,15 @@ export class Game {
             this.traffic.onNetworkChange(cs);
             this.emit({ t: "roads", cs });
           }
+        }
+        // the lanes added to the carriageway (drawn along it, or a ramp's slip lane), once the ramp's node is there
+        if (plan.widen) {
+          if (plan.strokes.length) {
+            const cs = this.net.rebuild();
+            this.traffic.onNetworkChange(cs);
+            this.emit({ t: "roads", cs });
+          }
+          commitWiden(this.net, plan.widen);
         }
       }
     });

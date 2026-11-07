@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { LANE_W, ROAD_TYPES, SHOULDER, SIDEWALK, STREET_TREES, isHighway, roadGroup, roadWidth } from "../config";
-import { clamp, dist, norm, polyClosest, right, smoothstep, sub, type V2 } from "../core/math";
+import { clamp, dist, dot, norm, polyAt, polyClosest, polyDir, right, smoothstep, sub, type Polyline, type V2 } from "../core/math";
 import type { ChangeSet, RoadNetwork } from "../roads/network";
 import { ringsNear } from "../roads/planner";
 import { dkey } from "../sim/router";
@@ -30,8 +30,8 @@ export function makeRoadMaterial(opts: { color?: number; opacity?: number; marki
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
     sh.vertexShader = sh.vertexShader
-      .replace("#include <common>", "#include <common>\nattribute vec4 aRoad;\nattribute vec2 aFlow;\nattribute vec3 aMed;\nvarying vec4 vRoad;\nvarying vec2 vFlow;\nvarying vec3 vMed;")
-      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRoad = aRoad;\nvFlow = aFlow;\nvMed = aMed;");
+      .replace("#include <common>", "#include <common>\nattribute vec4 aRoad;\nattribute vec2 aFlow;\nattribute vec3 aMed;\nattribute vec2 aClip;\nvarying vec4 vRoad;\nvarying vec2 vFlow;\nvarying vec3 vMed;\nvarying vec2 vClip;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRoad = aRoad;\nvFlow = aFlow;\nvMed = aMed;\nvClip = aClip;");
     sh.fragmentShader = sh.fragmentShader
       .replace(
         "#include <common>",
@@ -39,7 +39,7 @@ export function makeRoadMaterial(opts: { color?: number; opacity?: number; marki
 uniform vec3 uRoad; uniform vec3 uEdge; uniform vec3 uLane; uniform vec3 uCentre;
 uniform vec3 uGrass; uniform vec3 uTree; uniform vec3 uTreeLight;
 uniform float uFlowMode; uniform float uMarkings; uniform float uArrows; uniform float uHw;
-varying vec4 vRoad; varying vec2 vFlow; varying vec3 vMed;
+varying vec4 vRoad; varying vec2 vFlow; varying vec3 vMed; varying vec2 vClip;
 float band(float x, float w) { float f = fwidth(x) * 0.8 + 1e-4; return 1.0 - smoothstep(w - f, w + f, abs(x)); }
 vec3 flowTint(float r) {
   float k = clamp((0.92 - r) / 0.6, 0.0, 1.0);
@@ -60,7 +60,9 @@ vec3 covTint(float r) {
     float LW = ${LANE_W.toFixed(2)};
     float med = vMed.x * 0.5; // half the median: both directions start this far out
     float halfW = (f + b) * LW * 0.5 + ${SHOULDER.toFixed(2)} + med;
-    float edge = 1.0 - smoothstep(halfW - 0.42 - fwidth(u), halfW - 0.42, abs(u));
+    // where a taper pulls the surface in on this side, the edge band and line follow it in
+    float halfE = halfW - (u < 0.0 ? vClip.x : vClip.y);
+    float edge = 1.0 - smoothstep(halfE - 0.42 - fwidth(u), halfE - 0.42, abs(u));
     float dash = step(fract(v / 9.0), 0.5);
     float lanes = 0.0;
     if (b > 0.0) {
@@ -92,7 +94,7 @@ vec3 covTint(float r) {
       }
     }
     // highways: a solid white line along each edge, just inside the shoulder
-    if (uHw > 0.5) lanes = max(lanes, band(abs(u) - (halfW - ${SHOULDER.toFixed(2)} - 0.05), 0.11));
+    if (uHw > 0.5) lanes = max(lanes, band(abs(u) - (halfE - ${SHOULDER.toFixed(2)} - 0.05), 0.11));
     c = mix(c, uLane, lanes);
     if (uFlowMode > 0.5) {
       float r = (b > 0.0 && u < 0.0) ? vFlow.y : vFlow.x;
@@ -145,6 +147,8 @@ export class Roads3D {
   private hwPlain = makeRoadMaterial({ highway: true, markings: false });
   private edgeMat = new THREE.MeshLambertMaterial({ color: PAL.roadEdge });
   private walkMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  private seamHw = seamMaterial(PAL.hwRoad, PAL.hwLane);
+  private seamTown = seamMaterial(PAL.road, PAL.lane);
   // street trees: flat round crowns, darker rim and a lit side, one instanced mesh for the whole map
   private trees: THREE.InstancedMesh;
   private treeSpots = new Map<number, { x: number; y: number; h: number; r: number }[]>();
@@ -354,27 +358,6 @@ export class Roads3D {
     const surface = new THREE.Mesh(geo, s.ring ? this.ringSurface.mat : hw ? this.hwSurface.mat : this.surface.mat);
     surface.receiveShadow = true;
     const extra: THREE.Object3D[] = [];
-    if (edges) {
-      // the tapered edge gets its line drawn explicitly (the shader's edge line sits at the full width)
-      for (const side of [-1, 1] as const) {
-        const us = side > 0 ? edges.r : edges.l;
-        let run: { p: V2; h: number }[] = [];
-        const flush = () => {
-          if (run.length > 1) {
-            const km = new THREE.Mesh(strip(run.map((q) => q.p), Math.max(...run.map((q) => q.h)) + LIFT + 0.01, 0.42, -side * 0.21), hw ? this.hwEdgeMat : this.edgeMat);
-            km.receiveShadow = true;
-            extra.push(km);
-          }
-          run = [];
-        };
-        for (let i = 0; i < pts.length; i++) {
-          if (Math.abs(us[i]) > halfW - 0.02) { flush(); continue; }
-          const r = lateralAt(pts, i);
-          run.push({ p: { x: pts[i].x + r.x * us[i], y: pts[i].y + r.y * us[i] }, h: hs[i] });
-        }
-        flush();
-      }
-    }
     // town roads: pavements both sides on the ground (not on bridges or round roundabouts), trees on bigger roads
     const grp = roadGroup(T);
     const walk = s.ring ? 0 : SIDEWALK[grp];
@@ -400,9 +383,18 @@ export class Roads3D {
         if (spots.length) this.treeSpots.set(id, spots);
       }
     }
+    // gores: where a slip road runs flush beside the carriageway it leaves (or joins), the two kerbs between them give
+    // way to a broad dashed lane line, so its lane reads as carrying straight on from the carriageway's slip lane;
+    // where they part, the line turns solid and follows the gap open to the gore
+    for (const gl of [g.ends.a.glue, g.ends.b.glue]) {
+      const ms = gl && this.net.segs.get(gl.seg), mg = gl && this.net.segGeom.get(gl.seg);
+      if (!gl || !ms || !mg) continue;
+      const geo = seamGeo(g.center.pts, Array.from(g.hs), mg.center, Math.abs(gl.d), roadWidth(ROAD_TYPES[ms.type]) / 2, g.width / 2, isHighway(T) ? 0.56 : 0.2);
+      if (geo) { const sm = new THREE.Mesh(geo, isHighway(T) ? this.seamHw : this.seamTown); sm.receiveShadow = true; extra.push(sm); }
+    }
     const maxH = Math.max(...hs);
     if (maxH > 0.3) {
-      const deck = deckSides(pts, hs, halfW, LIFT);
+      const deck = deckSides(pts, hs, halfW, LIFT, edges);
       const dm = new THREE.Mesh(deck, this.deckMat);
       dm.castShadow = true;
       extra.push(dm);
@@ -718,6 +710,10 @@ export function ribbon(pts: V2[], hs: number[], ss: number[], halfW: number, lif
     med.set([median, a, t, median, a, t], i * 6);
   }
   g.setAttribute("aMed", new THREE.BufferAttribute(med, 3));
+  // how far each side is pulled in by a taper (the shader draws the edge band and line there)
+  const clip = new Float32Array(n * 4);
+  if (edges) for (let i = 0; i < n; i++) { const cl = halfW + edges.l[i], cr = halfW - edges.r[i]; clip.set([cl, cr, cl, cr], i * 4); }
+  g.setAttribute("aClip", new THREE.BufferAttribute(clip, 2));
   g.setIndex(idx);
   fixUpWinding(g);
   g.computeBoundingSphere();
@@ -725,7 +721,9 @@ export function ribbon(pts: V2[], hs: number[], ss: number[], halfW: number, lif
 }
 
 /** Vertical deck faces under an elevated ribbon, plus the underside. */
-function deckSides(pts: V2[], hs: number[], halfW: number, lift: number): THREE.BufferGeometry {
+function deckSides(pts: V2[], hs: number[], halfW: number, lift: number, edges?: { l: number[]; r: number[] }): THREE.BufferGeometry {
+  // (a tapered road's deck follows its tapered edges, or the underside shows through where the surface is pulled in)
+  const at = (i: number, side: number) => (edges ? (side > 0 ? edges.r[i] : edges.l[i]) : halfW * side);
   const pos: number[] = [];
   const idx: number[] = [];
   const n = pts.length;
@@ -734,7 +732,8 @@ function deckSides(pts: V2[], hs: number[], halfW: number, lift: number): THREE.
     for (let i = 0; i < n; i++) {
       const r = lateralAt(pts, i);
       const p = pts[i], y = hs[i] + lift;
-      const x = p.x + r.x * halfW * side, z = p.y + r.y * halfW * side;
+      const u = at(i, side);
+      const x = p.x + r.x * u, z = p.y + r.y * u;
       pos.push(x, y, z, x, Math.max(0.02, y - DECK), z);
     }
     for (let i = 0; i < n - 1; i++) {
@@ -748,7 +747,8 @@ function deckSides(pts: V2[], hs: number[], halfW: number, lift: number): THREE.
   for (let i = 0; i < n; i++) {
     const r = lateralAt(pts, i);
     const p = pts[i], y = Math.max(0.02, hs[i] + lift - DECK);
-    pos.push(p.x - r.x * halfW, y, p.y - r.y * halfW, p.x + r.x * halfW, y, p.y + r.y * halfW);
+    const ul = at(i, -1), ur = at(i, 1);
+    pos.push(p.x + r.x * ul, y, p.y + r.y * ul, p.x + r.x * ur, y, p.y + r.y * ur);
   }
   for (let i = 0; i < n - 1; i++) {
     const a = base + i * 2, b = a + 1, c = a + 2, d = a + 3;
@@ -785,6 +785,70 @@ function polyDeck(poly: V2[], y: number): THREE.BufferGeometry {
  * a darker rim on the outside. Only where `ok(i, side)` holds for both ends of a step. Sits just under the road
  * surface, so where it runs into another road that road covers it. null if there's nothing to draw.
  */
+/** A road-coloured band with a broad dashed line down its middle (see seamGeo). */
+function seamMaterial(road: number, line: number): THREE.MeshLambertMaterial {
+  const m = new THREE.MeshLambertMaterial({ color: road });
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uLine = { value: new THREE.Color(line) };
+    sh.vertexShader = sh.vertexShader
+      .replace("#include <common>", "#include <common>\nattribute vec3 aSeam;\nvarying vec3 vSeam;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvSeam = aSeam;");
+    sh.fragmentShader = sh.fragmentShader
+      .replace("#include <common>", "#include <common>\nuniform vec3 uLine;\nvarying vec3 vSeam;")
+      .replace(
+        "#include <color_fragment>",
+        `#include <color_fragment>
+{
+  float f = fwidth(vSeam.x) * 0.8 + 1e-4;
+  float l = 1.0 - smoothstep(0.15 - f, 0.15 + f, abs(vSeam.x));
+  float dash = mix(step(fract(vSeam.y / 6.0), 0.55), 1.0, step(0.5, vSeam.z));
+  diffuseColor.rgb = mix(diffuseColor.rgb, uLine, l * dash);
+}`,
+      );
+  };
+  return m;
+}
+
+/**
+ * The seam between a slip road and the carriageway it runs flush beside (its centre `d` from the carriageway's, the
+ * carriageway `mainHalf` wide each side, the slip road `rampHalf`): a road-coloured band over both kerbs with a broad
+ * dashed line down it. Where the two part, the band widens to fill the gap and the line turns solid, up to where the
+ * kerbs are clear of each other (the gore). `pad`: how far past the kerbs the band reaches. null where they never meet.
+ */
+function seamGeo(pts: V2[], hs: number[], main: Polyline, d: number, mainHalf: number, rampHalf: number, pad: number): THREE.BufferGeometry | null {
+  const pos: number[] = [], uv: number[] = [], idx: number[] = [];
+  let run = 0, v = 0, prev: V2 | null = null;
+  for (let i = 0; i < pts.length; i++) {
+    const c = polyClosest(main, pts[i]);
+    const dir = polyDir(main, c.s), foot = polyAt(main, c.s), nrm = right(dir);
+    const lat = dot(sub(pts[i], foot), nrm), gap = Math.abs(lat) - d;
+    // (once the kerbs are clear of each other, they and the grass between them make the gore; and only beside the
+    // carriageway, right up to the node where it starts or ends, not out past it)
+    const on = gap > -0.3 && gap < 0.5 && Math.abs(dot(sub(pts[i], foot), dir)) < 0.6;
+    if (!on) { run = 0; prev = null; continue; }
+    const sg = Math.sign(lat), y = hs[i] + LIFT + 0.004;
+    // between the carriageway's outer edge and the slip road's inner edge (they overlap 0.42 m when flush)
+    const e0 = mainHalf - 0.42, e1 = Math.abs(lat) - rampHalf + 0.42;
+    const mid = (e0 + e1) / 2, cover = (e1 - e0) / 2 + pad;
+    const m = { x: foot.x + nrm.x * sg * mid, y: foot.y + nrm.y * sg * mid };
+    if (prev) v += dist(prev, m);
+    prev = m;
+    const base = pos.length / 3;
+    const solid = smoothstep(clamp((gap - 0.1) / 0.3, 0, 1));
+    pos.push(m.x - nrm.x * cover, y, m.y - nrm.y * cover, m.x + nrm.x * cover, y, m.y + nrm.y * cover);
+    uv.push(-cover, v, solid, cover, v, solid);
+    if (run > 0) idx.push(base - 2, base - 1, base, base - 1, base + 1, base);
+    run++;
+  }
+  if (!idx.length) return null;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute("aSeam", new THREE.Float32BufferAttribute(uv, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
 function sidewalkGeo(pts: V2[], hs: number[], edge: { l: number[]; r: number[] }, walk: number, ok: (i: number, side: 1 | -1) => boolean, lift = 0): THREE.BufferGeometry | null {
   const pos: number[] = [], col: number[] = [], idx: number[] = [];
   const cw = new THREE.Color(PAL.sidewalk), ce = new THREE.Color(PAL.sidewalkEdge);

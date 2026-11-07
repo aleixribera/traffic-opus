@@ -40,9 +40,9 @@ export const ROAD_TYPES: Record<RoadTypeId, RoadType> = {
   boulevardM: { id: "boulevardM", name: "Divided boulevard", short: "3|3", fwd: 3, bwd: 3, speed: kmh(70), costPerM: 26, minRadius: 22, allowsAccess: false, rank: 3, median: 5, hint: "Three lanes each way either side of a wide median. A city's main artery." },
   one1: { id: "one1", name: "One-way", short: "1", fwd: 1, bwd: 0, speed: kmh(50), costPerM: 4, minRadius: 8, allowsAccess: true, rank: 1, hint: "One-lane town street, drawn direction only. Houses and shops can face it." },
   one2: { id: "one2", name: "One-way 2", short: "2", fwd: 2, bwd: 0, speed: kmh(70), costPerM: 9, minRadius: 16, allowsAccess: true, rank: 2, hint: "Two lanes, drawn direction only." },
-  hw1: { id: "hw1", name: "Highway 1", short: "1", fwd: 1, bwd: 0, speed: kmh(80), costPerM: 8, minRadius: 25, allowsAccess: false, rank: 2, hint: "One-lane highway ramp. Links carriageways and loops through interchanges; merging traffic gives way." },
+  hw1: { id: "hw1", name: "Highway 1", short: "1", fwd: 1, bwd: 0, speed: kmh(80), costPerM: 8, minRadius: 25, allowsAccess: false, rank: 2, hint: "One-lane highway ramp. Ramps off a motorway get a slip lane beside it. Draw along a carriageway to add a lane there, or to lengthen or join slip lanes." },
   hw2: { id: "hw2", name: "Highway 2", short: "2", fwd: 2, bwd: 0, speed: kmh(100), costPerM: 12, minRadius: 60, allowsAccess: false, rank: 3, hint: "Two-lane motorway carriageway. Build pairs, link with ramps." },
-  one3: { id: "one3", name: "Highway 3", short: "3", fwd: 3, bwd: 0, speed: kmh(90), costPerM: 15, minRadius: 30, allowsAccess: false, rank: 3, hint: "Three-lane carriageway. Build pairs for a motorway." },
+  one3: { id: "one3", name: "Highway 3", short: "3", fwd: 3, bwd: 0, speed: kmh(100), costPerM: 15, minRadius: 30, allowsAccess: false, rank: 3, hint: "Three-lane carriageway. Build pairs for a motorway." },
   one4: { id: "one4", name: "Highway 4", short: "4", fwd: 4, bwd: 0, speed: kmh(100), costPerM: 21, minRadius: 40, allowsAccess: false, rank: 4, hint: "Four-lane carriageway for the heaviest flows." },
 };
 
