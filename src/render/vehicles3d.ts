@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { SIM } from "../config";
-import { carColor, EMERGE, fromLot, type PendingSpawn, type Traffic, type Vehicle } from "../sim/traffic";
+import { carColor, EMERGE, fromLot, type PendingSpawn, type Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import type { V2 } from "../core/math";
 import type { LotWay } from "./buildings3d";
 import { VEHICLE_MODELS, type ModelSet, type VehicleKind } from "./models";
@@ -17,7 +17,22 @@ const LIFT = 0.07;
 /** One piece of a car's way into or out of a lot: a cubic, driven forwards or backed along. */
 interface Leg { a: V2; b: V2; c: V2; d: V2; len: number; back: boolean }
 /** A car drawn driving into its lot (after it left the road) or out of it (before it joins the road). */
-interface Ghost { kind: VehicleKind; color: number; cargo?: string; legs: Leg[]; total: number; t0: number; dur: number; out: boolean }
+interface Ghost { kind: VehicleKind; color: number; load: number | null; legs: Leg[]; total: number; t0: number; dur: number; out: boolean }
+
+/** The truck body that carries each product: loose bulk in tippers, liquids in tankers, long loads on flatbeds. */
+const TRUCK_BODY: Record<string, VehicleKind> = {
+  crops: "tipper", ore: "tipper", coal: "tipper", lime: "tipper", sand: "tipper", gravel: "tipper", copper: "tipper",
+  oil: "tanker", fuel: "tanker", chemicals: "tanker",
+  logs: "flatbed", planks: "flatbed", steel: "flatbed", machinery: "flatbed",
+};
+const truckBody = (t: Trip): VehicleKind => TRUCK_BODY[t.haul?.product ?? t.cargo ?? ""] ?? "truck";
+const EMPTY_BOX = 0xf2f2ee;
+/** What a truck's load part shows: the cargo's colour, or null for nothing on an open body (tipper, flatbed) running empty. */
+function loadOf(kind: VehicleKind, t: Trip): number | null {
+  if (t.cargo) return CARGO_COLOR[t.cargo] ?? EMPTY_BOX;
+  if (kind === "tanker") return CARGO_COLOR[t.haul?.product ?? ""] ?? EMPTY_BOX; // the tank stays its product's colour
+  return kind === "tipper" || kind === "flatbed" ? null : EMPTY_BOX;
+}
 
 const cub = (l: Leg, t: number): V2 => {
   const u = 1 - t;
@@ -51,6 +66,8 @@ export class Vehicles3D {
   private mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   private tintMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
   private m = new THREE.Matrix4();
+  /** Collapses a part to nothing (the empty load of an open truck body). */
+  private none = new THREE.Matrix4().makeScale(0, 0, 0);
   private c = new THREE.Color();
   private X = new THREE.Vector3();
   private Y = new THREE.Vector3(0, 1, 0);
@@ -63,7 +80,7 @@ export class Vehicles3D {
   private leaving = new Map<PendingSpawn, Ghost>();
 
   constructor(private models: ModelSet) {
-    for (const k of VEHICLE_MODELS) this.batches.set(k, this.makeBatch(k, k === "car" || k === "van" || k === "truck" ? 256 : 16));
+    for (const k of VEHICLE_MODELS) this.batches.set(k, this.makeBatch(k, k === "car" || k === "van" || k === "truck" ? 256 : k === "bus" ? 16 : 64));
   }
 
   private makeBatch(kind: VehicleKind, cap: number): Batch {
@@ -91,7 +108,7 @@ export class Vehicles3D {
 
   static kindOf(v: Vehicle): VehicleKind {
     if (v.trip.bus) return "bus";
-    if (v.truck) return "truck";
+    if (v.truck) return truckBody(v.trip);
     return v.look % 6 === 0 ? "van" : "car";
   }
 
@@ -122,7 +139,8 @@ export class Vehicles3D {
         legs.push(leg(w.kerb, w.into, bay.p, bay.dir));
       } else if (dst(w.kerb, w.drive) > 2) legs.push(leg(w.kerb, w.into, add(w.drive, w.into, -1), w.into));
       const total = legs.reduce((n, l) => n + l.len, 0);
-      this.arriving.push({ kind: Vehicles3D.kindOf(v), color: v.color, cargo: v.trip.cargo, legs, total, t0: now, dur: Math.min(4, Math.max(1.1, total / 4.5)), out: false });
+      const kind = Vehicles3D.kindOf(v);
+      this.arriving.push({ kind, color: v.color, load: loadOf(kind, v.trip), legs, total, t0: now, dur: Math.min(4, Math.max(1.1, total / 4.5)), out: false });
     }
     for (const v of traffic.vehicles) if (!this.seen.has(v.id)) this.seen.set(v.id, v);
     if (this.arriving.length > 400) this.arriving.splice(0, this.arriving.length - 400);
@@ -153,8 +171,8 @@ export class Vehicles3D {
       }
       const total = legs.reduce((n, l) => n + l.len, 0);
       const look = p.look ?? 0;
-      const kind: VehicleKind = p.truck ? "truck" : look % 6 === 0 ? "van" : "car";
-      this.leaving.set(p, { kind, color: p.truck ? 0xf5f5f0 : carColor(look), cargo: p.trip.cargo, legs, total, t0: p.t0 ?? traffic.time, dur: Math.min(EMERGE - 0.15, Math.max(1, total / 3.5)), out: true });
+      const kind: VehicleKind = p.truck ? truckBody(p.trip) : look % 6 === 0 ? "van" : "car";
+      this.leaving.set(p, { kind, color: p.truck ? 0xf5f5f0 : carColor(look), load: loadOf(kind, p.trip), legs, total, t0: p.t0 ?? traffic.time, dur: Math.min(EMERGE - 0.15, Math.max(1, total / 3.5)), out: true });
     }
     for (const p of this.leaving.keys()) if (!want.has(p)) this.leaving.delete(p);
   }
@@ -203,9 +221,10 @@ export class Vehicles3D {
         const q = gs[j];
         this.pose(this.m, q.x, q.y, 0, q.ang, q.s);
         for (const { mesh, tint } of b.meshes) {
-          mesh.setMatrixAt(vs.length + j, this.m);
+          const bare = tint === "cargo" && q.g.load === null;
+          mesh.setMatrixAt(vs.length + j, bare ? this.none : this.m);
           if (tint === "body") mesh.setColorAt(vs.length + j, this.c.setHex(q.g.color));
-          else if (tint === "cargo") mesh.setColorAt(vs.length + j, this.c.setHex(q.g.cargo ? CARGO_COLOR[q.g.cargo] ?? 0xf2f2ee : 0xf2f2ee));
+          else if (tint === "cargo") mesh.setColorAt(vs.length + j, this.c.setHex(q.g.load ?? EMPTY_BOX));
         }
       }
       for (let i = 0; i < vs.length; i++) {
@@ -219,10 +238,11 @@ export class Vehicles3D {
         const ang = v.pang + da * alpha;
         const f = v.fade < 1 ? 0.55 + 0.45 * v.fade : 1;
         this.pose(this.m, x, y, h, ang, f);
+        const load = v.truck ? loadOf(kind, v.trip) : EMPTY_BOX;
         for (const { mesh, tint } of b.meshes) {
-          mesh.setMatrixAt(i, this.m);
+          mesh.setMatrixAt(i, tint === "cargo" && load === null ? this.none : this.m);
           if (tint === "body") mesh.setColorAt(i, this.c.setHex(v.color));
-          else if (tint === "cargo") mesh.setColorAt(i, this.c.setHex(v.trip.cargo ? CARGO_COLOR[v.trip.cargo] ?? 0xf2f2ee : 0xf2f2ee));
+          else if (tint === "cargo") mesh.setColorAt(i, this.c.setHex(load ?? EMPTY_BOX));
         }
       }
       for (const { mesh } of b.meshes) {

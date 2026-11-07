@@ -18,7 +18,7 @@ export interface VehicleModel {
 export const BUILDING_MODELS: BuildingKind[] = [
   "house", "terrace", "apartments", "shop", "store", "mall", "farm", "loggingcamp", "foodplant", "sawmill", "coalplant",
 ];
-export const VEHICLE_MODELS = ["car", "van", "truck", "bus"] as const;
+export const VEHICLE_MODELS = ["car", "van", "truck", "tipper", "tanker", "flatbed", "bus"] as const;
 /** Street furniture, drawn on its own (not a lot). */
 export const PROP_MODELS = ["busstop"] as const;
 export type VehicleKind = (typeof VEHICLE_MODELS)[number];
