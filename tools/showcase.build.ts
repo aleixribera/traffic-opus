@@ -1,18 +1,18 @@
 /**
- * Builds the showcase city that plays behind the main menu, with the game's own tools (planner, zoning, services),
- * grows it for a few game days and writes it as a save to public/showcase.json.
+ * Builds the showcase city that plays behind the main menu, with the game's own tools (planner, zoning, a power
+ * plant), grows it for a few game days and writes it as a save to tools/out/showcase.json (copy it to public/).
  *
- *   npx vitest run --config tools/vitest.config.ts
+ *   npx vitest run --config tools/vitest.config.ts tools/showcase.build.ts
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { it } from "vitest";
 import { milestoneFor } from "../src/game/progression";
 import { Game } from "../src/game/city";
 import { HOUR } from "../src/game/society";
-import type { ServiceKind } from "../src/game/services";
+import type { PlacedKind } from "../src/game/placed";
 import type { ZoneId } from "../src/game/zones";
-import { LEVEL_H, TILE, type RoadTypeId } from "../src/config";
-import { add, cubicAt, dist, dot, norm, scale, sub, v2, type V2 } from "../src/core/math";
+import { LEVEL_H, type RoadTypeId } from "../src/config";
+import { add, dist, dot, scale, sub, v2, type V2 } from "../src/core/math";
 import { planGrid, planRoad, planRoundabout, snap, type CurveMode, type Snap } from "../src/roads/planner";
 
 const log: string[] = [];
@@ -54,54 +54,26 @@ function mk(g: Game) {
       const n = g.zonePaint(cells, zone);
       say(`zone ${name} ${zone}: ${n} cells`);
     },
-    service(kind: ServiceKind, p: V2) {
+    place(kind: PlacedKind, p: V2) {
       // look around p for a spot that fits
       for (let r = 0; r <= 120; r += 10) {
         for (let k = 0; k < (r ? 12 : 1); k++) {
           const q = add(p, v2(Math.cos((k * Math.PI) / 6) * r, Math.sin((k * Math.PI) / 6) * r));
-          if (g.placeService(kind, q)) { say(`service ${kind} at ${q.x.toFixed(0)},${q.y.toFixed(0)}`); return true; }
+          if (g.place(kind, q)) { say(`place ${kind} at ${q.x.toFixed(0)},${q.y.toFixed(0)}`); return true; }
         }
       }
-      say(`FAIL service ${kind} near ${p.x},${p.y}`);
-      return false;
-    },
-    /** A shore building: search wider, on every road near the water. */
-    shore(kind: ServiceKind, p: V2) {
-      for (let r = 0; r <= 600; r += 12) {
-        const n = r ? Math.max(12, Math.round(r / 10)) : 1;
-        for (let k = 0; k < n; k++) {
-          const q = add(p, v2(Math.cos((k * 2 * Math.PI) / n) * r, Math.sin((k * 2 * Math.PI) / n) * r));
-          if (g.placeService(kind, q)) { say(`shore ${kind} at ${q.x.toFixed(0)},${q.y.toFixed(0)}`); return true; }
-        }
-      }
-      say(`FAIL shore ${kind} near ${p.x.toFixed(0)},${p.y.toFixed(0)}`);
+      say(`FAIL place ${kind} near ${p.x},${p.y}`);
       return false;
     },
   };
   return B;
 }
 
-/** The motorway near a point: centre, direction of travel of each carriageway, and which side each is on. */
-function motorwayFrame(g: Game, near: V2) {
-  let best: { p: V2; dir: V2; id: number }[] = [];
-  for (const s of g.net.segs.values()) {
-    if (s.type !== "hw2") continue;
-    let bp = s.c.p0, bd = Infinity, bt = 0;
-    for (let i = 0; i <= 64; i++) { const p = cubicAt(s.c, i / 64); const d = dist(p, near); if (d < bd) { bd = d; bp = p; bt = i / 64; } }
-    if (bd < 120) {
-      const dir = norm(sub(cubicAt(s.c, Math.min(1, bt + 0.01)), cubicAt(s.c, Math.max(0, bt - 0.01))));
-      best.push({ p: bp, dir, id: s.id });
-    }
-  }
-  best.sort((a, b) => dist(a.p, near) - dist(b.p, near));
-  // one point per carriageway (opposite directions)
-  const c1 = best[0];
-  const c2 = best.find((b) => dot(b.dir, c1.dir) < 0)!;
-  const centre = scale(add(c1.p, c2.p), 0.5);
-  const u = c1.dir; // along carriageway 1's travel
-  const n = v2(-u.y, u.x);
-  return { centre, u, n, cw: [c1, c2] };
-}
+/**
+ * The town's frame: X runs east from the industrial side into the town, Y south towards the lake. (It is where the
+ * old pre-built motorway ran, so the districts sit on the land they were planned for.)
+ */
+const FRAME = { centre: v2(635, 20), nx: v2(-0.8738, -0.4863), uy: v2(-0.4863, 0.8738) };
 
 it("builds the showcase city", () => {
   const g = new Game(7);
@@ -112,28 +84,14 @@ it("builds the showcase city", () => {
   g.cityName = "Brightwater";
   const B = mk(g);
 
-  // City frame: X metres west of the motorway (the city side), Y metres along it (south is +Y, towards the lake).
-  const F = motorwayFrame(g, v2(600, 0));
-  const west = dot(sub(v2(0, 0), F.centre), F.n) > 0 ? 1 : -1;
-  const nx = scale(F.n, west), uy = F.u;
-  const P = (X: number, Y: number) => add(add(F.centre, scale(nx, X)), scale(uy, Y));
-  const XY = (p: V2) => ({ X: dot(sub(p, F.centre), nx), Y: dot(sub(p, F.centre), uy) });
-  say(`motorway centre ${F.centre.x.toFixed(0)},${F.centre.y.toFixed(0)}`);
+  // City frame: X metres into the town from the strip between it and the works, Y metres along it (south is +Y,
+  // towards the lake).
+  const { centre, nx, uy } = FRAME;
+  const P = (X: number, Y: number) => add(add(centre, scale(nx, X)), scale(uy, Y));
+  const XY = (p: V2) => ({ X: dot(sub(p, centre), nx), Y: dot(sub(p, centre), uy) });
 
-  // ---------------------------------------------------------------- the interchange: a diamond with an overpass
-  const JW = P(230, 0), JE = P(-230, 0);
-  B.path("main avenue", [P(-560, 0), JE, P(-90, 0), P(90, 0), JW, P(300, 0), P(550, 0), P(800, 0), P(1100, 0), P(1450, 0)], "avenueM", [0, 0, 1, 1, 0, 0, 0, 0, 0, 0]);
-  for (const c of F.cw) {
-    const side = dot(sub(c.p, F.centre), nx) > 0 ? 1 : -1;
-    const J = side > 0 ? JW : JE;
-    const onCw = (s: number) => add(c.p, scale(c.dir, s));
-    // ramp: a slip curve off the carriageway, then a short leg that meets the cross road square-ish
-    const up = dot(c.dir, uy) > 0 ? -1 : 1; // the Y side traffic on this carriageway comes from
-    B.road(`exit ${side}`, onCw(-340), P(side * 150, up * 120), "hw1", { mode: "continuous" });
-    B.road(`exit leg ${side}`, P(side * 150, up * 120), J, "hw1", { mode: "continuous" });
-    B.road(`entry leg ${side}`, J, P(side * 150, -up * 120), "hw1", { mode: "continuous" });
-    B.road(`entry ${side}`, P(side * 150, -up * 120), onCw(340), "hw1", { mode: "continuous" });
-  }
+  // ---------------------------------------------------------------- the spine: one avenue from the works to the far side of town
+  B.path("main avenue", [P(-640, 0), P(-360, 0), P(-200, 0), P(300, 0), P(550, 0), P(800, 0), P(1100, 0), P(1450, 0)], "avenueM");
 
   // ---------------------------------------------------------------- arterials
   B.path("frontage", [P(300, -380), P(300, 0), P(300, 650), P(300, 1050)], "avenue");
@@ -166,65 +124,38 @@ it("builds the showcase city", () => {
   B.road("south loop b", P(1125, 650), P(1125, 1050), "street", { ctrl: P(1180, 850) });
   B.road("south cross", P(300, 850), P(1450, 850), "street", { ctrl: P(875, 800) });
 
-  // ---------------------------------------------------------------- industry across the motorway
+  // ---------------------------------------------------------------- industry across the green strip
   B.path("works avenue", [P(-360, -330), P(-360, 0), P(-360, 330), P(-360, 600)], "avenue");
   B.path("works outer", [P(-640, -330), P(-640, 0), P(-640, 330), P(-640, 600)], "street");
   for (const Y of [-170, 170]) B.road(`works cross ${Y}`, P(-360, Y), P(-640, Y), "street");
   for (const Y of [-330, 330, 600]) B.road(`works cross ${Y}`, P(-200, Y), P(-640, Y), "street");
   B.road("works link", P(-200, 330), P(-200, 600), "street");
-  // a second way across the motorway, clear of the ramps: works traffic to the south of the city needn't queue
-  // through the interchange (an overpass, no ramps)
-  B.path("south bridge", [P(-200, 600), P(-95, 615), P(95, 638), P(300, 650)], "avenue", [0, 1, 1, 0]);
+  // a second way from the works into town, so works traffic to the south of the city needn't all use the main avenue
+  B.path("south link", [P(-200, 600), P(50, 625), P(300, 650)], "avenue");
+  B.path("north link", [P(-200, -330), P(50, -355), P(300, -380)], "street");
 
-  // a works road along the river, for the pumps and the sewage outlets (from the works' north corner down to
-  // their south-east cross street)
-  const RIV = [P(-640, -330), v2(1470, 170), v2(1550, 330), v2(1660, 490), v2(1725, 650)];
-  B.path("river road", RIV, "street");
-  B.road("river link", RIV[RIV.length - 1], P(-640, 330), "street");
-
-  // the ramp terminals of the diamond carry the most turning traffic: signals, as any CS player would add
-  for (const J of [JW, JE]) {
+  // where the avenues cross the main one carries the most turning traffic: signals, as any CS player would add
+  for (const J of [P(300, 0), P(800, 0), P(-360, 0)]) {
     let id = -1, bd = 25;
     for (const [nid, n] of g.net.nodes) { const d = dist(n.p, J); if (d < bd) { bd = d; id = nid; } }
     const pl = id >= 0 ? g.defaultSignal(id) : null;
     say(pl && g.setSignal(id, pl) ? `signals at node ${id}` : `FAIL signals near ${J.x.toFixed(0)},${J.y.toFixed(0)}`);
   }
 
-  // ---------------------------------------------------------------- services (before zoning, so they get good spots)
-  B.service("hospital", P(870, 90));
-  B.service("firestation", P(490, 60));
-  B.service("police", P(740, -240));
-  B.service("clinic", P(1200, 560));
-  B.service("school", P(1050, -210));
-  B.service("school", P(700, 760));
-  B.service("highschool", P(1300, 250));
-  B.service("university", P(1250, 950));
-  B.service("parklarge", P(650, -470));
-  B.service("park", P(1040, -440));
-  B.service("park", P(480, 380));
-  B.service("park", P(960, 950));
-  B.service("garbage", P(-520, 450));
-  B.service("garbage", P(1150, 330));
-  B.service("garbage", P(650, 600)); // three depots: two leave the trucks all out by 5,000 people
-  B.service("townhall", P(1050, 100)); // the landmark the town has just unlocked
-  // utilities: coal and wind out by the works, pumps and an outlet on the water
-  B.service("coalplant", P(-560, -230));
-  for (const Y of [80, 240, 420]) B.service("windturbine", P(-700, Y));
-  for (const p of [RIV[1], RIV[2], RIV[3]]) B.shore("waterpump", p);
-  for (const p of [RIV[4], RIV[4]]) B.shore("sewageoutlet", p);
+  // ---------------------------------------------------------------- a power plant out by the works (before zoning, so it gets a good spot)
+  B.place("coalplant", P(-560, -230));
 
   // ---------------------------------------------------------------- zoning by district
   const z = (name: string, zone: ZoneId, f: (X: number, Y: number) => boolean) => B.zone(name, zone, (p) => { const q = XY(p); return f(q.X, q.Y); });
   z("main avenue shops", "comHigh", (X, Y) => X > 300 && X < 800 && Math.abs(Y) < 55);
-  z("offices", "offHigh", (X, Y) => X > 240 && X < 560 && Y > -380 && Y < 330);
-  z("downtown towers", "resHigh", (X, Y) => X > 540 && X < 820 && Y > -380 && Y < 330);
+  z("big stores", "comHigh", (X, Y) => X > 240 && X < 560 && Y > -380 && Y < 120);
+  z("downtown towers", "resHigh", (X, Y) => X > 240 && X < 820 && Y > -380 && Y < 330);
   z("riverside flats", "resMed", (X, Y) => Y < -370);
   z("central shops", "comLow", (X, Y) => Math.abs(X - 800) < 50 || Math.abs(Y - 650) < 55);
   z("downtown south", "resMed", (X, Y) => X > 240 && X < 820 && Y >= 330 && Y < 660);
   z("suburbs north", "resLow", (X, Y) => X > 800 && Y < 0);
   z("row houses", "resRow", (X, Y) => X > 800 && Y >= 0 && Y < 650);
   z("south homes", "resLow", (X, Y) => X > 240 && Y >= 650);
-  z("works offices", "offLow", (X, Y) => X < 0 && X > -360 && Math.abs(Y) < 60);
   z("works", "ind", (X, Y) => X < 0);
 
   say(`zoned cells ${[...g.zones.allCells()].filter((c) => c.zone).length}`);
@@ -234,7 +165,7 @@ it("builds the showcase city", () => {
   // why trips fail while the city grows (logged every 4 hours)
   const why: Record<string, number> = {};
   const tev = (g.traffic as any).ev, fail0 = tev.fail;
-  tev.fail = (trip: any, reason: string, now: number) => { const k = `${reason}/${trip.run ? trip.run.svc : trip.kind}${trip.to < 0 || trip.from < 0 ? "/outside" : ""}`; why[k] = (why[k] ?? 0) + 1; fail0(trip, reason, now); };
+  tev.fail = (trip: any, reason: string, now: number) => { const k = `${reason}/${trip.kind}`; why[k] = (why[k] ?? 0) + 1; fail0(trip, reason, now); };
   const t0 = Date.now();
   for (let h = 1; h <= HOURS; h++) {
     for (let i = 0; i < HOUR * 30; i++) g.step(1 / 30);
@@ -243,9 +174,9 @@ it("builds the showcase city", () => {
       const st = g.people.stats;
       say(`h${h} pop ${st.population} buildings ${g.buildings.list.length} cars ${g.traffic.vehicles.length} failed ${g.failedTrips} ${((Date.now() - t0) / 1000).toFixed(0)}s`);
       if (Object.keys(why).length) say(`  fails ${JSON.stringify(why)}`);
-      say(`  demand ${(["res", "com", "ind", "off"] as const).map((k) => `${k} ${g.demand[k].v} [${g.demand[k].factors.map((f) => `${f.label} ${f.v}`).join(", ")}]`).join(" | ")}`);
+      say(`  demand ${(["res", "com", "ind"] as const).map((k) => `${k} ${g.demand[k].v} [${g.demand[k].factors.map((f) => `${f.label} ${f.v}`).join(", ")}]`).join(" | ")}`);
       const u = g.utilities.stats;
-      say(`  utilities ${(["power", "water", "sewage"] as const).map((k) => `${k} made ${u[k].made.toFixed(1)} used ${u[k].used.toFixed(1)} short ${u[k].short.toFixed(1)}`).join(" | ")}`);
+      say(`  power made ${u.power.made.toFixed(1)} used ${u.power.used.toFixed(1)} short ${u.power.short.toFixed(1)}`);
     }
   }
   // what a city this size would have reached, and a treasury to match

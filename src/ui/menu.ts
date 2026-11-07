@@ -3,7 +3,9 @@ import type { App } from "../app";
 import type { Game } from "../game/city";
 import type { Hud } from "./hud";
 import { cubicClosest } from "../roads/planner";
-import { add, cubicAt, cubicTangent, dot, norm, scale, sub, v2, type V2 } from "../core/math";
+import { cubicTangent, norm, scale, sub, v2, type V2 } from "../core/math";
+import { ROAD_TYPES } from "../config";
+import { SAVE_V } from "../game/city";
 
 type SaveData = ReturnType<Game["serialize"]>;
 
@@ -87,41 +89,35 @@ export class MainMenu {
     window.setTimeout(() => { if (this.curtain.classList.contains("out")) this.curtain.hidden = true; }, 360);
   }
 
-  /** Still camera on the showcase: the town square on, its streets level with the screen, the motorway running up the right. */
+  /** Still camera on the showcase: the town centre a little right of the middle (clear of the menu card), its main street level with the screen. */
   private frame() {
     const g = this.app.game, v = this.app.view;
     const bs = g.buildings.list;
-    // the centre of the town: weighted by size, so the towers pull it downtown
-    let sx = 0, sy = 0, sw = 0;
-    for (const b of bs) { const w = b.hw * b.hd; sx += b.c.x * w; sy += b.c.y * w; sw += w; }
-    const c = sw ? v2(sx / sw, sy / sw) : v2(v.cx, v.cy);
-    // the motorway nearest it
-    let m: V2 | null = null, d = v2(0, 1), bd = Infinity;
+    // the centre of the town: weighted by size, so the big buildings pull it downtown; then shifted
+    // onto the densest cluster, so thinly built outskirts don't drag the shot into empty fields
+    const centre = (r: number, c?: V2) => {
+      let sx = 0, sy = 0, sw = 0;
+      for (const b of bs) {
+        if (c && Math.hypot(b.c.x - c.x, b.c.y - c.y) > r) continue;
+        const w = b.hw * b.hd;
+        sx += b.c.x * w; sy += b.c.y * w; sw += w;
+      }
+      return sw ? v2(sx / sw, sy / sw) : c ?? v2(v.cx, v.cy);
+    };
+    let c = centre(Infinity);
+    for (let i = 0; i < 8; i++) c = centre(450, c);
+    // the widest road near it sets the screen's axis
+    let d = v2(1, 0), best = -Infinity;
     for (const s of g.net.segs.values()) {
-      if (s.type !== "hw2" && s.type !== "one3") continue;
       const r = cubicClosest(s.c, c);
-      if (r.d < bd) { bd = r.d; m = r.p; d = norm(cubicTangent(s.c, r.t)); }
+      if (r.d > 400) continue;
+      const k = ROAD_TYPES[s.type].fwd + ROAD_TYPES[s.type].bwd - r.d / 100;
+      if (k > best) { best = k; d = norm(cubicTangent(s.c, r.t)); }
     }
     v.halfH = 300;
-    if (!m || bd > 1500) { v.rot = 0; v.cx = c.x; v.cy = c.y; return; }
-    // screen right across the motorway, away from the town; the motorway a fifth of the way in from the right edge
-    let r = v2(-d.y, d.x);
-    if (dot(sub(c, m), r) > 0) r = scale(r, -1);
-    v.rot = Math.atan2(r.y, r.x);
-    // along the motorway: towards its interchange (the ramps), which sits a little above the middle
-    let along = dot(sub(c, m), d);
-    let ix = 0, iy = 0, n = 0;
-    for (const s of g.net.segs.values()) {
-      if (s.type !== "hw1") continue;
-      const q = cubicAt(s.c, 0.5);
-      if (Math.hypot(q.x - m.x, q.y - m.y) < 900) { ix += q.x; iy += q.y; n++; }
-    }
-    if (n) {
-      const ai = dot(sub(v2(ix / n, iy / n), m), d);
-      along = ai + Math.sign(along - ai) * Math.min(Math.abs(along - ai), v.halfH * 0.45);
-    }
+    v.rot = Math.atan2(d.y, d.x);
     const W = v.halfH * 2 * (v.w / Math.max(1, v.h));
-    const p = add(add(m, scale(d, along)), scale(r, -W * 0.36));
+    const p = sub(c, scale(d, W * 0.14));
     v.cx = p.x;
     v.cy = p.y;
   }
@@ -129,7 +125,7 @@ export class MainMenu {
   private render() {
     const app = this.app;
     const last = app.saves.latest();
-    const meta = last && (last.v ?? 1) >= 2 ? last : null;
+    const meta = last && (last.v ?? 1) === SAVE_V ? last : null;
     const name = app.game.cityName;
     this.root.innerHTML = `
       <nav class="card mm-card" aria-label="Main menu">
@@ -139,7 +135,7 @@ export class MainMenu {
         </header>
         <div class="mm-list">
           ${meta ? `<button class="mm-item primary" data-a="continue"><span class="mm-l">Continue</span><span class="mm-s">${esc(meta.name.replace(/, autosave$/, ""))} · ${fmtNum(meta.residents)} people · ${ago(meta.savedAt)}</span></button>` : ""}
-          <button class="mm-item${meta ? "" : " primary"}" data-a="new"><span class="mm-l">New city</span>${meta ? "" : `<span class="mm-s">Start by a motorway with $60,000</span>`}</button>
+          <button class="mm-item${meta ? "" : " primary"}" data-a="new"><span class="mm-l">New city</span>${meta ? "" : `<span class="mm-s">Start on open land with $60,000</span>`}</button>
           <button class="mm-item" data-a="load"><span class="mm-l">Load city</span></button>
           <button class="mm-item" data-a="explore"><span class="mm-l">Explore ${esc(name)}</span><span class="mm-s">The city behind this menu. Look round, try the tools; nothing is saved</span></button>
           <button class="mm-item" data-a="keys"><span class="mm-l">Controls</span></button>
