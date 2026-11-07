@@ -111,7 +111,9 @@ vec3 covTint(float r) {
     c = mix(c, uLane, lanes);
     if (uFlowMode > 0.5) {
       float r = (b > 0.0 && u < 0.0) ? vFlow.y : vFlow.x;
-      c *= uFlowMode > 1.5 ? covTint(r) : flowTint(r);
+      // dark asphalt: tint by mixing rather than multiplying, so the colour reads; markings stay on top
+      vec3 t = uFlowMode > 1.5 ? covTint(r) : flowTint(r);
+      c = mix(c, t * 0.82, uFlowMode > 1.5 ? 0.75 : (1.0 - smoothstep(0.97, 1.0, min(t.g, t.b))) * 0.8);
     }
     if (med > 0.0) {
       // planted median: a kerb either side, grass between, and a row of trees when it is wide enough
@@ -207,7 +209,7 @@ export class Roads3D {
   }
 
   private makeTrees(n: number): THREE.InstancedMesh {
-    const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, depthWrite: false });
     const uni = { uTree: { value: new THREE.Color(PAL.tree) }, uTreeLight: { value: new THREE.Color(PAL.treeLight) } };
     mat.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, uni);
@@ -220,16 +222,22 @@ export class Roads3D {
           "#include <color_fragment>",
           `#include <color_fragment>
 {
+  // a round crown lit from the upper left, and its soft shadow thrown down-right on the ground
   float d = length(vTq);
-  if (d > 1.0) discard;
+  float aa = fwidth(d) + 1e-4;
+  float crown = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, d);
+  float shadow = (1.0 - smoothstep(0.7, 1.15, length(vTq - vec2(0.48, 0.7)))) * 0.45;
+  if (crown <= 0.0 && shadow <= 0.01) discard;
   float lit = 1.0 - smoothstep(0.0, 1.3, length(vTq + vec2(0.35, 0.35)));
-  vec3 c = mix(uTree, uTreeLight, lit);
-  c *= mix(1.0, 0.86, smoothstep(0.82, 0.98, d));
-  diffuseColor.rgb *= c;
+  vec3 c = mix(uTree * 0.8, uTreeLight, lit);
+  c *= mix(1.0, 0.82, smoothstep(0.78, 0.98, d));
+  diffuseColor.rgb *= c * crown;
+  diffuseColor.a = max(crown, shadow);
 }`,
         );
     };
-    const m = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), mat, Math.max(1, n));
+    // twice the crown's size, so the shadow beside it fits on the same quad
+    const m = new THREE.InstancedMesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2), mat, Math.max(1, n));
     m.count = 0;
     m.frustumCulled = false; // spread over the whole map; bounds would go stale
     m.receiveShadow = true;
@@ -533,16 +541,18 @@ export class Roads3D {
   }
 
   /**
-   * Stop signs at a junction: a thick stop line across every lane coming in on a stop arm, and a sign beside the
-   * kerb lane's line.
+   * Stop lines at a junction: a thick one across every lane coming in on a stop arm, with a sign beside the kerb
+   * lane's line, and a thinner one where lights control the arm.
    */
   private stopMarks(id: number): THREE.Object3D[] {
     const n = this.net.nodes.get(id), ng = this.net.nodeGeom.get(id);
-    if (!n?.stops?.length || !ng || ng.kind !== "junction") return [];
+    const sig = !!n?.signal;
+    if (!n || (!n.stops?.length && !sig) || !ng || ng.kind !== "junction") return [];
     const out: THREE.Object3D[] = [];
     const pos: number[] = [];
     for (const a of ng.arms) {
-      if (!n.stops.includes(a.seg)) continue;
+      const stop = !!n.stops?.includes(a.seg);
+      if (!stop && !sig) continue;
       const g = this.net.segGeom.get(a.seg);
       if (!g) continue;
       const inn = g.lanes.filter((l) => l.to === id && l.seg === a.seg && (a.end === "b" ? l.dir === 1 : l.dir === -1));
@@ -552,11 +562,11 @@ export class Roads3D {
         const L = l.pl.length, at = Math.max(0, L - 0.45);
         const p = polyAt(l.pl, at), d = polyDir(l.pl, at), r = right(d);
         const h = (l.hs[l.hs.length - 1] ?? 0) + LIFT + 0.017;
-        const hw = LANE_W * 0.47, hd = 0.45;
+        const hw = LANE_W * 0.47, hd = stop ? 0.45 : 0.22;
         const c = (x: number, y: number) => [p.x + r.x * x + d.x * y, h, p.y + r.y * x + d.y * y];
         pos.push(...c(-hw, -hd), ...c(hw, -hd), ...c(hw, hd), ...c(-hw, -hd), ...c(hw, hd), ...c(-hw, hd));
       }
-      if (kerb) {
+      if (kerb && stop) {
         const L = kerb.pl.length, at = Math.max(0, L - 1.6);
         const p = polyAt(kerb.pl, at), r = right(polyDir(kerb.pl, at));
         const h = (kerb.hs[kerb.hs.length - 1] ?? 0) + LIFT + 0.05;

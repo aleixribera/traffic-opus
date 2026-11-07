@@ -125,7 +125,8 @@ export const goesIn = (ph: SignalPhase, seg: number, turn?: string) => ph.arms.i
 const TR_N = 40, TR_STEP = 0.35; // drawn-path samples per car (14 m: enough for the longest truck)
 /** A car's paint from its look. */
 export const carColor = (look: number) => CAR_COLORS[look % CAR_COLORS.length];
-const CAR_COLORS = [0xe8534a, 0x3c8de0, 0xf2b632, 0x55b85b, 0x9b6ce0, 0xef7fb6, 0x40c2c9, 0xf08a3a, 0x4a5568, 0xf5f5f0];
+// real traffic: mostly white, silver, grey and black, with some red, blue, beige and green
+const CAR_COLORS = [0xf1f1ee, 0xe4e5e3, 0xbfc2c5, 0x8d9095, 0x2a2c30, 0x45484e, 0xa8302c, 0x263f6b, 0x4c6f99, 0xc8b48c, 0x3e5640, 0xd6d8da];
 
 export interface TrafficEvents {
   arrive(v: Vehicle, now: number): void;

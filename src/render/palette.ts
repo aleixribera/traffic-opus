@@ -1,44 +1,50 @@
-// Map colours, in sRGB hex. Picked against the reference frames: cream ground, lime grass, pale sand,
-// periwinkle water, grey terraced mountains; white roads with grey kerbs and a yellow centre line.
+// Map colours, in sRGB hex. A dry, sunlit grassland seen from above: olive grass in soft patches, round shrubs
+// with shadows, dark asphalt with a double yellow centre line and white lanes, pale concrete kerbs.
 
 export const PAL = {
-  ground: 0xf1efe7,
-  grass: 0xc6f08f,
-  sand: 0xf6e9ab,
-  water: 0x9fbaf2,
-  waterEdge: 0x8eaaea,
-  mountain: [0x8d8c84, 0x9c9b93, 0xabaaa2, 0xbbbab2],
-  forestFloor: 0xa9d57a,
-  tree: 0x6fae4f,
-  treeLight: 0x86c35c,
+  ground: 0xa39a5c,
+  groundDark: 0x938c50,
+  groundLight: 0xb3a96a,
+  grass: 0x8f9a4e, // greener hollows
+  sand: 0xc2b27e, // bare dry soil
+  speck: 0x6f6a3a,
+  shrub: 0x67883a,
+  shrubLight: 0x86a24a,
+  water: 0x6f9db2,
+  waterEdge: 0x5d899e,
+  mountain: [0x8f8775, 0x9c9481, 0xa9a18e, 0xb6ae9b],
+  forestFloor: 0x7c7e45,
+  tree: 0x557a32,
+  treeLight: 0x739640,
   // resources overlay
-  resFert: 0xd8b44a,
-  resForest: 0x3f8f45,
-  resOre: 0xb4623a,
-  resOil: 0x2c2c34,
+  resFert: 0xe0c040,
+  resForest: 0x2f7a3a,
+  resOre: 0xc0622e,
+  resOil: 0x24242c,
   locked: 0x2a2a28,
-  road: 0xfbfbf9,
-  roadEdge: 0xa5aab0,
-  lane: 0xbfc3c8,
-  centre: 0xf0bd2c,
-  // highways: darker asphalt, darker shoulders, white lines
-  hwRoad: 0xc4c8ce,
-  hwEdge: 0x7d838b,
-  hwLane: 0xffffff,
-  // town pavements: pale stone with a darker outer edge against the ground
-  sidewalk: 0xdedacf,
-  sidewalkEdge: 0xc6c0b1,
-  deckSide: 0x3c3f44,
-  pillar: 0xd9dbdd,
-  driveway: 0xe3e5e6,
-  bg: 0xd9d6cc,
+  road: 0x3a3d43,
+  roadEdge: 0xc9c3ad,
+  lane: 0xeeeee8,
+  centre: 0xe6b42c,
+  // highways: the same asphalt a shade darker, pale shoulders, white lines
+  hwRoad: 0x33363b,
+  hwEdge: 0xbdb69e,
+  hwLane: 0xf4f4ee,
+  // town pavements: pale concrete with a darker outer edge against the grass
+  sidewalk: 0xc8c2ab,
+  sidewalkEdge: 0xa9a283,
+  deckSide: 0x2b2d31,
+  pillar: 0xb9b5a8,
+  driveway: 0x77787a,
+  bg: 0x9d955a,
 };
 
 /** Elevation tints used by previews and badges (level 0..3). */
 export const LEVEL_TINT = [0x58c8e6, 0x8fd14f, 0x4f8fe8, 0x9a6ae0];
 
+/** Parked cars: the same mix as the traffic. */
 export const CAR_COLORS = [
-  0xe8545a, 0xf2a33a, 0xf6d04d, 0x58b368, 0x3fa7d6, 0x5b6fd8, 0xa070d8, 0xe27ab0, 0xf4f4f4, 0x5d6168, 0x2fb5a3, 0xd9875a,
+  0xf1f1ee, 0xe4e5e3, 0xbfc2c5, 0x8d9095, 0x2a2c30, 0x45484e, 0xa8302c, 0x263f6b, 0x4c6f99, 0xc8b48c, 0x3e5640, 0xd6d8da,
 ];
 
 export const CARGO_COLOR: Record<string, number> = { ore: 0xf07a2a, food: 0x7cc84a, goods: 0x4f8fe8 };

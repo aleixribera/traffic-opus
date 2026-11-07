@@ -182,7 +182,7 @@ export class Terrain3D {
         .replace("#include <common>", `#include <common>\n${GROUND_GLSL}`)
         .replace("#include <color_fragment>", "#include <color_fragment>\ndiffuseColor.rgb = groundColor(vWorld);");
     };
-    mat.customProgramCacheKey = () => "ground-v1";
+    mat.customProgramCacheKey = () => "ground-v2";
     return mat;
   }
 }
@@ -254,41 +254,63 @@ vec3 groundColor(vec2 p) {
   float water = max(lake, 0.5 + (rw - sAbs) * ${RIVER_K.toFixed(1)});
   // decoration fades out as you zoom out so the far map stays calm
   float decoK = mix(1.0, 0.35, smoothstep(5.0, 16.0, mpp));
-  float deco = vnoise(p / 600.0) * 0.55 + vnoise(p / 230.0 + 31.7) * 0.3 + vnoise(p / 90.0 - 12.1) * 0.15;
-  deco = deco + 0.06 + (forest - 0.5) * 0.3;
-  vec3 c = ${c3(PAL.ground)};
-  float sand = max(1.0 - cov(deco + 0.27), cov(water + 0.08) * (1.0 - cov(deco - 0.06)));
-  c = mix(c, ${c3(PAL.sand)}, sand * decoK);
-  c = mix(c, ${c3(PAL.grass)}, cov(deco) * decoK);
-  // forest floor with tree crowns (cells of ~7 m, one crown each, shadow down-right); flat when far out
-  float fo = cov(forest);
-  float crownK = 1.0 - smoothstep(0.9, 1.6, mpp);
-  if (fo > 0.0) {
-    vec3 floorC = ${c3(PAL.forestFloor)};
-    vec3 fc = mix(floorC, ${c3(PAL.tree)}, 0.7);
-    if (crownK > 0.0) {
-      vec2 g = p / 7.0;
-      vec2 gi = floor(g);
-      float crown = 0.0, shade = 0.0, tone = 0.0;
-      for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
-        vec2 cell = gi + vec2(x, y);
-        float h = hash12(cell);
-        vec2 ctr = cell + 0.5 + (vec2(hash12(cell + 17.1), hash12(cell + 41.7)) - 0.5) * 0.6;
-        float r = 0.36 + 0.14 * h;
-        float d = length(g - ctr);
-        float d2 = length(g - ctr - vec2(0.16, 0.22));
-        float aa = fwidth(d) + 1e-4;
-        float cr = 1.0 - smoothstep(r - aa, r + aa, d);
-        if (cr > crown) { crown = cr; tone = hash12(cell + 5.3); }
-        shade = max(shade, 1.0 - smoothstep(r - aa, r + aa, d2));
-      }
-      vec3 tree = mix(${c3(PAL.tree)}, ${c3(PAL.treeLight)}, tone * 0.6);
-      vec3 near = mix(floorC, floorC * 0.82, shade);
-      near = mix(near, tree, crown);
-      fc = mix(fc, near, crownK);
-    }
-    c = mix(c, fc, fo);
+  float fineK = 1.0 - smoothstep(0.7, 2.2, mpp); // detail a few metres across
+  // dry grassland: broad soft patches of lighter and darker grass, greener hollows, bare soil, fine mottling
+  float n1 = vnoise(p / 520.0), n2 = vnoise(p / 170.0 + 31.7), n3 = vnoise(p / 48.0 - 12.1), n4 = vnoise(p / 7.0 + 5.3);
+  vec3 c = mix(${c3(PAL.groundDark)}, ${c3(PAL.groundLight)}, smoothstep(0.2, 0.8, n1 * 0.65 + n2 * 0.35));
+  c = mix(c, ${c3(PAL.grass)}, smoothstep(0.55, 0.8, n2 * 0.6 + n3 * 0.4 + (fert - 0.5) * 0.3) * 0.6 * decoK);
+  c = mix(c, ${c3(PAL.sand)}, smoothstep(0.64, 0.86, n1 * 0.45 + n3 * 0.55) * 0.45 * decoK);
+  c *= 1.0 + ((n3 - 0.5) * 0.06 + (n4 - 0.5) * 0.08 * fineK) * decoK;
+  // dry soil along the water
+  c = mix(c, ${c3(PAL.sand)}, cov(water + 0.07) * 0.8);
+  // specks: tufts and stones a metre or less across
+  if (fineK > 0.0) {
+    vec2 g = p / 2.6, gi = floor(g);
+    float h = hash12(gi + 3.1);
+    vec2 ctr = gi + 0.5 + (vec2(hash12(gi + 7.7), hash12(gi + 9.9)) - 0.5) * 0.7;
+    float r = 0.07 + 0.08 * hash12(gi + 1.3);
+    float d = length(g - ctr), aa = fwidth(d) + 1e-4;
+    c = mix(c, ${c3(PAL.speck)}, step(0.55, h) * (1.0 - smoothstep(r - aa, r + aa, d)) * 0.7 * fineK);
   }
+  // shrubs and trees: round crowns, lit from the sun's side, each with a soft shadow down-right.
+  // Scrub is scattered in loose clumps; in a forest they close up into canopy.
+  float fo = cov(forest);
+  float crownK = 1.0 - smoothstep(1.0, 2.0, mpp);
+  float clump = smoothstep(0.42, 0.75, vnoise(p / 90.0 + 4.4) * 0.7 + n3 * 0.3);
+  float density = mix(0.1 + 0.42 * clump, 0.85, fo);
+  float cell = mix(15.0, 7.5, fo);
+  vec3 under = mix(c, ${c3(PAL.forestFloor)}, fo * 0.85);
+  if (crownK > 0.0) {
+    vec2 g = p / cell, gi = floor(g);
+    vec2 sh = -uSun * 0.55;
+    float crown = 0.0, shade = 0.0, lit = 0.0, tone = 0.0;
+    for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+      vec2 cl = gi + vec2(x, y);
+      if (hash12(cl + 2.9) > density) continue;
+      vec2 ctr = cl + 0.5 + (vec2(hash12(cl + 17.1), hash12(cl + 41.7)) - 0.5) * 0.55;
+      float r = (mix(1.1, 2.4, hash12(cl)) + fo * 1.4) / cell;
+      vec2 q = g - ctr;
+      float wob = 1.0 + 0.09 * sin(atan(q.y, q.x) * 5.0 + hash12(cl + 8.0) * 6.28);
+      float d = length(q) / wob;
+      float aa = fwidth(d) + 1e-4;
+      float cr = 1.0 - smoothstep(r - aa, r + aa, d);
+      float ds = length(q - sh * r * 1.5);
+      shade = max(shade, 1.0 - smoothstep(r * 0.7, r * 1.2, ds));
+      if (cr > crown) {
+        crown = cr;
+        tone = hash12(cl + 5.3);
+        lit = 1.0 - smoothstep(0.0, r * 1.35, length(q + sh * r * 0.6));
+      }
+    }
+    vec3 leaf = mix(${c3(PAL.shrub)}, ${c3(PAL.tree)}, fo * 0.8 + tone * 0.25);
+    leaf = mix(leaf * 0.78, mix(${c3(PAL.shrubLight)}, ${c3(PAL.treeLight)}, fo), lit * 0.85);
+    vec3 near = under * (1.0 - shade * 0.5);
+    near = mix(near, leaf, crown);
+    under = mix(under, near, crownK);
+  }
+  // far out, scrub and forest read as a tint
+  vec3 farTone = mix(under, mix(${c3(PAL.shrub)}, ${c3(PAL.tree)}, fo) * 0.9, density * mix(0.25, 0.85, fo));
+  c = mix(farTone, under, crownK);
   // terraced hills: flat tiers, a lit or shaded bevel at each step, and the shadow each tier throws
   float lvl = 0.0;
   vec3 mc = c;
@@ -374,10 +396,9 @@ vec3 groundColor(vec2 p) {
     c = mix(c, ${c3(PAL.resOre)}, cov(ore) * 0.85);
     c = mix(c, ${c3(PAL.resOil)}, cov(oil) * 0.85);
   }
-  // land you don't own is a touch dimmer; tile view adds the grid
+  // the tile view shows the grid and dims land you don't own (always dimming it drew hard seams across the grass)
   vec2 tc = floor(p / uTile + 0.5) + ${(OWN / 2).toFixed(1)};
   float owned = (tc.x < 0.0 || tc.y < 0.0 || tc.x >= ${OWN.toFixed(1)} || tc.y >= ${OWN.toFixed(1)}) ? 0.0 : texelFetch(uOwn, ivec2(tc), 0).r;
-  c = mix(c * vec3(0.9, 0.9, 0.92), c, owned);
   if (uOverlay > 1.5) {
     vec2 tf = abs(fract(p / uTile + 0.5) - 0.5) * uTile;
     float e = min(tf.x, tf.y);

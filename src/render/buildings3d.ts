@@ -31,9 +31,9 @@ const bayTaken = (b: Building, k: number) => (((b.id * 73856093) ^ (k * 19349663
 /** Front yard depth (m) for a lot with this much depth to spare around its model. */
 const setback = (spare: number) => Math.min(spare * 0.68, 5);
 
-const SITE = 0xcdbb8f; // construction site
+const SITE = 0xb59d6a; // construction site: bare earth
 /** Ground of a grown lot: lawn for homes, paving for business. */
-const YARD: Record<string, number> = { res: 0xd5e7b0, com: 0xe2dfd6, ind: 0xd6d2c6, off: 0xe2dfd6 };
+const YARD: Record<string, number> = { res: 0x9aa65c, com: 0xc4bfae, ind: 0xb9b3a0, off: 0xc4bfae };
 const ABANDONED = 0x77736b;
 
 export class Buildings3D {
