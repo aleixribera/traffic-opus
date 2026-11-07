@@ -1873,8 +1873,9 @@ def v_van(Ms, P):
     box(glass, -0.85, 0.85, -2.5, -2.47, 0.68, 0.82, P["glass"])    # headlight bar
 
 
-def v_truck(Ms, P):
-    body, glass, dark, cargo = Ms["body"], Ms["glass"], Ms["dark"], Ms["cargo"]
+def truck_base(Ms, P):
+    """The rigid truck every freight body sits on: a forward cab (tinted "body"), chassis, bumpers, three axles."""
+    body, glass, dark = Ms["body"], Ms["glass"], Ms["dark"]
     hw_cab = 1.2
     side_profile(body, [(-4.22, 0.62), (-2.3, 0.62), (-2.3, 2.95), (-3.95, 2.95), (-4.22, 2.62)],
                  hw_cab, P["body"])
@@ -1883,12 +1884,77 @@ def v_truck(Ms, P):
         x0, x1 = (hw_cab, hw_cab + 0.03) if s > 0 else (-hw_cab - 0.03, -hw_cab)
         box(glass, x0, x1, -4.0, -3.1, 1.65, 2.55, P["glass"])
     box(glass, -0.9, 0.9, -3.92, -3.62, 2.95, 3.04, P["glass"])     # roof light bar
-    box(cargo, -1.25, 1.25, -2.1, 4.25, 0.98, 3.2, P["cargo"], bevel=0.04)
     box(dark, -0.85, 0.85, -4.0, 4.1, 0.5, 0.98, P["dark"])          # chassis
     box(dark, -1.2, 1.2, -4.25, -4.05, 0.35, 0.8, P["dark"])         # front bumper
     box(dark, -1.1, 1.1, 4.0, 4.2, 0.3, 0.55, P["dark"])             # rear underrun bar
     for y in (-3.35, 1.95, 3.15):
         wheel_axle(dark, y, 0.5, 1.2, P["dark"])
+
+
+def v_truck(Ms, P):
+    """Box truck (goods, food): the box is the tinted cargo."""
+    truck_base(Ms, P)
+    box(Ms["cargo"], -1.25, 1.25, -2.1, 4.25, 0.98, 3.2, P["cargo"], bevel=0.04)
+
+
+def v_tipper(Ms, P):
+    """Tipper (ore, coal, limestone, sand, gravel): an open steel tub in the cab's colour, the load heaped in it."""
+    body, dark, cargo = Ms["body"], Ms["dark"], Ms["cargo"]
+    truck_base(Ms, P)
+    y0, y1, zf, zt = -2.05, 4.25, 1.0, 2.35
+    box(dark, -1.25, 1.25, y0, y1, 0.98, zf + 0.12, P["dark"])               # tub floor
+    for s in (-1, 1):                                                         # side walls with a top rail
+        box(body, s * 1.25 - 0.06, s * 1.25 + 0.06, y0, y1, zf, zt, P["body"])
+        box(dark, s * 1.25 - 0.08, s * 1.25 + 0.08, y0, y1, zt - 0.12, zt + 0.02, P["dark"])
+    box(body, -1.25, 1.25, y0, y0 + 0.16, zf, zt + 0.45, P["body"])          # headboard, taller, over the cab
+    box(body, -1.22, 1.22, y0 - 0.5, y0, zt + 0.25, zt + 0.45, P["body"])    # its canopy lip
+    box(body, -1.25, 1.25, y1 - 0.14, y1, zf, zt - 0.1, P["body"])           # tailgate
+    for y in (y0 + 1.6, y0 + 3.2, y0 + 4.8):                                  # ribs on the outside of the walls
+        for s in (-1, 1):
+            box(dark, s * 1.31 - 0.04, s * 1.31 + 0.04, y - 0.08, y + 0.08, zf, zt - 0.05, P["dark"])
+    # the load: a heap with a flat-ish crest, higher toward the front where it was tipped in
+    taper(cargo, (-1.18, 1.18, y0 + 0.17, y1 - 0.15), (-0.55, 0.55, y0 + 0.9, y1 - 1.9), zf + 0.12, zt + 0.3,
+          P["cargo"])
+
+
+def _tube_y(M, y0, y1, rx, rz, cz, m, n=12):
+    """Closed tube along Y with an elliptical section (rx wide, rz tall) centred on x = 0, z = cz."""
+    ring = [(rx * math.cos(2 * math.pi * i / n), cz + rz * math.sin(2 * math.pi * i / n)) for i in range(n)]
+    return M.loft([(x, y0, z) for x, z in ring], [(x, y1, z) for x, z in ring], m)
+
+
+def v_tanker(Ms, P):
+    """Tanker (oil, fuel, chemicals): an oval tank in the cargo's colour on saddles, a walkway and hatches on top."""
+    dark, cargo = Ms["dark"], Ms["cargo"]
+    truck_base(Ms, P)
+    y0, y1, rx, rz, cz = -1.95, 4.25, 1.22, 0.98, 2.0
+    for y in (y0 + 0.4, y1 - 0.5):                                          # saddles
+        box(dark, -1.0, 1.0, y - 0.15, y + 0.15, 0.98, cz - 0.3, P["dark"])
+    _tube_y(cargo, y0 + 0.12, y1 - 0.12, rx, rz, cz, P["cargo"])
+    _tube_y(cargo, y0, y0 + 0.12, rx - 0.08, rz - 0.08, cz, P["cargo"])     # dished ends, a step in
+    _tube_y(cargo, y1 - 0.12, y1, rx - 0.08, rz - 0.08, cz, P["cargo"])
+    top = cz + rz
+    box(dark, -0.16, 0.16, y0 + 0.5, y1 - 0.6, top - 0.04, top + 0.05, P["dark"])   # walkway
+    for y in (y0 + 1.3, (y0 + y1) / 2 + 0.2, y1 - 1.3):                           # hatches
+        cyl(dark, 0.0, y, 0.3, top - 0.02, top + 0.12, P["dark"], n=6)
+    box(dark, -1.2, 1.2, y1 - 0.25, y1, 0.98, 1.28, P["dark"])          # rear valves and bumper box
+
+
+def v_flatbed(Ms, P):
+    """Flatbed (logs, planks, steel, machinery): a dark deck behind a headboard, the load strapped down on it."""
+    body, dark, cargo = Ms["body"], Ms["dark"], Ms["cargo"]
+    truck_base(Ms, P)
+    y0, y1, zd = -2.05, 4.25, 1.18
+    box(dark, -1.25, 1.25, y0, y1, 0.98, zd, P["dark"])                          # deck
+    box(body, -1.22, 1.22, y0, y0 + 0.14, zd, 2.95, P["body"])                   # headboard
+    for y in (y0 + 0.9, y0 + 2.5, y0 + 4.1, y1 - 0.2):                           # stakes
+        for s in (-1, 1):
+            box(dark, s * 1.2 - 0.06, s * 1.2 + 0.06, y - 0.07, y + 0.07, zd, 2.15, P["dark"])
+    # the load in two bundles, the rear one lower, straps over both
+    box(cargo, -1.1, 1.1, y0 + 0.3, y0 + 3.2, zd, 2.35, P["cargo"], bevel=0.05)
+    box(cargo, -1.1, 1.1, y0 + 3.35, y1 - 0.1, zd, 2.1, P["cargo"], bevel=0.05)
+    for y, zt in ((y0 + 1.0, 2.35), (y0 + 2.5, 2.35), (y0 + 4.1, 2.1), (y0 + 5.5, 2.1)):
+        box(dark, -1.14, 1.14, y - 0.08, y + 0.08, zt - 0.02, zt + 0.03, P["dark"])
 
 
 # Service vehicles keep fixed colours: their nodes are paint / trim / lights (+ ladder), never "body" or
@@ -2022,6 +2088,9 @@ VEHICLES = {
     "car": (v_car, ("body", "glass", "dark"), (1.85, 4.4, 1.45)),
     "van": (v_van, ("body", "glass", "dark"), (2.0, 5.0, 2.0)),
     "truck": (v_truck, ("body", "glass", "dark", "cargo"), (2.5, 8.5, 3.2)),
+    "tipper": (v_tipper, ("body", "glass", "dark", "cargo"), (2.7, 8.5, 3.04)),
+    "tanker": (v_tanker, ("body", "glass", "dark", "cargo"), (2.46, 8.5, 3.1)),
+    "flatbed": (v_flatbed, ("body", "glass", "dark", "cargo"), (2.52, 8.5, 3.04)),
     "bus": (v_bus, ("body", "trim", "lights", "glass", "dark"), (2.575, 12.17, 3.12)),
     # services (fixed colours)
     "garbagetruck": (v_garbagetruck, ("paint", "trim", "lights", "glass", "dark"), (2.5, 8.5, 3.2)),
@@ -2255,8 +2324,9 @@ def verify(names):
                 if abs(want - got) > 0.03:
                     st["issues"].append(f"size {[round(v, 3) for v in size]} != {(W, Ln, H)}")
                     break
-            if tris > 300:
-                st["issues"].append(f"{tris} tris over 300")
+            cap = 480 if "cargo" in parts else 300   # freight bodies carry more detail; there are far fewer of them
+            if tris > cap:
+                st["issues"].append(f"{tris} tris over {cap}")
             for o in meshes:
                 if o.matrix_world.translation.length > 1e-4:
                     st["issues"].append(f"{o.name} origin not at vehicle origin")
