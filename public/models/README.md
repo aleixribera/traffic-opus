@@ -36,6 +36,8 @@ Service buildings (garbage … university) follow the same lot rules. The parks 
 | farm | 40 × 40 | 10.8 | 824 | 2 |
 | works | 36 × 32 | 23.2 | 566 | 4 |
 | foodplant | 32 × 30 | 9.0 | 962 | 4 |
+| loggingcamp | 36 × 32 | 9.2 | 1476 | 2 |
+| sawmill | 40 × 34 | 14.1 | 1432 | 3 |
 | garbage | 36 × 32 | 10.8 | 592 | 3 |
 | firestation | 26 × 24 | 16.1 | 678 | 3 |
 | police | 24 × 22 | 9.0 | 692 | 3 |

@@ -124,6 +124,13 @@ def palette():
         "obs_concrete": "#cdc6ba", "obs_white": "#f2f2ee",
         "ch_shell": "#f7f7f3", "ch_shell2": "#e9ece9",
         "sky_base": "#b9c3cf", "sky_glass": "#5f86b0", "sky_fin": "#e7ebf0", "sky_roof": "#7f97b3",
+        # timber: logging camp (log brown + pale cut ends on a sandy yard, green roofs, pines), sawmill (rust-red
+        # two-tone roof with a pale ridge vent, pale yellow plank bundles)
+        "log_bark": "#7b5434", "log_bark2": "#906340", "log_end": "#e8b878", "lg_yard": "#d9ccad",
+        "lg_roof": "#3f8457", "lg_roof2": "#5c9c6c", "cabin": "#a8743f", "cabin_dark": "#7e5530",
+        "pine": "#2f6c45", "pine2": "#3d8552",
+        "sm_roof": "#cf5f3f", "sm_roof2": "#a9452e", "sm_ridge": "#f1ece2", "plank": "#f2d68e",
+        "stick": "#c49556",
     }.items():
         P[k] = mat(k, v)
     return P
@@ -1566,6 +1573,199 @@ def b_skytower(M, P):
     return L
 
 
+# ------------------------------------------------------------------ timber industry
+
+def log(M, axis, a0, a1, cu, cz, r, bark, end, t=0.55, n=5, chamfer=True):
+    """One felled log lying along `axis` from a0 to a1, centred at (cu, cz) across it. Five-sided with a vertex on
+    top (so the two top facets shade apart) and a flat underside 0.81 r below the centre. Both ends chamfer down
+    to a pale cut face that shows from above; chamfer=False gives a plain prism with pale end caps."""
+    bm, ib, ie = M.bm, M.mi(bark), M.mi(end)
+
+    def ring(a, rr):
+        out = []
+        for i in range(n):
+            ang = math.pi / 2 + 2 * math.pi * i / n
+            u, z = cu + rr * math.cos(ang), cz + rr * math.sin(ang)
+            out.append(bm.verts.new((a, u, z) if axis == "x" else (u, a, z)))
+        return out
+
+    if chamfer:
+        rings = [ring(a0, r * 0.66), ring(a0 + t, r), ring(a1 - t, r), ring(a1, r * 0.66)]
+    else:
+        rings = [ring(a0, r), ring(a1, r)]
+    fs = [bm.faces.new(rings[0][::-1]), bm.faces.new(rings[-1])]
+    for f in fs:
+        f.material_index = ie
+    for k, (A, B) in enumerate(zip(rings, rings[1:])):
+        for i in range(n):
+            j = (i + 1) % n
+            f = bm.faces.new((A[i], A[j], B[j], B[i]))
+            f.material_index = ib if k == 1 or not chamfer else ie
+            fs.append(f)
+    bmesh.ops.recalc_face_normals(bm, faces=fs)
+
+
+def log_stack(M, P, axis, a0, a1, cu, z0, r, layers, seed=0):
+    """Pyramid of logs along `axis`: layers = logs per layer, bottom first, centred on cu across the axis.
+    Lengths and ends are nudged per log so the ends don't line up like a block."""
+    step, k = 1.95 * r, seed
+    for li, nl in enumerate(layers):
+        cz = z0 + 0.81 * r + li * 1.45 * r
+        for i in range(nl):
+            u = cu + (i - (nl - 1) / 2) * step
+            k += 1
+            j0, j1 = ((k * 37) % 7) / 7 * 0.6, ((k * 53) % 5) / 5 * 0.6
+            log(M, axis, a0 + j0, a1 - j1, u, cz, r, P["log_bark" if (i + li) % 2 == 0 else "log_bark2"],
+                P["log_end"])
+
+
+def conifer(M, P, x, y, s=1.0, alt=False):
+    """Pine: two stacked six-sided cones, the upper one turned half a step, so it reads as a dark star from above."""
+    m, rot = P["pine2" if alt else "pine"], (x * 0.37 + y * 0.61) % 1.0
+    revolve(M, x, y, [(2.3 * s, PAD_H + 0.3), (0, 6.2 * s)], m, n=6, rot=rot)
+    revolve(M, x, y, [(1.6 * s, 4.4 * s), (0, 8.8 * s)], m, n=6, rot=rot + math.pi / 6)
+
+
+def gable2(M, x0, x1, y0, y1, ze, zr, roof_a, roof_b, wall, ridge=None, oh=0.5, th=0.25):
+    """Pitched roof with its ridge along X: the front (-Y) plane in roof_a, the back plane in roof_b, gable wall
+    triangles in `wall`, and an optional raised ridge strip."""
+    ym = (y0 + y1) / 2
+    s = (zr - ze) / ((y1 - y0) / 2)
+    zo = ze - s * oh
+    extrude_profile(M, [(y0 - oh, zo), (ym, zr), (ym, zr - th), (y0 - oh, zo - th)], "x", x0 - oh, x1 + oh, roof_a)
+    extrude_profile(M, [(ym, zr), (y1 + oh, zo), (y1 + oh, zo - th), (ym, zr - th)], "x", x0 - oh, x1 + oh, roof_b)
+    extrude_profile(M, [(y0, ze), (y1, ze), (ym, zr - th - 0.02)], "x", x0, x1, wall)
+    if ridge is not None:
+        box(M, x0 - oh + 0.3, x1 + oh - 0.3, ym - 0.7, ym + 0.7, zr - 0.15, zr + 0.35, ridge)
+
+
+def b_loggingcamp(M, P):
+    """Logging camp at the forest edge: a sandy log yard with three log stacks and a yellow log loader, a timber
+    cabin by the car park, an open green-roofed shed, and a row of pines along the back."""
+    L = lot(M, P, 36, 32, bay_row(2, -14.0), asphalt=(-18.0, -10.0))
+    yp, g = L.yf + PARK_DEPTH, PAD_H + 0.04
+    # yard over the lot behind the car park (the pad shows as an edge round it), a drive out to the road
+    box(M, -17.4, 17.4, yp, 15.4, PAD_H, g, P["lg_yard"])
+    box(M, -9.0, 17.4, L.yf, yp, PAD_H, g, P["lg_yard"])
+    # cabin office beside the car park: log walls, a dark band, green gable roof, stove pipe
+    cx0, cx1, cy0, cy1 = -17.0, -11.0, yp + 1.0, yp + 5.8
+    box(M, cx0, cx1, cy0, cy1, 0, 3.0, P["cabin"])
+    band(M, cx0, cx1, cy0, cy1, 1.2, 1.5, P["cabin_dark"], o=0.05)
+    gable(M, cx0, cx1, cy0, cy1, 3.0, 4.7, "x", P["lg_roof"], P["cabin"], oh_u=(0.6, 0.6), oh_a=(0.5, 0.5),
+          bevel=0.0)
+    box(M, -15.0, -13.8, cy0 - 0.06, cy0, 0, 2.2, P["cabin_dark"])
+    box(M, -12.6, -12.1, cy1 - 1.6, cy1 - 1.1, 3.6, 5.6, P["ind_dark"])
+    # open shed at the back left: six posts, a mono-pitch roof falling to the back with paler ribs
+    sx0, sx1, sy0, sy1 = -17.0, -7.5, 1.5, 9.5
+    for x in (sx0 + 0.3, (sx0 + sx1) / 2, sx1 - 0.3):
+        for y in (sy0 + 0.3, sy1 - 0.3):
+            box(M, x - 0.2, x + 0.2, y - 0.2, y + 0.2, 0, 4.4 if y < sy1 - 1 else 3.6, P["ind_dark"])
+    zf, zb, th = 4.6, 3.6, 0.22
+    lo = [(sx0 - 0.5, sy0 - 0.6, zf), (sx1 + 0.5, sy0 - 0.6, zf), (sx1 + 0.5, sy1 + 0.6, zb),
+          (sx0 - 0.5, sy1 + 0.6, zb)]
+    M.loft([(x, y, z - th) for x, y, z in lo], lo, P["lg_roof"])
+    for i in range(4):
+        rx = sx0 + (sx1 - sx0) * (i + 0.5) / 4
+        rib = [(rx - 0.35, sy0 - 0.6, zf), (rx + 0.35, sy0 - 0.6, zf), (rx + 0.35, sy1 + 0.6, zb),
+               (rx - 0.35, sy1 + 0.6, zb)]
+        M.loft(rib, [(x, y, z + 0.12) for x, y, z in rib], P["lg_roof2"])
+    # logging truck waiting to unload, nose to the road: red cab, dark chassis, stakes and three logs on the bed
+    tx, ty0, ty1 = 6.4, -12.2, 0.4
+    box(M, tx - 1.2, tx + 1.2, ty0 + 2.6, ty1, 0.5, 1.2, P["ind_dark"])
+    box(M, tx - 1.25, tx + 1.25, ty0, ty0 + 2.6, 0.5, 3.0, P["sm_roof"])
+    box(M, tx - 1.1, tx + 1.1, ty0 + 0.1, ty0 + 0.9, 2.2, 3.05, P["ind_dark"])
+    for sy in (ty0 + 3.0, ty1 - 0.4):
+        box(M, tx - 1.3, tx + 1.3, sy - 0.15, sy + 0.15, 1.2, 3.0, P["ind_dark"])
+    for u, z, bk in ((-0.6, 1.2 + 0.45, "log_bark"), (0.6, 1.2 + 0.45, "log_bark2"), (0.0, 1.2 + 1.25, "log_bark")):
+        log(M, "y", ty0 + 2.8, ty1 + 0.3, tx + u, z, 0.56, P[bk], P["log_end"], chamfer=False)
+    # log stacks: two long ones along X in the middle, one along Y on the right
+    log_stack(M, P, "x", -5.5, 5.5, 8.8, g, 0.6, (4, 3, 2), seed=1)
+    log_stack(M, P, "x", -5.5, 5.5, 1.8, g, 0.6, (3, 2), seed=5)
+    log_stack(M, P, "y", -7.5, 3.5, 12.6, g, 0.6, (4, 3), seed=9)
+    # log loader between the stacks: tracks, yellow body and cab, boom reaching over the back stack with a log
+    lx, ly = 7.6, 4.6
+    box(M, lx - 1.9, lx - 1.1, ly - 2.3, ly + 2.3, g, 1.0, P["ind_dark"])
+    box(M, lx + 1.1, lx + 1.9, ly - 2.3, ly + 2.3, g, 1.0, P["ind_dark"])
+    box(M, lx - 1.7, lx + 1.7, ly - 1.8, ly + 1.8, 1.0, 2.5, P["ind_yellow"])
+    box(M, lx + 0.1, lx + 1.6, ly - 1.7, ly - 0.1, 2.5, 4.2, P["ind_dark"])
+    box(M, lx + 0.2, lx + 1.5, ly - 1.6, ly - 0.2, 4.2, 4.45, P["ind_yellow"])
+    p, q = Vector((lx - 0.6, ly + 0.4, 2.6)), Vector((lx - 3.8, ly + 4.2, 7.4))
+    wd = 0.75
+    lo = [(p.x, p.y - wd / 2, p.z), (p.x, p.y + wd / 2, p.z), (q.x, q.y + wd / 2, q.z), (q.x, q.y - wd / 2, q.z)]
+    M.loft(lo, [(x, y, z + 0.6) for x, y, z in lo], P["ind_yellow"])
+    box(M, q.x - 0.25, q.x + 0.25, q.y - 0.25, q.y + 0.25, 4.95, q.z + 0.6, P["ind_yellow"])
+    box(M, q.x - 0.7, q.x + 0.7, q.y - 0.5, q.y + 0.5, 4.55, 4.95, P["ind_dark"])
+    log(M, "x", q.x - 3.4, q.x + 3.4, q.y, 4.0, 0.55, P["log_bark2"], P["log_end"])
+    # the forest edge along the back
+    for i, (x, y, s) in enumerate(((-15.2, 13.6, 1.0), (-10.8, 13.9, 0.85), (-6.4, 13.4, 1.05),
+                                   (-1.8, 13.8, 0.9), (2.8, 13.6, 1.0), (7.2, 13.9, 0.85),
+                                   (11.4, 13.4, 1.05), (15.4, 13.7, 0.95), (15.7, 9.0, 0.85))):
+        conifer(M, P, x, y, s, alt=i % 2 == 1)
+    return L
+
+
+def b_sawmill(M, P):
+    """Sawmill: a long saw hall under a rust-red two-tone pitched roof with a pale ridge vent, a log pile and log
+    deck on the left feeding it by conveyor, pale plank bundles on the right, a sawdust silo and boiler stack."""
+    L = lot(M, P, 40, 34, bay_row(3, 6.0), asphalt=(-9.6, 20.0))
+    yp, g = L.yf + PARK_DEPTH, PAD_H + 0.04
+    wall, dark = P["ind_wall"], P["ind_dark"]
+    # log yard on the left
+    box(M, -19.4, -9.6, L.yf, 16.4, PAD_H, g, P["lg_yard"])
+    # saw hall, ridge along X
+    hx0, hx1, hy0, hy1 = -9.0, 13.0, -3.5, 6.5
+    box(M, hx0, hx1, hy0, hy1, 0, 6.0, wall)
+    band(M, hx0, hx1, hy0, hy1, 4.6, 5.2, P["sm_roof2"], o=0.05)
+    gable2(M, hx0, hx1, hy0, hy1, 6.0, 9.6, P["sm_roof"], P["sm_roof2"], wall, ridge=P["sm_ridge"], oh=0.6)
+    box(M, -2.5, 2.5, hy0 - 0.06, hy0, 0, 4.4, dark)
+    # office annex at the front, flat roof
+    flat_block(M, 4.0, 11.5, L.y0 + 0.2, hy0, 3.6, P["sm_ridge"], P["sm_roof2"], bevel=0.0)
+    # log pile at the back left (logs along X)
+    log_stack(M, P, "x", -19.0, -10.4, 12.2, g, 0.65, (4, 3), seed=2)
+    log_stack(M, P, "x", -19.0, -10.4, 6.4, g, 0.65, (3, 2), seed=7)
+    # log deck: steel platform with logs lying across it, rolling toward the infeed conveyor
+    dx0, dx1, dy0, dy1 = -19.0, -13.0, -4.2, 2.4
+    box(M, dx0, dx1, dy0, dy1, 0, 1.4, dark)
+    for i in range(3):
+        x = dx0 + 1.2 + i * 1.75
+        log(M, "y", dy0 + 0.3, dy1 - 0.3, x, 1.4 + 0.49, 0.6, P["log_bark" if i % 2 else "log_bark2"], P["log_end"])
+    # infeed conveyor from the deck up into the hall's gable end, carrying one log
+    cy = 0.0
+    p, q = Vector((dx1 - 0.2, cy, 1.4)), Vector((hx0 + 0.2, cy, 3.2))
+    wd = 1.6
+    lo = [(p.x, p.y - wd / 2, p.z), (q.x, q.y - wd / 2, q.z), (q.x, q.y + wd / 2, q.z), (p.x, p.y + wd / 2, p.z)]
+    M.loft(lo, [(x, y, z + 0.4) for x, y, z in lo], P["ind_steel"])
+    for t in (0.35, 0.75):
+        s = p.lerp(q, t)
+        box(M, s.x - 0.2, s.x + 0.2, cy - 0.6, cy + 0.6, 0, s.z, dark)
+    s = p.lerp(q, 0.5)
+    log(M, "x", s.x - 1.6, s.x + 1.6, cy, s.z + 0.8, 0.5, P["log_bark2"], P["log_end"])
+    box(M, hx0 - 0.06, hx0, cy - 1.2, cy + 1.2, 2.6, 5.0, dark)
+    # sawn timber: plank bundles on the right in two rows, stickers across the tops
+    for col, (bx0, bx1) in enumerate(((14.0, 16.6), (17.0, 19.4))):
+        for row in range(4):
+            by0 = -9.6 + row * 6.3
+            by1 = by0 + 5.7
+            h = (1.3, 1.8, 1.5, 1.9)[(row + 2 * col) % 4]
+            box(M, bx0, bx1, by0, by1, PAD_H, h, P["plank"])
+            for sy in (by0 + 0.8, by1 - 0.8):
+                box(M, bx0 - 0.05, bx1 + 0.05, sy - 0.18, sy + 0.18, h - 0.1, h + 0.06, P["stick"])
+    # sawdust silo behind the hall on four legs, a cyclone on the roof and a duct across to the silo
+    tx, ty = 6.0, 12.0
+    for ddx in (-1.6, 1.6):
+        for ddy in (-1.6, 1.6):
+            box(M, tx + ddx - 0.15, tx + ddx + 0.15, ty + ddy - 0.15, ty + ddy + 0.15, 0, 3.4, dark)
+    revolve(M, tx, ty, [(0.5, 2.2), (2.5, 3.6), (2.5, 9.6), (0, 11.2)], P["ind_tank"], n=10)
+    cyl(M, tx, ty, 2.55, 8.2, 8.8, P["sm_roof"], n=10)
+    revolve(M, 6.0, 3.8, [(0.25, 7.7), (1.0, 9.6), (1.0, 11.0), (0.6, 11.5)], P["ind_tank"], n=8)
+    pipe_y(M, 6.0, 10.6, 0.35, 4.6, ty - 2.0, P["ind_steel"])
+    # boiler stack burning offcuts
+    cyl(M, -6.0, 9.4, 0.65, 0, 14.0, P["ind_steel"], n=8)
+    cyl(M, -6.0, 9.4, 0.72, 11.6, 12.4, P["sm_roof"], n=8)
+    cyl(M, -6.0, 9.4, 0.5, 14.0, 14.06, P["coal"], n=8)
+    return L
+
+
 SERVICES = ("garbage", "firestation", "police", "clinic", "hospital", "school", "highschool", "university",
             "park", "parklarge", "windturbine", "coalplant", "solarfarm", "waterpump", "sewageoutlet",
             "townhall", "stadium", "obstower", "concerthall", "skytower")
@@ -1584,6 +1784,8 @@ BUILDINGS = {
     "farm": (b_farm, 40, 40, 2),
     "works": (b_works, 36, 32, 4),
     "foodplant": (b_foodplant, 32, 30, 4),
+    "loggingcamp": (b_loggingcamp, 36, 32, 2),
+    "sawmill": (b_sawmill, 40, 34, 3),
     # services
     "garbage": (b_garbage, 36, 32, 3),
     "firestation": (b_firestation, 26, 24, 3),

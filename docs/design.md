@@ -1,106 +1,146 @@
-# Design: regional multi-city builder
+# Design: an industrial company on a road map
 
-Decided 2026-11-07 with the owner. The rule for anything not listed: do it the way Cities: Skylines 2 does,
-and make the fixes from CS2's most popular mods core features. Our own names, look and art throughout.
+Decided 2026-11-07 with the owner. You run an **industrial company**. You claim deposits, build big extractors
+and plants, found towns that grow on their own, and draw the roads that tie it all together. Freight routes
+itself; your job is the network and the buildings. References: Captain of Industry for resources and chains,
+Transport Fever 2 for self-growing towns with needs, Cities: Skylines 2 only for roads, traffic and controls.
+Our own names, look and art throughout.
 
 ## Pillars
 
-1. **Roads are the game.** Trafficity-grade road tools (curves, heights, bridges, ramps, roundabouts, signals,
-   upgrades) and a lane-level traffic sim. No glitches, no odd angles, no surprising connections, and it must be
-   intuitive. Every other system exists to create traffic or depend on it.
-2. **Cities, plural.** One large continuous region. The player founds several cities, grows big ones, and ties
-   them together with highways. People commute between cities and goods are trucked between them.
-3. **Cause you can see.** Every number has a breakdown (Info Loom-style). If a factory closes, the player can see
-   that it's short of workers and where the workers are.
+1. **Roads are the logistics.** Trafficity-grade road tools and a lane-level traffic sim. Every load is a real
+   truck in traffic and every worker a real commuter, so a good junction or highway is directly more output.
+2. **Far apart on purpose.** Each resource lives in its own regions, kilometres from the others. Getting every
+   chain running takes tens of kilometres of road over a playthrough.
+3. **Deep chains, visible.** Every building shows what it is short of and why: workers, an input, trucks,
+   power, a buyer, or a jammed road.
+4. **A long game with no waiting.** Many unlocks across many company levels, several things worth doing at any
+   moment, and no idle stretches spent waiting for money.
 
-## Region (owner, 2026-11-07: "almost infinite", "massive highways and interchanges should be the main focus")
+## The map
 
-- **Endless procedural world.** Terrain is generated in 1 km chunks on demand, deterministic from the seed,
-  with level-of-detail rendering from street level out to tens of kilometres.
-- **Large-scale geography with distinct regions**, so there are reasons to build far away:
-  - River valleys with fertile farm plains.
-  - Forest belts.
-  - Mountain ranges holding ore, kilometres from the start.
-  - Rare oil fields.
-  - Lakes and scenic hills.
-  Polluting industry also wants to sit far from homes.
-- **Land**: 640 m tiles. Roads can be built anywhere. Zoning and buildings need owned tiles. A tile can be bought
-  when it's next to land you own or one of your roads runs through it. Price rises with the number owned.
-  Milestones raise how many tiles you may own.
-- **Gateway cities**: big outside cities (port, capital, industrial hub, farm town...) placed far apart
-  (10-40 km). They act as outside connections:
-  - Imports, exports, migrants and tourists come and go through them.
-  - Each one wants different goods and pays its own prices.
-  The start has one pre-built motorway to the nearest gateway (as in CS2). Linking the others with your own
-  motorways and interchanges opens their trade. This is the road-centred long game.
+- An endless procedural world in 640 m tiles. Roads can go anywhere. Buildings need land the company owns:
+  tiles are bought next to land you own or along your roads, and company levels raise how many you may own.
+- **Deposits** sit in distinct regions that never run out, spread by tier:
 
-## Cities
+  | Tier | Deposit | Where | Distance from start |
+  |---|---|---|---|
+  | 1 | Fertile soil (crops), forest (logs) | river plains, forest belts | within 1-3 km |
+  | 2 | Iron ore, coal, limestone | foothills of the ranges, each its own field | 3-8 km |
+  | 3 | Oil, sand | oil basins; river and lake shores | 6-15 km |
+  | 4 | Copper ore | high ranges | 10-20 km |
 
-- A city is founded by placing a **City Hall**: name, colour, and a city area (radius grows with population;
-  areas never overlap). Zoning needs a city area. Extraction industry and roads can go anywhere you own.
-- One shared treasury (CS2 has one budget). Taxes are set region-wide per zone, with optional per-city overrides.
-- Each city has its own population, demand, milestones-progress panel, specialisation and statistics.
-  Region milestones count total population and unlock new City Hall slots.
-- **Specialisations**: when a city's output in one chain passes thresholds it becomes e.g. a Farming / Forestry /
-  Mining / Oil / Manufacturing / Tech city: +productivity in that chain and a signature building.
+  Every kind recurs further out, so later sites can be chosen for convenience. Two different kinds are never
+  next to each other: the chains are always a drive apart.
+- No outside world: no gateway cities, imports or exports. Your towns and your own plants are the only
+  customers. The start is an empty region with one small town and a few hundred metres of road.
 
-## Zoning (CS2)
+## Chains
 
-- Zone cells (8 m) appear along both sides of roads that allow access, 6 cells deep, following curves.
-  Overlapping cells resolve oldest-first. Cells under roads, water, steep ground or other lots are disabled.
-- Tools: paint brush, fill along a road, marquee, unzone. Zoning can be switched off per road side
-  (Zoning Toolkit).
-- Zone types: Residential, Commercial, Industrial and Office, each in Low and High density, plus Extraction zones
-  painted only on resource ground (CS2 specialised industry areas).
-- Buildings **grow on their own** when their zone has demand: they pick a lot of contiguous cells, are built,
-  and **level up** (1-5) with land value. They are abandoned when they fail economically, then demolished
-  automatically.
+| Tier | Extractors (on a deposit) | Plants |
+|---|---|---|
+| 1 | Farm: crops. Logging camp: logs | Food plant: crops to food. Sawmill: logs to planks |
+| 2 | Iron mine: iron ore. Coal mine: coal. Quarry: limestone | Smelter: iron ore + coal to steel. Cement works: limestone + coal to cement. Power plant: coal to power |
+| 3 | Oil well: crude. Sand pit: sand | Refinery: crude to fuel + plastics. Glassworks: sand + coal to glass. Furniture factory: planks + glass to household goods. Construction plant: steel + cement to construction parts |
+| 4 | Copper mine: copper ore | Copper smelter: copper ore + coal to copper. Electronics: copper + plastics to electronics. Machine works: steel + copper to machinery |
 
-## People and economy (CS2 + Realistic Workplaces/Households + Time2Work)
+- Each building has jobs, input stores, output stores and a rate. Rate = base x staffing x inputs on hand
+  (x power, from tier 2). A full output store stops production, and the building says so.
+- **Sizes:** each building can be upgraded twice (more output, jobs and truck bays) once the company level
+  allows it.
+- **Construction:** tier 1 buildings cost money only. From tier 2 a new plant or upgrade is a site that waits
+  for materials trucked to it: planks (tier 2), planks + cement (tier 3), construction parts (tier 4).
+- **Power** runs along the roads from power plants that burn coal brought by truck.
 
-- Households live in homes. Households and workplaces scale with building volume (no 2-job skyscrapers).
-- Each resident has a home, a job found by commute time (they may work in another city), education level and
-  schedule. Work shifts are staggered, so there are morning and evening rush hours, quieter weekends and some
-  night shifts.
-- Trips: commute, shopping, leisure, deliveries, service calls, imports and exports. Each car on screen is a real
-  trip by a real household or company. At large populations one vehicle trip may stand for one household's
-  shared trip; the scale is shown in statistics.
-- **Demand** (bars per zone, each with a factor breakdown):
-  - Residential: free jobs within reach, taxes, services and attractiveness.
-  - Commercial: resident spending vs shop capacity.
-  - Industrial: goods needed by shops, other industry and exports, vs available workers.
-  - Office: educated workers.
-- **Businesses** earn from sales and pay wages, rent and taxes. A workplace that can't fill its jobs or sell its
-  output loses money, and is abandoned after a while. Too many factories and too few workers means factories
-  close (owner's example).
-- Land value comes from road access, services coverage, parks and nearby shops, minus pollution and noise. It
-  drives leveling and rent. Proximity matters only here, through these CS-style effects.
-- Budget: tax income by zone, road and service upkeep, loans. You lose by going bankrupt.
+## Freight (routes itself)
 
-## Industry (CS2)
+- Every building owns trucks (two to start; it gets more bays as the company level allows). A truck loads
+  output, drives it over your roads to a customer, unloads and comes back. Throughput is trucks x round-trip
+  time, which is why road design matters.
+- Destinations are automatic. Your own plants short of an input come first, then towns that need the product,
+  nearest and neediest first. You never draw lines; you can block a destination for a building if you need to.
+- Truck classes unlock over the levels: light truck, heavy truck, road train, plus tankers (crude, fuel),
+  flatbeds (logs, steel) and tippers (ore, coal, sand, limestone).
+- **Fuel** is a running cost per km at a market price. Once your refinery stocks your fuel depots, trucks that
+  pass one fill up there at cost.
+- **Warehouses** (tier 2) buffer any product and re-ship it, so long chains can be split into legs.
 
-- Raw (extraction zones on deposits): Crops, Wood, Ore, Oil. Ore and oil deposits deplete.
-- Processing (Industrial zone; each building picks a product by demand):
-  - Food comes from crops.
-  - Paper and timber come from wood.
-  - Metals come from ore.
-  - Petrochemicals come from oil.
-- Manufacturing (Industrial High):
-  - Electronics: metals + petrochemicals.
-  - Furniture: timber + metals.
-  - Vehicles: metals + petrochemicals.
-- Commercial sells food, retail goods (furniture, electronics, paper) and fuel. Offices produce services that
-  boost industry productivity in their city.
-- Cargo moves by truck from producer to the nearest consumer with demand, or out through outside connections
-  for export. Missing inputs are imported (dearer). Warehouses buffer stock (later milestone).
+## Transport modes
 
-## Services (traffic-generating only)
+Every mode makes roads matter more: it crosses them, feeds them, or forces new junctions. Freight still routes
+itself across modes; you build tracks, docks and the transfer points, never lines.
 
-Garbage, fire, police, health, education (school and university; offices need educated workers) and parks.
-- **Coverage is measured by road travel time**, so service buildings dispatch vehicles that use your roads.
-- **Buses**: a line tool, stops and depots.
-- **Road maintenance**: roads wear with heavy-vehicle traffic, and maintenance trucks repair them.
-- No water, power, sewage or deathcare.
+- **Trucks** (from the start): the base layer and the last mile everywhere.
+- **Freight rail** (late: after a long road-and-truck first half, around tier 4): tracks drawn with the road tools (curves, heights, bridges, tunnels).
+  Stations at plants and towns, each fed by trucks. One train carries 20+ truckloads, which is the answer to the
+  exponential demand. **Level crossings** stop road traffic while a train passes; busy ones jam until you
+  replace them with a bridge.
+- **River barges** (late game): docks on rivers and lakes. Barges are slow and carry enormous loads. Bridges over
+  navigable water need clearance: build them high, or build **lift bridges** that open for barges and stop
+  the traffic on them.
+- **Workers** ride buses only. Commuters stay on the roads, competing with trucks.
+
+## Towns (like Transport Fever 2)
+
+- Found a town by picking a spot. It lays out its own streets, growing outward in a rough circle, and joins
+  them to your roads where they meet. Houses and shops build themselves along its streets. How many towns you
+  can run grows with company level.
+- Every resident is simulated: a home in a town, a job at one of your buildings within reach, a commute in
+  traffic. Buses carry workers to plants and take cars off the roads your trucks need.
+- **Needs** open with town size, and a town grows past each size only while that tier is supplied:
+
+  | Size | Population | Needs |
+  |---|---|---|
+  | Hamlet | 0+ | food |
+  | Village | 300+ | + building materials (planks, later cement) |
+  | Town | 1,500+ | + household goods and fuel |
+  | City | 6,000+ | + electronics and machinery |
+
+  Supply is the share of each need delivered over the last day. Good supply speeds growth, bigger and denser
+  buildings, and more workers; shortfalls stall growth and finally shrink the town.
+- Deliveries go to the town's shops, filling stations and building sites, so trucks drive into town streets.
+- No city services, taxes, policies or zoning.
+
+## Company
+
+- Income: payment for every load delivered to a town. Plant-to-plant transfers earn nothing; they keep the
+  chain running.
+- Costs: roads (build and upkeep), buildings and upgrades, wages, trucks, fuel, land. Loans exist; going
+  bankrupt ends the game.
+- The company panel is a balance sheet: income and costs per building and per product, profit per plant, fleet
+  use, and town supply.
+
+## Milestones
+
+Unlocks come from **milestones**, concrete achievements, never from cumulative XP. Examples:
+- a town reaches Village;
+- 20 loads of food delivered in a day;
+- three towns supplied with every need of their size;
+- a day's delivered value passes a threshold.
+
+There are about 40 milestones in a rough ladder, with a few open at once so there is always a choice of what to
+chase next. Each unlocks something concrete: a chain, a building size, a truck class, a road type or junction
+tool, town slots, land, warehouses, fuel depots. The last ones unlock **company projects**: huge buildings that
+take hundreds of mixed loads, as long-term goals and goods sinks.
+
+**Order of the long game:** the first half is a pure road-and-truck game. Tiers 1-3 chains, truck classes, every
+road type, highways and interchanges all come before trains. **Freight rail unlocks late** (around tier 4, when
+demand has outgrown even road trains on a good highway network), and barges after it.
+
+## Pacing (no waiting)
+
+- At every stage there should be at least three useful things to do: something new to build, a bottleneck to
+  fix, and a town to supply or found.
+- Early income is quick (tier 1 sells to the first town), so the first hour flows: road to the farm, food
+  plant, first deliveries, second town, sawmill.
+- The bottleneck moves on its own: more towns mean more commuters on the roads trucks use, and longer chains
+  mean longer trips, so road work keeps being needed.
+- **Demand rises exponentially.** From the mid game it should be obvious that each town size multiplies its
+  needs (per-resident use rises with size, and towns grow faster when supplied). In the long road phase that
+  means bigger trucks, more of them, highways and interchanges; only once volumes outgrow even that do rail
+  trunks with truck feeders arrive, then barges. The late game is borderline-madness logistics: huge flows,
+  terminals jammed by feeders, crossings to grade-separate.
+- Speed controls up to very fast; the sim must stay smooth at that speed.
 
 ## Roads (core features from mods)
 
@@ -175,23 +215,13 @@ starts or ends on, and each new piece carries on from the last twin.
 - Prefab interchanges (trumpet, diamond, cloverleaf) are a later milestone.
 - Ramps are one-way roads that join a carriageway with a merge, not a stop.
 
-## Progression (CS2 milestones by population)
-
-- 0: streets, low-density R/C/I, City Hall #1, garbage.
-- 240: avenue, roundabouts, signals, police, fire, health, extraction (farming).
-- 1k: second city, forestry, buses, education (school), one-way 2.
-- 2.5k: highways and ramps, office low, ore, warehouses.
-- 5k: high-density R/C, oil, university.
-- 10k: third city, manufacturing, office high, boulevard.
-- 20k / 40k / 80k / 150k / 250k: more city slots, tiles, signature buildings and region projects.
-
-Each milestone also grants money and tile slots.
-
 ## Look
 
-Top-down orthographic 3D with low-poly Blender models (current style), polished:
-- Day/night lighting, zone tints, soft shadows.
-- Building variety per zone, density and level.
-- Clear CS2-like HUD: top bar (city switcher, population, money, time); bottom tool categories; info views;
-  inspector panels.
-- No generic AI look.
+Realistic top-down, straight down, the owner's chosen direction (2026-11-07): dry olive grassland with large soft
+patches and fine specks, scattered round trees and shrubs with soft shadows cast down-right, dark charcoal
+asphalt with crisp markings (double yellow centre lines on two-way roads, white dashed lanes, stop bars, zebra
+crossings, rounded kerbs and light verges), dense small realistic cars and trucks with shadows, rail on gravel
+beds. A muted, satellite-like but clean palette, in our own models and colours. Buildings are Blender models
+in the same realistic register, with deposit regions readable on the ground. Clear company HUD (money and
+milestones at the top, build categories at the bottom: roads, extraction, plants, logistics, towns), inspector
+panels, no generic AI look.
