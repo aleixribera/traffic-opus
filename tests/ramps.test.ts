@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { RoadNetwork, type Connector } from "../src/roads/network";
 import { Traffic, type Trip } from "../src/sim/traffic";
-import { hermiteCubic, polyAt, polyClosest, straightCubic, v2, type V2 } from "../src/core/math";
+import { hermiteCubic, minRadius, polyAt, polyClosest, rampCurve, sampleCubic, straightCubic, v2, type V2 } from "../src/core/math";
 import type { RoadTypeId } from "../src/config";
 import type { Access } from "../src/sim/router";
 import { commitStrokes, commitWiden, planRoad, snap, type BuildWorld } from "../src/roads/planner";
@@ -203,5 +203,82 @@ describe("Slip road side", () => {
     expect(roles?.ramp?.seg).toBe(ramp);
     expect(roles?.main.seg).toBe(main);
     expect(roles?.side).toBe(1); // +y is the right of travel along +x
+  });
+});
+
+describe("Drawn ramps are smooth where they leave and join", () => {
+  /** Tightest bend (m) along the built centrelines of every hw1 piece, sampled every 4 m. */
+  function tightest(net: RoadNetwork): number {
+    let r = Infinity;
+    for (const s of net.segs.values()) if (s.type === "hw1") r = Math.min(r, minRadius(net.segGeom.get(s.id)!.center.pts, 4));
+    return r;
+  }
+  function carriageway() {
+    const net = new RoadNetwork();
+    net.begin();
+    road(net, net.addNode(v2(0, 0), 0), net.addNode(v2(2000, 0), 0), "hw2");
+    net.commit();
+    net.rebuild();
+    return net;
+  }
+  const free = (p: V2) => ({ p, h: 0, guides: [] });
+  // tightest bend allowed as built, by drawn angle (before: a ~20 m hook at 30 degrees; 60 and 70 weren't ramps at all)
+  const need: Record<number, number> = { 30: 50, 60: 40, 70: 28 };
+  for (const deg of [30, 60, 70]) {
+    const a = (deg * Math.PI) / 180, off = v2(110 * Math.cos(a), 110 * Math.sin(a));
+    it(`an exit drawn ${deg} degrees off peels away without a hook`, () => {
+      const net = carriageway();
+      const plan = planRoad(net, world, { start: on(net, v2(500, 0)), end: free(v2(500 + off.x, off.y)), mode: "straight", type: "hw1" });
+      expect(plan.errors.map((e) => e.msg)).toEqual([]);
+      net.begin(); commitStrokes(net, plan.strokes); net.commit(); net.rebuild();
+      expect([...net.nodeGeom.values()].filter((g) => g.kind === "split").length).toBe(1);
+      expect(tightest(net)).toBeGreaterThan(need[deg]);
+    });
+    it(`an entry drawn ${deg} degrees in merges without a hook`, () => {
+      const net = carriageway();
+      const plan = planRoad(net, world, { start: free(v2(1000 - off.x, off.y)), end: on(net, v2(1000, 0)), mode: "straight", type: "hw1" });
+      expect(plan.errors.map((e) => e.msg)).toEqual([]);
+      net.begin(); commitStrokes(net, plan.strokes); net.commit(); net.rebuild();
+      expect([...net.nodeGeom.values()].filter((g) => g.kind === "split").length).toBe(1);
+      expect(tightest(net)).toBeGreaterThan(need[deg]);
+    });
+  }
+  it("never swings a ramp round further than it was drawn", () => {
+    for (const deg of [30, 60, 70]) {
+      const net = carriageway();
+      const a = (deg * Math.PI) / 180;
+      const plan = planRoad(net, world, { start: on(net, v2(500, 0)), end: free(v2(500 + 110 * Math.cos(a), 110 * Math.sin(a))), mode: "straight", type: "hw1" });
+      const ch = plan.strokes[0].chain, c = ch[ch.length - 1];
+      const end = Math.atan2(c.p3.y - c.p2.y, c.p3.x - c.p2.x) * (180 / Math.PI);
+      expect(Math.abs(end - deg)).toBeLessThan(56);
+    }
+  });
+  it("a highway road drawn square off a highway is a junction, not a loop", () => {
+    const net = carriageway();
+    const plan = planRoad(net, world, { start: on(net, v2(500, 0)), end: free(v2(500, 110)), mode: "straight", type: "hw1" });
+    const c = plan.strokes[0].chain;
+    expect(c.length).toBe(1);
+    expect(Math.abs(c[0].p3.x - 500)).toBeLessThan(0.01);
+    expect(Math.abs(c[0].p1.x - 500)).toBeLessThan(0.01); // straight out, not along the carriageway
+  });
+  it("a town one-way drawn square into a highway is a T-junction", () => {
+    const net = carriageway();
+    const plan = planRoad(net, world, { start: free(v2(800, 60)), end: on(net, v2(800, 0)), mode: "straight", type: "one1" });
+    const c = plan.strokes[0].chain;
+    expect(c.length).toBe(1);
+    expect(Math.abs(c[0].p1.x - 800) + Math.abs(c[0].p2.x - 800)).toBeLessThan(0.01);
+  });
+  it("keeps a curve's own handle when it leaves a highway steeply", () => {
+    const net = carriageway();
+    const plan = planRoad(net, world, { start: on(net, v2(500, 0)), end: free(v2(560, 120)), ctrl: v2(505, 60), mode: "curve", type: "hw1" });
+    expect(plan.errors.map((e) => e.msg)).toEqual([]);
+    expect(minRadius(sampleCubic(plan.strokes[0].chain[0], 1.5), 4)).toBeGreaterThan(100);
+  });
+  it("leaves the carriageway dead in line and with no bend at first", () => {
+    const c = rampCurve(v2(0, 0), E, v2(95, 55), 50)[0];
+    expect(c).toBeDefined();
+    expect(c.p1.y).toBeCloseTo(0, 6);
+    expect(c.p2.y).toBeCloseTo(0, 6); // p0, p1, p2 in line: zero curvature at the start
+    expect(minRadius(sampleCubic(c, 1.5), 4)).toBeGreaterThanOrEqual(50);
   });
 });

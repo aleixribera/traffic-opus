@@ -117,6 +117,37 @@ export interface EndShape {
 
 export const NO_SHAPE: EndShape = { shift: 0, glue: null, clip: 0, clipSide: 1, clipLen: 0, laneTrim: [] };
 
+/**
+ * Carry a road's centreline (`pts`, arc lengths `cum`, length L) out beside `main` near its `end`, `d` metres from
+ * main's centreline (+ = main's right). An offset that eases away along the road (so a ramp drawn peeling off keeps
+ * its own smooth curve, only wider), and never closer than beside it (so one drawn running along it stays glued
+ * there): a smooth max, exactly x above k and 0 below -k, with k growing from 0 at the node. `otherShaped`: the far
+ * end is shaped too, so this end keeps to its own part of the road.
+ */
+export function glueRun(pts: V2[], cum: number[], L: number, end: "a" | "b", main: Polyline, d: number, otherShaped: boolean): V2[] {
+  const D = Math.abs(d), sg = Math.sign(d) || 1;
+  const win = Math.min(L * (otherShaped ? 0.6 : 0.85), 260), fade = Math.min(25, win * 0.4);
+  const ease = Math.min(win * 0.8, 90);
+  const f = (x: number, k: number) => (x >= k ? x : x <= -k ? 0 : (x + k) ** 2 / (4 * k));
+  const out = pts.slice();
+  for (let i = 0; i < pts.length; i++) {
+    const sd = end === "a" ? cum[i] : L - cum[i];
+    if (sd > win) continue;
+    const w = 1 - smoothstep(clamp((sd - (win - fade)) / fade, 0, 1));
+    const p = pts[i];
+    const c = polyClosest(main, p);
+    const foot = polyAt(main, c.s), nrm = right(polyDir(main, c.s));
+    const lat = dot(sub(p, foot), nrm) * sg;
+    const push = D * (1 - smoothstep(clamp(sd / ease, 0, 1)));
+    const want = D + f(lat + push - D, Math.max(0.01, 3 * Math.min(1, sd / ease)));
+    out[i] = add(p, scale(nrm, sg * (want - lat) * w));
+  }
+  return out;
+}
+
+/** How far a ramp of type `ramp` runs from the centreline of the carriageway `main` it is glued beside. */
+export const glueGap = (main: RoadTypeId, ramp: RoadTypeId): number => (roadWidth(ROAD_TYPES[main]) + roadWidth(ROAD_TYPES[ramp])) / 2 - 0.42;
+
 /** Who is who at a split or lane change (see JunctionKind). */
 export interface SplitRoles {
   trunk: Arm; // the single carriageway on one side
@@ -806,21 +837,8 @@ export class RoadNetwork {
       const gl = g.ends[end].glue;
       const mg = gl ? this.segGeom.get(gl.seg) : undefined;
       if (!gl || !mg) continue;
-      const D = Math.abs(gl.d), sg = Math.sign(gl.d) || 1;
-      const k = 3, win = Math.min(L * 0.6, 260), fade = Math.min(25, win * 0.4);
-      // smooth max(x, 0): exactly 0 below -k, exactly x above k
-      const f = (x: number) => (x >= k ? x : x <= -k ? 0 : (x + k) ** 2 / (4 * k));
-      for (let i = 0; i < pts.length; i++) {
-        const sd = end === "a" ? cum[i] : L - cum[i];
-        if (sd > win) continue;
-        const w = 1 - smoothstep(clamp((sd - (win - fade)) / fade, 0, 1));
-        const p = pts[i];
-        const c = polyClosest(mg.center, p);
-        const foot = polyAt(mg.center, c.s), nrm = right(polyDir(mg.center, c.s));
-        const lat = dot(sub(p, foot), nrm) * sg;
-        const want = D + f(lat - D);
-        pts[i] = add(p, scale(nrm, sg * (want - lat) * w));
-      }
+      const other = g.ends[end === "a" ? "b" : "a"];
+      pts = glueRun(pts, cum, L, end, mg.center, gl.d, !!(other.glue || other.shift));
     }
     const center = makePolyline(pts);
     const ha = this.nodes.get(s.a)!.h, hb = this.nodes.get(s.b)!.h;

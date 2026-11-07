@@ -1,13 +1,13 @@
 import {
   CLEARANCE, ELEVATED_COST_MULT, LANE_W, LEVEL_H, MAX_GRADE, MIN_ARM_ANGLE, MIN_SEG_LEN, NODE_SNAP_PX, ROAD_SNAP_PX,
-  ROAD_TYPES, ROUNDABOUT_COST, WATER_BRIDGE_MULT, BULLDOZE_REFUND, roadWidth, type RoadTypeId,
+  ROAD_TYPES, ROUNDABOUT_COST, WATER_BRIDGE_MULT, BULLDOZE_REFUND, roadWidth, isHighway, type RoadTypeId,
 } from "../config";
 import {
-  type Cubic, type V2, add, angleOf, arcCubics, clamp, cubicAt, cubicTangent, dist, dot, fromAngle, hermiteCubic,
-  lerpV, makePolyline, minRadius, norm, quadCubic, right, sampleCubic, scale, segIntersect, signedAngle, smoothstep,
+  type Cubic, type V2, add, angleOf, arcCubics, arcThenLine, rampCurve, rampCurves, clamp, cubicAt, cubicTangent, dist, dot, fromAngle, hermiteCubic,
+  lerpV, makePolyline, minRadius, norm, polyAt, polyClosest, polyDir, quadCubic, right, sampleCubic, scale, segIntersect, signedAngle, smoothstep,
   splitCubic, straightCubic, sub, tangentArc, pointSegDist2, len, cross,
 } from "../core/math";
-import type { RoadNetwork, RSeg } from "./network";
+import { glueGap, glueRun, type RoadNetwork, type RSeg } from "./network";
 
 // ---------------------------------------------------------------------------------------------
 // World queries the planner needs (terrain, buildings, locked tiles)
@@ -525,17 +525,92 @@ export function oneWayDirAt(net: RoadNetwork, sn: Snap): V2 | null {
   return null;
 }
 
-/** Slip roads: a one-way road leaving or joining a one-way carriageway nearly in line runs exactly along it there. */
+/** Is the road at this snap a highway carriageway (or a node where only highway carriageways meet)? */
+function highwayAt(net: RoadNetwork, sn: Snap): boolean {
+  if (sn.seg !== undefined) { const s = net.segs.get(sn.seg); return !!s && !s.ring && isHighway(ROAD_TYPES[s.type]); }
+  if (sn.node !== undefined) { const ss = net.segsAt(sn.node); return ss.length > 0 && ss.every((s) => !s.ring && isHighway(ROAD_TYPES[s.type])); }
+  return false;
+}
+
+const SLIP_TOWN = Math.cos((40 * Math.PI) / 180);
+
+/**
+ * How far off a carriageway's line a one-way road can be drawn and still be a slip road onto (or off) it: nearly in
+ * line for town one-ways (a sharper angle is a junction in a street grid), up to 75 degrees for a highway road off a
+ * highway, which only ever takes traffic on and off by merging.
+ */
+function slipLimit(net: RoadNetwork, sn: Snap, type: RoadTypeId): number {
+  return isHighway(ROAD_TYPES[type]) && highwayAt(net, sn) ? Math.cos((75 * Math.PI) / 180) : SLIP_TOWN;
+}
+
+/** Slip roads: a one-way road leaving or joining a one-way carriageway runs exactly along it there. */
 export function slipTangents(net: RoadNetwork, start: Snap, end: Snap, type: RoadTypeId): { ta?: V2; tb?: V2 } {
   if (ROAD_TYPES[type].bwd > 0) return {};
   const d = norm(sub(end.p, start.p));
-  const lim = Math.cos((40 * Math.PI) / 180);
   const out: { ta?: V2; tb?: V2 } = {};
   const sa = oneWayDirAt(net, start), sb = oneWayDirAt(net, end);
-  if (sa && dot(sa, d) > lim) out.ta = sa;
-  if (sb && dot(sb, d) > lim) out.tb = sb;
+  if (sa && dot(sa, d) > slipLimit(net, start, type)) out.ta = sa;
+  if (sb && dot(sb, d) > slipLimit(net, end, type)) out.tb = sb;
   return out;
 }
+
+/** Radius a slip road turns on as it leaves or joins: roomy enough to read as a ramp, scaled to the road. */
+export const rampRadius = (type: RoadTypeId): number => Math.max(ROAD_TYPES[type].minRadius * 3, 60);
+
+/**
+ * A slip road's shape. Candidates: the easing transition curve (preferred: it drifts off the lane with no swerve),
+ * other single curves, an arc on the ramp radius then a straight, and the plain arc. Each is judged as it will be
+ * built, glued in beside the carriageway; the one with the gentlest bend wins. Shapes that swing more than 110
+ * degrees or arrive far steeper than drawn are out: drawn like that, it isn't a ramp. [] when nothing fits.
+ */
+function rampChain(net: RoadNetwork, start: Snap, end: Snap, slip: { ta?: V2; tb?: V2 }, type: RoadTypeId): Cubic[] {
+  if (!slip.ta === !slip.tb) return [];
+  const atStart = !!slip.ta, sn = atStart ? start : end;
+  const [a, t, b] = atStart ? [start.p, slip.ta!, end.p] : [end.p, scale(slip.tb!, -1), start.p];
+  const R = rampRadius(type), rMin = ROAD_TYPES[type].minRadius * 1.05;
+  const pref = rampCurve(a, t, b, R);
+  const cands = [pref, ...rampCurves(a, t, b).map((c) => [c]), arcThenLine(a, t, b, R, rMin), tangentArc(a, t, b, (5 * Math.PI) / 6)].filter((c) => c.length);
+  const chordDir = norm(sub(b, a));
+  let best: Cubic[] = [], bestScore = -1;
+  for (const c of cands) {
+    if (chainTurn(c) > (110 * Math.PI) / 180) continue;
+    const endDir = norm(cubicTangent(c[c.length - 1], 1));
+    if (Math.abs(signedAngle(chordDir, endDir)) > (55 * Math.PI) / 180) continue;
+    const ch = atStart ? c : reverseChain(c);
+    const r = builtMinRadius(net, ch, sn, atStart, type);
+    const score = Math.min(r, R * 2) * (c === pref ? 1.2 : 1);
+    if (score > bestScore) { bestScore = score; best = ch; }
+  }
+  return best;
+}
+
+/** Total heading change along a chain (radians, unsigned sum). */
+function chainTurn(ch: Cubic[]): number {
+  let t = 0;
+  for (const c of ch) t += Math.abs(signedAngle(norm(cubicTangent(c, 0)), norm(cubicTangent(c, 1))));
+  return t;
+}
+
+/** The tightest bend of a slip road as it will be built: the piece at the carriageway glued in beside it (glueRun). */
+function builtMinRadius(net: RoadNetwork, chain: Cubic[], sn: Snap, atStart: boolean, type: RoadTypeId): number {
+  let r = Infinity;
+  for (const [i, c] of chain.entries()) if (i !== (atStart ? 0 : chain.length - 1)) r = Math.min(r, minRadius(sampleCubic(c, 1.5), 4));
+  const main = sn.seg !== undefined ? net.segs.get(sn.seg) : net.segsAt(sn.node!).find((s) => isOneWayCarriage(s));
+  const mg = main && net.segGeom.get(main.id);
+  if (!main || !mg || !chain.length) return r;
+  const piece = atStart ? chain[0] : chain[chain.length - 1];
+  const pts = sampleCubic(piece, 1.5);
+  const pl = makePolyline(pts);
+  // which side of the carriageway the ramp is on: where its far end lies
+  const far = atStart ? piece.p3 : piece.p0;
+  const c = mg.center, at = polyClosest(c, far).s;
+  const side = dot(sub(far, polyAt(c, at)), right(polyDir(c, at))) >= 0 ? 1 : -1;
+  const shaped = glueRun(pts, pl.cum, pl.length, atStart ? "a" : "b", c, side * glueGap(main.type, type), false);
+  return Math.min(r, minRadius(shaped, 4));
+}
+
+function isOneWayCarriage(s: RSeg): boolean { return !s.ring && ROAD_TYPES[s.type].bwd === 0; }
+
 
 /** Where a slip road leaves or joins a carriageway: it may run alongside those roads near there. */
 interface SlipAnchor { p: V2; segs: Set<number> }
@@ -648,16 +723,18 @@ export function planRoad(net: RoadNetwork, world: BuildWorld, inp: PlanInput): P
     const w = planWiden(net, world, start, end, type);
     if (w) return w;
   }
-  const slip = inp.ctrl ? {} : slipTangents(net, start, end, type);
+  let slip: { ta?: V2; tb?: V2 } = inp.ctrl ? {} : slipTangents(net, start, end, type);
+  // a ramp that would have to swing right round to get there is no ramp: drawn that steeply, it's a junction
+  const rch = rampChain(net, start, end, slip, type);
+  if (!slip.ta !== !slip.tb && !rch.length) slip = {}; // (a link with both ends on carriageways is shaped by makeChain)
   const ta = inp.startTangent ?? slip.ta ?? start.tangent;
   let tb: V2 | undefined = slip.tb;
   // a curve leaving (or joining) a one-way carriageway nearly in line: put its handle on the carriageway's line
   let ctrl = inp.ctrl;
   if (ctrl && inp.mode === "curve" && ROAD_TYPES[type].bwd === 0) {
-    const lim = Math.cos((40 * Math.PI) / 180);
     const sa = oneWayDirAt(net, start), sb = oneWayDirAt(net, end);
-    if (sa && dot(sa, norm(sub(ctrl, start.p))) > lim) ctrl = add(start.p, scale(sa, Math.max(4, dot(sub(ctrl, start.p), sa))));
-    else if (sb && dot(sb, norm(sub(end.p, ctrl))) > lim) ctrl = sub(end.p, scale(sb, Math.max(4, dot(sub(end.p, ctrl), sb))));
+    if (sa && dot(sa, norm(sub(ctrl, start.p))) > SLIP_TOWN) ctrl = add(start.p, scale(sa, Math.max(4, dot(sub(ctrl, start.p), sa))));
+    else if (sb && dot(sb, norm(sub(end.p, ctrl))) > SLIP_TOWN) ctrl = sub(end.p, scale(sb, Math.max(4, dot(sub(end.p, ctrl), sb))));
   }
   if (inp.mode === "continuous" && !slip.tb) {
     if (end.node !== undefined) {
@@ -673,7 +750,11 @@ export function planRoad(net: RoadNetwork, world: BuildWorld, inp: PlanInput): P
   }
   // a slip road is a smooth curve off (or onto) the carriageway even in straight mode
   const mode = (slip.ta || slip.tb) && inp.mode === "straight" ? "continuous" : inp.mode;
-  const chain = makeChain(mode, start.p, end.p, ta, tb, ctrl, inp.ctrl2);
+  // a slip road with one end on the carriageway: off along it, one even turn, then straight on to the other end
+  let chain: Cubic[] = [];
+  const asRamp = mode === "continuous" && ((slip.ta && ta === slip.ta && !tb) || (slip.tb && tb === slip.tb && !ta));
+  if (asRamp) chain = rch;
+  if (!chain.length) chain = makeChain(mode, start.p, end.p, ta, tb, ctrl, inp.ctrl2);
   const stroke: Stroke = { chain, h0: start.h, h1: end.h, type };
   const strokes = [stroke];
   const anchors: AnchorHint[] = [
@@ -708,6 +789,10 @@ export function planRoad(net: RoadNetwork, world: BuildWorld, inp: PlanInput): P
   }
   const plan = validateStrokes(net, world, strokes, "road", anchors, undefined, par ? strokes.map((_, i) => anchors.slice(i * 2, i * 2 + 2)) : undefined, skip, slips);
   plan.errors.push(...extra);
+  if (asRamp && !plan.errors.length) {
+    const sn = slip.ta ? start : end;
+    if (builtMinRadius(net, chain, sn, !!slip.ta, type) < ROAD_TYPES[type].minRadius * 0.98) plan.errors.push({ msg: "Too tight where it merges: draw the slip road longer", p: sn.p });
+  }
   if (par) plan.parallelEnds = par;
   if (trim) plan.trim = trim;
   if (chain.length) {

@@ -86,7 +86,7 @@ export class Buildings3D {
       ym.renderOrder = 1;
       const sc = new THREE.Matrix4();
       lots.forEach((b, i) => {
-        lotMatrix(this.tmp, b.c, b.rot, b.side, 0.05);
+        lotMatrix(this.tmp, b.c, b.rot, b.side, 0.04);
         // the lot is hw along the road and hd deep; in lot space x runs along the road
         ym.setMatrixAt(i, this.tmp.multiply(sc.makeScale(b.hw * 2 - 0.8, 1, b.hd * 2 - 0.8)));
         ym.setColorAt(i, this.col.setHex(b.built < 1 ? SITE : YARD[ZONE_GROUP[b.zone!]]));

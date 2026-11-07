@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import { LANE_W, ROAD_TYPES, SHOULDER, isHighway } from "../config";
-import { clamp, dist, norm, right, smoothstep, sub, type V2 } from "../core/math";
+import { LANE_W, ROAD_TYPES, SHOULDER, SIDEWALK, STREET_TREES, isHighway, roadGroup, roadWidth } from "../config";
+import { clamp, dist, norm, polyClosest, right, smoothstep, sub, type V2 } from "../core/math";
 import type { ChangeSet, RoadNetwork } from "../roads/network";
 import { ringsNear } from "../roads/planner";
 import { dkey } from "../sim/router";
@@ -64,7 +64,11 @@ vec3 covTint(float r) {
     float dash = step(fract(v / 9.0), 0.5);
     float lanes = 0.0;
     if (b > 0.0) {
-      if (med <= 0.0) c = mix(c, uCentre, band(u, 0.13));
+      // centre line: a dashed single line on small streets, a solid double line on bigger roads
+      if (med <= 0.0) {
+        if (max(f, b) < 1.5) c = mix(c, uCentre, band(u, 0.12) * step(fract(v / 6.0), 0.6));
+        else c = mix(c, uCentre, band(abs(u) - 0.2, 0.09));
+      }
       for (int k = 1; k < 4; k++) {
         float fk = float(k);
         if (fk < f) lanes = max(lanes, band(u - med - fk * LW, 0.08) * dash);
@@ -140,9 +144,19 @@ export class Roads3D {
   private hwRing = makeRoadMaterial({ highway: true, arrows: false });
   private hwPlain = makeRoadMaterial({ highway: true, markings: false });
   private edgeMat = new THREE.MeshLambertMaterial({ color: PAL.roadEdge });
+  private walkMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  // street trees: flat round crowns, darker rim and a lit side, one instanced mesh for the whole map
+  private trees: THREE.InstancedMesh;
+  private treeSpots = new Map<number, { x: number; y: number; h: number; r: number }[]>();
   private hwEdgeMat = new THREE.MeshLambertMaterial({ color: PAL.hwEdge });
   /** Every marked surface material, so overlay modes reach all of them. */
   private get marked() { return [this.surface, this.ringSurface, this.hwSurface, this.hwRing]; }
+  /** Pavement width round a junction or bend: the narrowest of its roads', none if any road there has none. */
+  private nodeWalk(id: number): number {
+    const at = this.net.segsAt(id);
+    if (!at.length || at.some((sg) => sg.ring)) return 0;
+    return Math.min(...at.map((sg) => SIDEWALK[roadGroup(ROAD_TYPES[sg.type])]));
+  }
   /** Is every road meeting this node a highway (so its junction or bend is drawn in highway asphalt)? */
   private hwNode(id: number): boolean {
     const at = this.net.segsAt(id);
@@ -164,7 +178,75 @@ export class Roads3D {
     this.lights.count = 0;
     this.lights.renderOrder = 3;
     this.lights.frustumCulled = false; // instances move around the whole map; bounds would go stale
-    this.group.add(this.lights, this.islands);
+    this.trees = this.makeTrees(0);
+    this.group.add(this.lights, this.islands, this.trees);
+  }
+
+  private makeTrees(n: number): THREE.InstancedMesh {
+    const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    const uni = { uTree: { value: new THREE.Color(PAL.tree) }, uTreeLight: { value: new THREE.Color(PAL.treeLight) } };
+    mat.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, uni);
+      sh.vertexShader = sh.vertexShader
+        .replace("#include <common>", "#include <common>\nvarying vec2 vTq;")
+        .replace("#include <begin_vertex>", "#include <begin_vertex>\nvTq = position.xz * 2.0;");
+      sh.fragmentShader = sh.fragmentShader
+        .replace("#include <common>", "#include <common>\nuniform vec3 uTree; uniform vec3 uTreeLight;\nvarying vec2 vTq;")
+        .replace(
+          "#include <color_fragment>",
+          `#include <color_fragment>
+{
+  float d = length(vTq);
+  if (d > 1.0) discard;
+  float lit = 1.0 - smoothstep(0.0, 1.3, length(vTq + vec2(0.35, 0.35)));
+  vec3 c = mix(uTree, uTreeLight, lit);
+  c *= mix(1.0, 0.86, smoothstep(0.82, 0.98, d));
+  diffuseColor.rgb *= c;
+}`,
+        );
+    };
+    const m = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), mat, Math.max(1, n));
+    m.count = 0;
+    m.frustumCulled = false; // spread over the whole map; bounds would go stale
+    m.receiveShadow = true;
+    return m;
+  }
+
+  /** A street tree stands only where its crown keeps off every other road (a road drawn alongside, a crossing street). */
+  private treeClear(own: number, t: { x: number; y: number; r: number }): boolean {
+    const reach = t.r + 12;
+    for (const id of this.net.segsNear(t.x - reach, t.y - reach, t.x + reach, t.y + reach)) {
+      if (id === own) continue;
+      const s = this.net.segs.get(id), g = this.net.segGeom.get(id);
+      if (!s || !g) continue;
+      if (polyClosest(g.center, t).d < roadWidth(ROAD_TYPES[s.type]) / 2 + t.r * 0.8) return false;
+    }
+    return true;
+  }
+
+  /** Gather every seg's street trees into the one instanced mesh. */
+  private collectTrees() {
+    let n = 0;
+    for (const t of this.treeSpots.values()) n += t.length;
+    if (n > this.trees.instanceMatrix.count) {
+      this.group.remove(this.trees);
+      this.trees.geometry.dispose();
+      (this.trees.material as THREE.Material).dispose();
+      this.trees.dispose();
+      this.trees = this.makeTrees(Math.ceil(n * 1.5) + 64);
+      this.group.add(this.trees);
+    }
+    let i = 0;
+    for (const [sid, spots] of this.treeSpots) {
+      for (const t of spots) {
+        if (!this.treeClear(sid, t)) continue;
+        // (a hair apart in height so crowns that touch never flicker)
+        this.tmpM.makeScale(t.r * 2, 1, t.r * 2).setPosition(t.x, t.h + LIFT + 0.03 + (i % 8) * 0.0005, t.y);
+        this.trees.setMatrixAt(i++, this.tmpM);
+      }
+    }
+    this.trees.count = i;
+    this.trees.instanceMatrix.needsUpdate = true;
   }
 
   set flowMode(on: boolean) {
@@ -200,6 +282,7 @@ export class Roads3D {
     for (const id of this.net.segs.keys()) this.buildSeg(id);
     for (const id of this.net.nodes.keys()) this.buildNode(id);
     this.collectLights();
+    this.collectTrees();
     this.buildIslands();
   }
 
@@ -209,6 +292,7 @@ export class Roads3D {
     for (const id of cs.dirtySegs) { this.dropSeg(id); if (this.net.segs.has(id)) this.buildSeg(id); }
     for (const id of cs.dirtyNodes) { this.dropNode(id); if (this.net.nodes.has(id)) this.buildNode(id); }
     this.collectLights();
+    this.collectTrees();
     this.buildIslands();
   }
 
@@ -219,6 +303,7 @@ export class Roads3D {
     m.surface.geometry.dispose();
     for (const o of m.extra) { this.group.remove(o); if ((o as THREE.Mesh).geometry && (o as THREE.Mesh).geometry !== this.pillarGeo) (o as THREE.Mesh).geometry.dispose(); }
     this.segs.delete(id);
+    this.treeSpots.delete(id);
   }
 
   private dropNode(id: number) {
@@ -290,6 +375,31 @@ export class Roads3D {
         flush();
       }
     }
+    // town roads: pavements both sides on the ground (not on bridges or round roundabouts), trees on bigger roads
+    const grp = roadGroup(T);
+    const walk = s.ring ? 0 : SIDEWALK[grp];
+    if (walk > 0) {
+      const inner = { l: edges ? edges.l : pts.map(() => -halfW), r: edges ? edges.r : pts.map(() => halfW) };
+      const ok = (i: number, side: 1 | -1) => hs[i] < 0.3 && Math.abs(side > 0 ? inner.r[i] : inner.l[i]) > halfW - 0.02;
+      // (each road's pavement a hair apart in height, so two that meet or overlap never flicker)
+      const wg = sidewalkGeo(pts, hs, inner, walk, ok, (id % 4) * 0.0004);
+      if (wg) { const wm = new THREE.Mesh(wg, this.walkMat); wm.receiveShadow = true; extra.push(wm); }
+      const tr = STREET_TREES[grp];
+      if (tr) {
+        const spots: { x: number; y: number; h: number; r: number }[] = [];
+        // on a fixed rhythm along the road (so pieces of one road line up), clear of junction mouths
+        for (let sc = Math.ceil((s0 + 6) / tr.every) * tr.every; sc < s1 - 6; sc += tr.every) {
+          let i = 0;
+          while (i < ss.length - 2 && ss[i + 1] < sc) i++;
+          for (const side of [-1, 1] as const) {
+            if (!ok(i, side) || !ok(Math.min(i + 1, pts.length - 1), side)) continue;
+            const r = lateralAt(pts, i), off = side * (halfW + walk * 0.55);
+            spots.push({ x: pts[i].x + r.x * off, y: pts[i].y + r.y * off, h: hs[i], r: tr.r });
+          }
+        }
+        if (spots.length) this.treeSpots.set(id, spots);
+      }
+    }
     const maxH = Math.max(...hs);
     if (maxH > 0.3) {
       const deck = deckSides(pts, hs, halfW, LIFT);
@@ -340,6 +450,11 @@ export class Roads3D {
       const surface = new THREE.Mesh(geo, this.hwNode(id) ? this.hwRing.mat : this.ringSurface.mat);
       surface.receiveShadow = true;
       out.push(surface);
+      const walk = this.nodeWalk(id);
+      if (walk > 0) {
+        const wg = sidewalkGeo(pts, hs, { l: pts.map(() => -halfW), r: pts.map(() => halfW) }, walk, (i) => hs[i] < 0.3);
+        if (wg) { const wm = new THREE.Mesh(wg, this.walkMat); wm.receiveShadow = true; out.push(wm); }
+      }
       // the curve runs from the arm whose lanes come in: tint each half like that arm's two directions
       const X = ng.arms.find((a) => { const g = this.net.segGeom.get(a.seg); return g?.lanes.some((l) => l.to === id); }) ?? ng.arms[0];
       const inDir = X.end === "b" ? 1 : -1;
@@ -364,6 +479,17 @@ export class Roads3D {
       out.push(deck, under);
     }
     out.push(m);
+    const walk = n.h < 0.3 ? this.nodeWalk(id) : 0;
+    for (const k of ng.kerbs) {
+      if (k.length < 2 || walk <= 0) continue;
+      // the pavement carries on round the corner, outside the kerb line
+      const mi = k.length >> 1, lat = lateralAt(k, mi);
+      const out_ = lat.x * (n.p.x - k[mi].x) + lat.y * (n.p.y - k[mi].y) > 0 ? -1 : 1;
+      const z = k.map(() => 0);
+      // (just above the roads' own pavements, so round the corner it wins cleanly)
+      const wg = sidewalkGeo(k, k.map(() => n.h), { l: z, r: z }, walk, (_, side) => side === out_, 0.002);
+      if (wg) { const wm = new THREE.Mesh(wg, this.walkMat); wm.receiveShadow = true; out.push(wm); }
+    }
     for (const k of ng.kerbs) {
       if (k.length < 2) continue;
       // the line is the road's outer edge; draw the band just inside it, like the segment shader does
@@ -651,6 +777,45 @@ function polyDeck(poly: V2[], y: number): THREE.BufferGeometry {
   g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
   g.setIndex(idx);
   g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * Pavement bands either side of a road: from the road edge (`edge.l` / `edge.r`, lateral offsets) out by `walk`, with
+ * a darker rim on the outside. Only where `ok(i, side)` holds for both ends of a step. Sits just under the road
+ * surface, so where it runs into another road that road covers it. null if there's nothing to draw.
+ */
+function sidewalkGeo(pts: V2[], hs: number[], edge: { l: number[]; r: number[] }, walk: number, ok: (i: number, side: 1 | -1) => boolean, lift = 0): THREE.BufferGeometry | null {
+  const pos: number[] = [], col: number[] = [], idx: number[] = [];
+  const cw = new THREE.Color(PAL.sidewalk), ce = new THREE.Color(PAL.sidewalkEdge);
+  const rim = Math.min(0.22, walk * 0.15);
+  for (const side of [-1, 1] as const) {
+    let prev = -1;
+    for (let i = 0; i < pts.length; i++) {
+      if (!ok(i, side)) { prev = -1; continue; }
+      const r = lateralAt(pts, i), y = hs[i] + LIFT - 0.005 + lift;
+      const e = side > 0 ? edge.r[i] : edge.l[i];
+      const base = pos.length / 3;
+      // four across: road edge, rim start (twice, for a hard colour change), outer edge
+      for (const [d, c] of [[0, cw], [walk - rim, cw], [walk - rim, ce], [walk, ce]] as const) {
+        const u = e + side * d;
+        pos.push(pts[i].x + r.x * u, y, pts[i].y + r.y * u);
+        col.push(c.r, c.g, c.b);
+      }
+      if (prev >= 0 && dist(pts[i], pts[i - 1]) > 1e-4) {
+        for (const [a, b] of [[0, 1], [2, 3]]) idx.push(prev + a, base + a, prev + b, prev + b, base + a, base + b);
+      }
+      prev = base;
+    }
+  }
+  if (!idx.length) return null;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("normal", new THREE.Float32BufferAttribute(new Array(pos.length).fill(0).map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
+  g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  fixUpWinding(g);
+  g.computeBoundingSphere();
   return g;
 }
 

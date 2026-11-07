@@ -110,7 +110,7 @@ export function hermiteCubic(a: V2, ta: V2, b: V2, tb: V2, k = 0.38): Cubic {
  * Circular arc that leaves `a` with unit tangent `ta` and passes through `b`, as cubic pieces of <= 90 deg each.
  * Falls back to a straight line when b lies (almost) on the tangent ray.
  */
-export function tangentArc(a: V2, ta: V2, b: V2): Cubic[] {
+export function tangentArc(a: V2, ta: V2, b: V2, maxPiece = Math.PI / 2): Cubic[] {
   const ab = sub(b, a);
   const n = right(ta);
   const h = dot(ab, n);
@@ -126,11 +126,89 @@ export function tangentArc(a: V2, ta: V2, b: V2): Cubic[] {
   let sweep = wrapAngle(a1 - a0);
   if (r > 0 && sweep < 0) sweep += Math.PI * 2;
   if (r < 0 && sweep > 0) sweep -= Math.PI * 2;
-  return arcCubics(c, Math.abs(r), a0, sweep);
+  return arcCubics(c, Math.abs(r), a0, sweep, maxPiece);
 }
 
-export function arcCubics(c: V2, r: number, a0: number, sweep: number): Cubic[] {
-  const pieces = Math.max(1, Math.ceil(Math.abs(sweep) / (Math.PI / 2) - 1e-6));
+/**
+ * A slip road peeling off a carriageway as one easing curve: it leaves `a` exactly along `ta` with no curvature at all
+ * (like a railway transition curve, so it drifts off the lane rather than swerving), and the bend tightens towards `b`.
+ * Among a few shapes of that family, the first whose sharpest bend is no tighter than `rMin`; [] when none is.
+ */
+export function rampCurve(a: V2, ta: V2, b: V2, rMin: number): Cubic[] {
+  const ab = sub(b, a);
+  const n = right(ta);
+  const along = dot(ab, ta), h = dot(ab, n);
+  if (along < 8 || Math.abs(h) < 0.05 * len(ab)) return [];
+  for (const k of [0, 0.15, 0.3, 0.45]) {
+    // k = 0 is the cubic parabola y = h (x / along)^3; larger k starts bending sooner and arrives less steeply
+    const c: Cubic = { p0: a, p1: add(a, scale(ta, along / 3)), p2: add(add(a, scale(ta, (2 * along) / 3)), scale(n, h * k)), p3: b };
+    if (minRadius(sampleCubic(c, 1.5), 4) >= rMin) return [c];
+  }
+  return [];
+}
+
+/**
+ * More single-curve shapes for a slip road leaving `a` along `ta` for `b`: the transition-curve family of rampCurve,
+ * and curves that arrive a little steeper than the line from `a` to `b` (10 to 45 degrees more), with short to long
+ * handles. The planner picks among them by how they come out once built.
+ */
+export function rampCurves(a: V2, ta: V2, b: V2): Cubic[] {
+  const ab = sub(b, a), n = right(ta), along = dot(ab, ta), h = dot(ab, n), L = len(ab);
+  if (L < 8 || Math.abs(h) < 0.05 * L) return [];
+  const out: Cubic[] = [];
+  if (along > 8) {
+    for (const k of [0, 0.15, 0.3, 0.45]) {
+      out.push({ p0: a, p1: add(a, scale(ta, along / 3)), p2: add(add(a, scale(ta, (2 * along) / 3)), scale(n, h * k)), p3: b });
+    }
+  }
+  const s = Math.sign(h), chord = Math.atan2(Math.abs(h), along);
+  for (const extra of [10, 20, 30, 45]) {
+    const phi = Math.min(chord + (extra * Math.PI) / 180, (150 * Math.PI) / 180);
+    const te = add(scale(ta, Math.cos(phi)), scale(n, s * Math.sin(phi)));
+    for (const lam of [0.3, 0.42, 0.55]) out.push({ p0: a, p1: add(a, scale(ta, lam * L)), p2: sub(b, scale(te, lam * L)), p3: b });
+  }
+  return out;
+}
+
+/**
+ * A ramp off a carriageway: leave `a` heading `ta`, turn on an arc of radius `rMax` until facing `b`, then run
+ * straight to `b`. When `b` is inside that circle, a tighter arc (70% of the single arc through `b`, but no tighter
+ * than `rMin`) and a short straight, so it doesn't swing round twice the angle it was drawn at. [] if b is behind.
+ */
+export function arcThenLine(a: V2, ta: V2, b: V2, rMax: number, rMin = 0): Cubic[] {
+  const ab = sub(b, a);
+  const n = right(ta);
+  const h = dot(ab, n);
+  if (Math.abs(h) < 0.05 * Math.max(1, len(ab))) return dot(ab, ta) > 0 ? [straightCubic(a, b)] : [];
+  // pieces up to 150 deg (true to the circle within ~0.6% of the radius): the piece meeting the carriageway is one road
+  // long enough to ease out beside it
+  const piece = (5 * Math.PI) / 6;
+  const r0 = dot(ab, ab) / (2 * Math.abs(h));
+  if (r0 <= rMax) {
+    const r = Math.max(rMin, r0 * 0.7);
+    return r >= r0 - 0.5 ? tangentArc(a, ta, b, piece) : arcThenLine(a, ta, b, r, rMin);
+  }
+  const s = Math.sign(h); // +1: turning right (angles increase), as in tangentArc
+  const c = add(a, scale(n, s * rMax));
+  const cb = sub(b, c);
+  const beta = Math.acos(clamp(rMax / len(cb), -1, 1));
+  const phi = angleOf(cb);
+  const a0 = angleOf(sub(a, c));
+  for (const th of [phi + beta, phi - beta]) {
+    const T = add(c, scale(fromAngle(th), rMax));
+    // the tangent point where the arc's heading looks straight at b
+    if (dot(fromAngle(th + (s * Math.PI) / 2), sub(b, T)) <= 0) continue;
+    let sweep = wrapAngle(th - a0);
+    if (s > 0 && sweep < 0) sweep += Math.PI * 2;
+    if (s < 0 && sweep > 0) sweep -= Math.PI * 2;
+    const arc = Math.abs(sweep) > 1e-4 ? arcCubics(c, rMax, a0, sweep, piece) : [];
+    return dist(T, b) > 0.5 ? [...arc, straightCubic(T, b)] : arc;
+  }
+  return tangentArc(a, ta, b, piece);
+}
+
+export function arcCubics(c: V2, r: number, a0: number, sweep: number, maxPiece = Math.PI / 2): Cubic[] {
+  const pieces = Math.max(1, Math.ceil(Math.abs(sweep) / maxPiece - 1e-6));
   const out: Cubic[] = [];
   const step = sweep / pieces;
   const k = (4 / 3) * Math.tan(step / 4);

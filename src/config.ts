@@ -51,6 +51,23 @@ export const ROAD_ORDER: RoadTypeId[] = ["one1", "street", "streetM", "one2", "a
 /** Motorway carriageways and ramps: one-way and closed to driveways. Drawn in darker asphalt with solid edge lines. */
 export const isHighway = (t: RoadType): boolean => t.bwd === 0 && !t.allowsAccess;
 
+/** The road families of the build menu; each has its own look. */
+export type RoadGroup = "small" | "medium" | "large" | "highway";
+export function roadGroup(t: RoadType): RoadGroup {
+  if (isHighway(t)) return "highway";
+  const m = Math.max(t.fwd, t.bwd);
+  return m <= 1 ? "small" : m === 2 ? "medium" : "large";
+}
+/**
+ * Pavement along each side of a town road (m). Drawn in the gap buildings already keep from the kerb for their
+ * driveways, so it moves no lot or building. Highways have none.
+ */
+export const SIDEWALK: Record<RoadGroup, number> = { small: 1.5, medium: 1.9, large: 2.2, highway: 0 };
+/** Street trees on the pavement: spacing and crown radius (m). */
+export const STREET_TREES: Record<RoadGroup, { every: number; r: number } | null> = {
+  small: null, medium: { every: 15, r: 2.1 }, large: { every: 12, r: 2.6 }, highway: null,
+};
+
 export function roadWidth(t: RoadType): number {
   return (t.fwd + t.bwd) * LANE_W + SHOULDER * 2 + (t.median ?? 0);
 }

@@ -25,6 +25,9 @@ export const PAL = {
   hwRoad: 0xc4c8ce,
   hwEdge: 0x7d838b,
   hwLane: 0xffffff,
+  // town pavements: pale stone with a darker outer edge against the ground
+  sidewalk: 0xdedacf,
+  sidewalkEdge: 0xc6c0b1,
   deckSide: 0x3c3f44,
   pillar: 0xd9dbdd,
   driveway: 0xe3e5e6,
