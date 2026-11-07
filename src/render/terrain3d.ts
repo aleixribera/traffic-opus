@@ -116,7 +116,7 @@ export class Terrain3D {
   private build(lod: number, ci: number, cj: number) {
     const step = 4 ** lod;
     const res = RES * step;
-    const data = [new Uint8Array(N * N * 4), new Uint8Array(N * N * 4)];
+    const data = Array.from({ length: Math.ceil(NF / 4) }, () => new Uint8Array(N * N * 4));
     const i0 = ci * CH - 1, j0 = cj * CH - 1;
     const t = this.terrain;
     const o = new Float32Array(NF);
@@ -159,6 +159,7 @@ export class Terrain3D {
     const local = {
       uF0: { value: tex[0] },
       uF1: { value: tex[1] },
+      uF2: { value: tex[2] },
       uOrigin: { value: new THREE.Vector2(ox, oy) },
       uRes: { value: res },
     };
@@ -171,7 +172,7 @@ export class Terrain3D {
         .replace("#include <common>", `#include <common>\n${GROUND_GLSL}`)
         .replace("#include <color_fragment>", "#include <color_fragment>\ndiffuseColor.rgb = groundColor(vWorld);");
     };
-    mat.customProgramCacheKey = () => "ground-v2";
+    mat.customProgramCacheKey = () => "ground-v3";
     return mat;
   }
 }
@@ -183,28 +184,29 @@ const c3 = (c: number) => {
 
 const GROUND_GLSL = /* glsl */ `
 varying vec2 vWorld;
-uniform sampler2D uF0; uniform sampler2D uF1; uniform sampler2D uOwn;
+uniform sampler2D uF0; uniform sampler2D uF1; uniform sampler2D uF2; uniform sampler2D uOwn;
 uniform vec2 uOrigin; uniform float uRes; uniform float uOverlay; uniform float uTile; uniform vec2 uSun; uniform vec2 uRot;
 
 vec4 bsw(float t) {
   float t2 = t * t, t3 = t2 * t;
   return vec4(1.0 - 3.0 * t + 3.0 * t2 - t3, 4.0 - 6.0 * t2 + 3.0 * t3, 1.0 + 3.0 * t + 3.0 * t2 - 3.0 * t3, t3) / 6.0;
 }
-// B-spline of both field textures at world point p (same weights and bytes as Terrain.sample)
-void fields(vec2 p, out vec4 a, out vec4 b) {
+// B-spline of the field textures at world point p (same weights and bytes as Terrain.sample)
+void fields(vec2 p, out vec4 a, out vec4 b, out vec4 c) {
   vec2 u = (p - uOrigin) / uRes;
   vec2 i = floor(u); vec2 f = u - i;
   vec4 wx = bsw(f.x), wy = bsw(f.y);
-  a = vec4(0.0); b = vec4(0.0);
+  a = vec4(0.0); b = vec4(0.0); c = vec4(0.0);
   ivec2 lo = ivec2(0), hi = ivec2(${N - 1});
   for (int y = 0; y < 4; y++) {
-    vec4 ra = vec4(0.0), rb = vec4(0.0);
+    vec4 ra = vec4(0.0), rb = vec4(0.0), rc = vec4(0.0);
     for (int x = 0; x < 4; x++) {
       ivec2 q = clamp(ivec2(i) + ivec2(x - 1, y - 1), lo, hi);
       ra += texelFetch(uF0, q, 0) * wx[x];
       rb += texelFetch(uF1, q, 0) * wx[x];
+      rc += texelFetch(uF2, q, 0) * wx[x];
     }
-    a += ra * wy[y]; b += rb * wy[y];
+    a += ra * wy[y]; b += rb * wy[y]; c += rc * wy[y];
   }
 }
 float mtnOnly(vec2 p) {
@@ -230,10 +232,11 @@ float vnoise(vec2 p) {
 float cov(float v) { float w = max(fwidth(v), 1e-4) * 0.75; return smoothstep(0.5 - w, 0.5 + w, v); }
 
 vec3 groundColor(vec2 p) {
-  vec4 A, B;
-  fields(p, A, B);
+  vec4 A, B, D;
+  fields(p, A, B, D);
   float m = A.r, lake = A.g, flow = A.a;
   float fert = B.r, forest = B.g, ore = B.b, oil = B.a;
+  float coal = D.r, lime = D.g, sandD = D.b, copper = D.a;
   float mpp = fwidth(p.x);
   // rivers from the signed river noise; never thinner than ~1.5 px so they read at any zoom
   float sAbs = abs((A.b - 0.5) / 4.0);
@@ -297,8 +300,16 @@ vec3 groundColor(vec2 p) {
     under = mix(under, near, crownK);
   }
   // far out, scrub and forest read as a tint
-  vec3 farTone = mix(under, mix(${c3(PAL.shrub)}, ${c3(PAL.tree)}, fo) * 0.9, density * mix(0.25, 0.85, fo));
+  vec3 farTone = mix(under, mix(${c3(PAL.shrub)}, ${c3(PAL.tree)}, fo) * 0.9, density * mix(0.14, 0.85, fo));
   c = mix(farTone, under, crownK);
+  // mineral deposits show through the grass as patches of their own soil or rock, mottled so they read as ground
+  float mott = 0.55 + 0.45 * smoothstep(0.3, 0.7, n3 * 0.6 + n4 * 0.4 * fineK + 0.2);
+  c = mix(c, ${c3(PAL.soilOre)}, cov(ore) * 0.42 * mott);
+  c = mix(c, ${c3(PAL.soilCoal)}, cov(coal) * 0.45 * mott);
+  c = mix(c, ${c3(PAL.soilLime)}, cov(lime) * 0.5 * mott);
+  c = mix(c, ${c3(PAL.soilSand)}, cov(sandD) * 0.55 * mott);
+  c = mix(c, ${c3(PAL.soilOil)}, cov(oil) * 0.35 * mott);
+  c = mix(c, ${c3(PAL.soilCopper)}, cov(copper) * 0.45 * mott);
   // terraced hills: flat tiers, a lit or shaded bevel at each step, and the shadow each tier throws
   float lvl = 0.0;
   vec3 mc = c;
@@ -349,6 +360,10 @@ vec3 groundColor(vec2 p) {
     c = mix(c, ${c3(PAL.resForest)}, cov(forest) * 0.7);
     c = mix(c, ${c3(PAL.resOre)}, cov(ore) * 0.85);
     c = mix(c, ${c3(PAL.resOil)}, cov(oil) * 0.85);
+    c = mix(c, ${c3(PAL.resCoal)}, cov(coal) * 0.85);
+    c = mix(c, ${c3(PAL.resLime)}, cov(lime) * 0.85);
+    c = mix(c, ${c3(PAL.resSand)}, cov(sandD) * 0.85);
+    c = mix(c, ${c3(PAL.resCopper)}, cov(copper) * 0.85);
   }
   // the tile view shows the grid and dims land you don't own (always dimming it drew hard seams across the grass)
   vec2 tc = floor(p / uTile + 0.5) + ${(OWN / 2).toFixed(1)};
