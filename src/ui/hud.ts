@@ -8,7 +8,9 @@ import type { SignalPlan } from "../roads/network";
 import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId, type ZoneMode } from "../app";
 import { ROUNDABOUTS, type RoundaboutSize } from "../roads/planner";
 import { ICON, roadIcon, serviceIcon } from "./icons";
-import { SERVICES, SERVICE_TABS, type ServiceKind } from "../game/services";
+import { SERVICES, SERVICE_TABS, UTILITY_TABS, isUtilityId, type ServiceKind, type UtilityId } from "../game/services";
+import { EXPORT_PRICE, IMPORT_CAP, IMPORT_PRICE, UNIT, UTILITIES, UTILITY_NAME } from "../game/utilities";
+import { POLICIES, POLICY_IDS, type PolicyId } from "../game/policies";
 import { BUS_UPKEEP, STOP_COST } from "../game/transit";
 import { Sfx } from "./sfx";
 
@@ -30,6 +32,9 @@ const OVERLAYS: { id: OverlayId; label: string; blurb: string }[] = [
   { id: "police", label: "Police", blurb: "Where patrols reach in time" },
   { id: "school", label: "Education", blurb: "Homes within reach of an elementary school" },
   { id: "parks", label: "Parks", blurb: "Homes near a park" },
+  { id: "landmark", label: "Landmarks", blurb: "Homes lifted by a landmark nearby" },
+  { id: "power", label: "Electricity", blurb: "Buildings with all the power they need" },
+  { id: "water", label: "Water & sewage", blurb: "Buildings with water and drains" },
 ];
 
 const GROUP_NAME: Record<ZoneGroup, string> = { res: "Residential", com: "Commercial", ind: "Industrial", off: "Office" };
@@ -42,7 +47,7 @@ const GROUPS: ZoneGroup[] = ["res", "com", "ind", "off"];
 export const BRUSH_SIZES: { r: number; label: string }[] = [{ r: 10, label: "S" }, { r: 22, label: "M" }, { r: 40, label: "L" }];
 
 /** Build categories along the bottom bar, each with its asset tabs. */
-type CatId = "roads" | "zoning" | "services" | "transport";
+type CatId = "roads" | "zoning" | "services" | "utilities" | "transport";
 type Asset =
   | { kind: "road"; id: RoadTypeId }
   | { kind: "service"; id: ServiceKind }
@@ -72,14 +77,24 @@ const CATS: Record<CatId, { label: string; tabs: Tab[] }> = {
     label: "Services",
     tabs: SERVICE_TABS.map((t) => ({ id: t.id, label: t.label, assets: t.kinds.map((id) => ({ kind: "service", id }) as Asset) })),
   },
+  utilities: {
+    label: "Utilities",
+    tabs: UTILITY_TABS.map((t) => ({ id: t.id, label: t.label, assets: t.kinds.map((id) => ({ kind: "service", id }) as Asset) })),
+  },
   transport: {
     label: "Transport",
     tabs: [{ id: "bus", label: "Bus", assets: [{ kind: "busstop" }, { kind: "busline" }] }],
   },
 };
-const catOf = (t: ToolId): CatId | null => (t === "road" || t === "roundabout" || t === "junction" || t === "lane" ? "roads" : t === "zone" ? "zoning" : t === "service" ? "services" : t === "transit" ? "transport" : null);
+const catOf = (st: { tool: ToolId; service: ServiceKind }): CatId | null => {
+  const t = st.tool;
+  if (t === "road" || t === "roundabout" || t === "junction" || t === "lane") return "roads";
+  if (t === "zone") return "zoning";
+  if (t === "service") return isUtilityId(SERVICES[st.service].svc) ? "utilities" : "services";
+  return t === "transit" ? "transport" : null;
+};
 
-type WinId = "info" | "progression" | "economy" | "city" | "transport";
+type WinId = "info" | "progression" | "economy" | "city" | "transport" | "utilities" | "policies";
 
 const h = <K extends keyof HTMLElementTagNameMap>(tag: K, cls = "", html = ""): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag);
@@ -100,6 +115,7 @@ const hex = (c: number) => "#" + c.toString(16).padStart(6, "0");
 type Milestone = (typeof MILESTONES)[number];
 const unlockAt = (test: (m: Milestone) => boolean): Milestone | undefined => MILESTONES.find(test);
 const servicesAt = (i: number) => (Object.values(SERVICES)).filter((s) => s.unlock === i).map((s) => BUILDING_TYPES[s.kind].name);
+const policiesAt = (i: number) => POLICY_IDS.filter((p) => POLICIES[p].unlock === i).map((p) => `${POLICIES[p].name} policy`);
 const FEATURE_NAME = { roundabout: "Roundabouts", signals: "Traffic lights", grid: "Grid tool", parallel: "Parallel roads", transit: "Buses" } as const;
 
 const KEYS: [string, string][] = [
@@ -116,6 +132,7 @@ const KEYS: [string, string][] = [
   ["L", "Add lane (Shift or right click removes)"],
   ["M", "Map tiles"],
   ["P / Z / C / X", "Progression / Economy / City / Transport"],
+  ["U / K", "Utilities / Policies"],
   ["Space, 1 2 3", "Pause, game speed"],
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
   ["F5 / F9", "Quicksave / quickload"],
@@ -152,7 +169,7 @@ export class Hud {
   private redoBtn = h("button", "cat hist");
   private catBtns = new Map<string, HTMLButtonElement>();
   private cat: CatId | null = null;
-  private tab: Record<CatId, string> = { roads: "small", zoning: "res", services: "garbage", transport: "bus" };
+  private tab: Record<CatId, string> = { roads: "small", zoning: "res", services: "garbage", utilities: "power", transport: "bus" };
   private lastRoad: RoadTypeId = "street";
   private winKind: WinId | null = null;
   private panelKind: "building" | "signal" | "stop" | null = null;
@@ -191,6 +208,8 @@ export class Hud {
     tlb("economy", ICON.coins, "Economy (Z)", () => this.toggleWin("economy"));
     tlb("city", ICON.chart, "City information (C)", () => this.toggleWin("city"));
     tlb("transport", ICON.car, "Transportation overview (X)", () => this.toggleWin("transport"));
+    tlb("utilities", ICON.utilitiesWin, "Utilities overview (U)", () => this.toggleWin("utilities"));
+    tlb("policies", ICON.policiesWin, "Policies (K)", () => this.toggleWin("policies"));
     tlb("tiles", ICON.tiles, "Map tiles (M)", () => app.setTool({ tool: app.st.tool === "unlock" ? "inspect" : "unlock" }));
     this.compass.innerHTML = ICON.north;
     this.compass.title = "North up (the map is turned: Q / E or middle-drag)";
@@ -228,6 +247,7 @@ export class Hud {
       cat("roads", ICON.roadCat, "Roads", "Roads", () => this.toggleCat("roads")),
       cat("zoning", ICON.zone, "Zoning", "Zoning", () => this.toggleCat("zoning")),
       cat("services", ICON.services, "Services", "City services", () => this.toggleCat("services")),
+      cat("utilities", ICON.utilities, "Utilities", "Electricity, water and sewage", () => this.toggleCat("utilities")),
       cat("transport", ICON.busCat, "Transport", "Public transport", () => this.toggleCat("transport")),
       h("span", "cat-sep"),
       cat("bulldoze", ICON.bulldoze, "Bulldoze", "Bulldozer (B)", () => app.setTool({ tool: app.st.tool === "bulldoze" ? "inspect" : "bulldoze" })),
@@ -294,7 +314,7 @@ export class Hud {
     const app = this.app;
     if (this.cat === c) {
       this.cat = null;
-      if (catOf(app.st.tool) === c) app.setTool({ tool: "inspect" });
+      if (catOf(app.st) === c) app.setTool({ tool: "inspect" });
       else this.refresh();
       return;
     }
@@ -304,9 +324,11 @@ export class Hud {
     else if (c === "transport") {
       if (app.game.featureUnlocked("transit")) app.setTool({ tool: "transit" });
       else this.refresh();
-    } else if (c === "services") {
+    } else if (c === "services" || c === "utilities") {
       // open on the first tab with something buildable, holding the tool only if it's unlocked
-      const k = app.game.serviceUnlocked(app.st.service) ? app.st.service : SERVICE_TABS.flatMap((t) => t.kinds).find((x) => app.game.serviceUnlocked(x));
+      const tabs = c === "services" ? SERVICE_TABS : UTILITY_TABS;
+      const mine = tabs.some((t) => t.kinds.includes(app.st.service));
+      const k = mine && app.game.serviceUnlocked(app.st.service) ? app.st.service : tabs.flatMap((t) => t.kinds).find((x) => app.game.serviceUnlocked(x));
       if (k) app.setTool({ tool: "service", service: k });
       else this.refresh();
     } else app.setTool({ tool: "zone", erase: false });
@@ -354,6 +376,20 @@ export class Hud {
     if (a.kind === "service") {
       const S = SERVICES[a.id], T = BUILDING_TYPES[a.id];
       const locked = g.serviceUnlocked(a.id) ? undefined : MILESTONES[S.unlock];
+      if (S.out && isUtilityId(S.svc)) {
+        const amt = `${fmtNum(S.out)} ${UNIT[S.svc]}`;
+        return {
+          key: "svc:" + a.id, icon: serviceIcon(a.id), name: T.name, sub: `${formatMoney(S.cost)} · ${amt}`,
+          title: `${T.name}: ${T.blurb} Makes ${amt}${S.svc === "power" ? "" : " an hour"} with full staff${S.shore ? ", and has to stand on a shore" : ""}. Costs ${formatMoney(S.cost)}, upkeep ${formatMoney(S.upkeep)} an hour.`, locked,
+        };
+      }
+      if (S.unique) {
+        const built = g.buildings.list.some((b) => b.kind === a.id);
+        return {
+          key: "svc:" + a.id, icon: serviceIcon(a.id), name: T.name, sub: built ? "Built" : `${formatMoney(S.cost)} · ${formatMoney(S.upkeep)}/h`,
+          title: `${T.name}: ${T.blurb} Lifts land value and happiness for ${fmtNum(S.range)} m round it, and draws visitors from across town. One per city${built ? ": already built" : ""}. Costs ${formatMoney(S.cost)}, upkeep ${formatMoney(S.upkeep)} an hour.`, locked,
+        };
+      }
       const what = S.vehicles ? `${S.vehicles} vehicles` : S.cap ? `${S.cap} ${S.tier === 0 ? "pupils" : "students"}` : "";
       return {
         key: "svc:" + a.id, icon: serviceIcon(a.id), name: T.name, sub: `${formatMoney(S.cost)} · ${formatMoney(S.upkeep)}/h`,
@@ -388,14 +424,14 @@ export class Hud {
     const curKey = cur ? this.assetInfo(cur).key : "";
     const C = CATS[c];
     // follow the tool to its tab (keyboard, right click, loading)
-    if (cur && catOf(this.app.st.tool) === c) {
+    if (cur && catOf(this.app.st) === c) {
       const t = C.tabs.find((t) => t.assets.some((a) => this.assetInfo(a).key === curKey));
       if (t && this.followKey !== curKey) this.tab[c] = t.id;
     }
     this.followKey = curKey;
     const tab = C.tabs.find((t) => t.id === this.tab[c]) ?? C.tabs[0];
     const infos = tab.assets.map((a) => ({ a, ...this.assetInfo(a) }));
-    const sig = [c, tab.id, curKey, infos.map((i) => i.key + (i.locked ? "L" : "")).join()].join("|");
+    const sig = [c, tab.id, curKey, infos.map((i) => i.key + (i.locked ? "L" : "") + i.sub).join()].join("|");
     el.hidden = false;
     if (sig === this.lastAssets) return;
     this.lastAssets = sig;
@@ -443,7 +479,7 @@ export class Hud {
   refresh() {
     const app = this.app, g = app.game, st = app.st;
     if (!g) return;
-    const tc = catOf(st.tool);
+    const tc = catOf(st);
     if (tc) this.cat = tc;
     else if (st.tool !== "inspect") this.cat = null;
     if (st.tool === "road") this.lastRoad = st.roadType;
@@ -669,6 +705,12 @@ export class Hud {
     for (const c of g.zones.allCells()) if (c.zone) { zoned++; if (ZONE_GROUP[c.zone] !== "res") jobsZoned++; if (zoned > 40 && jobsZoned > 20) break; }
     if (zoned < 10) return { key: "zone", cat: "zoning", html: "<b>Zone homes.</b> Open <b>Zoning</b>, pick <b>Low homes</b> and click beside your street. Houses grow when there is demand." };
     if (jobsZoned < 8) return { key: "jobs", cat: "zoning", html: "<b>Zone jobs.</b> New residents need work and shops. Zone some <b>Industry</b> and <b>Low shops</b>, away from homes if you can: factories lower land value." };
+    // short of power, water or sewage: what to build
+    const ws = g.utilities.worstShare;
+    if (g.utilities.active && ws.share < 0.97) {
+      const what = ws.u === "power" ? "a <b>Wind turbine</b> or a <b>Coal power plant</b>" : ws.u === "water" ? "a <b>Water pump</b> on a shore" : "a <b>Sewage outlet</b> on a shore";
+      return { key: "util-" + ws.u, cat: "utilities", html: `<b>Not enough ${ws.u === "power" ? "electricity" : ws.u === "water" ? "water" : "sewage capacity"}.</b> The outside sells the town only so much. Open <b>Utilities</b> and build ${what} on a road joined to the town.` };
+    }
     // demand nothing can meet: everything zoned for it is built
     for (const gp of GROUPS) {
       if (g.demand[gp].v >= LAND_SHORT && g.freeLand(gp) === 0) return { key: "land-" + gp, cat: "zoning", html: `<b>Zone more ${GROUP_LAND[gp]}.</b> Demand is high, but every lot zoned for ${GROUP_LAND[gp]} is built: nothing more can grow until you zone more land.` };
@@ -721,11 +763,11 @@ export class Hud {
   /** A milestone was reached: what it unlocks, and the grant. */
   milestone(index: number) {
     const M = MILESTONES[index];
-    const unl: string[] = [...M.roads.map((r) => ROAD_TYPES[r].name), ...M.zones.map((z) => ZONES[z].name), ...M.features.map((f) => FEATURE_NAME[f]), ...servicesAt(index)];
+    const unl: string[] = [...M.roads.map((r) => ROAD_TYPES[r].name), ...M.zones.map((z) => ZONES[z].name), ...M.features.map((f) => FEATURE_NAME[f]), ...servicesAt(index), ...policiesAt(index)];
     this.banner.innerHTML = `<header>${M.name}</header>
       <p class="sub">Milestone reached · ${fmtNum(M.pop)} people</p>
       ${unl.length ? `<p class="gifts">Unlocked: ${unl.join(" · ")}</p>` : ""}
-      ${index === 1 ? `<p class="gifts">Your town now needs city services: garbage, healthcare, fire and police (Services menu)</p>` : ""}
+      ${index === 1 ? `<p class="gifts">Your town now needs city services: garbage, healthcare, fire and police (Services menu). The outside sells it only a village's worth of electricity and water: build your own before that runs out (Utilities menu, U)</p>` : ""}
       <p class="gifts">+${formatMoney(M.grant)} grant · ${M.tiles} more map tile${M.tiles === 1 ? "" : "s"} to buy</p>
       <button class="btn primary">Continue</button>`;
     this.banner.hidden = false;
@@ -786,12 +828,14 @@ export class Hud {
     this.lastWin = "";
     this.win.hidden = false;
     if (k === "transport" && this.app.overlay !== "flow") this.app.setOverlay("flow");
+    if (k === "utilities" && this.app.overlay !== "power" && this.app.overlay !== "water") this.app.setOverlay("power");
     this.fillWin();
     this.refresh();
   }
 
   private closeWin() {
     if (this.winKind === "transport" && this.app.overlay === "flow") this.app.setOverlay("flow");
+    if (this.winKind === "utilities" && (this.app.overlay === "power" || this.app.overlay === "water")) this.app.setOverlay(this.app.overlay);
     this.winKind = null;
     this.win.hidden = true;
     this.lastWin = "";
@@ -830,6 +874,8 @@ export class Hud {
     else if (k === "economy") this.fillEconomy();
     else if (k === "city") this.fillCity();
     else if (k === "transport") this.fillTransport();
+    else if (k === "utilities") this.fillUtilities();
+    else if (k === "policies") this.fillPolicies();
   }
 
   private fillInfo() {
@@ -846,7 +892,8 @@ export class Hud {
     if (o === "level") return `<span class="lg lg-level"></span><span>Level 1</span><span>Level 5</span>`;
     if (o === "problems") return `<span class="lg lg-prob"></span><span>Has a problem</span><span>Fine</span>`;
     if (o === "zones") return GROUPS.map((gp) => `<span class="lg-key"><i class="dm-${gp}"></i>${GROUP_NAME[gp]}</span>`).join("");
-    if (o === "garbage" || o === "health" || o === "fire" || o === "police" || o === "school" || o === "parks") return `<span class="lg lg-cov"></span><span>Not covered</span><span>Well covered</span>`;
+    if (o === "garbage" || o === "health" || o === "fire" || o === "police" || o === "school" || o === "parks" || o === "landmark") return `<span class="lg lg-cov"></span><span>Not covered</span><span>Well covered</span>`;
+    if (o === "power" || o === "water") return `<span class="lg lg-util"></span><span>Short</span><span>Supplied</span>`;
     return "";
   }
 
@@ -854,8 +901,8 @@ export class Hud {
     const g = this.app.game;
     const B = g.budget;
     const inc = GROUPS.map((gp) => [GROUP_NAME[gp], B.income[gp]] as [string, number]);
-    const totalIn = inc.reduce((a, [, v]) => a + v, 0) + B.income.transit;
-    const totalOut = B.expense.roads + B.expense.services + B.expense.transit + B.expense.loans;
+    const totalIn = inc.reduce((a, [, v]) => a + v, 0) + B.income.transit + B.income.utilities;
+    const totalOut = B.expense.roads + B.expense.services + B.expense.transit + B.expense.utilities + B.expense.imports + B.expense.policies + B.expense.loans;
     const spark = sparkline(g.history.map((x) => x.money), "Money");
     const tax = GROUPS.map((gp) => `<div class="tax-row"><span>${GROUP_NAME[gp]}</span>
       <button class="dur" data-g="${gp}" data-d="-1" aria-label="Lower ${GROUP_NAME[gp]} tax">−</button><b>${g.tax[gp]}%</b><button class="dur" data-g="${gp}" data-d="1" aria-label="Raise ${GROUP_NAME[gp]} tax">+</button></div>`).join("");
@@ -863,6 +910,11 @@ export class Hud {
       <dl class="facts money-rows">${inc.map(([k, v]) => `<dt>${k} taxes</dt><dd class="good">${signed(v)}</dd>`).join("")}
       <dt>Road upkeep</dt><dd class="bad">${signed(-B.expense.roads)}</dd>
       <dt>Service upkeep</dt><dd class="bad">${signed(-B.expense.services)}</dd>
+      ${B.expense.utilities ? `<dt>Utility upkeep</dt><dd class="bad">${signed(-B.expense.utilities)}</dd>` : ""}
+      ${B.expense.imports ? `<dt>Power &amp; water bought in</dt><dd class="bad">${signed(-B.expense.imports)}</dd>` : ""}
+      ${B.income.utilities ? `<dt>Power &amp; water sold</dt><dd class="good">${signed(B.income.utilities)}</dd>` : ""}
+      ${B.expense.policies ? `<dt>Policies</dt><dd class="bad">${signed(-B.expense.policies)}</dd>` : ""}
+      ${B.expense.loans ? `<dt>Loan repayments</dt><dd class="bad">${signed(-B.expense.loans)}</dd>` : ""}
       ${B.income.transit || B.expense.transit ? `<dt>Bus fares</dt><dd class="good">${signed(B.income.transit)}</dd><dt>Bus upkeep</dt><dd class="bad">${signed(-B.expense.transit)}</dd>` : ""}
       <dt class="tot">Balance</dt><dd class="tot ${totalIn - totalOut >= 0 ? "good" : "bad"}">${signed(totalIn - totalOut)}</dd></dl>
       ${spark}
@@ -887,7 +939,7 @@ export class Hud {
       const i = k + 1;
       const done = g.milestone >= i;
       const cur = i === g.milestone + 1;
-      const unl = [...M.roads.map((r) => ROAD_TYPES[r].name), ...M.zones.map((z) => ZONES[z].short), ...M.features.map((f) => FEATURE_NAME[f]), ...servicesAt(i)];
+      const unl = [...M.roads.map((r) => ROAD_TYPES[r].name), ...M.zones.map((z) => ZONES[z].short), ...M.features.map((f) => FEATURE_NAME[f]), ...servicesAt(i), ...policiesAt(i)];
       const p = cur ? Math.min(1, pop / M.pop) : done ? 1 : 0;
       return `<li class="${done ? "done" : cur ? "cur" : ""}">
         <div class="ms-top">${done ? ICON.check : ICON.open}<b>${M.name}</b><span class="muted">${fmtNum(M.pop)} people</span></div>
@@ -918,6 +970,49 @@ export class Hud {
       <p class="small muted">Basic ${e0} · High school ${e1} · University ${e2}</p>
       ${sparkline(g.history.map((x) => x.pop), "Population")}`;
     this.setWin("City information", html);
+  }
+
+  private fillPolicies() {
+    const g = this.app.game, P = g.policies;
+    const rows = POLICY_IDS.map((id) => {
+      const d = POLICIES[id], on = P.has(id), open = P.unlocked(id);
+      const cost = P.costOf(id);
+      const right = open ? `<span class="pol-cost">${cost ? `${formatMoney(cost)}/h` : "Free"}</span><span class="sw" aria-hidden="true"></span>` : `<span class="pol-cost">${ICON.lock}${MILESTONES[d.unlock].name}</span>`;
+      return `<button class="pol" role="switch" aria-checked="${on}" data-id="${id}"${open ? "" : " disabled"}${open ? "" : ` title="Unlocks at ${MILESTONES[d.unlock].name} (${fmtNum(MILESTONES[d.unlock].pop)} people)"`}>
+        <span class="pol-txt"><b>${d.name}</b><span class="small muted">${d.blurb}</span></span><span class="pol-r">${right}</span></button>`;
+    }).join("");
+    const total = P.hourly();
+    const html = `<p class="win-sub">City-wide rules. Each costs money every hour, more as the city grows.</p><div class="pol-list">${rows}</div>
+      <dl class="facts"><dt class="tot">${P.on.size ? `${P.on.size} in force` : "None in force"}</dt><dd class="tot">${total ? signed(-total) + "/h" : "Nothing to pay"}</dd></dl>`;
+    if (!this.setWin("Policies", html)) return;
+    for (const b of this.win.querySelectorAll<HTMLButtonElement>(".pol")) {
+      b.onclick = () => {
+        const id = b.dataset.id as PolicyId;
+        if (!g.policies.set(id, !g.policies.has(id))) return;
+        this.sfx.play("click");
+        this.fillPolicies();
+      };
+    }
+  }
+
+  private fillUtilities() {
+    const g = this.app.game, U = g.utilities;
+    const block = (u: UtilityId) => {
+      const s = U.stats[u], unit = UNIT[u];
+      const n = (x: number) => (u === "power" ? x.toFixed(1) : fmtNum(Math.round(x)));
+      const plants = g.buildings.list.filter((b) => b.svc && SERVICES[b.kind as ServiceKind]?.svc === u).length;
+      const max = Math.max(s.used, s.made, 1e-6);
+      const bar = `<div class="ut-bar" role="img" aria-label="${UTILITY_NAME[u]}: makes ${n(s.made)} of ${n(s.used)} ${unit} used"><i class="ut-made" style="width:${(Math.min(s.made, max) / max) * 100}%"></i><i class="ut-imp" style="width:${(s.imported / max) * 100}%"></i><i class="ut-short" style="width:${(s.short / max) * 100}%"></i></div>`;
+      return `<h3 class="sub-h">${UTILITY_NAME[u]}</h3>${bar}
+        <dl class="facts"><dt>Used</dt><dd>${n(s.used)} ${unit}</dd>
+        <dt>Made (${plants} ${plants === 1 ? "plant" : "plants"})</dt><dd>${n(s.made)} ${unit}</dd>
+        ${s.imported > 0.001 ? `<dt>Bought in</dt><dd class="warn">${n(s.imported)} ${unit} · ${signed(-s.imported * IMPORT_PRICE[u])}/h</dd>` : ""}
+        ${s.exported > 0.001 && EXPORT_PRICE[u] ? `<dt>Sold</dt><dd class="good">${n(s.exported)} ${unit} · ${signed(s.exported * EXPORT_PRICE[u])}/h</dd>` : ""}
+        ${s.short > 0.001 ? `<dt>Short</dt><dd class="bad">${n(s.short)} ${unit}</dd>` : ""}</dl>`;
+    };
+    const html = `<p class="win-sub">Per game hour</p>${UTILITIES.map(block).join("")}
+      <p class="small muted">The highway brings in up to ${IMPORT_CAP.power} MW of power, ${fmtNum(IMPORT_CAP.water)} m³ of water and ${fmtNum(IMPORT_CAP.sewage)} m³ of sewage an hour, at a premium.${g.utilities.active ? "" : " Until the town is a Hamlet it's free."} Past that, build plants: Utilities on the bottom bar.</p>`;
+    this.setWin("Utilities", html);
   }
 
   private fillTransport() {
@@ -1071,12 +1166,21 @@ export class Hud {
       const fleet = g.services.fleet(b);
       if (b.problem) { status = b.problem; statusCls = "bad"; }
       else { status = "Working normally"; statusCls = "good"; }
-      if (S.svc !== "parks") rows.push(["Staff", `${w} / ${b.cap}`]);
+      if (S.svc !== "parks" && S.svc !== "landmark") rows.push(["Staff", `${w} / ${b.cap}`]);
       if (S.vehicles) rows.push(["Vehicles", `${Math.min(b.busy ?? 0, fleet)} of ${fleet} out${fleet < S.vehicles ? ` <span class="muted">· ${S.vehicles} with full staff</span>` : ""}`]);
       if (S.svc === "health") rows.push(["Patients", `${b.users ?? 0} / ${S.cap}`]);
       if (S.svc === "school") rows.push([S.tier === 0 ? "Pupils" : "Students", `${b.users ?? 0} / ${S.cap}`]);
-      if (S.svc === "parks") rows.push(["Visitors", `${Math.round(b.visits)} <span class="muted">recently</span>`]);
-      if (S.svc !== "parks") {
+      if (S.svc === "parks" || S.svc === "landmark") rows.push(["Visitors", `${Math.round(b.visits)} <span class="muted">recently</span>`]);
+      if (S.svc === "landmark") rows.push(["Lifts land value", `${fmtNum(S.range)} m round it`]);
+      if (S.out && isUtilityId(S.svc)) {
+        const u = S.svc, n = g.utilities.netOf(b), unit = UNIT[u] + (u === "power" ? "" : "/h");
+        const q = (x: number) => (u === "power" && x < 100 ? x.toFixed(1) : fmtNum(Math.round(x)));
+        rows.push(["Output", `${q(g.utilities.outputOf(b))} / ${fmtNum(S.out)} ${unit}`]);
+        if (n) {
+          rows.push(["Used on its roads", `${q(n.used[u])} ${unit}`]);
+          rows.push(["All plants there", `${q(n.made[u])} ${unit}`]);
+        }
+      } else if (S.svc !== "parks") {
         const reach = g.services.reachOf(b).size;
         rows.push(["Covers", `${reach} road${reach === 1 ? "" : "s"} <span class="muted">· ${Math.round(S.range)} s drive</span>`]);
       }
@@ -1130,8 +1234,8 @@ export class Hud {
     rows.push(["Land value", `${lvBar}<span class="num">${Math.round(b.lv)}</span>`]);
     if (g.services.active && b.built >= 1 && !b.abandoned) {
       const cv = g.services.cov.get(b.id);
-      const have = (["health", "police", "fire", "garbage", "school", "parks"] as const).filter((k) => (cv?.[k] ?? 0) > 0);
-      const NAME = { health: "healthcare", police: "police", fire: "fire", garbage: "garbage", school: "school", parks: "park" };
+      const have = (["health", "police", "fire", "garbage", "school", "parks", "landmark"] as const).filter((k) => (cv?.[k] ?? 0) > 0);
+      const NAME = { health: "healthcare", police: "police", fire: "fire", garbage: "garbage", school: "school", parks: "park", landmark: "landmark" };
       const miss = (["garbage", "health", "fire", "police"] as const).filter((k) => !have.includes(k));
       rows.push(["Services", have.length ? `${have.map((k) => NAME[k]).join(", ")}${miss.length ? ` <span class="bad">· no ${miss.map((k) => NAME[k]).join(", ")}</span>` : ""}` : `<span class="bad">None in reach</span>`]);
       if (grp === "res" && (g.people.hhAt.get(b.id)?.length ?? 0) > 0) rows.push(["Happiness", `${Math.round(g.services.happiness(b) * 100)}%`]);

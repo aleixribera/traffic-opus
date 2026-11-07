@@ -336,7 +336,7 @@ export class Transit {
             moves++;
             l.count++;
             this.boardings++;
-            this.fares += FARE;
+            if (!this.g.policies.has("freebus")) this.fares += FARE;
           } else stay.push(x);
         }
         st.wait = stay;

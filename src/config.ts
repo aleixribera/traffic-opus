@@ -86,7 +86,11 @@ export type BuildingKind =
   | "office" | "tower"
   | "mine" | "farm" | "works" | "foodplant"
   // city services (placed by the player, see game/services.ts)
-  | "garbage" | "firestation" | "police" | "clinic" | "hospital" | "school" | "highschool" | "university" | "park" | "parklarge";
+  | "garbage" | "firestation" | "police" | "clinic" | "hospital" | "school" | "highschool" | "university" | "park" | "parklarge"
+  // utilities (see game/utilities.ts)
+  | "windturbine" | "coalplant" | "solarfarm" | "waterpump" | "sewageoutlet"
+  // landmarks (one per city, later milestones)
+  | "townhall" | "stadium" | "obstower" | "concerthall" | "skytower";
 export type Zone = "res" | "com" | "work" | "ind" | "svc";
 export type Cargo = "ore" | "food" | "goods";
 
@@ -129,6 +133,16 @@ export const BUILDING_TYPES: Record<BuildingKind, BuildingType> = {
   university: { kind: "university", name: "University", zone: "svc", w: 70, d: 56, residents: 0, jobs: 40, pollution: 0, parking: 6, blurb: "Graduates are the educated workers offices need." },
   park: { kind: "park", name: "Small Park", zone: "svc", w: 24, d: 24, residents: 0, jobs: 0, pollution: 0, parking: 0, blurb: "Raises land value nearby. Residents come for an outing." },
   parklarge: { kind: "parklarge", name: "Large Park", zone: "svc", w: 48, d: 48, residents: 0, jobs: 2, pollution: 0, parking: 0, blurb: "A big park with a pond. Raises land value across the neighbourhood." },
+  windturbine: { kind: "windturbine", name: "Wind Turbine", zone: "svc", w: 16, d: 16, residents: 0, jobs: 1, pollution: 0, parking: 1, blurb: "Clean, cheap power, a little at a time." },
+  coalplant: { kind: "coalplant", name: "Coal Power Plant", zone: "svc", w: 64, d: 52, residents: 0, jobs: 24, pollution: 140, parking: 5, blurb: "Plenty of power for its price, and smoke that drags land value down for a few hundred metres. Keep homes away." },
+  solarfarm: { kind: "solarfarm", name: "Solar Farm", zone: "svc", w: 60, d: 44, residents: 0, jobs: 4, pollution: 0, parking: 2, blurb: "Rows of panels: clean power for a growing town." },
+  waterpump: { kind: "waterpump", name: "Water Pump", zone: "svc", w: 22, d: 20, residents: 0, jobs: 4, pollution: 0, parking: 2, blurb: "Draws fresh water from a river or lake. Build it on the shore." },
+  sewageoutlet: { kind: "sewageoutlet", name: "Sewage Outlet", zone: "svc", w: 22, d: 20, residents: 0, jobs: 3, pollution: 50, parking: 2, blurb: "Lets the town's sewage out into the water. Build it on the shore; it smells, so keep homes back." },
+  townhall: { kind: "townhall", name: "Town Hall", zone: "svc", w: 40, d: 36, residents: 0, jobs: 20, pollution: 0, parking: 4, blurb: "A grand civic hall with a clock tower. The streets round it become the place to live." },
+  stadium: { kind: "stadium", name: "Stadium", zone: "svc", w: 72, d: 60, residents: 0, jobs: 30, pollution: 0, parking: 8, blurb: "Match days bring the whole town out. Lifts land value across the district." },
+  obstower: { kind: "obstower", name: "Observation Tower", zone: "svc", w: 28, d: 28, residents: 0, jobs: 12, pollution: 0, parking: 2, blurb: "A viewing tower seen from everywhere. Everyone wants a view of it." },
+  concerthall: { kind: "concerthall", name: "Concert Hall", zone: "svc", w: 52, d: 44, residents: 0, jobs: 24, pollution: 0, parking: 6, blurb: "White sails over a glass foyer: the city's cultural heart." },
+  skytower: { kind: "skytower", name: "Skyline Tower", zone: "svc", w: 36, d: 36, residents: 0, jobs: 90, pollution: 0, parking: 4, blurb: "The tallest tower in the region: a sign this is a real city." },
 };
 
 export const ZONE_LABEL: Record<Zone, string> = { res: "Residential", com: "Commercial", work: "Workplace", ind: "Industry", svc: "City service" };

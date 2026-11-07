@@ -22,7 +22,7 @@ import { Transit3D, legPoints } from "./render/transit3d";
 import { STOP_COST } from "./game/transit";
 import { View } from "./render/view";
 import { Saves } from "./game/saves";
-import { SERVICES, type ServiceId, type ServiceKind } from "./game/services";
+import { SERVICES, isUtilityId, type Coverage, type ServiceId, type ServiceKind } from "./game/services";
 import type { Hud, Chip } from "./ui/hud";
 
 export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "zone" | "unlock" | "service" | "transit";
@@ -34,7 +34,7 @@ export type ZoneMode = "fill" | "brush" | "marquee";
 export type RoadMode = CurveMode | "grid" | "replace";
 export const ROAD_MODES: RoadMode[] = ["straight", "curve", "complex", "continuous", "grid", "replace"];
 export type OverlayId = "none" | "flow" | "zones" | "landvalue" | "level" | "problems" | ServiceId;
-const SERVICE_VIEWS: OverlayId[] = ["garbage", "fire", "police", "health", "school", "parks"];
+const SERVICE_VIEWS: OverlayId[] = ["garbage", "fire", "police", "health", "school", "parks", "landmark"];
 
 export interface ToolState {
   tool: ToolId;
@@ -256,14 +256,25 @@ export class App {
   /** The service whose coverage is on show: its info view, or the one being placed (CS2 shows it while placing). */
   coverageView(): ServiceId | null {
     if (SERVICE_VIEWS.includes(this.overlay)) return this.overlay as ServiceId;
-    if (this.overlay === "none" && this.st.tool === "service") return SERVICES[this.st.service].svc;
+    if (this.overlay === "none" && this.st.tool === "service" && !isUtilityId(SERVICES[this.st.service].svc)) return SERVICES[this.st.service].svc;
+    return null;
+  }
+
+  /** The utility on show: its info view, or the one whose plant is being placed. Water also shows sewage. */
+  utilityView(): "power" | "water" | null {
+    if (this.overlay === "power" || this.overlay === "water") return this.overlay;
+    if (this.overlay === "none" && this.st.tool === "service") {
+      const s = SERVICES[this.st.service].svc;
+      if (isUtilityId(s)) return s === "power" ? "power" : "water";
+    }
     return null;
   }
 
   /** Roads tinted by coverage (plus what the building at the cursor would add). */
   private updateCoverage() {
     const svc = this.coverageView();
-    if (!svc || svc === "parks") {
+    // (parks and landmarks reach by distance, not along the roads: their view tints buildings only)
+    if (!svc || svc === "parks" || svc === "landmark") {
       if (this.covShown) { this.roads.coverage(null); this.roads.flowMode = this.overlay === "flow"; this.covShown = false; }
       return;
     }
@@ -277,12 +288,28 @@ export class App {
   applyTint() {
     const g = this.game;
     const mode = this.overlay;
+    const uv = this.utilityView();
+    if (uv) {
+      // supply: buildings that get all they need go green, short ones orange to red; the plants stand out
+      this.buildings3d.tint((b) => {
+        if (b.svc) {
+          const s = SERVICES[b.kind as ServiceKind]?.svc;
+          return s === uv || (uv === "water" && s === "sewage") ? 0x2f86e0 : 0xc9c9c9;
+        }
+        if (!b.zone || b.built < 1) return 0xc4c4c4;
+        if (!b.access) return 0xe5484d;
+        const s = g.utilities.supplyOf(b);
+        const v = uv === "power" ? s.power : Math.min(s.water, s.sewage);
+        return v >= 0.999 ? 0x3faa5a : v > 0.6 ? 0xf0a33a : 0xe5484d;
+      });
+      return;
+    }
     const cv = this.coverageView();
     if (cv) {
       // coverage: buildings in reach go green (darker = better served), the rest grey; the service's own buildings stand out
       this.buildings3d.tint((b) => {
         if (b.svc) return SERVICES[b.kind as ServiceKind]?.svc === cv ? 0x2f86e0 : 0xc9c9c9;
-        const c = g.services.cov.get(b.id)?.[cv] ?? 0;
+        const c = g.services.cov.get(b.id)?.[cv as keyof Coverage] ?? 0;
         return c <= 0 ? 0xc4c4c4 : covRamp(c);
       });
       return;
@@ -544,6 +571,8 @@ export class App {
     else if (k === "z") this.hud?.toggleWin("economy");
     else if (k === "c") this.hud?.toggleWin("city");
     else if (k === "x") this.hud?.toggleWin("transport");
+    else if (k === "u") this.hud?.toggleWin("utilities");
+    else if (k === "k") this.hud?.toggleWin("policies");
     else if (k === "[" || k === "]") this.nudgeParallel(k === "]" ? 1 : -1);
     else if (k === "`" || e.code === "Backquote") this.toggleUi();
     else if (k === "F5") { e.preventDefault(); this.quickSave(); }

@@ -107,6 +107,23 @@ def palette():
         "water": "#6fbbe3", "stone": "#d6d8d4", "pav_roof": "#d8654f",
         # bus stop: dark frame, pale glass, a white roof and the blue stop sign
         "bs_frame": "#3c4148", "bs_glass": "#cfe6f2", "bs_roof": "#3f5470", "bs_sign": "#2f6fd0",
+        # utilities: wind (white tower, grey nacelle), coal (warm grey brick, red-white chimney, pale cooling
+        # tower), solar (deep blue panels on grass), water (white + blue), sewage (sand concrete, olive roof)
+        "tb_white": "#f2f3f1", "tb_grey": "#bfc4ca", "gravel": "#d3cbb9", "concrete": "#c8c6c0",
+        "cp_wall": "#a39a90", "cp_roof": "#756d66", "cp_red": "#d8473a", "cp_white": "#f2f0ea",
+        "coal": "#34353a", "cp_tower": "#ddd9d1", "cp_inside": "#8a8780",
+        "solar": "#2c4e88", "solar_line": "#a8bedf", "solar_leg": "#9aa0a8",
+        "wp_wall": "#e9eef2", "wp_roof": "#2f7fc8", "wp_pipe": "#3a8fd6", "wp_tank": "#dde5ec",
+        "sw_wall": "#ddd6c3", "sw_roof": "#7c8a5a", "sw_water": "#8a7849", "sw_pipe": "#6b6f75",
+        # landmarks: town hall (cream stone, slate roof, copper dome), stadium (pale shell, red seats, pitch),
+        # tower (warm concrete, glass pod), concert hall (white shells), skyline tower (blue glass, pale fins)
+        "lm_paving": "#e4ddd0", "lm_glass": "#a9cbe0", "lm_clock": "#f6f1e2", "lm_lamp": "#f4f1e0",
+        "th_wall": "#efe4cb", "th_trim": "#f8f4ea", "th_roof": "#6c7a90",
+        "st_shell": "#dfe3e8", "st_seat": "#d6503f", "st_seat2": "#e0705f", "st_roof": "#f4f6f8",
+        "pitch": "#5fae4a", "pitch2": "#6cbc55",
+        "obs_concrete": "#cdc6ba", "obs_white": "#f2f2ee",
+        "ch_shell": "#f7f7f3", "ch_shell2": "#e9ece9",
+        "sky_base": "#b9c3cf", "sky_glass": "#5f86b0", "sky_fin": "#e7ebf0", "sky_roof": "#7f97b3",
     }.items():
         P[k] = mat(k, v)
     return P
@@ -1177,8 +1194,381 @@ def b_busstop(M, P):
     return L
 
 
+# ------------------------------------------------------------------ utility buildings
+
+def flat_prism(M, pts, y0, y1, m):
+    """Prism over a polygon in the XZ plane (pts = (x, z)), from y0 to y1: blades, fins."""
+    fs = M.loft([(x, y0, z) for x, z in pts], [(x, y1, z) for x, z in pts], m)
+    bmesh.ops.recalc_face_normals(M.bm, faces=fs)
+    return fs
+
+
+def pipe_y(M, cx, cz, r, y0, y1, m, n=8):
+    """Horizontal pipe along Y."""
+    prof = [(cx + r * math.cos(2 * math.pi * i / n + math.pi / n), cz + r * math.sin(2 * math.pi * i / n + math.pi / n))
+            for i in range(n)]
+    fs = extrude_profile(M, prof, "y", y0, y1, m)
+    bmesh.ops.recalc_face_normals(M.bm, faces=fs)
+    return fs
+
+
+def pipe_x(M, cy, cz, r, x0, x1, m, n=8):
+    """Horizontal pipe along X."""
+    prof = [(cy + r * math.cos(2 * math.pi * i / n + math.pi / n), cz + r * math.sin(2 * math.pi * i / n + math.pi / n))
+            for i in range(n)]
+    fs = extrude_profile(M, prof, "x", x0, x1, m)
+    bmesh.ops.recalc_face_normals(M.bm, faces=fs)
+    return fs
+
+
+def b_windturbine(M, P):
+    """One turbine on a grass lot: gravel track from the road to a round crane pad, a white tower, the nacelle
+    looking at the road and three blades (the rotor stays inside the 16 m lot)."""
+    L = green_lot(M, P, 16, 16)
+    z0 = PAD_H
+    tx, ty = 0.0, 2.2
+    cyl(M, tx, ty, 3.6, z0, z0 + 0.04, P["gravel"], n=16)
+    box(M, -1.4, 1.4, -8.0, ty - 3.3, z0, z0 + 0.04, P["gravel"])
+    box(M, 2.6, 4.4, ty - 0.9, ty + 0.9, z0, 1.9, P["tb_grey"], bevel=0.05)     # transformer
+    hub = 24.0
+    revolve(M, tx, ty, [(1.25, z0), (0.95, hub * 0.5), (0.68, hub - 0.4), (0.0, hub - 0.4)], P["tb_white"], n=12)
+    # nacelle along Y, hub cone pointing at the road (-Y)
+    box(M, tx - 0.85, tx + 0.85, ty - 1.4, ty + 3.4, hub - 0.4, hub + 1.5, P["tb_white"], bevel=0.12)
+    box(M, tx - 0.86, tx + 0.86, ty + 2.6, ty + 3.41, hub - 0.4, hub + 1.5, P["tb_grey"])
+    yh = ty - 1.4
+    hz = hub + 0.55
+    M.cone([(tx + 0.75 * math.cos(2 * math.pi * i / 10), yh, hz + 0.75 * math.sin(2 * math.pi * i / 10))
+            for i in range(10)], (tx, yh - 1.5, hz), P["tb_white"])
+    for k in range(3):
+        a = math.radians(90 + 120 * k + 8)
+        u = (math.cos(a), math.sin(a))
+        v = (-u[1], u[0])
+        r0, r1 = 0.6, 7.4
+        pts = [(tx + u[0] * r0 + v[0] * 0.55, hz + u[1] * r0 + v[1] * 0.55),
+               (tx + u[0] * 2.2 + v[0] * 0.75, hz + u[1] * 2.2 + v[1] * 0.75),
+               (tx + u[0] * r1 + v[0] * 0.16, hz + u[1] * r1 + v[1] * 0.16),
+               (tx + u[0] * r1 - v[0] * 0.05, hz + u[1] * r1 - v[1] * 0.05),
+               (tx + u[0] * r0 - v[0] * 0.3, hz + u[1] * r0 - v[1] * 0.3)]
+        flat_prism(M, pts, yh - 0.55, yh - 0.25, P["tb_white"])
+    L.bays = []
+    return L
+
+
+def b_coalplant(M, P):
+    """Coal power station: turbine hall and tall boiler house, a red and white chimney, a coal yard with its
+    conveyor, a hyperbolic cooling tower and a switchyard at the front."""
+    L = lot(M, P, 64, 52, bay_row(6, -19.0))
+    wall, roof, red, white = P["cp_wall"], P["cp_roof"], P["cp_red"], P["cp_white"]
+    y0 = L.y0
+    # turbine hall (long, low) in front of the boiler house
+    band(M, -30.0, 0.0, y0, y0 + 11.0, 9.6, 10.4, red)
+    top = flat_block(M, -30.0, 0.0, y0, y0 + 11.0, 12.0, wall, roof)
+    ribs(M, -29.0, -1.0, y0 + 1.0, y0 + 10.0, top, P["cp_inside"], 6, along="y", wd=0.5, h=0.2)
+    box(M, -24.0, -18.0, y0 - 0.08, y0, 0, 7.0, P["ind_dark"])
+    # boiler house: the tall block, with a lighter band near the top
+    by0, by1 = y0 + 11.0, y0 + 26.0
+    band(M, -27.0, -6.0, by0, by1, 22.0, 24.0, white)
+    btop = flat_block(M, -27.0, -6.0, by0, by1, 27.0, wall, roof, parapet=white)
+    ac_unit(M, -22.0, by0 + 3.0, btop, P)
+    ac_unit(M, -18.5, by0 + 3.0, btop, P)
+    # chimney behind the boiler house
+    cx, cy = -10.0, L.y1 - 5.0
+    cyl(M, cx, cy, 3.4, PAD_H, 1.2, P["concrete"], n=14)
+    rad = lambda z: 2.5 - 0.95 * z / 62.0
+    for za, zb, m in ((1.2, 50.0, white), (50.0, 54.0, red), (54.0, 58.0, white), (58.0, 62.0, red)):
+        revolve(M, cx, cy, [(rad(za), za), (rad(zb), zb)], m, n=14)
+    cyl(M, cx, cy, rad(62.0) - 0.35, 62.0, 62.08, P["coal"], n=12)
+    # coal yard at the back left: concrete bunker walls round a dark pile, a conveyor up to the boiler house
+    kx0, kx1, ky0, ky1 = -30.5, -15.0, by1 + 0.8, L.y1 + 0.5
+    box(M, kx0, kx1, ky0, ky1, PAD_H, PAD_H + 0.04, P["concrete"])
+    frame(M, kx0, kx1, ky0, ky1, 0, 1.6, 0.4, P["concrete"])
+    taper(M, (kx0 + 1.0, kx1 - 1.0, ky0 + 1.0, ky1 - 1.0), (kx0 + 4.0, kx1 - 5.0, ky0 + 2.6, ky1 - 2.6), 0, 4.2, P["coal"])
+    box(M, -14.6, -12.8, by1 - 1.0, ky0 + 4.0, 15.0, 16.4, P["cp_inside"], bevel=0.05)
+    for yy in (by1 + 1.0, ky0 + 3.0):
+        box(M, -14.0, -13.4, yy, yy + 0.6, 0, 15.0, P["ind_steel"])
+    # cooling tower on the right: a hyperboloid with the dark water showing at the top
+    tx, ty = 19.0, L.y1 - 11.5
+    revolve(M, tx, ty, [(10.6, 0.0), (9.6, 4.0), (8.0, 12.0), (7.1, 19.0), (7.0, 22.0), (7.4, 26.0)], P["cp_tower"], n=24)
+    cyl(M, tx, ty, 6.9, 26.0, 26.08, P["cp_inside"], n=24)
+    cyl(M, tx, ty, 10.7, 0, 0.9, P["concrete"], n=24)
+    pipe_x(M, ty - 3.0, 1.2, 0.8, -6.0, tx - 9.6, P["ind_steel"])
+    # switchyard at the front right: gravel, transformers and two gantries
+    sx0, sx1, sy0, sy1 = 2.0, 30.5, y0 - 1.0, y0 + 9.0
+    box(M, sx0, sx1, sy0, sy1, PAD_H, PAD_H + 0.04, P["gravel"])
+    frame(M, sx0, sx1, sy0, sy1, 0, 2.0, 0.15, P["gb_fence"])
+    for gx in (6.0, 14.0, 22.0):
+        box(M, gx - 1.4, gx + 1.4, sy0 + 2.0, sy0 + 4.6, PAD_H, 2.6, P["ind_dark"], bevel=0.06)
+        box(M, gx - 1.5, gx + 1.5, sy0 + 2.4, sy0 + 4.2, 2.6, 3.1, P["tb_grey"])
+    for gy in (sy0 + 6.4, sy1 - 0.8):
+        for gx in (4.0, 12.0, 20.0, 28.0):
+            box(M, gx - 0.2, gx + 0.2, gy - 0.2, gy + 0.2, 0, 8.6, P["ind_steel"])
+        box(M, 3.8, 28.2, gy - 0.25, gy + 0.25, 8.6, 9.2, P["ind_steel"])
+    return L
+
+
+def b_solarfarm(M, P):
+    """Rows of tilted panels on grass, facing the road, with an inverter house and a small car park."""
+    w, d = 60, 44
+    L = lot(M, P, w, d, bay_row(2, -25.0), asphalt=(-30.0, -18.0))
+    z0 = PAD_H + 0.02
+    box(M, -w / 2, w / 2, L.yf + PARK_DEPTH, d / 2, PAD_H, z0, P["grass"])
+    box(M, -17.5, w / 2, L.yf, L.yf + PARK_DEPTH, PAD_H, z0, P["grass"])
+    # gravel service track along the front and up the middle
+    box(M, -29.0, 29.0, L.yf + PARK_DEPTH, L.yf + PARK_DEPTH + 2.6, z0, z0 + 0.03, P["gravel"])
+    box(M, -1.3, 1.3, L.yf + PARK_DEPTH + 2.6, d / 2 - 1.0, z0, z0 + 0.03, P["gravel"])
+    # inverter house beside the car park
+    flat_block(M, -16.5, -10.5, L.yf + 0.8, L.yf + 5.2, 3.0, P["wp_wall"], P["solar_leg"])
+    box(M, -9.5, -7.3, L.yf + 1.4, L.yf + 3.4, PAD_H, 2.2, P["tb_grey"], bevel=0.05)
+    ys = L.yf + PARK_DEPTH + 4.4
+    while ys + 2.6 < d / 2 - 1.2:
+        for xa, xb in ((-28.8, -2.4), (2.4, 28.8)):
+            pa, pb = ys, ys + 2.6
+            lo = [(xa, pa, 0.75), (xb, pa, 0.75), (xb, pb, 1.95), (xa, pb, 1.95)]
+            M.loft(lo, [(x, y, z + 0.1) for x, y, z in lo], P["solar"])
+            # a light line along the table (the gap between its two rows of panels)
+            k = 0.47
+            za = 0.75 + 1.2 * k + 0.1
+            q = [(xa, pa + 2.6 * k, za), (xb, pa + 2.6 * k, za), (xb, pa + 2.6 * (k + 0.06), za + 0.072),
+                 (xa, pa + 2.6 * (k + 0.06), za + 0.072)]
+            M.loft(q, [(x, y, z + 0.02) for x, y, z in q], P["solar_line"])
+            for lx in (xa + 1.0, (xa + xb) / 2, xb - 1.0):
+                box(M, lx - 0.1, lx + 0.1, pa + 1.2, pa + 1.4, z0, 1.3, P["solar_leg"])
+        ys += 4.6
+    return L
+
+
+def b_waterpump(M, P):
+    """Pumping station: a white pump house with a blue roof, a round clear-water tank and the blue intake pipes
+    running out the back to the water."""
+    L = lot(M, P, 22, 20, bay_row(2, -6.0))
+    y0 = L.y0
+    band(M, -10.0, 1.5, y0, y0 + 8.0, 3.4, 3.9, P["wp_pipe"])
+    box(M, -10.0, 1.5, y0, y0 + 8.0, 0, 5.0, P["wp_wall"])
+    gable(M, -10.0, 1.5, y0, y0 + 8.0, 5.0, 6.8, "x", P["wp_roof"], P["wp_wall"])
+    box(M, -6.0, -3.0, y0 - 0.06, y0, 0, 3.0, P["ind_dark"])
+    # clear-water tank
+    tx, ty = 6.2, y0 + 4.2
+    cyl(M, tx, ty, 3.7, 0, 5.2, P["wp_tank"], n=16)
+    cyl(M, tx, ty, 3.75, 4.4, 4.8, P["wp_pipe"], n=16)
+    cone(M, tx, ty, 3.75, 5.2, 6.0, P["wp_roof"], n=16)
+    # pipes: tank to pump house, and the intakes out of the back of the lot
+    pipe_x(M, ty, 1.2, 0.45, 1.5, tx - 3.6, P["wp_pipe"])
+    pipe_y(M, -4.0, 0.9, 0.6, y0 + 8.0, 10.0, P["wp_pipe"])
+    pipe_y(M, 4.0, 0.9, 0.6, ty + 3.6, 10.0, P["wp_pipe"])
+    box(M, -5.4, 5.4, 8.6, 10.0, 0, 1.8, P["concrete"])   # headwall at the shore
+    return L
+
+
+def b_sewageoutlet(M, P):
+    """Sewage outlet: a round settling tank with its scraper bridge, a small works building and the outfall pipe
+    out the back to the water."""
+    L = lot(M, P, 22, 20, bay_row(2, 6.0))
+    y0 = L.y0
+    cx, cy, r = -3.6, y0 + 6.2, 5.6
+    cyl(M, cx, cy, r, 0, 1.4, P["concrete"], n=20)
+    cyl(M, cx, cy, r - 0.45, 1.25, 1.42, P["sw_water"], n=20)
+    cyl(M, cx, cy, 0.7, 1.42, 2.2, P["concrete"], n=8)
+    box(M, cx - 0.4, cx + 0.4, cy - 0.3, cy + r, 2.0, 2.4, P["ind_steel"])
+    box(M, cx - 0.5, cx + 0.5, cy + r - 0.6, cy + r + 0.2, 0, 2.4, P["ind_yellow"])
+    # works building
+    top = flat_block(M, 3.4, 10.0, y0 - 0.5, y0 + 5.5, 4.2, P["sw_wall"], P["sw_roof"], parapet=P["sw_wall"])
+    ac_unit(M, 6.7, y0 + 2.5, top, P)
+    # pipe from the works into the tank, and the outfall to the shore
+    pipe_x(M, y0 + 3.0, 0.8, 0.4, cx + r - 0.2, 3.4, P["sw_pipe"])
+    pipe_y(M, 6.0, 0.8, 0.55, y0 + 5.5, 10.0, P["sw_pipe"])
+    box(M, 3.6, 8.4, 8.6, 10.0, 0, 1.6, P["concrete"])
+    return L
+
+
+# ------------------------------------------------------------------ landmarks (one of each per city)
+
+def plaza(M, P, L, x0, x1, y0, y1):
+    """Paved square over the lot behind the parking strip, with a stone kerb round it."""
+    box(M, x0, x1, y0, y1, PAD_H, PAD_H + 0.04, P["lm_paving"])
+    frame(M, x0, x1, y0, y1, PAD_H + 0.04, PAD_H + 0.2, 0.35, P["stone"])
+
+
+def b_townhall(M, P):
+    """Town hall: a cream classical block round a courtyard, a columned portico facing the road and a clock
+    tower with a green copper dome over the entrance."""
+    L = lot(M, P, 40, 36, bay_row(4))
+    y0, y1 = L.y0, L.y1
+    plaza(M, P, L, -19.0, 19.0, y0 - 0.6, y0 + 3.0)
+    # the U-shaped main block (wings left and right, the hall at the back) round a lawn courtyard
+    bx0, bx1, by0, by1 = -16.0, 16.0, y0 + 3.0, y1
+    for (a0, a1, c0, c1) in ((bx0, bx0 + 9.0, by0, by1), (bx1 - 9.0, bx1, by0, by1), (bx0 + 9.0, bx1 - 9.0, by1 - 7.0, by1)):
+        band(M, a0, a1, c0, c1, 3.6, 4.1, P["th_trim"])
+        box(M, a0, a1, c0, c1, 0, 7.8, P["th_wall"])
+        box(M, a0 - 0.3, a1 + 0.3, c0 - 0.3, c1 + 0.3, 7.8, 8.3, P["th_trim"], bevel=0.08)
+        taper(M, (a0 - 0.3, a1 + 0.3, c0 - 0.3, c1 + 0.3), (a0 + 1.6, a1 - 1.6, c0 + 1.6, c1 - 1.6), 8.3, 10.0, P["th_roof"])
+    box(M, bx0 + 9.0, bx1 - 9.0, by0, by1 - 7.0, PAD_H, PAD_H + 0.05, P["grass"])
+    fountain(M, P, 0.0, (by0 + by1 - 7.0) / 2, 1.8)
+    # portico across the front of the courtyard: steps, columns, entablature and a pediment
+    px0, px1, py0, py1 = -8.0, 8.0, by0 - 2.6, by0 + 1.6
+    for i, s in enumerate((0.0, 0.5, 1.0)):
+        box(M, px0 - 1.0 + s, px1 + 1.0 - s, py0 - 1.2 + s, py1, 0, 0.3 * (i + 1), P["stone"])
+    for k in range(6):
+        cx = px0 + 1.0 + k * (px1 - px0 - 2.0) / 5
+        cyl(M, cx, py0 + 0.6, 0.45, 0.9, 7.2, P["column"], n=8)
+    box(M, px0, px1, py0, py1, 7.2, 8.2, P["th_trim"])
+    gable(M, px0, px1, py0, py1, 8.2, 10.0, "y", P["th_roof"], P["th_wall"], oh_u=(0.3, 0.3), oh_a=(0.3, 0.0))
+    box(M, px0, px1, py1, by0 + 2.0, 0, 8.2, P["th_wall"])
+    # clock tower and dome rising behind the portico
+    tx, ty = 0.0, by1 - 3.5
+    box(M, tx - 3.0, tx + 3.0, ty - 3.0, ty + 3.0, 0, 15.0, P["th_wall"])
+    box(M, tx - 3.3, tx + 3.3, ty - 3.3, ty + 3.3, 15.0, 15.6, P["th_trim"])
+    cyl(M, tx, ty, 2.6, 15.6, 18.0, P["th_wall"], n=12)
+    box(M, tx - 1.2, tx + 1.2, ty - 3.12, ty - 3.0, 11.0, 13.4, P["lm_clock"])
+    box(M, tx - 1.2, tx + 1.2, ty + 3.0, ty + 3.12, 11.0, 13.4, P["lm_clock"])
+    revolve(M, tx, ty, [(2.8, 18.0), (2.7, 19.2), (2.3, 20.4), (1.5, 21.4), (0.5, 21.9), (0.0, 22.0)], P["dome"], n=12)
+    cyl(M, tx, ty, 0.12, 21.9, 24.0, P["ind_steel"], n=6)
+    for x, y in ((-18.0, y0 + 1.0), (18.0, y0 + 1.0)):
+        tree(M, P, x, y, 0.8)
+    return L
+
+
+def b_stadium(M, P):
+    """Stadium: an oval bowl of red seating round a striped pitch, a pale outer shell and a roof ring
+    over the long stands, floodlight masts at the corners."""
+    L = lot(M, P, 72, 60, bay_row(8))
+    cy = (L.y0 + L.y1) / 2 + 0.5
+    plaza(M, P, L, -35.0, 35.0, L.y0 - 0.6, L.y1 + 0.5)
+    def oval(rx, ry, z, n=28):
+        return [(rx * math.cos(2 * math.pi * i / n), cy + ry * math.sin(2 * math.pi * i / n), z) for i in range(n)]
+    def annulus(a, b, z0, z1, m):
+        """A hollow ring between two ovals with the same vertex count: one closed block per segment."""
+        n = len(a)
+        for i in range(n):
+            j = (i + 1) % n
+            pts = [a[i][:2], a[j][:2], b[j][:2], b[i][:2]]
+            M.loft([(x, y, z0) for x, y in pts], [(x, y, z1) for x, y in pts], m)
+    # outer shell, then seating tiers stepping down to the pitch (each a ring, so the bowl stays open)
+    annulus(oval(33.0, 21.0, 0), oval(31.0, 19.0, 0), 0, 9.3, P["st_shell"])
+    tiers = [(31.0, 19.0, 8.6), (28.0, 16.6, 6.6), (25.0, 14.2, 4.6), (22.0, 11.8, 2.6), (19.6, 11.0, 0.6)]
+    for (rx, ry, z), (qx, qy, _) in zip(tiers, tiers[1:]):
+        annulus(oval(rx, ry, 0), oval(qx, qy, 0), 0, z, P["st_seat"] if z > 5 else P["st_seat2"])
+    # pitch with mown stripes and white lines
+    hx, hy = 16.0, 9.6
+    box(M, -hx - 2.6, hx + 2.6, cy - hy - 1.4, cy + hy + 1.4, 0.3, 0.42, P["track"])
+    box(M, -hx, hx, cy - hy, cy + hy, 0.42, 0.48, P["pitch"])
+    for i in range(8):
+        if i % 2:
+            x0 = -hx + i * (2 * hx / 8)
+            box(M, x0, x0 + 2 * hx / 8, cy - hy, cy + hy, 0.48, 0.5, P["pitch2"])
+    w = 0.22
+    frame(M, -hx + 0.8, hx - 0.8, cy - hy + 0.8, cy + hy - 0.8, 0.5, 0.53, w, P["line"])
+    box(M, -w / 2, w / 2, cy - hy + 0.8, cy + hy - 0.8, 0.5, 0.53, P["line"])
+    ribbon(M, [(3.0 * math.cos(2 * math.pi * i / 16), cy + 3.0 * math.sin(2 * math.pi * i / 16)) for i in range(16)],
+           w, 0.5, 0.53, P["line"], closed=True)
+    # roof canopies over the two long stands
+    for s in (-1, 1):
+        pts = [(x, cy + s * (21.0 - 0.2), 9.3) for x in (-24.0, -12.0, 0.0, 12.0, 24.0)]
+        inner = [(x, cy + s * (14.5 + 1.6 * (1 - (x / 24.0) ** 2)), 10.4) for x in (-24.0, -12.0, 0.0, 12.0, 24.0)]
+        bm_pts = pts + inner[::-1]
+        lo = [(x, y, z) for x, y, z in bm_pts]
+        hi = [(x, y, z + 0.35) for x, y, z in bm_pts]
+        M.loft(lo, hi, P["st_roof"])
+    # floodlight masts on the diagonals
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            mx, my = sx * 30.5, cy + sy * 22.5
+            cyl(M, mx, my, 0.35, 0, 16.0, P["ind_steel"], n=6)
+            box(M, mx - 1.4, mx + 1.4, my - 0.4, my + 0.4, 15.2, 16.8, P["lm_lamp"])
+    return L
+
+
+def b_obstower(M, P):
+    """Observation tower: a round podium, a tapering concrete shaft, a glazed viewing pod two thirds of the way
+    up and a red-and-white mast on top."""
+    L = lot(M, P, 28, 28, bay_row(2))
+    cx, cy = 0.0, (L.y0 + L.y1) / 2 + 0.5
+    plaza(M, P, L, -13.0, 13.0, L.y0 - 0.6, L.y1 + 0.5)
+    cyl(M, cx, cy, 8.0, 0, 0.5, P["stone"], n=20)
+    cyl(M, cx, cy, 6.6, 0.5, 4.5, P["lm_glass"], n=20)
+    cyl(M, cx, cy, 7.0, 4.5, 5.0, P["obs_concrete"], n=20)
+    # three-legged base flaring into the shaft
+    for k in range(3):
+        t = math.radians(90 + 120 * k)
+        bar(M, (cx + 2.0 * math.cos(t), cy + 2.0 * math.sin(t)), (cx + 5.6 * math.cos(t), cy + 5.6 * math.sin(t)), 1.4, 5.0, 9.0, P["obs_concrete"])
+    revolve(M, cx, cy, [(2.6, 5.0), (2.2, 20.0), (1.8, 40.0), (1.6, 46.0)], P["obs_concrete"], n=12)
+    # viewing pod: a fat disc with a glass band and a restaurant deck above
+    revolve(M, cx, cy, [(1.6, 46.0), (5.6, 47.4), (6.4, 48.6)], P["obs_concrete"], n=16)
+    cyl(M, cx, cy, 6.4, 48.6, 51.2, P["lm_glass"], n=16)
+    revolve(M, cx, cy, [(6.6, 51.2), (6.6, 51.7), (5.0, 52.8), (3.4, 53.4), (1.4, 53.6)], P["obs_white"], n=16)
+    cyl(M, cx, cy, 1.4, 53.6, 57.0, P["obs_concrete"], n=10)
+    cyl(M, cx, cy, 2.2, 57.0, 57.6, P["obs_white"], n=10)
+    for i in range(5):
+        z = 57.6 + i * 2.4
+        cyl(M, cx, cy, 0.55 - i * 0.07, z, z + 2.4, P["cp_red"] if i % 2 == 0 else P["cp_white"], n=8)
+    for x, y in ((-11.0, L.y1 - 1.5), (11.0, L.y1 - 1.5), (-11.0, L.y0 + 1.0), (11.0, L.y0 + 1.0)):
+        tree(M, P, x, y, 0.75)
+    return L
+
+
+def b_concerthall(M, P):
+    """Concert hall: white curved roof shells rising toward the road over a glass foyer, on a stone podium
+    with broad steps down to the street."""
+    L = lot(M, P, 52, 44, bay_row(6))
+    y0, y1 = L.y0, L.y1
+    plaza(M, P, L, -25.0, 25.0, y0 - 0.6, y1 + 0.5)
+    box(M, -20.0, 20.0, y0 + 3.0, y1 - 1.0, 0, 2.2, P["stone"])
+    for i in range(4):
+        box(M, -12.0 + i * 0.6, 12.0 - i * 0.6, y0 + 0.2 + i * 0.7, y0 + 3.0, 0, 0.55 * (i + 1), P["stone"])
+    # glass foyer under the shells
+    box(M, -17.0, 17.0, y0 + 5.0, y1 - 3.0, 2.2, 7.0, P["lm_glass"])
+    # three shells per side, nested, each a quarter-ellipse profile swept across the hall
+    def shell(xc, half, ya, yb, h, m):
+        prof = []
+        n = 10
+        for i in range(n + 1):
+            t = i / n
+            prof.append((ya + (yb - ya) * t, 2.2 + h * (1 - t * t)))
+        top = [(y, z) for y, z in prof]
+        under = [(y, max(2.2, z - 0.7)) for y, z in prof][::-1]
+        # each shell narrows toward the back, like a sail
+        def hw(y):
+            return half * (1.0 - 0.45 * (y - ya) / (yb - ya))
+        lo = [(xc - hw(y), y, z) for y, z in top + under]
+        hi = [(xc + hw(y), y, z) for y, z in top + under]
+        M.loft(lo, hi, m)
+    shell(-9.0, 8.0, y0 + 4.0, y1 - 8.0, 13.0, P["ch_shell"])
+    shell(9.0, 8.0, y0 + 4.0, y1 - 8.0, 13.0, P["ch_shell"])
+    shell(-8.0, 6.5, y0 + 13.0, y1 - 2.5, 9.5, P["ch_shell2"])
+    shell(8.0, 6.5, y0 + 13.0, y1 - 2.5, 9.5, P["ch_shell2"])
+    shell(0.0, 2.6, y0 + 7.0, y1 - 4.0, 11.0, P["ch_shell"])
+    for x in (-23.0, 23.0):
+        for y in (y0 + 1.0, (y0 + y1) / 2, y1 - 1.0):
+            tree(M, P, x, y, 0.8)
+    return L
+
+
+def b_skytower(M, P):
+    """Skyline tower: a glass supertall in four setbacks with pale fins at the corners, a crown and a spire."""
+    L = lot(M, P, 36, 36, bay_row(4))
+    cx, cy = 0.0, (L.y0 + L.y1) / 2 + 0.5
+    plaza(M, P, L, -17.0, 17.0, L.y0 - 0.6, L.y1 + 0.5)
+    box(M, cx - 13.0, cx + 13.0, cy - 11.0, cy + 11.0, 0, 6.0, P["sky_base"])
+    steps = [(10.5, 6.0, 40.0), (8.8, 40.0, 70.0), (7.0, 70.0, 95.0), (5.0, 95.0, 112.0)]
+    for r, z0, z1 in steps:
+        box(M, cx - r, cx + r, cy - r, cy + r, z0, z1, P["sky_glass"])
+        box(M, cx - r - 0.3, cx + r + 0.3, cy - r - 0.3, cy + r + 0.3, z1, z1 + 0.6, P["sky_roof"])
+        frame(M, cx - r - 0.3, cx + r + 0.3, cy - r - 0.3, cy + r + 0.3, z1 + 0.6, z1 + 1.1, 0.5, P["sky_fin"])
+        for sx in (-1, 1):
+            for sy in (-1, 1):
+                box(M, cx + sx * r - 0.6, cx + sx * r + 0.6, cy + sy * r - 0.6, cy + sy * r + 0.6, z0, z1, P["sky_fin"])
+        for k in range(1, 4):
+            z = z0 + (z1 - z0) * k / 4
+            band(M, cx - r, cx + r, cy - r, cy + r, z, z + 0.35, P["sky_fin"], o=0.05)
+    revolve(M, cx, cy, [(5.0, 112.6), (3.6, 116.0), (1.2, 118.0), (0.0, 118.4)], P["sky_fin"], n=4, rot=math.pi / 4)
+    cyl(M, cx, cy, 0.3, 118.0, 132.0, P["ind_steel"], n=6)
+    for x, y in ((-15.5, L.y0 + 0.8), (15.5, L.y0 + 0.8), (-15.5, L.y1 - 0.8), (15.5, L.y1 - 0.8)):
+        tree(M, P, x, y, 0.8)
+    return L
+
+
 SERVICES = ("garbage", "firestation", "police", "clinic", "hospital", "school", "highschool", "university",
-            "park", "parklarge")
+            "park", "parklarge", "windturbine", "coalplant", "solarfarm", "waterpump", "sewageoutlet",
+            "townhall", "stadium", "obstower", "concerthall", "skytower")
 
 
 BUILDINGS = {
@@ -1206,6 +1596,18 @@ BUILDINGS = {
     "park": (b_park, 24, 24, 0),
     "parklarge": (b_parklarge, 48, 48, 0),
     "busstop": (b_busstop, 4.4, 1.8, 0),
+    # utilities
+    "windturbine": (b_windturbine, 16, 16, 0),
+    "coalplant": (b_coalplant, 64, 52, 6),
+    "solarfarm": (b_solarfarm, 60, 44, 2),
+    "waterpump": (b_waterpump, 22, 20, 2),
+    "sewageoutlet": (b_sewageoutlet, 22, 20, 2),
+    # landmarks
+    "townhall": (b_townhall, 40, 36, 4),
+    "stadium": (b_stadium, 72, 60, 8),
+    "obstower": (b_obstower, 28, 28, 2),
+    "concerthall": (b_concerthall, 52, 44, 6),
+    "skytower": (b_skytower, 36, 36, 4),
 }
 
 

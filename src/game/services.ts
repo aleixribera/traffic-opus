@@ -11,10 +11,15 @@ import type { Trip, Vehicle } from "../sim/traffic";
 import type { Building } from "./buildings";
 import type { Game } from "./city";
 import { ZONE_GROUP } from "./growables";
+import { EFFECT } from "./policies";
 import { Age, DAY, HOUR, St, type Citizen } from "./society";
 
-export type ServiceId = "garbage" | "fire" | "police" | "health" | "school" | "parks";
-export type ServiceKind = "garbage" | "firestation" | "police" | "clinic" | "hospital" | "school" | "highschool" | "university" | "park" | "parklarge";
+export type ServiceId = "garbage" | "fire" | "police" | "health" | "school" | "parks" | "landmark" | UtilityId;
+export type UtilityId = "power" | "water" | "sewage";
+export type ServiceKind =
+  | "garbage" | "firestation" | "police" | "clinic" | "hospital" | "school" | "highschool" | "university" | "park" | "parklarge"
+  | "windturbine" | "coalplant" | "solarfarm" | "waterpump" | "sewageoutlet"
+  | "townhall" | "stadium" | "obstower" | "concerthall" | "skytower";
 export type ServiceVehicle = "garbagetruck" | "firetruck" | "ambulance" | "policecar";
 
 export interface ServiceDef {
@@ -31,6 +36,12 @@ export interface ServiceDef {
   tier?: 0 | 1 | 2;
   unlock: number; // milestone index
   vehicle?: ServiceVehicle;
+  /** utilities: what it makes an hour at full staff (MW of power, m³ of water or sewage) */
+  out?: number;
+  /** utilities: it has to stand on the shore of a river or lake */
+  shore?: boolean;
+  /** landmarks: one per city */
+  unique?: boolean;
 }
 
 export const SERVICES: Record<ServiceKind, ServiceDef> = {
@@ -44,7 +55,32 @@ export const SERVICES: Record<ServiceKind, ServiceDef> = {
   university: { kind: "university", svc: "school", cost: 80000, upkeep: 150, range: 400, vehicles: 0, cap: 200, tier: 2, unlock: 4 },
   park: { kind: "park", svc: "parks", cost: 1500, upkeep: 3, range: 170, vehicles: 0, cap: 0, unlock: 0 },
   parklarge: { kind: "parklarge", svc: "parks", cost: 8000, upkeep: 10, range: 320, vehicles: 0, cap: 0, unlock: 2 },
+  windturbine: { kind: "windturbine", svc: "power", cost: 4500, upkeep: 30, range: 0, vehicles: 0, cap: 0, unlock: 0, out: 5 },
+  coalplant: { kind: "coalplant", svc: "power", cost: 36000, upkeep: 330, range: 0, vehicles: 0, cap: 0, unlock: 1, out: 70 },
+  solarfarm: { kind: "solarfarm", svc: "power", cost: 52000, upkeep: 240, range: 0, vehicles: 0, cap: 0, unlock: 3, out: 45 },
+  waterpump: { kind: "waterpump", svc: "water", cost: 7500, upkeep: 60, range: 0, vehicles: 0, cap: 0, unlock: 0, out: 1600, shore: true },
+  sewageoutlet: { kind: "sewageoutlet", svc: "sewage", cost: 6500, upkeep: 50, range: 0, vehicles: 0, cap: 0, unlock: 0, out: 2400, shore: true },
+  // landmarks, one of each per city, unlocked by the later milestones (CS2's signature buildings): they lift land
+  // value and happiness for `range` metres round them, and residents come from across town to visit
+  townhall: { kind: "townhall", svc: "landmark", cost: 60000, upkeep: 90, range: 520, vehicles: 0, cap: 0, unlock: 5, unique: true },
+  stadium: { kind: "stadium", svc: "landmark", cost: 120000, upkeep: 160, range: 700, vehicles: 0, cap: 0, unlock: 6, unique: true },
+  obstower: { kind: "obstower", svc: "landmark", cost: 200000, upkeep: 140, range: 900, vehicles: 0, cap: 0, unlock: 7, unique: true },
+  concerthall: { kind: "concerthall", svc: "landmark", cost: 320000, upkeep: 260, range: 820, vehicles: 0, cap: 0, unlock: 8, unique: true },
+  skytower: { kind: "skytower", svc: "landmark", cost: 500000, upkeep: 320, range: 1100, vehicles: 0, cap: 0, unlock: 9, unique: true },
 };
+
+/** Coverage that reaches by distance (parks, landmarks) rather than by drive time over the roads. */
+export const byDistance = (d: ServiceDef) => d.svc === "parks" || d.svc === "landmark";
+/** Most a building gets from landmarks together. */
+const LANDMARK_MAX = 1.5;
+
+export const isUtilityId = (s: ServiceId): s is UtilityId => s === "power" || s === "water" || s === "sewage";
+
+/** Utility tabs in the build menu (their own category, as in CS2). */
+export const UTILITY_TABS: { id: UtilityId | "watersewage"; label: string; kinds: ServiceKind[]; blurb: string }[] = [
+  { id: "power", label: "Electricity", kinds: ["windturbine", "coalplant", "solarfarm"], blurb: "Power runs along the roads to every building connected to a plant." },
+  { id: "watersewage", label: "Water & sewage", kinds: ["waterpump", "sewageoutlet"], blurb: "Pipes run under the roads: pumps and outlets go on a shore." },
+];
 
 export const SERVICE_KINDS = Object.keys(SERVICES) as ServiceKind[];
 export const isServiceKind = (k: BuildingKind): k is ServiceKind => k in SERVICES;
@@ -57,6 +93,7 @@ export const SERVICE_TABS: { id: ServiceId; label: string; kinds: ServiceKind[];
   { id: "police", label: "Police", kinds: ["police"], blurb: "Patrols keep crime down. High crime drives residents away." },
   { id: "school", label: "Education", kinds: ["school", "highschool", "university"], blurb: "Schools for children, and the education offices need." },
   { id: "parks", label: "Parks", kinds: ["park", "parklarge"], blurb: "Raise land value and happiness nearby." },
+  { id: "landmark", label: "Landmarks", kinds: ["townhall", "stadium", "obstower", "concerthall", "skytower"], blurb: "One of each per city, unlocked by the later milestones. They lift land value and happiness far around and draw visitors." },
 ];
 
 /** Problems only start once the town is a Hamlet, so a new player can lay out a first neighbourhood in peace. */
@@ -76,7 +113,7 @@ const SICK_LEAVE = DAY * 1.5; // a sick resident nobody can treat: the family mo
 const TREAT = HOUR * 10;
 const STUDY_DAYS: Record<number, number> = { 1: 3, 2: 4 };
 
-export interface Coverage { garbage: number; fire: number; police: number; health: number; school: number; parks: number }
+export interface Coverage { garbage: number; fire: number; police: number; health: number; school: number; parks: number; landmark: number }
 
 interface StationReach { version: number; segs: Map<number, number> }
 
@@ -159,7 +196,7 @@ export class Services {
     const v = this.g.net.version;
     let r = this.reach.get(b.id);
     if (!r || r.version !== v) {
-      r = { version: v, segs: d.svc === "parks" ? new Map() : this.g.traffic.router.reach(b.access, d.range) };
+      r = { version: v, segs: byDistance(d) ? new Map() : this.g.traffic.router.reach(b.access, d.range) };
       this.reach.set(b.id, r);
     }
     return r.segs;
@@ -167,7 +204,7 @@ export class Services {
 
   /** How well a spot (a building's driveway, or a point for parks) is served by one station: 0..1. */
   private level(st: Building, d: ServiceDef, b: Building): number {
-    if (d.svc === "parks") {
+    if (byDistance(d)) {
       const dd = dist(st.c, b.c);
       return dd < d.range ? 1 - (dd / d.range) * 0.7 : 0;
     }
@@ -179,14 +216,17 @@ export class Services {
 
   /** Coverage of a building by each service (best station; schools: the elementary tier). */
   coverageOf(b: Building): Coverage {
-    const c: Coverage = { garbage: 0, fire: 0, police: 0, health: 0, school: 0, parks: 0 };
+    const c: Coverage = { garbage: 0, fire: 0, police: 0, health: 0, school: 0, parks: 0, landmark: 0 };
     for (const st of this.stations()) {
       const d = this.def(st)!;
-      if (st.built < 1 || st.abandoned) continue;
+      if (st.built < 1 || st.abandoned || isUtilityId(d.svc)) continue;
       if (d.svc === "school" && d.tier !== 0) continue;
-      if (d.svc !== "parks" && !this.staffed(st)) continue;
+      if (!byDistance(d) && !this.staffed(st)) continue;
       const l = this.level(st, d, b);
-      if (l > c[d.svc]) c[d.svc] = l;
+      const k = d.svc as keyof Coverage;
+      // landmarks add up (a little); for the rest the best station counts
+      if (k === "landmark") c.landmark = Math.min(LANDMARK_MAX, c.landmark + l);
+      else if (l > c[k]) c[k] = l;
     }
     return c;
   }
@@ -199,7 +239,7 @@ export class Services {
   previewReach(kind: ServiceKind, access: Building["access"]): Map<number, number> {
     const d = SERVICES[kind];
     const out = new Map<number, number>();
-    if (!access || d.svc === "parks") return out;
+    if (!access || byDistance(d)) return out;
     for (const [seg, t] of this.g.traffic.router.reach(access, d.range)) out.set(seg, 1 - (t / d.range) * 0.6);
     return out;
   }
@@ -209,7 +249,7 @@ export class Services {
     const out = new Map<number, number>();
     for (const st of this.stations()) {
       const d = this.def(st)!;
-      if (d.svc !== svc || d.svc === "parks" || (d.svc === "school" && d.tier !== 0)) continue;
+      if (d.svc !== svc || byDistance(d) || (d.svc === "school" && d.tier !== 0)) continue;
       for (const [seg, t] of this.reachOf(st)) {
         const l = 1 - (t / d.range) * 0.6;
         if (l > (out.get(seg) ?? 0)) out.set(seg, l);
@@ -243,11 +283,12 @@ export class Services {
       const people = grp === "res" ? g.people.householdsIn(b.id) : g.people.workersAt(b.id);
       if (people <= 0) continue;
       // garbage: every household and workplace fills bins
-      b.garbage = Math.min(200, (b.garbage ?? 0) + people * (grp === "res" ? 0.6 : grp === "ind" ? 0.15 : 0.12) * h);
+      const recycle = g.policies.has("recycling") ? EFFECT.garbage : 1;
+      b.garbage = Math.min(200, (b.garbage ?? 0) + people * (grp === "res" ? 0.6 : grp === "ind" ? 0.15 : 0.12) * recycle * h);
       if (b.garbage >= GARBAGE_CALL) this.call(b, "garbage");
       if (b.garbage >= GARBAGE_BAD) s.garbage++;
       // crime: patrols in the area keep it down
-      const cr = people * (grp === "res" ? 0.22 : 0.1) * (1 - 0.85 * c.police) * h;
+      const cr = people * (grp === "res" ? 0.22 : 0.1) * (1 - 0.85 * c.police) * (g.policies.has("watch") ? EFFECT.crime : 1) * h;
       b.crime = Math.min(100, (b.crime ?? 0) + cr);
       if (b.crime >= CRIME_CALL) this.call(b, "police");
       if (b.crime >= CRIME_BAD) s.crime++;
@@ -256,7 +297,7 @@ export class Services {
         s.fires++;
         this.call(b, "fire");
         if (g.time - b.fire > FIRE_BURN) this.burnDown(b);
-      } else if (rng() < (grp === "ind" ? 0.0012 : 0.0004) * (1 - 0.8 * c.fire) * h) {
+      } else if (rng() < (grp === "ind" ? 0.0012 : 0.0004) * (1 - 0.8 * c.fire) * (g.policies.has("smoke") ? EFFECT.fire : 1) * h) {
         b.fire = g.time;
       }
     }
@@ -298,6 +339,7 @@ export class Services {
     const d = this.def(b);
     if (!d) return;
     b.visits *= Math.exp(-span / (HOUR * 6));
+    if (d.out) { b.problem = this.g.utilities.plantProblem(b); return; }
     let problem: string | null = null;
     if (!b.access) problem = "No road access";
     else if (d.cap === 0 && d.vehicles === 0) problem = null;
@@ -571,7 +613,7 @@ export class Services {
   landValueOf(b: Building): number {
     const c = this.cov.get(b.id);
     let lv = 0;
-    if (c) lv += c.health * 4 + c.police * 3 + c.fire * 3 + c.school * 4 + c.parks * 9 + c.garbage * 2;
+    if (c) lv += c.health * 4 + c.police * 3 + c.fire * 3 + c.school * 4 + c.parks * 9 + c.garbage * 2 + c.landmark * 12;
     if ((b.garbage ?? 0) > GARBAGE_BAD) lv -= Math.min(12, ((b.garbage ?? 0) - GARBAGE_BAD) / 6);
     if ((b.crime ?? 0) > CRIME_BAD) lv -= Math.min(10, ((b.crime ?? 0) - CRIME_BAD) / 5);
     return lv;
@@ -579,12 +621,13 @@ export class Services {
 
   /** How content a home's residents are with their services (0..1); low for long means they leave. */
   happiness(b: Building): number {
-    const c = this.cov.get(b.id) ?? { garbage: 0, fire: 0, police: 0, health: 0, school: 0, parks: 0 };
-    let h = 0.56 + c.health * 0.1 + c.police * 0.07 + c.fire * 0.06 + c.school * 0.06 + c.parks * 0.08 + c.garbage * 0.03;
+    const c = this.cov.get(b.id) ?? { garbage: 0, fire: 0, police: 0, health: 0, school: 0, parks: 0, landmark: 0 };
+    let h = 0.56 + c.health * 0.1 + c.police * 0.07 + c.fire * 0.06 + c.school * 0.06 + c.parks * 0.08 + c.garbage * 0.03 + c.landmark * 0.05;
     const gb = b.garbage ?? 0, cr = b.crime ?? 0;
     if (gb > GARBAGE_BAD) h -= Math.min(0.32, (gb - GARBAGE_BAD) / 160);
     if (cr > CRIME_BAD) h -= Math.min(0.26, (cr - CRIME_BAD) / 140);
     if (b.fire) h -= 0.3;
+    if (this.g.policies.has("watersave")) h -= EFFECT.waterMood;
     return Math.max(0, Math.min(1, h));
   }
 
@@ -602,7 +645,7 @@ export class Services {
   /** Upkeep of every station this hour. */
   upkeep(): number {
     let u = 0;
-    for (const st of this.stations()) u += this.def(st)!.upkeep;
+    for (const st of this.stations()) if (!this.def(st)!.out) u += this.def(st)!.upkeep; // (utilities: see Utilities.hourly)
     return u;
   }
 

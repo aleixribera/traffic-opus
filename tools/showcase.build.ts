@@ -65,6 +65,18 @@ function mk(g: Game) {
       say(`FAIL service ${kind} near ${p.x},${p.y}`);
       return false;
     },
+    /** A shore building: search wider, on every road near the water. */
+    shore(kind: ServiceKind, p: V2) {
+      for (let r = 0; r <= 600; r += 12) {
+        const n = r ? Math.max(12, Math.round(r / 10)) : 1;
+        for (let k = 0; k < n; k++) {
+          const q = add(p, v2(Math.cos((k * 2 * Math.PI) / n) * r, Math.sin((k * 2 * Math.PI) / n) * r));
+          if (g.placeService(kind, q)) { say(`shore ${kind} at ${q.x.toFixed(0)},${q.y.toFixed(0)}`); return true; }
+        }
+      }
+      say(`FAIL shore ${kind} near ${p.x.toFixed(0)},${p.y.toFixed(0)}`);
+      return false;
+    },
   };
   return B;
 }
@@ -164,6 +176,12 @@ it("builds the showcase city", () => {
   // through the interchange (an overpass, no ramps)
   B.path("south bridge", [P(-200, 600), P(-95, 615), P(95, 638), P(300, 650)], "avenue", [0, 1, 1, 0]);
 
+  // a works road along the river, for the pumps and the sewage outlets (from the works' north corner down to
+  // their south-east cross street)
+  const RIV = [P(-640, -330), v2(1470, 170), v2(1550, 330), v2(1660, 490), v2(1725, 650)];
+  B.path("river road", RIV, "street");
+  B.road("river link", RIV[RIV.length - 1], P(-640, 330), "street");
+
   // the ramp terminals of the diamond carry the most turning traffic: signals, as any CS player would add
   for (const J of [JW, JE]) {
     let id = -1, bd = 25;
@@ -187,6 +205,13 @@ it("builds the showcase city", () => {
   B.service("park", P(960, 950));
   B.service("garbage", P(-520, 450));
   B.service("garbage", P(1150, 330));
+  B.service("garbage", P(650, 600)); // three depots: two leave the trucks all out by 5,000 people
+  B.service("townhall", P(1050, 100)); // the landmark the town has just unlocked
+  // utilities: coal and wind out by the works, pumps and an outlet on the water
+  B.service("coalplant", P(-560, -230));
+  for (const Y of [80, 240, 420]) B.service("windturbine", P(-700, Y));
+  for (const p of [RIV[1], RIV[2], RIV[3]]) B.shore("waterpump", p);
+  for (const p of [RIV[4], RIV[4]]) B.shore("sewageoutlet", p);
 
   // ---------------------------------------------------------------- zoning by district
   const z = (name: string, zone: ZoneId, f: (X: number, Y: number) => boolean) => B.zone(name, zone, (p) => { const q = XY(p); return f(q.X, q.Y); });
@@ -205,7 +230,7 @@ it("builds the showcase city", () => {
   say(`zoned cells ${[...g.zones.allCells()].filter((c) => c.zone).length}`);
 
   // ---------------------------------------------------------------- grow it
-  const HOURS = Number(process.env.SHOWCASE_HOURS ?? 24);
+  const HOURS = Number(process.env.SHOWCASE_HOURS ?? 120);
   // why trips fail while the city grows (logged every 4 hours)
   const why: Record<string, number> = {};
   const tev = (g.traffic as any).ev, fail0 = tev.fail;
@@ -218,6 +243,9 @@ it("builds the showcase city", () => {
       const st = g.people.stats;
       say(`h${h} pop ${st.population} buildings ${g.buildings.list.length} cars ${g.traffic.vehicles.length} failed ${g.failedTrips} ${((Date.now() - t0) / 1000).toFixed(0)}s`);
       if (Object.keys(why).length) say(`  fails ${JSON.stringify(why)}`);
+      say(`  demand ${(["res", "com", "ind", "off"] as const).map((k) => `${k} ${g.demand[k].v} [${g.demand[k].factors.map((f) => `${f.label} ${f.v}`).join(", ")}]`).join(" | ")}`);
+      const u = g.utilities.stats;
+      say(`  utilities ${(["power", "water", "sewage"] as const).map((k) => `${k} made ${u[k].made.toFixed(1)} used ${u[k].used.toFixed(1)} short ${u[k].short.toFixed(1)}`).join(" | ")}`);
     }
   }
   // what a city this size would have reached, and a treasury to match
@@ -227,4 +255,4 @@ it("builds the showcase city", () => {
   mkdirSync("tools/out", { recursive: true });
   writeFileSync("tools/out/showcase.log", log.join("\n"));
   writeFileSync("tools/out/showcase.json", JSON.stringify(g.serialize()));
-}, 600000);
+}, 1800000);

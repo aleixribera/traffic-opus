@@ -92,6 +92,26 @@ export function serviceIcon(kind: string): string {
       return svg(28, 28, `<rect x="13" y="16" width="2.4" height="8" fill="#7a5a33"/><circle cx="14.2" cy="11" r="7" fill="#4fa64a"/><circle cx="11.5" cy="9" r="2.4" fill="#6cc066"/>`);
     case "parklarge":
       return svg(28, 28, `<ellipse cx="18" cy="20" rx="7" ry="3.6" fill="#5fb3e0"/><rect x="8" y="15" width="2" height="8" fill="#7a5a33"/><circle cx="9" cy="11" r="6" fill="#4fa64a"/><circle cx="19.5" cy="9.5" r="4.6" fill="#3f8f3c"/><rect x="18.8" y="12" width="1.6" height="5" fill="#7a5a33"/>`);
+    case "windturbine":
+      return svg(28, 28, `<path d="M13.2 13 L12.4 25 H15.6 L14.8 13 Z" fill="#b8bec5"/><circle cx="14" cy="11" r="1.9" fill="#8a929b"/><path d="M14 11 L14.9 2.5 L13.1 2.5 Z M14 11 L21.9 15 L22.8 13.4 Z M14 11 L6.1 15 L5.2 13.4 Z" fill="#dfe4ea" stroke="#8a929b" stroke-width="0.7" stroke-linejoin="round"/>`);
+    case "coalplant":
+      return svg(28, 28, `<path d="M17 24 C17.8 18 18.5 13 17.2 8 H24.8 C23.5 13 24.2 18 25 24 Z" fill="#9aa0a6"/><rect x="3" y="14" width="13" height="10" fill="#6d737a"/><rect x="7" y="5" width="3" height="9" fill="#545a61"/><circle cx="9" cy="3.6" r="2" fill="#c9cdd2"/><circle cx="12" cy="2.6" r="1.5" fill="#dde0e3"/>`);
+    case "solarfarm":
+      return svg(28, 28, `<path d="M3 16 L9 7 H25 L19 16 Z" fill="#2b4f8f"/><path d="M8.3 8.3 H23.7 M5.6 12 H21.6 M13 7 L7 16 M19 7 L13 16" stroke="#8fb3ea" stroke-width="0.9"/><rect x="10" y="16" width="2" height="7" fill="#6d737a"/><rect x="5" y="23" width="18" height="2" fill="#6d737a"/>`);
+    case "waterpump":
+      return svg(28, 28, `<path d="M14 3 C18 9 21 12.5 21 16.5 A7 7 0 0 1 7 16.5 C7 12.5 10 9 14 3 Z" fill="#2f86e0"/><path d="M11 16.5 A3 3 0 0 0 14 19.5" stroke="#d6ecff" stroke-width="1.6" fill="none" stroke-linecap="round"/>`);
+    case "townhall":
+      return svg(28, 28, `<rect x="3" y="14" width="22" height="10" fill="#efe4cb"/><path d="M2 14 L14 9 L26 14 Z" fill="#6c7a90"/><rect x="11" y="6" width="6" height="8" fill="#efe4cb"/><path d="M10.5 6.5 A3.5 3.5 0 0 1 17.5 6.5 Z" fill="#4fa58f"/><path d="M6 16 v7 M10 16 v7 M18 16 v7 M22 16 v7" stroke="#b9ad93" stroke-width="1.4"/><rect x="2" y="24" width="24" height="2" fill="#b9ad93"/>`);
+    case "stadium":
+      return svg(28, 28, `<ellipse cx="14" cy="14" rx="12.5" ry="9" fill="#dfe3e8"/><ellipse cx="14" cy="14" rx="10.5" ry="7.2" fill="#d6503f"/><rect x="7.5" y="10" width="13" height="8" fill="#5fae4a"/><path d="M14 10 v8" stroke="#fff" stroke-width="0.8"/><circle cx="14" cy="14" r="1.6" fill="none" stroke="#fff" stroke-width="0.8"/>`);
+    case "obstower":
+      return svg(28, 28, `<path d="M12.6 25 L13.3 11 H14.7 L15.4 25 Z" fill="#cdc6ba"/><ellipse cx="14" cy="10" rx="5" ry="2.4" fill="#f2f2ee" stroke="#a69e90" stroke-width="0.8"/><rect x="9.2" y="9.6" width="9.6" height="1.4" fill="#a9cbe0"/><path d="M14 7.6 V2" stroke="#d8473a" stroke-width="1.2"/><rect x="9" y="24" width="10" height="2" fill="#a69e90"/>`);
+    case "concerthall":
+      return svg(28, 28, `<rect x="3" y="20" width="22" height="4" fill="#a9cbe0"/><path d="M4 20 C5 12 9 8 13 6 C12 11 12 16 13 20 Z" fill="#f7f7f3" stroke="#a7aca7" stroke-width="0.8"/><path d="M13 20 C14 13 18 9 23 8 C21 12 21 16 22 20 Z" fill="#e9ece9" stroke="#a7aca7" stroke-width="0.8"/><rect x="2" y="24" width="24" height="2" fill="#a7aca7"/>`);
+    case "skytower":
+      return svg(28, 28, `<rect x="8" y="14" width="12" height="12" fill="#5f86b0"/><rect x="9.5" y="8" width="9" height="6" fill="#6f93bb"/><rect x="11" y="4" width="6" height="4" fill="#7f9fc4"/><path d="M14 4 V0.5" stroke="#8a929b" stroke-width="1"/><path d="M8 14 H20 M9.5 8 H18.5 M11 4 H17" stroke="#e7ebf0" stroke-width="1"/><path d="M11 16 v9 M14 16 v9 M17 16 v9" stroke="#8fb0d3" stroke-width="0.7"/>`);
+    case "sewageoutlet":
+      return svg(28, 28, `<rect x="3" y="7" width="12" height="7" rx="1" fill="#6d737a"/><rect x="15" y="8.5" width="6" height="4" fill="#545a61"/><path d="M21 10.5 C24 12 24.5 15 24 18" stroke="#8a6d3b" stroke-width="3" fill="none" stroke-linecap="round"/><ellipse cx="18" cy="22" rx="8" ry="2.6" fill="#7aa8c9"/>`);
     case "sick":
       return svg(28, 28, `<rect x="4" y="4" width="20" height="20" rx="3" fill="#e0475f"/><path d="M14 8 v12 M8 14 h12" stroke="#fff" stroke-width="4"/>`);
     case "crime":
@@ -150,6 +170,9 @@ export const ICON = {
   chart: svg(18, 18, `<path d="M2.5 15.5 H15.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="3.5" y="9" width="2.6" height="5" fill="currentColor"/><rect x="7.7" y="5" width="2.6" height="9" fill="currentColor"/><rect x="11.9" y="2.5" width="2.6" height="11.5" fill="currentColor"/>`),
   car: svg(18, 18, `<path d="M3 11 L4.4 6.6 C4.7 5.7 5.4 5.2 6.3 5.2 H11.7 C12.6 5.2 13.3 5.7 13.6 6.6 L15 11 V14 H3 Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="6" cy="11" r="1.1" fill="currentColor"/><circle cx="12" cy="11" r="1.1" fill="currentColor"/>`),
   tiles: svg(18, 18, `<path d="M2.5 2.5 H15.5 V15.5 H2.5 Z M2.5 9 H15.5 M9 2.5 V15.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="9.8" y="9.8" width="4.9" height="4.9" fill="currentColor" opacity=".45"/>`),
+  policiesWin: svg(18, 18, `<path d="M4 2.5 H11.5 L14 5 V15.5 H4 Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M6.6 9.4 L8.4 11.2 L11.6 7.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`),
+  utilitiesWin: svg(18, 18, `<path d="M7.5 1.8 L3.2 9.8 H6.6 L5.4 16.2 L10.6 7.6 H7.4 L9.6 1.8 Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M13.4 6.6 C15 9.2 16 10.6 16 12.2 A2.6 2.6 0 0 1 10.8 12.2 C10.8 10.6 11.8 9.2 13.4 6.6 Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>`),
+  utilities: svg(28, 28, `<path d="M11 3 L5 15 H10 L8 25 L16 12 H11 L14 3 Z" fill="#5b6168"/><path d="M20.5 10 C23 14 24.5 16.2 24.5 18.6 A4 4 0 0 1 16.5 18.6 C16.5 16.2 18 14 20.5 10 Z" fill="#5b6168"/>`),
   services: svg(28, 28, `<path d="M3 11 L14 4 L25 11 Z" fill="#5b6168"/><rect x="5" y="11" width="18" height="2" fill="#5b6168"/><path d="M7.5 14 v7 M12 14 v7 M16 14 v7 M20.5 14 v7" stroke="#5b6168" stroke-width="2.2"/><rect x="4" y="22" width="20" height="2.4" fill="#5b6168"/>`),
   roadCat: svg(28, 28, `<path d="M9 26 L12 2 M19 26 L16 2" stroke="#5b6168" stroke-width="2" stroke-linecap="round"/><path d="M14 5 v3.5 M14 12 v4 M14 19.5 v4" stroke="#e9b32a" stroke-width="1.8" stroke-linecap="round"/>`),
   keys: svg(18, 18, `<rect x="2" y="4.5" width="14" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5 7.5 h1 M8.5 7.5 h1 M12 7.5 h1 M5.5 10.8 h7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>`),

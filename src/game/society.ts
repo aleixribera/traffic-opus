@@ -10,6 +10,7 @@ import type { Trip, TripKind, Vehicle } from "../sim/traffic";
 import type { Building } from "./buildings";
 import type { Game } from "./city";
 import { ZONE_GROUP } from "./growables";
+import { EFFECT } from "./policies";
 
 /** Sim seconds per game hour; the clock starts at 06:00 on day 1. */
 export const HOUR = 40;
@@ -437,18 +438,19 @@ export class Society {
     this.scheduleFree(c);
   }
 
-  /** Somewhere for an outing: a park within reach now and then, else the shops. */
+  /** Somewhere for an outing: a park or a landmark within reach now and then, else the shops. */
   pickLeisure(near: Building): Building | undefined {
     const g = this.g;
     const rng = g.rng;
     if (rng() < 0.4) {
       let best: Building | undefined, bs = Infinity;
       for (const b of g.services.stations()) {
-        if ((b.kind !== "park" && b.kind !== "parklarge") || !b.access) continue;
+        const pull = OUTING_PULL[b.kind];
+        if (!pull || !b.access || b.built < 1) continue;
         const d = dist(b.c, near.c);
-        if (d > (b.kind === "park" ? 450 : 900)) continue;
+        if (d > pull.reach) continue;
         if (near.access && !g.connected(near.access.seg, b.access.seg)) continue;
-        const s = (d * (0.6 + rng() * 0.8)) / (b.kind === "parklarge" ? 1.8 : 1);
+        const s = (d * (0.6 + rng() * 0.8)) / pull.draw;
         if (s < bs) { bs = s; best = b; }
       }
       if (best) return best;
@@ -524,7 +526,7 @@ export class Society {
       const home = g.buildings.byId.get(c.home);
       const carless = c.hh >= 0 && (c.hh * 7919) % 100 < (home?.zone === "resHigh" || home?.zone === "resMed" ? 40 : 22);
       const bus = g.transit.plan(fromP, toP, carless);
-      if (bus && g.rng() < bus.p) {
+      if (bus && g.rng() < Math.min(0.95, bus.p * (g.policies.has("freebus") ? EFFECT.freeBus : 1))) {
         this.busTrips++;
         g.transit.wait(c.id, bus);
         c.next = Infinity;
@@ -706,6 +708,13 @@ export class Society {
 export const WALK = 400;
 
 /** Rough door-to-door time for a trip that isn't simulated as a car. */
+/** Places people go for an outing: how far they will drive (m) and how strongly each draws them. */
+const OUTING_PULL: Partial<Record<string, { reach: number; draw: number }>> = {
+  park: { reach: 450, draw: 1 }, parklarge: { reach: 900, draw: 1.8 },
+  townhall: { reach: 1600, draw: 2.2 }, stadium: { reach: 2600, draw: 3.2 }, obstower: { reach: 2600, draw: 3 },
+  concerthall: { reach: 2600, draw: 3 }, skytower: { reach: 3000, draw: 3.4 },
+};
+
 export function estTime(a: V2, b: V2): number {
   return 12 + (dist(a, b) * 1.35) / 11;
 }
