@@ -161,6 +161,14 @@ it("builds the showcase city", () => {
   for (const Y of [-330, 330, 600]) B.road(`works cross ${Y}`, P(-200, Y), P(-640, Y), "street");
   B.road("works link", P(-200, 330), P(-200, 600), "street");
 
+  // the ramp terminals of the diamond carry the most turning traffic: signals, as any CS player would add
+  for (const J of [JW, JE]) {
+    let id = -1, bd = 25;
+    for (const [nid, n] of g.net.nodes) { const d = dist(n.p, J); if (d < bd) { bd = d; id = nid; } }
+    const pl = id >= 0 ? g.defaultSignal(id) : null;
+    say(pl && g.setSignal(id, pl) ? `signals at node ${id}` : `FAIL signals near ${J.x.toFixed(0)},${J.y.toFixed(0)}`);
+  }
+
   // ---------------------------------------------------------------- services (before zoning, so they get good spots)
   B.service("hospital", P(870, 90));
   B.service("firestation", P(490, 60));
@@ -175,6 +183,7 @@ it("builds the showcase city", () => {
   B.service("park", P(480, 380));
   B.service("park", P(960, 950));
   B.service("garbage", P(-520, 450));
+  B.service("garbage", P(1150, 330));
 
   // ---------------------------------------------------------------- zoning by district
   const z = (name: string, zone: ZoneId, f: (X: number, Y: number) => boolean) => B.zone(name, zone, (p) => { const q = XY(p); return f(q.X, q.Y); });
@@ -194,6 +203,10 @@ it("builds the showcase city", () => {
 
   // ---------------------------------------------------------------- grow it
   const HOURS = Number(process.env.SHOWCASE_HOURS ?? 24);
+  // why trips fail while the city grows (logged every 4 hours)
+  const why: Record<string, number> = {};
+  const tev = (g.traffic as any).ev, fail0 = tev.fail;
+  tev.fail = (trip: any, reason: string, now: number) => { const k = `${reason}/${trip.run ? trip.run.svc : trip.kind}${trip.to < 0 || trip.from < 0 ? "/outside" : ""}`; why[k] = (why[k] ?? 0) + 1; fail0(trip, reason, now); };
   const t0 = Date.now();
   for (let h = 1; h <= HOURS; h++) {
     for (let i = 0; i < HOUR * 30; i++) g.step(1 / 30);
@@ -201,6 +214,7 @@ it("builds the showcase city", () => {
     if (h % 4 === 0) {
       const st = g.people.stats;
       say(`h${h} pop ${st.population} buildings ${g.buildings.list.length} cars ${g.traffic.vehicles.length} failed ${g.failedTrips} ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+      if (Object.keys(why).length) say(`  fails ${JSON.stringify(why)}`);
     }
   }
   say(`segs ${g.net.segs.size} buildings ${g.buildings.list.length}`);

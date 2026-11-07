@@ -204,7 +204,7 @@ i.dm-res, i.dm-com, i.dm-ind, i.dm-off { background: var(--c); }
 .lvl1 { --lc: #74b83e; }
 .lvl2 { --lc: #4f8fe8; }
 .lvl3 { --lc: #9a6ae0; }
-.snaps { display: grid; grid-template-columns: 1fr 1fr; gap: 1px 6px; }
+.snaps { display: grid; grid-template-columns: auto auto; justify-content: start; gap: 1px 12px; }
 .snap-row { display: flex; align-items: center; gap: 5px; padding: 3px 0; cursor: pointer; white-space: nowrap; }
 .snap-row input { width: 14px; height: 14px; accent-color: var(--accent); margin: 0; flex: none; }
 

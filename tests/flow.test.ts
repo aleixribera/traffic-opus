@@ -170,4 +170,25 @@ describe("Swapping lanes", () => {
     expect(maxStuck).toBeLessThan(30);
     expect(arrived).toBe(12);
   });
+
+  it("swaps two cars that reach the end of the lane side by side, each in the other's lane", () => {
+    // as above, but the cars turn up late, a short way before the split, and stop level with each other:
+    // the older one pulls up to the line and across, the other waits a car's length back
+    for (const frac of [0.6, 0.7, 0.8]) {
+      const net = new RoadNetwork();
+      net.begin();
+      const A = net.addNode(v2(0, 0), 0), X = net.addNode(v2(150, 0), 0), L = net.addNode(v2(400, -150), 0), R = net.addNode(v2(400, 150), 0);
+      const a = road(net, A, X, "one2"), l = road(net, X, L, "one1"), r = road(net, X, R, "one1");
+      net.commit();
+      net.rebuild();
+      let arrived = 0;
+      const tr = new Traffic(net, { arrive: () => { arrived++; }, fail: () => {} });
+      for (let i = 0; i < 3; i++) {
+        tr.request({ from: acc(net, a, frac), fromSide: -1, to: acc(net, r, 0.8), toSide: 1, trip: trip(), truck: false, tries: 0, wait: 0, through: true });
+        tr.request({ from: acc(net, a, frac), fromSide: 1, to: acc(net, l, 0.8), toSide: 1, trip: trip(), truck: false, tries: 0, wait: 0, through: true });
+      }
+      for (let t = 0; t < 120; t += 1 / 30) tr.step(1 / 30);
+      expect(arrived, `starting at ${frac}`).toBe(6);
+    }
+  });
 });

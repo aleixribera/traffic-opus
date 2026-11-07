@@ -5,7 +5,7 @@ import { add, dist, polyClosest, rectCorners, scale, sub, type V2 } from "../cor
 import { mulberry32 } from "../core/noise";
 import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/network";
 import {
-  applyTrim, chainPoints, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type Plan, type PlanError,
+  applyTrim, chainPoints, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type LanePlan, type Plan, type PlanError,
 } from "../roads/planner";
 import { Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import { Terrain } from "../world/terrain";
@@ -313,6 +313,13 @@ export class Game {
     return [...out];
   }
 
+  /** Zoned buildings a new lane's outline (a closed polygon) would clear. */
+  lotsUnderOutline(outline: V2[]): Building[] {
+    if (outline.length < 3) return [];
+    const ids = this.buildings.hit([...outline, outline[0]], 1);
+    return ids.map((id) => this.buildings.byId.get(id)).filter((b): b is Building => !!b?.zone);
+  }
+
   /** Zoned buildings standing where a road now runs: demolished (CS2 clears growables in a road's path). */
   private clearRoadsOverLots(): Building[] {
     const gone: Building[] = [];
@@ -333,6 +340,18 @@ export class Game {
           for (let k = 0; k <= n && !hit; k++) {
             const t = k / n;
             if (pointInRect({ x: q.x + (r.x - q.x) * t, y: q.y + (r.y - q.y) * t }, b, lim)) hit = true;
+          }
+        }
+        // a turn pocket widens the road before a junction: its lanes (and the through lanes moved over for it)
+        if (!hit && (g.ends.a.pocket || g.ends.b.pocket)) {
+          for (const l of g.lanes) {
+            const Q = l.pl.pts;
+            for (let i = 0; i < Q.length && !hit; i++) {
+              const q = Q[i], r = Q[i + 1] ?? q;
+              const n = Math.max(1, Math.ceil(dist(q, r) / 2));
+              for (let k = 0; k <= n && !hit; k++) if (pointInRect({ x: q.x + (r.x - q.x) * (k / n), y: q.y + (r.y - q.y) * (k / n) }, b, 1.4)) hit = true;
+            }
+            if (hit) break;
           }
         }
         if (hit) break;
@@ -370,6 +389,22 @@ export class Game {
     const gone = this.clearRoadsOverLots();
     this.money -= plan.cost;
     this.pushUndo({ label: plan.kind, ops, money: plan.cost, added: [], removed: gone });
+    this.emit({ t: "money" });
+    if (gone.length) this.emit({ t: "buildings" });
+    return true;
+  }
+
+  /** Add lane: a turn pocket set (or taken away) before a junction, or a motorway slip lane lengthened. */
+  addLane(lp: LanePlan): boolean {
+    if (lp.errors.length) return false;
+    if (lp.road) return this.build(lp.road);
+    const pk = lp.pocket;
+    if (!pk || !this.net.segs.has(pk.seg)) return false;
+    const ops = this.applyRoads(() => this.net.setPocket(pk.seg, pk.end, pk.to));
+    if (!ops.length) return false;
+    const gone = this.clearRoadsOverLots();
+    this.money -= lp.cost;
+    this.pushUndo({ label: "lane", ops, money: lp.cost, added: [], removed: gone });
     this.emit({ t: "money" });
     if (gone.length) this.emit({ t: "buildings" });
     return true;
@@ -744,10 +779,14 @@ export class Game {
     if (b) this.noRouteAt.set(b.id, this.time);
   }
 
-  /** Real trips per simulated car (1 in small towns). */
+  /**
+   * Real trips per simulated car. The clock runs ~90x faster than the cars drive, so if every trip were a car a
+   * commute would keep a worker on the road for a good part of the day and a town would have nearly as many cars
+   * out as people. One car per trip in a hamlet, rising gently so a town of 1000 has some 130 cars about (CS-like).
+   */
   get tripScale(): number {
     const p = this.people.stats.population + this.people.stats.commuters;
-    return Math.max(1, p / 1600);
+    return Math.max(1, Math.sqrt(p) / 10);
   }
 
   // ---------------------------------------------------------------- simulation
@@ -975,7 +1014,7 @@ export class Game {
     this.people.onArrive(v);
   }
 
-  private onFail(trip: Trip, _reason: string) {
+  private onFail(trip: Trip, reason: string) {
     this.failedTrips++;
     if (trip.run) { this.services.onFail(trip); return; }
     if (trip.kind === "cargo") {
@@ -983,7 +1022,8 @@ export class Game {
       const from = this.buildings.byId.get(trip.from);
       if (from && from.zone === "ind") from.out = Math.min(6, from.out + 1);
       const to = this.buildings.byId.get(trip.to);
-      this.noRoute(to ?? from ?? null);
+      // (held up in traffic is not "no road there": that warning is for real dead ends)
+      if (reason === "no route" || reason === "missed its turn" || reason === "road removed") this.noRoute(to ?? from ?? null);
       return;
     }
     this.people.onFail(trip);

@@ -163,3 +163,28 @@ describe("planner", () => {
     expect(three).toBe(6);
   });
 });
+
+describe("angle lock", () => {
+  const deg = (p: V2, f: V2) => (Math.atan2(p.y - f.y, p.x - f.x) * 180) / Math.PI;
+  it("turns free straight roads in 15° steps off the world grid", () => {
+    const net = new RoadNetwork();
+    const f = v2(0, 0);
+    const o = { mpp: 0.2, level: 0, type: "street" as const, angleStep: true, from: { p: f } };
+    expect(deg(snap(net, v2(100, 7), o).p, f)).toBeCloseTo(0, 6);
+    expect(deg(snap(net, v2(100, 30), o).p, f)).toBeCloseTo(15, 6);
+    expect(deg(snap(net, v2(30, 100), o).p, f)).toBeCloseTo(75, 6);
+    // and lengths keep to 8 m cells when asked
+    const q = snap(net, v2(100, 7), { ...o, lengthStep: 8 }).p;
+    expect(Math.hypot(q.x, q.y)).toBeCloseTo(104, 6);
+    // without the lock the raw angle stays
+    expect(deg(snap(net, v2(100, 30), { ...o, angleStep: false }).p, f)).toBeCloseTo(16.7, 1);
+  });
+  it("follows the road it leaves when that is nearer than the world grid", () => {
+    const net = new RoadNetwork();
+    const f = v2(0, 0);
+    const t = v2(Math.cos(0.1), Math.sin(0.1)); // a road leaving at ~5.7°
+    const o = { mpp: 0.2, level: 0, type: "street" as const, angleStep: true, from: { p: f, tangent: t } };
+    expect(deg(snap(net, v2(100, 10), o).p, f)).toBeCloseTo(5.73, 1); // straight on
+    expect(deg(snap(net, v2(100, -1), o).p, f)).toBeCloseTo(0, 6); // the world axis is nearer
+  });
+});

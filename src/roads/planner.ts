@@ -1,5 +1,5 @@
 import {
-  CLEARANCE, ELEVATED_COST_MULT, LEVEL_H, MAX_GRADE, MIN_ARM_ANGLE, MIN_SEG_LEN, NODE_SNAP_PX, ROAD_SNAP_PX,
+  LANE_W, CLEARANCE, ELEVATED_COST_MULT, LEVEL_H, MAX_GRADE, MIN_ARM_ANGLE, MIN_SEG_LEN, NODE_SNAP_PX, ROAD_SNAP_PX,
   ROAD_TYPES, ROUNDABOUT_COST, WATER_BRIDGE_MULT, BULLDOZE_REFUND, roadWidth, isHighway, type RoadTypeId,
 } from "../config";
 import {
@@ -7,7 +7,7 @@ import {
   lerpV, makePolyline, minRadius, norm, polyAt, polyClosest, polyDir, quadCubic, right, sampleCubic, scale, segIntersect, signedAngle, smoothstep,
   splitCubic, straightCubic, sub, tangentArc, pointSegDist2, len, cross,
 } from "../core/math";
-import { glueGap, glueRun, type RoadNetwork, type RSeg } from "./network";
+import { glueGap, glueRun, pocketTaper, type Pocket, type RoadNetwork, type RSeg } from "./network";
 
 // ---------------------------------------------------------------------------------------------
 // World queries the planner needs (terrain, buildings, locked tiles)
@@ -48,7 +48,7 @@ export interface SnapOpts {
   mpp: number; // metres per screen pixel
   level: number;
   from?: { p: V2; tangent?: V2; on?: Snap }; // the point we are drawing from (on: what it snapped to)
-  angleStep?: boolean; // shift held: 15 degree steps
+  angleStep?: boolean; // angle lock: 15 degree steps off the world grid or the road we start from
   grid?: number; // grid size in metres (0 = off)
   type: RoadTypeId;
   /** Snapping switched off in the snapping menu: existing roads, guidelines/right angles, side-by-side roads. */
@@ -210,9 +210,14 @@ export function snap(net: RoadNetwork, raw: V2, o: SnapOpts): Snap {
       const cands: number[] = [];
       const base = o.from.tangent ? angleOf(o.from.tangent) : 0;
       if (o.angleStep) {
+        // the nearer of the steps off the road we leave and the steps off the world grid
         const step = (15 * Math.PI) / 180;
-        const k = Math.round((ang - base) / step);
-        p = add(f, scale(fromAngle(base + k * step), L));
+        let c = base + Math.round((ang - base) / step) * step;
+        const w = Math.round(ang / step) * step;
+        const off = (a: number) => Math.abs(Math.atan2(Math.sin(ang - a), Math.cos(ang - a)));
+        if (o.from.tangent && off(w) < off(c) - 1e-6) c = w;
+        p = add(f, scale(fromAngle(c), L));
+        if (gd && Math.abs(Math.sin(2 * (c - base))) < 1e-3) guides.push({ a: add(f, scale(fromAngle(c), -2000)), b: add(f, scale(fromAngle(c), 2000)) });
       } else if (gd) {
         for (let k = 0; k < 4; k++) cands.push(k * (Math.PI / 2));
         if (o.from.tangent) for (let k = 0; k < 4; k++) cands.push(base + k * (Math.PI / 2));
@@ -755,7 +760,7 @@ function stretchBetween(net: RoadNetwork, from: Snap, to: Snap): { seg: RSeg; t0
 /** How long a slip lane runs beside the carriageway: before an exit (to slow down) and, a bit longer, after an entry (to speed up). */
 export function slipLaneLength(main: RoadTypeId, exit: boolean): number {
   const kmh = ROAD_TYPES[main].speed * 3.6;
-  return Math.round(clamp(kmh * 1.6, 100, 200) * (exit ? 1 : 1.25));
+  return Math.round((clamp(kmh * 1.35, 100, 200) * (exit ? 1 : 1.25)) / 10) * 10;
 }
 
 /** A slip lane ending this close to the next one (an entry's, then an exit's) runs on into it as one lane (a weave). */
@@ -1917,4 +1922,140 @@ export function segAt(net: RoadNetwork, p: V2, pad: number, level: number | null
     if (d < pad && score < bd) { bd = score; best = id; }
   }
   return best;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Add lane: turn pockets before a junction; on a motorway, a slip lane lengthened
+// ---------------------------------------------------------------------------------------------
+
+export interface LanePlan {
+  /** a turn pocket on road `seg` before the junction at its end `end`: lengths after the edit (null: none left) */
+  pocket?: { seg: number; end: "a" | "b"; to: Pocket | null; side: "r" | "l"; len: number };
+  /** a motorway's slip lane, lengthened up to the cursor */
+  road?: Plan;
+  cost: number;
+  errors: PlanError[];
+  /** shown with the cursor ("Left-turn lane 40 m") */
+  label: string;
+  /** the new lane's outline (and its taper), for the preview */
+  outline: V2[];
+}
+
+const POCKET_MIN = 15;
+
+/**
+ * Add lane at `p` (Trafficity): on a town road, a turn lane opening out of it before the junction ahead of the
+ * traffic on that side, from here up to the stop line; nearer the centre a left-turn lane, nearer the kerb a
+ * right-turn lane. On a motorway, the slip lane of the exit ahead (or the entry behind) drawn on to here.
+ * `remove`: take the turn lane there away instead.
+ */
+export function planAddLane(net: RoadNetwork, world: BuildWorld, p: V2, remove = false): LanePlan | null {
+  const id = segAt(net, p, 1.5);
+  if (id === null) return null;
+  const s = net.segs.get(id)!, g = net.segGeom.get(id)!;
+  const T = ROAD_TYPES[s.type];
+  const fail = (msg: string, label = ""): LanePlan => ({ cost: 0, errors: [{ msg, p }], label, outline: [] });
+  if (isHighway(T) && T.bwd === 0) return planMotorwayLane(net, world, p, id);
+  if (s.ring) return fail("Not on a roundabout");
+  const sc = polyClosest(g.center, p).s, dr = polyDir(g.center, sc);
+  const lat = cross(dr, sub(p, polyAt(g.center, sc))); // + = right of a->b
+  const dir: 1 | -1 = T.bwd === 0 || lat >= 0 ? 1 : -1;
+  const end = dir === 1 ? "b" : "a";
+  const node = dir === 1 ? s.b : s.a;
+  const ng = net.nodeGeom.get(node);
+  if (!ng || ng.kind !== "junction" || ng.arms.length < 3) return fail("Turn lanes go just before a junction");
+  const n = dir === 1 ? T.fwd : T.bwd, med = (T.median ?? 0) / 2;
+  // which half of this side's lanes the cursor is over
+  const side: "r" | "l" = T.bwd === 0 ? (lat < 0 ? "l" : "r") : Math.abs(lat) - med < (n * LANE_W) / 2 ? "l" : "r";
+  const prev = s.pk?.[end] ?? null;
+  const name = side === "r" ? "Right-turn lane" : "Left-turn lane";
+  if (remove) {
+    if (!prev || !prev[side]) return fail(`No ${name.toLowerCase()} here`);
+    const to = { ...prev, [side]: 0 };
+    return { pocket: { seg: id, end, to: to.r || to.l ? to : null, side, len: 0 }, cost: 0, errors: [], label: `Remove ${name.toLowerCase()}`, outline: pocketOutline(net, id, dir, side, prev[side], prev) };
+  }
+  // there has to be a turn that way for it to serve
+  const turns = side === "r" ? ["R"] : ["L", "U"];
+  if (!ng.conns.some((c) => c.from.seg === id && c.from.dir === dir && turns.includes(c.turn))) return fail(side === "r" ? "No right turn at this junction" : "No left turn at this junction", name);
+  const L = g.center.length, tp = pocketTaper(s.type);
+  const stop = dir === 1 ? L - g.trimB : g.trimA;
+  const other = s.pk?.[end === "a" ? "b" : "a"];
+  const room = L - g.trimA - g.trimB - 4 - (other ? Math.max(other.r, other.l) + tp : 0) - tp;
+  if (room < POCKET_MIN) return fail("Too short a road for a turn lane", name);
+  let len = Math.round(Math.max(POCKET_MIN, dir === 1 ? stop - sc : sc - stop) / 5) * 5;
+  const capped = len > room;
+  len = Math.min(len, Math.floor(room));
+  const to: Pocket = { r: prev?.r ?? 0, l: prev?.l ?? 0, [side]: len };
+  const perM = T.costPerM / (T.fwd + T.bwd);
+  const was = prev?.[side] ?? 0;
+  const cost = Math.round(Math.max(0, len - was) * perM + (was ? 0 : tp * 0.5 * perM));
+  const errors: PlanError[] = [];
+  const outline = pocketOutline(net, id, dir, side, len, to);
+  const hit = world.buildingsHit(outline, 0.2);
+  if (hit.length) errors.push({ msg: hit.length === 1 ? "Building in the way" : `${hit.length} buildings in the way`, p, buildings: hit });
+  if (cost > world.money() + 0.5) errors.push({ msg: "Not enough money", p });
+  return { pocket: { seg: id, end, to, side, len }, cost, errors, label: `${name} ${len} m${capped ? " (all that fits)" : ""}`, outline };
+}
+
+/** The outline of a turn pocket's lane (with its taper) on road `id`, for the traffic going `dir`. */
+function pocketOutline(net: RoadNetwork, id: number, dir: 1 | -1, side: "r" | "l", len: number, pk: Pocket): V2[] {
+  const s = net.segs.get(id)!, g = net.segGeom.get(id)!;
+  const T = ROAD_TYPES[s.type];
+  const L = g.center.length, tp = pocketTaper(s.type);
+  const stop = dir === 1 ? L - g.trimB : g.trimA;
+  const sg = dir === 1 ? 1 : -1;
+  const n = dir === 1 ? T.fwd : T.bwd, med = (T.median ?? 0) / 2, twoWay = T.bwd > 0;
+  // the side's inside edge (centre line, median or a one-way's left edge), and how far out the pocket's lane sits
+  const inner = twoWay ? med : -(n / 2) * LANE_W;
+  const a = inner + (side === "l" ? 0 : n + (pk.l > 0 ? 1 : 0)) * LANE_W;
+  const left: V2[] = [], rightE: V2[] = [];
+  const steps = Math.max(4, Math.ceil((len + tp) / 3));
+  for (let k = 0; k <= steps; k++) {
+    const back = ((len + tp) * k) / steps; // metres back from the stop line
+    const sc = clamp(dir === 1 ? stop - back : stop + back, 0, L);
+    const open = back <= len ? 1 : smoothstep(1 - (back - len) / tp);
+    const q = polyAt(g.center, sc), r = right(polyDir(g.center, sc));
+    // while it opens, the lane is only so wide
+    left.push(add(q, scale(r, sg * a)));
+    rightE.push(add(q, scale(r, sg * (a + LANE_W * open))));
+  }
+  return [...left, ...rightE.reverse()];
+}
+
+/** On a motorway: lengthen the slip lane of the exit ahead (or the entry behind) to reach `p`. */
+function planMotorwayLane(net: RoadNetwork, world: BuildWorld, p: V2, id: number): LanePlan {
+  const s = net.segs.get(id)!;
+  const fail = (msg: string): LanePlan => ({ cost: 0, errors: [{ msg, p }], label: "Slip lane", outline: [] });
+  if (slipLaneEnd(net, id)) return fail("Click the motorway before this lane starts to lengthen it");
+  const r = cubicClosest(s.c, p);
+  const here: Snap = { p: r.p, h: net.heightOnSeg(id, r.t), seg: id, t: r.t, guides: [] };
+  let best: { plan: Plan; d: number } | null = null;
+  for (const dir of [1, -1] as const) {
+    for (const w of walkCarriage(net, here, dir, 900)) {
+      if (w.node === undefined) continue;
+      const nd = net.nodes.get(w.node)!;
+      const sl = slipAt(net, { p: { ...nd.p }, h: nd.h, node: w.node, guides: [] });
+      // an exit's lane starts ahead of us (we're upstream of it), an entry's ends behind us
+      if (!sl || sl.exit !== (dir === 1)) continue;
+      const plan = planSlipExtend(net, world, { p: { ...nd.p }, h: nd.h, node: w.node, guides: [] }, here, sl.seg.type);
+      if (plan && (!best || w.d1 < best.d)) best = { plan, d: w.d1 };
+      break;
+    }
+  }
+  if (!best) return fail("Motorway lanes open where a ramp leaves or joins: click just before an exit's slip lane, or just after an entry's");
+  const plan = best.plan;
+  const st = plan.strokes[0];
+  const pts = st ? chainPoints(st.show ?? st.chain, 3) : [];
+  return { road: plan, cost: plan.cost, errors: plan.errors, label: plan.note ?? `Slip lane ${Math.round(best.d)} m longer`, outline: pts.length > 1 ? stripOutline(pts, LANE_W / 2) : [] };
+}
+
+function stripOutline(pts: V2[], hw: number): V2[] {
+  const l: V2[] = [], r: V2[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+    const n = right(norm(sub(b, a)));
+    l.push(add(pts[i], scale(n, -hw)));
+    r.push(add(pts[i], scale(n, hw)));
+  }
+  return [...l, ...r.reverse()];
 }

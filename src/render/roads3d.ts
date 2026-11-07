@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { LANE_W, ROAD_TYPES, SHOULDER, SIDEWALK, STREET_TREES, isHighway, roadGroup, roadWidth } from "../config";
 import { clamp, dist, dot, norm, polyAt, polyClosest, polyDir, right, smoothstep, sub, type Polyline, type V2 } from "../core/math";
-import type { ChangeSet, RoadNetwork } from "../roads/network";
+import { pocketZones, type ChangeSet, type RoadNetwork } from "../roads/network";
 import { ringsNear } from "../roads/planner";
 import { dkey } from "../sim/router";
 import type { Traffic } from "../sim/traffic";
@@ -30,8 +30,8 @@ export function makeRoadMaterial(opts: { color?: number; opacity?: number; marki
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
     sh.vertexShader = sh.vertexShader
-      .replace("#include <common>", "#include <common>\nattribute vec4 aRoad;\nattribute vec2 aFlow;\nattribute vec3 aMed;\nattribute vec2 aClip;\nvarying vec4 vRoad;\nvarying vec2 vFlow;\nvarying vec3 vMed;\nvarying vec2 vClip;")
-      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRoad = aRoad;\nvFlow = aFlow;\nvMed = aMed;\nvClip = aClip;");
+      .replace("#include <common>", "#include <common>\nattribute vec4 aRoad;\nattribute vec2 aFlow;\nattribute vec3 aMed;\nattribute vec2 aClip;\nattribute vec4 aPock;\nvarying vec4 vRoad;\nvarying vec2 vFlow;\nvarying vec3 vMed;\nvarying vec2 vClip;\nvarying vec4 vPock;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRoad = aRoad;\nvFlow = aFlow;\nvMed = aMed;\nvClip = aClip;\nvPock = aPock;");
     sh.fragmentShader = sh.fragmentShader
       .replace(
         "#include <common>",
@@ -39,8 +39,10 @@ export function makeRoadMaterial(opts: { color?: number; opacity?: number; marki
 uniform vec3 uRoad; uniform vec3 uEdge; uniform vec3 uLane; uniform vec3 uCentre;
 uniform vec3 uGrass; uniform vec3 uTree; uniform vec3 uTreeLight;
 uniform float uFlowMode; uniform float uMarkings; uniform float uArrows; uniform float uHw;
-varying vec4 vRoad; varying vec2 vFlow; varying vec3 vMed; varying vec2 vClip;
+varying vec4 vRoad; varying vec2 vFlow; varying vec3 vMed; varying vec2 vClip; varying vec4 vPock;
 float band(float x, float w) { float f = fwidth(x) * 0.8 + 1e-4; return 1.0 - smoothstep(w - f, w + f, abs(x)); }
+// a turn pocket's line: dashed while it opens out, solid where it's a lane of its own
+float pockLine(float x, float p, float dash) { return p < 0.01 ? 0.0 : band(x, 0.1) * (p > 0.98 ? 1.0 : dash); }
 vec3 flowTint(float r) {
   float k = clamp((0.92 - r) / 0.6, 0.0, 1.0);
   return mix(vec3(1.0), mix(vec3(1.0, 0.62, 0.28), vec3(0.86, 0.13, 0.16), smoothstep(0.35, 1.0, k)), smoothstep(0.0, 0.25, k));
@@ -72,22 +74,32 @@ vec3 covTint(float r) {
         if (max(f, b) < 1.5) c = mix(c, uCentre, band(u, 0.12) * step(fract(v / 6.0), 0.6));
         else c = mix(c, uCentre, band(abs(u) - 0.2, 0.09));
       }
+      // turn pockets (vPock: how open the left and right pockets are, this side then the other): a left one opens
+      // on the inside and the through lanes move out for it; a right one opens outside them
+      float fi = med + vPock.x * LW, bi = med + vPock.z * LW;
       for (int k = 1; k < 4; k++) {
         float fk = float(k);
-        if (fk < f) lanes = max(lanes, band(u - med - fk * LW, 0.08) * dash);
-        if (fk < b) lanes = max(lanes, band(u + med + fk * LW, 0.08) * dash);
+        if (fk < f) lanes = max(lanes, band(u - fi - fk * LW, 0.08) * dash);
+        if (fk < b) lanes = max(lanes, band(u + bi + fk * LW, 0.08) * dash);
       }
+      lanes = max(lanes, pockLine(u - fi, vPock.x, dash));
+      lanes = max(lanes, pockLine(u - fi - f * LW, vPock.y, dash));
+      lanes = max(lanes, pockLine(u + bi, vPock.z, dash));
+      lanes = max(lanes, pockLine(u + bi + b * LW, vPock.w, dash));
     } else {
+      float o0 = -f * 0.5 * LW + vPock.x * LW;
       for (int k = 1; k < 4; k++) {
         float fk = float(k);
-        if (fk < f) lanes = max(lanes, band(u - (-f * 0.5 * LW + fk * LW), 0.08) * dash);
+        if (fk < f) lanes = max(lanes, band(u - (o0 + fk * LW), 0.08) * dash);
       }
+      lanes = max(lanes, pockLine(u - o0, vPock.x, dash));
+      lanes = max(lanes, pockLine(u - o0 - f * LW, vPock.y, dash));
       // one-way: chevrons down each lane, pointing the way traffic goes
       float y = mod(v, 22.0) - 11.0;
       for (int k = 0; k < 4; k++) {
         float fk = float(k);
         if (fk >= f || uArrows < 0.5) break;
-        float x = u - (-f * 0.5 * LW + (fk + 0.5) * LW);
+        float x = u - (o0 + (fk + 0.5) * LW);
         float ax = abs(x);
         float m = (1.0 - smoothstep(0.95, 1.05, ax));
         lanes = max(lanes, band(y + ax * 0.9 - 0.6, 0.22) * m);
@@ -339,7 +351,15 @@ export class Roads3D {
       return c;
     };
     const clipped = !!(g.ends.a.clip || g.ends.b.clip);
-    const edges = clipped ? { l: ss.map((sc) => -halfW + clipAt(sc, -1)), r: ss.map((sc) => halfW - clipAt(sc, 1)) } : undefined;
+    // turn pockets widen the road on the side of the traffic they serve (fwd: right of a->b)
+    const pz = g.ends.a.pocket || g.ends.b.pocket ? pocketZones(s, g) : null;
+    const pock = pz ? ss.map((sc) => [pz.fwd.l(sc), pz.fwd.r(sc), pz.bwd.l(sc), pz.bwd.r(sc)]) : undefined;
+    const edges = clipped || pock
+      ? {
+        l: ss.map((sc, i) => -halfW + clipAt(sc, -1) - (pock ? (pock[i][2] + pock[i][3]) * LANE_W : 0)),
+        r: ss.map((sc, i) => halfW - clipAt(sc, 1) + (pock ? (pock[i][0] + pock[i][1]) * LANE_W : 0)),
+      }
+      : undefined;
     // a median ends in a nose at a junction or dead end, but runs straight on into more of the same road
     let medEnd: number[] | undefined;
     if (T.median) {
@@ -353,7 +373,7 @@ export class Roads3D {
       const na = nose(s.a), nb = nose(s.b);
       medEnd = ss.map((sc) => Math.min(na ? sc - s0 : 1e4, nb ? s1 - sc : 1e4));
     }
-    const geo = ribbon(pts, hs, ss, halfW, LIFT, [T.fwd, T.bwd], edges, T.median ?? 0, medEnd, ss.map((sc) => Math.min(sc - s0, s1 - sc)));
+    const geo = ribbon(pts, hs, ss, halfW, LIFT, [T.fwd, T.bwd], edges, T.median ?? 0, medEnd, ss.map((sc) => Math.min(sc - s0, s1 - sc)), pock);
     const flow = geo.getAttribute("aFlow") as THREE.BufferAttribute;
     const hw = isHighway(T);
     const surface = new THREE.Mesh(geo, s.ring ? this.ringSurface.mat : hw ? this.hwSurface.mat : this.surface.mat);
@@ -377,7 +397,7 @@ export class Roads3D {
           while (i < ss.length - 2 && ss[i + 1] < sc) i++;
           for (const side of [-1, 1] as const) {
             if (!ok(i, side) || !ok(Math.min(i + 1, pts.length - 1), side)) continue;
-            const r = lateralAt(pts, i), off = side * (halfW + walk * 0.55);
+            const r = lateralAt(pts, i), off = (side > 0 ? inner.r[i] : inner.l[i]) + side * walk * 0.55;
             spots.push({ x: pts[i].x + r.x * off, y: pts[i].y + r.y * off, h: hs[i], r: tr.r });
           }
         }
@@ -679,7 +699,7 @@ function lateralAt(pts: V2[], i: number): V2 {
 }
 
 /** Road ribbon with aRoad = (lateral u, arc length v, fwd lanes, bwd lanes). */
-export function ribbon(pts: V2[], hs: number[], ss: number[], halfW: number, lift: number, lanes: [number, number], edges?: { l: number[]; r: number[] }, median = 0, medEnd?: number[], treeEnd?: number[]): THREE.BufferGeometry {
+export function ribbon(pts: V2[], hs: number[], ss: number[], halfW: number, lift: number, lanes: [number, number], edges?: { l: number[]; r: number[] }, median = 0, medEnd?: number[], treeEnd?: number[], pock?: number[][]): THREE.BufferGeometry {
   const n = pts.length;
   const pos = new Float32Array(n * 2 * 3);
   const nor = new Float32Array(n * 2 * 3);
@@ -715,6 +735,10 @@ export function ribbon(pts: V2[], hs: number[], ss: number[], halfW: number, lif
   const clip = new Float32Array(n * 4);
   if (edges) for (let i = 0; i < n; i++) { const cl = halfW + edges.l[i], cr = halfW - edges.r[i]; clip.set([cl, cr, cl, cr], i * 4); }
   g.setAttribute("aClip", new THREE.BufferAttribute(clip, 2));
+  // turn pockets: how far each is open (this side's left and right, the other side's)
+  const pk = new Float32Array(n * 8);
+  if (pock) for (let i = 0; i < n; i++) { pk.set(pock[i], i * 8); pk.set(pock[i], i * 8 + 4); }
+  g.setAttribute("aPock", new THREE.BufferAttribute(pk, 4));
   g.setIndex(idx);
   fixUpWinding(g);
   g.computeBoundingSphere();

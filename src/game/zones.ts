@@ -3,7 +3,7 @@
 // cells; buildings grow on runs of cells (lots). Cells are rebuilt around road edits and keep their zone and lot by
 // position, so splitting or reshaping a road doesn't wipe the zoning next to it.
 
-import { ROAD_TYPES } from "../config";
+import { LANE_W, ROAD_TYPES } from "../config";
 import { add, dist, fromAngle, pointSegDist2, polyAt, polyDir, right, scale, type V2 } from "../core/math";
 import type { ChangeSet, RoadNetwork } from "../roads/network";
 
@@ -345,6 +345,14 @@ export class ZoneMap {
       for (let i = 0; i < pts.length - 1; i++) {
         if (g.hs[i] > 6 && g.hs[i + 1] > 6) continue;
         if (pointSegDist2(c.c, pts[i], pts[i + 1]).d2 < lim * lim) return false;
+      }
+      // where turn pockets widen it, its lanes reach further out
+      if (g.ends.a.pocket || g.ends.b.pocket) {
+        const ll = LANE_W / 2 + CELL / 2 + 0.3;
+        for (const l of g.lanes) {
+          const q = l.pl.pts;
+          for (let i = 0; i < q.length - 1; i++) if (pointSegDist2(c.c, q[i], q[i + 1]).d2 < ll * ll) return false;
+        }
       }
     }
     // junction areas

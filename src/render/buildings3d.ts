@@ -16,6 +16,18 @@ export function lotMatrix(out: THREE.Matrix4, c: V2, rot: number, side: 1 | -1, 
   return out;
 }
 
+/** Where a car goes in and out of a lot: the kerb, the end of the driveway, the way into the lot, and its empty bays. */
+export interface LotWay {
+  kerb: V2;
+  drive: V2;
+  into: V2; // unit, from the road into the lot
+  h: number;
+  bays: { p: V2; dir: V2 }[]; // empty parking bays: centre, and where a parked car's nose points
+}
+
+/** A bay a static parked car fills (the rest are free for cars that come and go). */
+const bayTaken = (b: Building, k: number) => (((b.id * 73856093) ^ (k * 19349663)) >>> 0) % 10 >= 4;
+
 /** Front yard depth (m) for a lot with this much depth to spare around its model. */
 const setback = (spare: number) => Math.min(spare * 0.68, 5);
 
@@ -130,7 +142,7 @@ export class Buildings3D {
         inv.makeScale(1 / s, 1 / (s * tall), 1 / s);
         mm.bays.forEach((bay, k) => {
           const hsh = (b.id * 73856093) ^ (k * 19349663);
-          if ((hsh >>> 0) % 10 < 4) return; // ~60% occupied
+          if (!bayTaken(b, k)) return; // ~60% occupied
           filled.push({ m: M.clone().multiply(bay).multiply(inv), color: CAR_COLORS[(hsh >>> 3) % CAR_COLORS.length] });
         });
       }
@@ -162,6 +174,31 @@ export class Buildings3D {
       touched.add(mesh);
     }
     for (const m of touched) m.instanceMatrix.needsUpdate = true;
+  }
+
+  /** How cars get into and out of this building's lot. */
+  lotWay(b: Building): LotWay {
+    const u = fromAngle(b.rot);
+    const away = right(u);
+    const into = { x: away.x * b.side, y: away.y * b.side };
+    const reach = b.zone ? b.hd - setback(Math.max(0, b.hd * 2 - this.depth(b))) + 0.5 : b.hd;
+    const drive = { x: b.c.x - into.x * reach, y: b.c.y - into.y * reach };
+    const kerb = { ...b.front };
+    const bays: LotWay["bays"] = [];
+    const mm = this.models.buildings.get(b.kind);
+    if (mm?.bays.length && b.built >= 1 && !b.abandoned) {
+      const M = this.matrix(new THREE.Matrix4(), b);
+      const s = b.zone ? b.fit : 1;
+      const inv = new THREE.Matrix4().makeScale(1 / s, 1 / (s * (b.zone ? b.tall : 1)), 1 / s);
+      const W = new THREE.Matrix4();
+      mm.bays.forEach((bay, k) => {
+        if (bayTaken(b, k)) return;
+        const e = W.copy(M).multiply(bay).multiply(inv).elements;
+        const L = Math.hypot(e[8], e[10]) || 1;
+        bays.push({ p: { x: e[12], y: e[14] }, dir: { x: e[8] / L, y: e[10] / L } });
+      });
+    }
+    return { kerb, drive, into, h: 0, bays };
   }
 
   rebuildDrives(list: Building[]) {

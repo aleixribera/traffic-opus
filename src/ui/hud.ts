@@ -43,6 +43,7 @@ type Asset =
   | { kind: "service"; id: ServiceKind }
   | { kind: "roundabout"; size: RoundaboutSize }
   | { kind: "junction" }
+  | { kind: "lane" }
   | { kind: "zone"; id: ZoneId };
 interface Tab { id: string; label: string; assets: Asset[] }
 const CATS: Record<CatId, { label: string; tabs: Tab[] }> = {
@@ -53,7 +54,7 @@ const CATS: Record<CatId, { label: string; tabs: Tab[] }> = {
       { id: "medium", label: "Medium roads", assets: [{ kind: "road", id: "one2" }, { kind: "road", id: "avenue" }, { kind: "road", id: "avenueM" }] },
       { id: "large", label: "Large roads", assets: [{ kind: "road", id: "boulevard" }, { kind: "road", id: "boulevardM" }] },
       { id: "highways", label: "Highways", assets: [{ kind: "road", id: "hw1" }, { kind: "road", id: "hw2" }, { kind: "road", id: "one3" }, { kind: "road", id: "one4" }] },
-      { id: "junctions", label: "Intersections", assets: [1, 2, 3, 4].map((s) => ({ kind: "roundabout", size: s as RoundaboutSize }) as Asset).concat([{ kind: "junction" }]) },
+      { id: "junctions", label: "Intersections", assets: [1, 2, 3, 4].map((s) => ({ kind: "roundabout", size: s as RoundaboutSize }) as Asset).concat([{ kind: "lane" }, { kind: "junction" }]) },
     ],
   },
   zoning: {
@@ -65,7 +66,7 @@ const CATS: Record<CatId, { label: string; tabs: Tab[] }> = {
     tabs: SERVICE_TABS.map((t) => ({ id: t.id, label: t.label, assets: t.kinds.map((id) => ({ kind: "service", id }) as Asset) })),
   },
 };
-const catOf = (t: ToolId): CatId | null => (t === "road" || t === "roundabout" || t === "junction" ? "roads" : t === "zone" ? "zoning" : t === "service" ? "services" : null);
+const catOf = (t: ToolId): CatId | null => (t === "road" || t === "roundabout" || t === "junction" || t === "lane" ? "roads" : t === "zone" ? "zoning" : t === "service" ? "services" : null);
 
 type WinId = "info" | "progression" | "economy" | "city" | "transport";
 
@@ -101,6 +102,7 @@ const KEYS: [string, string][] = [
   ["[ / ]", "Parallel road spacing"],
   ["Shift", "15° angle steps"],
   ["B", "Bulldozer"],
+  ["L", "Add lane (Shift or right click removes)"],
   ["M", "Map tiles"],
   ["P / Z / C / X", "Progression / Economy / City / Transport"],
   ["Space, 1 2 3", "Pause, game speed"],
@@ -299,6 +301,7 @@ export class Hud {
     if (a.kind === "road") { this.lastRoad = a.id; app.setTool({ tool: "road", roadType: a.id }); }
     else if (a.kind === "roundabout") app.setTool({ tool: "roundabout", rbSize: a.size });
     else if (a.kind === "junction") app.setTool({ tool: "junction" });
+    else if (a.kind === "lane") app.setTool({ tool: "lane" });
     else if (a.kind === "service") app.setTool({ tool: "service", service: a.id });
     else app.setTool({ tool: "zone", zone: a.id, erase: false });
     this.sfx.play("click");
@@ -310,6 +313,7 @@ export class Hud {
     if (st.tool === "road") return { kind: "road", id: st.roadType };
     if (st.tool === "roundabout") return { kind: "roundabout", size: st.rbSize };
     if (st.tool === "junction") return { kind: "junction" };
+    if (st.tool === "lane") return { kind: "lane" };
     if (st.tool === "service") return { kind: "service", id: st.service };
     if (st.tool === "zone") return st.erase ? null : { kind: "zone", id: st.zone };
     return null;
@@ -335,6 +339,12 @@ export class Hud {
       return {
         key: "svc:" + a.id, icon: serviceIcon(a.id), name: T.name, sub: `${formatMoney(S.cost)} · ${formatMoney(S.upkeep)}/h`,
         title: `${T.name}: ${T.blurb}${what ? ` ${what}.` : ""} Costs ${formatMoney(S.cost)}, upkeep ${formatMoney(S.upkeep)} an hour.`, locked,
+      };
+    }
+    if (a.kind === "lane") {
+      return {
+        key: "lane", icon: ICON.lane, name: "Add lane", sub: "Turn & slip lanes",
+        title: "Add lane (L): click a road just before a junction for a turn lane, nearer the middle for left turns, nearer the kerb for right turns. On a motorway, click before an exit or after an entry to lengthen its slip lane. Shift or right click removes a turn lane.",
       };
     }
     if (a.kind === "junction") {
@@ -498,7 +508,8 @@ export class Hud {
         }
         items.push(elevation());
         const snap = h("div", "snaps");
-        const opts: { k: "geometry" | "guides" | "netSide" | "length"; label: string; on: boolean }[] = [
+        const opts: { k: "geometry" | "guides" | "netSide" | "length" | "angle"; label: string; on: boolean }[] = [
+          { k: "angle", label: "15° angles", on: st.angleLock },
           { k: "geometry", label: "Existing roads", on: !st.snapOff.geometry },
           { k: "guides", label: "Guidelines", on: !st.snapOff.guides },
           { k: "netSide", label: "Road sides", on: !st.snapOff.netSide },
@@ -507,9 +518,11 @@ export class Hud {
         for (const o of opts) {
           const l = h("label", "snap-row", `<input type="checkbox" ${o.on ? "checked" : ""}><span>${o.label}</span>`);
           const cb = l.querySelector("input")!;
-          cb.setAttribute("aria-label", `Snap to ${o.label.toLowerCase()}`);
+          if (o.k === "angle") l.title = "Straight roads turn in 15° steps. Hold Shift to flip this while drawing.";
+          cb.setAttribute("aria-label", o.k === "angle" ? "Lock road angles to 15 degree steps" : `Snap to ${o.label.toLowerCase()}`);
           cb.onchange = () => {
-            if (o.k === "length") app.setTool({ snapLength: cb.checked });
+            if (o.k === "angle") app.setTool({ angleLock: cb.checked });
+            else if (o.k === "length") app.setTool({ snapLength: cb.checked });
             else app.setTool({ snapOff: { ...st.snapOff, [o.k]: !cb.checked } });
           };
           snap.appendChild(l);
@@ -533,6 +546,8 @@ export class Hud {
       })), "wrap")));
     } else if (st.tool === "junction") {
       items.push(h("p", "to-text", "Click a junction to add traffic lights or edit their phases."));
+    } else if (st.tool === "lane") {
+      items.push(h("p", "to-text", "Click a road where the turn lane should start, back from the junction. Middle half: left turns, kerb half: right turns. On a motorway, click before an exit or after an entry. Shift or right click removes."));
     } else if (st.tool === "unlock") {
       const left = g.tileSlotsLeft;
       items.push(h("p", "to-text", left > 0

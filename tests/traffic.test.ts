@@ -73,11 +73,12 @@ describe("Traffic", () => {
     const tr = new Traffic(net, { arrive: () => {}, fail: () => {} });
     const f = access(net, s1, 0.2, 1), to = access(net, s2, 0.8, 1);
     tr.request({ from: f.a, fromSide: f.side, to: to.a, toSide: to.side, trip: { kind: "shop", from: 0, to: 0, resident: -1, startT: 0, freeFlow: 0 }, truck: false, tries: 0, wait: 0 });
-    let minV = Infinity, sawBend = false, done = false;
+    let minV = Infinity, sawBend = false, done = false, drove = false;
     for (let t = 0; t < 60 && !done; t += 1 / 30) {
       tr.step(1 / 30);
       const v = tr.vehicles[0];
-      if (!v) { done = t > 1; continue; }
+      if (!v) { done = drove; continue; } // (it rolls out of its lot first)
+      drove = true;
       if (v.edge.kind === "conn") sawBend = true;
       if (t > 3 && (v.edge.kind === "conn" || (v.edge as any).seg === s2 && v.s < 20)) minV = Math.min(minV, v.v);
     }

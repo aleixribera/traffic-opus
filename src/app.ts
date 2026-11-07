@@ -4,7 +4,7 @@ import { cubicAt, dist, dot, formatMoney, norm, rectCorners, right, sub, v2, typ
 import type { Building } from "./game/buildings";
 import { Game } from "./game/city";
 import {
-  parallelSpacing, planGrid, planRoad, planRoundabout, removalRefund, segAt, snap,
+  parallelSpacing, planAddLane, planGrid, planRoad, planRoundabout, removalRefund, segAt, snap,
   type CurveMode, type Plan, type RoundaboutSize, type Snap, type SnapOpts,
 } from "./roads/planner";
 import { Buildings3D } from "./render/buildings3d";
@@ -23,7 +23,7 @@ import { Saves } from "./game/saves";
 import { SERVICES, type ServiceId, type ServiceKind } from "./game/services";
 import type { Hud, Chip } from "./ui/hud";
 
-export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "bulldoze" | "zone" | "unlock" | "service";
+export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "zone" | "unlock" | "service";
 /** Zoning tool modes (CS2): fill one side of a street, paint with a brush, or drag a rectangle. */
 export type ZoneMode = "fill" | "brush" | "marquee";
 /** Road tool modes, as in CS2: the four drawing modes, a 3-click grid, and Replace (change type / reverse). */
@@ -44,6 +44,8 @@ export interface ToolState {
   /** Snapping menu: which kinds are switched off, and 8 m length steps. */
   snapOff: { geometry: boolean; guides: boolean; netSide: boolean };
   snapLength: boolean;
+  /** Straight pieces turn in 15° steps (off the world grid or the road they start from); Shift frees them. */
+  angleLock: boolean;
   zone: ZoneId;
   zoneMode: ZoneMode;
   brush: number; // brush radius, m
@@ -71,7 +73,7 @@ export class App {
   hud!: Hud;
   st: ToolState = {
     tool: "inspect", roadType: "street", mode: "straight", level: 0, rbSize: 1, parallel: false, parOffset: null,
-    snapOff: { geometry: false, guides: false, netSide: false }, snapLength: false, zone: "resLow", zoneMode: "fill", brush: 22, erase: false, bdzLevel: null, reverse: false,
+    snapOff: { geometry: false, guides: false, netSide: false }, snapLength: true, angleLock: true, zone: "resLow", zoneMode: "fill", brush: 22, erase: false, bdzLevel: null, reverse: false,
     service: "garbage",
   };
   uiHidden = false;
@@ -185,6 +187,7 @@ export class App {
     this.labels.set(g.gateways.map((gw) => ({ p: gw.p, name: gw.name, sub: GATEWAY_LABEL[gw.kind], minHalfH: 900 })));
     this.vehicles = new Vehicles3D(this.models);
     this.buildings3d = new Buildings3D(this.models);
+    this.vehicles.lotOf = (id) => { const b = g.buildings.byId.get(id); return b ? this.buildings3d.lotWay(b) : null; };
     this.zones3d = new Zones3D(g.zones);
     this.zones3d.setGrid(this.st.tool === "zone" || this.overlay === "zones");
     this.worldRoot.add(this.terrain3d.group, this.zones3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group);
@@ -482,6 +485,11 @@ export class App {
     if (pi.button === 2) {
       // zoning: right-click unzones that side of the street (CS2)
       if (this.st.tool === "zone") { this.paintZone(this.fillCells(this.cursor, true), true); return; }
+      // add lane: right-click takes a turn lane away
+      if (this.st.tool === "lane") {
+        const lp = planAddLane(this.game.net, this.game.world, this.cursor, true);
+        if (lp?.pocket && !lp.errors.length) { this.onClick(true); return; }
+      }
       // right click undoes the last click; with nothing to undo it puts the tool down (CS2)
       if (!this.stepBack() && this.st.tool !== "inspect") this.setTool({ tool: "inspect" });
       return;
@@ -495,6 +503,7 @@ export class App {
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     // the title menu: only Esc, to close a dialog opened from it
     if (this.mode === "menu") { if (down && k === "Escape") this.hud?.back(); return; }
+    if (k === "Shift") this.dirtyPreview = true; // the lane tool previews removal while it is held
     if (down) this.keys.add(k); else { this.keys.delete(k); return; }
     // AltGr arrives as Ctrl+Alt: leave it to the plain keys ([ and ] need it on many layouts)
     if ((e.ctrlKey || e.metaKey) && !e.altKey) {
@@ -518,6 +527,7 @@ export class App {
       this.setTool({ tool: "road", mode: order[(i + (e.shiftKey ? order.length - 1 : 1)) % order.length] });
     }
     else if (k === "b") this.setTool({ tool: "bulldoze" });
+    else if (k === "l") this.setTool({ tool: this.st.tool === "lane" ? "inspect" : "lane" });
     else if (k === "m") this.setTool({ tool: this.st.tool === "unlock" ? "inspect" : "unlock" });
     else if (k === "p") this.hud?.toggleWin("progression");
     else if (k === "z") this.hud?.toggleWin("economy");
@@ -595,7 +605,7 @@ export class App {
     return {
       mpp: this.view.mpp, level: this.st.level, type: this.st.roadType,
       from: from ? { p: from.p, tangent: this.startTangent ?? from.tangent, on: from } : undefined,
-      angleStep: this.keys.has("Shift"),
+      angleStep: this.st.angleLock !== this.keys.has("Shift"),
       off: this.st.snapOff,
       lengthStep: this.st.snapLength ? 8 : 0,
     };
@@ -634,6 +644,17 @@ export class App {
     const g = this.game;
     const t = this.st.tool;
     const c = this.cursor;
+    if (t === "lane") {
+      const lp = planAddLane(g.net, g.world, c, shift);
+      if (!lp) { this.reject("Click a road just before a junction"); return; }
+      if (lp.errors.length) { this.reject(lp.errors[0].msg); return; }
+      if (!g.addLane(lp)) { this.reject("Nothing to change here"); return; }
+      const removed = !!lp.pocket && lp.pocket.len === 0;
+      this.hud?.sound(removed ? "remove" : "build");
+      this.hud?.toast(removed ? lp.label : lp.cost ? `${lp.label} built for ${formatMoney(lp.cost)}` : lp.label);
+      this.dirtyPreview = true;
+      return;
+    }
     if (t === "service") {
       const k = this.st.service;
       const pl = g.servicePlan(k, c);
@@ -835,7 +856,7 @@ export class App {
     const end = snap(g.net, this.cursor, this.snapOpts(this.anchor));
     // started inside a roundabout: join the rim on the side the road actually leaves from
     const start = this.anchor.ringRaw
-      ? snap(g.net, this.anchor.ringRaw, { ...this.snapOpts(), from: { p: end.p } })
+      ? snap(g.net, this.anchor.ringRaw, { ...this.snapOpts(), angleStep: false, lengthStep: 0, from: { p: end.p } })
       : this.anchor;
     if (end.node !== undefined && end.node === start.node) return null;
     const mode = this.st.mode === "grid" || this.st.mode === "replace" ? "straight" : this.st.mode;
@@ -1021,6 +1042,26 @@ export class App {
         const built = new Set(cells.filter((x) => x.lot && x.zone !== to).map((x) => x.lot)).size;
         if (built) chips.push({ text: `${built} building${built === 1 ? "" : "s"} demolished`, kind: "error" });
       } else if (!zs && !g.zones.cellAt(c)) chips.push({ text: "Zone beside a street", kind: "info" });
+    } else if (t === "lane") {
+      const lp = planAddLane(g.net, g.world, c, this.keys.has("Shift"));
+      if (lp) {
+        const removing = !!lp.pocket && lp.pocket.len === 0;
+        if (lp.road) pv.plan(lp.road, 0);
+        if (lp.outline.length > 2) pv.footprint(lp.outline, lp.errors.length || removing ? 0xe5484d : 0x58c8e6);
+        for (const e of lp.errors) for (const id of e.buildings ?? []) {
+          const b = g.buildings.byId.get(id);
+          if (b) pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
+        }
+        if (lp.errors.length) chips.push({ text: lp.errors[0].msg, kind: "error" });
+        if (lp.label) chips.push({ text: lp.label, kind: "info" });
+        if (lp.cost) chips.push({ text: formatMoney(lp.cost), kind: lp.cost > g.money ? "error" : "cost" });
+        if (lp.road) this.lotWarning(lp.road, chips);
+        else if (!lp.errors.length && !removing) {
+          const lots = g.lotsUnderOutline(lp.outline);
+          for (const b of lots) pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
+          if (lots.length) chips.push({ text: `${lots.length} building${lots.length === 1 ? "" : "s"} demolished`, kind: "error" });
+        }
+      } else chips.push({ text: "Click a road just before a junction", kind: "info" });
     } else if (t === "junction") {
       const n = this.nodeAt(c);
       if (n !== null) {

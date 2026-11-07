@@ -5,7 +5,7 @@ import { Router, dkey, dkDir, dkSeg, type Access } from "./router";
 
 export type TripKind = "shop" | "leisure" | "work" | "home" | "cargo" | "move" | "empty" | "school" | "service";
 /** What a service vehicle is doing: driving out to a call, or back to its station (see game/services.ts). */
-export interface ServiceRun { svc: string; station: number; target: number; leg: "out" | "back"; patient?: number; /** the leg ended (arrived or failed) */ done?: boolean }
+export interface ServiceRun { svc: string; station: number; target: number; leg: "out" | "back"; patient?: number; /** the leg ended (arrived or failed) */ done?: boolean; /** a garbage truck's load so far on its round */ load?: number; /** route index a garbage truck has emptied bins up to */ swept?: number }
 
 export interface Trip {
   kind: TripKind;
@@ -23,6 +23,10 @@ export interface Vehicle {
   truck: boolean;
   len: number;
   color: number;
+  /** Picks its colour and body (car or van), chosen when the trip is asked for so it looks the same pulling out of its lot. */
+  look: number;
+  /** set as it reaches its destination (not when it gives up or its road goes) */
+  arrived?: boolean;
   edge: Edge;
   s: number;
   v: number;
@@ -58,7 +62,9 @@ export interface Vehicle {
   overrode?: boolean; // that go-ahead was a driver with an earlier one letting it out (see letsOut)
   turnOk?: boolean; // its driveway was clear to turn into on the way up to it (it carries on rather than stop dead)
   latV?: number; // sideways speed while changing lanes / pulling out (m/s, signed like lat)
+  slide?: number; // sideways creep more than steering at this speed could give: the whole body moves over (m, like lat)
   wish?: { lane: Lane; t: number }; // a lane it must change into but found no gap in (last tried at t)
+  pocketAhead?: Lane; // the turn pocket it is heading for, still ahead of it (it eases off for the queue in there)
   lcFrom?: Lane; // the lane it is changing out of, while its body still sits partly in it
   lcS?: number; // where on its new lane it changed over
   crossing?: { lane: Lane; s: number }[]; // far lanes this car is still pulling out across (spot where it started)
@@ -87,9 +93,19 @@ export interface PendingSpawn {
   through?: boolean;
   /** Leaves through an outside connection at `to`. */
   exit?: boolean;
+  /** When the trip was asked for: a car leaving a building first rolls out of its lot (EMERGE seconds). */
+  t0?: number;
+  look?: number;
 }
 
+/** Seconds a car takes to come out of its lot to the kerb before it joins the road (drawn by the renderer). */
+export const EMERGE = 2.6;
+/** Whether a trip starts in a building's lot (and so rolls out of it first): not service runs or outside traffic. */
+export const fromLot = (p: PendingSpawn) => !p.through && !p.trip.run;
+
 const TR_N = 40, TR_STEP = 0.35; // drawn-path samples per car (14 m: enough for the longest truck)
+/** A car's paint from its look. */
+export const carColor = (look: number) => CAR_COLORS[look % CAR_COLORS.length];
 const CAR_COLORS = [0xe8534a, 0x3c8de0, 0xf2b632, 0x55b85b, 0x9b6ce0, 0xef7fb6, 0x40c2c9, 0xf08a3a, 0x4a5568, 0xf5f5f0];
 
 export interface TrafficEvents {
@@ -148,6 +164,8 @@ export class Traffic {
   // ---------------------------------------------------------------- spawning
 
   request(p: PendingSpawn) {
+    p.t0 ??= this.time;
+    p.look ??= (Math.random() * 1e6) | 0;
     this.pending.push(p);
   }
 
@@ -172,8 +190,9 @@ export class Traffic {
     const lanes = this.lanesOf(k);
     const crossing = (best.dir === 1 ? 1 : -1) !== p.fromSide;
     // joining from the far side you turn into the lane nearest the middle, as real drivers do
-    const want = crossing ? Math.max(...lanes.map((l) => l.idx)) : 0;
-    let lane = lanes.find((l) => l.idx === want) ?? lanes[0];
+    const full = lanes.filter((l) => !l.pocket);
+    const want = crossing ? Math.max(...full.map((l) => l.idx)) : 0;
+    let lane = full.find((l) => l.idx === want) ?? full[0];
     if (!lane) return "fail";
     // traffic driving in from the edge of the map uses another lane when its own is backed up to the edge
     if (p.through && lanes.length > 1) {
@@ -183,7 +202,7 @@ export class Traffic {
         return ahead ? ahead.s - ahead.len - s + ahead.v * 3 : 1e4;
       };
       let best = room(lane);
-      if (best < 40) for (const l of lanes) { const r = room(l); if (r > best + 10) { best = r; lane = l; } }
+      if (best < 40) for (const l of full) { const r = room(l); if (r > best + 10) { best = r; lane = l; } }
     }
     const lc = polyClosest(lane.pl, p.from.p);
     const ls = lc.s;
@@ -220,7 +239,7 @@ export class Traffic {
       }
     }
     const v: Vehicle = {
-      id: this.nextId++, truck: p.truck, len, color: p.truck ? 0xf5f5f0 : CAR_COLORS[(Math.random() * CAR_COLORS.length) | 0],
+      id: this.nextId++, truck: p.truck, len, look: p.look ?? 0, color: p.truck ? 0xf5f5f0 : carColor(p.look ?? 0),
       edge: lane, s: ls, v: 5, acc: 0, route: best.keys, ri: 0, next: null, granted: false, holding: null,
       lat: 0, lcCool: 2, wait: 0, stuck: 0, dest: to, destSide: p.toSide, destS: -1,
       trip: { ...p.trip, freeFlow: best.freeFlow },
@@ -249,6 +268,7 @@ export class Traffic {
     const side = (lane.dir === 1 ? 1 : -1) * p.fromSide; // +1 = building on the right of travel
     // start at the kerb (less a little: the nose is already poking out) and slide across into the lane
     v.lat = side * Math.max(LANE_W * 0.9, lc.d - 1.2);
+    if (fromLot(p)) v.fade = 1; // it was drawn rolling out of its lot up to here
     if (crossing) { v.crossing = this.lanesOf(dkey(p.from.seg, best.dir === 1 ? -1 : 1)).map((nl) => ({ lane: nl, s: polyClosest(nl.pl, p.from.p).s })); v.crossFrom = ls; }
     insertOcc(lane, v);
     this.vehicles.push(v);
@@ -275,8 +295,9 @@ export class Traffic {
     if (this.pending.length) {
       const keep: PendingSpawn[] = [];
       for (const p of this.pending) {
+        if (fromLot(p) && this.time - (p.t0 ?? 0) < EMERGE) { keep.push(p); continue; }
         const r = this.trySpawn(p);
-        if (r === "wait") { p.wait += dt; p.tries++; if (p.wait < 90) keep.push(p); else this.ev.fail(p.trip, "blocked driveway", this.time); }
+        if (r === "wait") { p.wait += dt; p.tries++; if (p.wait < (p.through ? 300 : 90)) keep.push(p); else this.ev.fail(p.trip, "blocked driveway", this.time); } // (a car driving in from beyond the map waits its turn off-map, as at a CS outside connection)
         else if (r === "fail") this.ev.fail(p.trip, "no route", this.time);
       }
       this.pending = keep;
@@ -318,8 +339,12 @@ export class Traffic {
         lv += clamp(want - lv, -aLat * dt, aLat * dt);
         if (Math.abs(lv) > cap) lv = Math.sign(lv) * cap;
         const nl = v.lat + lv * dt;
+        const was = v.lat;
         if (Math.abs(v.lat) < 0.02 || Math.sign(nl) !== Math.sign(v.lat)) { v.lat = 0; v.latV = 0; }
         else { v.lat = nl; v.latV = lv; }
+        // what steering could give at this speed turns the car; the creep beyond it slides it across, pointing ahead
+        const moved = v.lat - was, steer = v.v * 0.26 * dt;
+        if (Math.abs(moved) > steer) v.slide = (v.slide ?? 0) + moved - Math.sign(moved) * steer;
       }
       v.lcCool -= dt;
       const r = this.advance(v);
@@ -369,6 +394,7 @@ export class Traffic {
             if (v.s >= v.destS) {
               if (v.lost) return true;
               v.trip.freeFlow = v.ideal;
+              v.arrived = true;
               this.ev.arrive(v, this.time);
               return true;
             }
@@ -376,6 +402,7 @@ export class Traffic {
             if ((v.turnOk && v.v > 1) || this.canTurnIn(v, lane)) {
               // pulling out of a driveway takes a moment even on a quiet street: the first seconds aren't delay
               v.trip.freeFlow = v.ideal + Math.min(6, v.born - v.trip.startT);
+              v.arrived = true;
               this.ev.arrive(v, this.time);
               return true;
             }
@@ -503,7 +530,7 @@ export class Traffic {
       v.granted = false;
       if (!v.next) {
         // wrong lane at the end: after a short wait, take any exit and re-plan
-        if (((toEnd < 2 && v.wait > 3.5) || (v.wish && toEnd < 9 && v.wait > 20)) && lane.outs.length) {
+        if (((toEnd < 2 && v.wait > 3.5 && !v.wish) || (v.wish && toEnd < 9 && (v.wait > 20 || (v.wait > 4 && this.swapLocked(v, lane))))) && lane.outs.length) {
           // prefer a way on from which the destination can still be reached
           const viable = lane.outs.filter((c) => this.router.routeFromKey(dkey(c.to.seg, c.to.dir), v.dest));
           const pool = viable.length ? viable : lane.outs;
@@ -907,7 +934,7 @@ export class Traffic {
 
   /** How far from its stop line a car asks the junction: its comfortable stopping distance plus a margin. */
   private askAt(v: Vehicle): number {
-    return Math.max(14, (v.v * v.v) / (2 * 2) + v.v * 1.5 + 8);
+    return Math.max(14, (v.v * v.v) / (2 * 2.4) + v.v * 1.2 + 8);
   }
 
   /**
@@ -999,8 +1026,13 @@ export class Traffic {
         if (!v.turnOk) con(Math.max(0.1, dd - 0.85 + P.s0), 0);
       } else v.turnOk = false;
     }
-    if (lead) con(lead.s - lead.len - v.s, lead.v);
-    else {
+    if (lead) {
+      con(lead.s - lead.len - v.s, lead.v);
+      // drivers watch the brake lights a car further on too, so a queue's slowdown reaches them sooner and
+      // doesn't build into a stop-and-go wave down the line
+      const lead2 = occ[i + 2];
+      if (lead2 && lead2.v < lead.v) con(lead2.s - lead2.len - v.s - lead.len - P.s0, lead2.v);
+    } else {
       // look ahead along the planned path, through the junction too (also before the go-ahead: a car turning
       // ahead of us is something to slow for in good time, not something that appears when we're let through)
       let d = e.pl.length - v.s;
@@ -1081,17 +1113,23 @@ export class Traffic {
         for (const u of cf.c.holders as Vehicle[]) if (u !== v && u.edge === cf.c.from && u.v > 2) ld(u, cf.c.from.pl.length - u.s + cf.c.pl.length);
       }
     }
+    // a turn pocket coming up with a queue in it: ease off to join its tail rather than swing in fast and brake hard
+    if (e.kind === "lane" && v.pocketAhead && v.pocketAhead.seg === (e as Lane).seg) {
+      const pk = v.pocketAhead, tail = (pk.occ as Vehicle[])[0];
+      if (tail) con(Math.max(0.1, this.mapRaw(pk, e as Lane, tail.s - tail.len) - v.s - 1.5), tail.v);
+    }
     // cooperative merging (see laneChange): line up behind a car in the lane we must get into...
     if (e.kind === "lane" && v.wish) {
       const tl = v.wish.lane;
-      // and wait short of the end of the lane, where there's still room to pull across
-      const hold = e.pl.length - 7 - v.s;
-      if (hold > -2) con(Math.max(0.1, hold), 0);
       const ts = this.mapS(e as Lane, tl, v.s);
+      // (a car dropping back for us whose nose is still level with our tail: pull further up so it's clear)
+      let pullUp = false;
       for (const o of tl.occ as Vehicle[]) {
-        if (o.s <= ts - v.len) continue; // already behind us: it makes room (below)
         // two cars that each need the other's lane: the older one goes first, the other drops back behind it
-        if (o.wish?.lane === e && o.id > v.id) continue;
+        const mutual = o.wish?.lane === e && o.id > v.id;
+        if (mutual && o.s > ts - v.len - 2.5 && o.s < ts + 1) pullUp = true;
+        // already behind us: it makes room (below). Level with our tail at speed it can't any more: drop behind it
+        if (mutual || o.s <= ts - v.len - (o.v * o.v > 6 * 6 ? 6 : 0)) continue;
         const g2 = this.mapS(tl, e as Lane, o.s - o.len) - v.s - 1.5;
         if (g2 >= P.s0) con(g2, o.v);
         else {
@@ -1099,9 +1137,19 @@ export class Traffic {
           // stopping dead beside it, or creeping along level with it
           const tv = Math.max(0, o.v - 2);
           capA = Math.min(capA, v.v > tv ? Math.max(-3.5, (tv - v.v) * 1.5) : 0);
+          // it needs our lane too (and goes first): stop a car's length short of where it waits to pull
+          // across, or it never finds room beside us
+          if (o.wish?.lane === e) {
+            const back = e.pl.length - 1.5 - o.len - 1.6 - v.s;
+            if (back > -2) con(Math.max(0.1, back + P.s0), 0);
+          }
         }
         break;
       }
+      // wait short of the end of the lane, where there's still room to pull across (laneChange takes a crawling car up to 1 m from it)
+      // (s0 is the standstill gap car-following keeps to an obstacle: without it the car stops 2 m short)
+      const hold = e.pl.length - (pullUp ? 1.5 : 7) - v.s;
+      if (hold > -2) con(Math.max(0.1, hold + P.s0), 0);
     }
     // ...and hold back for a car beside us that needs to get into our lane ahead of us
     if (e.kind === "lane") {
@@ -1231,9 +1279,10 @@ export class Traffic {
 
   private laneChange(v: Vehicle) {
     const lane = v.edge as Lane;
-    if (lane.count < 2 || Math.abs(v.lat) > 0.4) return;
-    if (v.s < 3 || lane.pl.length - v.s < 4) return;
+    if (Math.abs(v.lat) > 0.4) return;
+    if (v.s < 3 || lane.pl.length - v.s < (v.v < 2 ? 1 : 4)) return;
     const all = this.lanesOf(dkey(lane.seg, lane.dir));
+    if (all.length < 2) return;
     const nk = v.route[v.ri + 1];
     const final = this.isFinal(v);
     // look one road further: a short next road (an exit right after a lane gain) leaves no room to change there
@@ -1251,6 +1300,7 @@ export class Traffic {
     let target: Lane | null = null;
     let mandatory = false;
     v.wish = undefined;
+    v.pocketAhead = undefined;
     if (!good(lane)) {
       const goods = all.filter(good);
       if (!goods.length) return;
@@ -1277,8 +1327,12 @@ export class Traffic {
       }
     }
     if (!target) return;
+    // a turn pocket opens out of the road just before the junction: over into it only once it's beside us
+    // (till then the car just drives on in its lane, and doesn't ask anyone to make room)
+    if (target.pocket && this.mapRaw(lane, target, v.s) < 2) { if (mandatory) v.pocketAhead = target; return; }
     const ts = this.mapS(lane, target, v.s);
-    const toEnd = lane.pl.length - v.s;
+    // (on the last road the lane is needed by the destination, not the end of the road)
+    const toEnd = (final && v.destS >= 0 ? Math.min(v.destS, lane.pl.length) : lane.pl.length) - v.s;
     const urgency = mandatory ? clamp(1 - toEnd / 90, 0, 1) : 0;
     const k = 1 - urgency * 0.6;
     const to = target.occ as Vehicle[];
@@ -1288,12 +1342,13 @@ export class Traffic {
       follow = o;
     }
     // (in a standing queue a car that has to get over noses in ahead of a waiting one with less room)
-    const squeeze = mandatory && v.v < 1 && follow && follow.v < 0.5 ? 1.2 : 2.5;
+    // (one stopped beside us that needs our lane in turn is waiting for us to go: clear of its nose will do)
+    const squeeze = mandatory && v.v < 1 && follow && follow.v < 0.5 ? (follow.wish?.lane === lane ? 0.3 : 1.2) : 2.5;
     // (and room ahead to slow to the speed of the lane we're moving into: no diving into a queue at speed)
     const noGap = (lead && lead.s - lead.len - ts < Math.max(2.5, v.v * 0.6 * k, (SIM.idm.s0 + Math.max(0, v.v * v.v - lead.v * lead.v) / (2 * (mandatory ? 3.2 : 2.2))) * k)) || (follow && ts - v.len - follow.s < Math.max(squeeze, follow.v * 0.9 * k + (follow.v - v.v) * 0.8));
     if (noGap) {
       // must get over soon and there's no gap: say so. We line up behind a car there, and the one behind it lets us in.
-      if (mandatory && toEnd < 160) v.wish = { lane: target, t: this.time };
+      if (mandatory && toEnd < Math.max(160, v.v * 7)) v.wish = { lane: target, t: this.time };
       return;
     }
     // commit
@@ -1312,8 +1367,30 @@ export class Traffic {
     if (final) this.computeDestS(v);
   }
 
+  /**
+   * Stopped level at the end of the lane with an older car that needs our lane while we need its: neither can
+   * pull across, so we (the younger) give way by driving on in our own lane and re-planning.
+   */
+  private swapLocked(v: Vehicle, lane: Lane): boolean {
+    const tl = v.wish?.lane;
+    if (!tl) return false;
+    const ts = this.mapS(lane, tl, v.s);
+    for (const o of tl.occ as Vehicle[]) {
+      if (o.id < v.id && o.wish?.lane === lane && o.v < 0.5 && o.wait > 4 && o.s > ts - v.len - 0.3 && o.s - o.len < ts + 0.3) return true;
+    }
+    return false;
+  }
+
   private mapS(a: Lane, b: Lane, s: number): number {
-    return clamp((s / (a.pl.length || 1)) * b.pl.length, 0, b.pl.length);
+    return clamp(this.mapRaw(a, b, s), 0, b.pl.length);
+  }
+
+  /** The point beside s on lane a, on lane b (by where both run along their road's centreline; < 0: before b starts). */
+  private mapRaw(a: Lane, b: Lane, s: number): number {
+    if (a.seg !== b.seg || a.dir !== b.dir) return (s / (a.pl.length || 1)) * b.pl.length;
+    const c = a.dir === 1 ? a.c0 + (s / (a.pl.length || 1)) * (a.c1 - a.c0) : a.c1 - (s / (a.pl.length || 1)) * (a.c1 - a.c0);
+    const f = a.dir === 1 ? (c - b.c0) / (b.c1 - b.c0 || 1) : (b.c1 - c) / (b.c1 - b.c0 || 1);
+    return f * b.pl.length;
   }
 
   // ---------------------------------------------------------------- rerouting
@@ -1571,6 +1648,14 @@ export class Traffic {
     }
     let T = v.trail;
     if (!T) { T = v.trail = new Float32Array(TR_N * 3); snap = true; }
+    if (v.slide) {
+      // a creep sideways at a crawl: the path driven so far moves over with it, so the body slides, not turns
+      if (!snap) {
+        const r = right(d), ox = r.x * v.slide, oy = r.y * v.slide;
+        for (let k = 0; k < TR_N; k++) { T[k * 3] += ox; T[k * 3 + 1] += oy; }
+      }
+      v.slide = 0;
+    }
     if (snap) {
       // a straight tail behind the front
       const bx = back ? back.x : -d.x, by = back ? back.y : -d.y;

@@ -6,6 +6,7 @@ import { HOUR, St } from "../src/game/society";
 import { ZONE_GROUP } from "../src/game/growables";
 import type { ServiceKind } from "../src/game/services";
 import type { Building } from "../src/game/buildings";
+import { dkSeg } from "../src/sim/router";
 
 const free = (p: V2): Snap => ({ p, h: 0, guides: [] });
 
@@ -92,7 +93,9 @@ describe("City services", () => {
     const homes = g.buildings.list.filter((b) => b.zone === "resLow" && b.built >= 1);
     expect(homes.length).toBeGreaterThan(4);
     // a high school is big: put it on the homes
-    const target = homes[Math.floor(homes.length / 2)];
+    // the first home a high school fits on (which homes grow depends on the city's traffic)
+    const order = [...homes.slice(Math.floor(homes.length / 2)), ...homes.slice(0, Math.floor(homes.length / 2))];
+    const target = order.find((h) => { const p = g.servicePlan("highschool", h.c); return p?.ok && p.clears!.length > 0; }) ?? order[0];
     const pl = g.servicePlan("highschool", target.c);
     expect(pl?.ok, pl?.reason).toBe(true);
     expect(pl!.clears!.length).toBeGreaterThan(0);
@@ -128,7 +131,7 @@ describe("City services", () => {
     g.money = 1e6;
     run(g, 6);
     g.milestone = 1; // problems start at Hamlet
-    run(g, 40);
+    run(g, 90); // (a house's bins take three or four days to overflow)
     const homes = g.buildings.list.filter((b) => b.zone && ZONE_GROUP[b.zone] === "res" && g.people.householdsIn(b.id) > 0);
     const piled = homes.filter((b) => (b.garbage ?? 0) > 45).length;
     expect(piled, "homes with garbage piling up").toBeGreaterThan(homes.length * 0.5);
@@ -178,6 +181,33 @@ describe("City services", () => {
     // upkeep is charged
     expect(g.budget.expense.services).toBeGreaterThan(0);
   }, 180000);
+
+  it("a garbage truck empties the bins along the roads it has driven, and no others", () => {
+    const g = new Game(7);
+    town(g);
+    g.money = 1e6;
+    run(g, 6);
+    g.milestone = 1;
+    place(g, "garbage", 0.3);
+    for (const b of g.buildings.list) if (!b.svc) b.garbage = 60;
+    // a truck out on its round, a few roads in
+    let truck: any = null;
+    for (let i = 0; i < 12 * HOUR * 30 && !truck; i++) {
+      g.step(1 / 30);
+      truck = g.traffic.vehicles.find((v) => v.trip.run?.svc === "garbage" && v.trip.run.leg === "out" && v.ri >= 1) ?? null;
+    }
+    expect(truck, "a garbage truck a few roads into its round").not.toBeNull();
+    const driven = new Set<number>();
+    for (let i = 0; i <= truck.ri; i++) driven.add(dkSeg(truck.route[i]));
+    for (const b of g.buildings.list) if (!b.svc) b.garbage = 30;
+    truck.trip.run.swept = 0;
+    truck.trip.run.load = 0;
+    (g.services as any).sweep();
+    const emptied = g.buildings.list.filter((b) => !b.svc && b.access && b.garbage === 0);
+    const along = g.buildings.list.filter((b) => !b.svc && b.access && driven.has(b.access.seg));
+    expect(along.length, "buildings on the roads it drove").toBeGreaterThan(0);
+    expect(emptied.map((b) => b.id).sort(), "bins emptied").toEqual(along.map((b) => b.id).sort());
+  }, 120000);
 
   it("fire engines put fires out; without a station the building burns down", () => {
     for (const withStation of [true, false]) {

@@ -1,4 +1,4 @@
-import { LANE_W, ROAD_TYPES, SHOULDER, roadWidth, type RoadTypeId } from "../config";
+import { LANE_W, ROAD_TYPES, SHOULDER, SIM, roadWidth, type RoadTypeId } from "../config";
 import {
   type Cubic, type Polyline, type V2,
   add, angleOf, clamp, cubicTangent, dist, dot, lineIntersect, makePolyline, minRadius, norm, offsetPolyline,
@@ -33,6 +33,20 @@ export interface RSeg {
   type: RoadTypeId;
   c: Cubic; // p0 at node a, p3 at node b
   ring: number; // roundabout id (0 = none); ring roads have priority at their junctions
+  /** turn pockets: extra lanes for the traffic arriving at that end, opening out of the road before the junction */
+  pk?: { a?: Pocket; b?: Pocket };
+}
+
+/**
+ * A turn pocket's lengths (metres of full-width lane before the stop line; 0 = none): `r` an extra lane on the
+ * right of the traffic arriving (it takes the right turns), `l` one on its left (the left turns and U-turns; the
+ * through lanes swing over to the right to make room, as on a real road).
+ */
+export interface Pocket { r: number; l: number }
+
+/** How long a pocket's taper is on a road of this type (where its lane opens out of the road). */
+export function pocketTaper(type: RoadTypeId): number {
+  return clamp(ROAD_TYPES[type].speed * 1.2, 12, 24);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -54,8 +68,13 @@ export interface Lane extends Edge {
   key: string; // `${seg}:${dir}:${idx}` stable across rebuilds
   seg: number;
   dir: 1 | -1; // 1 = a->b
-  idx: number; // 0 = kerb-side (rightmost) lane
-  count: number; // lanes in this direction
+  idx: number; // 0 = kerb-side (rightmost) lane; a turn pocket's is -1 (right of the kerb lane) or count (left of the inner one)
+  count: number; // lanes in this direction (turn pockets not counted)
+  /** a turn pocket's lane: only so long, before the junction */
+  pocket?: "r" | "l";
+  /** the stretch of the road's centreline (arc length from a) it runs beside */
+  c0: number;
+  c1: number;
   from: number; // node id at start
   to: number; // node id at end
   offset: number; // lateral offset from centreline (relative to a->b right)
@@ -94,6 +113,8 @@ export interface Arm {
   angle: number;
   halfW: number;
   trim: number;
+  /** extra width on the arm's left (seen from the junction): the turn pockets of the traffic arriving on it */
+  wL?: number;
 }
 
 /**
@@ -117,6 +138,8 @@ export interface EndShape {
   clipLen: number;
   /** per lane idx: how far from the node the lane starts (or ends); a connector carries cars across the taper */
   laneTrim: number[];
+  /** turn pockets for the traffic arriving at this end (at a junction only), lengths as built */
+  pocket?: Pocket;
 }
 
 export const NO_SHAPE: EndShape = { shift: 0, glue: null, clip: 0, clipSide: 1, clipLen: 0, laneTrim: [] };
@@ -241,7 +264,8 @@ export type Op =
   | { t: "delSeg"; seg: RSeg }
   | { t: "setType"; id: number; from: RoadTypeId; to: RoadTypeId }
   | { t: "flip"; id: number }
-  | { t: "setSignal"; id: number; from: SignalPlan | null; to: SignalPlan | null };
+  | { t: "setSignal"; id: number; from: SignalPlan | null; to: SignalPlan | null }
+  | { t: "setPocket"; id: number; end: "a" | "b"; from: Pocket | null; to: Pocket | null };
 
 /** Splits recorded during a transaction, so vehicles can be carried over to the new pieces. */
 export interface SplitInfo {
@@ -320,7 +344,19 @@ export class RoadNetwork {
       case "setType": this.segs.get(op.id)!.type = op.to; this.touchSeg(op.id); break;
       case "flip": this.flipRaw(op.id); break;
       case "setSignal": this.nodes.get(op.id)!.signal = op.to ? clone(op.to) : null; this.dirtyNodes.add(op.id); break;
+      case "setPocket": this.pocketRaw(op.id, op.end, op.to); break;
     }
+  }
+
+  private pocketRaw(id: number, end: "a" | "b", p: Pocket | null) {
+    const s = this.segs.get(id);
+    if (!s) return;
+    const pk = { ...(s.pk ?? {}) };
+    if (p && (p.r > 0 || p.l > 0)) pk[end] = { r: Math.max(0, p.r), l: Math.max(0, p.l) };
+    else delete pk[end];
+    if (pk.a || pk.b) s.pk = pk;
+    else delete s.pk;
+    this.touchSeg(id);
   }
 
   // ---------------- raw mutations ----------------
@@ -368,6 +404,8 @@ export class RoadNetwork {
     s.a = s.b;
     s.b = a;
     s.c = { p0: s.c.p3, p1: s.c.p2, p2: s.c.p1, p3: s.c.p0 };
+    // the traffic now arrives at the other ends: pockets go with the junctions they sit before
+    if (s.pk) s.pk = { a: s.pk.b, b: s.pk.a };
     // signal plans reference seg ids, unaffected
     this.removedSegs.add(id); // lanes change direction: treat as replaced
     this.touchSeg(id);
@@ -426,6 +464,17 @@ export class RoadNetwork {
     this.flipRaw(id);
   }
 
+  /** Turn pockets before the junction at `end` of road `id` (null or zero lengths: none). */
+  setPocket(id: number, end: "a" | "b", p: Pocket | null) {
+    const s = this.segs.get(id);
+    if (!s) return;
+    const from = s.pk?.[end] ?? null;
+    const to = p && (p.r > 0 || p.l > 0) ? { r: Math.max(0, p.r), l: Math.max(0, p.l) } : null;
+    if (JSON.stringify(from) === JSON.stringify(to)) return;
+    this.log({ t: "setPocket", id, end, from: from && clone(from), to: to && clone(to) });
+    this.pocketRaw(id, end, to);
+  }
+
   setSignal(id: number, plan: SignalPlan | null) {
     const n = this.nodes.get(id)!;
     this.log({ t: "setSignal", id, from: n.signal ? clone(n.signal) : null, to: plan ? clone(plan) : null });
@@ -444,6 +493,9 @@ export class RoadNetwork {
     this.removeSeg(id, false);
     const s1 = this.addSeg(s.a, nid, s.type, c1, s.ring);
     const s2 = this.addSeg(nid, s.b, s.type, c2, s.ring);
+    // turn pockets stay before their junctions
+    if (s.pk?.a) this.setPocket(s1, "a", s.pk.a);
+    if (s.pk?.b) this.setPocket(s2, "b", s.pk.b);
     const cut = total * this.arcFraction(id, t, g);
     this.splits.push({ old: id, parts: [{ seg: s1, from: 0, to: cut }, { seg: s2, from: cut, to: total }] });
     // carry signal arms over: a signal at either end referencing the old seg now references the new piece
@@ -603,7 +655,8 @@ export class RoadNetwork {
         const g = this.segGeom.get(arm.seg)!;
         if (arm.end === "a") g.trimA = arm.trim;
         else g.trimB = arm.trim;
-        g.ends = { ...g.ends, [arm.end]: shapes[i] };
+        const pk = arm.wL ? this.segs.get(arm.seg)!.pk?.[arm.end] : undefined;
+        g.ends = { ...g.ends, [arm.end]: pk ? { ...shapes[i], pocket: { ...pk } } : shapes[i] };
       }
     }
 
@@ -721,6 +774,12 @@ export class RoadNetwork {
       const trim = Math.min(45, R * Math.tan(Math.min(theta, 2.8) / 2)) + 0.3;
       for (const a of arms) a.trim = trim;
     } else if (kind === "junction") {
+      for (const a of arms) {
+        const s = segs.find((x) => x.id === a.seg)!;
+        const p = s.ring ? undefined : s.pk?.[a.end];
+        const k = p ? (p.r > 0 ? 1 : 0) + (p.l > 0 ? 1 : 0) : 0;
+        if (k && laneCounts(s, a.end).inn > 0) a.wL = k * LANE_W;
+      }
       const n = arms.length;
       const trims = new Array(n).fill(0);
       for (let i = 0; i < n; i++) {
@@ -728,7 +787,7 @@ export class RoadNetwork {
         if (n === 1) break;
         // gap between A's right edge and B's left edge (clockwise from A to B)
         const pa = add(scale(right(A.dir), A.halfW), { x: 0, y: 0 });
-        const pb = add(scale(right(B.dir), -B.halfW), { x: 0, y: 0 });
+        const pb = add(scale(right(B.dir), -(B.halfW + (B.wL ?? 0))), { x: 0, y: 0 });
         const hit = lineIntersect(pa, A.dir, pb, B.dir);
         let ta = 0, tb = 0;
         if (hit && hit.t > -1 && hit.u > -1) {
@@ -993,11 +1052,12 @@ export class RoadNetwork {
       return { s0, s1: Math.max(s0 + 0.5, L - g.trimB - tb) };
     };
     const twoWay = T.bwd > 0;
-    const mk = (dir: 1 | -1, idx: number, count: number, off: number): Lane => {
-      const { s0, s1 } = span(idx, dir);
+    const pz = pocketZones(s, g);
+    const mk = (dir: 1 | -1, idx: number, count: number, off: number | ((sc: number) => number), sp = span(idx, dir), pocket?: "r" | "l"): Lane => {
+      const { s0, s1 } = sp;
       const base = trimPolyline(g.center, s0, s1);
       const basePl = makePolyline(base);
-      let pts = offsetPolyline(base, off);
+      let pts = typeof off === "number" ? offsetPolyline(base, off) : offsetVar(base, base.map((_, i) => off(s0 + (basePl.cum[i] ?? 0))));
       let hs = new Float32Array(pts.length);
       for (let i = 0; i < pts.length; i++) hs[i] = this.heightFromCenter(s, g, s0 + (basePl.cum[Math.min(i, basePl.cum.length - 1)] ?? 0));
       if (dir === -1) {
@@ -1006,21 +1066,26 @@ export class RoadNetwork {
       }
       const pl = makePolyline(pts);
       return {
-        kind: "lane", uid: edgeUid++, key: `${s.id}:${dir}:${idx}`, seg: s.id, dir, idx, count,
+        kind: "lane", uid: edgeUid++, key: `${s.id}:${dir}:${idx}`, seg: s.id, dir, idx, count, c0: s0, c1: s1,
+        ...(pocket ? { pocket } : {}),
         from: dir === 1 ? s.a : s.b, to: dir === 1 ? s.b : s.a,
         // round a roundabout nobody drives at the road's limit: cap by the ring's curvature, like a connector
-        offset: off, pl, hs, speed: s.ring ? Math.min(T.speed, Math.sqrt(2.8 * Math.max(2, ringR(pl)))) : T.speed, occ: [], outs: [], ins: [],
+        offset: typeof off === "number" ? off : off(dir === 1 ? s1 : s0), pl, hs, speed: s.ring ? Math.min(T.speed, Math.sqrt(SIM.turnLat * Math.max(2, ringR(pl)))) : T.speed, occ: [], outs: [], ins: [],
       };
     };
     const med = (T.median ?? 0) / 2; // a median pushes both directions out from the centre line
-    for (let i = 0; i < T.fwd; i++) {
-      const off = twoWay ? (T.fwd - i - 0.5) * LANE_W + med : (T.fwd / 2 - i - 0.5) * LANE_W;
-      lanes.push(mk(1, i, T.fwd, off));
-    }
-    for (let j = 0; j < T.bwd; j++) {
-      const off = -(T.bwd - j - 0.5) * LANE_W - med;
-      lanes.push(mk(-1, j, T.bwd, off));
-    }
+    const side = (dir: 1 | -1, n: number, offOf: (i: number) => number) => {
+      const z = dir === 1 ? pz.fwd : pz.bwd;
+      const sg = dir === 1 ? 1 : -1; // + offset = right of a->b: the right of this direction's travel when sg > 0
+      // a left pocket: the through lanes swing over to the right to make room for it on their inside
+      const sw = (sc: number) => sg * LANE_W * z.l(sc);
+      for (let i = 0; i < n; i++) lanes.push(mk(dir, i, n, z.lLen > 0 ? (sc: number) => offOf(i) + sw(sc) : offOf(i)));
+      const at = (len: number) => (dir === 1 ? { s0: z.stop - len, s1: z.stop } : { s0: z.stop, s1: z.stop + len });
+      if (z.lLen > 0) lanes.push(mk(dir, n, n, offOf(n - 1), at(z.lLen), "l"));
+      if (z.rLen > 0) lanes.push(mk(dir, -1, n, offOf(0) + sg * LANE_W * (z.lLen > 0 ? 2 : 1), at(z.rLen), "r"));
+    };
+    side(1, T.fwd, (i) => (twoWay ? (T.fwd - i - 0.5) * LANE_W + med : (T.fwd / 2 - i - 0.5) * LANE_W));
+    side(-1, T.bwd, (j) => -(T.bwd - j - 0.5) * LANE_W - med);
     return lanes;
   }
 
@@ -1040,7 +1105,7 @@ export class RoadNetwork {
       const poly: V2[] = [];
       const kerbs: V2[][] = [];
       const n = arms.length;
-      const edgeL = (a: Arm) => add(add(c, scale(a.dir, a.trim)), scale(right(a.dir), -a.halfW));
+      const edgeL = (a: Arm) => add(add(c, scale(a.dir, a.trim)), scale(right(a.dir), -(a.halfW + (a.wL ?? 0))));
       const edgeR = (a: Arm) => add(add(c, scale(a.dir, a.trim)), scale(right(a.dir), a.halfW));
       for (let i = 0; i < n; i++) {
         const A = arms[i], B = arms[(i + 1) % n];
@@ -1170,8 +1235,11 @@ export class RoadNetwork {
 
     const deadEnd = arms.length === 1;
     for (const A of arms) {
-      const ins = laneOf(A, true);
+      const arriving = laneOf(A, true);
+      const ins = arriving.filter((l) => !l.pocket);
+      const rp = arriving.find((l) => l.pocket === "r"), lp = arriving.find((l) => l.pocket === "l");
       if (!ins.length) continue;
+      const mine: { from: Lane; to: Lane; turn: Connector["turn"] }[] = [];
       const inDir = scale(A.dir, -1);
       const exits: { arm: Arm; ang: number; outs: Lane[] }[] = [];
       // a road with a median can't be crossed mid-block, so it gets U-turns at its junctions instead
@@ -1218,9 +1286,27 @@ export class RoadNetwork {
             targets.push(Math.min(r, m - 1));
             if (r === k - 1 && m > k) for (let j = k; j < m; j++) targets.push(j);
           }
-          for (const j of targets) geom.conns.push(this.makeConn(nid, ins[li], e.outs[j], turn, nodeH, A.seg, prioOf(A)));
+          for (const j of targets) mine.push({ from: ins[li], to: e.outs[j], turn });
         });
       });
+      // turn pockets: the right one takes the right turns, the left one the left turns and U-turns, off the through
+      // lanes (unless that would leave a through lane going nowhere)
+      for (const [pl, turns] of [[rp, ["R"]], [lp, ["L", "U"]]] as const) {
+        if (!pl) continue;
+        const take = mine.filter((m) => (turns as readonly string[]).includes(m.turn));
+        const exitsTo = new Map<number, typeof take[number]>();
+        for (const m of take) {
+          // one connector per exit road, into its lane nearest our side
+          const k = m.to.seg * 2 + (m.to.dir === 1 ? 1 : 0), o = exitsTo.get(k);
+          if (!o || (pl.pocket === "r" ? m.to.idx < o.to.idx : m.to.idx > o.to.idx)) exitsTo.set(k, m);
+        }
+        for (const m of exitsTo.values()) mine.push({ from: pl, to: m.to, turn: m.turn });
+        for (const m of take) {
+          const rest = mine.filter((x) => x.from === m.from && x !== m && !take.includes(x));
+          if (rest.length) mine.splice(mine.indexOf(m), 1);
+        }
+      }
+      for (const m of mine) geom.conns.push(this.makeConn(nid, m.from, m.to, m.turn, nodeH, A.seg, prioOf(A)));
     }
     this.computeConflicts(geom.conns);
     return geom;
@@ -1270,7 +1356,7 @@ export class RoadNetwork {
     const h0 = from.hs[from.hs.length - 1] ?? h, h1 = to.hs[0] ?? h;
     for (let i = 0; i < pts.length; i++) hs[i] = h0 + (h1 - h0) * (pl.cum[i] / (pl.length || 1));
     const r = minRadius(pts, 2);
-    const speed = Math.min(from.speed, to.speed, Math.sqrt(2.8 * Math.max(r, 2)));
+    const speed = Math.min(from.speed, to.speed, Math.sqrt(SIM.turnLat * Math.max(r, 2)));
     return {
       kind: "conn", uid: edgeUid++, node: nid, from, to, turn, conflicts: [], armIn, prio,
       pl, hs, speed: Math.max(speed, 3), occ: [], holders: [],
@@ -1327,6 +1413,44 @@ export class RoadNetwork {
   }
 }
 
+/** A polyline moved sideways by a different amount at each point. */
+function offsetVar(pts: V2[], offs: number[]): V2[] {
+  return pts.map((p, i) => {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+    const r = right(norm(sub(b, a)));
+    return { x: p.x + r.x * offs[i], y: p.y + r.y * offs[i] };
+  });
+}
+
+/** One direction's turn pockets along its road: how far open each is (0..1) at centreline arc length sc. */
+export interface PocketZone { stop: number; rLen: number; lLen: number; r: (sc: number) => number; l: (sc: number) => number }
+
+/**
+ * Where a road's turn pockets open out: for the traffic one way (fwd: a->b, arriving at b) and the other (bwd),
+ * each pocket full width over its length before the stop line and opening out over a taper before that.
+ */
+export function pocketZones(s: RSeg, g: SegGeom): { fwd: PocketZone; bwd: PocketZone } {
+  const L = g.center.length, tp = pocketTaper(s.type);
+  const zone = (p: Pocket | undefined, dir: 1 | -1, room: number): PocketZone => {
+    const stop = dir === 1 ? L - g.trimB : g.trimA;
+    const fit = (len: number) => (len > 0 ? Math.max(0, Math.min(len, room - tp)) : 0);
+    const rLen = fit(p?.r ?? 0), lLen = fit(p?.l ?? 0);
+    const open = (len: number) => (sc: number) => {
+      if (len <= 0) return 0;
+      const d = dir === 1 ? stop - sc : sc - stop; // metres back from the stop line
+      return d <= len ? 1 : d >= len + tp ? 0 : smoothstep(1 - (d - len) / tp);
+    };
+    return { stop, rLen, lLen, r: open(rLen), l: open(lLen) };
+  };
+  // both ends' pockets share the road between the junctions
+  const room = Math.max(0, L - g.trimA - g.trimB - 4);
+  const pa = g.ends.a.pocket, pb = g.ends.b.pocket;
+  const need = (p?: Pocket) => (p ? Math.max(p.r, p.l) + pocketTaper(s.type) : 0);
+  const na = need(pa), nb = need(pb);
+  const k = na + nb > room ? room / (na + nb) : 1;
+  return { fwd: zone(pb, 1, nb * k), bwd: zone(pa, -1, na * k) };
+}
+
 function laneCounts(s: RSeg, endAtNode: "a" | "b") {
   const T = ROAD_TYPES[s.type];
   // incoming to node: if node is b, fwd lanes come in
@@ -1355,6 +1479,7 @@ function invert(op: Op): Op {
     case "setType": return { t: "setType", id: op.id, from: op.to, to: op.from };
     case "flip": return op;
     case "setSignal": return { t: "setSignal", id: op.id, from: op.to, to: op.from };
+    case "setPocket": return { t: "setPocket", id: op.id, end: op.end, from: op.to, to: op.from };
   }
 }
 

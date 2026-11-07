@@ -6,6 +6,7 @@
 
 import { BUILDING_TYPES, type BuildingKind } from "../config";
 import { dist } from "../core/math";
+import { dkSeg } from "../sim/router";
 import type { Trip, Vehicle } from "../sim/traffic";
 import type { Building } from "./buildings";
 import type { Game } from "./city";
@@ -33,7 +34,7 @@ export interface ServiceDef {
 }
 
 export const SERVICES: Record<ServiceKind, ServiceDef> = {
-  garbage: { kind: "garbage", svc: "garbage", cost: 12000, upkeep: 36, range: 170, vehicles: 4, cap: 0, unlock: 0, vehicle: "garbagetruck" },
+  garbage: { kind: "garbage", svc: "garbage", cost: 12000, upkeep: 36, range: 170, vehicles: 6, cap: 0, unlock: 0, vehicle: "garbagetruck" },
   firestation: { kind: "firestation", svc: "fire", cost: 10000, upkeep: 30, range: 110, vehicles: 3, cap: 0, unlock: 1, vehicle: "firetruck" },
   police: { kind: "police", svc: "police", cost: 9000, upkeep: 28, range: 120, vehicles: 3, cap: 0, unlock: 1, vehicle: "policecar" },
   clinic: { kind: "clinic", svc: "health", cost: 9000, upkeep: 30, range: 120, vehicles: 2, cap: 12, unlock: 1, vehicle: "ambulance" },
@@ -62,6 +63,12 @@ export const SERVICE_TABS: { id: ServiceId; label: string; kinds: ServiceKind[];
 const PRESSURE_MILESTONE = 1;
 const GARBAGE_CALL = 12; // units before a building asks for a pickup
 const GARBAGE_BAD = 45;
+/** What a garbage truck carries before it heads home to tip: it works its way round the waiting bins till then. */
+const TRUCK_LOAD = 8000;
+/** How far (straight line, m) a truck on its round goes on to the next waiting bin rather than home. */
+const ROUND_HOP = 600;
+/** Bins a passing truck bothers to empty (CS trucks pick up from every building on the streets they drive). */
+const SWEEP_MIN = 4;
 const CRIME_CALL = 22;
 const CRIME_BAD = 45;
 const FIRE_BURN = HOUR * 4; // unattended, a fire destroys the building
@@ -236,11 +243,11 @@ export class Services {
       const people = grp === "res" ? g.people.householdsIn(b.id) : g.people.workersAt(b.id);
       if (people <= 0) continue;
       // garbage: every household and workplace fills bins
-      b.garbage = Math.min(200, (b.garbage ?? 0) + people * (grp === "res" ? 1.6 : grp === "ind" ? 0.7 : 0.45) * h);
+      b.garbage = Math.min(200, (b.garbage ?? 0) + people * (grp === "res" ? 0.6 : grp === "ind" ? 0.15 : 0.12) * h);
       if (b.garbage >= GARBAGE_CALL) this.call(b, "garbage");
       if (b.garbage >= GARBAGE_BAD) s.garbage++;
       // crime: patrols in the area keep it down
-      const cr = people * (grp === "res" ? 0.22 : 0.1) * (1 - 0.7 * c.police) * h;
+      const cr = people * (grp === "res" ? 0.22 : 0.1) * (1 - 0.85 * c.police) * h;
       b.crime = Math.min(100, (b.crime ?? 0) + cr);
       if (b.crime >= CRIME_CALL) this.call(b, "police");
       if (b.crime >= CRIME_BAD) s.crime++;
@@ -253,7 +260,38 @@ export class Services {
         b.fire = g.time;
       }
     }
+    this.sweep();
     this.dispatch();
+  }
+
+  /** Garbage trucks empty the bins of every building on the streets they drive along, on the way out and back. */
+  private sweep() {
+    const g = this.g;
+    let bySeg: Map<number, Building[]> | null = null;
+    for (const v of g.traffic.vehicles as Vehicle[]) {
+      const run = v.trip.run;
+      if (!run || run.svc !== "garbage" || run.done || (run.load ?? 0) >= TRUCK_LOAD) continue;
+      if (!bySeg) {
+        bySeg = new Map();
+        for (const b of g.buildings.list) {
+          if (!b.access || b.svc || (b.garbage ?? 0) < SWEEP_MIN) continue;
+          const l = bySeg.get(b.access.seg);
+          if (l) l.push(b); else bySeg.set(b.access.seg, [b]);
+        }
+      }
+      let load = run.load ?? 0;
+      const upTo = Math.min(v.ri, v.route.length - 1);
+      for (let i = run.swept ?? 0; i <= upTo && load < TRUCK_LOAD; i++) {
+        for (const b of bySeg.get(dkSeg(v.route[i])) ?? []) {
+          if (!b.garbage) continue;
+          load += b.garbage;
+          b.garbage = 0;
+          if (load >= TRUCK_LOAD) break;
+        }
+      }
+      run.swept = upTo + 1;
+      run.load = load;
+    }
   }
 
   private stepStation(b: Building, span: number) {
@@ -328,12 +366,38 @@ export class Services {
     return true;
   }
 
-  private sendBack(from: Building, st: Building, svc: ServiceId, patient?: number) {
+  /** A garbage truck on its round with room left: the nearest waiting bin its station covers, if one is close. */
+  private nextStop(from: Building, st: Building, load: number): boolean {
+    const g = this.g;
+    if (!from.access) return false;
+    const reach = this.reachOf(st);
+    let best: Building | null = null, bd = ROUND_HOP;
+    for (const [id, set] of this.calls) {
+      if (!set.has("garbage")) continue;
+      const o = g.buildings.byId.get(id);
+      if (!o || !o.access || (o.garbage ?? 0) < GARBAGE_CALL || this.enRoute(o, "garbage") || !reach.has(o.access.seg)) continue;
+      const d = dist(o.c, from.c);
+      if (d < bd) { bd = d; best = o; }
+    }
+    if (!best || !g.connected(from.access.seg, best.access!.seg)) return false;
+    this.calls.get(best.id)!.delete("garbage");
+    let set = this.answered.get(best.id);
+    if (!set) this.answered.set(best.id, (set = new Set()));
+    set.add("garbage");
+    g.traffic.request({
+      from: from.access, fromSide: from.side, to: best.access!, toSide: best.side,
+      trip: { kind: "service", from: from.id, to: best.id, resident: -1, startT: g.time, freeFlow: 0, run: { svc: "garbage", station: st.id, target: best.id, leg: "out", load } },
+      truck: true, tries: 0, wait: 0,
+    });
+    return true;
+  }
+
+  private sendBack(from: Building, st: Building, svc: ServiceId, patient?: number, load?: number) {
     const g = this.g;
     if (!from.access || !st.access) { this.back(st, patient); return; }
     g.traffic.request({
       from: from.access, fromSide: from.side, to: st.access, toSide: st.side,
-      trip: { kind: "service", from: from.id, to: st.id, resident: -1, startT: g.time, freeFlow: 0, run: { svc, station: st.id, target: from.id, leg: "back", patient } },
+      trip: { kind: "service", from: from.id, to: st.id, resident: -1, startT: g.time, freeFlow: 0, run: { svc, station: st.id, target: from.id, leg: "back", patient, load } },
       truck: svc === "garbage" || svc === "fire", tries: 0, wait: 0,
     });
   }
@@ -360,15 +424,18 @@ export class Services {
     const b = g.buildings.byId.get(run.target);
     if (!b) { if (st) st.busy = Math.max(0, (st.busy ?? 0) - 1); return; }
     let patient: number | undefined;
+    let load: number | undefined;
     if (svc === "garbage") {
       // the truck works the street: every bin within a short walk of the stop
-      let load = 0;
+      load = run.load ?? 0;
       for (const o of g.buildings.list) {
-        if (load >= 220) break;
+        if (load >= TRUCK_LOAD) break;
         if (!o.garbage || dist(o.c, b.c) > 110) continue;
         load += o.garbage;
         o.garbage = 0;
       }
+      // room left: on to the next street with full bins (as CS trucks do), home only when full or done
+      if (st && load < TRUCK_LOAD * 0.9 && this.nextStop(b, st, load)) return;
     } else if (svc === "police") {
       for (const o of g.buildings.list) {
         if (!o.crime) continue;
@@ -381,7 +448,7 @@ export class Services {
       // only with a clinic to take them to (it may have been demolished on the way)
       patient = this.pickUp(b);
     }
-    if (st) this.sendBack(b, st, svc, patient);
+    if (st) this.sendBack(b, st, svc, patient, load);
   }
 
   /** A vehicle couldn't get there (or back). */

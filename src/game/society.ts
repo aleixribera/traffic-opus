@@ -515,7 +515,9 @@ export class Society {
     c.tStart = this.now;
     this.allTrips++;
     const fromP = from ? from.c : a.p, toP = to ? to.c : b.p;
-    const real = g.rng() * g.tripScale < 1;
+    // round the corner to work, the shops, the school or a park: people walk
+    const walk = !!from && !!to && kind !== "move" && dist(fromP, toP) < WALK;
+    const real = !walk && g.rng() * g.tripScale < 1;
     if (real) {
       this.carTrips++;
       g.traffic.request({
@@ -678,6 +680,9 @@ export class Society {
     this.refreshStats();
   }
 }
+
+/** Trips shorter than this (straight line, m) between two buildings are walked rather than driven. */
+export const WALK = 400;
 
 /** Rough door-to-door time for a trip that isn't simulated as a car. */
 export function estTime(a: V2, b: V2): number {
