@@ -12,17 +12,20 @@ export interface LotTemplate {
   tall?: [number, number];
 }
 
-/** Largest first: growth tries the biggest lot that fits, with some randomness. */
+/**
+ * Largest first: growth tries the biggest lot that fits, with some randomness. Every zone ends in a small lot (two
+ * or three cells), so any leftover piece of zoned land deep and wide enough to zone at all grows something.
+ */
 export const ZONE_LOTS: Record<ZoneId, LotTemplate[]> = {
   resLow: [{ w: 2, d: 3, model: "house" }, { w: 2, d: 2, model: "house" }],
-  resRow: [{ w: 3, d: 3, model: "terrace" }, { w: 3, d: 2, model: "terrace" }],
-  resMed: [{ w: 4, d: 4, model: "apartments" }, { w: 4, d: 3, model: "terrace", tall: [1.5, 1.8] }],
-  resHigh: [{ w: 5, d: 5, model: "apartments", tall: [1.8, 3.2] }, { w: 4, d: 4, model: "apartments", tall: [1.6, 2.6] }],
-  comLow: [{ w: 4, d: 4, model: "store" }, { w: 3, d: 3, model: "shop" }],
-  comHigh: [{ w: 6, d: 5, model: "mall" }, { w: 4, d: 4, model: "store", tall: [1.6, 2.4] }],
-  ind: [{ w: 5, d: 4, model: "works" }, { w: 4, d: 4, model: "foodplant" }],
-  offLow: [{ w: 3, d: 3, model: "office" }],
-  offHigh: [{ w: 4, d: 4, model: "tower", tall: [1.6, 3] }],
+  resRow: [{ w: 3, d: 3, model: "terrace" }, { w: 3, d: 2, model: "terrace" }, { w: 2, d: 2, model: "terrace" }],
+  resMed: [{ w: 4, d: 4, model: "apartments" }, { w: 4, d: 3, model: "terrace", tall: [1.5, 1.8] }, { w: 3, d: 3, model: "apartments" }, { w: 2, d: 2, model: "terrace", tall: [1.4, 1.6] }],
+  resHigh: [{ w: 5, d: 5, model: "apartments", tall: [1.8, 3.2] }, { w: 4, d: 4, model: "apartments", tall: [1.6, 2.6] }, { w: 3, d: 3, model: "apartments", tall: [1.5, 2.2] }, { w: 2, d: 2, model: "apartments", tall: [1.6, 2.4] }],
+  comLow: [{ w: 4, d: 4, model: "store" }, { w: 3, d: 3, model: "shop" }, { w: 2, d: 2, model: "shop" }],
+  comHigh: [{ w: 6, d: 5, model: "mall" }, { w: 4, d: 4, model: "store", tall: [1.6, 2.4] }, { w: 3, d: 3, model: "store", tall: [1.4, 2] }, { w: 2, d: 2, model: "shop", tall: [1.6, 2.2] }],
+  ind: [{ w: 5, d: 4, model: "works" }, { w: 4, d: 4, model: "foodplant" }, { w: 3, d: 3, model: "foodplant" }, { w: 2, d: 2, model: "works" }],
+  offLow: [{ w: 3, d: 3, model: "office" }, { w: 2, d: 2, model: "office" }],
+  offHigh: [{ w: 4, d: 4, model: "tower", tall: [1.6, 3] }, { w: 3, d: 3, model: "tower", tall: [1.4, 2.4] }, { w: 2, d: 2, model: "office", tall: [1.8, 2.6] }],
 };
 
 /** Households (residential) or jobs (everything else) per lot cell at level 1. */

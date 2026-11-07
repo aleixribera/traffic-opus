@@ -160,6 +160,7 @@ i.dm-res, i.dm-com, i.dm-ind, i.dm-off { background: var(--c); }
 .dp-bar i { display: block; height: 100%; }
 .dp-row ul { list-style: none; margin: 3px 0 0 16px; padding: 0; color: var(--ink-2); font-size: 11px; }
 .dp-row li { display: flex; justify-content: space-between; gap: 8px; }
+.dp-row li.short { color: var(--bad, #c4362f); font-weight: 600; }
 
 /* ------------------------------------------------------------ asset panel (above the bar) */
 .assets { width: min(760px, calc(100vw - 16px)); margin-bottom: 10px; padding: 0 0 8px; overflow: hidden; }

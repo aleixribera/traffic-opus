@@ -237,3 +237,40 @@ describe("Traffic in a growing city", () => {
     expect(g.traffic.flowScore()).toBeGreaterThan(0.6);
   }, 180000);
 });
+
+describe("Zoned land fills up", () => {
+  it("a grid zoned for homes grows houses on every zoneable cell, with no strips left that nothing fits", () => {
+    const g = new Game(3);
+    (g as { money: number }).money = 1e7;
+    const grid = planGrid(g.net, g.world, v2(-110, -110), v2(110, 110), v2(1, 0), "street", 0);
+    expect(g.build(grid)).toBe(true);
+    // every road of the grid has its zone blocks (not just the last one drawn): the same as building them afresh
+    const built = okCells(g).length;
+    g.zones.rebuildAll();
+    expect(built).toBeGreaterThan(800);
+    expect(okCells(g).length).toBe(built);
+    const cells = okCells(g);
+    g.zonePaint(cells, "resLow");
+    let houses = 0;
+    for (let i = 0; i < 3000; i++) if ((g as any).grow("res")) houses++;
+    expect(houses).toBeGreaterThan(70);
+    expect(cells.filter((c) => c.zone && !c.lot).length).toBe(0);
+  }, 120000);
+
+  it("so do industry, shops and offices: every zone has a lot small enough for the leftovers between blocks", () => {
+    const g = new Game(3);
+    (g as { money: number }).money = 1e7;
+    expect(g.build(planGrid(g.net, g.world, v2(-110, -110), v2(110, 110), v2(1, 0), "street", 0))).toBe(true);
+    const cells = okCells(g);
+    g.zonePaint(cells.filter((c) => c.c.x > 30), "ind");
+    g.zonePaint(cells.filter((c) => c.c.x <= 30 && c.c.y < 0), "comLow");
+    g.zonePaint(cells.filter((c) => c.c.x <= 30 && c.c.y >= 0), "offLow");
+    for (let i = 0; i < 4000; i++) for (const gp of ["ind", "com", "off"]) (g as any).grow(gp);
+    const left = cells.filter((c) => c.zone && !c.lot);
+    // (a lone column between two zones painted side by side is the player's doing: allow a few)
+    expect(left.length).toBeLessThan(cells.length * 0.04);
+    // and most land still goes to the bigger lots
+    const lots = g.buildings.list.filter((b) => b.zone);
+    expect(lots.filter((b) => b.lot!.w * b.lot!.d <= 4).length).toBeLessThan(lots.length * 0.4);
+  }, 120000);
+});

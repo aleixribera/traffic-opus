@@ -32,6 +32,10 @@ const OVERLAYS: { id: OverlayId; label: string; blurb: string }[] = [
 ];
 
 const GROUP_NAME: Record<ZoneGroup, string> = { res: "Residential", com: "Commercial", ind: "Industrial", off: "Office" };
+/** What the player zones more of, for each group ("Zone more homes"). */
+const GROUP_LAND: Record<ZoneGroup, string> = { res: "homes", com: "shops", ind: "industry", off: "offices" };
+/** Demand at which a group with no empty zoned land left is worth telling the player about. */
+const LAND_SHORT = 40;
 const GROUP_LETTER: Record<ZoneGroup, string> = { res: "R", com: "C", ind: "I", off: "O" };
 const GROUPS: ZoneGroup[] = ["res", "com", "ind", "off"];
 export const BRUSH_SIZES: { r: number; label: string }[] = [{ r: 10, label: "S" }, { r: 22, label: "M" }, { r: 40, label: "L" }];
@@ -603,8 +607,9 @@ export class Hud {
     const g = this.app.game;
     const html = GROUPS.map((gp) => {
       const d = g.demand[gp];
-      const fs = d.factors.filter((f) => f.v !== 0 || f.label.startsWith("Unlocks")).map((f) =>
+      let fs = d.factors.filter((f) => f.v !== 0 || f.label.startsWith("Unlocks")).map((f) =>
         `<li><span>${f.label}</span><b class="${f.v > 0 ? "good" : f.v < 0 ? "bad" : ""}">${f.v > 0 ? "+" : f.v < 0 ? "−" : ""}${Math.abs(f.v) || ""}</b></li>`).join("");
+      if (d.v >= LAND_SHORT && g.freeLand(gp) === 0) fs += `<li class="short"><span>No empty ${GROUP_LAND[gp]} zones: zone more</span></li>`;
       return `<div class="dp-row"><div class="dp-head"><i class="dm-${gp}"></i><span>${GROUP_NAME[gp]}</span><span class="dp-bar"><i class="dm-${gp}" style="width:${d.v}%"></i></span><b>${d.v}</b></div><ul>${fs}</ul></div>`;
     }).join("");
     if (this.demandPop.dataset.h !== html) {
@@ -639,6 +644,10 @@ export class Hud {
     for (const c of g.zones.allCells()) if (c.zone) { zoned++; if (ZONE_GROUP[c.zone] !== "res") jobsZoned++; if (zoned > 40 && jobsZoned > 20) break; }
     if (zoned < 10) return { key: "zone", cat: "zoning", html: "<b>Zone homes.</b> Open <b>Zoning</b>, pick <b>Low homes</b> and click beside your street. Houses grow when there is demand." };
     if (jobsZoned < 8) return { key: "jobs", cat: "zoning", html: "<b>Zone jobs.</b> New residents need work and shops. Zone some <b>Industry</b> and <b>Low shops</b>, away from homes if you can: factories lower land value." };
+    // demand nothing can meet: everything zoned for it is built
+    for (const gp of GROUPS) {
+      if (g.demand[gp].v >= LAND_SHORT && g.freeLand(gp) === 0) return { key: "land-" + gp, cat: "zoning", html: `<b>Zone more ${GROUP_LAND[gp]}.</b> Demand is high, but every lot zoned for ${GROUP_LAND[gp]} is built: nothing more can grow until you zone more land.` };
+    }
     if (g.people.stats.population < 60) return { key: "grow", html: "<b>Watch the demand bars</b> at the bottom right. Zone more of whatever is high. Trucks bring goods from the highway; keep the road to it flowing." };
     if (g.milestone === 0) return { key: "ms", html: `<b>Grow to ${MILESTONES[1].pop} people</b> to reach ${MILESTONES[1].name}: it unlocks avenues, roundabouts and traffic lights. Progression (P) shows what's next.` };
     return null;

@@ -97,6 +97,7 @@ export class Game {
   private compVersion = -1;
   private shopCache: Building[] | null = null;
   private candCache = new Map<ZoneGroup, Cell[]>();
+  private freeCache = new Map<ZoneGroup, number>();
   private candVersion = -1;
   /** Roads whose use is blocked (no route); shown as notifications. */
   noRouteAt = new Map<number, number>();
@@ -371,6 +372,7 @@ export class Game {
           applyTrim(this.net, plan.trim);
           const cs = this.net.rebuild();
           this.traffic.onNetworkChange(cs);
+          this.zones.onNetworkChange(cs);
           this.emit({ t: "roads", cs });
         }
         // a slip lane redrawn longer: the old one goes first
@@ -381,6 +383,8 @@ export class Game {
           if (plan.strokes.length > 1) {
             const cs = this.net.rebuild();
             this.traffic.onNetworkChange(cs);
+            // (the zone map too: each rebuild hands over only what changed since the last)
+            this.zones.onNetworkChange(cs);
             this.emit({ t: "roads", cs });
           }
         }
@@ -645,11 +649,30 @@ export class Game {
     return this.shopCache;
   }
 
+  /** How many empty zoned roadside cells a group has where a lot could still start (0: nothing more can grow). */
+  freeLand(group: ZoneGroup): number {
+    const cands = this.candidates(group);
+    const hit = this.freeCache.get(group);
+    if (hit !== undefined) return hit;
+    let n = 0;
+    for (const c of cands) {
+      if (!c.zone) continue;
+      const t = ZONE_LOTS[c.zone][ZONE_LOTS[c.zone].length - 1]; // (the smallest)
+      for (let shift = 0; shift < t.w; shift++) {
+        const col0 = c.col - shift;
+        if (col0 >= 0 && col0 + t.w <= c.block.cols && this.lotFits(c.block, col0, t, c.zone)) { n++; break; }
+      }
+    }
+    this.freeCache.set(group, n);
+    return n;
+  }
+
   /** Empty, zoned front-row cells of a group, where a new lot could start. */
   private candidates(group: ZoneGroup): Cell[] {
     if (this.candVersion !== this.zones.version) {
       this.candCache.clear();
       for (const gp of GROUPS) this.candCache.set(gp, []);
+      this.freeCache.clear();
       for (const c of this.zones.allCells()) if (c.row === 0 && c.ok && c.zone && !c.lot) this.candCache.get(ZONE_GROUP[c.zone])!.push(c);
       this.candVersion = this.zones.version;
     }
@@ -667,16 +690,43 @@ export class Game {
       const seg = this.net.segs.get(b.seg);
       if (!seg) continue;
       const temps = ZONE_LOTS[c.zone];
-      const order = this.rng() < 0.35 ? [...temps].reverse() : temps;
+      // (some variety between the two main sizes; the small ones only where nothing bigger fits)
+      const order = this.rng() < 0.35 && temps.length > 1 ? [temps[1], temps[0], ...temps.slice(2)] : temps;
       for (const t of order) {
+        // where along the free run to put it: snug against a neighbour or the block's end if it can, so no strip too
+        // narrow for any lot is left beside it; one that can't be avoided goes to the lot as extra yard (CS2 lots fill
+        // the block)
+        let best: { x0: number; w: number; snug: boolean } | null = null;
         for (let shift = 0; shift < t.w; shift++) {
           const col0 = c.col - shift;
-          if (col0 < 0 || col0 + t.w > b.cols) continue;
-          if (this.lotFits(b, col0, t, c.zone)) return this.placeLot(b, col0, t, this.lotDepth(b, col0, t, c.zone), c.zone);
+          if (col0 < 0 || col0 + t.w > b.cols || !this.lotFits(b, col0, t, c.zone)) continue;
+          const lot = this.snugLot(b, col0, t, c.zone) ?? { x0: col0, w: t.w, snug: false };
+          if (lot && (!best || (lot.snug && !best.snug))) best = lot;
+          if (best?.snug) break;
+        }
+        if (best) {
+          const tt = best.w === t.w ? t : { ...t, w: best.w };
+          return this.placeLot(b, best.x0, tt, this.lotDepth(b, best.x0, tt, c.zone), c.zone);
         }
       }
     }
     return null;
+  }
+
+  /**
+   * A lot of template `t` at `col0`, widened over any free strip beside it too narrow for the zone's smallest lot.
+   * `snug`: it needed no widening. Null if the widened lot won't fit (too curved).
+   */
+  private snugLot(b: Block, col0: number, t: LotTemplate, zone: ZoneId): { x0: number; w: number; snug: boolean } | null {
+    const minW = Math.min(...ZONE_LOTS[zone].map((x) => x.w));
+    const one = { ...t, w: 1 };
+    let gl = 0, gr = 0;
+    while (gl < minW && col0 - gl - 1 >= 0 && this.lotFits(b, col0 - gl - 1, one, zone)) gl++;
+    while (gr < minW && col0 + t.w + gr < b.cols && this.lotFits(b, col0 + t.w + gr, one, zone)) gr++;
+    const xl = gl < minW ? gl : 0, xr = gr < minW ? gr : 0;
+    if (!xl && !xr) return { x0: col0, w: t.w, snug: true };
+    const x0 = col0 - xl, w = t.w + xl + xr;
+    return this.lotFits(b, x0, { ...t, w }, zone) ? { x0, w, snug: false } : null;
   }
 
   private lotFits(b: Block, col0: number, t: LotTemplate, zone: ZoneId): boolean {

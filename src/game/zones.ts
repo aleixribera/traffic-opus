@@ -9,6 +9,8 @@ import type { ChangeSet, RoadNetwork } from "../roads/network";
 
 export const CELL = 8;
 export const DEPTH = 6;
+/** The shallowest lot any zone grows (cells): shallower strips aren't zoneable. */
+export const MIN_LOT_DEPTH = 2;
 
 export type ZoneId = "resLow" | "resRow" | "resMed" | "resHigh" | "comLow" | "comHigh" | "ind" | "offLow" | "offHigh";
 export type ZoneGroup = "res" | "com" | "ind" | "off";
@@ -314,17 +316,32 @@ export class ZoneMap {
       if (prev.ok && dist(prev.c, c.c) < CELL * 0.7) for (let rr = r; rr < DEPTH; rr++) b.cells[k * DEPTH + rr].ok = false;
     }
     // older blocks win overlapping cells; this block wins over younger ones
+    const touched = new Set<Block>([b]);
     for (const c of b.cells) {
       if (!c.ok) continue;
       for (const o of this.near(c.c, CELL * 0.92)) {
         if (o.block === b || !o.ok) continue;
         if (o.block.age < b.age || (o.block.age === b.age && o.block.side < b.side)) { this.cut(c); break; }
         this.cut(o);
+        touched.add(o.block);
       }
     }
+    for (const t of touched) this.trimUnusable(t);
   }
 
-  /** Disable a cell and everything behind it in its column. */
+  /**
+   * Columns no lot could ever stand on aren't zoneable: too shallow, or with no neighbour beside them, deep and in
+   * line enough, to make the narrowest lot (two cells) with. They'd only ever sit there zoned and empty.
+   */
+  private trimUnusable(b: Block) {
+    const deep = (k: number) => k >= 0 && k < b.cols && b.cells[k * DEPTH + MIN_LOT_DEPTH - 1].ok;
+    const pair = (k: number) => deep(k) && deep(k + 1) && Math.abs(Math.cos(b.cells[k * DEPTH].rot - b.cells[(k + 1) * DEPTH].rot)) >= 0.97;
+    const dead: number[] = [];
+    for (let k = 0; k < b.cols; k++) if (!pair(k - 1) && !pair(k)) dead.push(k);
+    for (const k of dead) for (let r = 0; r < DEPTH; r++) b.cells[k * DEPTH + r].ok = false;
+  }
+
+  /** Disable a cell and everything behind it in its column (all of it, if what's left is too shallow for any lot). */
   private cut(c: Cell) {
     const b = c.block;
     for (let r = c.row; r < DEPTH; r++) b.cells[c.col * DEPTH + r].ok = false;
