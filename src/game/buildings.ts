@@ -4,6 +4,7 @@ import type { RoadNetwork } from "../roads/network";
 import { cubicClosest } from "../roads/planner";
 import type { Access } from "../sim/router";
 import type { ZoneId } from "./zones";
+import type { PlantState } from "./industry";
 
 export interface Lot {
   block: string; // zone block key
@@ -45,6 +46,8 @@ export interface Building {
   custDay?: number;
   born: number; // sim time it appeared
   // city services (see game/services.ts)
+  /** One of the company's extractors or plants (see game/industry.ts). */
+  plant?: PlantState;
   /** A placed service building (fire station, school...). */
   svc?: boolean;
   /** Service vehicles out on a call (service buildings). */

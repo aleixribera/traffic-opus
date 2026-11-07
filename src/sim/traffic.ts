@@ -2,6 +2,7 @@ import { LANE_W, ROAD_TYPES, SIM } from "../config";
 import { clamp, dist, dot, norm, polyAt, polyClosest, polyDirSmooth, right, sub, type V2 } from "../core/math";
 import type { ChangeSet, Connector, Edge, Lane, RoadNetwork, SignalPhase, SignalPlan } from "../roads/network";
 import { Router, dkey, dkDir, dkSeg, type Access } from "./router";
+import type { HaulRun } from "../game/industry";
 
 export type TripKind = "shop" | "leisure" | "work" | "home" | "cargo" | "move" | "empty" | "school" | "service" | "bus";
 /** A bus going round its line: the stop it is heading for (index into the line) and who is aboard. */
@@ -25,6 +26,8 @@ export interface Trip {
   freeFlow: number;
   run?: ServiceRun;
   bus?: BusRun;
+  /** one of the company's trucks (see game/industry.ts) */
+  haul?: HaulRun;
 }
 
 export interface Vehicle {
