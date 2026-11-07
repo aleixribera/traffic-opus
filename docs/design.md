@@ -48,11 +48,32 @@ Our own names, look and art throughout.
 
 - Each building has jobs, input stores, output stores and a rate. Rate = base x staffing x inputs on hand
   (x power, from tier 2). A full output store stops production, and the building says so.
-- **Sizes:** each building can be upgraded twice (more output, jobs and truck bays) once the company level
-  allows it.
-- **Construction:** tier 1 buildings cost money only. From tier 2 a new plant or upgrade is a site that waits
+- **Sites (owner, 2026-11-08):** every extractor and plant is a big fenced complex, about 5x the old lots:
+  plants roughly 160-220 m on a side, farms, pits and the refinery up to ~300 m. A deposit (600-800 m across)
+  holds one or two. See "Industry sites" below.
+- **Construction:** tier 1 buildings cost money only. From tier 2 a new plant is a construction site that waits
   for materials trucked to it: planks (tier 2), planks + cement (tier 3), construction parts (tier 4).
 - **Power** runs along the roads from power plants that burn coal brought by truck.
+
+## Industry sites (owner, 2026-11-08)
+
+- **Placed anywhere, connected later.** A site can go down with no road near it: you place it free-standing
+  (`,` and `.` turn it in 15 degree steps; with a road close by it turns its gate to face it). Its **gate** is
+  the middle of one side, marked on the map while it has no road. Any road that passes the gate or ends in front
+  of it (within ~12 m) connects it; the site says "Connected" and its trucks start. Until then it shows
+  "No road to the gate" and does nothing but wait.
+- **Four levels, growing by themselves (like TF2).** Level 1 is the core plant by the gate with its truck yard,
+  about a fifth of the plot; levels 2-4 fill the plot to roughly 45%, 70% and full. A site grows one level when
+  it has run near its capacity for a sustained stretch (most of a few in-game days) with its output being
+  shipped, and its inputs coming in for a plant. It never shrinks (an idle site simply stops). Each level
+  multiplies output, jobs and trucks (x1, x2, x3, x4.5 of the level-1 rate).
+- **Look.** A fence round the plot, natural ground inside, internal service roads from the gate, and faint
+  concrete pads where the next level's buildings will stand, so you can read what the site will become. Every
+  building on a site is a Blender model in the usual lot style (pad, front apron facing an internal road): the
+  kind's own model is the core; the rest are repeats of it and shared support models (halls, silos, tanks,
+  heaps tinted to the material, offices, workshops, truck yards; fields for farms, log yards for camps).
+- **Trucks** stop at the truck yard by the gate; internal movement isn't simulated.
+- **Towns** never grow into a site's fence.
 
 ## Freight (routes itself)
 
