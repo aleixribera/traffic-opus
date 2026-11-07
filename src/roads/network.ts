@@ -24,6 +24,10 @@ export interface RNode {
   p: V2;
   h: number; // metres above ground
   signal: SignalPlan | null;
+  /** arms (seg ids) with a stop sign: traffic on them stops at the line and gives way to everyone else */
+  stops?: number[];
+  /** the player removed this junction's lights: they aren't added again by themselves */
+  noAutoLights?: boolean;
 }
 
 export interface RSeg {
@@ -265,6 +269,7 @@ export type Op =
   | { t: "setType"; id: number; from: RoadTypeId; to: RoadTypeId }
   | { t: "flip"; id: number }
   | { t: "setSignal"; id: number; from: SignalPlan | null; to: SignalPlan | null }
+  | { t: "setStops"; id: number; from: number[] | null; to: number[] | null }
   | { t: "setPocket"; id: number; end: "a" | "b"; from: Pocket | null; to: Pocket | null };
 
 /** Splits recorded during a transaction, so vehicles can be carried over to the new pieces. */
@@ -344,6 +349,7 @@ export class RoadNetwork {
       case "setType": this.segs.get(op.id)!.type = op.to; this.touchSeg(op.id); break;
       case "flip": this.flipRaw(op.id); break;
       case "setSignal": this.nodes.get(op.id)!.signal = op.to ? clone(op.to) : null; this.dirtyNodes.add(op.id); break;
+      case "setStops": this.stopsRaw(op.id, op.to); break;
       case "setPocket": this.pocketRaw(op.id, op.end, op.to); break;
     }
   }
@@ -481,6 +487,23 @@ export class RoadNetwork {
     this.dirtyNodes.add(id);
   }
 
+  /** Stop signs on these arms of junction `id` (none: null or empty). */
+  setStops(id: number, arms: number[] | null) {
+    const n = this.nodes.get(id)!;
+    const from = n.stops?.length ? [...n.stops] : null;
+    const to = arms?.length ? [...new Set(arms)].sort((a, b) => a - b) : null;
+    if (JSON.stringify(from) === JSON.stringify(to)) return;
+    this.log({ t: "setStops", id, from, to });
+    this.stopsRaw(id, to);
+  }
+
+  private stopsRaw(id: number, arms: number[] | null) {
+    const n = this.nodes.get(id)!;
+    if (arms?.length) n.stops = [...arms];
+    else delete n.stops;
+    this.dirtyNodes.add(id);
+  }
+
   /** Split segment at curve parameter t. Returns the new node id. */
   splitSeg(id: number, t: number): number {
     const s = this.segs.get(id)!;
@@ -505,6 +528,7 @@ export class RoadNetwork {
         for (const ph of plan.phases) ph.arms = ph.arms.map((a) => (a === id ? piece : a));
         this.setSignal(end, plan);
       }
+      if (n.stops?.includes(id)) this.setStops(end, n.stops.map((a) => (a === id ? piece : a)));
     }
     return nid;
   }
@@ -1182,7 +1206,8 @@ export class RoadNetwork {
     const nodeH = node.h;
     const prioOf = (arm: Arm) => {
       const s = this.segs.get(arm.seg)!;
-      return s.ring ? 10 : ROAD_TYPES[s.type].rank;
+      // (a stop sign puts its arm below every other; lights, if there are any, take over from the signs)
+      return !node.signal && !s.ring && node.stops?.includes(arm.seg) ? -1 : s.ring ? 10 : ROAD_TYPES[s.type].rank;
     };
 
     if (kind === "bend") geom.curve = this.bendCurve(node, arms, segs);
@@ -1501,6 +1526,7 @@ function invert(op: Op): Op {
     case "setType": return { t: "setType", id: op.id, from: op.to, to: op.from };
     case "flip": return op;
     case "setSignal": return { t: "setSignal", id: op.id, from: op.to, to: op.from };
+    case "setStops": return { t: "setStops", id: op.id, from: op.to, to: op.from };
     case "setPocket": return { t: "setPocket", id: op.id, end: op.end, from: op.to, to: op.from };
   }
 }

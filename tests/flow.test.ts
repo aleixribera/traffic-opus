@@ -87,8 +87,11 @@ describe("Junction flow", () => {
     net.rebuild();
     const tr = new Traffic(net, { arrive: () => {}, fail: () => {} });
     const waits = new Map<number, number>();
-    let k = 0;
+    let k = 0, kf = 0, queue = 0;
+    const xyIn = net.segGeom.get(xy)!.lanes.filter((l) => l.to === Y);
     for (let t = 0; t < 400; t += 1 / 30) {
+      // steady traffic from F keeps the lights' other phase busy (they'd otherwise stay green for X->Y)
+      if (t > kf * 2.5) { kf++; tr.request({ from: acc(net, f, 0.1), fromSide: 1, to: acc(net, w, 0.9), toSide: 1, trip: { ...trip(), from: 2 }, truck: false, tries: 0, wait: 0, through: true }); }
       if (t > k * 2.5) {
         k++;
         tr.request({ from: acc(net, n, 0.1), fromSide: 1, to: acc(net, w, 0.9), toSide: 1, trip: trip(), truck: false, tries: 0, wait: 0, through: true });
@@ -100,7 +103,10 @@ describe("Junction flow", () => {
         const l = v.edge as any;
         if (v.trip.from === 1 && l.kind === "lane" && l.seg === e && v.s > l.pl.length - 3) waits.set(v.id, (waits.get(v.id) ?? 0) + 1 / 30);
       }
+      queue = Math.max(queue, xyIn.reduce((n, l) => n + l.occ.length, 0));
     }
+    // the street X->Y does back up (or this tests nothing)
+    expect(queue).toBeGreaterThanOrEqual(8);
     const worst = Math.max(...waits.values());
     expect(waits.size).toBeGreaterThan(5);
     expect(worst, `a car on the side street waited ${worst.toFixed(0)} s at the front of its queue`).toBeLessThan(45);
@@ -127,10 +133,13 @@ describe("Merging into a queue", () => {
     net.commit();
     net.rebuild();
     let arrived = 0, fails = 0;
-    const tr = new Traffic(net, { arrive: () => { arrived++; }, fail: () => { fails++; } });
-    let k = 0, missed = 0;
+    const tr = new Traffic(net, { arrive: (v) => { if (v.trip.from !== 2) arrived++; }, fail: () => { fails++; } });
+    let k = 0, kf = 0, missed = 0, queue = 0;
     const onB = new Set<number>();
+    const xyIn = net.segGeom.get(xy)!.lanes.filter((l) => l.to === Y);
     for (let t = 0; t < 420; t += 1 / 30) {
+      // steady traffic from F keeps the lights' other phase busy
+      if (t > kf * 3) { kf++; tr.request({ from: acc(net, f, 0.1), fromSide: 1, to: acc(net, w, 0.9), toSide: 1, trip: { ...trip(), from: 2 }, truck: false, tries: 0, wait: 0, through: true }); }
       if (k < 60 && t > k * 2.4) {
         k++;
         // fromSide -1 on a one-way: joins in the outer lane
@@ -138,10 +147,13 @@ describe("Merging into a queue", () => {
       }
       tr.step(1 / 30);
       for (const v of tr.vehicles as Vehicle[]) if ((v.edge as any).seg === b && !onB.has(v.id)) { onB.add(v.id); missed++; }
+      queue = Math.max(queue, xyIn.reduce((n, l) => n + l.occ.length, 0));
     }
+    expect(queue, "the exit road backs up").toBeGreaterThanOrEqual(8);
     expect(missed, "cars that missed the exit").toBe(0);
     expect(fails).toBe(0);
-    expect(arrived + tr.vehicles.length + tr.pending.length).toBe(60);
+    const mine = (x: { trip: Trip }) => x.trip.from !== 2;
+    expect(arrived + (tr.vehicles as Vehicle[]).filter(mine).length + tr.pending.filter(mine).length).toBe(60);
   });
 });
 

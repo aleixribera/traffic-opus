@@ -1,5 +1,5 @@
 import {
-  BUILDING_TYPES, BULLDOZE_REFUND, START_TILES, TILE, ROAD_TYPES, SIGNAL_COST, SIM, roadWidth, type RoadTypeId,
+  BUILDING_TYPES, BULLDOZE_REFUND, START_TILES, TILE, ROAD_TYPES, SIGNAL_COST, SIM, isHighway, roadWidth, type RoadTypeId,
 } from "../config";
 import { add, dist, polyClosest, rectCorners, scale, sub, type V2 } from "../core/math";
 import { mulberry32 } from "../core/noise";
@@ -98,6 +98,7 @@ export class Game {
   private shopCache: Building[] | null = null;
   private candCache = new Map<ZoneGroup, Cell[]>();
   private freeCache = new Map<ZoneGroup, number>();
+  private midRebuilds: ChangeSet[] = []; // rebuilds part-way through the edit being applied (see autoLights)
   private candVersion = -1;
   /** Roads whose use is blocked (no route); shown as notifications. */
   noRouteAt = new Map<number, number>();
@@ -276,12 +277,53 @@ export class Game {
   // ---------------------------------------------------------------- road edits
 
   private applyRoads(fn: () => void): Op[] {
+    // which way each junction's roads went before the edit (see autoLights)
+    const before = new Map<number, V2[]>();
+    if (this.featureUnlocked("signals")) for (const [id, ng] of this.net.nodeGeom) if (ng.kind === "junction") before.set(id, ng.arms.map((a) => a.dir));
     this.net.begin();
     fn();
     const cs = this.net.rebuild();
+    // new crossings of bigger roads get lights, as in CS2 (part of the same edit, so undo takes them away too)
+    const lit = this.autoLights([...this.midRebuilds, cs], before);
+    this.midRebuilds = [];
+    const cs2 = lit ? this.net.rebuild() : null;
     const ops = this.net.commit();
     this.afterRoads(cs);
+    if (cs2) this.afterRoads(cs2);
     return ops;
+  }
+
+  /**
+   * Traffic lights where two bigger roads now meet (CS2 places them by itself): a junction whose approaches just
+   * gained a road, with at least three arms of avenue size or more (an avenue going on through it is two of them; motorway
+   * ramps and roundabouts don't count), gets the default plan for free, unless the player took its lights away
+   * before. Returns how many it lit.
+   */
+  private autoLights(css: ChangeSet[], before: Map<number, V2[]>): number {
+    if (!this.featureUnlocked("signals")) return 0;
+    let lit = 0;
+    const ids = new Set<number>();
+    for (const cs of css) for (const id of cs.dirtyNodes) ids.add(id);
+    for (const id of ids) {
+      const n = this.net.nodes.get(id), ng = this.net.nodeGeom.get(id);
+      if (!n || !ng || n.signal || n.noAutoLights || ng.kind !== "junction" || ng.arms.length < 3) continue;
+      let big = 0, ring = false;
+      for (const a of ng.arms) {
+        const s = this.net.segs.get(a.seg);
+        if (!s) continue;
+        if (s.ring) ring = true;
+        const T = ROAD_TYPES[s.type];
+        if (!isHighway(T) && T.rank >= 2) big++;
+      }
+      if (ring || big < 3) continue;
+      // only a new junction, or one a road was just added to: one the player has left unsignalled stays that way,
+      // whatever happens further along its roads (a split elsewhere renumbers its arms but doesn't turn them)
+      const was = before.get(id);
+      if (was && ng.arms.every((a) => was.some((d) => a.dir.x * d.x + a.dir.y * d.y > 0.985))) continue;
+      const plan = this.defaultSignal(id);
+      if (plan) { this.net.setSignal(id, plan); lit++; }
+    }
+    return lit;
   }
 
   private afterRoads(cs: ChangeSet) {
@@ -371,6 +413,7 @@ export class Game {
         if (plan.trim) {
           applyTrim(this.net, plan.trim);
           const cs = this.net.rebuild();
+          this.midRebuilds.push(cs);
           this.traffic.onNetworkChange(cs);
           this.zones.onNetworkChange(cs);
           this.emit({ t: "roads", cs });
@@ -382,6 +425,7 @@ export class Game {
           // later strokes of a grid must see earlier ones
           if (plan.strokes.length > 1) {
             const cs = this.net.rebuild();
+            this.midRebuilds.push(cs);
             this.traffic.onNetworkChange(cs);
             // (the zone map too: each rebuild hands over only what changed since the last)
             this.zones.onNetworkChange(cs);
@@ -472,12 +516,23 @@ export class Game {
   setSignal(nodeId: number, plan: SignalPlan | null): boolean {
     const n = this.net.nodes.get(nodeId);
     if (!n) return false;
+    // lights the player takes away stay away (they aren't put back when the junction changes)
+    if (!plan && n.signal) n.noAutoLights = true;
     const cost = !n.signal && plan ? SIGNAL_COST : 0;
     if (cost > this.money) return false;
     const ops = this.applyRoads(() => this.net.setSignal(nodeId, plan));
     this.money -= cost;
     this.pushUndo({ label: "signal", ops, money: cost, added: [], removed: [] });
     this.emit({ t: "money" });
+    return true;
+  }
+
+  /** Stop signs on these arms of a junction (free; none: empty). Undoable. */
+  setStops(nodeId: number, arms: number[]): boolean {
+    if (!this.net.nodes.has(nodeId)) return false;
+    const ops = this.applyRoads(() => this.net.setStops(nodeId, arms));
+    if (!ops.length) return false;
+    this.pushUndo({ label: "stops", ops, money: 0, added: [], removed: [] });
     return true;
   }
 

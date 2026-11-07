@@ -258,6 +258,8 @@ i.dm-res, i.dm-com, i.dm-ind, i.dm-off { background: var(--c); }
 .ph-arms { display: flex; flex-wrap: wrap; gap: 2px; }
 .arm { font-size: 11px; font-weight: 600; padding: 1px 4px; border: 1px solid var(--line-2); background: #fff; border-radius: 3px; color: var(--ink-2); }
 .arm.on { background: #1f7a36; border-color: #17602a; color: #fff; }
+.arm.on.stop { background: #c8302b; border-color: #a12521; }
+.phase.stops { cursor: default; margin: 6px 0 10px; }
 .ph-dur { display: flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
 .dur { width: 22px; height: 22px; border: 1px solid var(--line-2); background: #fff; border-radius: 3px; padding: 0; line-height: 14px; }
 .ph-del { background: none; border: 0; padding: 0; color: var(--ink-3); display: grid; place-items: center; }

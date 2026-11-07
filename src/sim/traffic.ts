@@ -1,6 +1,6 @@
 import { LANE_W, ROAD_TYPES, SIM } from "../config";
 import { clamp, dist, dot, norm, polyAt, polyClosest, polyDirSmooth, right, sub, type V2 } from "../core/math";
-import type { ChangeSet, Connector, Edge, Lane, RoadNetwork } from "../roads/network";
+import type { ChangeSet, Connector, Edge, Lane, RoadNetwork, SignalPlan } from "../roads/network";
 import { Router, dkey, dkDir, dkSeg, type Access } from "./router";
 
 export type TripKind = "shop" | "leisure" | "work" | "home" | "cargo" | "move" | "empty" | "school" | "service";
@@ -57,6 +57,7 @@ export interface Vehicle {
   ideal: number;
   born: number; // sim time it entered the road
   block?: string; // why the junction last refused entry (debug + inspector)
+  stopAt?: Connector; // the stop sign it has already stopped at (and may now go on from, when clear)
   blockTo?: Lane; // the lane the car it last gave way to was heading into
   grantT?: number; // order in which it got its current go-ahead at the junction ahead (a sequence, never tied)
   overrode?: boolean; // that go-ahead was a driver with an earlier one letting it out (see letsOut)
@@ -151,6 +152,13 @@ export class Traffic {
   // A backed-up exit lane: the car that has waited longest at its stop line for room on it gets the next gap,
   // instead of whoever happens to roll up at speed when the queue moves.
   private roomClaim = new Map<Lane, Vehicle>();
+
+  // Traffic lights run on demand (CS2): per signalled node, which phase is on, its stage (0 green, 1 yellow,
+  // 2 all red) and how long it has been in it. Made the first time anything asks about that node's lights.
+  private sigCtl = new Map<number, { plan: SignalPlan; i: number; st: 0 | 1 | 2; t: number }>();
+  // node -> arm seg -> the lanes coming into the node on that arm, each with the lanes feeding it from further back
+  // (an arm that is only a short piece of road would otherwise hide most of its queue)
+  private sigIn = new Map<number, Map<number, { l: Lane; back: number; arm: number }[]>>();
 
   private ringLoads = new Map<number, number>(); // ring id -> share of its capacity in use (this step)
   flow = new Map<number, FlowStat>(); // by directed seg key
@@ -300,6 +308,7 @@ export class Traffic {
   step(dt: number) {
     this.time += dt;
     this.ringLoads.clear();
+    this.updateSignals(dt);
     // spawns
     if (this.pending.length) {
       const keep: PendingSpawn[] = [];
@@ -442,6 +451,7 @@ export class Traffic {
         insertOcc(c, v);
         v.next = null;
         v.granted = false;
+        v.stopAt = undefined;
       } else {
         const c = e as Connector;
         if (v.s <= c.pl.length) return false;
@@ -598,22 +608,129 @@ export class Traffic {
   signalState(nodeId: number, armSeg: number): "green" | "yellow" | "red" | "none" {
     const n = this.net.nodes.get(nodeId);
     if (!n || !n.signal || !n.signal.phases.length) return "none";
-    const Y = 3, AR = 1.5;
-    const ph = n.signal.phases;
-    let cycle = 0;
-    for (const p of ph) cycle += p.dur + Y + AR;
-    let t = (this.time + nodeId * 3.7) % cycle;
-    for (const p of ph) {
-      const span = p.dur + Y + AR;
-      if (t < span) {
-        if (!p.arms.includes(armSeg)) return "red";
-        if (t < p.dur) return "green";
-        if (t < p.dur + Y) return "yellow";
-        return "red";
+    let c = this.sigCtl.get(nodeId);
+    if (!c) this.sigCtl.set(nodeId, (c = { plan: n.signal, i: 0, st: 0, t: 0 }));
+    else if (c.plan !== n.signal) this.resetSignal(c, n.signal);
+    if (!n.signal.phases[c.i].arms.includes(armSeg)) return "red";
+    return c.st === 0 ? "green" : c.st === 1 ? "yellow" : "red";
+  }
+
+  /**
+   * Right turn on red: from a standstill at the line, when nothing with a green is coming its way (a car going
+   * through on its green, or still in the junction). The usual checks (room on the exit, the box) come after.
+   */
+  private rightOnRed(v: Vehicle, c: Connector, toEnd: number): boolean {
+    if (!v.granted && (toEnd > 2.5 || v.v > 0.5 || v.wait < 1)) return false;
+    for (const cf of c.conflicts) {
+      const o = cf.c;
+      for (const h of o.holders as Vehicle[]) if (h !== v && !this.clearsBefore(h, o, cf, 6, false, 1)) return false;
+      if (this.signalState(o.node, o.armIn) === "red") continue;
+      const ap = o.from.occ as Vehicle[];
+      for (let k = ap.length - 1; k >= 0; k--) {
+        const w = ap[k];
+        const d = o.from.pl.length - w.s;
+        if (d > 90) break;
+        const goes = w.next ? w.next === o : w.route[w.ri + 1] === dkey(o.to.seg, o.to.dir);
+        if (!goes || w === v) continue;
+        if (d / Math.max(w.v, 0.5) < 6 && (w.v > 1 || d < 8)) return false;
+        break; // (the one nearest the line decides: those behind it come later still)
       }
-      t -= span;
     }
-    return "red";
+    return true;
+  }
+
+  /**
+   * The player edited the lights' plan. If the phase that is on still lets the same arms go, the light carries
+   * on as it was (a change of time elsewhere changes nothing now); otherwise it goes to all red, and on from there.
+   */
+  private resetSignal(c: { plan: SignalPlan; i: number; st: 0 | 1 | 2; t: number }, plan: SignalPlan) {
+    const was = c.plan.phases[c.i]?.arms ?? [];
+    c.plan = plan;
+    c.i = Math.min(c.i, plan.phases.length - 1);
+    const now = plan.phases[c.i].arms;
+    if (was.length === now.length && was.every((a) => now.includes(a))) return;
+    c.st = 2;
+    c.t = 0;
+  }
+
+  /**
+   * Actuated lights (CS2): a phase's green lasts at least a few seconds and is kept while its cars are still
+   * coming through, up to twice its set length; it ends early once its approaches are empty and someone waits on
+   * red. Phases nobody waits for are skipped, and with nobody waiting anywhere else the light stays green.
+   */
+  private updateSignals(dt: number) {
+    const Y = 3, AR = 1.5, MIN_G = 5;
+    for (const [id, c] of this.sigCtl) {
+      const n = this.net.nodes.get(id);
+      if (!n?.signal || !n.signal.phases.length) { this.sigCtl.delete(id); continue; }
+      if (c.plan !== n.signal) this.resetSignal(c, n.signal);
+      c.t += dt;
+      const ph = c.plan.phases;
+      if (c.st === 1) { if (c.t >= Y) { c.st = 2; c.t = 0; } continue; }
+      if (c.st === 2) {
+        if (c.t >= AR) {
+          // on to the next phase with cars waiting for it. If they've all gone meanwhile (turned right on red),
+          // back to the one that was on; a phase that lets nobody go is never picked unless it is all there is.
+          const cur = ph[c.i].arms;
+          let to = -1;
+          for (let k = 1; k < ph.length && to < 0; k++) {
+            const j = (c.i + k) % ph.length;
+            if (ph[j].arms.length && this.sigDemand(id, ph[j].arms, false, cur)) to = j;
+          }
+          if (to < 0 && !cur.length) for (let k = 1; k < ph.length && to < 0; k++) if (ph[(c.i + k) % ph.length].arms.length) to = (c.i + k) % ph.length;
+          c.i = to < 0 ? c.i : to; c.st = 0; c.t = 0;
+        }
+        continue;
+      }
+      const g = ph[c.i];
+      if (ph.length < 2 || c.t < Math.min(g.dur, MIN_G)) continue;
+      let waiting = !g.arms.length; // (a phase that lets nobody go only lasts its minimum)
+      for (let j = 0; j < ph.length && !waiting; j++) if (j !== c.i && this.sigDemand(id, ph[j].arms, false, g.arms)) waiting = true;
+      if (!waiting) continue;
+      if (c.t < g.dur * 2 && this.sigDemand(id, g.arms, true)) continue;
+      c.st = 1; c.t = 0;
+    }
+  }
+
+  /**
+   * Cars coming up to lights `node` on approaches `arms` (not counting those in `skip`): any within 60 m of the
+   * stop line, or with `gap`, any that will still go through in the next few seconds (arriving soon, or at the line
+   * and free to go: one held by a full exit doesn't keep the green).
+   */
+  private sigDemand(node: number, arms: number[], gap: boolean, skip?: number[]): boolean {
+    let byArm = this.sigIn.get(node);
+    if (!byArm) this.sigIn.set(node, (byArm = new Map()));
+    for (const seg of arms) {
+      if (skip?.includes(seg)) continue;
+      let lanes = byArm.get(seg);
+      if (!lanes) {
+        // the arm's lanes, and back from them (through connectors) up to 60 m from the stop line
+        lanes = [];
+        const seen = new Set<Lane>();
+        const add = (l: Lane, back: number, arm: number) => {
+          if (seen.has(l) || back >= 60) return;
+          seen.add(l);
+          lanes!.push({ l, back, arm });
+          for (const c of l.ins) if (c.from.kind === "lane") add(c.from as Lane, back + l.pl.length + c.pl.length, arm);
+        };
+        for (const l of this.net.segGeom.get(seg)?.lanes ?? []) if (l.to === node) add(l, 0, dkey(l.seg, l.dir));
+        byArm.set(seg, lanes);
+      }
+      for (const { l, back, arm } of lanes) {
+        const occ = l.occ as Vehicle[];
+        for (let k = occ.length - 1; k >= 0; k--) {
+          const v = occ[k];
+          const d = l.pl.length - v.s + back;
+          if (d > 60) break;
+          // (turning off into a lot before the junction: not for the lights. Further back: heading this way?)
+          if (back === 0 ? v.next?.node !== node : !v.route.slice(v.ri + 1, v.ri + 4).includes(arm)) continue;
+          if (!gap) return true;
+          if (v.block === "box" && v.v < 0.5) continue;
+          if (d < Math.max(10, v.v * 3.5)) return true;
+        }
+      }
+    }
+    return false;
   }
 
   private canEnter(v: Vehicle, c: Connector, toEnd: number): boolean {
@@ -634,9 +751,14 @@ export class Traffic {
       for (const cf of c.conflicts) if (cf.merge && !this.mergeOk(v, c, cf.c)) { v.block = "yield"; return false; }
       return true;
     }
+    // a stop sign: a full stop at the line first (then the usual giving way, to everyone: its arm ranks lowest)
+    if (c.prio < 0 && !v.granted && v.stopAt !== c) {
+      if (toEnd > 2.5 || v.v > 0.3) { v.block = "stop"; return false; }
+      v.stopAt = c;
+    }
     // signals
     const sig = this.signalState(c.node, c.armIn);
-    if (sig === "red") { v.block = "red"; return false; }
+    if (sig === "red" && !(c.turn === "R" && this.rightOnRed(v, c, toEnd))) { v.block = "red"; return false; }
     // letting a long-waiting car out: hold back if our path crosses its and we can still stop
     const cl = this.courtesy.get(c.node);
     if (cl && cl.v !== v && cl.v.next && !this.committed(v) && cl.v.next.conflicts.some((cf) => cf.c === c)) { v.block = "courtesy"; return false; }
@@ -1458,6 +1580,7 @@ export class Traffic {
   /** Carry vehicles over to rebuilt lanes/connectors; drop only those whose road is gone. */
   onNetworkChange(cs: ChangeSet) {
     const net = this.net;
+    this.sigIn.clear();
     this.roomClaim.clear();
     this.courtesy.clear();
     this.courtesyRest.clear();

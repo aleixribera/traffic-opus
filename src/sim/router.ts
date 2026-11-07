@@ -66,7 +66,7 @@ export interface RouteResult {
 export class Router {
   /** measured mean speed per directed seg (m/s); missing = speed limit */
   speeds = new Map<number, number>();
-  private succCache = new Map<number, { k: number; turn: string; signal: boolean }[]>();
+  private succCache = new Map<number, { k: number; turn: string; signal: boolean; stop: boolean }[]>();
   private cacheVersion = -1;
 
   constructor(private net: RoadNetwork) {}
@@ -92,7 +92,7 @@ export class Router {
         const nk = dkey(c.to.seg, c.to.dir);
         if (seen.has(nk)) continue;
         seen.add(nk);
-        out.push({ k: nk, turn: c.turn, signal: !!this.net.nodes.get(c.node)?.signal });
+        out.push({ k: nk, turn: c.turn, signal: !!this.net.nodes.get(c.node)?.signal, stop: c.prio < 0 });
       }
     }
     this.succCache.set(k, out);
@@ -174,7 +174,7 @@ export class Router {
       if (gk >= bestCost) break;
       for (const sc of this.succ(k)) {
         const nk = sc.k;
-        let step = (sc.turn === "L" ? 2.5 : sc.turn === "U" ? 9 : sc.turn === "R" ? 1 : 0.3) + (sc.signal ? 4 : 0);
+        let step = (sc.turn === "L" ? 2.5 : sc.turn === "U" ? 9 : sc.turn === "R" ? 1 : 0.3) + (sc.signal ? 4 : sc.stop ? 3 : 0);
         let ffStep = 0;
         const gl = goalKeys.get(nk);
         if (gl !== undefined) {
@@ -241,7 +241,7 @@ export class Router {
       const near = Math.max(0, gk - this.segLen(k) / this.limit(k));
       if (near < (out.get(seg) ?? Infinity)) out.set(seg, near);
       for (const sc of this.succ(k)) {
-        const step = (sc.turn === "L" ? 2.5 : sc.turn === "U" ? 9 : sc.turn === "R" ? 1 : 0.3) + (sc.signal ? 4 : 0);
+        const step = (sc.turn === "L" ? 2.5 : sc.turn === "U" ? 9 : sc.turn === "R" ? 1 : 0.3) + (sc.signal ? 4 : sc.stop ? 3 : 0);
         const ng = gk + step + this.segLen(sc.k) / this.limit(sc.k);
         if (ng < (g.get(sc.k) ?? Infinity)) { g.set(sc.k, ng); heap.push(sc.k, ng); }
       }

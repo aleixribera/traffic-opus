@@ -188,6 +188,11 @@ export class Roads3D {
   private lightRefs: { node: number; arm: number; x: number; y: number; h: number }[] = [];
   // turn arrows painted on the lanes coming into a junction
   private arrowMat = new THREE.MeshLambertMaterial({ color: PAL.lane, side: THREE.DoubleSide });
+  // stop signs: a red octagon at the kerb (white rim)
+  private stopMat = new THREE.MeshBasicMaterial({ color: 0xd9302c });
+  private stopRim = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  private stopGeo = new THREE.CircleGeometry(0.85, 8, Math.PI / 8).rotateX(-Math.PI / 2);
+  private stopRimGeo = new THREE.CircleGeometry(1.08, 8, Math.PI / 8).rotateX(-Math.PI / 2);
   // grass islands inside roundabouts
   private islands = new THREE.Group();
   private islandMat = new THREE.MeshLambertMaterial({ color: PAL.grass });
@@ -328,7 +333,11 @@ export class Roads3D {
   private dropNode(id: number) {
     const os = this.nodes.get(id);
     if (!os) return;
-    for (const o of os) { this.group.remove(o); (o as THREE.Mesh).geometry?.dispose(); }
+    for (const o of os) {
+      this.group.remove(o);
+      const geo = (o as THREE.Mesh).geometry;
+      if (geo !== this.stopGeo && geo !== this.stopRimGeo) geo?.dispose(); // (the stop signs share theirs)
+    }
     this.nodes.delete(id);
     this.bendFlow.delete(id);
   }
@@ -518,8 +527,56 @@ export class Roads3D {
     }
     const arrows = this.turnArrows(id);
     if (arrows) out.push(arrows);
+    out.push(...this.stopMarks(id));
     this.group.add(...out);
     this.nodes.set(id, out);
+  }
+
+  /**
+   * Stop signs at a junction: a thick stop line across every lane coming in on a stop arm, and a sign beside the
+   * kerb lane's line.
+   */
+  private stopMarks(id: number): THREE.Object3D[] {
+    const n = this.net.nodes.get(id), ng = this.net.nodeGeom.get(id);
+    if (!n?.stops?.length || !ng || ng.kind !== "junction") return [];
+    const out: THREE.Object3D[] = [];
+    const pos: number[] = [];
+    for (const a of ng.arms) {
+      if (!n.stops.includes(a.seg)) continue;
+      const g = this.net.segGeom.get(a.seg);
+      if (!g) continue;
+      const inn = g.lanes.filter((l) => l.to === id && l.seg === a.seg && (a.end === "b" ? l.dir === 1 : l.dir === -1));
+      let kerb: (typeof inn)[number] | null = null;
+      for (const l of inn) {
+        if (!kerb || l.idx < kerb.idx) kerb = l;
+        const L = l.pl.length, at = Math.max(0, L - 0.45);
+        const p = polyAt(l.pl, at), d = polyDir(l.pl, at), r = right(d);
+        const h = (l.hs[l.hs.length - 1] ?? 0) + LIFT + 0.017;
+        const hw = LANE_W * 0.47, hd = 0.45;
+        const c = (x: number, y: number) => [p.x + r.x * x + d.x * y, h, p.y + r.y * x + d.y * y];
+        pos.push(...c(-hw, -hd), ...c(hw, -hd), ...c(hw, hd), ...c(-hw, -hd), ...c(hw, hd), ...c(-hw, hd));
+      }
+      if (kerb) {
+        const L = kerb.pl.length, at = Math.max(0, L - 1.6);
+        const p = polyAt(kerb.pl, at), r = right(polyDir(kerb.pl, at));
+        const h = (kerb.hs[kerb.hs.length - 1] ?? 0) + LIFT + 0.05;
+        const x = p.x + r.x * (LANE_W / 2 + 1.5), y = p.y + r.y * (LANE_W / 2 + 1.5);
+        const rim = new THREE.Mesh(this.stopRimGeo, this.stopRim), face = new THREE.Mesh(this.stopGeo, this.stopMat);
+        rim.position.set(x, h, y);
+        face.position.set(x, h + 0.01, y);
+        rim.renderOrder = face.renderOrder = 3;
+        out.push(rim, face);
+      }
+    }
+    if (pos.length) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+      geo.computeVertexNormals();
+      const m = new THREE.Mesh(geo, this.arrowMat);
+      m.receiveShadow = true;
+      out.unshift(m);
+    }
+    return out;
   }
 
   /**

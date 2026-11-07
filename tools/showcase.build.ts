@@ -6,7 +6,7 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { it } from "vitest";
-import { MILESTONES } from "../src/game/progression";
+import { milestoneFor } from "../src/game/progression";
 import { Game } from "../src/game/city";
 import { HOUR } from "../src/game/society";
 import type { ServiceKind } from "../src/game/services";
@@ -93,7 +93,7 @@ function motorwayFrame(g: Game, near: V2) {
 
 it("builds the showcase city", () => {
   const g = new Game(7);
-  g.milestone = MILESTONES.length - 1;
+  g.milestone = 9; // everything unlocked while it is built
   g.money = 1e9;
   for (let i = -3; i <= 3; i++) for (let j = -3; j <= 3; j++) g.tiles.add(`${i},${j}`);
   g.zones.rebuildAll();
@@ -160,6 +160,9 @@ it("builds the showcase city", () => {
   for (const Y of [-170, 170]) B.road(`works cross ${Y}`, P(-360, Y), P(-640, Y), "street");
   for (const Y of [-330, 330, 600]) B.road(`works cross ${Y}`, P(-200, Y), P(-640, Y), "street");
   B.road("works link", P(-200, 330), P(-200, 600), "street");
+  // a second way across the motorway, clear of the ramps: works traffic to the south of the city needn't queue
+  // through the interchange (an overpass, no ramps)
+  B.path("south bridge", [P(-200, 600), P(-95, 615), P(95, 638), P(300, 650)], "avenue", [0, 1, 1, 0]);
 
   // the ramp terminals of the diamond carry the most turning traffic: signals, as any CS player would add
   for (const J of [JW, JE]) {
@@ -217,7 +220,10 @@ it("builds the showcase city", () => {
       if (Object.keys(why).length) say(`  fails ${JSON.stringify(why)}`);
     }
   }
-  say(`segs ${g.net.segs.size} buildings ${g.buildings.list.length}`);
+  // what a city this size would have reached, and a treasury to match
+  g.milestone = milestoneFor(g.people.stats.population);
+  g.money = 240_000;
+  say(`segs ${g.net.segs.size} buildings ${g.buildings.list.length} milestone ${g.milestone}`);
   mkdirSync("tools/out", { recursive: true });
   writeFileSync("tools/out/showcase.log", log.join("\n"));
   writeFileSync("tools/out/showcase.json", JSON.stringify(g.serialize()));
