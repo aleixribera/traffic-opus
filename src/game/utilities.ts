@@ -13,7 +13,6 @@ export const UTILITIES: UtilityId[] = ["power"];
 /** What one resident or worker uses an hour (MW). */
 export const PER_PERSON: Record<UtilityId, number> = { power: 0.006 };
 export const UNIT: Record<UtilityId, string> = { power: "MW" };
-export const UTILITY_NAME: Record<UtilityId, string> = { power: "Electricity" };
 
 export interface UtilityStats {
   /** made by the town's own plants */

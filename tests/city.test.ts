@@ -190,7 +190,8 @@ describe("Growth, people and money", () => {
     expect(okCells(h).filter((c) => c.zone).length).toBe(okCells(g).filter((c) => c.zone).length);
     expect(h.people.citizens.size).toBe(g.people.citizens.size);
     expect(Math.round(h.money)).toBe(Math.round(g.money));
-    expect(() => Game.load({ ...json, v: 1 })).toThrow();
+    // saves from before the city-builder systems came out (v2, with taxes, services and gateways) are refused, clearly
+    for (const v of [1, 2, undefined]) expect(() => Game.load({ ...json, v } as typeof json)).toThrow(/older version/);
     run(h, 2); // and it keeps running
   }, 60000);
 });

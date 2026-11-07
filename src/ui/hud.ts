@@ -635,7 +635,7 @@ export class Hud {
     const g = this.app.game;
     const html = GROUPS.map((gp) => {
       const d = g.demand[gp];
-      let fs = d.factors.filter((f) => f.v !== 0 || f.label.startsWith("Unlocks")).map((f) =>
+      let fs = d.factors.filter((f) => f.v !== 0).map((f) =>
         `<li><span>${f.label}</span><b class="${f.v > 0 ? "good" : f.v < 0 ? "bad" : ""}">${f.v > 0 ? "+" : f.v < 0 ? "−" : ""}${Math.abs(f.v) || ""}</b></li>`).join("");
       if (d.v >= LAND_SHORT && g.freeLand(gp) === 0) fs += `<li class="short"><span>No empty ${GROUP_LAND[gp]} zones: zone more</span></li>`;
       return `<div class="dp-row"><div class="dp-head"><i class="dm-${gp}"></i><span>${GROUP_NAME[gp]}</span><span class="dp-bar"><i class="dm-${gp}" style="width:${d.v}%"></i></span><b>${d.v}</b></div><ul>${fs}</ul></div>`;

@@ -3,7 +3,7 @@ import type { View } from "../render/view";
 
 /** What a problem looks like on the map: the pictogram and how urgent it is (urgent ones bounce). */
 function iconFor(p: string): { key: string; svg: string; urgent: boolean } {
-  if (p === "No road access" || p.startsWith("Trips can't")) return { key: "road", svg: ROAD, urgent: false };
+  if (p === "No road access" || p.startsWith("Trips can't") || p.startsWith("Not connected")) return { key: "road", svg: ROAD, urgent: false };
   return { key: "warn", svg: WARN, urgent: false };
 }
 

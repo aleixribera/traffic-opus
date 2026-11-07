@@ -561,7 +561,7 @@ export class App {
   quickLoad() {
     const d = this.saves.load("quick");
     if (!d) { this.reject("No quicksave yet (F5 saves)"); return; }
-    this.loadGame(d);
+    try { this.loadGame(d); } catch (e) { this.reject(String(e).includes("older version") ? "That quicksave is from an older version" : "Couldn't load the quicksave"); return; }
     this.hud?.toast("Quickload");
   }
 
