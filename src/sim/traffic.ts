@@ -59,6 +59,8 @@ export interface Vehicle {
   turnOk?: boolean; // its driveway was clear to turn into on the way up to it (it carries on rather than stop dead)
   latV?: number; // sideways speed while changing lanes / pulling out (m/s, signed like lat)
   wish?: { lane: Lane; t: number }; // a lane it must change into but found no gap in (last tried at t)
+  lcFrom?: Lane; // the lane it is changing out of, while its body still sits partly in it
+  lcS?: number; // where on its new lane it changed over
   crossing?: { lane: Lane; s: number }[]; // far lanes this car is still pulling out across (spot where it started)
   crossFrom?: number; // its own lane position when it started pulling out
   v0e: number; // free-road desired speed this step (limits, curves, driveway approach)
@@ -119,6 +121,13 @@ export class Traffic {
   // lane -> cars beside it that need to get into it soon: the car behind each one holds back to make room
   private wishes = new Map<Lane, Vehicle[]>();
   private crossers = new Map<Lane, number[]>(); // lane -> spots where a car is pulling out across it (this step)
+  private leavers = new Map<Lane, Vehicle[]>(); // lane -> cars changing out of it that still take up room in it (this step)
+  // Where one lane divides in two (a taper into a slip lane, a fork), the two paths run on top of each other for a
+  // while: a car on one branch there blocks the other too. Pairs of such branches with how far they overlap, built
+  // lazily after each network change; and per edge the cars on its sibling branch that sit in that shared stretch.
+  private tapers: { a: Connector; b: Connector; ov: number }[] | null = null;
+  private shadows = new Map<Edge, Vehicle[]>();
+  private shadowS = new Map<Vehicle, number>(); // a shadowing car's position mapped onto the edge it shadows
   // An unsignalled junction where a car has waited long for a gap that never comes: traffic that can still stop
   // lets it out (one car at a time, for a few seconds, then the main road gets a turn again).
   private courtesy = new Map<number, { v: Vehicle; until: number }>();
@@ -164,8 +173,18 @@ export class Traffic {
     const crossing = (best.dir === 1 ? 1 : -1) !== p.fromSide;
     // joining from the far side you turn into the lane nearest the middle, as real drivers do
     const want = crossing ? Math.max(...lanes.map((l) => l.idx)) : 0;
-    const lane = lanes.find((l) => l.idx === want) ?? lanes[0];
+    let lane = lanes.find((l) => l.idx === want) ?? lanes[0];
     if (!lane) return "fail";
+    // traffic driving in from the edge of the map uses another lane when its own is backed up to the edge
+    if (p.through && lanes.length > 1) {
+      const room = (l: Lane) => {
+        const s = polyClosest(l.pl, p.from.p).s;
+        const ahead = (l.occ as Vehicle[]).find((o) => o.s > s - 2);
+        return ahead ? ahead.s - ahead.len - s + ahead.v * 3 : 1e4;
+      };
+      let best = room(lane);
+      if (best < 40) for (const l of lanes) { const r = room(l); if (r > best + 10) { best = r; lane = l; } }
+    }
     const lc = polyClosest(lane.pl, p.from.p);
     const ls = lc.s;
     const len = p.truck ? SIM.truckLen : SIM.carLen;
@@ -210,7 +229,15 @@ export class Traffic {
     };
     if (p.exit) v.exit = true;
     if (p.through) {
-      v.v = ROAD_TYPES[net.segs.get(lane.seg)!.type].speed * 0.85;
+      // driving in at speed, but never faster than it can comfortably slow to the car ahead (the tail of a queue)
+      let sp = ROAD_TYPES[net.segs.get(lane.seg)!.type].speed * 0.85;
+      const ahead = (lane.occ as Vehicle[]).find((o) => o.s > ls);
+      if (ahead) {
+        const gap = ahead.s - ahead.len - ls - SIM.idm.s0;
+        if (gap < 3) { p.why = "occupied"; return "wait"; }
+        sp = Math.min(sp, Math.sqrt(ahead.v * ahead.v + 2 * 1.5 * gap) - 1, ahead.v + gap / Math.max(SIM.idm.T, 0.5));
+      }
+      v.v = Math.max(0, sp);
       v.fade = 1;
       insertOcc(lane, v);
       this.vehicles.push(v);
@@ -745,6 +772,81 @@ export class Traffic {
       const moved = v.edge.kind === "lane" ? Math.max(0, v.s - (v.crossFrom ?? v.s)) : 0;
       for (const c of v.crossing) { const k = c.s - moved; const a = this.crossers.get(c.lane); if (a) a.push(k); else this.crossers.set(c.lane, [k]); }
     }
+    // a car changing lanes stays in the way in the lane it left until it is mostly across
+    this.leavers.clear();
+    for (const v of this.vehicles) {
+      const f = v.lcFrom;
+      if (!f) continue;
+      // (its tail follows the path its nose took: across only once it has driven on about a car's length)
+      if (v.edge.kind !== "lane") { if (v.lat === 0) v.lcFrom = undefined; continue; } // (picked up again on the next road)
+      const cur = v.edge as Lane;
+      if (cur.seg !== f.seg || cur.dir !== f.dir) {
+        // drove on to the next road still part-way across: it is leaving the lane there that it sits in now
+        if (v.lat === 0) { v.lcFrom = undefined; continue; }
+        const at = cur.offset + (cur.dir === 1 ? 1 : -1) * v.lat;
+        let best: Lane | undefined, bd = LANE_W * 0.5;
+        for (const l of this.lanesOf(dkey(cur.seg, cur.dir))) if (l !== cur && Math.abs(l.offset - at) < bd) { bd = Math.abs(l.offset - at); best = l; }
+        if (!best) { v.lcFrom = undefined; continue; }
+        v.lcFrom = best;
+        v.lcS = v.s - v.len;
+      }
+      const f2 = v.lcFrom!;
+      if (Math.abs(v.lat) < 0.5 && v.s - (v.lcS ?? 0) > v.len * 0.8) {
+        // across once its tail is too (a car that crept over slowly still trails back into the old lane)
+        const l = v.edge as Lane, q = polyAt(l.pl, Math.max(0, v.s - v.len * 0.9));
+        const rx = v.x - Math.cos(v.ang) * v.len * 0.4, ry = v.y - Math.sin(v.ang) * v.len * 0.4;
+        if (Math.hypot(rx - q.x, ry - q.y) < 0.7) { v.lcFrom = undefined; continue; }
+      }
+      const a = this.leavers.get(f2);
+      if (a) a.push(v); else this.leavers.set(f2, [v]);
+    }
+    this.collectShadows();
+  }
+
+  /** How far two connectors leaving the same lane (with the lanes they lead to) stay within a car's width of each other. */
+  private overlap(a: Connector, b: Connector): number {
+    const pb = [b.pl, b.to.pl];
+    const at = (pls: typeof pb, s: number) => (s <= pls[0].length ? polyAt(pls[0], s) : polyAt(pls[1], Math.min(s - pls[0].length, pls[1].length)));
+    const lenA = a.pl.length + Math.min(a.to.pl.length, 120);
+    let s = 0;
+    for (; s < lenA; s += 1) {
+      const p = at([a.pl, a.to.pl], s);
+      const d = Math.min(polyClosest(pb[0], p).d, polyClosest(pb[1], p).d);
+      if (d > 2.4) break;
+    }
+    return s;
+  }
+
+  private collectShadows() {
+    this.shadows.clear();
+    this.shadowS.clear();
+    if (!this.tapers) {
+      this.tapers = [];
+      for (const ng of this.net.nodeGeom.values()) {
+        if (ng.kind === "junction") continue; // a junction's turns fan out within the box, and cars there ask first
+        const byFrom = new Map<Lane, Connector[]>();
+        for (const c of ng.conns) { const l = byFrom.get(c.from); if (l) l.push(c); else byFrom.set(c.from, [c]); }
+        for (const cs of byFrom.values()) for (const a of cs) for (const b of cs) {
+          if (a === b || a.to === b.to) continue;
+          const ov = this.overlap(a, b);
+          if (ov > 3) this.tapers.push({ a, b, ov });
+        }
+      }
+    }
+    const add = (e: Edge, u: Vehicle, s: number) => {
+      const l = this.shadows.get(e);
+      if (l) l.push(u); else this.shadows.set(e, [u]);
+      this.shadowS.set(u, s); // (one car shadows one sibling branch at a time in practice)
+    };
+    for (const { a, b, ov } of this.tapers) {
+      // cars on branch a (its connector or the start of the lane it leads to) that are still in the shared stretch
+      const put = (u: Vehicle, pos: number) => {
+        if (pos - u.len >= ov) return;
+        if (pos <= b.pl.length) add(b, u, pos); else add(b.to, u, pos - b.pl.length);
+      };
+      for (const u of a.occ as Vehicle[]) put(u, u.s);
+      for (const u of a.to.occ as Vehicle[]) { if (a.pl.length + u.s - u.len >= ov) break; put(u, a.pl.length + u.s); }
+    }
   }
 
   /** Vehicles on a roundabout (its arcs and junction connectors) as a share of what it can hold. */
@@ -925,6 +1027,10 @@ export class Traffic {
       let hops = 0;
       while (next && hops++ < 3 && d < 140) {
         const o = next.occ as Vehicle[];
+        const sh = this.shadows.get(next);
+        if (sh) for (const u of sh) if (u !== v) con(d + this.shadowS.get(u)! - u.len, u.v);
+        const lx = next.kind === "lane" ? this.leavers.get(next as Lane) : undefined;
+        if (lx) for (const u of lx) if (u !== v) con(d + this.mapS(u.edge as Lane, next as Lane, u.s) - u.len, u.v);
         if (o.length) {
           const l = o[0];
           con(d + l.s - l.len, l.v);
@@ -1014,6 +1120,30 @@ export class Traffic {
       if (X) for (const k of X) {
         if (v.s > k - 1.5) continue;
         con(Math.max(0.1, k - 2 - v.s), 0);
+      }
+    }
+    // a car on a sibling branch of a taper, still on top of our path
+    const SH = this.shadows.get(e);
+    if (SH) for (const u of SH) {
+      if (u === v) continue;
+      const us = this.shadowS.get(u)!;
+      if (us <= v.s) continue;
+      con(Math.max(0.1, us - u.len - v.s), u.v);
+    }
+    // a car changing out of this lane ahead of us is still (partly) in it
+    if (e.kind === "lane") {
+      const X = this.leavers.get(e as Lane);
+      if (X) for (const u of X) {
+        if (u === v) continue;
+        const rear = this.mapS(u.edge as Lane, e as Lane, u.s) - u.len;
+        if (rear + u.len <= v.s) continue; // behind us
+        con(Math.max(0.1, rear - v.s), u.v);
+      }
+      // and while we're still partly in the lane we're leaving, we don't drive into the car ahead in it
+      const f = v.lcFrom;
+      if (f && f.seg === (e as Lane).seg) {
+        const ms = this.mapS(e as Lane, f, v.s);
+        for (const o of f.occ as Vehicle[]) if (o !== v && o.s > ms) { con(Math.max(0.1, o.s - o.len - ms), o.v); break; }
       }
     }
     // keep driveways clear: don't come to rest across a spot where someone waits to turn in or pull out
@@ -1159,7 +1289,8 @@ export class Traffic {
     }
     // (in a standing queue a car that has to get over noses in ahead of a waiting one with less room)
     const squeeze = mandatory && v.v < 1 && follow && follow.v < 0.5 ? 1.2 : 2.5;
-    const noGap = (lead && lead.s - lead.len - ts < Math.max(2.5, v.v * 0.6 * k)) || (follow && ts - v.len - follow.s < Math.max(squeeze, follow.v * 0.9 * k + (follow.v - v.v) * 0.8));
+    // (and room ahead to slow to the speed of the lane we're moving into: no diving into a queue at speed)
+    const noGap = (lead && lead.s - lead.len - ts < Math.max(2.5, v.v * 0.6 * k, (SIM.idm.s0 + Math.max(0, v.v * v.v - lead.v * lead.v) / (2 * (mandatory ? 3.2 : 2.2))) * k)) || (follow && ts - v.len - follow.s < Math.max(squeeze, follow.v * 0.9 * k + (follow.v - v.v) * 0.8));
     if (noGap) {
       // must get over soon and there's no gap: say so. We line up behind a car there, and the one behind it lets us in.
       if (mandatory && toEnd < 160) v.wish = { lane: target, t: this.time };
@@ -1175,6 +1306,8 @@ export class Traffic {
     v.edge = target;
     v.s = ts;
     insertOcc(target, v);
+    v.lcFrom = lane;
+    v.lcS = ts;
     v.lcCool = mandatory ? 1.2 : 5;
     if (final) this.computeDestS(v);
   }
@@ -1244,6 +1377,7 @@ export class Traffic {
     this.courtesy.clear();
     this.courtesyRest.clear();
     this.wishes.clear();
+    this.tapers = null;
     const lost: Vehicle[] = [];
     // all connector holder lists at rebuilt nodes are fresh: recompute them from vehicle state
     for (const v of this.vehicles) {
