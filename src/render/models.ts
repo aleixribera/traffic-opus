@@ -19,19 +19,22 @@ export const BUILDING_MODELS: BuildingKind[] = [
   "house", "terrace", "apartments", "shop", "store", "mall", "office", "tower", "mine", "farm", "works", "foodplant",
   "garbage", "firestation", "police", "clinic", "hospital", "school", "highschool", "university", "park", "parklarge",
 ];
-export const VEHICLE_MODELS = ["car", "van", "truck", "garbagetruck", "firetruck", "ambulance", "policecar"] as const;
+export const VEHICLE_MODELS = ["car", "van", "truck", "bus", "garbagetruck", "firetruck", "ambulance", "policecar"] as const;
+/** Street furniture, drawn on its own (not a lot). */
+export const PROP_MODELS = ["busstop"] as const;
 export type VehicleKind = (typeof VEHICLE_MODELS)[number];
 
 export interface ModelSet {
   buildings: Map<BuildingKind, MergedModel>;
   vehicles: Map<VehicleKind, VehicleModel>;
+  props: Map<string, MergedModel>;
 }
 
 const base = import.meta.env.BASE_URL + "models/";
 
 export async function loadModels(onProgress?: (k: number) => void): Promise<ModelSet> {
   const loader = new GLTFLoader();
-  const all = [...BUILDING_MODELS, ...VEHICLE_MODELS];
+  const all = [...BUILDING_MODELS, ...VEHICLE_MODELS, ...PROP_MODELS];
   let done = 0;
   const scenes = await Promise.all(
     all.map((n) =>
@@ -44,13 +47,15 @@ export async function loadModels(onProgress?: (k: number) => void): Promise<Mode
   );
   const buildings = new Map<BuildingKind, MergedModel>();
   const vehicles = new Map<VehicleKind, VehicleModel>();
+  const props = new Map<string, MergedModel>();
   all.forEach((n, i) => {
     const sc = scenes[i];
     sc.updateMatrixWorld(true);
     if ((VEHICLE_MODELS as readonly string[]).includes(n)) vehicles.set(n as VehicleKind, splitVehicle(sc));
+    else if ((PROP_MODELS as readonly string[]).includes(n)) props.set(n, mergeModel(sc));
     else buildings.set(n as BuildingKind, mergeModel(sc));
   });
-  return { buildings, vehicles };
+  return { buildings, vehicles, props };
 }
 
 function prepGeometry(m: THREE.Mesh, color: THREE.Color | null): THREE.BufferGeometry {

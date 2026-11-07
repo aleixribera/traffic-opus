@@ -141,6 +141,7 @@ export const SIM = {
   idm: { a: 2.0, b: 2.6, s0: 2.2, T: 1.1 },
   carLen: 4.4,
   truckLen: 8.5,
+  busLen: 12,
   laneChangeTime: 2.2,
   junctionCheckTime: 4.5,
   yieldGap: 3.2,

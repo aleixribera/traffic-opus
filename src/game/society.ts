@@ -122,6 +122,7 @@ export class Society {
   stats: PeopleStats = this.emptyStats();
   /** Trips that were real cars, and all trips, in the last game hour window (for the statistics panel). */
   carTrips = 0;
+  busTrips = 0;
   allTrips = 0;
   private matchT = 0;
 
@@ -517,6 +518,19 @@ export class Society {
     const fromP = from ? from.c : a.p, toP = to ? to.c : b.p;
     // round the corner to work, the shops, the school or a park: people walk
     const walk = !!from && !!to && kind !== "move" && dist(fromP, toP) < WALK;
+    // a bus that goes their way, about as quick as driving: they take it (and leave the car at home)
+    if (!walk && from && to && kind !== "move" && g.transit.lines.size) {
+      // (about one household in four has no car; more in flats)
+      const home = g.buildings.byId.get(c.home);
+      const carless = c.hh >= 0 && (c.hh * 7919) % 100 < (home?.zone === "resHigh" || home?.zone === "resMed" ? 40 : 22);
+      const bus = g.transit.plan(fromP, toP, carless);
+      if (bus && g.rng() < bus.p) {
+        this.busTrips++;
+        g.transit.wait(c.id, bus);
+        c.next = Infinity;
+        return;
+      }
+    }
     const real = !walk && g.rng() * g.tripScale < 1;
     if (real) {
       this.carTrips++;
@@ -529,6 +543,13 @@ export class Society {
     } else {
       this.schedule(c, this.now + estTime(fromP, toP));
     }
+  }
+
+  /** A bus rider got off (or gave up on the bus): they get where they were going `dt` from now. */
+  resume(id: number, dt: number) {
+    const c = this.citizens.get(id);
+    if (!c || c.st !== St.Travel) return;
+    this.schedule(c, this.now + Math.max(1, dt));
   }
 
   /** A car reached its destination. */

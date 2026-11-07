@@ -8,7 +8,7 @@ export interface Milestone {
   name: string;
   roads: RoadTypeId[];
   zones: ZoneId[];
-  features: ("roundabout" | "signals" | "grid" | "parallel")[];
+  features: ("roundabout" | "signals" | "grid" | "parallel" | "transit")[];
   tiles: number; // tile slots granted (total ownable tiles grows by this)
   grant: number;
 }
@@ -16,7 +16,7 @@ export interface Milestone {
 export const MILESTONES: Milestone[] = [
   { pop: 0, name: "Crossroads", roads: ["street", "one1", "hw1", "hw2"], zones: ["resLow", "resRow", "comLow", "ind"], features: ["grid", "parallel"], tiles: 9, grant: 0 },
   { pop: 120, name: "Hamlet", roads: ["avenue", "one2", "streetM"], zones: [], features: ["roundabout", "signals"], tiles: 2, grant: 8000 },
-  { pop: 400, name: "Village", roads: ["one3", "avenueM"], zones: ["resMed", "offLow"], features: [], tiles: 2, grant: 15000 },
+  { pop: 400, name: "Village", roads: ["one3", "avenueM"], zones: ["resMed", "offLow"], features: ["transit"], tiles: 2, grant: 15000 },
   { pop: 1000, name: "Small town", roads: ["boulevard", "boulevardM"], zones: ["comHigh"], features: [], tiles: 3, grant: 30000 },
   { pop: 2500, name: "Town", roads: ["one4"], zones: ["resHigh", "offHigh"], features: [], tiles: 3, grant: 60000 },
   { pop: 5000, name: "Large town", roads: [], zones: [], features: [], tiles: 4, grant: 100000 },

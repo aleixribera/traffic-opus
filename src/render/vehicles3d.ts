@@ -92,6 +92,7 @@ export class Vehicles3D {
   static kindOf(v: Vehicle): VehicleKind {
     const run = v.trip.run;
     if (run) return run.svc === "garbage" ? "garbagetruck" : run.svc === "fire" ? "firetruck" : run.svc === "health" ? "ambulance" : "policecar";
+    if (v.trip.bus) return "bus";
     if (v.truck) return "truck";
     return v.look % 6 === 0 ? "van" : "car";
   }

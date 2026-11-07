@@ -13,6 +13,8 @@ export interface Access {
   p: V2; // kerb point the driveway meets
   /** Side of the seg (relative to a->b) the building stands on. On a road with a median only that side's lanes reach it. */
   side?: 1 | -1;
+  /** Only reachable from its own side's lanes on any road (a bus stop): never by crossing the oncoming traffic. */
+  strict?: boolean;
 }
 
 class Heap {
@@ -145,6 +147,7 @@ export class Router {
     for (const d of [1, -1] as const) {
       if (!this.hasLanes(to.seg, d)) continue;
       if (divided && to.side && d !== to.side) continue; // across the median: go round and come back on the right side
+      if (to.strict && to.side && d !== to.side && this.hasLanes(to.seg, to.side)) continue; // a bus pulls in at its own kerb
       goalKeys.set(dkey(to.seg, d), this.along(to.seg, d, to.s));
     }
     for (const d of [1, -1] as const) {

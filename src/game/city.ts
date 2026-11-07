@@ -16,6 +16,7 @@ import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, type LotTemplate }
 import { MILESTONES, milestoneFor, tilePrice, tileSlots, unlockedFeature, unlockedRoads, unlockedZones, type Milestone } from "./progression";
 import { DAY, HOUR, Society, estTime, type Port } from "./society";
 import { SERVICES, Services, type ServiceKind } from "./services";
+import { Transit } from "./transit";
 import type { Placement } from "./buildings";
 import { CELL, DEPTH, ZoneMap, type Block, type Cell, type ZoneGroup, type ZoneId } from "./zones";
 
@@ -42,8 +43,8 @@ export interface DemandFactor { label: string; v: number }
 export interface Demand { v: number; factors: DemandFactor[] }
 
 export interface Budget {
-  income: Record<"res" | "com" | "ind" | "off", number>;
-  expense: Record<"roads" | "services" | "loans", number>;
+  income: Record<"res" | "com" | "ind" | "off" | "transit", number>;
+  expense: Record<"roads" | "services" | "transit" | "loans", number>;
 }
 
 /** A truck load not simulated as a vehicle, arriving at a set time. */
@@ -60,6 +61,7 @@ export class Game {
   zones: ZoneMap;
   people: Society;
   services: Services;
+  transit: Transit;
   money = 0;
   tiles = new Set<string>();
   time = 0;
@@ -118,6 +120,7 @@ export class Game {
       arrive: (v, now) => this.onArrive(v, now),
       fail: (trip, reason) => this.onFail(trip, reason),
       exits: () => this.exits.map((p) => p.a),
+      busAt: (v) => this.transit.busAt(v),
     });
     for (const [i, j] of START_TILES) this.tiles.add(`${i},${j}`);
     this.money = 60000;
@@ -125,6 +128,7 @@ export class Game {
     this.zones = new ZoneMap(this.net, { isWater: (p) => t.isWater(p), isMountain: (p) => t.isMountain(p), owned: (p) => this.unlocked(p) });
     this.people = new Society(this);
     this.services = new Services(this);
+    this.transit = new Transit(this);
     this.world = {
       isWater: (p) => t.isWater(p),
       isMountain: (p) => t.isMountain(p),
@@ -338,13 +342,14 @@ export class Game {
     const n = this.net.nodes.get(id), ng = this.net.nodeGeom.get(id);
     if (!n?.signal || !ng || ng.kind !== "junction") return null;
     const sig = n.signal;
-    const missing = ng.arms.filter((a) => ng.conns.some((c) => c.armIn === a.seg) && !sig.phases.some((p) => p.arms.includes(a.seg)));
+    // (a left-turn phase alone doesn't count: the rest of that road's traffic would never go)
+    const missing = ng.arms.filter((a) => ng.conns.some((c) => c.armIn === a.seg) && !sig.phases.some((p) => !p.left && p.arms.includes(a.seg)));
     if (!missing.length) return null;
     const live = new Set(ng.arms.map((a) => a.seg));
     const plan: SignalPlan = { phases: sig.phases.map((p) => ({ ...p, arms: p.arms.filter((x) => live.has(x)) })) };
     for (const a of missing) {
-      const across = ng.arms.find((b) => b.seg !== a.seg && b.dir.x * a.dir.x + b.dir.y * a.dir.y < -0.8 && plan.phases.some((p) => p.arms.includes(b.seg)));
-      const ph = across && plan.phases.find((p) => p.arms.includes(across.seg));
+      const across = ng.arms.find((b) => b.seg !== a.seg && b.dir.x * a.dir.x + b.dir.y * a.dir.y < -0.8 && plan.phases.some((p) => !p.left && p.arms.includes(b.seg)));
+      const ph = across && plan.phases.find((p) => !p.left && p.arms.includes(across.seg));
       if (ph) ph.arms.push(a.seg);
       else plan.phases.push({ arms: [a.seg], dur: 12 });
     }
@@ -353,6 +358,7 @@ export class Game {
 
   private afterRoads(cs: ChangeSet) {
     this.buildings.reattach();
+    this.transit.afterRoads();
     this.traffic.onNetworkChange(cs);
     this.zones.onNetworkChange(cs);
     this.updateOutside();
@@ -579,6 +585,13 @@ export class Game {
         if (d > bd) { bd = d; best = b; }
       }
       if (best) { used.add(best.seg); group.push(best.seg); }
+      // two big roads facing each other: their left turns cut across the oncoming traffic, so (as CS2 does on
+      // avenues) they get a short phase of their own first; it is skipped when nobody is waiting to turn left
+      const big = group.length === 2 && group.every((x) => {
+        const T = ROAD_TYPES[this.net.segs.get(x)!.type];
+        return T.rank >= 2 && !isHighway(T);
+      });
+      if (big && g.conns.some((c) => group.includes(c.armIn) && c.turn === "L")) phases.push({ arms: [...group], dur: 6, left: true });
       phases.push({ arms: group, dur: 12 });
     }
     return { phases };
@@ -987,6 +1000,7 @@ export class Game {
     }
     this.moveIns();
     this.services.tick(span);
+    this.transit.tick();
     for (const b of [...this.buildings.list]) this.stepBuilding(b, span);
     if (changed) this.emit({ t: "buildings" });
   }
@@ -1135,6 +1149,7 @@ export class Game {
 
   private onArrive(v: Vehicle, now: number) {
     const trip = v.trip;
+    if (trip.bus) { this.transit.onGone(trip.bus, { x: v.x, y: v.y }); return; }
     this.traffic.recordTrip(trip.freeFlow, now - trip.startT);
     if (trip.run) { this.services.onArrive(v); return; }
     if (trip.kind === "cargo") {
@@ -1145,6 +1160,7 @@ export class Game {
   }
 
   private onFail(trip: Trip, reason: string) {
+    if (trip.bus) { this.transit.onGone(trip.bus); return; }
     this.failedTrips++;
     if (trip.run) { this.services.onFail(trip); return; }
     if (trip.kind === "cargo") {
@@ -1258,6 +1274,9 @@ export class Game {
     }
     B.expense.roads += roads;
     B.expense.services += this.services.upkeep();
+    const tr = this.transit.hourly();
+    B.income.transit += tr.fares;
+    B.expense.transit += tr.upkeep;
     this.services.hourly();
     const net = sum(B.income) - sum(B.expense);
     this.money += net;
@@ -1337,6 +1356,7 @@ export class Game {
       zones: [...this.zones.allCells()].filter((c) => c.zone).map((c) => [Math.round(c.c.x * 10) / 10, Math.round(c.c.y * 10) / 10, c.zone]),
       zoneAges: this.zones.agesJSON(),
       people: this.people.toJSON(),
+      transit: this.transit.toJSON(),
       money: this.money,
       milestone: this.milestone,
       tiles: [...this.tiles],
@@ -1385,6 +1405,7 @@ export class Game {
     g.updateOutside();
     g.services.reset();
     g.people.load(data.people);
+    g.transit.load(data.transit);
     g.computeDemand();
     return g;
   }
@@ -1408,7 +1429,7 @@ export class Game {
 }
 
 function emptyBudget(): Budget {
-  return { income: { res: 0, com: 0, ind: 0, off: 0 }, expense: { roads: 0, services: 0, loans: 0 } };
+  return { income: { res: 0, com: 0, ind: 0, off: 0, transit: 0 }, expense: { roads: 0, services: 0, transit: 0, loans: 0 } };
 }
 
 function sum(o: Record<string, number>): number {

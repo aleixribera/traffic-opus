@@ -122,6 +122,24 @@ export class Preview3D {
     this.add(mesh, 6);
   }
 
+  /** A coloured route line (a bus line being drawn). */
+  path(pts: V2[], color: number, w = 2.6) {
+    if (pts.length < 2) return;
+    const m = new THREE.Mesh(strip(pts, 31, w), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthTest: false }));
+    this.add(m, 12);
+  }
+
+  /** A ring marker in a colour (bus stops on the line being drawn). */
+  dot(p: V2, color: number, r = 3.2) {
+    const geo = new THREE.CircleGeometry(r, 20).rotateX(-Math.PI / 2);
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, depthTest: false }));
+    m.position.set(p.x, 32, p.y);
+    this.add(m, 13);
+    const o = new THREE.Mesh(new THREE.RingGeometry(r, r + 0.9, 20).rotateX(-Math.PI / 2), this.markerMat);
+    o.position.set(p.x, 32.1, p.y);
+    this.add(o, 13);
+  }
+
   setGhost(mesh: THREE.Mesh | null) {
     if (this.ghost) this.group.remove(this.ghost);
     this.ghost = mesh;

@@ -18,12 +18,16 @@ import { MapLabels } from "./ui/labels";
 import { MapIcons } from "./ui/mapIcons";
 import { Terrain3D } from "./render/terrain3d";
 import { Vehicles3D } from "./render/vehicles3d";
+import { Transit3D, legPoints } from "./render/transit3d";
+import { STOP_COST } from "./game/transit";
 import { View } from "./render/view";
 import { Saves } from "./game/saves";
 import { SERVICES, type ServiceId, type ServiceKind } from "./game/services";
 import type { Hud, Chip } from "./ui/hud";
 
-export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "zone" | "unlock" | "service";
+export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "zone" | "unlock" | "service" | "transit";
+/** The bus tool: put stops on the kerb, or click stops in order to make a line. */
+export type TransitMode = "stop" | "line";
 /** Zoning tool modes (CS2): fill one side of a street, paint with a brush, or drag a rectangle. */
 export type ZoneMode = "fill" | "brush" | "marquee";
 /** Road tool modes, as in CS2: the four drawing modes, a 3-click grid, and Replace (change type / reverse). */
@@ -53,6 +57,7 @@ export interface ToolState {
   bdzLevel: number | null; // bulldozer elevation filter (null = all)
   reverse: boolean; // upgrade tool flips one-ways instead
   service: ServiceKind; // service building being placed
+  transitMode: TransitMode;
 }
 
 interface PointerInfo { id: number; x: number; y: number; sx: number; sy: number; button: number; moved: boolean; t: number }
@@ -74,8 +79,11 @@ export class App {
   st: ToolState = {
     tool: "inspect", roadType: "street", mode: "straight", level: 0, rbSize: 1, parallel: false, parOffset: null,
     snapOff: { geometry: false, guides: false, netSide: false }, snapLength: true, angleLock: true, zone: "resLow", zoneMode: "fill", brush: 22, erase: false, bdzLevel: null, reverse: false,
-    service: "garbage",
+    service: "garbage", transitMode: "stop",
   };
+  /** stops clicked so far for the bus line being drawn */
+  lineDraft: number[] = [];
+  transit3d!: Transit3D;
   uiHidden = false;
   /** menu: the showcase city playing behind the title menu (no input, no saving); explore: that city, free to look round, never saved. */
   mode: "menu" | "play" | "explore" = "play";
@@ -190,7 +198,8 @@ export class App {
     this.vehicles.lotOf = (id) => { const b = g.buildings.byId.get(id); return b ? this.buildings3d.lotWay(b) : null; };
     this.zones3d = new Zones3D(g.zones);
     this.zones3d.setGrid(this.st.tool === "zone" || this.overlay === "zones");
-    this.worldRoot.add(this.terrain3d.group, this.zones3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group);
+    this.transit3d = new Transit3D(this.models.props.get("busstop"));
+    this.worldRoot.add(this.terrain3d.group, this.zones3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group);
     this.roads.rebuildAll();
     this.buildings3d.rebuild(g.buildings.list);
     this.terrain3d.setTiles(g.tiles);
@@ -213,7 +222,8 @@ export class App {
   setTool(p: Partial<ToolState>) {
     const prev = this.st.tool, prevMode = this.st.mode;
     Object.assign(this.st, p);
-    if ((p.tool && p.tool !== prev) || (p.mode && p.mode !== prevMode)) this.cancelStroke();
+    if ((p.tool && p.tool !== prev) || (p.mode && p.mode !== prevMode) || p.transitMode) this.cancelStroke();
+    if (this.st.tool === "transit" && !this.game.featureUnlocked("transit")) this.st.tool = "inspect";
     // locked road types can't be picked (keyboard, saved state)
     if (!this.game.roadsUnlocked.has(this.st.roadType)) this.st.roadType = "street";
     if ((this.st.tool === "roundabout" && !this.game.featureUnlocked("roundabout"))) this.st.tool = "inspect";
@@ -298,6 +308,7 @@ export class App {
     this.plan = null;
     this.dragRect = null;
     this.zoneStroke = null;
+    this.lineDraft = [];
     this.zones3d?.highlight([], null);
     this.dirtyPreview = true;
     this.hud?.rect(null);
@@ -636,8 +647,80 @@ export class App {
     else if (this.ctrl2) this.ctrl2 = null;
     else if (this.ctrl) this.ctrl = null;
     else if (this.anchor) { this.anchor = null; this.startTangent = undefined; this.parFrom = undefined; }
+    else if (this.lineDraft.length) this.lineDraft.pop();
     else return false;
     return true;
+  }
+
+  /** The bus stop under (or right next to) a point. */
+  stopAt(p: V2, r = 9): number | null {
+    let best: number | null = null, bd = r;
+    for (const st of this.game.transit.stops.values()) {
+      const d = Math.hypot(st.p.x - p.x, st.p.y - p.y);
+      if (d < bd) { bd = d; best = st.id; }
+    }
+    return best;
+  }
+
+  private transitClick() {
+    const g = this.game, c = this.cursor, tr = g.transit;
+    if (this.st.transitMode === "stop") {
+      if (this.stopAt(c, 6) !== null) { this.reject("There's a stop here already"); return; }
+      const pl = tr.stopPlan(c);
+      if (!pl) { this.reject("Put stops beside a street"); return; }
+      if (!pl.ok) { this.reject(pl.why ?? "Can't put a stop here"); return; }
+      tr.addStop(c);
+      this.hud?.sound("build");
+      this.hud?.toast(`Bus stop built for ${formatMoney(STOP_COST)}`);
+      this.dirtyPreview = true;
+      return;
+    }
+    const id = this.stopAt(c);
+    if (id === null) { this.reject(tr.stops.size < 2 ? "Put down two or more bus stops first" : "Click a bus stop"); return; }
+    const d = this.lineDraft;
+    if (d.length >= 2 && id === d[0]) {
+      const l = tr.addLine(d);
+      this.lineDraft = [];
+      if (!l) { this.reject("That line needs two stops"); return; }
+      const ok = isFinite(tr.loopTime(l));
+      this.hud?.sound("build");
+      this.hud?.toast(ok ? `${l.name} opened: ${l.stops.length} stops, ${l.want} bus${l.want === 1 ? "" : "es"}` : `${l.name} made, but its buses can't get round it: check the roads between its stops`);
+      this.hud?.openLines(l.id);
+    } else if (d.includes(id)) { this.reject(d.length >= 2 ? "Click the first stop to close the line" : "Already on this line"); return; }
+    else {
+      if (d.length && !tr.routeKeys(tr.stops.get(d[d.length - 1])!.access, tr.stops.get(id)!.access)) { this.reject("Buses can't drive there from the last stop"); return; }
+      d.push(id);
+      this.hud?.sound("place");
+    }
+    this.dirtyPreview = true;
+  }
+
+  private transitPreview(pv: Preview3D, chips: Chip[]) {
+    const g = this.game, c = this.cursor, tr = g.transit;
+    if (this.st.transitMode === "stop") {
+      const here = this.stopAt(c, 6);
+      chips.push({ text: "Bus stop", kind: "info" });
+      if (here !== null) { pv.dot(tr.stops.get(here)!.p, 0x2f6fd0); chips.push({ text: "There's a stop here already", kind: "error" }); return; }
+      const pl = tr.stopPlan(c);
+      if (!pl) { chips.push({ text: "Put stops beside a street", kind: "info" }); return; }
+      pv.dot(pl.p, pl.ok ? 0x34c25a : 0xe5484d, 2.4);
+      if (!pl.ok) chips.push({ text: pl.why ?? "Can't put a stop here", kind: "error" });
+      else chips.push({ text: formatMoney(STOP_COST), kind: STOP_COST > g.money ? "error" : "cost" });
+      return;
+    }
+    const d = this.lineDraft;
+    const col = tr.nextColor();
+    const hover = this.stopAt(c);
+    for (let i = 0; i + 1 < d.length; i++) pv.path(legPoints(tr, g.net, tr.stops.get(d[i])!.access, tr.stops.get(d[i + 1])!.access), col);
+    if (d.length && hover !== null && hover !== d[d.length - 1] && (!d.includes(hover) || (hover === d[0] && d.length >= 2))) {
+      const pts = legPoints(tr, g.net, tr.stops.get(d[d.length - 1])!.access, tr.stops.get(hover)!.access);
+      if (pts.length) pv.path(pts, col, 1.8);
+      else chips.push({ text: "Buses can't drive there from the last stop", kind: "error" });
+    }
+    for (const st of tr.stops.values()) pv.dot(st.p, d.includes(st.id) ? col : 0xffffff, st.id === hover ? 3.8 : 2.8);
+    if (!d.length) chips.push({ text: hover !== null ? "Start the line here" : "Click the stops in order", kind: "info" });
+    else if (hover === d[0] && d.length >= 2) chips.push({ text: `Finish the line: ${d.length} stops`, kind: "info" });
+    else chips.push({ text: `${d.length} stop${d.length === 1 ? "" : "s"} · click the first stop to finish`, kind: "info" });
   }
 
   private onClick(shift: boolean) {
@@ -655,6 +738,7 @@ export class App {
       this.dirtyPreview = true;
       return;
     }
+    if (t === "transit") { this.transitClick(); return; }
     if (t === "service") {
       const k = this.st.service;
       const pl = g.servicePlan(k, c);
@@ -676,6 +760,8 @@ export class App {
       return;
     }
     if (t === "inspect") {
+      const sid = this.stopAt(c, 6);
+      if (sid !== null) { this.selected = null; this.hud?.openStop(sid); return; }
       const b = g.buildings.at(c);
       this.selected = b;
       if (b) this.hud?.openBuilding(b);
@@ -760,6 +846,8 @@ export class App {
       return;
     }
     if (t === "bulldoze") {
+      const sid = this.stopAt(c, 6);
+      if (sid !== null) { g.transit.removeStop(sid); this.hud?.sound("remove"); this.hud?.toast(`Removed bus stop, refunded ${formatMoney(STOP_COST / 2)}`); return; }
       const b = g.buildings.at(c);
       if (b) { g.bulldoze([], [b.id]); this.hud?.sound("remove"); return; }
       const id = segAt(g.net, c, 2, this.st.bdzLevel);
@@ -1013,7 +1101,12 @@ export class App {
         chips.push({ text: `${formatMoney(removalRefund(g.net, g.world, segs))} refund`, kind: "cost" });
       } else {
         const b = g.buildings.at(c);
-        if (b) {
+        const sid = this.stopAt(c, 6);
+        if (sid !== null) {
+          pv.dot(g.transit.stops.get(sid)!.p, 0xe5484d);
+          chips.push({ text: "Remove bus stop", kind: "info" });
+          chips.push({ text: `${formatMoney(STOP_COST / 2)} refund`, kind: "cost" });
+        } else if (b) {
           pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
           chips.push({ text: `Demolish ${b.zone ? ZONES[b.zone].short.toLowerCase() : BUILDING_TYPES[b.kind].name}`, kind: "info" });
         } else {
@@ -1078,6 +1171,8 @@ export class App {
         chips.push(why ? { text: why, kind: "error" } : { text: "Buy this tile", kind: "info" });
         chips.push({ text: formatMoney(g.nextTilePrice), kind: g.nextTilePrice > g.money ? "error" : "cost" });
       }
+    } else if (t === "transit") {
+      this.transitPreview(pv, chips);
     } else if (t === "service") {
       const k = this.st.service;
       const pl = g.servicePlan(k, c);
@@ -1143,6 +1238,7 @@ export class App {
     }
     g.update(dt);
     this.vehicles.update(g.traffic, g.alpha);
+    this.transit3d.update(g.transit, g.net, this.st.tool === "transit" || !!this.hud?.linesShown, this.view.mpp, this.view.rot);
     this.flowT += dt;
     const flowOn = this.overlay === "flow";
     this.zones3d.update();

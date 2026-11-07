@@ -9,6 +9,7 @@ import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId, type 
 import { ROUNDABOUTS, type RoundaboutSize } from "../roads/planner";
 import { ICON, roadIcon, serviceIcon } from "./icons";
 import { SERVICES, SERVICE_TABS, type ServiceKind } from "../game/services";
+import { BUS_UPKEEP, STOP_COST } from "../game/transit";
 import { Sfx } from "./sfx";
 
 export interface Chip {
@@ -41,13 +42,15 @@ const GROUPS: ZoneGroup[] = ["res", "com", "ind", "off"];
 export const BRUSH_SIZES: { r: number; label: string }[] = [{ r: 10, label: "S" }, { r: 22, label: "M" }, { r: 40, label: "L" }];
 
 /** Build categories along the bottom bar, each with its asset tabs. */
-type CatId = "roads" | "zoning" | "services";
+type CatId = "roads" | "zoning" | "services" | "transport";
 type Asset =
   | { kind: "road"; id: RoadTypeId }
   | { kind: "service"; id: ServiceKind }
   | { kind: "roundabout"; size: RoundaboutSize }
   | { kind: "junction" }
   | { kind: "lane" }
+  | { kind: "busstop" }
+  | { kind: "busline" }
   | { kind: "zone"; id: ZoneId };
 interface Tab { id: string; label: string; assets: Asset[] }
 const CATS: Record<CatId, { label: string; tabs: Tab[] }> = {
@@ -69,8 +72,12 @@ const CATS: Record<CatId, { label: string; tabs: Tab[] }> = {
     label: "Services",
     tabs: SERVICE_TABS.map((t) => ({ id: t.id, label: t.label, assets: t.kinds.map((id) => ({ kind: "service", id }) as Asset) })),
   },
+  transport: {
+    label: "Transport",
+    tabs: [{ id: "bus", label: "Bus", assets: [{ kind: "busstop" }, { kind: "busline" }] }],
+  },
 };
-const catOf = (t: ToolId): CatId | null => (t === "road" || t === "roundabout" || t === "junction" || t === "lane" ? "roads" : t === "zone" ? "zoning" : t === "service" ? "services" : null);
+const catOf = (t: ToolId): CatId | null => (t === "road" || t === "roundabout" || t === "junction" || t === "lane" ? "roads" : t === "zone" ? "zoning" : t === "service" ? "services" : t === "transit" ? "transport" : null);
 
 type WinId = "info" | "progression" | "economy" | "city" | "transport";
 
@@ -93,7 +100,7 @@ const hex = (c: number) => "#" + c.toString(16).padStart(6, "0");
 type Milestone = (typeof MILESTONES)[number];
 const unlockAt = (test: (m: Milestone) => boolean): Milestone | undefined => MILESTONES.find(test);
 const servicesAt = (i: number) => (Object.values(SERVICES)).filter((s) => s.unlock === i).map((s) => BUILDING_TYPES[s.kind].name);
-const FEATURE_NAME = { roundabout: "Roundabouts", signals: "Traffic lights", grid: "Grid tool", parallel: "Parallel roads" } as const;
+const FEATURE_NAME = { roundabout: "Roundabouts", signals: "Traffic lights", grid: "Grid tool", parallel: "Parallel roads", transit: "Buses" } as const;
 
 const KEYS: [string, string][] = [
   ["Esc", "Back: close a panel, drop the tool, then the pause menu"],
@@ -145,10 +152,11 @@ export class Hud {
   private redoBtn = h("button", "cat hist");
   private catBtns = new Map<string, HTMLButtonElement>();
   private cat: CatId | null = null;
-  private tab: Record<CatId, string> = { roads: "small", zoning: "res", services: "garbage" };
+  private tab: Record<CatId, string> = { roads: "small", zoning: "res", services: "garbage", transport: "bus" };
   private lastRoad: RoadTypeId = "street";
   private winKind: WinId | null = null;
-  private panelKind: "building" | "signal" | null = null;
+  private panelKind: "building" | "signal" | "stop" | null = null;
+  private stopId = -1;
   private panelNode = -1;
   private panelPhase = 0;
   private tutHidden = false;
@@ -220,6 +228,7 @@ export class Hud {
       cat("roads", ICON.roadCat, "Roads", "Roads", () => this.toggleCat("roads")),
       cat("zoning", ICON.zone, "Zoning", "Zoning", () => this.toggleCat("zoning")),
       cat("services", ICON.services, "Services", "City services", () => this.toggleCat("services")),
+      cat("transport", ICON.busCat, "Transport", "Public transport", () => this.toggleCat("transport")),
       h("span", "cat-sep"),
       cat("bulldoze", ICON.bulldoze, "Bulldoze", "Bulldozer (B)", () => app.setTool({ tool: app.st.tool === "bulldoze" ? "inspect" : "bulldoze" })),
     );
@@ -292,7 +301,10 @@ export class Hud {
     this.cat = c;
     // like picking up the last thing you built from this category
     if (c === "roads") app.setTool({ tool: "road", roadType: this.lastRoad });
-    else if (c === "services") {
+    else if (c === "transport") {
+      if (app.game.featureUnlocked("transit")) app.setTool({ tool: "transit" });
+      else this.refresh();
+    } else if (c === "services") {
       // open on the first tab with something buildable, holding the tool only if it's unlocked
       const k = app.game.serviceUnlocked(app.st.service) ? app.st.service : SERVICE_TABS.flatMap((t) => t.kinds).find((x) => app.game.serviceUnlocked(x));
       if (k) app.setTool({ tool: "service", service: k });
@@ -307,6 +319,8 @@ export class Hud {
     else if (a.kind === "junction") app.setTool({ tool: "junction" });
     else if (a.kind === "lane") app.setTool({ tool: "lane" });
     else if (a.kind === "service") app.setTool({ tool: "service", service: a.id });
+    else if (a.kind === "busstop") app.setTool({ tool: "transit", transitMode: "stop" });
+    else if (a.kind === "busline") app.setTool({ tool: "transit", transitMode: "line" });
     else app.setTool({ tool: "zone", zone: a.id, erase: false });
     this.sfx.play("click");
   }
@@ -319,6 +333,7 @@ export class Hud {
     if (st.tool === "junction") return { kind: "junction" };
     if (st.tool === "lane") return { kind: "lane" };
     if (st.tool === "service") return { kind: "service", id: st.service };
+    if (st.tool === "transit") return { kind: st.transitMode === "stop" ? "busstop" : "busline" };
     if (st.tool === "zone") return st.erase ? null : { kind: "zone", id: st.zone };
     return null;
   }
@@ -350,6 +365,12 @@ export class Hud {
         key: "lane", icon: ICON.lane, name: "Add lane", sub: "Turn & slip lanes",
         title: "Add lane (L): click a road just before a junction for a turn lane, nearer the middle for left turns, nearer the kerb for right turns. On a motorway, click before an exit or after an entry to lengthen its slip lane. Shift or right click removes a turn lane.",
       };
+    }
+    if (a.kind === "busstop" || a.kind === "busline") {
+      const locked = g.featureUnlocked("transit") ? undefined : unlockAt((m) => m.features.includes("transit"));
+      return a.kind === "busstop"
+        ? { key: "busstop", icon: ICON.busStop, name: "Bus stop", sub: formatMoney(STOP_COST), title: `Bus stop: put it on the kerb of a street, on the side the buses will stop. ${formatMoney(STOP_COST)}.`, locked }
+        : { key: "busline", icon: ICON.busLine, name: "Bus line", sub: `${formatMoney(BUS_UPKEEP)}/h a bus`, title: `Bus line: click stops in the order the buses visit them, then the first again to close the loop. Each bus costs ${formatMoney(BUS_UPKEEP)} an hour; riders pay a fare.`, locked };
     }
     if (a.kind === "junction") {
       const locked = g.featureUnlocked("signals") ? undefined : unlockAt((m) => m.features.includes("signals"));
@@ -596,6 +617,10 @@ export class Hud {
     GROUPS.forEach((gp, i) => bars[i].style.setProperty("--v", String(g.demand[gp].v / 100)));
     if (!this.demandPop.hidden) this.fillDemand();
     this.renderTips();
+    if (this.panelKind === "stop") {
+      if (!g.transit.stops.has(this.stopId)) this.closeSelection();
+      else this.fillStop();
+    }
     if (this.panelKind === "building" && this.app.selected) {
       if (!g.buildings.byId.has(this.app.selected.id)) { this.closeSelection(); this.app.selected = null; }
       else this.fillBuilding(this.app.selected);
@@ -773,14 +798,27 @@ export class Hud {
     this.refresh();
   }
 
+  /** line whose delete button has been clicked once (a second click deletes it) */
+  private armedLine: number | null = null;
+  private armedT = 0;
+
   private setWin(title: string, html: string): boolean {
     const full = `<header class="win-head"><b>${title}</b><button class="close" aria-label="Close ${title}">${ICON.close}</button></header><div class="win-body">${html}</div>`;
     if (full === this.lastWin) return false;
     this.lastWin = full;
     const body = this.win.querySelector(".win-body");
     const scroll = body?.scrollTop ?? 0;
+    // keep keyboard focus across the rebuild (the window refreshes as the numbers in it change)
+    const fe = document.activeElement as HTMLElement | null;
+    let refocus: ((root: HTMLElement) => HTMLElement | null) | null = null;
+    if (fe && fe !== document.body && this.win.contains(fe)) {
+      const all = [...this.win.querySelectorAll<HTMLElement>("button, input, select, [tabindex]")];
+      const i = all.indexOf(fe);
+      refocus = (root) => root.querySelectorAll<HTMLElement>("button, input, select, [tabindex]")[i] ?? null;
+    }
     this.win.innerHTML = full;
     this.win.querySelector(".win-body")!.scrollTop = scroll;
+    if (refocus) refocus(this.win)?.focus({ preventScroll: true });
     (this.win.querySelector(".close") as HTMLButtonElement).onclick = () => this.closeWin();
     return true;
   }
@@ -816,8 +854,8 @@ export class Hud {
     const g = this.app.game;
     const B = g.budget;
     const inc = GROUPS.map((gp) => [GROUP_NAME[gp], B.income[gp]] as [string, number]);
-    const totalIn = inc.reduce((a, [, v]) => a + v, 0);
-    const totalOut = B.expense.roads + B.expense.services + B.expense.loans;
+    const totalIn = inc.reduce((a, [, v]) => a + v, 0) + B.income.transit;
+    const totalOut = B.expense.roads + B.expense.services + B.expense.transit + B.expense.loans;
     const spark = sparkline(g.history.map((x) => x.money), "Money");
     const tax = GROUPS.map((gp) => `<div class="tax-row"><span>${GROUP_NAME[gp]}</span>
       <button class="dur" data-g="${gp}" data-d="-1" aria-label="Lower ${GROUP_NAME[gp]} tax">−</button><b>${g.tax[gp]}%</b><button class="dur" data-g="${gp}" data-d="1" aria-label="Raise ${GROUP_NAME[gp]} tax">+</button></div>`).join("");
@@ -825,6 +863,7 @@ export class Hud {
       <dl class="facts money-rows">${inc.map(([k, v]) => `<dt>${k} taxes</dt><dd class="good">${signed(v)}</dd>`).join("")}
       <dt>Road upkeep</dt><dd class="bad">${signed(-B.expense.roads)}</dd>
       <dt>Service upkeep</dt><dd class="bad">${signed(-B.expense.services)}</dd>
+      ${B.income.transit || B.expense.transit ? `<dt>Bus fares</dt><dd class="good">${signed(B.income.transit)}</dd><dt>Bus upkeep</dt><dd class="bad">${signed(-B.expense.transit)}</dd>` : ""}
       <dt class="tot">Balance</dt><dd class="tot ${totalIn - totalOut >= 0 ? "good" : "bad"}">${signed(totalIn - totalOut)}</dd></dl>
       ${spark}
       <h3 class="sub-h">Tax rates</h3>
@@ -894,8 +933,113 @@ export class Hud {
         <dt>Trucks on the road</dt><dd>${fmtNum(trucks)}</dd>
         <dt>Road network</dt><dd>${(len / 1000).toFixed(1)} km</dd>
       </dl>
-      <p class="small muted">The map shows the Traffic flow view while this is open: red roads are jammed.</p>`;
-    this.setWin("Transportation", html);
+      <p class="small muted">The map shows the Traffic flow view while this is open: red roads are jammed.</p>
+      ${this.linesHtml()}`;
+    if (!this.setWin("Transportation", html)) return;
+    this.bindLines();
+  }
+
+  /** The bus lines list in the Transportation window. */
+  private linesHtml(): string {
+    const g = this.app.game, tr = g.transit;
+    if (!g.featureUnlocked("transit")) {
+      const m = unlockAt((x) => x.features.includes("transit"));
+      return `<h3 class="sub-h">Bus lines</h3><p class="small muted">${ICON.lock} Buses unlock at ${m?.name ?? "a later milestone"}${m ? ` (${fmtNum(m.pop)} people)` : ""}.</p>`;
+    }
+    const lines = [...tr.lines.values()];
+    if (!lines.length) return `<h3 class="sub-h">Bus lines</h3><p class="small muted">No bus lines yet. Put down stops with Transport › Bus stop, then click them in order with Bus line.</p>`;
+    let riders = 0, buses = 0;
+    const rows = lines.map((l) => {
+      const n = tr.busesOn(l.id);
+      riders += l.riders;
+      buses += n;
+      const waiting = l.stops.reduce((a, id) => a + (tr.stops.get(id)?.wait.filter((x) => x.line === l.id).length ?? 0), 0);
+      const broken = !isFinite(tr.loopTime(l));
+      const sub = broken ? `<span class="bad">Buses can't get round it</span>` : `${l.stops.length} stops · ${fmtNum(l.riders)} riders/h${waiting ? ` · ${waiting} waiting` : ""}`;
+      return `<li class="bl" data-id="${l.id}"><i class="bl-sw" style="background:${hex(l.color)}"></i><span class="bl-name"><b>${l.name}</b><span class="small muted">${sub}</span></span>
+        <span class="bl-buses" title="Buses on this line (${n} running)"><button class="dur" data-d="-1" aria-label="One bus fewer on the ${l.name}">−</button><b>${l.want}</b><button class="dur" data-d="1" aria-label="One more bus on the ${l.name}">+</button></span>
+        ${this.armedLine === l.id
+          ? `<button class="bl-del close armed" aria-label="Click again to delete the ${l.name}">Delete</button>`
+          : `<button class="bl-del close" aria-label="Delete the ${l.name}">${ICON.close}</button>`}</li>`;
+    }).join("");
+    return `<h3 class="sub-h">Bus lines</h3>
+      <dl class="facts"><dt>Riders last hour</dt><dd>${fmtNum(riders)}</dd><dt>Buses running</dt><dd>${buses}</dd><dt>Fares / upkeep</dt><dd>${signed(g.budget.income.transit)} / ${signed(-g.budget.expense.transit)}</dd></dl>
+      <ul class="bus-lines">${rows}</ul>`;
+  }
+
+  private bindLines() {
+    const g = this.app.game, tr = g.transit;
+    for (const li of this.win.querySelectorAll<HTMLElement>(".bl")) {
+      const id = +li.dataset.id!;
+      const on = () => { this.app.transit3d.focus = id; };
+      const off = () => { if (this.app.transit3d.focus === id) this.app.transit3d.focus = null; };
+      li.onpointerenter = on;
+      li.onpointerleave = off;
+      li.addEventListener("focusin", on);
+      li.addEventListener("focusout", off);
+      for (const b of li.querySelectorAll<HTMLButtonElement>(".dur")) {
+        b.onclick = () => {
+          const l = tr.lines.get(id);
+          if (!l) return;
+          l.want = Math.max(1, Math.min(20, l.want + +b.dataset.d!));
+          this.sfx.play("click");
+          this.fillWin();
+        };
+      }
+      (li.querySelector(".bl-del") as HTMLButtonElement).onclick = () => {
+        // two clicks: the first arms it (a line is a dozen clicks to draw again)
+        if (this.armedLine !== id) {
+          this.armedLine = id;
+          clearTimeout(this.armedT);
+          this.armedT = window.setTimeout(() => { this.armedLine = null; this.fillWin(); }, 3000);
+          this.fillWin();
+          return;
+        }
+        this.armedLine = null;
+        tr.removeLine(id);
+        this.app.transit3d.focus = null;
+        this.sfx.play("remove");
+        this.fillWin();
+      };
+    }
+  }
+
+  /** Bus line routes are drawn on the map while the lines list or a stop is open. */
+  get linesShown(): boolean {
+    return this.winKind === "transport" || this.panelKind === "stop";
+  }
+
+  /** Open the lines list with one line picked out. */
+  openLines(id: number) {
+    if (this.winKind !== "transport") this.toggleWin("transport");
+    this.app.transit3d.focus = id;
+  }
+
+  openStop(id: number) {
+    this.panelKind = "stop";
+    this.stopId = id;
+    this.lastPanel = "";
+    this.panel.hidden = false;
+    this.fillStop();
+  }
+
+  private fillStop() {
+    const tr = this.app.game.transit, st = tr.stops.get(this.stopId);
+    if (!st) return;
+    const lines = [...tr.lines.values()].filter((l) => l.stops.includes(st.id));
+    const ls = lines.length
+      ? `<ul class="bus-lines">${lines.map((l) => `<li class="bl"><i class="bl-sw" style="background:${hex(l.color)}"></i><span class="bl-name"><b>${l.name}</b><span class="small muted">${tr.busesOn(l.id)} buses · ${fmtNum(l.riders)} riders/h</span></span></li>`).join("")}</ul>`
+      : `<p class="status">No line stops here yet: draw one with Transport › Bus line.</p>`;
+    const html = `<header><span class="svc-tag">${ICON.busStop}</span>Bus stop</header>
+      <dl class="facts"><dt>Waiting</dt><dd>${st.wait.length}</dd></dl>
+      ${ls}
+      <button class="btn quiet danger demolish">Remove stop</button>`;
+    if (!this.setPanel(html)) return;
+    (this.panel.querySelector(".demolish") as HTMLButtonElement).onclick = () => {
+      tr.removeStop(st.id);
+      this.sfx.play("remove");
+      this.closeSelection();
+    };
   }
 
   // ---------------------------------------------------------------- selection panel (top right)
@@ -1048,7 +1192,7 @@ export class Hud {
         <button class="btn primary add-sig" ${sigOn ? "" : "disabled"}>${sigOn ? `Add traffic lights · ${formatMoney(SIGNAL_COST)}` : `Traffic lights unlock at ${MILESTONES.find((m) => m.features.includes("signals"))!.name}`}</button>`;
     } else {
       body = `<p class="muted small">The lights follow the traffic: a green ends early when its road is empty and runs up to twice its time while cars keep coming. Cars may turn right on red after stopping.</p>` + plan.phases.map((p, i) => `<div class="phase ${i === this.panelPhase ? "on" : ""}" data-i="${i}">
-          <span class="ph-name">Phase ${i + 1}</span>
+          <span class="ph-name">${i + 1}. ${p.left ? "Left turns" : "All turns"}<button class="ph-left ${p.left ? "on" : ""}" data-i="${i}" aria-pressed="${!!p.left}" title="Only left turns (and U-turns) go in this phase">Left only</button></span>
           <span class="ph-arms">${arms.map((a) => `<button class="arm ${p.arms.includes(a.seg) ? "on" : ""}" data-i="${i}" data-seg="${a.seg}" title="Toggle this approach">${compass(a.dir)}</button>`).join("")}</span>
           <span class="ph-dur"><button class="dur" data-i="${i}" data-d="-2" aria-label="Shorter">−</button><b title="Usual green time">${p.dur}s</b><button class="dur" data-i="${i}" data-d="2" aria-label="Longer">+</button></span>
           ${plan.phases.length > 1 ? `<button class="ph-del" data-i="${i}" aria-label="Remove phase">${ICON.close}</button>` : ""}
@@ -1080,6 +1224,14 @@ export class Hud {
       const p = clonePlan(plan!);
       const i = +b.dataset.i!;
       p.phases[i].dur = Math.max(4, Math.min(60, p.phases[i].dur + +b.dataset.d!));
+      this.panelPhase = i;
+      set(p);
+    }));
+    q(".ph-left").forEach((b) => (b.onclick = () => {
+      const p = clonePlan(plan!);
+      const i = +b.dataset.i!;
+      p.phases[i].left = !p.phases[i].left || undefined;
+      if (!p.phases[i].left) delete p.phases[i].left;
       this.panelPhase = i;
       set(p);
     }));
@@ -1224,7 +1376,7 @@ function stockBar(n: number, max: number): string {
 }
 
 function clonePlan(p: SignalPlan): SignalPlan {
-  return { phases: p.phases.map((x) => ({ arms: [...x.arms], dur: x.dur })) };
+  return { phases: p.phases.map((x) => ({ ...x, arms: [...x.arms] })) };
 }
 
 function compass(d: V2): string {

@@ -105,6 +105,8 @@ def palette():
         "uni_wall": "#eadcbc", "uni_roof": "#c8683f", "dome": "#5fb39e", "column": "#f7f3ea",
         "grass": "#a6d880", "path": "#ece4cd", "leaf": "#4f9f45", "leaf2": "#68b552", "trunk": "#8a6a4a",
         "water": "#6fbbe3", "stone": "#d6d8d4", "pav_roof": "#d8654f",
+        # bus stop: dark frame, pale glass, a white roof and the blue stop sign
+        "bs_frame": "#3c4148", "bs_glass": "#cfe6f2", "bs_roof": "#3f5470", "bs_sign": "#2f6fd0",
     }.items():
         P[k] = mat(k, v)
     return P
@@ -1151,6 +1153,30 @@ def b_parklarge(M, P):
     return L
 
 
+def b_busstop(M, P):
+    """Kerbside bus shelter, 4.4 x 1.8: open to the road (-Y), a glass back, a cantilevered roof, a bench, and a
+    pole at the leading end carrying the stop sign."""
+    L = Lot(4.4, 1.8)
+    L.bays = []
+    # paving slab the shelter stands on (the footpath edge)
+    box(M, -2.2, 2.2, -0.9, 0.9, 0, PAD_H, P["stone"])
+    # back frame: two posts and the glass panel between them
+    for x in (-1.75, 1.75):
+        box(M, x - 0.07, x + 0.07, 0.5, 0.64, PAD_H, 2.45, P["bs_frame"])
+    box(M, -1.68, 1.68, 0.54, 0.6, 0.25, 2.3, P["bs_glass"])
+    # roof: a thin slab reaching out over the waiting area
+    box(M, -1.95, 1.95, -0.55, 0.8, 2.45, 2.6, P["bs_roof"])
+    # bench against the glass
+    box(M, -1.3, 1.3, 0.2, 0.5, 0.42, 0.5, P["wood"])
+    for x in (-1.1, 1.1):
+        box(M, x - 0.05, x + 0.05, 0.3, 0.42, PAD_H, 0.42, P["bs_frame"])
+    # sign pole at the leading end, with the square stop sign facing the traffic
+    cyl(M, -2.05, -0.7, 0.06, PAD_H, 2.9, P["bs_frame"], n=6)
+    box(M, -2.11, -1.99, -0.98, -0.42, 2.4, 2.95, P["bs_sign"])
+    box(M, -2.125, -1.975, -0.9, -0.5, 2.62, 2.78, P["line"])
+    return L
+
+
 SERVICES = ("garbage", "firestation", "police", "clinic", "hospital", "school", "highschool", "university",
             "park", "parklarge")
 
@@ -1179,6 +1205,7 @@ BUILDINGS = {
     "university": (b_university, 70, 56, 6),
     "park": (b_park, 24, 24, 0),
     "parklarge": (b_parklarge, 48, 48, 0),
+    "busstop": (b_busstop, 4.4, 1.8, 0),
 }
 
 
@@ -1360,10 +1387,38 @@ def v_policecar(Ms, P):
     box(glass, -0.82, 0.82, -2.29, -2.26, 0.55, 0.67, P["glass"])
 
 
+def v_bus(Ms, P):
+    """City bus, 12 m. `body` (roof and lower skirt) is tinted with its line's colour; trim stays white."""
+    S = {"trim": mat("bus_trim", "#f4f5f2"), "lights": mat("bus_lights", "#f5b82e")}
+    body, trim, lights, glass, dark = Ms["body"], Ms["trim"], Ms["lights"], Ms["glass"], Ms["dark"]
+    hw, L = 1.27, 6.0
+    box(body, -hw, hw, -L, L, 0.32, 1.12, P["body"])                         # lower body
+    box(glass, -hw + 0.02, hw - 0.02, -L + 0.06, L - 0.06, 1.12, 2.5, P["glass"])   # window band
+    # white pillars between the windows, both sides
+    for i in range(5):
+        y = -4.4 + i * 2.1
+        box(trim, -hw, hw, y, y + 0.16, 1.12, 2.5, S["trim"])
+    box(trim, -hw, hw, -L + 0.02, -L + 0.4, 2.3, 2.5, S["trim"])          # header over the windscreen
+    box(body, -hw, hw, -L, L, 2.5, 2.92, P["body"])                          # roof (line colour from above)
+    box(trim, -0.9, 0.9, 0.2, 2.9, 2.92, 3.12, S["trim"])                    # roof AC pod
+    box(glass, -1.12, 1.12, -L - 0.03, -L, 0.85, 2.28, P["glass"])          # windscreen
+    box(lights, -0.95, 0.95, -L - 0.04, -L, 2.32, 2.52, S["lights"])        # destination sign
+    box(glass, -0.95, 0.95, L, L + 0.03, 1.4, 2.3, P["glass"])              # rear window
+    # doors on the kerb side (the right of travel: -X with the front at -Y), front and middle
+    for y0, y1 in ((-5.55, -4.6), (-0.35, 0.95)):
+        box(glass, -hw - 0.03, -hw, y0, y1, 0.4, 2.35, P["glass"])
+    box(dark, -hw, hw, -L - 0.08, -L + 0.1, 0.22, 0.62, P["dark"])          # bumpers
+    box(dark, -hw, hw, L - 0.1, L + 0.08, 0.22, 0.6, P["dark"])
+    box(glass, -1.0, 1.0, -L - 0.09, -L - 0.06, 0.66, 0.8, P["glass"])      # headlight bar
+    wheel_axle(dark, -3.9, 0.5, 1.22, P["dark"])
+    wheel_axle(dark, 3.2, 0.5, 1.22, P["dark"])
+
+
 VEHICLES = {
     "car": (v_car, ("body", "glass", "dark"), (1.85, 4.4, 1.45)),
     "van": (v_van, ("body", "glass", "dark"), (2.0, 5.0, 2.0)),
     "truck": (v_truck, ("body", "glass", "dark", "cargo"), (2.5, 8.5, 3.2)),
+    "bus": (v_bus, ("body", "trim", "lights", "glass", "dark"), (2.575, 12.17, 3.12)),
     # services (fixed colours)
     "garbagetruck": (v_garbagetruck, ("paint", "trim", "lights", "glass", "dark"), (2.5, 8.5, 3.2)),
     "firetruck": (v_firetruck, ("paint", "trim", "lights", "ladder", "glass", "dark"), (2.5, 8.5, 3.15)),

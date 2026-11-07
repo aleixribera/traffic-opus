@@ -1,9 +1,17 @@
 import { LANE_W, ROAD_TYPES, SIM } from "../config";
 import { clamp, dist, dot, norm, polyAt, polyClosest, polyDirSmooth, right, sub, type V2 } from "../core/math";
-import type { ChangeSet, Connector, Edge, Lane, RoadNetwork, SignalPlan } from "../roads/network";
+import type { ChangeSet, Connector, Edge, Lane, RoadNetwork, SignalPhase, SignalPlan } from "../roads/network";
 import { Router, dkey, dkDir, dkSeg, type Access } from "./router";
 
-export type TripKind = "shop" | "leisure" | "work" | "home" | "cargo" | "move" | "empty" | "school" | "service";
+export type TripKind = "shop" | "leisure" | "work" | "home" | "cargo" | "move" | "empty" | "school" | "service" | "bus";
+/** A bus going round its line: the stop it is heading for (index into the line) and who is aboard. */
+export interface BusRun {
+  line: number; i: number; pax: { c: number; to: number; walk: number }[];
+  /** finishes at its next stop */
+  retire?: boolean;
+  /** the stop it was driving to was taken away: where it pulls up is no stop, it just goes on to stop i */
+  detour?: boolean;
+}
 /** What a service vehicle is doing: driving out to a call, or back to its station (see game/services.ts). */
 export interface ServiceRun { svc: string; station: number; target: number; leg: "out" | "back"; patient?: number; /** the leg ended (arrived or failed) */ done?: boolean; /** a garbage truck's load so far on its round */ load?: number; /** route index a garbage truck has emptied bins up to */ swept?: number }
 
@@ -16,6 +24,7 @@ export interface Trip {
   startT: number;
   freeFlow: number;
   run?: ServiceRun;
+  bus?: BusRun;
 }
 
 export interface Vehicle {
@@ -76,6 +85,8 @@ export interface Vehicle {
   exit?: boolean;
   /** Missed its way and can't get back (its trip already counted as failed): drives out of the region, or just leaves. */
   lost?: boolean;
+  /** A bus standing at its stop: seconds left before it pulls out again. */
+  dwell?: number;
 }
 
 export interface PendingSpawn {
@@ -97,12 +108,16 @@ export interface PendingSpawn {
   /** When the trip was asked for: a car leaving a building first rolls out of its lot (EMERGE seconds). */
   t0?: number;
   look?: number;
+  /** body colour (a bus wears its line's) */
+  color?: number;
 }
 
 /** Seconds a car takes to come out of its lot to the kerb before it joins the road (drawn by the renderer). */
 export const EMERGE = 2.6;
 /** Whether a trip starts in a building's lot (and so rolls out of it first): not service runs or outside traffic. */
-export const fromLot = (p: PendingSpawn) => !p.through && !p.trip.run;
+export const fromLot = (p: PendingSpawn) => !p.through && !p.trip.run && !p.trip.bus;
+/** Whether phase `ph` lets traffic from arm `seg` turning `turn` go (a left-turn phase: only left turns and U-turns). */
+export const goesIn = (ph: SignalPhase, seg: number, turn?: string) => ph.arms.includes(seg) && (!ph.left || turn === "L" || turn === "U");
 
 const TR_N = 40, TR_STEP = 0.35; // drawn-path samples per car (14 m: enough for the longest truck)
 /** A car's paint from its look. */
@@ -114,6 +129,8 @@ export interface TrafficEvents {
   fail(trip: Trip, reason: string, now: number): void;
   /** Where cars leave the region (a car that lost its way heads for one). */
   exits?(): Access[];
+  /** A bus reached its stop: where it goes next and how long it stands here first (null: it leaves the road). */
+  busAt?(v: Vehicle): { to: Access; dwell: number } | null;
 }
 
 /** Segment-level flow statistics for overlays and objectives. */
@@ -159,6 +176,8 @@ export class Traffic {
   // node -> arm seg -> the lanes coming into the node on that arm, each with the lanes feeding it from further back
   // (an arm that is only a short piece of road would otherwise hide most of its queue)
   private sigIn = new Map<number, Map<number, { l: Lane; back: number; arm: number }[]>>();
+  /** per signalled junction: the turn from an arm into each road ("arm:out" -> "L" | "S" | "R" | "U") */
+  private sigTurn = new Map<number, Map<string, string>>();
 
   private ringLoads = new Map<number, number>(); // ring id -> share of its capacity in use (this step)
   flow = new Map<number, FlowStat>(); // by directed seg key
@@ -214,7 +233,7 @@ export class Traffic {
     }
     const lc = polyClosest(lane.pl, p.from.p);
     const ls = lc.s;
-    const len = p.truck ? SIM.truckLen : SIM.carLen;
+    const len = p.trip.bus ? SIM.busLen : p.truck ? SIM.truckLen : SIM.carLen;
     // gap check on the target lane (and traffic arriving soon)
     // gap acceptance like a real driver: ~4 s to oncoming traffic, shrinking as they get impatient,
     // so through traffic rarely has to brake for someone pulling out
@@ -245,7 +264,7 @@ export class Traffic {
       }
     }
     const v: Vehicle = {
-      id: this.nextId++, truck: p.truck, len, look: p.look ?? 0, color: p.truck ? 0xf5f5f0 : carColor(p.look ?? 0),
+      id: this.nextId++, truck: p.truck, len, look: p.look ?? 0, color: p.color ?? (p.truck ? 0xf5f5f0 : carColor(p.look ?? 0)),
       edge: lane, s: ls, v: 5, acc: 0, route: best.keys, ri: 0, next: null, granted: false, holding: null,
       lat: 0, lcCool: 2, wait: 0, stuck: 0, dest: to, destSide: p.toSide, destS: -1,
       trip: { ...p.trip, freeFlow: best.freeFlow },
@@ -341,6 +360,16 @@ export class Traffic {
     const done: Vehicle[] = [];
     for (const v of vs) {
       v.px = v.x; v.py = v.y; v.ph = v.h; v.pang = v.ang;
+      if (v.dwell !== undefined) {
+        // a bus at its stop stands still (the traffic behind waits or goes round it), then plans its way on
+        v.v = 0;
+        v.wait = 0;
+        v.stuck = 0;
+        v.lcCool = Math.max(v.lcCool, 1);
+        v.dwell -= dt;
+        if (v.dwell <= 0) { v.dwell = undefined; this.reroute(v); }
+        continue;
+      }
       v.v = Math.max(0, v.v + v.acc * dt);
       v.s += v.v * dt;
       v.ideal += v.constrained ? (v.v * dt) / Math.max(v.v0e, 1) : dt;
@@ -418,6 +447,19 @@ export class Traffic {
             }
           } else if (lane.idx === this.turnIdx(v, lane) && v.s >= v.destS - 0.8) {
             if ((v.turnOk && v.v > 1) || this.canTurnIn(v, lane)) {
+              if (v.trip.bus && !v.lost) {
+                const nx = this.ev.busAt?.(v);
+                if (nx) {
+                  // pulled up at the kerb: riders off and on, then on to the next stop
+                  v.dwell = nx.dwell;
+                  v.dest = nx.to;
+                  v.destSide = nx.to.side ?? 1;
+                  v.destS = -1;
+                  v.v = 0;
+                  v.turnOk = false;
+                  return false;
+                }
+              }
               // pulling out of a driveway takes a moment even on a quiet street: the first seconds aren't delay
               v.trip.freeFlow = v.ideal + Math.min(6, v.born - v.trip.startT);
               v.arrived = true;
@@ -605,13 +647,14 @@ export class Traffic {
     return best;
   }
 
-  signalState(nodeId: number, armSeg: number): "green" | "yellow" | "red" | "none" {
+  /** The light for traffic from arm `armSeg` turning `turn` ("L", "S", "R", "U"; a left-turn phase greens only L and U). */
+  signalState(nodeId: number, armSeg: number, turn?: string): "green" | "yellow" | "red" | "none" {
     const n = this.net.nodes.get(nodeId);
     if (!n || !n.signal || !n.signal.phases.length) return "none";
     let c = this.sigCtl.get(nodeId);
-    if (!c) this.sigCtl.set(nodeId, (c = { plan: n.signal, i: 0, st: 0, t: 0 }));
+    if (!c) this.sigCtl.set(nodeId, (c = { plan: n.signal, i: Math.max(0, n.signal.phases.findIndex((p) => !p.left)), st: 0, t: 0 }));
     else if (c.plan !== n.signal) this.resetSignal(c, n.signal);
-    if (!n.signal.phases[c.i].arms.includes(armSeg)) return "red";
+    if (!goesIn(n.signal.phases[c.i], armSeg, turn)) return "red";
     return c.st === 0 ? "green" : c.st === 1 ? "yellow" : "red";
   }
 
@@ -624,7 +667,7 @@ export class Traffic {
     for (const cf of c.conflicts) {
       const o = cf.c;
       for (const h of o.holders as Vehicle[]) if (h !== v && !this.clearsBefore(h, o, cf, 6, false, 1)) return false;
-      if (this.signalState(o.node, o.armIn) === "red") continue;
+      if (this.signalState(o.node, o.armIn, o.turn) === "red") continue;
       const ap = o.from.occ as Vehicle[];
       for (let k = ap.length - 1; k >= 0; k--) {
         const w = ap[k];
@@ -644,11 +687,12 @@ export class Traffic {
    * on as it was (a change of time elsewhere changes nothing now); otherwise it goes to all red, and on from there.
    */
   private resetSignal(c: { plan: SignalPlan; i: number; st: 0 | 1 | 2; t: number }, plan: SignalPlan) {
-    const was = c.plan.phases[c.i]?.arms ?? [];
+    const wasPh = c.plan.phases[c.i];
+    const was = wasPh?.arms ?? [];
     c.plan = plan;
     c.i = Math.min(c.i, plan.phases.length - 1);
     const now = plan.phases[c.i].arms;
-    if (was.length === now.length && was.every((a) => now.includes(a))) return;
+    if (was.length === now.length && was.every((a) => now.includes(a)) && !wasPh?.left === !plan.phases[c.i].left) return;
     c.st = 2;
     c.t = 0;
   }
@@ -671,13 +715,18 @@ export class Traffic {
         if (c.t >= AR) {
           // on to the next phase with cars waiting for it. If they've all gone meanwhile (turned right on red),
           // back to the one that was on; a phase that lets nobody go is never picked unless it is all there is.
-          const cur = ph[c.i].arms;
+          const cur = ph[c.i];
           let to = -1;
           for (let k = 1; k < ph.length && to < 0; k++) {
             const j = (c.i + k) % ph.length;
-            if (ph[j].arms.length && this.sigDemand(id, ph[j].arms, false, cur)) to = j;
+            if (ph[j].arms.length && this.sigDemand(id, ph[j], false, cur)) to = j;
           }
-          if (to < 0 && !cur.length) for (let k = 1; k < ph.length && to < 0; k++) if (ph[(c.i + k) % ph.length].arms.length) to = (c.i + k) % ph.length;
+          if (to < 0 && !cur.arms.length) for (let k = 1; k < ph.length && to < 0; k++) if (ph[(c.i + k) % ph.length].arms.length) to = (c.i + k) % ph.length;
+          // nobody waiting anywhere: a left-turn phase hands over to the rest of its roads' traffic and rests there
+          if (to < 0 && cur.left) {
+            const k = ph.findIndex((p) => !p.left && cur.arms.every((a) => p.arms.includes(a)));
+            to = k >= 0 ? k : ph.findIndex((p) => !p.left);
+          }
           c.i = to < 0 ? c.i : to; c.st = 0; c.t = 0;
         }
         continue;
@@ -685,23 +734,29 @@ export class Traffic {
       const g = ph[c.i];
       if (ph.length < 2 || c.t < Math.min(g.dur, MIN_G)) continue;
       let waiting = !g.arms.length; // (a phase that lets nobody go only lasts its minimum)
-      for (let j = 0; j < ph.length && !waiting; j++) if (j !== c.i && this.sigDemand(id, ph[j].arms, false, g.arms)) waiting = true;
-      if (!waiting) continue;
-      if (c.t < g.dur * 2 && this.sigDemand(id, g.arms, true)) continue;
+      for (let j = 0; j < ph.length && !waiting; j++) if (j !== c.i && this.sigDemand(id, ph[j], false, g)) waiting = true;
+      // (a left-turn phase ends once its turns are done, rather than hold the rest of the road on red)
+      if (!waiting && !(g.left && !this.sigDemand(id, g, true))) continue;
+      if (c.t < g.dur * 2 && this.sigDemand(id, g, true)) continue;
       c.st = 1; c.t = 0;
     }
   }
 
   /**
-   * Cars coming up to lights `node` on approaches `arms` (not counting those in `skip`): any within 60 m of the
-   * stop line, or with `gap`, any that will still go through in the next few seconds (arriving soon, or at the line
-   * and free to go: one held by a full exit doesn't keep the green).
+   * Cars coming up to lights `node` that phase `ph` lets go (not counting those `cur`, the phase that is on, lets
+   * go already; but a left turn waiting for a gap in the oncoming traffic does call its own left-turn phase): any
+   * within 60 m of the stop line, or with `gap`, any that will still go through in the next few seconds (arriving
+   * soon, or at the line and free to go: one held by a full exit doesn't keep the green).
    */
-  private sigDemand(node: number, arms: number[], gap: boolean, skip?: number[]): boolean {
+  private sigDemand(node: number, ph: SignalPhase, gap: boolean, cur?: SignalPhase): boolean {
     let byArm = this.sigIn.get(node);
     if (!byArm) this.sigIn.set(node, (byArm = new Map()));
-    for (const seg of arms) {
-      if (skip?.includes(seg)) continue;
+    let turns = this.sigTurn.get(node);
+    if (!turns) {
+      this.sigTurn.set(node, (turns = new Map()));
+      for (const c of this.net.nodeGeom.get(node)?.conns ?? []) turns.set(`${c.armIn}:${c.to.seg}`, c.turn);
+    }
+    for (const seg of ph.arms) {
       let lanes = byArm.get(seg);
       if (!lanes) {
         // the arm's lanes, and back from them (through connectors) up to 60 m from the stop line
@@ -723,7 +778,22 @@ export class Traffic {
           const d = l.pl.length - v.s + back;
           if (d > 60) break;
           // (turning off into a lot before the junction: not for the lights. Further back: heading this way?)
-          if (back === 0 ? v.next?.node !== node : !v.route.slice(v.ri + 1, v.ri + 4).includes(arm)) continue;
+          let turn: string | undefined;
+          if (back === 0) {
+            if (v.next?.node !== node) continue;
+            turn = v.next.turn;
+          } else {
+            const i = v.route.indexOf(arm, v.ri + 1);
+            if (i < 0 || i > v.ri + 3) continue;
+            const out = v.route[i + 1];
+            turn = out === undefined ? undefined : turns.get(`${seg}:${dkSeg(out)}`);
+          }
+          // (at the line, one that this phase doesn't let go holds up everyone behind it in its lane)
+          if (!goesIn(ph, seg, turn)) { if (back === 0) break; continue; }
+          if (cur && !ph.left && goesIn(cur, seg, turn)) continue;
+          // a left-turn phase is called by left turns held up (by the oncoming traffic), not by any coming along:
+          // with nothing oncoming they just turn on the green
+          if (!gap && ph.left && !(back === 0 && v.v < 0.5 && v.wait > 1.5)) continue;
           if (!gap) return true;
           if (v.block === "box" && v.v < 0.5) continue;
           if (d < Math.max(10, v.v * 3.5)) return true;
@@ -757,7 +827,7 @@ export class Traffic {
       v.stopAt = c;
     }
     // signals
-    const sig = this.signalState(c.node, c.armIn);
+    const sig = this.signalState(c.node, c.armIn, c.turn);
     if (sig === "red" && !(c.turn === "R" && this.rightOnRed(v, c, toEnd))) { v.block = "red"; return false; }
     // letting a long-waiting car out: hold back if our path crosses its and we can still stop
     const cl = this.courtesy.get(c.node);
@@ -884,7 +954,7 @@ export class Traffic {
       const exempt = cf.merge && o.to === c.to && this.roomClaim.get(c.to) === v;
       const yieldTo = o.prio > c.prio || (sig !== "none" && c.turn === "L" && o.turn !== "L" && !cf.merge) || (cf.merge && o.prio === c.prio && o.turn === "S" && c.turn !== "S");
       if (yieldTo) {
-        if (sig !== "none" && this.signalState(o.node, o.armIn) === "red") continue;
+        if (sig !== "none" && this.signalState(o.node, o.armIn, o.turn) === "red") continue;
         const ap = o.from.occ as Vehicle[];
         const w = ap[ap.length - 1];
         if (w && w !== v && (w.next === o || (w.next === null && !this.isFinal(w)))) {
@@ -1581,6 +1651,7 @@ export class Traffic {
   onNetworkChange(cs: ChangeSet) {
     const net = this.net;
     this.sigIn.clear();
+    this.sigTurn.clear();
     this.roomClaim.clear();
     this.courtesy.clear();
     this.courtesyRest.clear();
@@ -1686,7 +1757,7 @@ export class Traffic {
       if (d < bd) {
         bd = d;
         const q = polyAt(g.center, r.s), t = polyDirSmooth(g.center, r.s, 2);
-        best = { seg: id, s: r.s, p: a.p, side: dot(sub(a.p, q), right(t)) >= 0 ? 1 : -1 };
+        best = { seg: id, s: r.s, p: a.p, side: dot(sub(a.p, q), right(t)) >= 0 ? 1 : -1, strict: a.strict };
       }
     }
     return best;

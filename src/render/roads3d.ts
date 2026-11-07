@@ -185,7 +185,7 @@ export class Roads3D {
   private pillarGeo = new THREE.CylinderGeometry(0.9, 1.1, 1, 10).translate(0, 0.5, 0);
   // signal heads drawn as coloured dots at the stop line
   private lights: THREE.InstancedMesh;
-  private lightRefs: { node: number; arm: number; x: number; y: number; h: number }[] = [];
+  private lightRefs: { node: number; arm: number; turns: string[]; x: number; y: number; h: number }[] = [];
   // turn arrows painted on the lanes coming into a junction
   private arrowMat = new THREE.MeshLambertMaterial({ color: PAL.lane, side: THREE.DoubleSide });
   // stop signs: a red octagon at the kerb (white rim)
@@ -719,7 +719,9 @@ export class Roads3D {
           const p = l.pl.pts[l.pl.pts.length - 1];
           const q = l.pl.pts[Math.max(0, l.pl.pts.length - 3)];
           const d = norm(sub(p, q));
-          this.lightRefs.push({ node: id, arm: a.seg, x: p.x - d.x * 1.2, y: p.y - d.y * 1.2, h: n.h });
+          // (the turns this lane takes: a left-turn lane shows its own left-turn phase)
+          const turns = [...new Set(l.outs.map((c) => c.turn as string))];
+          this.lightRefs.push({ node: id, arm: a.seg, turns: turns.length ? turns : ["S"], x: p.x - d.x * 1.2, y: p.y - d.y * 1.2, h: n.h });
         }
       }
     }
@@ -744,7 +746,13 @@ export class Roads3D {
       const r = this.lightRefs[i];
       this.tmpM.makeTranslation(r.x, r.h + LIFT + 0.05, r.y);
       li.setMatrixAt(i, this.tmpM);
-      const st = traffic.signalState(r.node, r.arm);
+      // a lane shared by several turns shows the best of them (a car on it may go when its own turn is green)
+      let st = "red";
+      for (const t of r.turns) {
+        const x = traffic.signalState(r.node, r.arm, t);
+        if (x === "green") { st = x; break; }
+        if (x === "yellow") st = x;
+      }
       li.setColorAt(i, this.tmpC.set(st === "green" ? 0x34c25a : st === "yellow" ? 0xf5b82e : 0xe5484d));
     }
     li.instanceMatrix.needsUpdate = true;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { RoadNetwork, type Connector } from "../src/roads/network";
+import { RoadNetwork, type Connector, type SignalPhase } from "../src/roads/network";
 import { Traffic, type Trip } from "../src/sim/traffic";
 import { straightCubic, v2, polyAt, type V2 } from "../src/core/math";
 import type { RoadTypeId } from "../src/config";
@@ -37,8 +37,14 @@ const trip = (): Trip => ({ kind: "shop", from: 0, to: 0, resident: -1, startT: 
  * Sends cars along `flows` ([from arm, to arm, seconds between cars]) for `T` seconds, and reports how many
  * arrived and the longest any one car stood still, per flow.
  */
-function drive(flows: [number, number, number][], T: number) {
+function drive(flows: [number, number, number][], T: number, phases?: SignalPhase[]) {
   const k = crossing();
+  if (phases) {
+    k.net.begin();
+    k.net.setSignal(k.c, { phases });
+    k.net.commit();
+    k.net.rebuild();
+  }
   let arrived = 0, closest = Infinity;
   const tr = new Traffic(k.net, { arrive: () => { arrived++; }, fail: () => {} });
   const longest = flows.map(() => 0);
@@ -121,6 +127,31 @@ describe("Traffic lights adapt to the traffic (CS2)", () => {
     edit(20, [k.e]); // the west arm no longer goes in this phase
     expect(tr.signalState(k.c, k.e)).toBe("red");
     expect(ctl.st).toBe(2);
+  });
+
+  it("a left-turn phase lets left turns through that would wait for a gap in heavy oncoming traffic", () => {
+    const k = crossing();
+    // eastbound (from the west arm) turning left goes north
+    const l = k.net.nodeGeom.get(k.c)!.conns.find((c) => c.armIn === k.w && c.turn === "L")!;
+    expect(l.to.seg).toBe(k.n);
+    const flows: [number, number, number][] = [[k.e, k.w, 1.6], [k.w, k.e, 1.8], [k.w, k.n, 7], [k.n, k.s, 9]];
+    const plain = drive(flows, 300);
+    const withLeft = drive(flows, 300, [{ arms: [k.e, k.w], dur: 6, left: true }, { arms: [k.e, k.w], dur: 14 }, { arms: [k.n, k.s], dur: 14 }]);
+    console.log("left turn: longest wait", plain.longest[2].toFixed(1), "->", withLeft.longest[2].toFixed(1), "arrived", plain.arrived, "->", withLeft.arrived);
+    expect(withLeft.longest[2]).toBeLessThan(plain.longest[2] * 0.7);
+    expect(withLeft.arrived).toBeGreaterThanOrEqual(plain.arrived * 0.95);
+    expect(withLeft.closest).toBeGreaterThan(2.2);
+  });
+
+  it("after a left-turn phase with nobody else about, the light rests on the road's green, not on red for it", () => {
+    const k = crossing();
+    const plan: SignalPhase[] = [{ arms: [k.e, k.w], dur: 6, left: true }, { arms: [k.e, k.w], dur: 14 }, { arms: [k.n, k.s], dur: 14 }];
+    // a lone left turn now and then, and between them a lone car going straight on along the same road
+    const r = drive([[k.w, k.n, 30], [k.w, k.e, 30]], 200, plan);
+    expect(r.arrived).toBeGreaterThanOrEqual(10);
+    expect(r.longest[1]).toBeLessThan(2);
+    // a left turn, alone, calls its phase and goes
+    expect(r.longest[0]).toBeLessThan(8);
   });
 
   it("never turns green for a phase that lets nobody go, or for a road nobody is on", () => {

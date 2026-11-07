@@ -13,6 +13,8 @@ import {
 export interface SignalPhase {
   arms: number[]; // seg ids whose approach is green in this phase
   dur: number; // green seconds
+  /** a protected left-turn phase: only left turns (and U-turns) from these arms go */
+  left?: boolean;
 }
 
 export interface SignalPlan {

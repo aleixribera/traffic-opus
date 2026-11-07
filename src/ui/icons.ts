@@ -102,6 +102,10 @@ export function serviceIcon(kind: string): string {
 }
 
 export const ICON = {
+  // public transport: the bar's category (a bus seen from the front), a stop sign on its pole, and a line
+  busCat: svg(28, 28, `<rect x="6" y="4" width="16" height="18" rx="3" fill="#5b6168"/><rect x="8.5" y="7" width="11" height="6.5" rx="1" fill="#fff"/><circle cx="10" cy="17.5" r="1.4" fill="#fff"/><circle cx="18" cy="17.5" r="1.4" fill="#fff"/><rect x="8" y="22" width="3" height="3" rx="0.8" fill="#5b6168"/><rect x="17" y="22" width="3" height="3" rx="0.8" fill="#5b6168"/>`),
+  busStop: svg(28, 28, `<rect x="3" y="21" width="22" height="3" fill="#d6d8d4"/><path d="M8 21 V7" stroke="#3c4148" stroke-width="1.8"/><rect x="4" y="3" width="8" height="7" rx="1.2" fill="#2f6fd0"/><rect x="5.6" y="5.6" width="4.8" height="1.8" fill="#fff"/><path d="M13 9 H25 V11 H13 Z" fill="#9aa0a6"/><path d="M14.5 11 V21 M23.5 11 V21" stroke="#3c4148" stroke-width="1.4"/><rect x="15.5" y="12" width="7" height="8" fill="#cfe6f2"/>`),
+  busLine: svg(28, 28, `<path d="M5 22 L11 9 L20 18 L24 6" fill="none" stroke="#e0533d" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/><circle cx="5" cy="22" r="2.8" fill="#fff" stroke="#3c4148" stroke-width="1.4"/><circle cx="11" cy="9" r="2.8" fill="#fff" stroke="#3c4148" stroke-width="1.4"/><circle cx="20" cy="18" r="2.8" fill="#fff" stroke="#3c4148" stroke-width="1.4"/><circle cx="24" cy="6" r="2.8" fill="#fff" stroke="#3c4148" stroke-width="1.4"/>`),
   grid: svg(28, 28, `<rect x="4" y="4" width="20" height="20" rx="2" fill="none" stroke="#5b6168" stroke-width="1.6"/><path d="M4 11 h20 M4 17 h20 M11 4 v20 M17 4 v20" stroke="#5b6168" stroke-width="1.2"/>`),
   roundabout: svg(28, 28, `<circle cx="14" cy="14" r="8" fill="none" stroke="#5b6168" stroke-width="3.2"/><path d="M14 2 v4 M14 22 v4 M2 14 h4 M22 14 h4" stroke="#5b6168" stroke-width="3"/>`),
   junction: svg(28, 28, `<rect x="10" y="3" width="8" height="22" rx="1" fill="#fff" stroke="#8d939a"/><rect x="3" y="10" width="22" height="8" rx="1" fill="#fff" stroke="#8d939a"/><circle cx="14" cy="14" r="2.6" fill="#34c25a"/><circle cx="20.5" cy="7" r="2" fill="#e5484d"/>`),
