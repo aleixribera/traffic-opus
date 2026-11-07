@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BUILDING_TYPES, LEVEL_H, TILE, MAX_LEVEL, ROAD_TYPES, roadWidth, type RoadTypeId } from "./config";
+import { BUILDING_TYPES, LEVEL_H, TILE, MAX_LEVEL, ROAD_TYPES, SIM, roadWidth, type RoadTypeId } from "./config";
 import { cubicAt, dist, dot, formatMoney, norm, rectCorners, right, sub, v2, type V2 } from "./core/math";
 import type { Building } from "./game/buildings";
 import { Game } from "./game/city";
@@ -75,6 +75,11 @@ export class App {
     service: "garbage",
   };
   uiHidden = false;
+  /** menu: the showcase city playing behind the title menu (no input, no saving); explore: that city, free to look round, never saved. */
+  mode: "menu" | "play" | "explore" = "play";
+  /** Set at boot: back to the title menu. */
+  openMenu?: () => void;
+  private modeListeners: ((m: App["mode"]) => void)[] = [];
   overlay: OverlayId = "none";
   zones3d!: Zones3D;
   selected: Building | null = null;
@@ -121,6 +126,32 @@ export class App {
     this.hud = h;
   }
 
+  setMode(m: App["mode"]) {
+    this.mode = m;
+    document.body.classList.toggle("in-menu", m === "menu");
+    document.body.classList.toggle("exploring", m === "explore");
+    if (m === "menu") { this.cancelStroke(); this.selected = null; this.setTool({ tool: "inspect" }); this.hasCursor = false; this.hud?.chips(null); }
+    this.saveT = 0;
+    for (const f of this.modeListeners) f(m);
+    this.hud?.refresh();
+  }
+
+  onMode(f: (m: App["mode"]) => void) {
+    this.modeListeners.push(f);
+  }
+
+  /** Run the simulation ahead by `seconds` of game time (a few frames' work at a time), so traffic is already flowing. */
+  async prewarm(seconds: number, progress?: (k: number) => void) {
+    const g = this.game, n = Math.round(seconds / SIM.dt);
+    for (let i = 0; i < n;) {
+      const t0 = performance.now();
+      while (i < n && performance.now() - t0 < 40) { g.step(SIM.dt); i++; }
+      progress?.(i / n);
+      if (g !== this.game) return;
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  }
+
   newGame(seed = 7) {
     this.setGame(new Game(seed));
     // open on the town site with the motorway you connect to in view
@@ -143,6 +174,8 @@ export class App {
 
   private setGame(g: Game) {
     this.game = g;
+    this.view.rot = 0;
+    this.hud?.compassAngle(0);
     for (const c of [...this.worldRoot.children]) this.worldRoot.remove(c);
     const small = Math.min(window.innerWidth, window.innerHeight) < 700;
     this.terrain3d = new Terrain3D(g.terrain, small);
@@ -163,8 +196,8 @@ export class App {
       else if (e.t === "buildings") { this.buildings3d.rebuild(g.buildings.list); this.applyTint(); this.dirtyPreview = true; }
       else if (e.t === "tiles") this.terrain3d.setTiles(g.tiles);
       else if (e.t === "zones") this.dirtyPreview = true;
-      else if (e.t === "milestone") this.hud?.milestone(e.index);
-      else if (e.t === "toast") this.hud?.toast(e.msg);
+      else if (e.t === "milestone") { if (this.mode === "play") this.hud?.milestone(e.index); }
+      else if (e.t === "toast") { if (this.mode !== "menu") this.hud?.toast(e.msg); }
       this.hud?.refresh();
     });
     this.cancelStroke();
@@ -278,6 +311,7 @@ export class App {
     el.addEventListener("pointerleave", () => { this.hasCursor = false; this.dirtyPreview = true; this.hud?.chips(null); });
     el.addEventListener("wheel", (e) => {
       e.preventDefault();
+      if (this.mode === "menu") return;
       const r = el.getBoundingClientRect();
       const k = Math.exp(Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY), 120) * 0.0022);
       this.view.zoomAt(e.clientX - r.left, e.clientY - r.top, k);
@@ -296,6 +330,7 @@ export class App {
   }
 
   private onDown(e: PointerEvent) {
+    if (this.mode === "menu") return;
     const p = this.local(e);
     try { (e.target as HTMLElement).setPointerCapture?.(e.pointerId); } catch { /* pointer already gone */ }
     this.pointers.set(e.pointerId, { id: e.pointerId, x: p.x, y: p.y, sx: p.x, sy: p.y, button: e.button, moved: false, t: performance.now() });
@@ -371,6 +406,7 @@ export class App {
   }
 
   private onMove(e: PointerEvent) {
+    if (this.mode === "menu") return;
     const p = this.local(e);
     const pi = this.pointers.get(e.pointerId);
     if (this.pinch && this.pointers.size === 2 && pi) {
@@ -457,6 +493,8 @@ export class App {
     const tag = (e.target as HTMLElement)?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA") return;
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    // the title menu: only Esc, to close a dialog opened from it
+    if (this.mode === "menu") { if (down && k === "Escape") this.hud?.back(); return; }
     if (down) this.keys.add(k); else { this.keys.delete(k); return; }
     // AltGr arrives as Ctrl+Alt: leave it to the plain keys ([ and ] need it on many layouts)
     if ((e.ctrlKey || e.metaKey) && !e.altKey) {
@@ -1081,7 +1119,7 @@ export class App {
     this.covT += dt;
     if (this.covT > 0.5) { this.covT = 0; this.updateCoverage(); }
     this.saveT += dt;
-    if (this.saveT > 60) { this.saveT = 0; this.saves.autosave(g); }
+    if (this.saveT > 60) { this.saveT = 0; if (this.mode === "play") this.saves.autosave(g); }
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - dt * 4);
       this.hud?.shake(this.shake);
@@ -1094,7 +1132,7 @@ export class App {
     this.roadsFar.update(this.view.mpp, this.view.w, this.view.h);
     this.labels.update(this.view);
     this.iconT += dt;
-    if (this.iconT > 0.4) { this.iconT = 0; this.icons.set(this.uiHidden ? [] : g.buildings.list, this.view); }
+    if (this.iconT > 0.4) { this.iconT = 0; this.icons.set(this.uiHidden || this.mode === "menu" ? [] : g.buildings.list, this.view); }
     else this.icons.update(this.view);
     this.hud?.compassAngle(this.view.rot);
     this.view.render();
@@ -1104,7 +1142,7 @@ export class App {
   start() {
     requestAnimationFrame(this.frame);
     // closing or hiding the tab saves straight away, so at most a few seconds of work is ever lost
-    const flush = () => { if (this.game && this.game.playtime > 1) { this.saveT = 0; this.saves.autosave(this.game); } };
+    const flush = () => { if (this.game && this.mode === "play" && this.game.playtime > 1) { this.saveT = 0; this.saves.autosave(this.game); } };
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
     window.addEventListener("pagehide", flush);
   }

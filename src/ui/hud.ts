@@ -601,7 +601,7 @@ export class Hud {
   private renderTips() {
     const tip = this.tipFor();
     const crowded = !!this.winKind && matchMedia("(max-width: 760px)").matches; // phones: one thing at the top at a time
-    if (!tip || this.tutHidden || this.panelKind || crowded) { this.tut.hidden = true; this.hint(null); return; }
+    if (!tip || this.tutHidden || this.panelKind || crowded || this.app.mode !== "play") { this.tut.hidden = true; this.hint(null); return; }
     this.tut.hidden = false;
     if (this.tut.dataset.k !== tip.key) {
       this.tut.dataset.k = tip.key;
@@ -693,6 +693,12 @@ export class Hud {
   // ---------------------------------------------------------------- back / Esc
 
   /** One step back, the way Esc works: popups, dialogs, panels, the tool, the asset menu. False when there was nothing to close. */
+  /** A new city has just been started (from the title menu): the tips start over. */
+  newCity() {
+    this.tutHidden = false;
+    this.refresh();
+  }
+
   back(): boolean {
     if (!this.demandPop.hidden) { this.demandPop.hidden = true; this.demandBtn.setAttribute("aria-expanded", "false"); return true; }
     if (!this.banner.hidden) { this.banner.hidden = true; return true; }
@@ -1063,6 +1069,7 @@ export class Hud {
         <button class="pm save">Save game</button>
         <button class="pm load">Load game</button>
         <button class="pm keys">Controls</button>
+        <button class="pm home">Main menu</button>
         <button class="pm new">New city</button>
       </div>`, "Pause menu");
     dlg.classList.add("pause");
@@ -1071,26 +1078,33 @@ export class Hud {
     on(".save", () => this.openSaves(true));
     on(".load", () => this.openSaves(false));
     on(".keys", () => this.openKeys());
+    on(".home", () => {
+      if (app.mode === "play") app.saves.autosave(app.game);
+      this.resumeOnClose = false;
+      this.closeModal();
+      app.openMenu?.();
+    });
     on(".new", () => {
       const b = dlg.querySelector(".new") as HTMLButtonElement;
       if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Start a new city? Your city is autosaved"; b.classList.add("danger"); return; }
-      app.saves.autosave(app.game);
+      if (app.mode === "play") app.saves.autosave(app.game);
       app.newGame(1 + Math.floor(Math.random() * 9999));
+      app.setMode("play");
       this.resumeOnClose = false;
       this.closeModal();
       this.tutHidden = false;
-      this.toast("New city. Your last one is in the autosaves.");
+      this.toast(app.saves.latest() ? "New city. Your last one is in the autosaves." : "New city");
     });
     requestAnimationFrame(() => (dlg.querySelector(".resume") as HTMLButtonElement).focus());
   }
 
   private backButton(dlg: HTMLElement) {
     const b = h("button", "btn quiet back", `${ICON.caret}<span>Back</span>`);
-    b.onclick = () => this.openPause();
+    b.onclick = () => (this.app.mode === "menu" ? this.closeModal() : this.openPause());
     dlg.prepend(b);
   }
 
-  private openKeys() {
+  openKeys() {
     const dlg = this.showModal(`<header>Controls</header><dl class="keys">${KEYS.map(([k, v]) => `<dt><kbd>${k}</kbd></dt><dd>${v}</dd>`).join("")}</dl>`, "Controls");
     this.backButton(dlg);
   }
@@ -1125,6 +1139,7 @@ export class Hud {
         const d = app.saves.load(li.dataset.id!);
         if (!d) { this.toast("That save is unreadable", true); return; }
         try { app.loadGame(d); } catch { this.toast("That save is from an older version", true); return; }
+        app.setMode("play");
         this.resumeOnClose = false;
         this.closeModal();
         this.toast("Loaded");

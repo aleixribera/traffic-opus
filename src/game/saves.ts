@@ -61,7 +61,7 @@ export class Saves {
 
   autosave(game: Game) {
     this.autoFlip = 1 - this.autoFlip;
-    return this.save(game, "Autosave", "auto" + this.autoFlip, true);
+    return this.save(game, `${game.cityName}, autosave`, "auto" + this.autoFlip, true);
   }
 
   load(id: string): ReturnType<Game["serialize"]> | null {

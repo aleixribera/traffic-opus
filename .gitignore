@@ -6,3 +6,4 @@ dist
 tools/blender/previews/
 docs/design-audit/*/captures/
 docs/design-audit/*/after/
+tools/out/

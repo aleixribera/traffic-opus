@@ -2,12 +2,13 @@ import "./ui/hud.css";
 import { App } from "./app";
 import { loadModels } from "./render/models";
 import { Hud } from "./ui/hud";
+import { MainMenu } from "./ui/menu";
 
 async function boot() {
   const canvas = document.getElementById("game") as HTMLCanvasElement;
   const loading = document.getElementById("loading")!;
   const bar = loading.querySelector("i") as HTMLElement;
-  const models = await loadModels((k) => (bar.style.width = `${Math.round(k * 100)}%`));
+  const models = await loadModels((k) => (bar.style.width = `${Math.round(k * 70)}%`));
   const app = new App(canvas, models);
   const hud = new Hud(app, document.body);
   app.attachHud(hud);
@@ -23,11 +24,19 @@ async function boot() {
     g.drawImage(src, (c.width - w) / 2, (c.height - h) / 2, w, h);
     return c.toDataURL("image/jpeg", 0.7);
   };
-  const last = app.saves.latest();
-  const data = last ? app.saves.load(last.id) : null;
-  if (data && !location.search.includes("new")) {
-    try { app.loadGame(data); } catch { app.newGame(); }
-  } else app.newGame(Number(new URLSearchParams(location.search).get("seed")) || 7);
+  const menu = new MainMenu(app, hud);
+  app.openMenu = () => void menu.open();
+  const q = new URLSearchParams(location.search);
+  // ?new (a fresh city, ?seed=N), ?play (the last city): straight into a game, no title menu
+  const direct = q.has("new") || q.has("play") || q.has("seed");
+  if (direct || !(await menu.open((k) => (bar.style.width = `${Math.round(70 + k * 30)}%`)))) {
+    const last = app.saves.latest();
+    const data = last && !q.has("new") ? app.saves.load(last.id) : null;
+    if (data) {
+      try { app.loadGame(data); } catch { app.newGame(); }
+    } else app.newGame(Number(q.get("seed")) || 7);
+    app.setMode("play");
+  }
   app.bindInput(canvas);
   hud.refresh();
   app.start();
