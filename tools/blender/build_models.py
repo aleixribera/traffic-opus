@@ -73,23 +73,23 @@ def mat(name, hexstr, rough=0.8):
 def palette():
     P = {}
     for k, v in {
-        "pad": "#eef0ee", "asphalt": "#c9ccd0", "line": "#ffffff",
+        "pad": "#bdb8a6", "asphalt": "#45484d", "line": "#e6e4da",
         # residential
-        "res_wall": "#7ed957", "res_roof": "#62c043", "res_wall2": "#72cc4c", "res_roof2": "#57b238",
-        "res_trim": "#e6e8e2",
-        "apt_wall": "#2e8b3e", "apt_roof": "#287a36", "apt_brace": "#4dab5c", "apt_band": "#3a9a4b",
+        "res_wall": "#e2d6bc", "res_roof": "#b0603f", "res_wall2": "#d6c8aa", "res_roof2": "#96503a",
+        "res_trim": "#ece8dc",
+        "apt_wall": "#cdc4b2", "apt_roof": "#8e8f8d", "apt_brace": "#a9a8a2", "apt_band": "#b3ab9b",
         # commercial
-        "com_wall": "#2f86e0", "com_roof": "#2373c4", "com_rib": "#4f9ee9", "com_canopy": "#1c60a8",
-        "com_glass": "#cfe4f7",
+        "com_wall": "#d4d2ca", "com_roof": "#b6b8b8", "com_rib": "#cacccb", "com_canopy": "#8a4a36",
+        "com_glass": "#93acbd",
         # workplaces
-        "work_wall": "#8b6fd6", "work_roof": "#7559c2", "work_glass": "#d6d3f4", "work_trim": "#9f88e2",
+        "work_wall": "#9ba1a6", "work_roof": "#6e747a", "work_glass": "#7d98ad", "work_trim": "#b8bdc0",
         # industry
-        "ind_wall": "#8f949c", "ind_roof": "#7f848c", "ind_dark": "#62676e", "ind_orange": "#f07a2a",
-        "ind_copper": "#cf6f35", "ind_yellow": "#f2c230", "ind_tank": "#dde0e4", "ind_steel": "#b0b5bc",
+        "ind_wall": "#9c9e9c", "ind_roof": "#82868a", "ind_dark": "#55595e", "ind_orange": "#c9652e",
+        "ind_copper": "#b0653a", "ind_yellow": "#d9b13a", "ind_tank": "#dde0e4", "ind_steel": "#b0b5bc",
         "ac_box": "#d6d9de", "ac_fan": "#5b626c",
         # farm
-        "barn_roof": "#f3f4f1", "farm_accent": "#4caf50", "silo": "#f8f8f5", "soil": "#cbb68e",
-        "crop_g1": "#8ac843", "crop_g2": "#6fb23a", "crop_w1": "#e8cc6c", "crop_w2": "#d4b14f",
+        "barn_roof": "#9a5a40", "farm_accent": "#5e7d3a", "silo": "#d9d8d2", "soil": "#9c8562",
+        "crop_g1": "#7f9b3f", "crop_g2": "#6b8836", "crop_w1": "#cdb36a", "crop_w2": "#b89b51",
         # services: waste (sage + green), fire (brick red + white), police (navy + gold), health (white + red
         # cross, mint accents), education (cream + orange / terracotta), parks (grass, paths, trees, water)
         "gb_wall": "#a9b2ac", "gb_roof": "#4f9a6c", "gb_cap": "#37804f", "gb_fence": "#7b8681",
@@ -103,7 +103,7 @@ def palette():
         "sch_glass": "#d9eef5", "court": "#4f8fd0", "play": "#e9785a", "sand": "#ead49c", "wood": "#a97c50",
         "track": "#d0654a",
         "uni_wall": "#eadcbc", "uni_roof": "#c8683f", "dome": "#5fb39e", "column": "#f7f3ea",
-        "grass": "#a6d880", "path": "#ece4cd", "leaf": "#4f9f45", "leaf2": "#68b552", "trunk": "#8a6a4a",
+        "grass": "#8f9a4e", "path": "#d4cbb2", "leaf": "#557a32", "leaf2": "#67883c", "trunk": "#8a6a4a",
         "water": "#6fbbe3", "stone": "#d6d8d4", "pav_roof": "#d8654f",
         # bus stop: dark frame, pale glass, a white roof and the blue stop sign
         "bs_frame": "#3c4148", "bs_glass": "#cfe6f2", "bs_roof": "#3f5470", "bs_sign": "#2f6fd0",
@@ -126,10 +126,10 @@ def palette():
         "sky_base": "#b9c3cf", "sky_glass": "#5f86b0", "sky_fin": "#e7ebf0", "sky_roof": "#7f97b3",
         # timber: logging camp (log brown + pale cut ends on a sandy yard, green roofs, pines), sawmill (rust-red
         # two-tone roof with a pale ridge vent, pale yellow plank bundles)
-        "log_bark": "#7b5434", "log_bark2": "#906340", "log_end": "#e8b878", "lg_yard": "#d9ccad",
-        "lg_roof": "#3f8457", "lg_roof2": "#5c9c6c", "cabin": "#a8743f", "cabin_dark": "#7e5530",
+        "log_bark": "#7b5434", "log_bark2": "#906340", "log_end": "#e8b878", "lg_yard": "#b9aa86",
+        "lg_roof": "#4f6a4c", "lg_roof2": "#61795a", "cabin": "#a8743f", "cabin_dark": "#7e5530",
         "pine": "#2f6c45", "pine2": "#3d8552",
-        "sm_roof": "#cf5f3f", "sm_roof2": "#a9452e", "sm_ridge": "#f1ece2", "plank": "#f2d68e",
+        "sm_roof": "#a8553b", "sm_roof2": "#8c4630", "sm_ridge": "#ddd8cc", "plank": "#e2c78a",
         "stick": "#c49556",
     }.items():
         P[k] = mat(k, v)

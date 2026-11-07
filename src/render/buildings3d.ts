@@ -32,8 +32,10 @@ const bayTaken = (b: Building, k: number) => (((b.id * 73856093) ^ (k * 19349663
 const setback = (spare: number) => Math.min(spare * 0.68, 5);
 
 const SITE = 0xb59d6a; // construction site: bare earth
+/** Tints multiplied over a model's own colours, picked per building. */
+const VARY = [0xffffff, 0xffffff, 0xf2ebe4, 0xe2dcd8, 0xfbf3e6, 0xdcdcdc, 0xf5f0f0];
 /** Ground of a grown lot: lawn for homes, paving for business. */
-const YARD: Record<string, number> = { res: 0x9aa65c, com: 0xc4bfae, ind: 0xb9b3a0, off: 0xc4bfae };
+const YARD: Record<string, number> = { res: 0x99994f, com: 0xb3ae9b, ind: 0xaaa490, off: 0xb3ae9b };
 const ABANDONED = 0x77736b;
 
 export class Buildings3D {
@@ -82,7 +84,8 @@ export class Buildings3D {
   private baseColor(b: Building): number | null {
     if (b.abandoned) return ABANDONED;
     if (b.built < 1) return SITE;
-    return null;
+    // a street of the same model shouldn't look stamped: weathering and paint vary a little from one to the next
+    return VARY[(Math.imul(b.id, 2654435761) >>> 28) % VARY.length];
   }
 
   rebuild(list: Building[]) {
