@@ -759,6 +759,13 @@ export class Hud {
     this.queueBanner({ town, size });
   }
 
+  /** Drop every banner still showing or waiting (a new game or a load: they belonged to the last one). */
+  clearBanners() {
+    clearTimeout(this.bannerT);
+    this.bannerQ = [];
+    this.banner.hidden = true;
+  }
+
   private queueBanner(x: Banner) {
     this.bannerQ.push(x);
     if (this.banner.hidden) this.nextBanner();

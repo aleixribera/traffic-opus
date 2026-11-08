@@ -112,6 +112,8 @@ export class Buildings {
   version = 0;
   private sitesAt = -1;
   private sitesCache: Building[] = [];
+  /** the road geometry each building was last attached to (see reattach) */
+  private attachedTo = new WeakMap<Building, unknown>();
 
   constructor(private net: RoadNetwork) {}
 
@@ -383,6 +385,8 @@ export class Buildings {
     const joined: Building[] = [];
     for (const b of this.list) {
       const a = b.access;
+      // (a building on a road that hasn't been rebuilt since it was last attached stays as it is: a city has thousands)
+      if (a && this.attachedTo.get(b) === net.segGeom.get(a.seg) && net.segs.has(a.seg)) continue;
       if (a && net.segs.has(a.seg) && ROAD_TYPES[net.segs.get(a.seg)!.type].allowsAccess) {
         // seg may have been rebuilt (new trims): refresh the arc-length
         const g = net.segGeom.get(a.seg)!;
@@ -394,6 +398,7 @@ export class Buildings {
           // (a site keeps its gate where it is whichever way the road now runs)
           if (b.placed && side !== b.side) b.rot = wrapAngle(b.rot + Math.PI);
           b.side = side;
+          this.attachedTo.set(b, g);
           continue;
         }
       }
@@ -418,6 +423,7 @@ export class Buildings {
         if (r.d < g.width / 2 + 1.5 && net.heightOnSeg(id, r.t) < 0.5) {
           b.access = { seg: id, s: g.center.length * arcFrac(s.c, r.t, g.center.pts), p: b.front };
           b.side = sideOf(s.c, r.t, b.c);
+          this.attachedTo.set(b, g);
           break;
         }
       }
@@ -485,6 +491,7 @@ export class Buildings {
       if (!b) continue;
       b.c = to ? m.c1 : m.c0;
       b.front = to ? m.f1 : m.f0;
+      this.attachedTo.delete(b);
     }
   }
 }

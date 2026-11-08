@@ -69,6 +69,8 @@ export class Router {
   /** measured mean speed per directed seg (m/s); missing = speed limit */
   speeds = new Map<number, number>();
   private succCache = new Map<number, { k: number; turn: string; signal: boolean; stop: boolean }[]>();
+  /** each directed seg's length, speed limit and whether it has lanes (a search asks for them thousands of times) */
+  private keyCache = new Map<number, { len: number; lim: number; lanes: boolean }>();
   private cacheVersion = -1;
 
   constructor(private net: RoadNetwork) {}
@@ -80,11 +82,26 @@ export class Router {
     return g.lanes.filter((l) => l.dir === d);
   }
 
-  succ(k: number) {
-    if (this.cacheVersion !== this.net.version) {
-      this.succCache.clear();
-      this.cacheVersion = this.net.version;
+  private fresh() {
+    if (this.cacheVersion === this.net.version) return;
+    this.succCache.clear();
+    this.keyCache.clear();
+    this.cacheVersion = this.net.version;
+  }
+
+  private info(k: number) {
+    this.fresh();
+    let i = this.keyCache.get(k);
+    if (!i) {
+      const ls = this.lanesOf(k);
+      i = { len: this.net.segGeom.get(dkSeg(k))?.center.length ?? 0, lim: ls.length ? ls[0].speed : 13, lanes: ls.length > 0 };
+      this.keyCache.set(k, i);
     }
+    return i;
+  }
+
+  succ(k: number) {
+    this.fresh();
     let out = this.succCache.get(k);
     if (out) return out;
     out = [];
@@ -102,12 +119,11 @@ export class Router {
   }
 
   segLen(k: number): number {
-    return this.net.segGeom.get(dkSeg(k))?.center.length ?? 0;
+    return this.info(k).len;
   }
 
   limit(k: number): number {
-    const l = this.lanesOf(k)[0];
-    return l ? l.speed : 13;
+    return this.info(k).lim;
   }
 
   private cost(k: number, frac = 1): number {
@@ -119,7 +135,7 @@ export class Router {
   }
 
   hasLanes(seg: number, dir: 1 | -1): boolean {
-    return this.lanesOf(dkey(seg, dir)).length > 0;
+    return this.info(dkey(seg, dir)).lanes;
   }
 
   /** Centre arc-length of a directed seg, measured from where a vehicle on it starts. */

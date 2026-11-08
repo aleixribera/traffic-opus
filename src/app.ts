@@ -184,6 +184,7 @@ export class App {
     this.game = g;
     this.view.rot = 0;
     this.hud?.compassAngle(0);
+    this.hud?.clearBanners();
     for (const c of [...this.worldRoot.children]) this.worldRoot.remove(c);
     const small = Math.min(window.innerWidth, window.innerHeight) < 700;
     this.terrain3d = new Terrain3D(g.terrain, small);
@@ -509,8 +510,10 @@ export class App {
   }
 
   quickSave() {
-    if (this.saves.save(this.game, "Quicksave", "quick")) this.hud?.toast("Quicksaved (F9 to load)");
-    else this.reject("Couldn't save: browser storage is full");
+    void this.saves.saveSoon(this.game, "Quicksave", "quick").then((m) => {
+      if (m) this.hud?.toast("Quicksaved (F9 to load)");
+      else this.reject("Couldn't save: browser storage is full");
+    });
   }
 
   quickLoad() {
@@ -1237,7 +1240,7 @@ export class App {
       if ((this.overlay !== "none" && this.overlay !== "flow") || this.st.tool === "place") this.applyTint();
     }
     this.saveT += dt;
-    if (this.saveT > 60) { this.saveT = 0; if (this.mode === "play") this.saves.autosave(g); }
+    if (this.saveT > 60) { this.saveT = 0; if (this.mode === "play") void this.saves.autosaveSoon(g); }
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - dt * 4);
       this.hud?.shake(this.shake);

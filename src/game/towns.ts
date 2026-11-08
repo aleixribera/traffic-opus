@@ -115,6 +115,42 @@ export function ringZone(size: number, r: number): ZoneId {
   return "resLow";
 }
 
+/**
+ * A town's high streets, from a Village on: shops and offices along the centre cross, and from a City along every
+ * fourth grid line too, out as far as the town wants shops (highStreetReach), so its commerce keeps pace with its
+ * homes instead of stopping at the centre ring. The zone along them at each size (none for a hamlet).
+ */
+export const HIGH_STREET: (ZoneId | null)[] = [null, "comLow", "comMid", "comMid", "comHigh"];
+/** Does grid line k (counted from the centre cross) carry a high street at a size? */
+export const highLine = (size: number, k: number) => k === 0 || (size >= 3 && k % 4 === 0);
+/** Shops on a block's length of high street, both sides (a lot is two to four cells wide, less the junctions). */
+export const SHOPS_PER_BLOCK = 6;
+/** Shops the centre ring holds at a size, about (the high streets take the rest). */
+const CORE_SHOPS = [2, 12, 18, 22, 26];
+
+/**
+ * How far out (blocks from the centre) a town's high streets run for the shops it wants: their frontage, every
+ * high-street line inside that radius, holds what the centre ring can't. Grows in half blocks; 0 for a hamlet.
+ */
+export function highStreetReach(size: number, shopsWanted: number): number {
+  const s = Math.max(0, Math.min(HIGH_STREET.length - 1, size));
+  if (!HIGH_STREET[s]) return 0;
+  const core = RINGS[s][0][0];
+  const need = shopsWanted - CORE_SHOPS[s];
+  let R = core;
+  for (; R < 16; R += 0.5) {
+    // street length (blocks) of every high-street line inside R, both ways, outside the centre ring
+    let len = 0;
+    for (let k = 0; k < R; k++) {
+      if (!highLine(s, k)) continue;
+      const half = Math.sqrt(R * R - k * k), inner = k < core ? Math.sqrt(core * core - k * k) : 0;
+      len += (k === 0 ? 2 : 4) * 2 * (half - inner); // both axes; lines k and -k
+    }
+    if (len * SHOPS_PER_BLOCK >= need) break;
+  }
+  return R;
+}
+
 /** Old buildings a town pulls down for denser ones each day, at most (a few, more in a bigger town). */
 export const redevPerDay = (size: number, buildings: number) => 2 + size + Math.floor(buildings / 60);
 /** Share of a town's homes that may be building sites for redevelopment at once. */
