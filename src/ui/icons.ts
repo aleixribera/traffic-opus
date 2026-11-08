@@ -152,3 +152,20 @@ export const ICON = {
   keys: svg(18, 18, `<rect x="2" y="4.5" width="14" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5 7.5 h1 M8.5 7.5 h1 M12 7.5 h1 M5.5 10.8 h7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>`),
   close: svg(14, 14,`<path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>`),
 };
+
+/** Small pictograms of what towns buy (town panel, Towns list, map labels), 16 px. */
+export function productIcon(p: string): string {
+  switch (p) {
+    case "food":
+      // an apple
+      return svg(16, 16, `<path d="M8 4.6c-1.7-1.3-5.6-1-5.6 3.1 0 3.3 2.3 6.1 3.9 6.1.7 0 1-.4 1.7-.4s1 .4 1.7.4c1.6 0 3.9-2.8 3.9-6.1 0-4.1-3.9-4.4-5.6-3.1z" fill="#d4553a"/><path d="M8 4.6C8 3.1 8.6 2.1 9.7 1.5" stroke="#5a3b1e" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M8.7 3.1c1-1.4 3-1.5 3.5-.9-1 1.1-2.3 1.2-3.5.9z" fill="#4f8a3a"/>`);
+    case "planks":
+      // a stack of boards
+      return svg(16, 16, `<g stroke="#7d5a26" stroke-width=".9"><rect x="1.5" y="10.6" width="13" height="3" rx=".5" fill="#c99a52"/><rect x="2.5" y="7.1" width="12" height="3" rx=".5" fill="#ddb470"/><rect x="1" y="3.6" width="12.5" height="3" rx=".5" fill="#e8cf8f"/></g>`);
+    case "cement":
+      // a sack
+      return svg(16, 16, `<path d="M4 3h8l1.3 2.2-.7 8.8H3.4l-.7-8.8z" fill="#cfccc3" stroke="#625f58" stroke-width=".9" stroke-linejoin="round"/><path d="M5.2 7.2h5.6M5.6 9.6h4.8" stroke="#625f58" stroke-width=".9"/>`);
+    default:
+      return svg(16, 16, `<circle cx="8" cy="8" r="5.5" fill="#9aa0a6"/>`);
+  }
+}

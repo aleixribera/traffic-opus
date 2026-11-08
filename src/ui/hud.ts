@@ -5,14 +5,14 @@ import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
 import { MILESTONES, unlockedBy, type Milestone, type Unlocks } from "../game/progression";
 import { ZONES } from "../game/zones";
 import { BUILD_TIME, PLANTS, PRODUCTS, MIN_DEPOSIT, TRUCK_COST, TRUCK_UPKEEP, UNPOWERED, isPlantKind, powerPace, type Product } from "../game/industry";
-import { TOWN_COST, TOWN_SPACING, type Town } from "../game/settlements";
-import { TOWN_SIZES, demandPerDay, needFrom, needsOf, nextNeed, sizeOf } from "../game/towns";
+import { MARKET, TOWN_COST, TOWN_SPACING, type Town } from "../game/settlements";
+import { HALLS, TOWN_SIZES, demandPerDay, growthPerDay, needFrom, needsOf, nextNeed, sizeOf } from "../game/towns";
 import { HOUR } from "../game/society";
 import { PAL } from "../render/palette";
 import type { SignalPlan } from "../roads/network";
 import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId } from "../app";
 import { ROUNDABOUTS, type RoundaboutSize } from "../roads/planner";
-import { ICON, placedIcon, roadIcon } from "./icons";
+import { ICON, placedIcon, productIcon, roadIcon } from "./icons";
 import { PLACED, PLACED_TABS, type PlacedKind } from "../game/placed";
 import { SAVE_V } from "../game/city";
 import { BUS_UPKEEP, STOP_COST } from "../game/transit";
@@ -92,6 +92,8 @@ const fmtTime = (s: number) => {
 };
 
 const fmtNum = (n: number) => (n >= 10000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : n.toLocaleString("en-US"));
+/** A banner waiting its turn: a milestone reached, or a town grown into a new size. */
+type Banner = { m: Milestone } | { town: number; size: number };
 const signed = (n: number) => `${n >= 0 ? "+" : "−"}${formatMoney(Math.abs(Math.round(n)))}`;
 const hex = (c: number) => "#" + c.toString(16).padStart(6, "0");
 
@@ -281,6 +283,8 @@ export class Hud {
     this.panel.hidden = true;
     this.modal.hidden = true;
     this.banner.hidden = true;
+    // (news a player doesn't have to act on, like a town grown, is read out without taking the keyboard)
+    this.banner.setAttribute("aria-live", "polite");
     this.bannerQ = [];
     this.rectEl.hidden = true;
     this.tut.hidden = true;
@@ -733,12 +737,22 @@ export class Hud {
     this.sfx.play(k);
   }
 
-  /** Milestones reached and not yet shown: several can come at once, each gets its banner in turn. */
-  private bannerQ: Milestone[] = [];
+  /** Milestones reached (and towns grown) not yet shown: several can come at once, each gets its banner in turn. */
+  private bannerQ: Banner[] = [];
+  private bannerT = 0;
 
   /** A milestone was reached: what it unlocks, and the grant. */
   milestone(M: Milestone) {
-    this.bannerQ.push(M);
+    this.queueBanner({ m: M });
+  }
+
+  /** A town has grown into a new size: its moment. */
+  townGrew(town: number, size: number) {
+    this.queueBanner({ town, size });
+  }
+
+  private queueBanner(x: Banner) {
+    this.bannerQ.push(x);
     if (this.banner.hidden) this.nextBanner();
     else this.bannerMore();
     this.sfx.play("level");
@@ -746,26 +760,49 @@ export class Hud {
   }
 
   private nextBanner() {
-    const M = this.bannerQ.shift();
-    if (!M) { this.banner.hidden = true; return; }
-    this.banner.innerHTML = `<header>${M.name}</header>
-      <p class="sub">Milestone reached · ${M.goal}</p>
-      <p class="gifts">Unlocked: ${unlockList(M.unlocks).join(" · ")}</p>
-      <button class="btn primary">Continue</button>`;
+    clearTimeout(this.bannerT);
+    const X = this.bannerQ.shift();
+    if (!X) { this.banner.hidden = true; return; }
+    const g = this.app.game;
+    const t = "town" in X ? g.towns.byId.get(X.town) : undefined;
+    if ("town" in X && !t) { this.nextBanner(); return; }
+    if ("m" in X) {
+      const M = X.m;
+      this.banner.innerHTML = `<header>${M.name}</header>
+        <p class="sub">Milestone reached · ${M.goal}</p>
+        <p class="gifts">Unlocked: ${unlockList(M.unlocks).join(" · ")}</p>
+        <div class="banner-btns"><button class="btn primary" data-k="ok">Continue</button></div>`;
+    } else {
+      const S = TOWN_SIZES[X.size];
+      const adds = S.adds.filter((p) => needFrom(p) === S.pop).map((p) => PRODUCTS[p].name.toLowerCase());
+      const what = [
+        adds.length ? `now needs ${adds.join(" and ")} too` : "",
+        X.size > 0 ? `a new ${BUILDING_TYPES[HALLS[X.size]].name.toLowerCase()} is going up` : "",
+        "the centre rebuilds denser",
+      ].filter(Boolean).join(" · ");
+      this.banner.innerHTML = `<header>${escapeHtml(t!.name)} is now a ${S.name}</header>
+        <p class="sub">${fmtNum(t!.pop)} people</p>
+        <p class="gifts">${what[0].toUpperCase() + what.slice(1)}</p>
+        <div class="banner-btns"><button class="btn" data-k="town">Open ${escapeHtml(t!.name)}</button><button class="btn primary" data-k="ok">Continue</button></div>`;
+    }
     this.banner.hidden = false;
     this.banner.classList.remove("in");
     void this.banner.offsetWidth;
     this.banner.classList.add("in");
-    const ok = this.banner.querySelector("button") as HTMLButtonElement;
+    const ok = this.banner.querySelector<HTMLButtonElement>('[data-k="ok"]')!;
     ok.onclick = () => this.nextBanner();
+    const open = this.banner.querySelector<HTMLButtonElement>('[data-k="town"]');
+    if (open && t) open.onclick = () => { this.nextBanner(); this.openTown(t.id); };
     this.bannerMore();
-    requestAnimationFrame(() => ok.focus({ preventScroll: true }));
+    // a milestone waits to be read; a town's news steps aside by itself after a while (and doesn't take the keyboard)
+    if ("m" in X) requestAnimationFrame(() => ok.focus({ preventScroll: true }));
+    else this.bannerT = window.setTimeout(() => { if (!this.banner.matches(":hover, :focus-within")) this.nextBanner(); }, 12000);
   }
 
-  /** The banner's button says when more milestones wait behind this one. */
+  /** The banner's button says when more news waits behind this one. */
   private bannerMore() {
-    const ok = this.banner.querySelector("button");
-    if (ok) ok.textContent = this.bannerQ.length ? `Next milestone (${this.bannerQ.length} more)` : "Continue";
+    const ok = this.banner.querySelector<HTMLButtonElement>('[data-k="ok"]');
+    if (ok) ok.textContent = this.bannerQ.length ? `Next (${this.bannerQ.length} more)` : "Continue";
   }
 
   // ---------------------------------------------------------------- back / Esc
@@ -930,7 +967,14 @@ export class Hud {
     const s = g.people.stats;
     const rows = g.towns.list.map((t) => {
       const tr = trendOf(t);
-      return `<li><button class="tw-row" data-id="${t.id}"><span class="tw-name"><b>${escapeHtml(t.name)}</b><span class="small muted">${g.towns.sizeName(t)} · ${fmtNum(t.pop)} people</span></span><span class="tw-trend ${tr.cls}">${tr.short}</span></button></li>`;
+      // its worst-supplied need
+      let worst: Product | null = null;
+      for (const p of needsOf(t.pop)) if (t.supply[p] !== undefined && (worst === null || t.supply[p]! < t.supply[worst]!)) worst = p;
+      const ws = worst ? t.supply[worst]! : 1;
+      const need = worst && t.pop >= 60
+        ? `<span class="tw-need ${ws >= 0.8 ? "" : ws >= 0.5 ? "mid" : "low"}">${productIcon(worst)}${PRODUCTS[worst].name} ${Math.round(ws * 100)}%</span>`
+        : "";
+      return `<li><button class="tw-row" data-id="${t.id}"><span class="tw-name"><b>${escapeHtml(t.name)}</b><span class="small muted">${g.towns.sizeName(t)} · ${fmtNum(t.pop)} people</span></span>${miniSpark(t.hist.pop.slice(-72))}<span class="tw-right"><span class="tw-trend ${tr.cls}">${tr.short}</span>${need}</span></button></li>`;
     }).join("");
     const html = `<dl class="facts">
         <dt>People in your towns</dt><dd>${fmtNum(s.population)}</dd>
@@ -1096,25 +1140,71 @@ export class Hud {
     const g = this.app.game, t = g.towns.byId.get(this.townId);
     if (!t) { this.closeSelection(); return; }
     const si = sizeOf(t.pop), next = TOWN_SIZES[si + 1];
+    const tr = trendOf(t);
+    // its needs: what it takes to grow (the mark), what its shops buy at most (the whole bar), what came yesterday
     const needs = needsOf(t.pop).map((p) => {
       const share = t.supply[p];
-      const today = t.today[p] ?? 0, want = demandPerDay(p, t.pop);
+      const want = demandPerDay(p, t.pop), market = want * MARKET;
+      const got = t.yesterday[p] ?? 0, today = t.today[p] ?? 0;
       const pct = share === undefined ? null : Math.round(share * 100);
       const col = share === undefined ? "" : share >= 0.8 ? "ok" : share >= 0.5 ? "mid" : "low";
-      return `<dt>${PRODUCTS[p].name}</dt><dd><span class="bar need ${col}"><i style="width:${Math.max(2, pct ?? 0)}%"></i></span><span class="num">${pct === null ? "new" : pct + "%"}</span></dd>
-        <dd class="need-sub small muted">${fmtLoads(today)} of ${fmtLoads(want)} loads today</dd>`;
+      const fill = Math.min(100, (got / market) * 100);
+      return `<li class="tn-need">
+          <span class="tn-need-top">${productIcon(p)}<b>${PRODUCTS[p].name}</b><span class="num ${col}">${pct === null ? "New need" : `${pct}% of needs`}</span></span>
+          <span class="bar need ${col} tn-bar" role="img" aria-label="${fmtLoads(got)} loads yesterday, ${fmtLoads(want)} needed to grow, shops buy up to ${fmtLoads(market)}"><i style="width:${Math.max(1.5, fill)}%"></i><em style="left:${100 / MARKET}%"></em></span>
+          <span class="tn-need-sub small muted"><span>Yesterday ${fmtLoads(got)} of ${fmtLoads(want)} needed</span><span>Shops buy up to ${fmtLoads(market)} · ${fmtLoads(today)} so far today</span></span>
+        </li>`;
     }).join("");
-    const tr = trendOf(t);
+    // what it is short of, and what that costs it
+    const shortOf = needsOf(t.pop).filter((p) => (t.supply[p] ?? 1) < 0.8);
+    let cost = "";
+    if (shortOf.length && t.pop >= 60) {
+      const full = { ...t.supply };
+      for (const p of shortOf) full[p] = 1;
+      const could = Math.round(growthPerDay(full, t.pop)), now = Math.round(growthPerDay(t.supply, t.pop));
+      const more = shortOf.map((p) => `${fmtLoads(Math.max(1, demandPerDay(p, t.pop) - (t.yesterday[p] ?? 0)))} more ${PRODUCTS[p].name.toLowerCase()}`).join(" and ");
+      cost = `<p class="tn-cost"><b>Short of ${shortOf.map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ")}.</b> ${cap(more)} a day would grow it by about ${plural(could, "household")} a day${now > 0 ? ` instead of ${now}` : now < 0 ? `; it is losing ${-now} a day` : "; it isn't growing now"}.</p>`;
+    }
+    // what came, by product, and what it was worth
+    const sold = (Object.entries(t.yesterday) as [Product, number][]).filter(([, n]) => n > 0);
+    const worth = sold.reduce((a, [p, n]) => a + n * PRODUCTS[p].price, 0);
+    const deliveries = sold.length
+      ? `<dl class="facts">${sold.map(([p, n]) => `<dt>${PRODUCTS[p].name}</dt><dd>${fmtLoads(n)} ${Math.round(n) === 1 ? "load" : "loads"}</dd>`).join("")}<dt class="tot">Worth</dt><dd class="tot">${formatMoney(worth)}</dd></dl>`
+      : `<p class="small muted">Nothing delivered yesterday.</p>`;
+    // homes and work
+    const mine = g.towns.buildingsOf(t);
+    let jobs = 0, rebuilding = 0;
+    for (const b of mine) {
+      if (b.zone && ZONE_GROUP[b.zone] === "com") jobs += b.cap;
+      if (b.redev && b.built < 1) rebuilding++;
+    }
+    const hall = g.buildings.byId.get(t.hall);
+    const hallLine = hall ? `${BUILDING_TYPES[hall.kind].name}${hall.built < 1 ? ` <span class="muted">· building, ${Math.round(hall.built * 100)}%</span>` : ""}` : "None yet";
+    // how far to its next size, and what that size will need as well
+    const adds = next ? next.adds.filter((p) => needFrom(p) === next.pop).map((p) => PRODUCTS[p].name.toLowerCase()) : [];
+    const progress = next
+      ? `<div class="tn-next"><span class="tn-next-top"><span>${next.name} at ${fmtNum(next.pop)} people</span><span class="num">${Math.min(99, Math.floor((t.pop / next.pop) * 100))}%</span></span><span class="bar tn-prog"><i style="width:${Math.max(1.5, Math.min(100, (t.pop / next.pop) * 100))}%"></i></span>${adds.length ? `<span class="small muted">As a ${next.name.toLowerCase()} it needs ${adds.join(" and ")} as well</span>` : ""}</div>`
+      : "";
+    // a need that comes before the next size (cement in a grown village)
+    const nn = nextNeed(t.pop);
+    const soon = nn && (!next || nn.pop < next.pop) ? nextLine(t.pop, next) : "";
     const html = `<header><span class="svc-tag">${ICON.town}</span>${escapeHtml(t.name)}<span class="muted head-sub">${TOWN_SIZES[si].name}</span></header>
       <p class="status ${tr.cls}">${tr.long}</p>
+      ${townChart(t, next)}
+      ${progress}
       <dl class="facts">
-        <dt>Population</dt><dd>${fmtNum(t.pop)}</dd>
-        <dt>Households</dt><dd>${fmtNum(t.households)} <span class="muted">· heading for ${fmtNum(Math.round(t.target))}</span></dd>
-        <dt>Shops</dt><dd>${t.shops}</dd>
+        <dt>People</dt><dd>${fmtNum(t.pop)}</dd>
+        <dt>Households</dt><dd>${fmtNum(t.households)} <span class="muted">of ${fmtNum(t.homes)} homes</span></dd>
+        <dt>Shops and offices</dt><dd>${t.shops} <span class="muted">· ${fmtNum(jobs)} jobs</span></dd>
+        <dt>Hall</dt><dd>${hallLine}</dd>
+        ${rebuilding ? `<dt>Rebuilding</dt><dd>${plural(rebuilding, "site")}</dd>` : ""}
       </dl>
-      <h3 class="sub-h">Needs, supplied yesterday</h3>
-      <dl class="facts needs">${needs}</dl>
-      ${nextLine(t.pop, next)}`;
+      <h3 class="sub-h">Needs, loads a day</h3>
+      <ul class="tn-needs">${needs}</ul>
+      ${cost}
+      ${soon}
+      <h3 class="sub-h">Delivered yesterday</h3>
+      ${deliveries}`;
     this.setPanel(html);
   }
 
@@ -1448,6 +1538,45 @@ function cubicLength(s: { c: { p0: V2; p1: V2; p2: V2; p3: V2 } }): number {
   return len;
 }
 
+/** A town's people over the last days (hourly), with the size it is heading for as a dashed line when it is near. */
+function townChart(t: Town, next: (typeof TOWN_SIZES)[number] | undefined): string {
+  const vs = [...t.hist.pop, t.pop];
+  if (vs.length < 3) return "";
+  const W = 248, H = 78, top = 12, bot = 62;
+  const hi0 = Math.max(...vs);
+  const goal = next && next.pop < Math.max(hi0, 40) * 1.6 ? next.pop : null;
+  const hi = niceCeil(Math.max(hi0, goal ?? 0, 10));
+  const y = (v: number) => bot - (v / hi) * (bot - top);
+  const x = (i: number) => (i / (vs.length - 1)) * W;
+  const pts = vs.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const hrs = vs.length - 1;
+  const span = hrs >= 48 ? `${Math.round(hrs / 24)} days` : `${hrs} hours`;
+  const goalLine = goal ? `<line class="tc-goal" x1="0" x2="${W}" y1="${y(goal)}" y2="${y(goal)}"/><text class="tc-t" x="2" y="${y(goal) - 3}">${next!.name}, ${fmtNum(goal)}</text>` : "";
+  return `<svg class="tn-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${escapeHtml(t.name)}'s people over the last ${span}: from ${fmtNum(vs[0])} to ${fmtNum(t.pop)}">
+    <line class="tc-grid" x1="0" x2="${W}" y1="${top}" y2="${top}"/><line class="tc-base" x1="0" x2="${W}" y1="${bot}" y2="${bot}"/>
+    <text class="tc-t" x="${W}" y="${top - 3}" text-anchor="end">${hi >= 10000 ? `${hi / 1000}k` : fmtNum(hi)} people</text>
+    ${goalLine}
+    <polyline class="tc-line" points="${pts}"/>
+    <circle class="tc-dot" cx="${x(vs.length - 1)}" cy="${y(t.pop)}" r="2.5"/>
+    <text class="tc-t" x="0" y="${H - 2}">${span} ago</text><text class="tc-t" x="${W}" y="${H - 2}" text-anchor="end">now</text>
+  </svg>`;
+}
+
+/** A round number at or above v, for a chart's top line: 10, 15, 20, 30, 40, 50, 60, 80, 100… */
+function niceCeil(v: number): number {
+  const m = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const k of [1, 1.5, 2, 3, 4, 5, 6, 8, 10]) if (k * m >= v) return k * m;
+  return 10 * m;
+}
+
+/** A tiny line of a town's people (the Towns list). */
+function miniSpark(vs: number[]): string {
+  if (vs.length < 3) return `<span class="tw-spark"></span>`;
+  const lo = Math.min(...vs), hi = Math.max(...vs), span = Math.max(1, hi - lo);
+  const pts = vs.map((v, i) => `${((i / (vs.length - 1)) * 56).toFixed(1)},${(17 - ((v - lo) / span) * 14).toFixed(1)}`).join(" ");
+  return `<svg class="tw-spark" viewBox="0 0 56 20" aria-hidden="true" focusable="false"><polyline points="${pts}"/></svg>`;
+}
+
 function sparkline(vs: number[], what: string): string {
   if (vs.length < 2) return "";
   const lo = Math.min(...vs), hi = Math.max(...vs), span = Math.max(1, hi - lo);
@@ -1468,7 +1597,7 @@ function stockBar(n: number, max: number, color?: number): string {
 
 const km = (m: number) => `${(m / 1000).toFixed(1)} km`;
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
-const fmtLoads = (n: number) => (n < 10 && n % 1 ? n.toFixed(1) : String(Math.round(n)));
+const fmtLoads = (n: number) => (n < 10 && n % 1 ? n.toFixed(1) : Math.round(n).toLocaleString("en-US"));
 
 function productList(o: Partial<Record<Product, number>>): string {
   return (Object.keys(o) as Product[]).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ");

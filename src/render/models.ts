@@ -16,7 +16,8 @@ export interface VehicleModel {
 }
 
 export const BUILDING_MODELS: BuildingKind[] = [
-  "house", "terrace", "apartments", "shop", "store", "mall", "farm", "loggingcamp", "foodplant", "sawmill", "coalplant",
+  "house", "terrace", "apartments", "modernflats", "aptower", "highstreet", "shop", "store", "office", "mall", "tower", "glasstower",
+  "hamlethall", "villagehall", "townhall", "cityhall", "farm", "loggingcamp", "foodplant", "sawmill", "coalplant",
   "ironmine", "coalmine", "quarry", "smelter", "cementworks",
 ];
 /**
