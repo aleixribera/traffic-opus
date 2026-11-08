@@ -7,7 +7,7 @@ import type { View } from "../render/view";
 function iconFor(p: string): { key: string; svg: string; urgent: boolean } {
   if (p === GATE_PROBLEM) return { key: "gate", svg: GATE, urgent: false };
   if (p === "No road access" || p.startsWith("Trips can't") || p.startsWith("Not connected")) return { key: "road", svg: ROAD, urgent: false };
-  if (p.startsWith("Full of") || p.startsWith("Waiting for") || p.startsWith("Nobody") || p.startsWith("Towns on your roads") || p.startsWith("Your plants") || p === "Out of food") return { key: "cargo", svg: CARGO, urgent: false };
+  if (p.startsWith("Full of") || p.startsWith("Waiting for") || p.startsWith("Building site") || p.startsWith("Nobody") || p.startsWith("Towns on your roads") || p.startsWith("Your plants") || p === "Out of food") return { key: "cargo", svg: CARGO, urgent: false };
   return { key: "warn", svg: WARN, urgent: false };
 }
 

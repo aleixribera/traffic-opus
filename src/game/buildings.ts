@@ -4,7 +4,7 @@ import type { RoadNetwork } from "../roads/network";
 import { cubicClosest } from "../roads/planner";
 import type { Access } from "../sim/router";
 import type { ZoneId } from "./zones";
-import type { PlantState } from "./industry";
+import type { PlantState, Product } from "./industry";
 import { GATE_REACH, GATE_SETBACK, siteFrame } from "./sites";
 
 export interface Lot {
@@ -53,6 +53,11 @@ export interface Building {
   placed?: boolean;
   /** Built where a town pulled down older buildings for a denser one (see TownSystem.redevelop). */
   redev?: boolean;
+  /**
+   * A town building site waiting for materials the company trucks in (a block or tower from Town size is put up
+   * from construction parts: see settlements.ts PARTS_FOR). It doesn't go up until every load is in.
+   */
+  site?: { need: Partial<Record<Product, number>>; got: Partial<Record<Product, number>> };
 }
 
 export interface BuildingMove {

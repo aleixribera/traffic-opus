@@ -14,8 +14,8 @@ import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, type LotTemplate }
 import { Progress, tilePrice, type Feature, type Milestone, type ProgressView } from "./progression";
 import { DAY, HOUR, Society } from "./society";
 import { PLACED, SHORE_REACH, type PlacedKind } from "./placed";
-import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, TRUCK_COST, isPlantKind } from "./industry";
-import { TownSystem } from "./settlements";
+import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, TRUCK_COST, isPlantKind, type Product } from "./industry";
+import { PARTS_FOR, TownSystem } from "./settlements";
 import { BLOCK, demandPerDay, gridPt, isHall, needsOf } from "./towns";
 import { F } from "../world/gen";
 import { Transit } from "./transit";
@@ -946,9 +946,10 @@ export class Game {
   private ticking = false;
   private grew = false;
 
-  /** A town grows a home or a shop on its zoned land. */
-  growIn(town: number, group: ZoneGroup): Building | null {
-    const b = this.grow(this.candidates(`${town}:${group}`));
+  /** A town grows a home or a shop on its zoned land (a given building, such as its filling station, when asked). */
+  growIn(town: number, group: ZoneGroup, model?: BuildingKind): Building | null {
+    const only = model ? [lotFor(model)] : undefined;
+    const b = this.grow(this.candidates(`${town}:${group}`), false, only);
     if (b) { b.town = town; if (this.ticking) this.grew = true; else this.emit({ t: "buildings" }); }
     return b;
   }
@@ -1001,7 +1002,7 @@ export class Game {
    * grow one building of a denser zone there, a building site first. The new building, or null if none fits (the land
    * is left zoned for the town to grow on).
    */
-  rebuildLots(town: number, ids: number[], zone: ZoneId, block: string, lo: number, hi: number): Building | null {
+  rebuildLots(town: number, ids: number[], zone: ZoneId, block: string, lo: number, hi: number, model?: BuildingKind): Building | null {
     const blk = this.zones.blocks.get(block);
     const old = ids.map((id) => this.buildings.byId.get(id)).filter((b): b is Building => !!b);
     const freed = this.clearForTown(town, old);
@@ -1011,7 +1012,7 @@ export class Game {
     }
     this.zones.paint(freed, zone);
     const fronts = blk ? freed.filter((c) => c.block === blk && c.row === 0 && c.col >= lo && c.col < hi) : [];
-    const nb = this.grow(fronts, true);
+    const nb = this.grow(fronts, true, model ? [lotFor(model)] : undefined);
     if (nb) { nb.town = town; nb.redev = true; }
     this.emit({ t: "zones" });
     if (this.ticking) this.grew = true; else this.emit({ t: "buildings" });
@@ -1057,7 +1058,11 @@ export class Game {
       for (let k = 0; k < hours * 8; k++) {
         this.time += TICK;
         this.traffic.time = this.time;
-        for (const b of this.buildings.list) if (b.built < 1 && !b.plant?.site) b.built = Math.min(1, b.built + TICK / BUILD_TIME);
+        // (every need met: the parts a town building site waits for come in at once)
+        for (const b of this.buildings.list) {
+          if (b.site) { delete b.site; b.problem = null; }
+          if (b.built < 1 && !b.plant?.site) b.built = Math.min(1, b.built + TICK / BUILD_TIME);
+        }
         for (const b of this.shops) { b.stock = Math.max(b.stock, 4); b.badT = 0; }
         // every need met: deliveries come in through the day, and the town wants to grow
         for (const p of needsOf(t.pop)) t.today[p] = Math.max(t.today[p] ?? 0, demandPerDay(p, t.pop) * ((k % 192) + 1) / 192);
@@ -1078,7 +1083,7 @@ export class Game {
   }
 
   /** Try to grow a building on one of these candidate cells. */
-  private grow(cands: Cell[], biggest = false): Building | null {
+  private grow(cands: Cell[], biggest = false, only?: LotTemplate[]): Building | null {
     if (!cands.length) return null;
     for (let attempt = 0; attempt < 6; attempt++) {
       const c = cands[(this.rng() * cands.length) | 0];
@@ -1086,7 +1091,7 @@ export class Game {
       const b = c.block;
       const seg = this.net.segs.get(b.seg);
       if (!seg) continue;
-      const temps = ZONE_LOTS[c.zone];
+      const temps = only ?? ZONE_LOTS[c.zone];
       // (some variety between the two main sizes; the small ones only where nothing bigger fits)
       const order = !biggest && this.rng() < 0.35 && temps.length > 1 ? [temps[1], temps[0], ...temps.slice(2)] : temps;
       for (const t of order) {
@@ -1180,6 +1185,9 @@ export class Game {
       level: 1, cap: capacity(zone, t.w, t.d + (depth - t.d) * 0.5, 1, tall), fit: modelFit(t, M.w, M.d), tall, built: 0, abandoned: 0, lv: 0, upT: 0, badT: 0,
       problem: null, stock: ZONE_GROUP[zone] === "com" ? 2 : 0, prodT: 0, visits: 0, born: this.time,
     };
+    // (from the moment the company can make construction parts, a town's blocks and towers are put up from them)
+    const parts = PARTS_FOR[t.model];
+    if (parts && this.placedUnlocked("constructionplant")) bl.site = { need: { parts }, got: {} };
     this.buildings.insert(bl);
     for (const cc of cells) cc.lot = bl.id;
     this.buildings.reattach();
@@ -1291,7 +1299,9 @@ export class Game {
     let changed = false;
     for (const b of this.buildings.list) {
       // (a building site goes up only once every material it waits for has been trucked in)
+      if (b.site) { b.problem = siteWaiting(b.site); continue; }
       if (b.built < 1 && !b.plant?.site) {
+        if (b.zone && b.problem?.startsWith("Building site")) b.problem = null;
         b.built = Math.min(1, b.built + span / BUILD_TIME);
         if (b.built >= 1) changed = true;
       }
@@ -1329,8 +1339,10 @@ export class Game {
       const staff = b.cap ? this.people.workersAt(b.id) / b.cap : 1;
       health = Math.min(1, staff * 1.25);
       if (staff < 0.5) problem = "Not enough workers";
-      if (grp === "com" && b.stock <= 0) { health *= 0.5; problem = "Out of food"; }
-      if (grp === "com") {
+      const T = BUILDING_TYPES[b.kind];
+      if (grp === "com" && T.shelves && b.stock <= 0) { health *= 0.5; problem = "Out of food"; }
+      // (a filling station lives on passing traffic, not on shoppers)
+      if (grp === "com" && !T.fuel) {
         // judged on a whole day's custom (yesterday's, or today's once it's caught up): a quiet morning is no sign
         const customers = Math.max(b.custDay ?? 0, b.custToday ?? 0) / Math.max(1, b.cap * 3.2);
         if (this.time - b.born > DAY * 2 && customers < 0.2) { health *= 0.6 + customers * 2; problem ??= "Not enough customers"; }
@@ -1589,4 +1601,17 @@ function pointInRect(p: V2, b: Building, pad: number): boolean {
   const d = sub(p, b.c);
   const a = Math.abs(d.x * u.x + d.y * u.y), c = Math.abs(-d.x * u.y + d.y * u.x);
   return a < b.hw + pad && c < b.hd + pad;
+}
+
+/** Lots of buildings a town puts up on purpose rather than by zone (its filling stations), in cells. */
+const SPECIAL_LOTS: Partial<Record<BuildingKind, LotTemplate>> = { fuelstation: { w: 3, d: 3, model: "fuelstation" } };
+
+/** The lot a model is grown on: its own zone template, or a special one. */
+const lotFor = (model: BuildingKind): LotTemplate =>
+  SPECIAL_LOTS[model] ?? Object.values(ZONE_LOTS).flat().find((l) => l.model === model) ?? { w: 3, d: 3, model };
+
+/** What a town building site still waits for, as its problem. */
+export function siteWaiting(s: NonNullable<Building["site"]>): string {
+  const left = (Object.entries(s.need) as [Product, number][]).map(([p, n]) => [p, n - (s.got[p] ?? 0)] as [Product, number]).filter(([, n]) => n > 0);
+  return `Building site: waiting for ${left.map(([p, n]) => `${n} load${n === 1 ? "" : "s"} of ${PRODUCTS[p].name.toLowerCase()}`).join(" and ")}`;
 }

@@ -62,4 +62,5 @@ export const CAR_COLORS = [
 export const CARGO_COLOR: Record<string, number> = {
   crops: 0xd9b44a, logs: 0x8a5a33, food: 0xe2704a, planks: 0xe8cf8f,
   ore: 0x93603f, coal: 0x3a3a3e, lime: 0xd9d3bd, steel: 0x8a96a3, cement: 0xb9b6ae,
+  crude: 0x2e2a26, sand: 0xe0c78e, fuel: 0xd99a2b, plastics: 0x6fb7c9, glass: 0x9fd3d6, goods: 0xb0603e, parts: 0x7f8b6a,
 };

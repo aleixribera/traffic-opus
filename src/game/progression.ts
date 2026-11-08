@@ -2,7 +2,7 @@
 // are open at once (the first OPEN_AT_ONCE not yet reached, in ladder order), so there is always a choice of what
 // to chase next; reaching one opens the next. Each unlocks something concrete: a building, a road type or tool,
 // land, town slots, truck bays or bigger loads. The company starts with tier 1 (farms, logging camps, food plants,
-// sawmills), founding towns and the basic roads. This ladder covers tiers 1 and 2; the later tiers come after.
+// sawmills), founding towns and the basic roads. This ladder covers tiers 1 to 3 (to a City); tier 4 comes after.
 
 import type { RoadTypeId } from "../config";
 import { PLANTS, type Product } from "./industry";
@@ -145,12 +145,18 @@ export const MILESTONES: Milestone[] = [
   {
     id: "pop1000", name: "Big village", goal: "Grow a town to 1,000 people",
     measure: (v) => [biggest(v), 1000],
-    unlocks: { towns: 1, tiles: 4 },
+    // (a town wants fuel from 1,500: oil opens first, while it is still on its way there)
+    unlocks: { buildings: ["oilwell", "refinery"], towns: 1, tiles: 4 },
   },
   {
     id: "planks30", name: "Building boom", goal: "Deliver 30 loads of planks in one day",
     measure: (v) => [n(v.bestDay, "planks"), 30],
-    unlocks: { tiles: 2, grant: 30000 },
+    unlocks: { buildings: ["sandpit", "glassworks", "furniture"], tiles: 2, grant: 30000 },
+  },
+  {
+    id: "fuel1", name: "First fuel", goal: "Refine your first load of fuel",
+    measure: (v) => [n(v.made, "fuel"), 1],
+    unlocks: { tiles: 2, grant: 25000 },
   },
   {
     id: "food60", name: "Feeding thousands", goal: "Deliver 60 loads of food in one day",
@@ -160,12 +166,68 @@ export const MILESTONES: Milestone[] = [
   {
     id: "cement30", name: "Concrete age", goal: "Deliver 30 loads of cement in one day",
     measure: (v) => [n(v.bestDay, "cement"), 30],
-    unlocks: { bays: 1 },
+    unlocks: { buildings: ["constructionplant"], bays: 1 },
+  },
+  {
+    id: "goods1", name: "Home comforts", goal: "Make your first load of household goods",
+    measure: (v) => [n(v.made, "goods"), 1],
+    unlocks: { tiles: 2, grant: 25000 },
   },
   {
     id: "town", name: "Town", goal: "Grow a town to Town size: 1,500 people",
     measure: (v) => [biggest(v), 1500],
     unlocks: { towns: 2, grant: 50000 },
+  },
+  {
+    id: "parts1", name: "Prefab", goal: "Deliver your first load of construction parts to a town building site",
+    measure: (v) => [n(v.sold, "parts"), 1],
+    unlocks: { bays: 1, tiles: 2 },
+  },
+  {
+    id: "towns5", name: "Five towns", goal: "Run five towns",
+    measure: (v) => [v.towns.length, 5],
+    unlocks: { tiles: 4 },
+  },
+  {
+    id: "townSupplied", name: "Town supplied", goal: "Keep a Town of 1,500+ in everything it needs for a day",
+    measure: (v) => [v.towns.some((t) => sizeOf(t.pop) >= 2 && fullySupplied(t)) ? 1 : 0, 1],
+    unlocks: { load: 1, grant: 60000 },
+  },
+  {
+    id: "fuel30", name: "Fuelling the roads", goal: "Deliver 30 loads of fuel in one day",
+    measure: (v) => [n(v.bestDay, "fuel"), 30],
+    unlocks: { bays: 1 },
+  },
+  {
+    id: "goods30", name: "Furnished", goal: "Deliver 30 loads of household goods in one day",
+    measure: (v) => [n(v.bestDay, "goods"), 30],
+    unlocks: { tiles: 3 },
+  },
+  {
+    id: "parts20", name: "Rising blocks", goal: "Deliver 20 loads of construction parts to building sites",
+    measure: (v) => [n(v.sold, "parts"), 20],
+    unlocks: { bays: 1, tiles: 2 },
+  },
+  {
+    id: "trade100k", name: "Big trading day", goal: "Take $100,000 from deliveries in one day",
+    measure: (v) => [Math.floor(v.bestEarned), 100000], money: true,
+    unlocks: { towns: 1, tiles: 2 },
+  },
+  {
+    id: "pop4000", name: "Market town", goal: "Grow a town to 4,000 people",
+    measure: (v) => [biggest(v), 4000],
+    unlocks: { tiles: 4, bays: 1 },
+  },
+  {
+    id: "towns2town", name: "Twin towns", goal: "Grow two towns to Town size",
+    measure: (v) => [v.towns.filter((t) => sizeOf(t.pop) >= 2).length, 2],
+    unlocks: { towns: 1, grant: 80000 },
+  },
+  {
+    // (tier 4 hook: copper, electronics and machinery unlock along here, for a City's needs)
+    id: "city", name: "City", goal: "Grow a town to City size: 6,000 people",
+    measure: (v) => [biggest(v), 6000],
+    unlocks: { towns: 2, tiles: 6, grant: 100000 },
   },
 ];
 

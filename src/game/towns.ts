@@ -22,7 +22,8 @@ export interface TownSize {
 export const TOWN_SIZES: TownSize[] = [
   { name: "Hamlet", pop: 0, adds: ["food"] },
   { name: "Village", pop: 300, adds: ["planks", "cement"] },
-  { name: "Town", pop: 1500, adds: [] },
+  { name: "Town", pop: 1500, adds: ["goods", "fuel"] },
+  // (tier 4 hook: a City adds electronics and machinery once those chains exist)
   { name: "City", pop: 6000, adds: [] },
   { name: "Metropolis", pop: 20000, adds: [] },
 ];
@@ -59,7 +60,9 @@ export function nextNeed(pop: number): { p: Product; pop: number } | null {
  * there being more residents: demand climbs exponentially through the sizes, as the design asks.
  */
 export function demandPerDay(p: Product, pop: number): number {
-  const per: Partial<Record<Product, number>> = { food: 1 / 8, planks: 1 / 20, cement: 1 / 30 };
+  // (a new need starts lighter per resident than the old staples: a Town wants about 64 loads a day of goods and of
+  // fuel, a City several hundred)
+  const per: Partial<Record<Product, number>> = { food: 1 / 8, planks: 1 / 20, cement: 1 / 30, goods: 1 / 60, fuel: 1 / 60 };
   const base = per[p] ?? 1 / 24;
   return Math.max(1, pop * base * Math.pow(1.6, sizeOf(pop)));
 }

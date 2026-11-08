@@ -31,7 +31,7 @@ const OVERLAYS: { id: OverlayId; label: string; blurb: string }[] = [
   { id: "landvalue", label: "Land value", blurb: "Higher value lets buildings level up" },
   { id: "level", label: "Building level", blurb: "Buildings grow from level 1 to 5" },
   { id: "problems", label: "Problems", blurb: "Plants and buildings with something holding them up" },
-  { id: "power", label: "Power", blurb: "Power plants in blue; tier 2 buildings green with all the power they need, orange to red when short" },
+  { id: "power", label: "Power", blurb: "Power plants in blue; buildings that draw power green with all they need, orange to red when short" },
 ];
 
 /** Build categories along the bottom bar, each with its asset tabs. */
@@ -362,7 +362,7 @@ export class Hud {
       const D = PLANTS[a.id];
       const locked = g.placedUnlocked(a.id) ? undefined : unlockedBy((u) => u.buildings?.includes(a.id));
       const site = D.site ? ` Starts as a building site: it needs ${siteText(D.site)} trucked to it.` : "";
-      const power = D.power ? ` Draws ${D.power} MW: without power it works at ${Math.round(UNPOWERED * 100)}%.` : D.makes ? ` Makes ${D.makes} MW for the tier 2 buildings on its roads within ${D.reach! / 1000} km.` : "";
+      const power = D.power ? ` Draws ${D.power} MW: without power it works at ${Math.round(UNPOWERED * 100)}%.` : D.makes ? ` Makes ${D.makes} MW for the buildings on its roads within ${D.reach! / 1000} km that draw power.` : "";
       return {
         key: "placed:" + a.id, icon: placedIcon(a.id), name: T.name, sub: `${formatMoney(S.cost)} · ${formatMoney(S.upkeep)}/h`,
         title: `${T.name}: ${chainText(a.id)}. ${T.blurb}${site}${power} Costs ${formatMoney(S.cost)}; upkeep ${formatMoney(S.upkeep)} an hour plus its ${T.jobs} workers' wages.`, locked,
@@ -570,9 +570,8 @@ export class Hud {
       items.push(h("p", "to-text", "Beside a road its gate faces the road. Anywhere else it stands free and waits for a road to its gate. Press , or . to turn it 15°."));
       items.push(h("p", "to-text", D.deposit
         ? `At least ${Math.round(MIN_DEPOSIT * 100)}% of the plot must be ${D.deposit.name}: the ground shows it while you place. More of it, faster work.`
-        : `Your extractors' trucks bring it ${productList(D.inputs)}; ${D.makes ? `it powers your tier 2 buildings on its roads within ${D.reach! / 1000} km`
-          : (Object.keys(D.outputs) as Product[]).some((p) => PRODUCTS[p].price > 0) ? `its own trucks sell the ${productList(D.outputs)} to the towns on your roads`
-          : `it keeps the ${productList(D.outputs)} in its yard until tier 3 brings plants that use it`}.`));
+        : `Trucks from your other plants bring it ${productList(D.inputs)}; ${D.makes ? `it powers the buildings on its roads within ${D.reach! / 1000} km that draw power`
+          : outputsText(D.outputs)}.`));
     } else if (st.tool === "roundabout") {
       items.push(elevation());
     } else if (st.tool === "bulldoze") {
@@ -659,7 +658,7 @@ export class Hud {
           <span class="bar gl-bar" role="progressbar" aria-label="${m.name}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p * 100)}"><i style="width:${Math.max(2, p * 100)}%"></i></span>
           <p class="gl-gift">${unlockList(m.unlocks).join(" · ")}</p></li>`;
       }).join("");
-      body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : `<p class="gl-done">Every milestone of tiers 1 and 2 reached.</p>`}${tip ? `<p class="gl-tip">${tip.html}</p>` : ""}</div>`;
+      body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : `<p class="gl-done">Every milestone of tiers 1 to 3 reached. Tier 4 comes next.</p>`}${tip ? `<p class="gl-tip">${tip.html}</p>` : ""}</div>`;
     }
     const html = head + body;
     if (this.tut.dataset.html !== html) {
@@ -694,9 +693,15 @@ export class Hud {
     const site = plants.find((b) => b.plant!.site);
     if (site && !has("sawmill")) return { key: "site-planks", cat: "industry", html: `<b>Your ${BUILDING_TYPES[site.kind].name.toLowerCase()} is a building site.</b> It needs planks: a sawmill joined to it by road sends them.` };
     if (g.placedUnlocked("ironmine") && (!has("ironmine") || !has("coalmine"))) return { key: "mines", cat: "industry", html: `<b>Tier 2 is open.</b> Place an <b>Iron mine</b> and a <b>Coal mine</b> on their deposits (the Resources view shows them). They start as building sites: your sawmill trucks them the planks.` };
-    if (g.placedUnlocked("coalplant") && !has("coalplant")) return { key: "power", cat: "industry", html: `<b>Build a Power plant</b> within ${PLANTS.coalplant.reach! / 1000} km of your mines, on the same roads. Without power tier 2 works at ${Math.round(UNPOWERED * 100)}%; the plant burns coal from your coal mine.` };
+    if (g.placedUnlocked("coalplant") && !has("coalplant")) return { key: "power", cat: "industry", html: `<b>Build a Power plant</b> within ${PLANTS.coalplant.reach! / 1000} km of your mines, on the same roads. Without power, mines and plants work at ${Math.round(UNPOWERED * 100)}%; the plant burns coal from your coal mine.` };
     if (g.placedUnlocked("smelter") && !has("smelter")) return { key: "smelter", cat: "industry", html: `<b>Build a Smelter</b> on a road your iron and coal mines reach: it makes steel from ore and coal.` };
     if (g.placedUnlocked("cementworks") && (!has("quarry") || !has("cementworks"))) return { key: "cement", cat: "industry", html: `<b>Villages of ${fmtNum(nextNeed(300)?.pop ?? 600)} want cement.</b> Place a <b>Quarry</b> on limestone and a <b>Cement works</b> on a road between it, a coal mine and your towns.` };
+    // tier 3: fuel and household goods for a Town, construction parts for the blocks it puts up
+    const town = TOWN_SIZES[2].pop;
+    if (g.placedUnlocked("refinery") && (!has("oilwell") || !has("refinery"))) return { key: "fuel", cat: "industry", html: `<b>Towns of ${fmtNum(town)} want fuel.</b> Place an <b>Oil well</b> on oil, ${km(6000)} or more out (the Resources view shows it), and a <b>Refinery</b> on a road between it and your towns. The refinery draws power.` };
+    if (g.placedUnlocked("furniture") && (!has("sandpit") || !has("glassworks"))) return { key: "glass", cat: "industry", html: `<b>Towns of ${fmtNum(town)} want household goods.</b> Place a <b>Sand pit</b> on the sand along a river or lake shore, and a <b>Glassworks</b> your sand pit and coal mine reach: it makes glass.` };
+    if (g.placedUnlocked("furniture") && !has("furniture")) return { key: "goods", cat: "industry", html: `<b>Build a Furniture factory</b> on a road your glassworks and sawmill reach: it makes household goods from planks and glass, and its trucks sell them to the towns' shops.` };
+    if (g.placedUnlocked("constructionplant") && !has("constructionplant")) return { key: "parts", cat: "industry", html: `<b>Towns of ${fmtNum(town)} build in prefab.</b> Their new blocks wait for construction parts. Build a <b>Construction plant</b> your smelter and cement works reach: it makes parts from steel and cement.` };
     return null;
   }
 
@@ -1145,7 +1150,10 @@ export class Hud {
     const si = sizeOf(t.pop), next = TOWN_SIZES[si + 1];
     const tr = trendOf(t);
     // its needs: what it takes to grow (the mark), what its shops buy at most (the whole bar), what came yesterday
+    const mine = g.towns.buildingsOf(t);
+    const stations = mine.filter((b) => BUILDING_TYPES[b.kind].fuel).length;
     const needs = needsOf(t.pop).map((p) => {
+      const buyer = p === "fuel" && stations ? "Filling stations buy" : "Shops buy";
       const share = t.supply[p];
       const want = demandPerDay(p, t.pop), market = want * MARKET;
       const got = t.yesterday[p] ?? 0, today = t.today[p] ?? 0;
@@ -1154,8 +1162,8 @@ export class Hud {
       const fill = Math.min(100, (got / market) * 100);
       return `<li class="tn-need">
           <span class="tn-need-top">${productIcon(p)}<b>${PRODUCTS[p].name}</b><span class="num ${col}">${pct === null ? "New need" : `${pct}% of needs`}</span></span>
-          <span class="bar need ${col} tn-bar" role="img" aria-label="${fmtLoads(got)} loads yesterday, ${fmtLoads(want)} needed to grow, shops buy up to ${fmtLoads(market)}"><i style="width:${Math.max(1.5, fill)}%"></i><em style="left:${100 / MARKET}%"></em></span>
-          <span class="tn-need-sub small muted"><span>Yesterday ${fmtLoads(got)} of ${fmtLoads(want)} needed</span><span>Shops buy up to ${fmtLoads(market)} · ${fmtLoads(today)} so far today</span></span>
+          <span class="bar need ${col} tn-bar" role="img" aria-label="${fmtLoads(got)} loads yesterday, ${fmtLoads(want)} needed to grow, ${buyer.toLowerCase()} up to ${fmtLoads(market)}"><i style="width:${Math.max(1.5, fill)}%"></i><em style="left:${100 / MARKET}%"></em></span>
+          <span class="tn-need-sub small muted"><span>Yesterday ${fmtLoads(got)} of ${fmtLoads(want)} needed</span><span>${buyer} up to ${fmtLoads(market)} · ${fmtLoads(today)} so far today</span></span>
         </li>`;
     }).join("");
     // what it is short of, and what that costs it
@@ -1174,12 +1182,12 @@ export class Hud {
     const deliveries = sold.length
       ? `<dl class="facts">${sold.map(([p, n]) => `<dt>${PRODUCTS[p].name}</dt><dd>${fmtLoads(n)} ${Math.round(n) === 1 ? "load" : "loads"}</dd>`).join("")}<dt class="tot">Worth</dt><dd class="tot">${formatMoney(worth)}</dd></dl>`
       : `<p class="small muted">Nothing delivered yesterday.</p>`;
-    // homes and work
-    const mine = g.towns.buildingsOf(t);
-    let jobs = 0, rebuilding = 0;
+    // homes and work, and the blocks waiting for construction parts
+    let jobs = 0, rebuilding = 0, waiting = 0, partsLeft = 0;
     for (const b of mine) {
       if (b.zone && ZONE_GROUP[b.zone] === "com") jobs += b.cap;
       if (b.redev && b.built < 1) rebuilding++;
+      if (b.site) { waiting++; partsLeft += Math.max(0, (b.site.need.parts ?? 0) - (b.site.got.parts ?? 0)); }
     }
     const hall = g.buildings.byId.get(t.hall);
     const hallLine = hall ? `${BUILDING_TYPES[hall.kind].name}${hall.built < 1 ? ` <span class="muted">· building, ${Math.round(hall.built * 100)}%</span>` : ""}` : "None yet";
@@ -1201,6 +1209,8 @@ export class Hud {
         <dt>Shops and offices</dt><dd>${t.shops} <span class="muted">· ${fmtNum(jobs)} jobs</span></dd>
         <dt>Hall</dt><dd>${hallLine}</dd>
         ${rebuilding ? `<dt>Rebuilding</dt><dd>${plural(rebuilding, "site")}</dd>` : ""}
+        ${stations ? `<dt>Filling stations</dt><dd>${stations}</dd>` : ""}
+        ${waiting ? `<dt>Waiting for parts</dt><dd class="${waiting > 3 ? "bad" : ""}">${plural(waiting, "block")}, ${plural(partsLeft, "load")}</dd>` : ""}
       </dl>
       <h3 class="sub-h">Needs, loads a day</h3>
       <ul class="tn-needs">${needs}</ul>
@@ -1257,11 +1267,13 @@ export class Hud {
       const ins = (Object.keys(D.inputs) as Product[]).map((p) => stock(p, P.stock[p] ?? 0)).join("");
       const outs = (Object.keys(D.outputs) as Product[]).map((p) => stock(p, P.out[p] ?? 0)).join("");
       const L = P.last;
+      const flare = b.built >= 1 ? Industry.flaring(b) : undefined;
       const html = `<header><span class="svc-tag">${placedIcon(b.kind)}</span>${T.name}</header>
         <p class="muted small">${chainText(b.kind)}</p>
         <p class="status ${statusCls}">${status}</p>
         ${ins ? `<h3 class="sub-h">In the yard</h3><dl class="facts">${ins}</dl>` : ""}
         ${outs ? `<h3 class="sub-h">Ready to ship</h3><dl class="facts">${outs}</dl>` : ""}
+        ${flare ? `<p class="small muted">Its yard is full of ${PRODUCTS[flare].name.toLowerCase()}: nothing of yours uses it until tier ${Industry.laterTier(flare)}, so it burns off the rest and keeps making ${(Object.keys(D.outputs) as Product[]).filter((p) => p !== flare).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ")}.</p>` : ""}
         ${siteLevel(b)}
         <dl class="facts">
           ${plantRows}${powerRow}
@@ -1287,9 +1299,15 @@ export class Hud {
     const Z = ZONES[b.zone], grp = ZONE_GROUP[b.zone];
     const health = (b as Building & { health?: number }).health ?? 1;
     if (b.abandoned) { status = "Abandoned: it will be cleared and something new can grow"; statusCls = "bad"; }
+    else if (b.site) status = "Building site: waiting for its construction parts";
     else if (b.built < 1) { status = `Under construction · ${Math.round(b.built * 100)}%`; }
     else if (b.problem) { status = b.problem; statusCls = "bad"; }
     else { status = grp === "res" ? "Residents are happy here" : "Business is doing well"; statusCls = "good"; }
+    // (a block a Town puts up waits for construction parts, trucked in from the company's construction plant)
+    if (b.site) for (const p of Object.keys(b.site.need) as Product[]) {
+      const need = b.site.need[p]!, got = Math.min(need, b.site.got[p] ?? 0);
+      rows.push([`${PRODUCTS[p].name} in`, `${stockBar(got, need, PRODUCTS[p].color)}<span class="num">${Math.floor(got)} / ${need}</span>`]);
+    }
     if (grp === "res") {
       const hhs = g.people.hhAt.get(b.id) ?? [];
       let res = 0, adults = 0, emp = 0, kids = 0, old = 0;
@@ -1305,7 +1323,8 @@ export class Hud {
     } else {
       const w = g.people.workersAt(b.id);
       rows.push(["Workers", `${w} / ${b.cap}`]);
-      if (grp === "com") {
+      if (grp === "com" && T.fuel) rows.push(["Sells", `${productIcon("fuel")} the town's fuel`]);
+      else if (grp === "com") {
         rows.push(["Food on the shelves", stockBar(b.stock, 6)]);
         rows.push(["Customers", b.custDay !== undefined ? `${fmtNum(b.custDay)} <span class="muted">yesterday</span>` : `${fmtNum(b.custToday ?? 0)} <span class="muted">so far</span>`]);
       }
@@ -1317,7 +1336,7 @@ export class Hud {
     const town = b.town !== undefined ? g.towns.byId.get(b.town) : undefined;
     if (town) rows.unshift(["Town", `<button class="link town-link">${escapeHtml(town.name)}</button>`]);
     const stars = Array.from({ length: 5 }, (_, i) => `<i class="${i < b.level ? "on" : ""}"></i>`).join("");
-    const html = `<header><span class="zone-tag" style="background:${hex(Z.color)}">${Z.short}</span>${Z.name}</header>
+    const html = `<header><span class="zone-tag" style="background:${hex(Z.color)}">${Z.short}</span>${T.fuel ? T.name : Z.name}</header>
       <div class="lvl-row"><span class="stars" role="img" aria-label="Level ${b.level} of 5">${stars}</span><span class="muted">Level ${b.level}${next ? ` · next at land value ${next}` : " · top level"}</span></div>
       <p class="status ${statusCls}">${status}</p>
       <dl class="facts">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
@@ -1622,6 +1641,18 @@ function siteLevel(b: Building): string {
 const km = (m: number) => `${(m / 1000).toFixed(1)} km`;
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 const fmtLoads = (n: number) => (n < 10 && n % 1 ? n.toFixed(1) : Math.round(n).toLocaleString("en-US"));
+
+/** Where a plant's outputs go, as a clause: sold to towns, taken to the company's plants, or flared for now. */
+function outputsText(o: Partial<Record<Product, number>>): string {
+  const outs = Object.keys(o) as Product[];
+  const pick = (f: (p: Product) => boolean) => Object.fromEntries(outs.filter(f).map((p) => [p, 1])) as Partial<Record<Product, number>>;
+  const sold = pick((p) => PRODUCTS[p].price > 0), fed = pick((p) => !PRODUCTS[p].price && Industry.usedBy(p)), idle = pick((p) => !Industry.useful(p));
+  const parts: string[] = [];
+  if (Object.keys(sold).length) parts.push(`its own trucks sell the ${productList(sold)} to the towns on your roads`);
+  if (Object.keys(fed).length) parts.push(`its trucks take the ${productList(fed)} to your plants that use it`);
+  for (const p of Object.keys(idle) as Product[]) parts.push(`it burns off the ${PRODUCTS[p].name.toLowerCase()} until tier ${Industry.laterTier(p)} brings plants that use it`);
+  return parts.join("; ");
+}
 
 function productList(o: Partial<Record<Product, number>>): string {
   return (Object.keys(o) as Product[]).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ");

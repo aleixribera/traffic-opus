@@ -271,7 +271,7 @@ describe("Industry", () => {
     expect(sm.problem).toBe("Short of power: working at 70%");
   });
 
-  it("steel waits in the yard until tier 3, and the smelter says so", () => {
+  it("steel goes to a construction plant; with none on its roads, the smelter says which plant takes it", () => {
     const w = world();
     const sm = w.plant("smelter", 0);
     delete sm.plant!.site;
@@ -280,6 +280,204 @@ describe("Industry", () => {
     sm.plant!.stock = { ore: 2, coal: 2 };
     w.ind.tick(HOUR);
     expect(w.pending.length).toBe(0);
-    expect(sm.problem).toBe("Full of steel: nothing uses it until tier 3");
+    expect(sm.problem).toBe("Full of steel: not enough trucks, or no construction plant on its roads");
+    sm.plant!.out.steel = 2;
+    sm.problem = null;
+    w.ind.tick(0);
+    expect(sm.problem).toBe("No construction plant on your roads takes steel");
+    const cp = w.plant("constructionplant", 400);
+    delete cp.plant!.site;
+    w.ind.tick(0);
+    expect(w.pending.length).toBeGreaterThan(0);
+    expect(w.pending[0].trip.haul!.dest).toBe(cp.id);
+  });
+});
+
+describe("Tier 3 chains", () => {
+  const ready = (w: ReturnType<typeof world>, kind: PlantKind, x: number) => {
+    const b = w.plant(kind, x);
+    delete b.plant!.site;
+    return b;
+  };
+
+  it("the oil well and the sand pit draw crude and sand from their deposits, with no power", () => {
+    const w = world();
+    for (const [kind, out] of [["oilwell", "crude"], ["sandpit", "sand"]] as const) {
+      expect(PLANTS[kind].deposit!.field).toBe(kind === "oilwell" ? F.oil : F.sand);
+      expect(PLANTS[kind].power ?? 0).toBe(0);
+      expect(PLANTS[kind].tier).toBe(3);
+      const b = ready(w, kind, 0);
+      b.plant!.yld = 1;
+      w.ind.produce(b, PLANTS[kind].cycle * 3.01);
+      expect(b.plant!.out[out]).toBe(3);
+      expect(b.problem).toBeNull();
+    }
+  });
+
+  it("each plant turns its inputs into its outputs: glass, household goods, construction parts", () => {
+    const cases: [PlantKind, Record<string, number>, string][] = [
+      ["glassworks", { sand: 4, coal: 4 }, "glass"],
+      ["furniture", { planks: 4, glass: 4 }, "goods"],
+      ["constructionplant", { steel: 4, cement: 4 }, "parts"],
+    ];
+    for (const [kind, stock, out] of cases) {
+      const w = world();
+      const b = ready(w, kind, 0);
+      expect(Object.keys(PLANTS[kind].inputs).sort()).toEqual(Object.keys(stock).sort());
+      b.plant!.stock = { ...stock };
+      w.ind.produce(b, PLANTS[kind].cycle * 2.01);
+      expect(b.plant!.out[out as never], kind).toBe(2);
+      for (const p of Object.keys(stock)) expect(b.plant!.stock[p as never], `${kind} ${p}`).toBe(2);
+      // and it waits once an input runs out
+      const first = Object.keys(stock)[0];
+      b.plant!.stock = { ...stock, [first]: 0 };
+      w.ind.produce(b, PLANTS[kind].cycle);
+      expect(b.problem).toBe(`Waiting for ${PRODUCTS[first as keyof typeof PRODUCTS].name.toLowerCase()}`);
+    }
+  });
+
+  it("the refinery splits crude into fuel and plastics; it flares the plastics once its yard is full and keeps making fuel", () => {
+    const w = world();
+    const rf = ready(w, "refinery", 0);
+    expect(PLANTS.refinery.outputs).toEqual({ fuel: 1, plastics: 1 });
+    rf.plant!.stock.crude = 10;
+    w.ind.produce(rf, PLANTS.refinery.cycle * 2.01);
+    expect(rf.plant!.out).toEqual({ fuel: 2, plastics: 2 });
+    expect(rf.plant!.stock.crude).toBe(8);
+    // plastics full: no problem, fuel goes on
+    const store = Industry.storeOf(rf);
+    rf.plant!.out.plastics = store;
+    w.ind.produce(rf, PLANTS.refinery.cycle * 2.01);
+    expect(rf.plant!.out.fuel).toBe(4);
+    expect(rf.plant!.out.plastics).toBe(store);
+    expect(rf.problem).toBeNull();
+    expect(Industry.flaring(rf)).toBe("plastics");
+    // its trucks never take plastics anywhere (nothing uses them until tier 4), and say nothing about it
+    rf.plant!.out.fuel = 0;
+    w.ind.tick(0);
+    expect(w.pending.length).toBe(0);
+    expect(rf.problem ?? "").not.toMatch(/plastics/);
+    // both full: it stops, on the fuel
+    rf.plant!.out.fuel = store;
+    w.ind.produce(rf, PLANTS.refinery.cycle * 2);
+    expect(rf.plant!.stock.crude).toBe(6);
+    expect(rf.problem).toMatch(/^Full of fuel/);
+    expect(Industry.laterTier("plastics")).toBe(4);
+  });
+
+  it("the refinery, glassworks and construction plant draw power; the furniture factory does not", () => {
+    for (const k of ["refinery", "glassworks", "constructionplant"] as PlantKind[]) expect(PLANTS[k].power, k).toBeGreaterThan(0);
+    expect(PLANTS.furniture.power ?? 0).toBe(0);
+    const w = world();
+    let share = 0;
+    (w.host as { power?: () => number }).power = () => share;
+    const gw = ready(w, "glassworks", 0);
+    gw.plant!.stock = { sand: 9, coal: 9 };
+    w.ind.produce(gw, PLANTS.glassworks.cycle * 5.01);
+    expect(gw.plant!.out.glass).toBe(2); // 40% of 5
+    expect(gw.problem).toBe("No power: working at 40%");
+    share = 1;
+    gw.plant!.prog = 0;
+    w.ind.produce(gw, PLANTS.glassworks.cycle * 2.01);
+    expect(gw.plant!.out.glass).toBe(4);
+  });
+
+  it("a tier 3 plant's building site waits for planks and cement, and the sawmill and cement works send them there first", () => {
+    const w = world();
+    const mill = ready(w, "sawmill", 0);
+    const cw = ready(w, "cementworks", 100);
+    const rf = w.plant("refinery", 2000);
+    w.shop(50);
+    for (const k of ["oilwell", "sandpit", "refinery", "glassworks", "furniture", "constructionplant"] as PlantKind[]) {
+      const s = PLANTS[k].site!;
+      expect(s.planks, k).toBeGreaterThan(0);
+      expect(s.cement, k).toBeGreaterThan(0);
+    }
+    expect(rf.plant!.site).toEqual({ need: { ...PLANTS.refinery.site }, got: {} });
+    w.ind.produce(rf, HOUR);
+    expect(rf.problem).toBe(`Building site: waiting for ${PLANTS.refinery.site!.planks} loads of planks and ${PLANTS.refinery.site!.cement} loads of cement`);
+    mill.plant!.out.planks = 2;
+    cw.plant!.out.cement = 2;
+    w.ind.tick(0);
+    expect(w.pending.length).toBeGreaterThan(0);
+    for (const p of w.pending) expect(p.trip.haul!.dest).toBe(rf.id);
+    w.ind.deliver(rf, "planks", 50, mill);
+    expect(rf.plant!.site).toBeDefined();
+    w.ind.deliver(rf, "cement", 50, cw);
+    expect(rf.plant!.site).toBeUndefined();
+    expect(rf.built).toBe(0);
+  });
+
+  it("each chain's trucks take its product on to the next plant: crude to the refinery, sand to the glassworks, glass to the furniture factory", () => {
+    const w = world();
+    const well = ready(w, "oilwell", 0), pit = ready(w, "sandpit", 50), gw = ready(w, "glassworks", 300);
+    const rf = ready(w, "refinery", 600), ff = ready(w, "furniture", 900);
+    well.plant!.out.crude = 1;
+    pit.plant!.out.sand = 1;
+    gw.plant!.out.glass = 1;
+    w.ind.tick(0);
+    const dest = new Map(w.pending.map((p) => [p.trip.haul!.product, p.trip.haul!.dest]));
+    expect(dest.get("crude")).toBe(rf.id);
+    expect(dest.get("sand")).toBe(gw.id);
+    expect(dest.get("glass")).toBe(ff.id);
+  });
+
+  it("fuel goes to a town's filling station once it has one, to its shops until then; goods go to the shops", () => {
+    const w = world();
+    (w.host as { townOf: (b: Building) => number | null }).townOf = (b) => b.town ?? null;
+    const rf = ready(w, "refinery", 0);
+    const ff = ready(w, "furniture", 10);
+    const shopA = w.shop(300), shopB = w.shop(5000), station = w.shop(4000);
+    shopA.town = 1; shopB.town = 2; station.town = 2;
+    station.kind = "fuelstation";
+    station.built = 0; // still going up: the town's shops take its fuel
+    let custs = w.ind.customers(rf, "fuel").map((c) => c.b.id);
+    expect(custs).toContain(shopA.id);
+    expect(custs).toContain(shopB.id);
+    expect(custs).not.toContain(station.id);
+    station.built = 1;
+    custs = w.ind.customers(rf, "fuel").map((c) => c.b.id);
+    expect(custs).toContain(station.id);
+    expect(custs).toContain(shopA.id); // town 1 has no station
+    expect(custs).not.toContain(shopB.id);
+    // goods never go to a filling station
+    const goods = w.ind.customers(ff, "goods").map((c) => c.b.id);
+    expect(goods).toContain(shopB.id);
+    expect(goods).not.toContain(station.id);
+    expect(PRODUCTS.goods.price).toBeGreaterThan(0);
+    expect(PRODUCTS.fuel.price).toBeGreaterThan(0);
+  });
+
+  it("construction parts go to a town's building site, which goes up once it has them all; the town pays", () => {
+    const w = world();
+    let sold = 0;
+    w.host.sold = (_t, p, n) => { if (p === "parts") sold += n; };
+    const cp = ready(w, "constructionplant", 0);
+    w.shop(200);
+    const block = w.shop(500);
+    block.kind = "apartments";
+    block.built = 0;
+    block.site = { need: { parts: 2 }, got: {} };
+    cp.plant!.out.parts = 3;
+    w.ind.tick(0);
+    const legs = w.pending.filter((p) => p.trip.haul!.leg === "out");
+    expect(legs.length).toBeGreaterThan(0);
+    for (const p of legs) expect(p.trip.haul!.dest).toBe(block.id);
+    // no more than it still needs is sent
+    expect(legs.reduce((a, p) => a + p.trip.haul!.n, 0)).toBe(2);
+    const before = w.money;
+    w.ind.deliver(block, "parts", 1, cp);
+    expect(block.site!.got.parts).toBe(1);
+    w.ind.deliver(block, "parts", 5, cp);
+    expect(block.site).toBeUndefined();
+    expect(w.money - before).toBe(2 * PRODUCTS.parts.price);
+    expect(sold).toBe(2);
+    // with no site waiting, parts have nowhere to go, and the plant says why
+    w.pending.length = 0;
+    cp.plant!.out.parts = 3;
+    cp.problem = null;
+    w.ind.tick(0);
+    expect(w.pending.length).toBe(0);
+    expect(cp.problem).toMatch(/^No town on your roads is putting up a block/);
   });
 });

@@ -95,6 +95,24 @@ export function placedIcon(kind: string): string {
       return svg(28, 28, `<rect x="3" y="6" width="6" height="19" fill="#7d8790"/><rect x="4.5" y="3" width="3" height="3" fill="#545a61"/><path d="M8 20 L22 17 V21 L8 24 Z" fill="#9aa0a6" stroke="#6d737a" stroke-width="0.8"/><rect x="20" y="7" width="6" height="18" rx="3" fill="#c9c6bd"/><path d="M20 12 H26" stroke="#a9a69d" stroke-width="1"/>`);
     case "coalplant":
       return svg(28, 28, `<path d="M17 24 C17.8 18 18.5 13 17.2 8 H24.8 C23.5 13 24.2 18 25 24 Z" fill="#9aa0a6"/><rect x="3" y="14" width="13" height="10" fill="#6d737a"/><rect x="7" y="5" width="3" height="9" fill="#545a61"/><circle cx="9" cy="3.6" r="2" fill="#c9cdd2"/><circle cx="12" cy="2.6" r="1.5" fill="#dde0e3"/>`);
+    case "oilwell":
+      // a pumpjack nodding over the well, a squat tank beside it
+      return svg(28, 28, `<rect x="2" y="23" width="24" height="2.4" fill="#7d8790"/><path d="M6 23 L10 10 L14 23" fill="none" stroke="#545a61" stroke-width="1.8" stroke-linejoin="round"/><path d="M2.5 9 L19 12" stroke="#3c4148" stroke-width="2.6" stroke-linecap="round"/><path d="M2.5 7.5 Q1 9 2.5 12.5 L4 12 Q3 9.5 4 8 Z" fill="#3c4148"/><path d="M3 12.5 V23" stroke="#3c4148" stroke-width="1"/><circle cx="10" cy="10.5" r="1.3" fill="#d9b13a"/><rect x="18" y="14" width="7" height="9" rx="1" fill="#dde0e4" stroke="#8d939a" stroke-width="0.8"/>`);
+    case "sandpit":
+      // a pale sand heap in a pit, a conveyor feeding it
+      return svg(28, 28, `<path d="M2 25 H26 L23 19 H5 Z" fill="#b8a77a"/><path d="M4 22 Q11 8 18 22 Z" fill="#e0c78e" stroke="#b39a5c" stroke-width="0.8"/><path d="M15 12 L25 7" stroke="#545a61" stroke-width="1.8" stroke-linecap="round"/><path d="M24 7 V19" stroke="#545a61" stroke-width="1.2"/><rect x="19" y="18" width="6" height="4" rx="0.8" fill="#e0a526"/>`);
+    case "refinery":
+      // a fractionating column with a flare stack and two round tanks
+      return svg(28, 28, `<rect x="5" y="4" width="5" height="21" rx="1.4" fill="#b0b5bc" stroke="#6d737a" stroke-width="0.8"/><path d="M5 9 H10 M5 14 H10 M5 19 H10" stroke="#6d737a" stroke-width="0.8"/><rect x="12" y="7" width="2" height="18" fill="#545a61"/><path d="M13 7 Q11.4 4.6 13 2.2 Q14.6 4.6 13 7 Z" fill="#f08a3a"/><ellipse cx="21" cy="17" rx="4.6" ry="1.6" fill="#eef0f2"/><rect x="16.4" y="17" width="9.2" height="7" fill="#dde0e4"/><ellipse cx="21" cy="24" rx="4.6" ry="1.4" fill="#c9cdd2"/>`);
+    case "glassworks":
+      // a furnace hall with a stack, panes of glass leaning on a rack
+      return svg(28, 28, `<rect x="3" y="11" width="14" height="14" fill="#7d8790"/><path d="M3 11 L10 6 L17 11 Z" fill="#5b6168"/><rect x="12" y="2" width="3" height="9" fill="#545a61"/><rect x="6" y="17" width="5" height="3.4" fill="#f08a3a"/><path d="M19 25 L21.5 10 H25.5 L23 25 Z" fill="#9fd3d6" stroke="#4f8f96" stroke-width="0.9"/><path d="M21 14 L23.5 12" stroke="#fff" stroke-width="0.9"/>`);
+    case "furniture":
+      // a workshop roof and a chair and a table in front
+      return svg(28, 28, `<rect x="3" y="7" width="22" height="9" fill="#a37a52"/><path d="M3 7 L8.5 3 L14 7 L19.5 3 L25 7 Z" fill="#6b4a2b"/><path d="M6 25 V17 H9 M6 21 H11 V25" fill="none" stroke="#b0603e" stroke-width="1.8" stroke-linejoin="round"/><rect x="14" y="18" width="11" height="2" fill="#b0603e"/><path d="M15.5 20 V25 M23.5 20 V25" stroke="#b0603e" stroke-width="1.8"/>`);
+    case "constructionplant":
+      // a yard crane over a stack of prefab panels and a mixer silo
+      return svg(28, 28, `<path d="M6 25 V5 H23" fill="none" stroke="#d9b13a" stroke-width="2"/><path d="M6 9 L10 5" stroke="#d9b13a" stroke-width="1.4"/><path d="M19 5 V11" stroke="#545a61" stroke-width="1"/><rect x="15.5" y="11" width="7" height="2.4" fill="#7f8b6a"/><rect x="10" y="20" width="15" height="2.4" fill="#9aa48a" stroke="#5f6a4c" stroke-width="0.6"/><rect x="11" y="17.2" width="13" height="2.4" fill="#9aa48a" stroke="#5f6a4c" stroke-width="0.6"/><rect x="2" y="15" width="3" height="10" rx="1.5" fill="#c9c6bd"/>`);
     default:
       return svg(28, 28, `<circle cx="14" cy="14" r="9" fill="#9aa0a6"/>`);
   }
@@ -165,6 +183,15 @@ export function productIcon(p: string): string {
     case "cement":
       // a sack
       return svg(16, 16, `<path d="M4 3h8l1.3 2.2-.7 8.8H3.4l-.7-8.8z" fill="#cfccc3" stroke="#625f58" stroke-width=".9" stroke-linejoin="round"/><path d="M5.2 7.2h5.6M5.6 9.6h4.8" stroke="#625f58" stroke-width=".9"/>`);
+    case "fuel":
+      // a jerrycan
+      return svg(16, 16, `<path d="M4 3.5h5.5l3 2.8v7.2H4z" fill="#d99a2b" stroke="#7a5512" stroke-width=".9" stroke-linejoin="round"/><path d="M6 3.5V2h2.5v1.5" fill="none" stroke="#7a5512" stroke-width=".9"/><path d="M5.6 6.6l5 5M10.6 6.6l-5 5" stroke="#7a5512" stroke-width=".8"/>`);
+    case "goods":
+      // an armchair
+      return svg(16, 16, `<path d="M3.5 4.5a1.5 1.5 0 0 1 1.5-1.5h6a1.5 1.5 0 0 1 1.5 1.5v4h-9z" fill="#c4744f" stroke="#6b3a24" stroke-width=".9"/><rect x="1.6" y="7.6" width="12.8" height="4" rx="1.2" fill="#b0603e" stroke="#6b3a24" stroke-width=".9"/><path d="M3.5 11.6v2M12.5 11.6v2" stroke="#6b3a24" stroke-width="1.2" stroke-linecap="round"/>`);
+    case "parts":
+      // a steel I-beam over a precast panel
+      return svg(16, 16, `<rect x="2" y="9" width="12" height="5" rx=".4" fill="#b8bfa8" stroke="#5f6a4c" stroke-width=".9"/><path d="M5 11.5h2M9 11.5h2" stroke="#5f6a4c" stroke-width=".9"/><path d="M1.5 2.5h13v1.6h-5.6v1.8h5.6v1.6h-13V5.9h5.6V4.1H1.5z" fill="#8a96a3" stroke="#4b5560" stroke-width=".7" stroke-linejoin="round"/>`);
     default:
       return svg(16, 16, `<circle cx="8" cy="8" r="5.5" fill="#9aa0a6"/>`);
   }

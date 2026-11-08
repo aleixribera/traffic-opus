@@ -6,9 +6,9 @@ import { Game } from "../src/game/city";
 const view = (o: Partial<ProgressView> = {}): ProgressView => ({ towns: [], made: {}, sold: {}, bestDay: {}, bestEarned: 0, powered: 0, ...o });
 
 describe("Milestones", () => {
-  it("are a ladder of tiers 1 and 2: unique, each with a goal and something concrete to unlock", () => {
-    expect(MILESTONES.length).toBeGreaterThanOrEqual(15);
-    expect(MILESTONES.length).toBeLessThanOrEqual(20);
+  it("are a ladder of tiers 1 to 3: unique, each with a goal and something concrete to unlock", () => {
+    expect(MILESTONES.length).toBeGreaterThanOrEqual(28);
+    expect(MILESTONES.length).toBeLessThanOrEqual(40);
     expect(new Set(MILESTONES.map((m) => m.id)).size).toBe(MILESTONES.length);
     for (const m of MILESTONES) {
       expect(m.goal.length).toBeGreaterThan(5);
@@ -18,7 +18,7 @@ describe("Milestones", () => {
     }
   });
 
-  it("every tier 2 building unlocks with a milestone, tier 1 from the start", () => {
+  it("every tier 2 and 3 building unlocks with a milestone, tier 1 from the start", () => {
     const start = unlocksOf([]);
     for (const k of Object.keys(PLANTS) as PlantKind[]) {
       if (PLANTS[k].tier === 1) expect(start.buildings.has(k), k).toBe(true);
@@ -31,7 +31,39 @@ describe("Milestones", () => {
     expect(all.buildings.size).toBe(Object.keys(PLANTS).length);
     expect(all.tiles).toBeGreaterThan(BASE.tiles);
     expect(all.bays).toBeGreaterThan(0);
-    expect(all.load).toBe(3);
+    expect(all.load).toBe(4);
+  });
+
+  it("tier 3 opens on the way to Town size: oil first, then glass and goods, then construction parts", () => {
+    const at = (id: string) => MILESTONES.findIndex((m) => m.id === id);
+    const by = (k: PlantKind) => unlockedBy((u) => u.buildings?.includes(k))!.id;
+    expect(by("oilwell")).toBe("pop1000");
+    expect(by("refinery")).toBe("pop1000");
+    for (const k of ["sandpit", "glassworks", "furniture"] as PlantKind[]) expect(by(k)).toBe("planks30");
+    expect(by("constructionplant")).toBe("cement30");
+    // every tier 3 plant is unlocked before the Town milestone, and its first-load milestones come after its unlock
+    for (const k of ["oilwell", "sandpit", "refinery", "glassworks", "furniture", "constructionplant"] as PlantKind[]) {
+      expect(PLANTS[k].tier, k).toBe(3);
+      expect(at(by(k)), k).toBeLessThan(at("town"));
+    }
+    expect(at("fuel1")).toBeGreaterThan(at("pop1000"));
+    expect(at("goods1")).toBeGreaterThan(at("planks30"));
+    expect(at("parts1")).toBeGreaterThan(at("cement30"));
+    expect(at("city")).toBe(MILESTONES.length - 1);
+  });
+
+  it("tier 3 milestones measure fuel, goods and parts, and a Town supplied in everything", () => {
+    const m = (id: string) => MILESTONES.find((x) => x.id === id)!;
+    expect(m("fuel1").measure(view({ made: { fuel: 1 } }))).toEqual([1, 1]);
+    expect(m("goods30").measure(view({ bestDay: { goods: 12 } }))).toEqual([12, 30]);
+    expect(m("parts20").measure(view({ sold: { parts: 7 } }))).toEqual([7, 20]);
+    const sup = m("townSupplied");
+    const all = { food: 1, planks: 1, cement: 1 };
+    // a village fully supplied doesn't count; a Town needs its goods and fuel too
+    expect(sup.measure(view({ towns: [{ pop: 1200, supply: all }] }))[0]).toBe(0);
+    expect(sup.measure(view({ towns: [{ pop: 1600, supply: all }] }))[0]).toBe(0);
+    expect(sup.measure(view({ towns: [{ pop: 1600, supply: { ...all, goods: 0.9, fuel: 0.85 } }] }))[0]).toBe(1);
+    expect(m("towns2town").measure(view({ towns: [{ pop: 1600, supply: {} }, { pop: 1500, supply: {} }, { pop: 900, supply: {} }] }))).toEqual([2, 2]);
   });
 
   it("a few are open at once, in ladder order; reaching one opens the next", () => {

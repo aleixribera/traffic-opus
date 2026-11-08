@@ -34,13 +34,19 @@ export const PLACED: Record<PlacedKind, PlacedDef> = {
   smelter: plant("smelter"),
   cementworks: plant("cementworks"),
   coalplant: plant("coalplant"),
+  oilwell: plant("oilwell"),
+  sandpit: plant("sandpit"),
+  refinery: plant("refinery"),
+  glassworks: plant("glassworks"),
+  furniture: plant("furniture"),
+  constructionplant: plant("constructionplant"),
 };
 
 export const isPlacedKind = (k: BuildingKind | string): k is PlacedKind => k in PLACED;
 
 /** Build-menu tabs of the Industry category. */
 export const PLACED_TABS: { id: string; label: string; kinds: PlacedKind[]; blurb: string }[] = [
-  { id: "extraction", label: "Extraction", kinds: ["farm", "loggingcamp", "ironmine", "coalmine", "quarry"], blurb: "Extractors stand on a deposit and send what they win to your plants." },
-  { id: "processing", label: "Processing", kinds: ["foodplant", "sawmill", "smelter", "cementworks"], blurb: "Plants turn one product into another and sell finished goods to the towns." },
-  { id: "power", label: "Power", kinds: ["coalplant"], blurb: "Power plants burn coal and power your tier 2 buildings on their roads within reach." },
+  { id: "extraction", label: "Extraction", kinds: ["farm", "loggingcamp", "ironmine", "coalmine", "quarry", "oilwell", "sandpit"], blurb: "Extractors stand on a deposit and send what they win to your plants." },
+  { id: "processing", label: "Processing", kinds: ["foodplant", "sawmill", "smelter", "cementworks", "refinery", "glassworks", "furniture", "constructionplant"], blurb: "Plants turn one product into another and sell finished goods to the towns." },
+  { id: "power", label: "Power", kinds: ["coalplant"], blurb: "Power plants burn coal and power the buildings that need it on their roads within reach." },
 ];

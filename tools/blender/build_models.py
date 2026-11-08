@@ -81,6 +81,8 @@ def palette():
         # commercial
         "com_wall": "#d4d2ca", "com_roof": "#b6b8b8", "com_rib": "#cacccb", "com_canopy": "#8a4a36",
         "com_glass": "#93acbd",
+        # filling station: white canopy with a rust band (the shop canopy colour), dark pumps
+        "fs_canopy": "#eeefeb", "fs_band": "#b5533a", "fs_pump": "#3b4047",
         # workplaces
         "work_wall": "#9ba1a6", "work_roof": "#6e747a", "work_glass": "#7d98ad", "work_trim": "#b8bdc0",
         # industry
@@ -2966,6 +2968,45 @@ def b_aptower(M, P):
     return L
 
 
+def b_fuelstation(M, P):
+    """Filling station: an asphalt forecourt under a white canopy on four columns over two pump islands, a small
+    kiosk shop at the back with a glass front, a price pylon at the front corner, two parking bays."""
+    L = lot(M, P, 24, 24, bay_row(2, cx=-7.0))
+    fy0, fy1 = L.yf + PARK_DEPTH, 4.6
+    box(M, -12.0, 12.0, fy0, fy1, PAD_H, PAD_H + 0.01, P["asphalt"])
+    # pump islands with two pumps each, a kerb round them
+    for ix in (-4.2, 4.2):
+        box(M, ix - 0.8, ix + 0.8, -3.6, 2.2, PAD_H, PAD_H + 0.2, P["concrete"], bevel=0.05)
+        for py in (-2.0, 0.6):
+            box(M, ix - 0.4, ix + 0.4, py - 0.35, py + 0.35, PAD_H + 0.2, 1.9, P["fs_pump"], bevel=0.04)
+            box(M, ix - 0.42, ix + 0.42, py - 0.37, py + 0.37, 1.5, 1.75, P["fs_canopy"])
+    # canopy: columns, deck, a band round the edge
+    for cx in (-4.2, 4.2):
+        for cy in (-3.3, 1.9):
+            box(M, cx - 0.22, cx + 0.22, cy - 0.22, cy + 0.22, PAD_H + 0.2, 4.7, P["fs_canopy"])
+    box(M, -8.6, 8.6, -4.7, 3.3, 4.7, 5.1, P["fs_canopy"])
+    box(M, -8.7, 8.7, -4.8, 3.4, 5.1, 5.6, P["fs_band"], bevel=0.04)
+    box(M, -8.4, 8.4, -4.5, 3.1, 5.6, 5.64, P["fs_canopy"])
+    # kiosk shop at the back: glass front, flat roof with a parapet, plant on the roof
+    kx0, kx1, ky0, ky1 = -8.5, 6.5, 6.0, L.y1
+    box(M, kx0, kx1, ky0, ky1, 0, 3.8, P["com_wall"])
+    box(M, kx0 + 1.0, kx1 - 3.0, ky0 - 0.06, ky0, 0.3, 2.8, P["com_glass"])
+    box(M, kx1 - 2.4, kx1 - 1.0, ky0 - 0.06, ky0, 0.0, 2.6, P["fs_pump"])
+    box(M, kx0 - 0.1, kx1 + 0.1, ky0 - 0.12, ky1 + 0.1, 3.8, 4.3, P["fs_band"])
+    box(M, kx0 + 0.3, kx1 - 0.3, ky0 + 0.2, ky1 - 0.3, 4.3, 4.34, P["com_roof"])
+    box(M, kx0 + 2.0, kx0 + 4.0, ky0 + 1.4, ky0 + 3.4, 4.3, 5.2, P["ac_box"], bevel=0.04)
+    box(M, kx0 - 0.3, kx1 + 0.3, ky0 - 1.6, ky0, PAD_H, PAD_H + 0.15, P["concrete"])
+    # air and water post, bins, the price pylon at the front corner
+    box(M, 9.2, 9.8, 5.2, 5.8, PAD_H, 1.3, P["fs_pump"], bevel=0.04)
+    box(M, -10.6, -10.0, 5.2, 5.8, PAD_H, 1.0, P["gb_skip_g"], bevel=0.04)
+    box(M, 10.4, 10.7, -5.2, -4.9, 0, 4.5, P["fs_pump"])
+    box(M, 9.7, 11.4, -5.3, -4.8, 4.5, 7.3, P["fs_canopy"], bevel=0.04)
+    box(M, 9.65, 11.45, -5.35, -4.75, 6.6, 7.3, P["fs_band"])
+    for z in (4.9, 5.5, 6.1):
+        box(M, 9.9, 11.2, -5.36, -5.3, z, z + 0.32, P["fs_pump"])
+    return L
+
+
 SERVICES = ("garbage", "firestation", "police", "clinic", "hospital", "school", "highschool", "university",
             "park", "parklarge", "windturbine", "coalplant", "solarfarm", "waterpump", "sewageoutlet",
             "townhall", "hamlethall", "villagehall", "cityhall", "stadium", "obstower", "concerthall", "skytower")
@@ -2977,6 +3018,7 @@ BUILDINGS = {
     "apartments": (b_apartments, 30, 30, 6),
     "shop": (b_shop, 18, 20, 4),
     "store": (b_store, 30, 28, 8),
+    "fuelstation": (b_fuelstation, 24, 24, 2),
     "mall": (b_mall, 48, 40, 14),
     "office": (b_office, 20, 22, 5),
     "tower": (b_tower, 30, 30, 9),
