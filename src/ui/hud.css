@@ -664,3 +664,77 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .convoy-tag:focus-visible { outline: 2px solid #ffd26a; outline-offset: 2px; }
 @keyframes ctlamp { 50% { background: #5a3d10; box-shadow: none; } }
 @media (prefers-reduced-motion: reduce) { .convoy-tag .ct-lamp { animation: none; } }
+
+/* ------------------------------------------------------------ inspector: one anatomy for every panel (docs/ui-style.md "Inspector") */
+.panel > header.ip-head { gap: 6px; padding-right: 38px; }
+.ip-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ip-tn, .ip-ts { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ip-ts { font: 500 var(--t-xs)/1.2 var(--f-text); letter-spacing: 0.02em; text-transform: none; color: var(--cream-2); }
+.lv-badge { flex: none; text-transform: none; padding: 3px 5px; border: 1px solid var(--pin); border-radius: 1px; font: 600 var(--t-xs)/1 var(--f-text); letter-spacing: 0.06em; color: var(--ochre-hi); font-variant-numeric: tabular-nums lining-nums; }
+.ip-act { flex: none; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; background: none; border: 1px solid transparent; border-radius: var(--r); color: var(--cream-2); }
+.ip-act svg { width: 16px; height: 16px; }
+.ip-act:hover { color: var(--cream); background: var(--plate-3); border-color: var(--rule-2); }
+.ip-act.on { color: var(--ochre-hi); border-color: var(--pin); }
+.ip-act.demolish.armed { color: var(--cream); background: var(--brick); border-color: var(--bad); }
+.ip-act:focus-visible, .fchip:focus-visible, .ip-more summary:focus-visible, .ip-flowbtn:focus-visible { outline: 2px solid var(--ochre); outline-offset: 1px; }
+
+/* the status: one sentence, a diamond whose colour repeats what the words say */
+.ip-st { display: flex; gap: 8px; align-items: baseline; margin: 0 0 4px; font-weight: 600; font-size: var(--t-md); line-height: 1.35; }
+.ip-st > i { width: 8px; height: 8px; flex: none; background: var(--cream-3); transform: translateY(-1px) rotate(45deg); }
+.ip-st.good > i { background: var(--good); }
+.ip-st.warn > i { background: var(--ochre); }
+.ip-st.bad > i { background: var(--bad); }
+.ip-st.bad .ip-st-t { color: var(--bad); }
+.ip-st-t { min-width: 0; }
+.ip-tag { margin-left: auto; padding-left: 8px; font: 500 var(--t-xs)/1.35 var(--f-text); color: var(--cream-2); white-space: nowrap; }
+.ip-fix { margin: 0 0 4px 16px; color: var(--cream-2); line-height: 1.4; }
+.ip-st + .ip-keys, .ip-fix + .ip-keys { margin-top: 10px; }
+
+/* the three key numbers: big tabular figures over a small caption, hairline columns */
+.ip-keys { display: grid; grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr)); margin: 10px 0 12px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.ip-key { padding: 8px 0 7px 10px; border-left: 1px solid var(--rule); min-width: 0; }
+.ip-key:first-child { border-left: 0; padding-left: 0; }
+.ip-key b { display: block; font: 600 20px/1.1 var(--f-text); color: var(--cream); font-variant-numeric: tabular-nums lining-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ip-key b small { margin-left: 2px; font-size: var(--t-sm); font-weight: 500; color: var(--cream-2); }
+.ip-key b.good { color: var(--good); }
+.ip-key b.bad { color: var(--bad); }
+.ip-key b.warn { color: var(--ochre-hi); }
+.ip-key span { display: block; margin-top: 2px; font-size: var(--t-xs); line-height: 1.3; color: var(--cream-2); }
+
+/* the flow: where it comes from, where it goes; chips select the place and light it on the map */
+.ip-flow { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 10px; margin: 0 0 12px; align-items: start; }
+.ip-flow dt { display: flex; align-items: center; gap: 6px; padding-top: 5px; font-size: var(--t-xs); letter-spacing: 0.04em; color: var(--cream-2); }
+.ip-flow dt::before { content: ""; width: 7px; height: 7px; flex: none; border: 1px solid var(--cream-3); }
+.ip-flow dt.fl-from::before { background: var(--cream); border-color: var(--cream); }
+.ip-flow dt.fl-to::before, .ip-flow dt.fl-heading-to::before { background: var(--ochre); border-color: var(--ochre); }
+.ip-flow dd { margin: 0; display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.fchip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; min-height: 26px; padding: 2px 7px 2px 4px; background: var(--plate-2); border: 1px solid var(--rule-2); border-radius: var(--r); color: var(--cream); font: 500 var(--t-sm)/1.2 var(--f-text); text-align: left; }
+button.fchip:hover { background: var(--plate-3); border-color: var(--pin); }
+.fchip.still { background: none; border-style: dashed; color: var(--cream-2); }
+.fchip svg { width: 16px; height: 16px; flex: none; }
+.fchip .fc-p { display: inline-flex; margin-left: -3px; }
+.fchip .fc-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fchip em { font-style: normal; font-size: var(--t-xs); color: var(--cream-2); white-space: nowrap; font-variant-numeric: tabular-nums lining-nums; }
+.fchip em.bad { color: var(--bad); }
+.fchip em.good { color: var(--good); }
+
+/* the level: one thin bar and one line */
+.ip-lvl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; align-items: center; margin: 0 0 4px; font-size: var(--t-xs); color: var(--cream-2); }
+.ip-lvl-k { font-weight: 600; color: var(--ochre-hi); font-variant-numeric: tabular-nums lining-nums; }
+.ip-lvl .bar { height: 4px; }
+.ip-lvl .bar i { background: var(--ochre); }
+.ip-lvl-t { grid-column: 2; line-height: 1.35; }
+.ip-lvl-t.bad { color: var(--bad); }
+
+/* everything else, folded away (remembered per kind) */
+.ip-more { margin-top: 12px; border-top: 1px solid var(--rule); }
+.ip-more summary { display: flex; align-items: center; gap: 7px; padding: 9px 0 3px; cursor: pointer; list-style: none; color: var(--cream-2); font-weight: 600; letter-spacing: 0.02em; }
+.ip-more summary::-webkit-details-marker { display: none; }
+.ip-more summary::before { content: ""; width: 0; height: 0; border-style: solid; border-width: 4px 0 4px 6px; border-color: transparent transparent transparent var(--ochre); transition: transform .12s; }
+.ip-more[open] summary::before { transform: rotate(90deg); }
+.ip-more summary:hover { color: var(--cream); }
+.ip-more-body { padding-top: 4px; }
+@media (prefers-reduced-motion: reduce) { .ip-more summary::before { transition: none; } }
+
+.ip-sig { margin-top: 4px; }
+.ip-flowbtn { margin-top: 2px; }

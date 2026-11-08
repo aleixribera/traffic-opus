@@ -79,8 +79,8 @@ function worksRows(g: Game, b: Building, bar: Bar): string {
 }
 
 /** Extra facts rows for any plant's panel (empty for most). */
-export function specialRows(g: Game, b: Building, bar: Bar): string {
-  return turbineRows(b) + worksRows(g, b, bar) + seasonRows(b, g.time);
+export function specialRows(g: Game, b: Building, bar: Bar, season = true): string {
+  return turbineRows(b) + worksRows(g, b, bar) + (season ? seasonRows(b, g.time) : "");
 }
 
 /** A plant's conveyors and pipes, as a section of its panel. */
