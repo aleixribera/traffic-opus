@@ -98,7 +98,6 @@ it("builds the showcase company", () => {
   g.start();
   g.unlockAll(); // everything unlocked while it is built (the milestones it really reached are set at the end)
   g.money = 1e9;
-  for (let i = -9; i <= 9; i++) for (let j = -9; j <= 9; j++) g.tiles.add(`${i},${j}`);
   const B = mk(g);
   const A = g.towns.list[0];
   say(`hamlet ${A.name} at ${A.c.x.toFixed(0)},${A.c.y.toFixed(0)} pop ${A.pop}`);

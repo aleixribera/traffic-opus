@@ -7,6 +7,7 @@ import { add, rectDistance, scale, v2, type V2 } from "../src/core/math";
 import { Game } from "../src/game/city";
 import { Industry, PLANT_KINDS, type IndustryHost } from "../src/game/industry";
 import type { Building } from "../src/game/buildings";
+import { PLACED } from "../src/game/placed";
 import { GATE_REACH, GROW_NEED, LEVEL_MULT, SITE_LEVELS, siteFrame, siteLayout, slotHalf, type SiteLayout } from "../src/game/sites";
 import type { PendingSpawn } from "../src/sim/traffic";
 import { planRoad } from "../src/roads/planner";
@@ -164,11 +165,9 @@ describe("site levels", () => {
   });
 });
 
-/** Every tile round the origin bought (big sites need room), and no town. */
+/** A new map with no town yet (there is no land to buy: the company builds anywhere). */
 function openGame(): Game {
-  const g = new Game(7);
-  for (let i = -8; i <= 8; i++) for (let j = -8; j <= 8; j++) g.tiles.add(`${i},${j}`);
-  return g;
+  return new Game(7);
 }
 
 /** Open, dry, flat ground where a site of `kind` can stand (on its deposit), at least 400 m from the origin. */
@@ -181,6 +180,22 @@ function openSpot(g: Game, kind: "foodplant" | "farm", opts = {}): V2 {
 }
 
 describe("free placement and the gate", () => {
+  it("builds anywhere: a farm several km out stands on its soil, with no land to buy", () => {
+    const g = new Game(7);
+    g.start();
+    let p: V2 | null = null;
+    for (let r = 4000; r < 9000 && !p; r += 250) for (let k = 0; k < 24 && !p; k++) {
+      const q = v2(Math.cos((k / 24) * 6.283) * r, Math.sin((k / 24) * 6.283) * r);
+      if (g.placedPlan("farm", q)?.ok) p = q;
+    }
+    expect(p, "a farm plot 4+ km out").not.toBeNull();
+    const m = g.money;
+    const b = g.place("farm", p!)!;
+    expect(b).toBeTruthy();
+    expect(Math.hypot(b.c.x, b.c.y)).toBeGreaterThan(3800);
+    expect(g.money).toBe(m - PLACED.farm.cost); // the plant's price, nothing for land
+  });
+
   it("stands free with no road near, turns in steps, and joins the first road that passes its gate", () => {
     const g = openGame();
     const toasts: string[] = [];
@@ -244,7 +259,6 @@ describe("free placement and the gate", () => {
   it("keeps off a town's square, and a town's hall is never taken for a site", () => {
     const g = openGame();
     g.start();
-    for (let i = -8; i <= 8; i++) for (let j = -8; j <= 8; j++) g.tiles.add(`${i},${j}`);
     g.money = 1e7;
     const t = g.towns.list[0];
     const hall = g.buildings.byId.get(t.hall!)!;

@@ -167,8 +167,3 @@ export const SIM = {
   workTarget: 150,
   deliveryInterval: 55,
 };
-
-/** Land tile size in metres. Tile (i, j) is centred on (i * TILE, j * TILE); the start tile is centred on the origin. */
-export const TILE = 640;
-/** Tiles owned at the start: the 3x3 block around the origin (CS2 starts with 9 tiles). */
-export const START_TILES: [number, number][] = [-1, 0, 1].flatMap((i) => [-1, 0, 1].map((j) => [i, j] as [number, number]));

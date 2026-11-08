@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import { TILE } from "../config";
 import { NF, RIVER_K, RIVER_S } from "../world/gen";
 import { CH, RES, type Terrain } from "../world/terrain";
 import { PAL } from "./palette";
@@ -7,7 +6,6 @@ import type { View } from "./view";
 
 export const MOUNTAIN_STEP_H = 7;
 const N = CH + 4; // texels per chunk side: nodes -1 .. CH+2
-const OWN = 256; // owned-tile texture covers tiles -128..127 on each axis
 const LODS = 5; // chunk size 1 km * 4^L
 const MAX_PER_LOD = 220;
 
@@ -31,39 +29,21 @@ export class Terrain3D {
   private queue: { lod: number; ci: number; cj: number; d: number }[] = [];
   private frame = 0;
   private plane = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2).translate(0.5, 0, 0.5);
-  private ownTex: THREE.DataTexture;
-  private ownData = new Uint8Array(OWN * OWN);
   readonly shared = {
-    uOverlay: { value: 0 }, // 0 none, 1 resources, 2 land tiles
-    uOwn: { value: null as unknown as THREE.DataTexture },
-    uTile: { value: TILE },
+    uOverlay: { value: 0 }, // 0 none, 1 resources
     uSun: { value: new THREE.Vector2(-0.56, -0.83) },
     uRot: { value: new THREE.Vector2(1, 0) },
   };
 
   constructor(private terrain: Terrain, _small: boolean) {
-    this.ownTex = new THREE.DataTexture(this.ownData, OWN, OWN, THREE.RedFormat, THREE.UnsignedByteType);
-    this.ownTex.needsUpdate = true;
-    this.shared.uOwn.value = this.ownTex;
     // far background under everything (the endless map never shows it, but the first frame might)
     const bg = new THREE.Mesh(new THREE.PlaneGeometry(1e6, 1e6).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: PAL.ground }));
     bg.position.y = -2;
     this.group.add(bg);
   }
 
-  /** Owned land tiles ("i,j" keys). */
-  setTiles(owned: Set<string>) {
-    this.ownData.fill(0);
-    for (const k of owned) {
-      const [i, j] = k.split(",").map(Number);
-      const a = i + OWN / 2, b = j + OWN / 2;
-      if (a >= 0 && b >= 0 && a < OWN && b < OWN) this.ownData[b * OWN + a] = 255;
-    }
-    this.ownTex.needsUpdate = true;
-  }
-
-  setOverlay(mode: "none" | "resources" | "tiles") {
-    this.shared.uOverlay.value = mode === "resources" ? 1 : mode === "tiles" ? 2 : 0;
+  setOverlay(mode: "none" | "resources") {
+    this.shared.uOverlay.value = mode === "resources" ? 1 : 0;
   }
 
   /** Call every frame: keeps the chunks covering the view built, at the right detail, within a time budget. */
@@ -184,8 +164,8 @@ const c3 = (c: number) => {
 
 const GROUND_GLSL = /* glsl */ `
 varying vec2 vWorld;
-uniform sampler2D uF0; uniform sampler2D uF1; uniform sampler2D uF2; uniform sampler2D uOwn;
-uniform vec2 uOrigin; uniform float uRes; uniform float uOverlay; uniform float uTile; uniform vec2 uSun; uniform vec2 uRot;
+uniform sampler2D uF0; uniform sampler2D uF1; uniform sampler2D uF2;
+uniform vec2 uOrigin; uniform float uRes; uniform float uOverlay; uniform vec2 uSun; uniform vec2 uRot;
 
 vec4 bsw(float t) {
   float t2 = t * t, t3 = t2 * t;
@@ -354,7 +334,7 @@ vec3 groundColor(vec2 p) {
     c = mix(c, wc, wa);
   }
   // resources overlay
-  if (uOverlay > 0.5 && uOverlay < 1.5) {
+  if (uOverlay > 0.5) {
     c = mix(c, c * 0.72 + 0.28 * vec3(1.0), 0.6);
     c = mix(c, ${c3(PAL.resFert)}, cov(fert) * 0.75 * (1.0 - wa));
     c = mix(c, ${c3(PAL.resForest)}, cov(forest) * 0.7);
@@ -364,16 +344,6 @@ vec3 groundColor(vec2 p) {
     c = mix(c, ${c3(PAL.resLime)}, cov(lime) * 0.85);
     c = mix(c, ${c3(PAL.resSand)}, cov(sandD) * 0.85);
     c = mix(c, ${c3(PAL.resCopper)}, cov(copper) * 0.85);
-  }
-  // the tile view shows the grid and dims land you don't own (always dimming it drew hard seams across the grass)
-  vec2 tc = floor(p / uTile + 0.5) + ${(OWN / 2).toFixed(1)};
-  float owned = (tc.x < 0.0 || tc.y < 0.0 || tc.x >= ${OWN.toFixed(1)} || tc.y >= ${OWN.toFixed(1)}) ? 0.0 : texelFetch(uOwn, ivec2(tc), 0).r;
-  if (uOverlay > 1.5) {
-    vec2 tf = abs(fract(p / uTile + 0.5) - 0.5) * uTile;
-    float e = min(tf.x, tf.y);
-    float lw = fwidth(p.x) * 1.2;
-    c = mix(c, vec3(0.35), (1.0 - smoothstep(lw, lw * 2.0, e)) * 0.5);
-    c = mix(c, c * vec3(0.78, 0.8, 0.86), 1.0 - owned);
   }
   return c;
 }

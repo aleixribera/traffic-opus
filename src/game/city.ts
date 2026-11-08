@@ -1,5 +1,5 @@
 import {
-  BUILDING_TYPES, BULLDOZE_REFUND, START_TILES, TILE, ROAD_TYPES, SIGNAL_COST, SIM, isHighway, roadWidth, type RoadTypeId,
+  BUILDING_TYPES, BULLDOZE_REFUND, ROAD_TYPES, SIGNAL_COST, SIM, isHighway, roadWidth, type RoadTypeId,
 } from "../config";
 import { add, dist, dist2, rectCorners, rectDistance, scale, sub, type V2 } from "../core/math";
 import { mulberry32 } from "../core/noise";
@@ -11,7 +11,7 @@ import { Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import { Terrain } from "../world/terrain";
 import { Buildings, obbOverlap, type Building, type BuildingMove } from "./buildings";
 import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, type LotTemplate } from "./growables";
-import { Progress, tilePrice, type Feature, type Milestone, type ProgressView } from "./progression";
+import { Progress, type Feature, type Milestone, type ProgressView } from "./progression";
 import { DAY, HOUR, Society } from "./society";
 import { PLACED, SHORE_REACH, type PlacedKind } from "./placed";
 import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, TRUCK_COST, isPlantKind, type Product } from "./industry";
@@ -39,7 +39,6 @@ export type GameEvent =
   | { t: "zones" }
   | { t: "milestone"; m: Milestone }
   | { t: "money" }
-  | { t: "tiles" }
   | { t: "toast"; msg: string }
   /** a town has grown into a new size */
   | { t: "townSize"; town: number; size: number };
@@ -70,7 +69,6 @@ export class Game {
   industry: Industry;
   towns: TownSystem;
   money = 0;
-  tiles = new Set<string>();
   time = 0;
   playtime = 0;
   speed = 1;
@@ -119,12 +117,10 @@ export class Game {
       fail: (trip, reason) => this.onFail(trip, reason),
       busAt: (v) => this.transit.busAt(v),
     });
-    for (const [i, j] of START_TILES) this.tiles.add(`${i},${j}`);
     this.money = START_MONEY;
     const t = this.terrain;
-    // (towns grow on any land: only the company's own buildings need owned tiles)
-    // (and never inside the fence of one of the company's sites)
-    this.zones = new ZoneMap(this.net, { isWater: (p) => t.isWater(p), isMountain: (p) => t.isMountain(p), owned: () => true, taken: (p) => this.inSite(p), landKey: () => this.buildings.sites.map((b) => b.id).join() });
+    // (towns grow on any land, never inside the fence of one of the company's sites)
+    this.zones = new ZoneMap(this.net, { isWater: (p) => t.isWater(p), isMountain: (p) => t.isMountain(p), taken: (p) => this.inSite(p), landKey: () => this.buildings.sites.map((b) => b.id).join() });
     this.people = new Society(this);
     this.transit = new Transit(this);
     this.utilities = new Utilities(this);
@@ -156,7 +152,6 @@ export class Game {
       isWater: (p) => t.isWater(p),
       isMountain: (p) => t.isMountain(p),
       inBounds: (p) => t.inBounds(p, 2),
-      unlocked: () => true, // roads can go anywhere (CS2: building needs owned land, roads don't)
       buildingsHit: (pts, hw) => this.buildings.hit(pts, hw).filter((id) => !this.buildings.byId.get(id)?.zone),
       money: () => this.money,
     };
@@ -251,56 +246,6 @@ export class Game {
 
   private emit(e: GameEvent) {
     for (const f of this.listeners) f(e);
-  }
-
-  // ---------------------------------------------------------------- tiles
-
-  tileOf(p: V2): [number, number] {
-    return [Math.floor(p.x / TILE + 0.5), Math.floor(p.y / TILE + 0.5)];
-  }
-
-  unlocked(p: V2): boolean {
-    const [i, j] = this.tileOf(p);
-    return this.tiles.has(`${i},${j}`);
-  }
-
-  get tileSlotsLeft(): number {
-    return this.progress.unlocked.tiles - this.tiles.size;
-  }
-
-  get nextTilePrice(): number {
-    return tilePrice(this.tiles.size);
-  }
-
-  /** Why a tile can't be bought, or null if it can. */
-  tileBlock(i: number, j: number): string | null {
-    if (this.tiles.has(`${i},${j}`)) return "Already yours";
-    if (Math.abs(i) > 120 || Math.abs(j) > 120) return "Too far away";
-    if (this.tileSlotsLeft <= 0) return "Reach the next milestone to buy more land";
-    if (this.nextTilePrice > this.money) return "Not enough money";
-    const nb = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => this.tiles.has(`${i + a},${j + b}`));
-    if (!nb && !this.roadInTile(i, j)) return "Must border your land or have one of your roads";
-    return null;
-  }
-
-  canUnlock(i: number, j: number): boolean {
-    return this.tileBlock(i, j) === null;
-  }
-
-  private roadInTile(i: number, j: number): boolean {
-    const x0 = (i - 0.5) * TILE, y0 = (j - 0.5) * TILE;
-    return this.net.segsNear(x0, y0, x0 + TILE, y0 + TILE).size > 0;
-  }
-
-  unlockTile(i: number, j: number): boolean {
-    if (!this.canUnlock(i, j)) return false;
-    this.money -= this.nextTilePrice;
-    this.tiles.add(`${i},${j}`);
-    this.zones.rebuildAll();
-    this.emit({ t: "tiles" });
-    this.emit({ t: "zones" });
-    this.emit({ t: "money" });
-    return true;
   }
 
   // ---------------------------------------------------------------- unlocks
@@ -819,8 +764,7 @@ export class Game {
 
   /** Where a placed building would go near p, and what it would cost and replace. */
   placedPlan(kind: PlacedKind, p: V2, opts?: PlaceOpts): (Placement & { cost: number; deposit?: { name: string; share: number } }) | null {
-    const world = { ...this.world, unlocked: (q: V2) => this.unlocked(q) };
-    const pl = this.buildings.placement(kind, p, world, (o) => !!o.zone, opts);
+    const pl = this.buildings.placement(kind, p, this.world, (o) => !!o.zone, opts);
     if (!pl) return null;
     const D = PLACED[kind];
     const cost = D.cost;
@@ -1530,7 +1474,6 @@ export class Game {
       transit: this.transit.toJSON(),
       money: this.money,
       progress: this.progress.toJSON(),
-      tiles: [...this.tiles],
       towns: this.towns.toJSON(),
       budget: this.budget as Budget | undefined,
       time: this.time,
@@ -1543,7 +1486,7 @@ export class Game {
     if ((data as { v?: number }).v !== SAVE_V) throw new Error("Save from an older version of the game: it can't be loaded");
     const g = new Game(data.seed);
     g.net.load(data.net);
-    g.tiles = new Set(data.tiles);
+    // (saves from before land was dropped carry a `tiles` list: ignored)
     g.progress.load(data.progress);
     g.money = data.money;
     if (data.budget) {

@@ -100,7 +100,6 @@ const FACE_REACH = 300;
 export interface PlaceWorld {
   isWater(p: V2): boolean;
   isMountain(p: V2): boolean;
-  unlocked(p: V2): boolean;
   inBounds(p: V2): boolean;
 }
 
@@ -251,11 +250,8 @@ export class Buildings {
       samples.push({ x: c.x + u.x * a + v.x * b, y: c.y + u.y * a + v.y * b });
     }
     samples.push(c);
-    // (a site claims its whole plot from the tile its middle stands on: a big plot needn't own every tile it spills over)
-    if (T.zone === "placed" && world.inBounds(c) && !world.unlocked(c)) return fail("Not your land: buy the tile under its middle first (M)");
     for (const k of samples) {
       if (!world.inBounds(k)) return fail("Outside the map");
-      if (T.zone !== "placed" && !world.unlocked(k)) return fail("Not your land: buy this tile first (M)");
       if (world.isWater(k)) return fail("Can't build on water");
     }
     // mountains
@@ -460,8 +456,7 @@ export class Buildings {
       const c = m.c1;
       const corners = rectCorners(c, b.hw, b.hd, b.rot);
       const samples = [...corners, c, ...corners.map((k) => scale(add(k, c), 0.5))];
-      // (a site only needs the land under its centre, docs/design.md "Industry sites")
-      let ok = samples.every((k) => world.inBounds(k) && (b.placed || world.unlocked(k)) && !world.isWater(k) && !world.isMountain(k)) && world.unlocked(c);
+      let ok = samples.every((k) => world.inBounds(k) && !world.isWater(k) && !world.isMountain(k));
       const gate = b.placed ? siteFrame(c, b.rot, b.side, b.hd).gate : null;
       if (ok) ok = !this.list.some((o) => o.id !== b.id && (!moving.has(o.id) || target.has(o.id)) &&
         obbOverlap(c, b.hw + 0.3, b.hd + 0.3, b.rot, target.get(o.id) ?? o.c, o.hw, o.hd, o.rot));
