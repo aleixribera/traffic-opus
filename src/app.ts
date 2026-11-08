@@ -8,6 +8,9 @@ import {
   type CurveMode, type Plan, type RoundaboutSize, type Snap, type SnapOpts,
 } from "./roads/planner";
 import { Buildings3D } from "./render/buildings3d";
+import { Parks3D } from "./render/parks3d";
+import { Fireworks } from "./render/fx3d";
+import { ConvoyTags } from "./ui/convoyTags";
 import { GATE_GAP, siteFrame, siteToWorld } from "./game/sites";
 
 /** How far outside a waiting site's gate the road tool snaps a road's end (m): clear of the fence, well in reach. */
@@ -73,6 +76,13 @@ export class App {
   roadsFar!: RoadsFar;
   labels = new MapLabels();
   icons = new MapIcons();
+  /** tags over the oversized-load convoys (click one to follow it) */
+  convoyTags = new ConvoyTags((id) => { this.followT = id === null ? 0 : 1; });
+  private followT = 0;
+  /** the camera gliding to a place (a finished landmark): from, to, start and length (s) */
+  private glide: { from: { x: number; y: number; h: number }; to: { x: number; y: number; h: number }; t: number; dur: number } | null = null;
+  parks3d!: Parks3D;
+  fireworks = new Fireworks();
   private iconT = 0;
   private labelKey = "";
   vehicles!: Vehicles3D;
@@ -175,6 +185,20 @@ export class App {
     this.setGame(Game.load(data));
   }
 
+  /** Glide the camera to a place over `dur` seconds (eased), ending zoomed to `halfH`. */
+  glideTo(p: V2, halfH: number, dur = 1.6) {
+    this.convoyTags.follow(null);
+    this.glide = { from: { x: this.view.cx, y: this.view.cy, h: this.view.halfH }, to: { x: p.x, y: p.y, h: Math.min(this.view.maxHalfH, halfH) }, t: 0, dur };
+  }
+
+  /** A landmark is finished: the camera swings over to it and a fireworks show goes up over it. */
+  private celebrate(id: number) {
+    const b = this.game.buildings.byId.get(id);
+    if (!b || this.mode !== "play") return;
+    this.glideTo(b.c, Math.max(220, Math.hypot(b.hw, b.hd) * 1.6), 2.2);
+    this.fireworks.launch(b.c, Math.max(70, Math.hypot(b.hw, b.hd) * 0.8), 18, performance.now() / 1000 + 1.4);
+  }
+
   /** Point the camera at a place, zoomed out to at least `halfH`. */
   lookAt(p: V2, halfH: number) {
     this.view.cx = p.x;
@@ -198,7 +222,10 @@ export class App {
     this.buildings3d = new Buildings3D(this.models, () => this.game.time);
     this.vehicles.lotOf = (id) => { const b = g.buildings.byId.get(id); return b ? this.buildings3d.lotWay(b) : null; };
     this.transit3d = new Transit3D(this.models.props.get("busstop"));
-    this.worldRoot.add(this.terrain3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group);
+    this.parks3d = new Parks3D(this.models);
+    this.convoyTags.follow(null);
+    this.glide = null;
+    this.worldRoot.add(this.terrain3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.fireworks.group);
     this.roads.rebuildAll();
     this.buildings3d.rebuild(g.buildings.list);
     this.terrain3d.setTiles(g.tiles);
@@ -211,6 +238,7 @@ export class App {
       else if (e.t === "milestone") { if (this.mode === "play") this.hud?.milestone(e.m); }
       else if (e.t === "toast") { if (this.mode !== "menu") this.hud?.toast(e.msg); }
       else if (e.t === "townSize") { if (this.mode === "play") this.hud?.townGrew(e.town, e.size); }
+      else if (e.t === "landmark") { if (this.mode === "play") { this.hud?.landmarkDone(e.b); this.celebrate(e.b); } }
       this.hud?.refresh();
     });
     this.cancelStroke();
@@ -399,6 +427,9 @@ export class App {
       }
       const panning = pi.button === 2 || (pi.button === 0 && !this.dragRect && (this.st.tool === "inspect" || e.pointerType === "touch" || this.keys.has(" ")));
       if (panning && pi.moved) {
+        // (taking the camera by hand lets a followed convoy go)
+        if (this.convoyTags.following !== null) this.convoyTags.follow(null);
+        this.glide = null;
         this.view.pan(dx, dy);
         this.clampView();
       }
@@ -1227,6 +1258,7 @@ export class App {
     // Q/E turn the view, R/F zoom (CS2)
     const turn = (this.keys.has("e") ? 1 : 0) - (this.keys.has("q") ? 1 : 0);
     const zoom = (this.keys.has("f") ? 1 : 0) - (this.keys.has("r") ? 1 : 0);
+    if ((mx || my) && (this.convoyTags.following !== null || this.glide)) { this.convoyTags.follow(null); this.glide = null; }
     if (mx || my) {
       const c = Math.cos(this.view.rot), s = Math.sin(this.view.rot);
       this.view.cx += (mx * c - my * s) * pan;
@@ -1240,6 +1272,26 @@ export class App {
     }
     g.update(dt);
     this.vehicles.update(g.traffic, g.alpha);
+    this.parks3d.update(g.parks.links, g.time + g.alpha * SIM.dt);
+    this.fireworks.update(this.view.camera);
+    if (this.glide) {
+      const G = this.glide;
+      G.t += dt;
+      const k = Math.min(1, G.t / G.dur), e = k * k * (3 - 2 * k);
+      this.view.cx = G.from.x + (G.to.x - G.from.x) * e;
+      this.view.cy = G.from.y + (G.to.y - G.from.y) * e;
+      this.view.halfH = G.from.h + (G.to.h - G.from.h) * e;
+      if (k >= 1) this.glide = null;
+    } else if (this.convoyTags.following !== null) {
+      // the camera keeps a followed convoy in the middle, easing after it (and zooms in a little to start with)
+      const v = g.traffic.vehicles.find((x) => x.id === this.convoyTags.following);
+      if (v) {
+        const p = ConvoyTags.centre(v, g.alpha), k = 1 - Math.exp(-dt * 5);
+        this.view.cx += (p.x - this.view.cx) * k;
+        this.view.cy += (p.y - this.view.cy) * k;
+        if (this.followT > 0) { this.view.halfH += (Math.min(this.view.halfH, 120) - this.view.halfH) * k; this.followT = Math.max(0, this.followT - dt); }
+      }
+    }
     this.transit3d.update(g.transit, g.net, this.st.tool === "transit" || !!this.hud?.linesShown, this.view.mpp, this.view.rot);
     this.flowT += dt;
     const flowOn = this.overlay === "flow";
@@ -1269,8 +1321,14 @@ export class App {
     this.terrain3d.update(this.view);
     this.roadsFar.update(this.view.mpp, this.view.w, this.view.h);
     this.labels.update(this.view);
+    this.convoyTags.update(this.view, g.alpha);
     this.iconT += dt;
-    if (this.iconT > 0.4) { this.iconT = 0; this.icons.set(this.uiHidden || this.mode === "menu" ? [] : g.buildings.list, this.view); this.townLabels(); }
+    if (this.iconT > 0.4) {
+      this.iconT = 0;
+      this.icons.set(this.uiHidden || this.mode === "menu" ? [] : g.buildings.list, this.view);
+      this.townLabels();
+      this.convoyTags.sync(g.traffic.vehicles, g.buildings.byId, this.uiHidden || this.mode === "menu");
+    }
     else this.icons.update(this.view);
     this.hud?.compassAngle(this.view.rot);
     this.view.render();

@@ -59,6 +59,8 @@ export interface ConvoyHost {
   piecesLeft(site: Building): { kind: BigKind; n: number } | null;
   /** a convoy got through (the milestones count it) */
   delivered?(kind: BigKind, to: Building): void;
+  /** a convoy set off (the news ticker and the map follow it) */
+  departed?(kind: BigKind, from: Building, to: Building): void;
   toast?(msg: string): void;
 }
 
@@ -130,6 +132,7 @@ export class Convoys {
       from: from.access!, fromSide: from.side, to: to.access!, toSide: to.side, truck: true, tries: 0, wait: 0, ...convoyBody(),
       trip: { kind: "cargo", from: from.id, to: to.id, resident: -1, cargo: "big", startT: this.h.time, freeFlow: 0, haul },
     });
+    this.h.departed?.(kind, from, to);
   }
 
   /** A convoy reached its destination: the piece goes into the landmark, or onto the power plant's turbine hall. */
@@ -143,7 +146,6 @@ export class Convoys {
     if (left && left.kind === r.big && left.n >= 1) this.h.pieceIn(to, r.big);
     else if (PLANTS[to.kind as PlantKind]?.makes && (to.plant.turbines ?? 0) < MAX_TURBINES && r.big === "turbine") {
       to.plant.turbines = (to.plant.turbines ?? 0) + 1;
-      this.h.toast?.(`A turbine reached the power plant: it makes ${Math.round(TURBINE_BOOST * 100)}% more power for good`);
     } else { this.back(r); return; }
     const home = this.h.buildings.byId.get(r.plant);
     if (home?.plant?.big) home.plant.big.shipped = (home.plant.big.shipped ?? 0) + 1;

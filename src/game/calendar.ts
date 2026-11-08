@@ -66,3 +66,25 @@ export function seasonAvg(kind: string, s: Season): number {
   for (let k = 0; k < N; k++) sum += seasonMult(kind, ((i + (k + 0.5) / N) / 4) * YEAR - (START_HOUR / 24) * DAY);
   return sum / N;
 }
+
+/**
+ * What the farms' fields look like now (the renderer swaps each field's model): spring shoots, summer green, the
+ * autumn harvest ripe gold and then, late in autumn, half the fields cut to stubble and bales, winter's bare furrows.
+ */
+export type FieldLook = "young" | "green" | "ripe" | "cut" | "bare";
+export function fieldLook(t: number): FieldLook {
+  const s = seasonOf(t);
+  if (s === "spring") return "young";
+  if (s === "summer") return "green";
+  if (s === "winter") return "bare";
+  return seasonPart(t) < 0.5 ? "ripe" : "cut";
+}
+
+/** The model a farm field slot (planted as site_field_g or site_field_w) is drawn with in this look. */
+export function fieldModel(slot: string, look: FieldLook): string {
+  if (look === "young") return "site_field_young";
+  if (look === "green") return "site_field_g";
+  if (look === "bare") return "site_field_bare";
+  if (look === "cut" && slot === "site_field_g") return "site_field_cut";
+  return "site_field_w";
+}

@@ -22,9 +22,9 @@ import { BLOCK, demandPerDay, gridPt, isHall, needsOf } from "./towns";
 import { F } from "../world/gen";
 import { Transit } from "./transit";
 import { Utilities } from "./utilities";
-import { seasonMult } from "./calendar";
-import { Convoys } from "./convoys";
-import { isMega, megaBlock, piecesLeft, townAt, MEGAS } from "./megaprojects";
+import { fieldLook, seasonMult } from "./calendar";
+import { BIG_NAME, Convoys, TURBINE_BOOST, type BigKind } from "./convoys";
+import { isMega, megaBlock, megaStage, piecesLeft, townAt, MEGAS } from "./megaprojects";
 import { PARK_SMOKE, Parks } from "./parks";
 import { sizeOf } from "./towns";
 import type { PlaceOpts, Placement } from "./buildings";
@@ -51,7 +51,9 @@ export type GameEvent =
   /** a town has grown into a new size */
   | { t: "townSize"; town: number; size: number }
   /** one of the company's landmarks is finished (its banner) */
-  | { t: "landmark"; b: number };
+  | { t: "landmark"; b: number }
+  /** an oversized-load convoy set off ("out") or got there ("in") */
+  | { t: "convoy"; phase: "out" | "in"; kind: BigKind; from: number; to: number };
 
 /** The company's books for an hour. Income comes only from loads delivered to towns (and bus fares). */
 export interface Budget {
@@ -184,7 +186,20 @@ export class Game {
         L.pieces++;
         Industry.finishSite(b);
       },
-      delivered: () => { this.progress.onPiece(); this.checkMilestones(); },
+      delivered: (kind, to) => {
+        this.progress.onPiece();
+        this.checkMilestones();
+        const name = BUILDING_TYPES[to.kind].name;
+        const mega = isMega(to.kind);
+        this.toast(mega
+          ? `${BIG_NAME[kind]} delivered to the ${name} site`
+          : `${BIG_NAME[kind]} installed at the ${name}: +${Math.round(TURBINE_BOOST * 100)}% power for good`);
+        this.emit({ t: "convoy", phase: "in", kind, from: -1, to: to.id });
+      },
+      departed: (kind, from, to) => {
+        this.toast(`Oversized load: a ${BIG_NAME[kind].toLowerCase()} leaves the ${BUILDING_TYPES[from.kind].name} for the ${BUILDING_TYPES[to.kind].name}, under escort`);
+        this.emit({ t: "convoy", phase: "out", kind, from: from.id, to: to.id });
+      },
       toast: (msg) => this.toast(msg),
     });
     this.parks = new Parks({
@@ -1230,6 +1245,14 @@ export class Game {
    * A landmark whose construction is over is finished: it serves the town it stands in or beside, and the company
    * gets its banner. True when one was.
    */
+  private lookWas = "";
+  /** What the buildings look like beyond their level: each landmark's stage, and the season. */
+  private lookSig(): string {
+    let s = fieldLook(this.time) as string;
+    for (const b of this.buildings.sites) if (isMega(b.kind) && isPlantKind(b.kind)) s += `|${b.id}:${megaStage(b, PLANTS[b.kind])}`;
+    return s;
+  }
+
   private landmarks(): boolean {
     let any = false;
     for (const b of this.buildings.sites) {
@@ -1484,6 +1507,9 @@ export class Game {
     this.industry.tick(span);
     this.convoys.tick();
     if (this.landmarks()) changed = true;
+    // (a landmark's site rising to its next stage, or a new season on the farms' fields, is drawn anew)
+    const look = this.lookSig();
+    if (look !== this.lookWas) { this.lookWas = look; changed = true; }
     this.utilities.tick(span);
     this.transit.tick();
     for (const b of [...this.buildings.list]) this.stepBuilding(b, span);

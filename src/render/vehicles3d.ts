@@ -6,13 +6,32 @@ import type { LotWay } from "./buildings3d";
 import { VEHICLE_MODELS, type ModelSet, type VehicleKind } from "./models";
 import { CARGO_COLOR } from "./palette";
 import { TRUCK_CLASSES } from "../game/trucks";
+import { CONVOY_UNITS } from "../game/convoys";
 import type { Unit } from "../sim/traffic";
 
 interface Batch {
   kind: VehicleKind;
-  meshes: { mesh: THREE.InstancedMesh; tint: "body" | "cargo" | null }[];
+  meshes: { mesh: THREE.InstancedMesh; tint: "body" | "cargo" | "beacon" | null }[];
   cap: number;
 }
+
+/** A soft round glow (a flashing beacon's light on the road round it): white in the middle, fading out. */
+function glowTexture(): THREE.Texture {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const x = c.getContext("2d")!;
+  const g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, "rgba(255,255,255,1)");
+  g.addColorStop(0.25, "rgba(255,255,255,0.55)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  x.fillStyle = g;
+  x.fillRect(0, 0, 64, 64);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+/** How fast a convoy's beacons flash (flashes a second), and the glow's size (m) and colour. */
+const BEACON_HZ = 1.6, GLOW = 5.5, GLOW_COLOR = 0xffa11c;
 
 const LIFT = 0.07;
 
@@ -37,6 +56,14 @@ const truckBody = (t: Trip): Body => (TRUCK_BODY[t.haul?.product ?? t.cargo ?? "
  * tractor and two trailers) with the body for what it carries.
  */
 function truckPieces(t: Trip): Piece[] {
+  if (t.haul?.big) {
+    // an oversized-load convoy: the pilot car, the tractor, the low-loader with its piece, the escort behind
+    const U = CONVOY_UNITS, mid = (u: Unit) => u.at + u.len / 2;
+    return [
+      { kind: "escort_car", back: 0 }, { kind: "ll_tractor", back: mid(U[1]) - mid(U[0]) },
+      { kind: `ll_trailer_${t.haul.big}`, back: mid(U[2]) - mid(U[0]) }, { kind: "escort_car", back: mid(U[3]) - mid(U[0]) },
+    ];
+  }
   const b = truckBody(t);
   if (t.haul?.cls === "heavy") return [{ kind: `heavy_${b}`, back: 0 }];
   if (t.haul?.cls === "roadtrain") {
@@ -84,6 +111,13 @@ export class Vehicles3D {
   private batches = new Map<VehicleKind, Batch>();
   private mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   private tintMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  /** A convoy's amber lamps: lit (no shading), flashing. */
+  private beaconMat = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false });
+  /** Each lit beacon's glow on the ground about it, added on top (one draw call for every convoy). */
+  private glow: THREE.InstancedMesh;
+  /** Where on each convoy model its beacons' glow sits (the middle of its lamps). */
+  private glowAt = new Map<VehicleKind, THREE.Vector3>();
+  private gv = new THREE.Vector3();
   private m = new THREE.Matrix4();
   /** Collapses a part to nothing (the empty load of an open truck body). */
   private none = new THREE.Matrix4().makeScale(0, 0, 0);
@@ -100,18 +134,35 @@ export class Vehicles3D {
 
   constructor(private models: ModelSet) {
     for (const k of VEHICLE_MODELS) this.batches.set(k, this.makeBatch(k, k === "car" || k === "van" || k === "truck" ? 256 : k === "bus" ? 16 : 64));
+    const plane = new THREE.PlaneGeometry(GLOW, GLOW).rotateX(-Math.PI / 2);
+    const gm = new THREE.MeshBasicMaterial({
+      map: glowTexture(), color: GLOW_COLOR, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending,
+      depthWrite: false, toneMapped: false,
+    });
+    this.glow = new THREE.InstancedMesh(plane, gm, 64);
+    this.glow.count = 0;
+    this.glow.frustumCulled = false;
+    this.glow.renderOrder = 2;
+    this.group.add(this.glow);
+    for (const k of VEHICLE_MODELS) {
+      const p = this.models.vehicles.get(k)?.parts.find((q) => q.name === "beacon");
+      if (!p) continue;
+      p.geo.computeBoundingBox();
+      this.glowAt.set(k, p.geo.boundingBox!.getCenter(new THREE.Vector3()));
+    }
   }
 
   private makeBatch(kind: VehicleKind, cap: number): Batch {
     const vm = this.models.vehicles.get(kind)!;
     const meshes = vm.parts.map((p) => {
-      const mesh = new THREE.InstancedMesh(p.geo, p.tint ? this.tintMat : this.mat, cap);
+      const lamp = p.name === "beacon";
+      const mesh = new THREE.InstancedMesh(p.geo, p.tint ? this.tintMat : lamp ? this.beaconMat : this.mat, cap);
       mesh.count = 0;
-      mesh.castShadow = true;
+      mesh.castShadow = !lamp;
       mesh.frustumCulled = false;
       if (p.tint) mesh.setColorAt(0, new THREE.Color(1, 1, 1));
       this.group.add(mesh);
-      return { mesh, tint: p.tint ? (p.name === "cargo" ? "cargo" as const : "body" as const) : null };
+      return { mesh, tint: p.tint ? (p.name === "cargo" ? "cargo" as const : "body" as const) : lamp ? "beacon" as const : null };
     });
     return { kind, meshes, cap };
   }
@@ -251,6 +302,15 @@ export class Vehicles3D {
       return !!q;
     });
     for (const g of this.leaving.values()) { const q = this.ghostPose(g, now); if (q) addGhost(g, q); }
+    // (the convoys' beacons flash: each vehicle's on its own beat, so a convoy's lamps ripple rather than blink as one)
+    let nGlow = 0;
+    const lit = (id: number, unit: number) => ((now * BEACON_HZ + id * 0.37 + Math.max(0, unit) * 0.5) % 1) < 0.5;
+    const glowAt = (kind: VehicleKind) => {
+      const at = this.glowAt.get(kind);
+      if (!at || nGlow >= this.glow.instanceMatrix.count) return;
+      this.gv.copy(at).applyMatrix4(this.m);
+      this.glow.setMatrixAt(nGlow++, this.tmpG.makeTranslation(this.gv.x, this.gv.y - at.y + 0.3, this.gv.z));
+    };
     for (const kind of VEHICLE_MODELS) {
       const vs = lists[kind], gs = ghosts[kind];
       const b = this.ensure(kind, vs.length + gs.length);
@@ -259,8 +319,9 @@ export class Vehicles3D {
         const q = gs[j];
         this.pose(this.m, q.x, q.y, 0, q.ang, q.s);
         for (const { mesh, tint } of b.meshes) {
-          const bare = tint === "cargo" && q.g.load === null;
+          const bare = (tint === "cargo" && q.g.load === null) || (tint === "beacon" && !lit(j, 0));
           mesh.setMatrixAt(vs.length + j, bare ? this.none : this.m);
+          if (tint === "beacon" && !bare) glowAt(kind);
           if (tint === "body") mesh.setColorAt(vs.length + j, this.c.setHex(q.g.color));
           else if (tint === "cargo") mesh.setColorAt(vs.length + j, this.c.setHex(q.g.load ?? EMPTY_BOX));
         }
@@ -290,7 +351,9 @@ export class Vehicles3D {
         const f = v.fade < 1 ? 0.55 + 0.45 * v.fade : 1;
         this.pose(this.m, x, y, h, ang, f);
         for (const { mesh, tint } of b.meshes) {
-          mesh.setMatrixAt(i, tint === "cargo" && load === null ? this.none : this.m);
+          const off = (tint === "cargo" && load === null) || (tint === "beacon" && !lit(v.id, unit));
+          mesh.setMatrixAt(i, off ? this.none : this.m);
+          if (tint === "beacon" && !off) glowAt(kind);
           if (tint === "body") mesh.setColorAt(i, this.c.setHex(v.color));
           else if (tint === "cargo") mesh.setColorAt(i, this.c.setHex(load ?? EMPTY_BOX));
         }
@@ -300,5 +363,8 @@ export class Vehicles3D {
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       }
     }
+    this.glow.count = nGlow;
+    this.glow.instanceMatrix.needsUpdate = true;
   }
+  private tmpG = new THREE.Matrix4();
 }

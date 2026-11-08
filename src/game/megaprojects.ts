@@ -105,9 +105,9 @@ export function megaProgress(b: Building, def: PlantDef): number {
   return need > 0 ? got / need : 1;
 }
 
-/** The stage a landmark's model shows: 1 foundations, 2 rising, 3 finished. */
+/** The stage a landmark's model shows: 1 foundations, 2 rising (and while it is finished off), 3 open. */
 export function megaStage(b: Building, def: PlantDef): 1 | 2 | 3 {
-  if (!b.plant?.site) return 3;
+  if (!b.plant?.site) return b.built >= 1 ? 3 : 2;
   return megaProgress(b, def) < 0.4 ? 1 : 2;
 }
 

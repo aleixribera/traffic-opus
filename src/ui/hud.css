@@ -484,3 +484,70 @@ kbd { font: inherit; font-size: 11px; font-weight: 500; padding: 1px 5px; border
 .map-label .ml-icons { display: flex; gap: 3px; margin-top: 4px; }
 .map-label .ml-icons i { width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(20, 22, 26, 0.35); display: grid; place-items: center; }
 .map-label .ml-icons svg { width: 14px; height: 14px; display: block; }
+
+/* ------------------------------------------------------------ special industries (specials.ts, convoyTags.ts) */
+/* the season in the clock: its glyph in the season's colour */
+.cb-season { display: inline-flex; align-items: center; gap: 4px; }
+.season-glyph { flex: none; vertical-align: -2px; }
+.season-glyph.s-spring { color: #4f9a3c; }
+.season-glyph.s-summer { color: #c98a12; }
+.season-glyph.s-autumn { color: #b8661c; }
+.season-glyph.s-winter { color: #4c7fa8; }
+.facts dd .season-glyph { margin-right: -2px; }
+.facts dd.muted { color: var(--ink-2); }
+
+/* slots: turbines in a power plant's hall, a landmark's pieces (on the way: outlined) */
+.slots { display: inline-flex; gap: 3px; }
+.slots i { width: 10px; height: 10px; border-radius: 2px; background: #dddcd4; }
+.slots.big i { width: 14px; }
+.slots i.on { background: var(--ind); box-shadow: inset 0 0 0 1px #a97d17; }
+.slots i.way { background: #fff; box-shadow: inset 0 0 0 1.5px var(--ind); }
+
+/* a landmark's site: the ring beside its stage */
+.lm-head { display: flex; align-items: center; gap: 12px; margin: 10px 0 4px; }
+.lm-head p { margin: 0; }
+.lm-stage { font-weight: 600; font-size: 13px; margin-bottom: 2px !important; }
+.lm-ring { flex: none; }
+.lm-ring circle { fill: none; stroke-width: 7; }
+.lm-ring-bg { stroke: #e7e5dc; }
+.lm-ring-fg { stroke: var(--ind); stroke-linecap: butt; transition: stroke-dasharray .6s ease; }
+.lm-ring text { font: 600 13px "Lexend", system-ui, sans-serif; fill: var(--ink); font-variant-numeric: tabular-nums; }
+.lm-reward { color: var(--ink); margin: 2px 0 6px; line-height: 1.4; }
+@media (prefers-reduced-motion: reduce) { .lm-ring-fg { transition: none; } }
+
+/* a plant's conveyors and pipes */
+.park-lines { list-style: none; margin: 4px 0; padding: 0; display: grid; gap: 3px; }
+.park-lines li { position: relative; padding-left: 16px; color: var(--ink); }
+.park-lines li::before { content: ""; position: absolute; left: 0; top: 50%; width: 10px; height: 0; border-top: 2px dashed #8a8c86; }
+.park-lines li.out::after { content: ""; position: absolute; left: 7px; top: calc(50% - 3px); border: 3px solid transparent; border-left: 4px solid #8a8c86; border-right: 0; }
+
+/* a landmark's opening: the banner dressed for the occasion, in the period's manner (gilt rules, spaced capitals) */
+.banner.lm { background: #fbf7ec; padding: 14px 22px 14px; min-width: 360px; max-width: min(520px, calc(100vw - 32px));
+  border: 1px solid #b8892c; box-shadow: 0 0 0 3px #fbf7ec, 0 0 0 4px #b8892c, 0 6px 22px rgba(40, 32, 12, 0.22); }
+.banner.lm .lm-kicker { display: flex; align-items: center; gap: 10px; justify-content: center; margin: 0 0 6px; color: #8d6516;
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; }
+.banner.lm .lm-kicker::before, .banner.lm .lm-kicker::after { content: ""; flex: 1; max-width: 70px; height: 5px;
+  border-top: 1px solid #b8892c; border-bottom: 1px solid #b8892c; }
+.banner.lm header { font-size: 20px; font-weight: 650; letter-spacing: 0.01em; margin-bottom: 6px; }
+.banner.lm .gifts { color: var(--ink); line-height: 1.45; text-wrap: pretty; }
+.banner.lm.in { animation: lmin .6s cubic-bezier(.2, 1.2, .35, 1); }
+@keyframes lmin { from { opacity: 0; transform: translate(-50%, -14px) scale(.92); } }
+@media (prefers-reduced-motion: reduce) { .banner.lm.in, .banner.in { animation: none; } }
+
+/* oversized-load convoys on the map: a tag over each, its lamp flashing with the beacons; click to follow */
+.convoy-tags { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
+.convoy-tag { position: absolute; left: 0; top: 0; pointer-events: auto; display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto;
+  column-gap: 6px; align-items: center; padding: 4px 8px 4px 7px; text-align: left; white-space: nowrap; will-change: transform;
+  background: #24262a; color: #f3ecd8; border: 1px solid #e2b13a; border-radius: 3px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28); line-height: 1.2; }
+.convoy-tag::after { content: ""; position: absolute; left: 50%; bottom: -6px; margin-left: -5px; border: 5px solid transparent; border-top-color: #e2b13a; border-bottom: 0; }
+.convoy-tag .ct-lamp { grid-row: 1 / 3; width: 9px; height: 9px; border-radius: 50%; background: #ffa21f; box-shadow: 0 0 0 2px rgba(255, 162, 31, 0.25), 0 0 8px #ffa21f; animation: ctlamp .625s steps(1, end) infinite; }
+.convoy-tag .ct-k { font-size: 9.5px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: #e2b13a; }
+.convoy-tag b { font-weight: 600; font-size: 12px; grid-column: 2; }
+.convoy-tag .ct-to { grid-column: 2; font-size: 10.5px; color: #c9c2ad; }
+.convoy-tag b + .ct-to { display: none; }
+.convoy-tag:hover b + .ct-to, .convoy-tag.on b + .ct-to { display: block; }
+.convoy-tag:hover { border-color: #ffd26a; }
+.convoy-tag.on { background: #3a2f12; border-color: #ffd26a; box-shadow: 0 0 0 2px rgba(255, 210, 106, 0.35), 0 2px 6px rgba(0, 0, 0, 0.3); }
+.convoy-tag:focus-visible { outline: 2px solid #ffd26a; outline-offset: 2px; }
+@keyframes ctlamp { 50% { background: #5a3d10; box-shadow: none; } }
+@media (prefers-reduced-motion: reduce) { .convoy-tag .ct-lamp { animation: none; } }
