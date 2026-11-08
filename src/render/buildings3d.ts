@@ -13,12 +13,26 @@ import { makeTreeMesh } from "./roads3d";
 import { PLANTS } from "../game/industry";
 import { isMega, megaStage } from "../game/megaprojects";
 import { fieldLook, fieldModel } from "../game/calendar";
+import { seasonal } from "./envShader";
+import type { LampSpot, WindowSpot } from "./lamps3d";
+import type { WindowKind } from "./daylight";
 
 /**
  * The model a site's slot is drawn with now: a landmark's core by how far its building has got (foundations, the
  * structure in scaffolding, finished), a farm's fields by the season; anything else as planned. `stage` overrides
  * the landmark's (the placement ghost shows it finished).
  */
+/** What a building's lit windows look like at night: none for a works (it has floodlights) or a building site. */
+function windowKind(b: Building): WindowKind | null {
+  if (b.zone) {
+    if (ZONE_GROUP[b.zone] === "res") return "home";
+    return b.zone === "comHigh" || b.zone === "comTower" ? "office" : "shop";
+  }
+  if (isHall(b.kind)) return "hall";
+  if (b.plant || b.placed) return null;
+  return "office";
+}
+
 function slotModel(b: Building | null, model: string, time: number, stage?: 1 | 2 | 3): string {
   if (model.startsWith("mega_")) return `${model}_${stage ?? (b ? megaStage(b, PLANTS[b.kind as PlantKind]) : 3)}`;
   if (model === "site_field_g" || model === "site_field_w" || model === "farm") return fieldModel(model, fieldLook(time));
@@ -157,15 +171,17 @@ export class Buildings3D {
   private meshes = new Map<string, THREE.InstancedMesh>();
   private parked: THREE.InstancedMesh[] = [];
   private yards: THREE.InstancedMesh | null = null;
-  private yardMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  private yardMat = seasonal(new THREE.MeshLambertMaterial({ color: 0xffffff }));
   /** Town hall squares: their paving, and their trees. */
   private paving: THREE.InstancedMesh | null = null;
-  private paveMat = pavingMaterial();
+  private paveMat = seasonal(pavingMaterial(), { shelter: 0.3 });
   private squareTrees: THREE.InstancedMesh | null = null;
   private yardGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
   private drives: THREE.Mesh | null = null;
   private siteParts: THREE.Object3D[] = [];
-  private mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  /** Every model, under the season (snow on its roofs, its lawns and trees in the season's colours). */
+  private mat = seasonal(new THREE.MeshLambertMaterial({ vertexColors: true }), { roofs: true });
+  private carMat = new THREE.MeshLambertMaterial({ vertexColors: true });
   private driveMat = new THREE.MeshLambertMaterial({ color: PAL.driveway });
   private roadMat = new THREE.MeshLambertMaterial({ color: SERVICE_ROAD });
   private meshMat = new THREE.MeshLambertMaterial({ color: FENCE_MESH, transparent: true, opacity: 0.42, side: THREE.DoubleSide, depthWrite: false });
@@ -182,6 +198,16 @@ export class Buildings3D {
 
   /** `clock` gives the sim time (a site's new buildings rise for a while after it grows). */
   constructor(private models: ModelSet, private clock: () => number = () => 0) {}
+
+  /** The time whose season the fields show (the day cycle's: the title menu and the dev hook can show another). */
+  seasonClock: (() => number) | null = null;
+  /** At night: every lit building's windows, and the works' floodlight masts (laid out with the buildings). */
+  windows: WindowSpot[] = [];
+  floods: LampSpot[] = [];
+  /** Counts up whenever the buildings are laid out again. */
+  version = 0;
+  /** Each model's footprint above the ground floor's sill (model space; x0, x1, z0, z1, top), measured once. */
+  private feet = new Map<string, [number, number, number, number, number] | null>();
 
   private geoOf(name: string): MergedModel | undefined {
     return this.models.buildings.get(name as BuildingKind) ?? this.models.sites.get(name);
@@ -218,7 +244,7 @@ export class Buildings3D {
     const L = siteLayout(kind as PlantKind, T.w, T.d, seed);
     const out: { geo: THREE.BufferGeometry; m: THREE.Matrix4 }[] = [];
     for (const s of L.slots) {
-      const mm = s.level <= 1 ? this.geoOf(slotModel(null, s.model, this.clock(), 3)) : undefined;
+      const mm = s.level <= 1 ? this.geoOf(slotModel(null, s.model, this.seasonClock?.() ?? this.clock(), 3)) : undefined;
       if (mm) out.push({ geo: mm.geo, m: this.slotMatrix(new THREE.Matrix4(), f, s, 1, 0.1) });
     }
     return out;
@@ -285,7 +311,7 @@ export class Buildings3D {
   private piecesOf(b: Building): Piece[] {
     if (!b.placed || !b.plant) return [{ b, model: b.kind, slot: null }];
     const level = b.plant.level ?? 1;
-    const now = this.clock();
+    const now = this.seasonClock?.() ?? this.clock();
     return this.layoutOf(b).slots.filter((s) => s.level <= level).map((s) => ({ b, model: slotModel(b, s.model, now), slot: s }));
   }
 
@@ -397,6 +423,7 @@ export class Buildings3D {
       this.group.add(mesh);
     }
     this.applyColors();
+    this.lights(list);
     // parked cars, a deterministic share of bays filled (cars keep their size whatever the model's scale); a site's
     // truck yard stays free for its trucks
     const car = this.models.vehicles.get("car")!;
@@ -421,7 +448,7 @@ export class Buildings3D {
     }
     if (filled.length) {
       for (const p of car.parts) {
-        const im = new THREE.InstancedMesh(p.geo, p.tint ? new THREE.MeshLambertMaterial({ color: 0xffffff }) : this.mat, filled.length);
+        const im = new THREE.InstancedMesh(p.geo, p.tint ? new THREE.MeshLambertMaterial({ color: 0xffffff }) : this.carMat, filled.length);
         im.castShadow = true;
         filled.forEach((f, i) => {
           im.setMatrixAt(i, f.m);
@@ -437,6 +464,76 @@ export class Buildings3D {
   }
 
   /** Fences, service roads and the pads of buildings to come, for every company site at once (a few draw calls). */
+  /** A model's walls seen from above: the bounds of everything over 1.2 m (the lot's yard and parking excluded). */
+  private footOf(model: string) {
+    if (this.feet.has(model)) return this.feet.get(model)!;
+    const pos = this.geoOf(model)?.geo.getAttribute("position");
+    let f: [number, number, number, number, number] | null = null;
+    if (pos) {
+      let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, top = 0;
+      for (let i = 0; i < pos.count; i++) {
+        const y = pos.getY(i);
+        if (y < 1.2) continue;
+        const x = pos.getX(i), z = pos.getZ(i);
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (z < z0) z0 = z;
+        if (z > z1) z1 = z;
+        if (y > top) top = y;
+      }
+      if (x1 > x0 && z1 > z0) f = [x0, x1, z0, z1, top];
+    }
+    this.feet.set(model, f);
+    return f;
+  }
+
+  /** The night's lights the buildings give: windows round every finished home, shop, office and hall; floodlight masts round each works. */
+  private lights(list: Building[]) {
+    this.windows = [];
+    this.floods = [];
+    const c = new THREE.Vector3(), ax = new THREE.Vector3(), ay = new THREE.Vector3(), az = new THREE.Vector3();
+    for (const [model, ps] of this.order) {
+      for (const p of ps) {
+        const b = p.b;
+        if (p.slot || b.built < 1 || b.abandoned) continue;
+        const kind = windowKind(b);
+        if (!kind) continue;
+        const f = this.footOf(model);
+        if (!f) continue;
+        const M = this.matrix(this.tmp, p);
+        M.extractBasis(ax, ay, az);
+        c.set((f[0] + f[1]) / 2, 0, (f[2] + f[3]) / 2).applyMatrix4(M);
+        const sx = ax.length(), sz = az.length();
+        this.windows.push({
+          x: c.x, y: c.z, ux: ax.x / sx, uy: ax.z / sx,
+          hx: ((f[1] - f[0]) / 2) * sx, hz: ((f[3] - f[2]) / 2) * sz, tall: f[4] * ay.length(), kind, seed: b.id,
+        });
+      }
+    }
+    for (const b of list) {
+      if (!b.placed || !b.plant || b.built < 1) continue;
+      const fr = siteFrame(b.c, b.rot, b.side, b.hd);
+      const hw = b.hw, d = b.hd * 2, inset = 4;
+      const mid = siteToWorld(fr, 0, d / 2);
+      const spots: V2[] = [];
+      // a mast in each corner, and more along a long side
+      for (const sx of [-1, 1]) {
+        const n = Math.max(1, Math.round((d - 2 * inset) / 80));
+        for (let k = 0; k <= n; k++) spots.push(siteToWorld(fr, sx * (hw - inset), inset + ((d - 2 * inset) * k) / n));
+      }
+      const across = Math.max(0, Math.round((2 * hw - 2 * inset) / 80) - 1);
+      for (let k = 1; k <= across; k++) {
+        const x = -hw + inset + ((2 * hw - 2 * inset) * k) / (across + 1);
+        spots.push(siteToWorld(fr, x, d - inset));
+      }
+      for (const s of spots) {
+        const dx = mid.x - s.x, dy = mid.y - s.y, l = Math.hypot(dx, dy) || 1;
+        this.floods.push({ x: s.x, y: s.y, h: 0, dx: dx / l, dy: dy / l, kind: "flood" });
+      }
+    }
+    this.version++;
+  }
+
   private rebuildSites(list: Building[]) {
     for (const o of this.siteParts) {
       this.group.remove(o);

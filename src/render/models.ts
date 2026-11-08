@@ -56,7 +56,7 @@ export const VEHICLE_MODELS = [
   "carrier", "heavy_carrier", "rt_carrier_a", "rt_carrier_b", "motorcar",
 ] as const;
 /** Street furniture, drawn on its own (not a lot). */
-export const PROP_MODELS = ["busstop", "fence", "bridge_pier", "bridge_abutment", "bridge_pylon", "bridge_truss"] as const;
+export const PROP_MODELS = ["busstop", "fence", "bridge_pier", "bridge_abutment", "bridge_pylon", "bridge_truss", "streetlamp", "floodmast"] as const;
 export type VehicleKind = (typeof VEHICLE_MODELS)[number];
 
 export interface ModelSet {

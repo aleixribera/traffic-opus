@@ -38,6 +38,9 @@ import { MapIcons } from "./ui/mapIcons";
 import { Pops } from "./ui/pops";
 import { Terrain3D } from "./render/terrain3d";
 import { Vehicles3D } from "./render/vehicles3d";
+import { Lamps3D } from "./render/lamps3d";
+import { DayCycle } from "./render/daycycle";
+import { fieldLook } from "./game/calendar";
 import { Transit3D, legPoints } from "./render/transit3d";
 import { STOP_COST } from "./game/transit";
 import { View } from "./render/view";
@@ -125,6 +128,12 @@ export class App {
   openMenu?: () => void;
   private modeListeners: ((m: App["mode"]) => void)[] = [];
   overlay: OverlayId = "none";
+  /** The day and the seasons on the map (and the Nights setting). */
+  readonly dayCycle = new DayCycle();
+  /** The lamps, floodlights, lit windows and vehicle lights. */
+  lamps!: Lamps3D;
+  private lampSig = "";
+  private fieldsWere = "";
   selected: Building | null = null;
   private worldRoot = new THREE.Group();
   private cursor: V2 = v2(0, 0);
@@ -158,6 +167,13 @@ export class App {
   constructor(canvas: HTMLCanvasElement, private models: ModelSet) {
     this.view = new View(canvas);
     this.view.scene.add(this.worldRoot);
+    // the dev hook for the day and the seasons (render/daycycle.ts says how to use it)
+    const dc = this.dayCycle;
+    (window as unknown as { __env: unknown }).__env = {
+      set: (o: Parameters<DayCycle["set"]>[0]) => dc.set(o),
+      clear: () => dc.clear(),
+      get: () => ({ hour: dc.hour, yday: dc.yday, mode: dc.mode, light: dc.light, look: dc.look }),
+    };
     this.view.scene.add(this.preview.group);
   }
 
@@ -297,9 +313,13 @@ export class App {
     this.vehicles.lotOf = (id) => { const b = g.buildings.byId.get(id); return b ? this.buildings3d.lotWay(b) : null; };
     this.transit3d = new Transit3D(this.models.props.get("busstop"));
     this.parks3d = new Parks3D(this.models);
+    this.lamps = new Lamps3D(this.models.props.get("streetlamp"), this.models.props.get("floodmast"));
+    this.vehicles.lamps = this.lamps;
+    this.buildings3d.seasonClock = () => this.dayCycle.lookTime(this.game.time);
+    this.lampSig = "";
     this.convoyTags.follow(null);
     this.glide = null;
-    this.worldRoot.add(this.terrain3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.fireworks.group);
+    this.worldRoot.add(this.terrain3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.lamps.group, this.fireworks.group);
     this.roads.rebuildAll();
     this.buildings3d.rebuild(g.buildings.list);
     this.groundOverlay();
@@ -1358,6 +1378,29 @@ export class App {
     pv.path([W(-7, -17), tip, W(7, -17)], 0xffd34a, 3.2);
   }
 
+  /** The light and the season for this frame, and the lamps that go with them. */
+  private dayFrame(dt: number, far: boolean) {
+    const g = this.game;
+    const L = this.dayCycle.update(g.time + g.alpha * SIM.dt, dt, this.mode === "menu", this.overlay !== "none");
+    this.view.setLight(L.amb, L.sun, L.dir);
+    // (no shadow map once the direct light is too faint to cast one)
+    if (L.shade < 0.04) this.view.sun.castShadow = false;
+    // the fields follow the season shown (the menu's and the dev hook's too)
+    const look = fieldLook(this.dayCycle.lookTime(g.time));
+    if (look !== this.fieldsWere) {
+      if (this.fieldsWere) { this.buildings3d.rebuild(g.buildings.list); this.applyTint(); }
+      this.fieldsWere = look;
+    }
+    const sig = `${this.roads.lampVersion}:${this.buildings3d.version}`;
+    if (sig !== this.lampSig) {
+      this.lampSig = sig;
+      this.lamps.setStatic([...this.roads.lamps, ...this.buildings3d.floods], this.buildings3d.windows);
+    }
+    this.lamps.showCars(!far);
+    const lum = (c: readonly number[]) => c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+    this.lamps.update(L.lamps, this.dayCycle.hour, this.view.mpp, this.roads.signalHeads, lum(L.amb) + lum(L.sun));
+  }
+
   frame = () => {
     const now = performance.now();
     const dt = Math.min(0.1, (now - this.last) / 1000);
@@ -1433,6 +1476,7 @@ export class App {
     const far = this.view.halfH > 1800;
     this.vehicles.group.visible = !far;
     this.view.sun.castShadow = this.view.halfH < 2400;
+    this.dayFrame(dt, far);
     this.terrain3d.update(this.view);
     this.roadsFar.update(this.view.mpp, this.view.w, this.view.h);
     this.labels.update(this.view);

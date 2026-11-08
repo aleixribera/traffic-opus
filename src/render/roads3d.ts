@@ -7,7 +7,9 @@ import { dkey } from "../sim/router";
 import type { Traffic } from "../sim/traffic";
 import { PAL } from "./palette";
 import { MeshBatch } from "./batch";
+import { ENV, ENV_GLSL, seasonal } from "./envShader";
 import type { MergedModel } from "./models";
+import type { LampSpot } from "./lamps3d";
 
 const LIFT = 0.06;
 const DECK = 0.9;
@@ -20,6 +22,13 @@ const PIECE_W = 10, PIECE_H = 5.1;
 /** What the road renderer needs from outside for bridges: the Blender bridge pieces, and where the water is. */
 /** Grid (m) the driveways are bucketed in when placing street trees. */
 const DRIVE_CELL = 16;
+/** Street lamps along a town road: how far apart (m), where the rhythm starts (between the street trees), and
+ * whether they stand in facing pairs or one side and the other in turn. */
+const LAMP_EVERY: Record<string, { every: number; phase: number; both: boolean } | undefined> = {
+  small: { every: 32, phase: 0, both: false },
+  medium: { every: 15, phase: 7.5, both: false },
+  large: { every: 24, phase: 6, both: true },
+};
 
 export interface BridgeParts {
   props: Map<string, MergedModel>;
@@ -46,7 +55,7 @@ export function makeRoadMaterial(opts: { color?: number; opacity?: number; marki
     uArrows: { value: opts.arrows === false ? 0 : 1 },
   };
   mat.onBeforeCompile = (sh) => {
-    Object.assign(sh.uniforms, uniforms);
+    Object.assign(sh.uniforms, uniforms, ENV);
     sh.vertexShader = sh.vertexShader
       .replace("#include <common>", "#include <common>\nattribute vec4 aRoad;\nattribute vec2 aFlow;\nattribute vec3 aMed;\nattribute vec2 aClip;\nattribute vec4 aPock;\nvarying vec4 vRoad;\nvarying vec2 vFlow;\nvarying vec3 vMed;\nvarying vec2 vClip;\nvarying vec4 vPock;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRoad = aRoad;\nvFlow = aFlow;\nvMed = aMed;\nvClip = aClip;\nvPock = aPock;");
@@ -55,6 +64,7 @@ export function makeRoadMaterial(opts: { color?: number; opacity?: number; marki
         "#include <common>",
         `#include <common>
 uniform vec3 uRoad; uniform vec3 uEdge; uniform vec3 uLane; uniform vec3 uCentre;
+${ENV_GLSL}
 uniform vec3 uGrass; uniform vec3 uTree; uniform vec3 uTreeLight;
 uniform float uFlowMode; uniform float uMarkings; uniform float uArrows; uniform float uHw;
 varying vec4 vRoad; varying vec2 vFlow; varying vec3 vMed; varying vec2 vClip; varying vec4 vPock;
@@ -147,7 +157,9 @@ vec3 flowTint(float r) {
       // planted median: a kerb either side, grass between, and a row of trees when it is wide enough
       float au = abs(u), fw = fwidth(u) + 1e-4;
       float inMed = 1.0 - smoothstep(mh - fw, mh, au);
-      vec3 mc = mix(uEdge, uGrass, 1.0 - smoothstep(mh - 0.32 - fw, mh - 0.32, au));
+      // (the grass in the season's colour, under snow in winter)
+      vec3 gr = mix(envGrass(uGrass), envSnowCol(vec2(u, v)), envSnowAt(vec2(u * 3.0, v), -0.3));
+      vec3 mc = mix(uEdge, gr, 1.0 - smoothstep(mh - 0.32 - fw, mh - 0.32, au));
       // trees keep clear of the piece ends (vMed.z) so a crown is never cut in half at a join
       if (med > 1.4 && dn > med + 2.0 && vMed.z > 2.6) {
         float y = mod(v, 12.0) - 6.0;
@@ -155,13 +167,20 @@ vec3 flowTint(float r) {
         float d = length(vec2(u, y));
         float crown = 1.0 - smoothstep(rr - fwidth(d) - 0.04, rr, d);
         float lit = 1.0 - smoothstep(0.0, rr * 1.3, length(vec2(u + rr * 0.35, y + rr * 0.35)));
-        mc = mix(mc, mix(uTree, uTreeLight, lit), crown);
+        vec4 lf = envLeaf(mix(uTree, uTreeLight, lit), fract(floor(v / 12.0) * 0.618), fract(floor(v / 12.0) * 0.377 + 0.25), vec2(u, y) / rr, lit, 0.0);
+        mc = mix(mc, lf.rgb, crown * lf.a);
       }
       c = mix(c, mc, inMed);
     }
     c = mix(uEdge, c, edge);
+    // winter: the ploughs keep the lanes black; what they push aside lies in a grey-white bank along the kerbs
+    if (envSnow > 0.001) {
+      float bw = 0.35 + 0.75 * envNoise(vec2(v * 0.21, u > 0.0 ? 3.0 : 9.0)) * envSnow;
+      float bank = (1.0 - smoothstep(bw * 0.6, bw, de)) * smoothstep(0.1, 0.5, envSnow);
+      c = mix(c, envSnowCol(vec2(u * 4.0, v)) * 0.86, bank * 0.9);
+    }
   }
-  diffuseColor.rgb *= c;
+  diffuseColor.rgb = envGrade(diffuseColor.rgb * c);
 }`,
       );
   };
@@ -181,30 +200,38 @@ export function makeTreeMesh(n: number): THREE.InstancedMesh {
   const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, depthWrite: false });
   const uni = { uTree: { value: new THREE.Color(PAL.tree) }, uTreeLight: { value: new THREE.Color(PAL.treeLight) } };
   mat.onBeforeCompile = (sh) => {
-    Object.assign(sh.uniforms, uni);
+    Object.assign(sh.uniforms, uni, ENV);
     sh.vertexShader = sh.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec2 vTq;")
-      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvTq = position.xz * 2.0;");
+      .replace("#include <common>", "#include <common>\nvarying vec2 vTq; varying vec2 vTseed;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvTq = position.xz * 2.0;\nvTseed = instanceMatrix[3].xz;");
     sh.fragmentShader = sh.fragmentShader
-      .replace("#include <common>", "#include <common>\nuniform vec3 uTree; uniform vec3 uTreeLight;\nvarying vec2 vTq;")
+      .replace("#include <common>", `#include <common>\n${ENV_GLSL}\nuniform vec3 uTree; uniform vec3 uTreeLight;\nvarying vec2 vTq; varying vec2 vTseed;`)
       .replace(
         "#include <color_fragment>",
         `#include <color_fragment>
 {
-  // a round crown lit from the upper left, and its soft shadow thrown down-right on the ground
+  // a round crown lit from the sun's side, and its soft shadow thrown away from the sun on the ground (as long and
+  // as strong as the light makes it, render/daylight.ts)
   float d = length(vTq);
   float aa = fwidth(d) + 1e-4;
   float crown = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, d);
-  float shadow = (1.0 - smoothstep(0.7, 1.15, length(vTq - vec2(0.48, 0.7)))) * 0.45;
+  float tone = envHash(vTseed * 0.71 + 3.1), h = envHash(vTseed * 0.37 + 9.2);
+  float thin = 1.0 - 0.6 * envBare * step(0.2, h);
+  float shadow = (1.0 - smoothstep(0.7, 1.15, length(vTq + uSun * 0.85 * uShade.y))) * 0.45 * uShade.x * thin;
   if (crown <= 0.0 && shadow <= 0.01) discard;
-  float lit = 1.0 - smoothstep(0.0, 1.3, length(vTq + vec2(0.35, 0.35)));
+  float lit = 1.0 - smoothstep(0.0, 1.3, length(vTq - uSun * 0.5));
   vec3 c = mix(uTree * 0.8, uTreeLight, lit);
   c *= mix(1.0, 0.82, smoothstep(0.78, 0.98, d));
-  diffuseColor.rgb *= c * crown;
-  diffuseColor.a = max(crown, shadow);
+  // the season's crown (street trees: a fifth of them evergreen)
+  vec4 lf = envLeaf(c, tone, h, vTq, lit, 0.2);
+  float ac = crown * lf.a;
+  float a = ac + shadow * (1.0 - ac);
+  diffuseColor.rgb = envGrade(diffuseColor.rgb * lf.rgb * ac / max(a, 1e-3));
+  diffuseColor.a = a;
 }`,
       );
   };
+  mat.customProgramCacheKey = () => "tree-v2";
   // twice the crown's size, so the shadow beside it fits on the same quad
   const m = new THREE.InstancedMesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2), mat, Math.max(1, n));
   m.count = 0;
@@ -227,12 +254,18 @@ export class Roads3D {
   private hwRing = makeRoadMaterial({ highway: true, arrows: false });
   private hwPlain = makeRoadMaterial({ highway: true, markings: false });
   private edgeMat = new THREE.MeshLambertMaterial({ color: PAL.roadEdge });
-  private walkMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  // (pavements: swept, so less snow on them than on the verges)
+  private walkMat = seasonal(new THREE.MeshLambertMaterial({ vertexColors: true }), { shelter: 0.45 });
   private seamHw = seamMaterial(PAL.hwRoad, PAL.hwLane);
   private seamTown = seamMaterial(PAL.road, PAL.lane);
   // street trees: flat round crowns, darker rim and a lit side, one instanced mesh for the whole map
   private trees: THREE.InstancedMesh;
   private treeSpots = new Map<number, { x: number; y: number; h: number; r: number }[]>();
+  /** Street lamps by seg (before the driveway check), and all of them as the lamps layer takes them. */
+  private lampSpots = new Map<number, LampSpot[]>();
+  lamps: LampSpot[] = [];
+  /** Counts up whenever the lamps change. */
+  lampVersion = 0;
   private hwEdgeMat = new THREE.MeshLambertMaterial({ color: PAL.hwEdge });
   /** Every marked surface material, so overlay modes reach all of them. */
   private get marked() { return [this.surface, this.ringSurface, this.hwSurface, this.hwRing]; }
@@ -266,7 +299,7 @@ export class Roads3D {
   private stopRimGeo = new THREE.CircleGeometry(1.08, 8, Math.PI / 8).rotateX(-Math.PI / 2);
   // grass islands inside roundabouts
   private islands = new THREE.Group();
-  private islandMat = new THREE.MeshLambertMaterial({ color: PAL.grass });
+  private islandMat = seasonal(new THREE.MeshLambertMaterial({ color: PAL.grass }));
 
   constructor(private net: RoadNetwork, private parts?: BridgeParts) {
     this.lights = new THREE.InstancedMesh(new THREE.CircleGeometry(0.85, 16).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffffff }), 256);
@@ -327,10 +360,21 @@ export class Roads3D {
     }
     this.trees.count = i;
     this.trees.instanceMatrix.needsUpdate = true;
+    // the lamps: clear of driveways and of other roads, like the trees
+    this.lamps = [];
+    for (const [sid, spots] of this.lampSpots) {
+      for (const l of spots) if (this.treeClear(sid, { x: l.x, y: l.y, r: 0.6 }, drives)) this.lamps.push(l);
+    }
+    this.lampVersion++;
   }
 
   set flowMode(on: boolean) {
     for (const m of this.marked) m.uniforms.uFlowMode.value = on ? 1 : 0;
+  }
+
+  /** The signal heads (one instance each, coloured by its state): the lamps layer gives them a halo at night. */
+  get signalHeads(): THREE.InstancedMesh {
+    return this.lights;
   }
 
   /** Re-place the street trees round the driveways (after buildings come and go). */
@@ -368,6 +412,7 @@ export class Roads3D {
     for (const o of m.extra) { this.batch.remove(o as THREE.Mesh); if ((o as THREE.Mesh).geometry && !o.userData.shared) (o as THREE.Mesh).geometry.dispose(); }
     this.segs.delete(id);
     this.treeSpots.delete(id);
+    this.lampSpots.delete(id);
   }
 
   private dropNode(id: number) {
@@ -453,6 +498,36 @@ export class Roads3D {
         }
         if (spots.length) this.treeSpots.set(id, spots);
       }
+      // street lamps at the kerb, between the trees: one side and the other in turn on smaller roads, facing pairs
+      // on the big ones
+      const lp = LAMP_EVERY[grp];
+      if (lp) {
+        const lamps: LampSpot[] = [];
+        let k = 0;
+        for (let sc = Math.ceil((s0 + 5 - lp.phase) / lp.every) * lp.every + lp.phase; sc < s1 - 5; sc += lp.every, k++) {
+          let i = 0;
+          while (i < ss.length - 2 && ss[i + 1] < sc) i++;
+          for (const side of [-1, 1] as const) {
+            if (!lp.both && (k % 2 === 0) !== (side > 0)) continue;
+            if (!ok(i, side) || !ok(Math.min(i + 1, pts.length - 1), side)) continue;
+            const r = lateralAt(pts, i), off = (side > 0 ? inner.r[i] : inner.l[i]) + side * 0.45;
+            lamps.push({ x: pts[i].x + r.x * off, y: pts[i].y + r.y * off, h: hs[i] + LIFT, dx: -r.x * side, dy: -r.y * side, kind: "street" });
+          }
+        }
+        if (lamps.length) this.lampSpots.set(id, lamps);
+      }
+    } else if (hw && !s.ring) {
+      // motorways: a tall lamp on the verge every so often, on the ground only
+      const lamps: LampSpot[] = [];
+      const every = 44;
+      for (let sc = Math.ceil((s0 + 8) / every) * every; sc < s1 - 8; sc += every) {
+        let i = 0;
+        while (i < ss.length - 2 && ss[i + 1] < sc) i++;
+        if (hs[i] > 0.3 || hs[Math.min(i + 1, hs.length - 1)] > 0.3) continue;
+        const r = lateralAt(pts, i), off = halfW + 1.1;
+        lamps.push({ x: pts[i].x + r.x * off, y: pts[i].y + r.y * off, h: hs[i] + LIFT, dx: -r.x, dy: -r.y, kind: "highway" });
+      }
+      if (lamps.length) this.lampSpots.set(id, lamps);
     }
     // gores: where a slip road runs flush beside the carriageway it leaves (or joins), the two kerbs between them give
     // way to a broad dashed lane line, so its lane reads as carrying straight on from the carriageway's slip lane;
