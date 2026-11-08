@@ -114,6 +114,7 @@ export class TownSystem {
       const d = dist(p, t.c);
       if (d < TOWN_SPACING) return `Too close to ${t.name} (${(d / 1000).toFixed(1)} km; needs ${(TOWN_SPACING / 1000).toFixed(1)} km)`;
     }
+    if (!free && this.list.length >= this.g.townSlots) return `You can run ${this.g.townSlots} towns for now: milestones add more`;
     if (!free && this.g.money < TOWN_COST) return "Not enough money";
     return null;
   }

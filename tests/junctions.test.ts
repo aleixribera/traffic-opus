@@ -23,7 +23,7 @@ const nodeNear = (g: Game, p: V2) => [...g.net.nodes.values()].sort((a, b) => Ma
 describe("Traffic lights where bigger roads meet (CS2)", () => {
   const game = () => {
     const g = new Game(7);
-    g.milestone = 2; // lights unlocked
+    g.unlockAll(); // lights unlocked
     g.money = 1e7;
     return g;
   };
@@ -93,7 +93,6 @@ describe("Traffic lights where bigger roads meet (CS2)", () => {
   it("not before lights are unlocked", () => {
     const g = new Game(7);
     g.money = 1e7;
-    g.milestone = 1;
     // (avenues come with the same milestone: draw them anyway, as if unlocked)
     (g as unknown as { featureUnlocked: (f: string) => boolean }).featureUnlocked = () => false;
     lay(g, v2(0, 0), v2(240, 0), "avenue");

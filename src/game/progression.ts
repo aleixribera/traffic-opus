@@ -1,47 +1,305 @@
-// Milestones. Each one unlocks road types, features and land, and pays a grant. The company's tier-1 extractors and
-// plants, founding towns and the basic roads are open from the start (see placed.ts for each building's unlock).
-// TODO(milestones): still reached by total population; the design's achievement ladder replaces this list.
+// Milestones (docs/design.md, "Milestones"): concrete achievements in a rough ladder, never accumulated XP. A few
+// are open at once (the first OPEN_AT_ONCE not yet reached, in ladder order), so there is always a choice of what
+// to chase next; reaching one opens the next. Each unlocks something concrete: a building, a road type or tool,
+// land, town slots, truck bays or bigger loads. The company starts with tier 1 (farms, logging camps, food plants,
+// sawmills), founding towns and the basic roads. This ladder covers tiers 1 and 2; the later tiers come after.
 
 import type { RoadTypeId } from "../config";
+import { PLANTS, type Product } from "./industry";
+import type { PlacedKind } from "./placed";
+import { needsOf, sizeOf } from "./towns";
+
+export type Feature = "roundabout" | "signals" | "grid" | "parallel" | "transit";
+
+export interface Unlocks {
+  roads?: RoadTypeId[];
+  features?: Feature[];
+  buildings?: PlacedKind[];
+  /** more map tiles the company may own */
+  tiles?: number;
+  /** more towns it may run */
+  towns?: number;
+  /** a truck bay more at every building */
+  bays?: number;
+  /** a load more on every truck */
+  load?: number;
+  /** money paid on reaching it */
+  grant?: number;
+}
+
+/** What a milestone is measured on (kept by Progress and the game). */
+export interface ProgressView {
+  towns: { pop: number; supply: Partial<Record<Product, number>> }[];
+  /** loads made, all time */
+  made: Partial<Record<Product, number>>;
+  /** loads delivered to towns: all time, and the best single day (today included) */
+  sold: Partial<Record<Product, number>>;
+  bestDay: Partial<Record<Product, number>>;
+  /** sales: the best day's takings (today included) */
+  bestEarned: number;
+  /** buildings that need power and get all of it */
+  powered: number;
+}
 
 export interface Milestone {
-  pop: number;
+  id: string;
   name: string;
-  roads: RoadTypeId[];
-  features: ("roundabout" | "signals" | "grid" | "parallel" | "transit")[];
-  tiles: number; // tile slots granted (total ownable tiles grows by this)
-  grant: number;
+  /** what to do, as a sentence */
+  goal: string;
+  /** how far along: [have, need] */
+  measure(v: ProgressView): [number, number];
+  /** the measure is money */
+  money?: boolean;
+  unlocks: Unlocks;
 }
+
+/** What a company has before any milestone. */
+export const BASE: Required<Pick<Unlocks, "roads" | "features" | "tiles" | "towns">> & { bays: number; load: number } = {
+  // (the one- and two-lane highways too: hauls between deposits kilometres apart want them from the start)
+  roads: ["street", "one1", "hw1", "hw2"],
+  features: ["grid", "parallel"],
+  tiles: 9,
+  towns: 2,
+  bays: 0,
+  load: 1,
+};
+
+/** How many milestones are open at once. */
+export const OPEN_AT_ONCE = 3;
+
+/** Every need of a town's size supplied over the last full day (at least 80% of each). */
+/** A town gets at least 80% of each of its needs (of only these products, when given). */
+export const fullySupplied = (t: ProgressView["towns"][number], only?: Product[]) =>
+  needsOf(t.pop).every((p) => (only && !only.includes(p)) || (t.supply[p] ?? 0) >= 0.8);
+
+const n = (o: Partial<Record<Product, number>>, p: Product) => o[p] ?? 0;
+const biggest = (v: ProgressView) => v.towns.reduce((a, t) => Math.max(a, t.pop), 0);
 
 export const MILESTONES: Milestone[] = [
-  { pop: 0, name: "Crossroads", roads: ["street", "one1", "hw1", "hw2"], features: ["grid", "parallel"], tiles: 9, grant: 0 },
-  { pop: 120, name: "Hamlet", roads: ["avenue", "one2", "streetM"], features: ["roundabout", "signals"], tiles: 2, grant: 8000 },
-  { pop: 400, name: "Village", roads: ["one3", "avenueM"], features: ["transit"], tiles: 2, grant: 15000 },
-  { pop: 1000, name: "Small town", roads: ["boulevard", "boulevardM"], features: [], tiles: 3, grant: 30000 },
-  { pop: 2500, name: "Town", roads: ["one4"], features: [], tiles: 3, grant: 60000 },
-  { pop: 5000, name: "Large town", roads: [], features: [], tiles: 4, grant: 100000 },
-  { pop: 10000, name: "City", roads: [], features: [], tiles: 5, grant: 180000 },
-  { pop: 20000, name: "Large city", roads: [], features: [], tiles: 6, grant: 300000 },
-  { pop: 40000, name: "Metropolis", roads: [], features: [], tiles: 8, grant: 500000 },
-  { pop: 80000, name: "Megalopolis", roads: [], features: [], tiles: 10, grant: 800000 },
+  {
+    id: "food10", name: "First customers", goal: "Deliver 10 loads of food to your towns",
+    measure: (v) => [n(v.sold, "food"), 10],
+    unlocks: { roads: ["avenue", "one2"], tiles: 3, grant: 5000 },
+  },
+  {
+    id: "town2", name: "A second town", goal: "Run two towns",
+    measure: (v) => [v.towns.length, 2],
+    unlocks: { features: ["roundabout"], roads: ["streetM"], towns: 1 },
+  },
+  {
+    id: "village", name: "Village", goal: "Grow a town to Village size: 300 people",
+    measure: (v) => [biggest(v), 300],
+    unlocks: { buildings: ["ironmine", "coalmine", "coalplant"], tiles: 4, grant: 15000 },
+  },
+  {
+    id: "planks10", name: "Sawn timber", goal: "Saw 10 loads of planks",
+    measure: (v) => [n(v.made, "planks"), 10],
+    unlocks: { bays: 1, features: ["signals"] },
+  },
+  {
+    id: "food20", name: "Market day", goal: "Deliver 20 loads of food in one day",
+    measure: (v) => [n(v.bestDay, "food"), 20],
+    unlocks: { buildings: ["smelter"], load: 1 },
+  },
+  {
+    // (food and planks only: a village of 600 also wants cement, and this is the milestone that unlocks it)
+    id: "supplied", name: "Village supplied", goal: "Keep a village in all the food and planks it needs for a day",
+    measure: (v) => [v.towns.some((t) => sizeOf(t.pop) >= 1 && fullySupplied(t, ["food", "planks"])) ? 1 : 0, 1],
+    unlocks: { buildings: ["quarry", "cementworks"], tiles: 2 },
+  },
+  {
+    id: "steel", name: "First steel", goal: "Make your first load of steel",
+    measure: (v) => [n(v.made, "steel"), 1],
+    unlocks: { roads: ["one3", "avenueM"], grant: 20000 },
+  },
+  {
+    id: "powered3", name: "Lights on", goal: "Run three buildings at full power",
+    measure: (v) => [v.powered, 3],
+    unlocks: { bays: 1 },
+  },
+  {
+    id: "cement", name: "First cement", goal: "Make your first load of cement",
+    measure: (v) => [n(v.made, "cement"), 1],
+    unlocks: { features: ["transit"], tiles: 3 },
+  },
+  {
+    id: "towns3", name: "Three towns", goal: "Run three towns",
+    measure: (v) => [v.towns.length, 3],
+    unlocks: { towns: 1, roads: ["boulevard"] },
+  },
+  {
+    id: "cement20", name: "Concrete", goal: "Deliver 20 loads of cement to your towns",
+    measure: (v) => [n(v.sold, "cement"), 20],
+    unlocks: { load: 1 },
+  },
+  {
+    id: "supplied2", name: "Two towns supplied", goal: "Supply every need of two towns of 100+ people for a day",
+    measure: (v) => [v.towns.filter((t) => t.pop >= 100 && fullySupplied(t)).length, 2],
+    unlocks: { roads: ["boulevardM"], tiles: 2 },
+  },
+  {
+    id: "trade20k", name: "Good trading day", goal: "Take $20,000 from deliveries in one day",
+    measure: (v) => [Math.floor(v.bestEarned), 20000], money: true,
+    unlocks: { bays: 1 },
+  },
+  {
+    id: "pop1000", name: "Big village", goal: "Grow a town to 1,000 people",
+    measure: (v) => [biggest(v), 1000],
+    unlocks: { towns: 1, tiles: 4 },
+  },
+  {
+    id: "planks30", name: "Building boom", goal: "Deliver 30 loads of planks in one day",
+    measure: (v) => [n(v.bestDay, "planks"), 30],
+    unlocks: { tiles: 2, grant: 30000 },
+  },
+  {
+    id: "food60", name: "Feeding thousands", goal: "Deliver 60 loads of food in one day",
+    measure: (v) => [n(v.bestDay, "food"), 60],
+    unlocks: { roads: ["one4"] },
+  },
+  {
+    id: "cement30", name: "Concrete age", goal: "Deliver 30 loads of cement in one day",
+    measure: (v) => [n(v.bestDay, "cement"), 30],
+    unlocks: { bays: 1 },
+  },
+  {
+    id: "town", name: "Town", goal: "Grow a town to Town size: 1,500 people",
+    measure: (v) => [biggest(v), 1500],
+    unlocks: { towns: 2, grant: 50000 },
+  },
 ];
 
-export function milestoneFor(pop: number): number {
-  let m = 0;
-  for (let i = 0; i < MILESTONES.length; i++) if (pop >= MILESTONES[i].pop) m = i;
-  return m;
+export const milestoneById = new Map(MILESTONES.map((m) => [m.id, m]));
+
+/** The milestone that unlocks something, if one does. */
+export const unlockedBy = (test: (u: Unlocks) => boolean | undefined): Milestone | undefined => MILESTONES.find((m) => test(m.unlocks));
+
+/** Everything a set of reached milestones adds up to, with the start's. */
+export interface Unlocked {
+  roads: Set<RoadTypeId>;
+  features: Set<Feature>;
+  buildings: Set<PlacedKind>;
+  tiles: number;
+  towns: number;
+  bays: number;
+  load: number;
 }
 
-export function unlockedRoads(m: number): Set<RoadTypeId> {
-  return new Set(MILESTONES.slice(0, m + 1).flatMap((x) => x.roads));
+export function unlocksOf(done: Iterable<string>): Unlocked {
+  const u: Unlocked = {
+    roads: new Set(BASE.roads), features: new Set(BASE.features),
+    buildings: new Set((Object.keys(PLANTS) as PlacedKind[]).filter((k) => PLANTS[k].tier === 1)),
+    tiles: BASE.tiles, towns: BASE.towns, bays: BASE.bays, load: BASE.load,
+  };
+  for (const id of done) {
+    const m = milestoneById.get(id)?.unlocks;
+    if (!m) continue;
+    for (const r of m.roads ?? []) u.roads.add(r);
+    for (const f of m.features ?? []) u.features.add(f);
+    for (const b of m.buildings ?? []) u.buildings.add(b);
+    u.tiles += m.tiles ?? 0;
+    u.towns += m.towns ?? 0;
+    u.bays += m.bays ?? 0;
+    u.load += m.load ?? 0;
+  }
+  return u;
 }
 
-export function unlockedFeature(m: number, f: Milestone["features"][number]): boolean {
-  return MILESTONES.slice(0, m + 1).some((x) => x.features.includes(f));
+export interface ProgressJSON {
+  done: string[];
+  made: Partial<Record<Product, number>>;
+  sold: Partial<Record<Product, number>>;
+  today: Partial<Record<Product, number>>;
+  bestDay: Partial<Record<Product, number>>;
+  earnedToday: number;
+  bestEarned: number;
 }
 
-export function tileSlots(m: number): number {
-  return MILESTONES.slice(0, m + 1).reduce((a, x) => a + x.tiles, 0);
+/** The company's record: milestones reached, in order, and the tallies they are measured on. */
+export class Progress {
+  done: string[] = [];
+  made: Partial<Record<Product, number>> = {};
+  sold: Partial<Record<Product, number>> = {};
+  /** loads delivered to towns today, and the best day so far (whole days) */
+  today: Partial<Record<Product, number>> = {};
+  bestDay: Partial<Record<Product, number>> = {};
+  earnedToday = 0;
+  bestEarned = 0;
+  private cache: { n: number; u: Unlocked } | null = null;
+
+  isDone(id: string): boolean {
+    return this.done.includes(id);
+  }
+
+  /** The milestones open now: the first few not yet reached, in ladder order. */
+  open(): Milestone[] {
+    return MILESTONES.filter((m) => !this.isDone(m.id)).slice(0, OPEN_AT_ONCE);
+  }
+
+  get unlocked(): Unlocked {
+    if (this.cache?.n !== this.done.length) this.cache = { n: this.done.length, u: unlocksOf(this.done) };
+    return this.cache.u;
+  }
+
+  onMade(p: Product, k: number) {
+    this.made[p] = (this.made[p] ?? 0) + k;
+  }
+
+  onSold(p: Product, k: number) {
+    this.sold[p] = (this.sold[p] ?? 0) + k;
+    this.today[p] = (this.today[p] ?? 0) + k;
+  }
+
+  onEarned(v: number) {
+    this.earnedToday += v;
+  }
+
+  /** The view milestones measure, with today's figures counting toward the best day. */
+  view(towns: ProgressView["towns"], powered: number): ProgressView {
+    const bestDay: Partial<Record<Product, number>> = { ...this.bestDay };
+    for (const [p, k] of Object.entries(this.today) as [Product, number][]) bestDay[p] = Math.max(bestDay[p] ?? 0, k);
+    return { towns, made: this.made, sold: this.sold, bestDay, bestEarned: Math.max(this.bestEarned, this.earnedToday), powered };
+  }
+
+  /** Reach every open milestone whose goal is met (and any it opens that are met too). Returns those reached. */
+  check(v: ProgressView): Milestone[] {
+    const out: Milestone[] = [];
+    for (let guard = 0; guard < MILESTONES.length; guard++) {
+      const m = this.open().find((x) => { const [have, need] = x.measure(v); return have >= need; });
+      if (!m) break;
+      this.done.push(m.id);
+      out.push(m);
+    }
+    return out;
+  }
+
+  /** A day is over: today's figures become a candidate for the best day. */
+  daily() {
+    for (const [p, k] of Object.entries(this.today) as [Product, number][]) this.bestDay[p] = Math.max(this.bestDay[p] ?? 0, k);
+    this.bestEarned = Math.max(this.bestEarned, this.earnedToday);
+    this.today = {};
+    this.earnedToday = 0;
+  }
+
+  /** Everything reached at once (for tools and tests that need every unlock). */
+  completeAll() {
+    for (const m of MILESTONES) if (!this.isDone(m.id)) this.done.push(m.id);
+  }
+
+  toJSON(): ProgressJSON {
+    return { done: [...this.done], made: { ...this.made }, sold: { ...this.sold }, today: { ...this.today }, bestDay: { ...this.bestDay }, earnedToday: this.earnedToday, bestEarned: this.bestEarned };
+  }
+
+  load(d: ProgressJSON) {
+    this.done = [...d.done];
+    this.made = { ...d.made };
+    this.sold = { ...d.sold };
+    this.today = { ...d.today };
+    this.bestDay = { ...d.bestDay };
+    this.earnedToday = d.earnedToday;
+    this.bestEarned = d.bestEarned;
+    this.cache = null;
+  }
 }
 
 /** Price of the next tile when `owned` are already owned. */

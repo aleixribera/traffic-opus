@@ -11,10 +11,10 @@ import { Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import { Terrain } from "../world/terrain";
 import { Buildings, obbOverlap, type Building, type BuildingMove } from "./buildings";
 import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, type LotTemplate } from "./growables";
-import { MILESTONES, milestoneFor, tilePrice, tileSlots, unlockedFeature, unlockedRoads, type Milestone } from "./progression";
+import { Progress, tilePrice, type Feature, type Milestone, type ProgressView } from "./progression";
 import { DAY, HOUR, Society } from "./society";
 import { PLACED, SHORE_REACH, type PlacedKind } from "./placed";
-import { Industry, MIN_DEPOSIT, PLANTS, isPlantKind } from "./industry";
+import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, isPlantKind } from "./industry";
 import { TownSystem } from "./settlements";
 import { BLOCK, gridPt } from "./towns";
 import { F } from "../world/gen";
@@ -36,7 +36,7 @@ export type GameEvent =
   | { t: "roads"; cs: ChangeSet }
   | { t: "buildings" }
   | { t: "zones" }
-  | { t: "milestone"; index: number }
+  | { t: "milestone"; m: Milestone }
   | { t: "money" }
   | { t: "tiles" }
   | { t: "toast"; msg: string };
@@ -44,11 +44,12 @@ export type GameEvent =
 /** The company's books for an hour. Income comes only from loads delivered to towns (and bus fares). */
 export interface Budget {
   income: Record<"sales" | "transit", number>;
-  expense: Record<"roads" | "wages" | "upkeep" | "fuel" | "transit" | "utilities" | "loans", number>;
+  expense: Record<"roads" | "wages" | "upkeep" | "fuel" | "transit" | "loans", number>;
 }
 
-/** Save format: 4 = the industrial company (plants, towns that grow themselves, no player zoning). */
-export const SAVE_V = 4;
+/** Save format: 4 = the industrial company (plants, towns that grow themselves, no player zoning); 5 = tier 2,
+ * building sites, company power and the milestone ladder. */
+export const SAVE_V = 5;
 
 /** Money a new company starts with: a farm, a food plant and some road, with a little to spare. */
 export const START_MONEY = 80000;
@@ -72,7 +73,8 @@ export class Game {
   speed = 1;
   paused = false;
   readonly dt = SIM.dt;
-  milestone = 0;
+  /** milestones reached and the tallies they are measured on */
+  progress = new Progress();
   cityName = "Larkfield";
   /** Per game hour: last complete hour, and the one being counted. */
   budget: Budget = emptyBudget();
@@ -132,11 +134,16 @@ export class Game {
       get shops() { return game.shops; },
       townOf: (b) => b.town ?? null,
       want: (town, p) => this.towns.want(town, p),
-      sold: (town, p, n) => this.towns.sold(town, p, n),
+      sold: (town, p, n) => { this.towns.sold(town, p, n); this.progress.onSold(p, n); },
       request: (sp) => this.traffic.request(sp),
       trips: () => this.trips(),
-      earn: (v) => { this.money += v; this.budgetNow.income.sales += v; },
+      earn: (v) => { this.money += v; this.budgetNow.income.sales += v; this.progress.onEarned(v); },
       spend: (v, what) => { this.money -= v; this.budgetNow.expense[what] += v; },
+      bays: () => this.progress.unlocked.bays,
+      load: () => this.progress.unlocked.load,
+      power: (b) => this.utilities.supplyOf(b),
+      wanted: (b) => this.utilities.wanted(b),
+      made: (p, n) => this.progress.onMade(p, n),
     });
     this.world = {
       isWater: (p) => t.isWater(p),
@@ -239,7 +246,7 @@ export class Game {
   }
 
   get tileSlotsLeft(): number {
-    return tileSlots(this.milestone) - this.tiles.size;
+    return this.progress.unlocked.tiles - this.tiles.size;
   }
 
   get nextTilePrice(): number {
@@ -279,9 +286,27 @@ export class Game {
 
   // ---------------------------------------------------------------- unlocks
 
-  get roadsUnlocked(): Set<RoadTypeId> { return unlockedRoads(this.milestone); }
-  featureUnlocked(f: Milestone["features"][number]): boolean { return unlockedFeature(this.milestone, f); }
-  placedUnlocked(k: PlacedKind): boolean { return this.milestone >= PLACED[k].unlock; }
+  get roadsUnlocked(): Set<RoadTypeId> { return this.progress.unlocked.roads; }
+  featureUnlocked(f: Feature): boolean { return this.progress.unlocked.features.has(f); }
+  placedUnlocked(k: PlacedKind): boolean { return this.progress.unlocked.buildings.has(k); }
+  /** Towns the company may run. */
+  get townSlots(): number { return this.progress.unlocked.towns; }
+  /** Every milestone reached (for tools and tests that need everything unlocked; no grants). */
+  unlockAll() { this.progress.completeAll(); }
+
+  /** What the milestones are measured on, now. */
+  progressView(): ProgressView {
+    return this.progress.view(this.towns.list.map((t) => ({ pop: t.pop, supply: t.supply })), this.utilities.powered);
+  }
+
+  /** Reach any open milestone whose goal is met: pay its grant and say so. */
+  checkMilestones() {
+    for (const m of this.progress.check(this.progressView())) {
+      this.money += m.unlocks.grant ?? 0;
+      this.emit({ t: "milestone", m });
+      this.emit({ t: "money" });
+    }
+  }
 
   toast(msg: string) {
     this.emit({ t: "toast", msg });
@@ -1097,14 +1122,15 @@ export class Game {
     // a new day: shops close the books on yesterday's customers, the towns on yesterday's deliveries
     const day = Math.floor(this.time / DAY);
     if (day !== this.dayN) {
-      if (this.dayN >= 0) this.towns.daily();
+      if (this.dayN >= 0) { this.towns.daily(); this.checkMilestones(); this.progress.daily(); }
       this.dayN = day;
       for (const b of this.shops) { b.custDay = b.custToday ?? 0; b.custToday = 0; }
     }
     let changed = false;
     for (const b of this.buildings.list) {
-      if (b.built < 1) {
-        b.built = Math.min(1, b.built + span / (HOUR * 1.5));
+      // (a building site goes up only once every material it waits for has been trucked in)
+      if (b.built < 1 && !b.plant?.site) {
+        b.built = Math.min(1, b.built + span / BUILD_TIME);
         if (b.built >= 1) changed = true;
       }
     }
@@ -1116,14 +1142,13 @@ export class Game {
     this.utilities.tick(span);
     this.transit.tick();
     for (const b of [...this.buildings.list]) this.stepBuilding(b, span);
+    this.checkMilestones();
     if (changed) this.emit({ t: "buildings" });
   }
 
   private stepBuilding(b: Building, span: number) {
-    // placed buildings: a plant's own trouble (no road, nobody on its roads, no staff)
     // (the company's plants report their own trouble: see Industry)
-    if (b.plant) return;
-    if (b.placed) { b.problem = b.built >= 1 && PLACED[b.kind as PlacedKind]?.utility ? this.utilities.plantProblem(b) : null; return; }
+    if (b.plant || b.placed) return;
     if (!b.zone || b.built < 1) return;
     const grp = ZONE_GROUP[b.zone];
     // shops count their customers over a day (an evening rush and a quiet morning even out); parks over a few hours
@@ -1219,12 +1244,11 @@ export class Game {
       if (g) roads += g.center.length * ROAD_TYPES[s.type].costPerM * 0.002;
     }
     B.expense.roads += roads;
-    B.expense.utilities += this.utilities.upkeep();
     const tr = this.transit.hourly();
     B.income.transit += tr.fares;
     B.expense.transit += tr.upkeep;
     // (sales, wages, upkeep and fuel have already moved the money)
-    this.money += B.income.transit - B.expense.roads - B.expense.utilities - B.expense.transit - B.expense.loans;
+    this.money += B.income.transit - B.expense.roads - B.expense.transit - B.expense.loans;
     this.budget = B;
     this.budgetLog.push(B);
     if (this.budgetLog.length > 24) this.budgetLog.shift();
@@ -1235,20 +1259,13 @@ export class Game {
     if (this.history.length > 72) this.history.shift();
     this.landValue();
     for (const [id, t] of this.noRouteAt) if (this.time - t > HOUR * 3) this.noRouteAt.delete(id);
-    // milestones
-    const m = milestoneFor(st.population);
-    if (m > this.milestone) {
-      for (let k = this.milestone + 1; k <= m; k++) this.money += MILESTONES[k].grant;
-      this.milestone = m;
-      this.emit({ t: "milestone", index: m });
-    }
     this.emit({ t: "money" });
   }
 
   /** Land value from road access and nearby shops, minus the company's dirty plants nearby. */
   private landValue() {
     const list = this.buildings.list.filter((b) => b.zone && !b.abandoned);
-    const ind = this.buildings.list.filter((b) => b.plant && BUILDING_TYPES[b.kind].pollution > 0);
+    const ind = this.buildings.list.filter((b) => b.plant && !b.plant.site && BUILDING_TYPES[b.kind].pollution > 0);
     const shops = list.filter((b) => b.zone && ZONE_GROUP[b.zone] === "com");
     const pop = this.people.stats.population;
     for (const b of list) {
@@ -1287,7 +1304,7 @@ export class Game {
       people: this.people.toJSON(),
       transit: this.transit.toJSON(),
       money: this.money,
-      milestone: this.milestone,
+      progress: this.progress.toJSON(),
       tiles: [...this.tiles],
       towns: this.towns.toJSON(),
       budget: this.budget as Budget | undefined,
@@ -1298,11 +1315,11 @@ export class Game {
   }
 
   static load(data: ReturnType<Game["serialize"]>): Game {
-    if ((data as { v?: number }).v !== SAVE_V) throw new Error("Save from an older version");
+    if ((data as { v?: number }).v !== SAVE_V) throw new Error("Save from an older version of the game: it can't be loaded");
     const g = new Game(data.seed);
     g.net.load(data.net);
     g.tiles = new Set(data.tiles);
-    g.milestone = data.milestone;
+    g.progress.load(data.progress);
     g.money = data.money;
     if (data.budget) {
       const e = emptyBudget();
@@ -1387,7 +1404,7 @@ export class Game {
 }
 
 function emptyBudget(): Budget {
-  return { income: { sales: 0, transit: 0 }, expense: { roads: 0, wages: 0, upkeep: 0, fuel: 0, transit: 0, utilities: 0, loans: 0 } };
+  return { income: { sales: 0, transit: 0 }, expense: { roads: 0, wages: 0, upkeep: 0, fuel: 0, transit: 0, loans: 0 } };
 }
 
 function sum(o: Record<string, number>): number {

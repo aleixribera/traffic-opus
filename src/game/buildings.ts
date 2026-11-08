@@ -142,7 +142,7 @@ export class Buildings {
     const samples = [...corners, c, ...corners.map((k) => scale(add(k, c), 0.5))];
     for (const k of samples) {
       if (!world.inBounds(k)) return fail("Outside the map");
-      if (!world.unlocked(k)) return fail("Area not unlocked yet");
+      if (!world.unlocked(k)) return fail("Not your land: buy this tile first (M)");
       if (world.isWater(k)) return fail("Can't build on water");
     }
     // mountains

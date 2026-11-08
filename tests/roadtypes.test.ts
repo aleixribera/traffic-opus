@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ROAD_TYPES, ROAD_ORDER, isHighway } from "../src/config";
-import { MILESTONES } from "../src/game/progression";
+import { BASE } from "../src/game/progression";
 
 describe("Road types", () => {
   it("a one-lane highway exists alongside the one-lane town one-way, and only highways count as highways", () => {
@@ -18,7 +18,7 @@ describe("Road types", () => {
   });
 
   it("the one-lane highway is available from the start, like the motorway it links to", () => {
-    expect(MILESTONES[0].roads).toContain("hw1");
-    expect(MILESTONES[0].roads).toContain("hw2");
+    expect(BASE.roads).toContain("hw1");
+    expect(BASE.roads).toContain("hw2");
   });
 });

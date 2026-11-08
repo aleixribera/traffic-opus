@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import type { BuildingKind } from "../config";
+import { BUILDING_TYPES, type BuildingKind } from "../config";
 
 /** A Blender model flattened into one vertex-coloured geometry (one draw call per instanced kind). */
 export interface MergedModel {
@@ -17,7 +17,13 @@ export interface VehicleModel {
 
 export const BUILDING_MODELS: BuildingKind[] = [
   "house", "terrace", "apartments", "shop", "store", "mall", "farm", "loggingcamp", "foodplant", "sawmill", "coalplant",
+  "ironmine", "coalmine", "quarry", "smelter", "cementworks",
 ];
+/**
+ * Stand-ins for kinds whose own model isn't built yet: the generic mine and works, fitted to the kind's lot. A kind
+ * here loads its own GLB when there is one.
+ */
+const FALLBACK: Partial<Record<BuildingKind, string>> = { ironmine: "mine", coalmine: "mine", quarry: "mine", smelter: "works", cementworks: "works" };
 export const VEHICLE_MODELS = ["car", "van", "truck", "tipper", "tanker", "flatbed", "bus"] as const;
 /** Street furniture, drawn on its own (not a lot). */
 export const PROP_MODELS = ["busstop"] as const;
@@ -35,14 +41,18 @@ export async function loadModels(onProgress?: (k: number) => void): Promise<Mode
   const loader = new GLTFLoader();
   const all = [...BUILDING_MODELS, ...VEHICLE_MODELS, ...PROP_MODELS];
   let done = 0;
+  const load = (n: string) => loader.loadAsync(base + n + ".glb").then((g) => g.scene);
   const scenes = await Promise.all(
-    all.map((n) =>
-      loader.loadAsync(base + n + ".glb").then((g) => {
+    all.map((n) => {
+      const fb = FALLBACK[n as BuildingKind];
+      // (a missing file comes back as the app's HTML page, which the loader refuses)
+      const sc = fb ? load(n).catch(() => load(fb).then((s) => fitLot(s, n as BuildingKind))) : load(n);
+      return sc.then((s) => {
         done++;
         onProgress?.(done / all.length);
-        return g.scene;
-      }),
-    ),
+        return s;
+      });
+    }),
   );
   const buildings = new Map<BuildingKind, MergedModel>();
   const vehicles = new Map<VehicleKind, VehicleModel>();
@@ -55,6 +65,19 @@ export async function loadModels(onProgress?: (k: number) => void): Promise<Mode
     else buildings.set(n as BuildingKind, mergeModel(sc));
   });
   return { buildings, vehicles, props };
+}
+
+/** Scale a stand-in model to fill its kind's lot (footprint w x d, keeping its proportions). */
+function fitLot(sc: THREE.Object3D, kind: BuildingKind): THREE.Object3D {
+  sc.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(sc);
+  const size = box.getSize(new THREE.Vector3());
+  const T = BUILDING_TYPES[kind];
+  const k = Math.min(T.w / Math.max(1e-3, size.x), T.d / Math.max(1e-3, size.z)) * 0.92;
+  const root = new THREE.Group();
+  root.scale.setScalar(k);
+  root.add(sc);
+  return root;
 }
 
 function prepGeometry(m: THREE.Mesh, color: THREE.Color | null): THREE.BufferGeometry {
@@ -100,7 +123,10 @@ function mergeModel(sc: THREE.Object3D): MergedModel {
       } else geos.push(prepGeometry(m, meshColor(m)));
     } else if (/^park_?\d+/i.test(o.name)) {
       // empty: its -z (Blender +Y) is where the car's nose points; car models face +z
-      bays.push(o.matrixWorld.clone().multiply(flip));
+      // (without scale: a stand-in model fitted to its lot keeps full-size cars in its bays)
+      const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+      o.matrixWorld.decompose(pos, q, sc);
+      bays.push(new THREE.Matrix4().compose(pos, q, new THREE.Vector3(1, 1, 1)).multiply(flip));
     }
   });
   const geo = mergeGeometries(geos, false)!;

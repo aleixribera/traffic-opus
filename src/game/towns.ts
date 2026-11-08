@@ -19,11 +19,14 @@ export interface TownSize {
 /** Sizes and the needs each one adds (design: food, building materials, household goods + fuel, electronics...). */
 export const TOWN_SIZES: TownSize[] = [
   { name: "Hamlet", pop: 0, adds: ["food"] },
-  { name: "Village", pop: 300, adds: ["planks"] },
+  { name: "Village", pop: 300, adds: ["planks", "cement"] },
   { name: "Town", pop: 1500, adds: [] },
   { name: "City", pop: 6000, adds: [] },
   { name: "Metropolis", pop: 20000, adds: [] },
 ];
+
+/** Needs a size adds only once the town has grown further into it: a village builds in timber, then in concrete. */
+export const NEED_FROM: Partial<Record<Product, number>> = { cement: 600 };
 
 export function sizeOf(pop: number): number {
   let s = 0;
@@ -31,9 +34,22 @@ export function sizeOf(pop: number): number {
   return s;
 }
 
+/** Population a town needs a product from. */
+export const needFrom = (p: Product): number => NEED_FROM[p] ?? TOWN_SIZES.find((s) => s.adds.includes(p))?.pop ?? Infinity;
+
 /** Everything a town of this population needs. */
 export function needsOf(pop: number): Product[] {
-  return TOWN_SIZES.slice(0, sizeOf(pop) + 1).flatMap((s) => s.adds);
+  return TOWN_SIZES.slice(0, sizeOf(pop) + 1).flatMap((s) => s.adds).filter((p) => needFrom(p) <= pop);
+}
+
+/** The next need a town of this population will have, and the population it starts at (null: none for now). */
+export function nextNeed(pop: number): { p: Product; pop: number } | null {
+  let best: { p: Product; pop: number } | null = null;
+  for (const s of TOWN_SIZES) for (const p of s.adds) {
+    const at = needFrom(p);
+    if (at > pop && (!best || at < best.pop)) best = { p, pop: at };
+  }
+  return best;
 }
 
 /**
@@ -41,7 +57,7 @@ export function needsOf(pop: number): Product[] {
  * there being more residents: demand climbs exponentially through the sizes, as the design asks.
  */
 export function demandPerDay(p: Product, pop: number): number {
-  const per: Partial<Record<Product, number>> = { food: 1 / 12, planks: 1 / 30 };
+  const per: Partial<Record<Product, number>> = { food: 1 / 12, planks: 1 / 30, cement: 1 / 50 };
   const base = per[p] ?? 1 / 40;
   return Math.max(1, pop * base * Math.pow(1.6, sizeOf(pop)));
 }

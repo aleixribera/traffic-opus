@@ -174,22 +174,24 @@ describe("Towns", () => {
     const g = new Game(7);
     expect(g.roadsUnlocked.has("avenue")).toBe(false);
     expect(g.featureUnlocked("roundabout")).toBe(false);
-    let seen = -1;
-    g.on((e) => { if (e.t === "milestone") seen = e.index; });
+    const seen: string[] = [];
+    g.on((e) => { if (e.t === "milestone") seen.push(e.m.id); });
     const m0 = g.money;
-    (g.people.stats as { population: number }).population = 130;
-    (g as unknown as { hourly(): void }).hourly();
-    expect(g.milestone).toBe(1);
-    expect(seen).toBe(1);
-    expect(g.money - m0).toBeGreaterThan(7000);
+    g.progress.onSold("food", 10);
+    g.checkMilestones();
+    expect(seen).toEqual(["food10"]);
+    expect(g.money - m0).toBe(5000);
     expect(g.roadsUnlocked.has("avenue")).toBe(true);
-    expect(g.featureUnlocked("roundabout")).toBe(true);
+    expect(g.tileSlotsLeft).toBe(3);
+    // a second town: roundabouts and a town slot more
+    expect(g.featureUnlocked("roundabout")).toBe(false);
+    expect(g.townSlots).toBe(2);
   });
 
   it("buys land next to owned tiles, at a rising price, up to the milestone's limit", () => {
     const g = new Game(7);
     expect(g.tileBlock(2, 0)).toBe("Reach the next milestone to buy more land");
-    g.milestone = 2; // Village: 4 more tiles
+    g.progress.done.push("village"); // Village: 4 more tiles
     expect(g.tileBlock(3, 0)).toMatch(/border/);
     const p0 = g.nextTilePrice;
     const m0 = g.money;
@@ -242,7 +244,7 @@ describe("Traffic in a growing town", () => {
   it("keeps traffic moving through a roundabout town (no ring gridlock)", () => {
     const g = new Game(7);
     (g as { money: number }).money = 1e7;
-    g.milestone = 1;
+    g.unlockAll();
     road(g, v2(366, 473), v2(0, 60));
     expect(g.build(planRoundabout(g.net, g.world, v2(0, 0), 1, 0))).toBe(true);
     for (const [x, y] of [[0, -160], [160, 0], [-160, 0], [0, 60]]) {

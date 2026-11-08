@@ -22,7 +22,7 @@ interface Ghost { kind: VehicleKind; color: number; load: number | null; legs: L
 /** The truck body that carries each product: loose bulk in tippers, liquids in tankers, long loads on flatbeds. */
 const TRUCK_BODY: Record<string, VehicleKind> = {
   crops: "tipper", ore: "tipper", coal: "tipper", lime: "tipper", sand: "tipper", gravel: "tipper", copper: "tipper",
-  oil: "tanker", fuel: "tanker", chemicals: "tanker",
+  oil: "tanker", fuel: "tanker", chemicals: "tanker", cement: "tanker",
   logs: "flatbed", planks: "flatbed", steel: "flatbed", machinery: "flatbed",
 };
 const truckBody = (t: Trip): VehicleKind => TRUCK_BODY[t.haul?.product ?? t.cargo ?? ""] ?? "truck";

@@ -78,6 +78,21 @@ export function placedIcon(kind: string): string {
     case "sawmill":
       // a long shed, a saw blade and planks
       return svg(28, 28, `<rect x="2" y="9" width="17" height="14" fill="#8a6a45"/><path d="M2 9 L10.5 4 L19 9 Z" fill="#5b4630"/><circle cx="22" cy="12" r="4.4" fill="#c9cdd2" stroke="#6d737a" stroke-width="1"/><circle cx="22" cy="12" r="1.2" fill="#6d737a"/><rect x="5" y="18" width="21" height="2.4" fill="#e8cf8f" stroke="#a9862b" stroke-width="0.6"/><rect x="7" y="21" width="19" height="2.4" fill="#e8cf8f" stroke="#a9862b" stroke-width="0.6"/>`);
+    case "ironmine":
+    case "coalmine": {
+      // a headframe over the shaft and a heap of what comes up: rust-red ore or black coal
+      const heap = kind === "ironmine" ? "#93603f" : "#34353a";
+      return svg(28, 28, `<path d="M5 24 L10 6 L15 24" fill="none" stroke="#545a61" stroke-width="2" stroke-linejoin="round"/><path d="M7 16 H13" stroke="#545a61" stroke-width="1.6"/><circle cx="10" cy="6" r="2.6" fill="#c9cdd2" stroke="#545a61" stroke-width="1.2"/><rect x="3" y="22" width="14" height="3" fill="#7d8790"/><path d="M14 25 Q19.5 13 26 25 Z" fill="${heap}"/>`);
+    }
+    case "quarry":
+      // stepped pale rock benches cut into the ground
+      return svg(28, 28, `<path d="M2 25 H26 V20 H21 V15 H15 V10 H9 V5 H2 Z" fill="#d9d3bd" stroke="#8e8670" stroke-width="1"/><path d="M2 10 H9 M2 15 H15 M2 20 H21" stroke="#b5ad94" stroke-width="1"/><rect x="18" y="5" width="7" height="4" rx="1" fill="#e0a526"/><circle cx="19.5" cy="10" r="1.2" fill="#3c3f44"/><circle cx="23.5" cy="10" r="1.2" fill="#3c3f44"/>`);
+    case "smelter":
+      // a blast furnace stack beside the casting shed, glowing
+      return svg(28, 28, `<path d="M5 25 L7 9 H13 L15 25 Z" fill="#6d737a"/><rect x="8" y="3" width="4" height="6" fill="#545a61"/><rect x="15" y="14" width="11" height="11" fill="#7d8790"/><path d="M15 14 L20.5 10 L26 14 Z" fill="#5b6168"/><rect x="7.5" y="18" width="5" height="4" fill="#f08a3a"/><rect x="18" y="19" width="5" height="2" fill="#8a96a3"/>`);
+    case "cementworks":
+      // a long kiln, a preheater tower and a cement silo
+      return svg(28, 28, `<rect x="3" y="6" width="6" height="19" fill="#7d8790"/><rect x="4.5" y="3" width="3" height="3" fill="#545a61"/><path d="M8 20 L22 17 V21 L8 24 Z" fill="#9aa0a6" stroke="#6d737a" stroke-width="0.8"/><rect x="20" y="7" width="6" height="18" rx="3" fill="#c9c6bd"/><path d="M20 12 H26" stroke="#a9a69d" stroke-width="1"/>`);
     case "coalplant":
       return svg(28, 28, `<path d="M17 24 C17.8 18 18.5 13 17.2 8 H24.8 C23.5 13 24.2 18 25 24 Z" fill="#9aa0a6"/><rect x="3" y="14" width="13" height="10" fill="#6d737a"/><rect x="7" y="5" width="3" height="9" fill="#545a61"/><circle cx="9" cy="3.6" r="2" fill="#c9cdd2"/><circle cx="12" cy="2.6" r="1.5" fill="#dde0e3"/>`);
     default:

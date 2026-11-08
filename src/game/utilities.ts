@@ -1,147 +1,112 @@
-// Electricity, the CS2 way. Cables run with the roads, so every building on a road that reaches a power plant can
-// draw from it. What the plants on a connected road network make is shared by every building on it. There is no
-// outside grid to buy from or sell to. Shortage doesn't hurt homes or shops (the company's plants will need power).
+// The company's power (docs/design.md, "Chains"): power plants burn coal trucked to them and power the company's
+// tier 2 buildings, along the roads: a building draws from the plants on its road network within their reach.
+// What those plants make is shared among the buildings that draw on them; a building short of power works slower
+// (industry.ts, powerPace). Homes and shops don't use the company's power (no city services).
 
 import { dist } from "../core/math";
 import type { Building } from "./buildings";
 import type { Game } from "./city";
-import { ZONE_GROUP } from "./growables";
-import { PLACED, type UtilityId } from "./placed";
+import { Industry, PLANTS, type PlantKind } from "./industry";
 
-export const UTILITIES: UtilityId[] = ["power"];
-
-/** What one resident or worker uses an hour (MW). */
-export const PER_PERSON: Record<UtilityId, number> = { power: 0.006 };
+export type UtilityId = "power";
 export const UNIT: Record<UtilityId, string> = { power: "MW" };
 
 export interface UtilityStats {
-  /** made by the town's own plants */
+  /** made by the company's power plants */
   made: number;
-  /** used by its buildings */
+  /** wanted by the buildings that draw power */
   used: number;
   /** wanted but not had */
   short: number;
 }
 
-const empty = (): UtilityStats => ({ made: 0, used: 0, short: 0 });
-
-export type Supply = Record<UtilityId, number>;
-const FULL: Supply = { power: 1 };
-
-const defOf = (b: Building) => (b.placed ? PLACED[b.kind as keyof typeof PLACED] : undefined);
+const defOf = (b: Building) => (b.plant ? PLANTS[b.kind as PlantKind] : undefined);
 
 export class Utilities {
-  /** Building id -> share of what it needs that it gets (0..1). Missing: fully supplied. */
-  supply = new Map<number, Supply>();
-  stats: Record<UtilityId, UtilityStats> = { power: empty() };
-  /** Road component -> what the plants on it make and its buildings use (for a plant's inspector). */
-  nets = new Map<number, { made: Supply; used: Supply }>();
+  /** Building id -> share of the power it needs that it gets (0..1). Missing: needs none, or fully supplied. */
+  supply = new Map<number, number>();
+  stats: UtilityStats = { made: 0, used: 0, short: 0 };
+  /** Power plant id -> what it makes now, and what the buildings it reaches want. */
+  plants = new Map<number, { made: number; used: number; users: number }>();
   /** Coal plants (for land value), refreshed each tick. */
   private polluters: Building[] = [];
 
   constructor(private g: Game) {}
 
-  /** What a plant makes now: its rated output, scaled by its staff (a skeleton crew keeps a quarter going). */
+  /** What a power plant makes now: its rating, scaled by its staff, while it has coal to burn. */
   outputOf(b: Building): number {
     const d = defOf(b);
-    if (!d?.out || b.built < 1 || b.abandoned || !b.access) return 0;
+    if (!d?.makes || !Industry.running(b) || !b.access) return 0;
+    if ((b.plant!.stock.coal ?? 0) < 1) return 0;
     const staff = b.cap ? this.g.people.workersAt(b.id) / b.cap : 1;
-    return d.out * Math.max(0.25, Math.min(1, staff * 1.25));
+    if (staff <= 0) return 0;
+    return d.makes * Math.max(0.25, Math.min(1, staff * 1.25));
   }
 
-  /** People a building serves (its residents, or its workers). */
-  private peopleIn(b: Building): number {
-    if (b.placed) return defOf(b)?.out ? 0 : this.g.people.workersAt(b.id);
-    if (!b.zone || b.built < 1 || b.abandoned) return 0;
-    if (ZONE_GROUP[b.zone] === "res") {
-      let n = 0;
-      for (const hh of this.g.people.hhAt.get(b.id) ?? []) n += hh.members.length;
-      return n;
-    }
-    return this.g.people.workersAt(b.id);
+  /** Power a building draws at full work (0: it needs none). Building sites draw nothing. */
+  demandOf(b: Building): number {
+    const d = defOf(b);
+    return d?.power && Industry.running(b) && b.access ? d.power : 0;
   }
 
-  /** Every 1/8 game hour: share out what each road network makes. */
+  /** Is building b within reach of power plant p, on the same roads? */
+  reaches(p: Building, b: Building): boolean {
+    const d = defOf(p);
+    if (!d?.makes || !p.access || !b.access) return false;
+    return dist(p.c, b.c) <= d.reach! && this.g.connected(p.access.seg, b.access.seg);
+  }
+
+  /**
+   * Every 1/8 game hour: each power plant shares what it makes among the buildings within its reach, in proportion
+   * to what they draw; a building in reach of two plants gets its share from both. A plant far off on the same roads
+   * gives nothing: power reaches only as far as the plant's reach.
+   */
   tick(_span: number) {
     const g = this.g;
-    type Net = { made: Supply; used: Supply; users: Building[] };
-    const nets = new Map<number, Net>();
-    const netOf = (b: Building): Net | null => {
-      if (!b.access) return null;
-      const c = g.compOf(b.access.seg);
-      if (c === null) return null;
-      let n = nets.get(c);
-      if (!n) nets.set(c, (n = { made: { power: 0 }, used: { power: 0 }, users: [] }));
-      return n;
-    };
-    for (const b of g.buildings.list) {
-      const n = netOf(b);
-      if (!n) continue;
-      const d = defOf(b);
-      if (d?.out && d.utility) {
-        n.made[d.utility] += this.outputOf(b);
-        continue;
-      }
-      const p = this.peopleIn(b);
-      if (p <= 0) continue;
-      for (const u of UTILITIES) n.used[u] += p * PER_PERSON[u];
-      n.users.push(b);
+    const plants = g.buildings.list.filter((b) => defOf(b)?.makes && b.access);
+    const users = g.buildings.list.filter((b) => this.demandOf(b) > 0);
+    this.plants.clear();
+    for (const p of plants) this.plants.set(p.id, { made: this.outputOf(p), used: 0, users: 0 });
+    const near = new Map<number, Building[]>();
+    for (const b of users) {
+      const ps = plants.filter((p) => this.reaches(p, b));
+      near.set(b.id, ps);
+      for (const p of ps) { const e = this.plants.get(p.id)!; e.used += this.demandOf(b); e.users++; }
     }
-    const st: Record<UtilityId, UtilityStats> = { power: empty() };
     this.supply.clear();
-    for (const n of nets.values()) {
-      const s: Supply = { ...FULL };
-      for (const u of UTILITIES) {
-        const made = n.made[u], used = n.used[u];
-        st[u].made += made;
-        st[u].used += used;
-        if (used <= made) continue;
-        s[u] = used > 0 ? Math.min(1, made / used) : 1;
-        st[u].short += used - made;
-      }
-      if (s.power < 1) for (const b of n.users) this.supply.set(b.id, s);
+    const st: UtilityStats = { made: 0, used: 0, short: 0 };
+    for (const e of this.plants.values()) st.made += e.made;
+    for (const b of users) {
+      const want = this.demandOf(b);
+      let share = 0;
+      for (const p of near.get(b.id)!) { const e = this.plants.get(p.id)!; share += e.made / e.used; }
+      share = Math.min(1, share);
+      this.supply.set(b.id, share);
+      st.used += want;
+      st.short += want * (1 - share);
     }
     this.stats = st;
-    this.polluters = g.buildings.list.filter((b) => b.placed && b.kind === "coalplant");
-    this.nets = new Map([...nets].map(([c, n]) => [c, { made: n.made, used: n.used }]));
+    this.polluters = g.buildings.list.filter((b) => b.kind === "coalplant" && !b.plant?.site);
   }
 
-  /** What the plants on a building's road network make and its buildings use. */
-  netOf(b: Building): { made: Supply; used: Supply } | null {
-    const c = b.access ? this.g.compOf(b.access.seg) : null;
-    return c === null ? null : this.nets.get(c) ?? null;
+  /** Share of the power a building needs that it gets (1 when it needs none). */
+  supplyOf(b: Building): number {
+    return this.supply.get(b.id) ?? 1;
   }
 
-  supplyOf(b: Building): Supply {
-    return this.supply.get(b.id) ?? FULL;
+  /** Buildings within a power plant's reach want its power (it burns coal only then). */
+  wanted(p: Building): boolean {
+    return (this.plants.get(p.id)?.users ?? 0) > 0;
   }
 
-  /** The plants' upkeep this hour (for the budget). */
-  upkeep(): number {
-    let upkeep = 0;
-    for (const b of this.g.buildings.list) {
-      const d = defOf(b);
-      if (d?.out) upkeep += d.upkeep;
-    }
-    return upkeep;
+  /** Buildings that need power and get all of it. */
+  get powered(): number {
+    let n = 0;
+    for (const b of this.g.buildings.list) if (this.demandOf(b) > 0 && this.supplyOf(b) >= 0.999) n++;
+    return n;
   }
 
-  /** A plant's own trouble (the inspector). */
-  plantProblem(b: Building): string | null {
-    if (!b.access) return "No road access";
-    if (!this.servesAnyone(b)) return "Not connected to anything";
-    if (b.cap && this.g.people.workersAt(b.id) < b.cap * 0.5) return this.g.people.workersAt(b.id) > 0 ? "Short of staff" : "No staff yet";
-    return null;
-  }
-
-  private servesAnyone(b: Building): boolean {
-    const c = b.access ? this.g.compOf(b.access.seg) : null;
-    if (c === null) return false;
-    for (const o of this.g.buildings.list) if (o !== b && !o.placed && o.access && this.g.compOf(o.access.seg) === c) return true;
-    return false;
-  }
-
-  /** Land value lost to smoke from a coal plant nearby. */
+  /** Land value lost to smoke from a power plant nearby. */
   landValueOf(b: Building): number {
     let lv = 0;
     for (const o of this.polluters) {

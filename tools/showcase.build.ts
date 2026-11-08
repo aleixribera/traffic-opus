@@ -1,14 +1,14 @@
 /**
  * Builds the showcase company that plays behind the main menu with the game's own tools: the starting hamlet grown
- * into a village, a second town founded down the road, a farm and a food plant feeding both, and a logging camp and
- * sawmill selling planks to the village. It runs for a few game days and is written as a save to
- * tools/out/showcase.json (copy it to public/).
+ * into a village, a second town founded down the road, farms and food plants feeding both, a logging camp and
+ * sawmill selling planks to the village, and out past the river tier 2: a coal mine, a power plant and a smelter fed
+ * by an iron mine. It runs for a few game days and is written as a save to tools/out/showcase.json (copy it to
+ * public/).
  *
  *   npx vitest run --config tools/vitest.config.ts tools/showcase.build.ts
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { it } from "vitest";
-import { milestoneFor } from "../src/game/progression";
 import { Game, START_MONEY } from "../src/game/city";
 import { HOUR } from "../src/game/society";
 import { BLOCK, gridPt } from "../src/game/towns";
@@ -18,6 +18,7 @@ import type { PlacedKind } from "../src/game/placed";
 import type { Building } from "../src/game/buildings";
 import { dist, v2, type V2 } from "../src/core/math";
 import { planRoad, snap, type Snap } from "../src/roads/planner";
+import { layRoad } from "../tests/helpers";
 
 const log: string[] = [];
 const say = (s: string) => { log.push(s); console.log(s); };
@@ -35,6 +36,19 @@ function mk(g: Game) {
       if (!g.build(plan)) { say(`FAIL build ${name}`); return false; }
       say(`road ${name} ${dist(a, b).toFixed(0)} m`);
       return true;
+    },
+    /** A plant beside the street a-b, as near fraction t0 of the way along as fits. */
+    placeFrom(kind: PlacedKind, a: V2, b: V2, t0: number): Building | null {
+      const L = dist(a, b), n = v2(-(b.y - a.y) / L, (b.x - a.x) / L);
+      for (let t = t0; t < 0.95; t += 12 / L) {
+        const q = v2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+        for (const side of [1, -1]) for (const o of [35, 50]) {
+          const p = v2(q.x + side * n.x * o, q.y + side * n.y * o);
+          if (g.placedPlan(kind, p)?.ok) { const x = g.place(kind, p)!; say(`place ${kind} at ${p.x.toFixed(0)},${p.y.toFixed(0)}`); return x; }
+        }
+      }
+      say(`FAIL place ${kind} along ${a.x.toFixed(0)},${a.y.toFixed(0)} - ${b.x.toFixed(0)},${b.y.toFixed(0)}`);
+      return null;
     },
     /** A plant beside the street a-b, as near its middle as fits. */
     place(kind: PlacedKind, a: V2, b: V2): Building | null {
@@ -54,9 +68,22 @@ function mk(g: Game) {
   };
 }
 
-/** The nearest spot to p whose 75 m square is mostly on a deposit field. */
-function nearestDeposit(g: Game, field: number, p: V2, from = 150): V2 | null {
-  for (let r = from; r < 2500; r += 25) for (let k = 0; k < 64; k++) {
+/** Spots on a deposit field from `from` to `to` m out from p, nearest first (one per patch or so). */
+function deposits(g: Game, field: number, p: V2, from: number, to: number): V2[] {
+  const out: V2[] = [];
+  for (let r = from; r < to && out.length < 8; r += 100) for (let k = 0; k < 96; k++) {
+    const q = v2(p.x + Math.cos((k / 96) * Math.PI * 2) * r, p.y + Math.sin((k / 96) * Math.PI * 2) * r);
+    if (!g.world.inBounds(q) || g.world.isWater(q) || g.world.isMountain(q) || out.some((o) => dist(o, q) < 450)) continue;
+    let ok = 0;
+    for (let i = -2; i <= 2; i++) for (let j = -2; j <= 2; j++) if (g.terrain.has(field, v2(q.x + i * 15, q.y + j * 15))) ok++;
+    if (ok >= 23) out.push(q);
+  }
+  return out;
+}
+
+/** The nearest spot to p (from `from` m out, to `to`) whose 75 m square is mostly on a deposit field. */
+function nearestDeposit(g: Game, field: number, p: V2, from = 150, to = 2500): V2 | null {
+  for (let r = from; r < to; r += 25) for (let k = 0; k < 64; k++) {
     const q = v2(p.x + Math.cos((k / 64) * Math.PI * 2) * r, p.y + Math.sin((k / 64) * Math.PI * 2) * r);
     if (!g.world.inBounds(q) || g.world.isWater(q) || g.world.isMountain(q)) continue;
     let ok = 0;
@@ -69,9 +96,9 @@ function nearestDeposit(g: Game, field: number, p: V2, from = 150): V2 | null {
 it("builds the showcase company", () => {
   const g = new Game(7);
   g.start();
-  g.milestone = 9; // everything unlocked while it is built
+  g.unlockAll(); // everything unlocked while it is built (the milestones it really reached are set at the end)
   g.money = 1e9;
-  for (let i = -3; i <= 3; i++) for (let j = -3; j <= 3; j++) g.tiles.add(`${i},${j}`);
+  for (let i = -9; i <= 9; i++) for (let j = -9; j <= 9; j++) g.tiles.add(`${i},${j}`);
   const B = mk(g);
   const A = g.towns.list[0];
   say(`hamlet ${A.name} at ${A.c.x.toFixed(0)},${A.c.y.toFixed(0)} pop ${A.pop}`);
@@ -106,7 +133,7 @@ it("builds the showcase company", () => {
   // a road between the two towns, main street to main street
   const edgeTo = (t: Town, toward: V2) => {
     let best = gridPt(t.c, t.ang, 1, 0), bd = Infinity;
-    for (const [i, j] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const q = gridPt(t.c, t.ang, i, j); if (dist(q, toward) < bd) { bd = dist(q, toward); best = q; } }
+    for (const [i, j] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]]) { const q = gridPt(t.c, t.ang, i, j); if (dist(q, toward) < bd) { bd = dist(q, toward); best = q; } }
     return best;
   };
   const ea = edgeTo(A, T.c), eb = edgeTo(T, A.c);
@@ -126,6 +153,29 @@ it("builds the showcase company", () => {
   const mill = B.place("sawmill", ew, woodEnd);
   say(`plants: farm ${!!farm} farm2 ${!!farm2} food ${!!food} food2 ${!!food2} camp ${!!camp} mill ${!!mill}`);
 
+  // ---------------------------------------------------------------- tier 2: coal over the river, iron ore to the west
+  // (their building sites are taken as built: planks would take days to truck out this far)
+  const built = (b: Building | null) => { if (b) { b.plant!.site = undefined; b.built = 1; } return b; };
+  /** A road out to the nearest spot on a deposit a street gets to (round a river, or over it): its last leg. */
+  const out = (name: string, field: number): [V2, V2] | null => {
+    for (const d of deposits(g, field, A.c, 2500, 7000)) for (const t of [A, T]) {
+      const a = edgeTo(t, d), e = v2(d.x + (d.x - a.x) / dist(d, a) * 90, d.y + (d.y - a.y) / dist(d, a) * 90);
+      const r = layRoad(g, a, e);
+      if (typeof r === "string") continue;
+      say(`road to the ${name} ${(dist(a, e) / 1000).toFixed(1)} km${r.bridge ? `, ${Math.round(r.bridge)} m bridge` : ""}`);
+      return r.legs[r.legs.length - 1];
+    }
+    say(`FAIL no way through to the ${name}`);
+    return null;
+  };
+  const coalRoad = out("coal", F.coal);
+  const coal = coalRoad && built(B.placeFrom("coalmine", coalRoad[1], coalRoad[0], 0));
+  const power = coalRoad && built(B.placeFrom("coalplant", coalRoad[0], coalRoad[1], 0.3));
+  const smelter = coalRoad && built(B.placeFrom("smelter", coalRoad[0], coalRoad[1], 0.45));
+  const oreRoad = out("iron ore", F.ore);
+  const ore = oreRoad && built(B.placeFrom("ironmine", oreRoad[1], oreRoad[0], 0));
+  say(`tier 2: coal ${!!coal} power ${!!power} smelter ${!!smelter} ore ${!!ore}`);
+
   // ---------------------------------------------------------------- grow: the hamlet into a village, the new town into a hamlet
   A.target = 130;
   T.target = 30;
@@ -140,9 +190,11 @@ it("builds the showcase company", () => {
       for (const b of g.buildings.list) if (b.plant && b.problem) say(`  ${b.kind}: ${b.problem}`);
     }
   }
-  g.milestone = milestoneFor(g.people.stats.population);
+  // the milestones the showcase company has really reached, on what it has made and sold
+  g.progress.load({ ...g.progress.toJSON(), done: [] });
+  g.progress.check(g.progressView());
   g.money = START_MONEY;
-  say(`segs ${g.net.segs.size} buildings ${g.buildings.list.length} milestone ${g.milestone}`);
+  say(`segs ${g.net.segs.size} buildings ${g.buildings.list.length} made ${JSON.stringify(g.progress.made)} milestones ${g.progress.done.join(" ")}`);
   mkdirSync("tools/out", { recursive: true });
   writeFileSync("tools/out/showcase.log", log.join("\n"));
   writeFileSync("tools/out/showcase.json", JSON.stringify(g.serialize()));
