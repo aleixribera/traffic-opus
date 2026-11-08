@@ -51,15 +51,18 @@ function truckPieces(t: Trip): Piece[] {
   return [{ kind: b, back: 0 }];
 }
 const EMPTY_BOX = 0xf2f2ee;
+/** A reefer's livery band down its white box: dairy blue for milk, gold for cheese (milk's own colour is white). */
+const REEFER_BAND: Record<string, number> = { milk: 0x2b6c9e, cheese: 0xd9a227 };
 /** A Motor Works car's paint: one of the company's liveries. */
 const livery = (look: number) => MOTOR_LIVERY[look % MOTOR_LIVERY.length];
 /** What a truck's load part shows: the cargo's colour, or null for nothing on an open body (tipper, flatbed) running empty. */
 function loadOf(kind: Body, t: Trip): number | null {
   // (a transporter's cars are one batch off the line, in one of the Motor Works' liveries)
   if (kind === "carrier" && t.cargo) return MOTOR_LIVERY[Math.floor(t.startT) % MOTOR_LIVERY.length];
+  if (kind === "reefer" && t.cargo) return REEFER_BAND[t.cargo] ?? EMPTY_BOX;
   if (t.cargo) return CARGO_COLOR[t.cargo] ?? EMPTY_BOX;
   if (kind === "tanker") return CARGO_COLOR[t.haul?.product ?? ""] ?? EMPTY_BOX; // the tank stays its product's colour
-  if (kind === "reefer") return CARGO_COLOR[t.haul?.product ?? ""] ?? EMPTY_BOX; // (and a reefer its product's livery band)
+  if (kind === "reefer") return REEFER_BAND[t.haul?.product ?? ""] ?? EMPTY_BOX; // (and a reefer its product's livery band)
   return kind === "tipper" || kind === "flatbed" || kind === "carrier" ? null : EMPTY_BOX;
 }
 

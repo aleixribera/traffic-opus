@@ -3360,6 +3360,12 @@ def b_motorworks(M, P):
         a, b = hy0 + i * w, hy0 + (i + 1) * w
         extrude_profile(M, [(a, 9.0), (b, 9.0), (b, 12.0)], "x", hx0, hx1, P["ind_roof"])
         extrude_profile(M, [(b - 0.12, 9.1), (b, 9.1), (b, 11.8), (b - 0.12, 11.8)], "x", hx0 + 0.3, hx1 - 0.3, P["saw_glass"])
+        # (roof lights in the upper slope and a steel ridge cap, so the sawtooth reads from straight above)
+        ln = math.hypot(b - a, 3.0)
+        nx, nz = -3.0 / ln * 0.05, (b - a) / ln * 0.05
+        q = lambda t, o: (a + (b - a) * t + nx * o, 9.0 + 3.0 * t + nz * o)
+        extrude_profile(M, [q(0.55, 1), q(0.88, 1), q(0.88, 2), q(0.55, 2)], "x", hx0 + 1.0, hx1 - 1.0, P["saw_glass"])
+        box(M, hx0, hx1, b - 0.35, b + 0.05, 11.85, 12.1, P["ind_steel"])
     # the deco front: ribbon glazing, a brass band, a stepped tower with brass fins over the doors
     fy0, fy1 = hy0 - 3.0, hy0 + 0.2
     flat_block(M, hx0, hx1, fy0, fy1, 10.0, wall, P["ind_roof"], parapet=wall)
@@ -3955,8 +3961,10 @@ def cargo_body(Ms, P, kind, y0, y1, zf, top):
         box(body, -1.29, 1.29, y1 - 0.1, y1, zf, top + 0.02, P["body"])           # rear door frame
         for s in (-1, 1):
             box(body, s * 1.2 - 0.04, s * 1.2 + 0.04, yb + 0.6, y1 - 2.6, zf - 0.55, zf, P["body"])
-        box(insul, -0.95, 0.95, y0, yb, top - 1.15, top - 0.12, P["insul"], bevel=0.04)   # the fridge unit
-        box(dark, -0.8, 0.8, y0, y0 + 0.04, top - 1.0, top - 0.3, P["dark"])            # its grille
+        for sd in (-1, 1):                                                          # the band wraps over the roof edges
+            box(cargo, sd * 0.86, sd * 1.29, yb + 0.5, y1 - 0.35, top, top + 0.03, P["cargo"])
+        box(dark, -0.95, 0.95, y0, yb, top - 1.15, top - 0.05, P["dark"], bevel=0.04)    # the fridge unit, dark
+        box(insul, -0.7, 0.7, y0 + 0.02, yb - 0.04, top - 0.05, top + 0.0, P["insul"])     # its fan housing on top
     elif kind == "carrier":
         # a car transporter (the Motor Works' cars): two open decks on posts, the cars nose to tail on each, all in
         # one batch's paint (the tinted "cargo"; an empty carrier runs home with bare decks)

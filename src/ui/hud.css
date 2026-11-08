@@ -404,7 +404,7 @@ kbd { font: inherit; font-size: 11px; font-weight: 500; padding: 1px 5px; border
 .map-icon.urgent { animation: icon-bob 0.9s ease-in-out infinite alternate; }
 @keyframes icon-bob { to { margin-top: -4px; } }
 @media (prefers-reduced-motion: reduce) { .map-icon.urgent { animation: none; } }
-.boost-gain { font-weight: 600; margin-top: -2px; }
+.boost-gain { grid-column: 1 / -1; text-align: right; font-weight: 600; margin-top: -4px; }
 /* supply badge by a site's gate: what it is working on and how much it adds */
 .map-boost { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 1px; height: 20px; padding: 0 6px 0 3px;
   border-radius: 10px; background: #fff; color: var(--good); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); font-weight: 650; font-size: 11px;
@@ -417,21 +417,24 @@ kbd { font: inherit; font-size: 11px; font-weight: 500; padding: 1px 5px; border
 
 /* money and moments rising off the map (ui/pops.ts) */
 .map-pops { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
-.pop { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 4px; white-space: nowrap; font-weight: 700;
-  font-size: 13px; font-variant-numeric: tabular-nums; letter-spacing: 0.01em; will-change: transform, opacity;
-  text-shadow: 0 0 2px #fff, 0 0 3px #fff, 0 1px 1px rgba(255, 255, 255, 0.9); }
+/* (a shipping tag: a paper card, its edge ruled in the moment's colour, so it reads over field, forest or road) */
+.pop { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 5px; white-space: nowrap; font-weight: 650;
+  font-size: 12.5px; font-variant-numeric: tabular-nums; will-change: transform, opacity; color: var(--ink);
+  background: #fbfaf5; border-left: 3px solid var(--rule, var(--good)); border-radius: 2px; padding: 3px 7px 3px 5px;
+  box-shadow: 0 1px 2px rgba(30, 28, 20, 0.35), 0 3px 10px rgba(30, 28, 20, 0.18); }
 .pop em { font-style: normal; color: var(--good); }
-.pop i { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }
-.pop i svg { width: 13px; height: 13px; display: block; }
-.pop.sale { font-size: 12px; }
-.pop.fresh { color: #13706f; }
-.pop.fresh i.snow { background: #13706f; color: #fff; }
-.pop.fresh i.snow svg { width: 11px; height: 11px; }
-.pop.spoiled b { color: #9a5b12; }
+.pop i { display: grid; place-items: center; width: 16px; height: 16px; }
+.pop i svg { width: 14px; height: 14px; display: block; }
+.pop.sale { --rule: var(--good); padding: 2px 6px 2px 4px; font-size: 12px; }
+.pop.fresh { --rule: #13706f; color: #13706f; }
+.pop.fresh i.snow { border-radius: 50%; background: #13706f; color: #fff; }
+.pop.fresh i.snow svg { width: 10px; height: 10px; }
+.pop.spoiled { --rule: var(--bad); }
+.pop.spoiled b { color: #8a4f0e; }
 .pop.spoiled em { color: var(--bad); }
-.pop.cars { font-size: 14px; }
+.pop.cars { --rule: #7a2e2a; font-size: 13.5px; }
 .pop.cars b { color: #7a2e2a; }
-.pop.byproduct { color: #3e4146; font-size: 12px; }
+.pop.byproduct { --rule: #6b6862; font-size: 12px; }
 .pop.byproduct span { font-weight: 500; color: var(--ink-2); }
 
 /* a refrigerated truck's shelf time running down */

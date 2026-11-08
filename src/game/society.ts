@@ -9,6 +9,7 @@ import type { Trip, TripKind, Vehicle } from "../sim/traffic";
 import type { Building } from "./buildings";
 import type { Game } from "./city";
 import { ZONE_GROUP } from "./growables";
+import { MOTOR_MAX } from "./towns";
 
 /** Sim seconds per game hour; the clock starts at 06:00 on day 1. */
 export const HOUR = 40;
@@ -427,12 +428,12 @@ export class Society {
         return;
       }
     }
-    const roll = walk ? 1 : g.rng();
-    const real = roll < carOdds(g.tripScale, motor);
+    const real = !walk && g.rng() < carOdds(g.tripScale, motor);
     if (real) {
       this.carTrips++;
-      // (the trips a town drives only because of the cars the company sold it are driven in those cars)
-      const built = motor > 0 && roll >= carOdds(g.tripScale, 0);
+      // (the households the company's cars went to drive them: motor / MOTOR_MAX is the share of households with one,
+      // and the same households keep theirs, picked by a hash of the household)
+      const built = motor > 0 && c.hh >= 0 && ((Math.imul(c.hh + 1, 2654435761) >>> 0) % 1000) / 1000 < motor / MOTOR_MAX;
       g.traffic.request({
         from: a, fromSide: from.side, to: b, toSide: to.side,
         trip: { kind, from: from.id, to: to.id, resident: c.id, startT: this.now, freeFlow: 0, ...(built ? { motor: true } : {}) },

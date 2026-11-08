@@ -1298,7 +1298,7 @@ export class Hud {
       const gains = b.built >= 1 ? g.industry.boosts(b) : [];
       const boost = (p: Product) => {
         const x = gains.find((q) => q.p === p);
-        return x ? `<dt></dt><dd class="good boost-gain">+${x.pct}% output from ${PRODUCTS[p].name.toLowerCase()}</dd>` : "";
+        return x ? `<dd class="good boost-gain">+${x.pct}% from ${PRODUCTS[p].name.toLowerCase()}</dd>` : "";
       };
       const supRows = sup.map(({ p, stock: n, now }) => `<dt title="${now ? `Used up as it works at level ${lvl}` : `Needed in store to grow to level ${lvl + 1}`}">${PRODUCTS[p].name}${now ? "" : ` <span class="muted">(level ${lvl + 1})</span>`}</dt><dd>${stockBar(n, SUPPLY_STORE, PRODUCTS[p].color)}<span class="num">${n.toFixed(1)}</span></dd>${boost(p)}`).join("");
       const supNote = sup.some((s) => s.now)

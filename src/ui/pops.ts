@@ -88,7 +88,7 @@ export class Pops {
       const s = view.toScreen(p.at);
       const rise = 14 + 34 * (1 - (1 - f) * (1 - f));
       p.el.style.transform = `translate(${s.x.toFixed(1)}px, ${(s.y - rise).toFixed(1)}px) translate(-50%, -100%)`;
-      p.el.style.opacity = f < 0.12 ? (f / 0.12).toFixed(2) : f > 0.7 ? ((1 - f) / 0.3).toFixed(2) : "1";
+      p.el.style.opacity = f < 0.05 ? (f / 0.05).toFixed(2) : f > 0.72 ? ((1 - f) / 0.28).toFixed(2) : "1";
       return true;
     });
     this.updateRings(view, traffic, alpha);
@@ -102,7 +102,13 @@ export class Pops {
       for (const v of traffic.vehicles) {
         const p = v.trip.cargo as Product | undefined;
         if (!v.truck || !p || !perishable(p)) continue;
-        const x = v.px + (v.x - v.px) * alpha, y = v.py + (v.y - v.py) * alpha;
+        // (over the middle of the truck: a road train's middle piece, else its body)
+        let x = v.px + (v.x - v.px) * alpha, y = v.py + (v.y - v.py) * alpha;
+        if (v.uPose && v.puPose && v.uPose.length >= 8) {
+          const o = Math.floor(v.uPose.length / 8) * 4;
+          x = v.puPose[o] + (v.uPose[o] - v.puPose[o]) * alpha;
+          y = v.puPose[o + 1] + (v.uPose[o + 1] - v.puPose[o + 1]) * alpha;
+        }
         const s = view.toScreen({ x, y });
         if (s.x < -30 || s.y < -30 || s.x > view.w + 30 || s.y > view.h + 30) continue;
         list.push({ x: s.x, y: s.y, d: Math.hypot(s.x - cx, s.y - cy), p, age: traffic.time - v.trip.startT });
