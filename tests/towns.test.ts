@@ -11,7 +11,7 @@ describe("town sizes and needs", () => {
     expect(needsOf(400)).toEqual(["food", "planks"]);
   });
 
-  it("a Town adds household goods and fuel, a few dozen loads a day each to start; a City adds nothing more until tier 4", () => {
+  it("a Town adds household goods and fuel, a few dozen loads a day each to start", () => {
     expect(needsOf(1499)).toEqual(["food", "planks", "cement"]);
     expect(needsOf(1500)).toEqual(["food", "planks", "cement", "goods", "fuel"]);
     for (const p of ["goods", "fuel"] as const) {
@@ -20,7 +20,18 @@ describe("town sizes and needs", () => {
       // lighter per resident than the staples
       expect(demandPerDay(p, 1500)).toBeLessThan(demandPerDay("planks", 1500));
     }
-    expect(needsOf(7000)).toEqual(needsOf(1500));
+    expect(needsOf(5999)).toEqual(needsOf(1500));
+  });
+
+  it("a City adds electronics and machinery, a couple of hundred loads a day each, lighter per head than goods; a Metropolis adds nothing yet", () => {
+    expect(needsOf(6000)).toEqual([...needsOf(1500), "electronics", "machinery"]);
+    for (const p of ["electronics", "machinery"] as const) {
+      expect(demandPerDay(p, 6000)).toBeGreaterThan(100);
+      expect(demandPerDay(p, 6000)).toBeLessThan(400);
+      expect(demandPerDay(p, 6000)).toBeLessThan(demandPerDay("goods", 6000));
+    }
+    expect(needsOf(25000)).toEqual(needsOf(6000));
+    expect(supplyShare({}, 6000).electronics).toBe(0);
   });
 
   it("demand per resident climbs with each size, so the total climbs faster than the population", () => {

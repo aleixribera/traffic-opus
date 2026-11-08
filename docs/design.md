@@ -138,6 +138,12 @@ itself across modes; you build tracks, docks and the transfer points, never line
   blocks, stores and offices take 1 load, modern flats 2, malls and towers 3, glass towers 4. The town pays for
   them on delivery. Houses, terraces and high-street shops need none. This gives steel its buyer from Town
   size; tier 4 plant sites will take parts too.
+- **Electronics and machinery (tier 4, 2026-11-08).** A City's electronics go to its shops. Its machinery goes to its
+  offices and office towers, the firms that fit out its works; a city with none standing yet takes it at its shops,
+  the way fuel falls back to the shops before the first filling station. Tier 4 plant sites wait for construction
+  parts on top of planks and cement. Copper ore lies in the high ranges: on the flat floor of an upland valley, with
+  mountain round it. Copper opens before a town reaches City (as oil opens before a town wants fuel), so the chains
+  are running when it gets there. A Metropolis adds no needs of its own yet.
 - No city services, taxes, policies or zoning.
 
 ### Towns grow into cities (owner, 2026-11-08)

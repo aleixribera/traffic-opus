@@ -88,7 +88,8 @@ export type BuildingKind =
   // placed by the player (see game/placed.ts): the company's extractors and plants, and power
   | "farm" | "loggingcamp" | "foodplant" | "sawmill"
   | "ironmine" | "coalmine" | "quarry" | "smelter" | "cementworks" | "coalplant"
-  | "oilwell" | "sandpit" | "refinery" | "glassworks" | "furniture" | "constructionplant";
+  | "oilwell" | "sandpit" | "refinery" | "glassworks" | "furniture" | "constructionplant"
+  | "coppermine" | "coppersmelter" | "electronics" | "machineworks";
 export type Zone = "res" | "com" | "placed";
 
 export interface BuildingType {
@@ -142,6 +143,10 @@ export const BUILDING_TYPES: Record<BuildingKind, BuildingType> = {
   glassworks: { kind: "glassworks", name: "Glassworks", zone: "placed", w: 210, d: 190, residents: 0, jobs: 14, pollution: 110, parking: 4, blurb: "Melts sand with coal into glass." },
   furniture: { kind: "furniture", name: "Furniture Factory", zone: "placed", w: 200, d: 180, residents: 0, jobs: 14, pollution: 30, parking: 4, blurb: "Builds household goods from planks and glass." },
   constructionplant: { kind: "constructionplant", name: "Construction Plant", zone: "placed", w: 220, d: 200, residents: 0, jobs: 16, pollution: 90, parking: 4, blurb: "Casts steel and cement into construction parts." },
+  coppermine: { kind: "coppermine", name: "Copper Mine", zone: "placed", w: 250, d: 230, residents: 0, jobs: 12, pollution: 90, parking: 2, blurb: "Digs copper ore in the high ranges. Its tippers take it to your copper smelters." },
+  coppersmelter: { kind: "coppersmelter", name: "Copper Smelter", zone: "placed", w: 230, d: 210, residents: 0, jobs: 16, pollution: 150, parking: 4, blurb: "Smelts copper ore with coal into copper." },
+  electronics: { kind: "electronics", name: "Electronics Plant", zone: "placed", w: 200, d: 180, residents: 0, jobs: 18, pollution: 30, parking: 5, blurb: "Builds electronics from copper and plastics." },
+  machineworks: { kind: "machineworks", name: "Machine Works", zone: "placed", w: 220, d: 200, residents: 0, jobs: 18, pollution: 80, parking: 4, blurb: "Builds machinery from steel and copper." },
   coalplant: { kind: "coalplant", name: "Power Plant", zone: "placed", w: 220, d: 200, residents: 0, jobs: 12, pollution: 140, parking: 5, blurb: "Burns coal for power: the buildings that need it on its roads within 4 km work at full pace. Its smoke drags land value down for a few hundred metres." },
 };
 

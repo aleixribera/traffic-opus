@@ -113,6 +113,18 @@ export function placedIcon(kind: string): string {
     case "constructionplant":
       // a yard crane over a stack of prefab panels and a mixer silo
       return svg(28, 28, `<path d="M6 25 V5 H23" fill="none" stroke="#d9b13a" stroke-width="2"/><path d="M6 9 L10 5" stroke="#d9b13a" stroke-width="1.4"/><path d="M19 5 V11" stroke="#545a61" stroke-width="1"/><rect x="15.5" y="11" width="7" height="2.4" fill="#7f8b6a"/><rect x="10" y="20" width="15" height="2.4" fill="#9aa48a" stroke="#5f6a4c" stroke-width="0.6"/><rect x="11" y="17.2" width="13" height="2.4" fill="#9aa48a" stroke="#5f6a4c" stroke-width="0.6"/><rect x="2" y="15" width="3" height="10" rx="1.5" fill="#c9c6bd"/>`);
+    case "coppermine":
+      // an open pit stepped down into the hillside, a conveyor up to a heap of green-grey ore
+      return svg(28, 28, `<path d="M2 8 H6 V12 H9 V16 H13 V20 H16 V25 H2 Z" fill="#a9a08a" stroke="#6f6754" stroke-width="0.9"/><path d="M2 12 H6 M2 16 H9 M2 20 H13" stroke="#8e8670" stroke-width="0.9"/><path d="M14 18 L22 9" stroke="#545a61" stroke-width="1.8" stroke-linecap="round"/><path d="M21 9 V14" stroke="#545a61" stroke-width="1.1"/><path d="M15 25 Q21.5 11 27 25 Z" fill="#4f8a78" stroke="#2f5a4c" stroke-width="0.8"/><rect x="3" y="21" width="6" height="3" rx="0.8" fill="#e0a526"/>`);
+    case "coppersmelter":
+      // a smelter stack banded in copper, the casting shed, and copper ingots cooling in front
+      return svg(28, 28, `<path d="M4 25 L6 8 H11 L13 25 Z" fill="#6d737a"/><rect x="7" y="2.5" width="3" height="5.5" fill="#545a61"/><path d="M5.2 14 H11.8" stroke="#c4703a" stroke-width="2"/><rect x="13" y="12" width="13" height="13" fill="#7d8790"/><path d="M13 12 L19.5 8 L26 12 Z" fill="#5b6168"/><rect x="6.5" y="18" width="4" height="3.5" fill="#f08a3a"/><path d="M15 22.5 L16 20 H20 L21 22.5 Z M20.5 22.5 L21.5 20 H25.5 L26.5 22.5" fill="#c4703a" stroke="#7a3f1a" stroke-width="0.6"/>`);
+    case "electronics":
+      // a clean assembly hall with a sawtooth roof, and a circuit chip in front
+      return svg(28, 28, `<path d="M2 12 L6 7 V12 L10 7 V12 L14 7 V12 L18 7 V12 H26 V20 H2 Z" fill="#c9cdd2" stroke="#7d8790" stroke-width="0.8" stroke-linejoin="round"/><path d="M6 7 V12 M10 7 V12 M14 7 V12" stroke="#7fb6d9" stroke-width="1"/><rect x="11" y="16" width="10" height="9" rx="0.8" fill="#3f5f8f" stroke="#253a5a" stroke-width="0.8"/><path d="M13 16 V14.4 M16 16 V14.4 M19 16 V14.4 M21 18.5 H22.6 M21 21.5 H22.6 M11 18.5 H9.4 M11 21.5 H9.4" stroke="#545a61" stroke-width="1"/><rect x="13.6" y="18.4" width="4.8" height="4.2" fill="#d8b24a"/>`);
+    case "machineworks":
+      // a tall machine hall under a gantry crane, and a gear in front
+      return svg(28, 28, `<rect x="2" y="9" width="20" height="16" fill="#7d8790"/><path d="M2 9 L12 5 L22 9 Z" fill="#5b6168"/><path d="M4 4 V25 M24 4 V25 M3 4 H25" fill="none" stroke="#d9b13a" stroke-width="1.6"/><path d="M15 4 V12" stroke="#545a61" stroke-width="1"/><rect x="13" y="12" width="4" height="2" fill="#545a61"/><circle cx="10" cy="19" r="4.3" fill="#d8a22e" stroke="#7a5512" stroke-width="0.9" stroke-dasharray="2.1 1.3"/><circle cx="10" cy="19" r="1.4" fill="#7d8790"/>`);
     default:
       return svg(28, 28, `<circle cx="14" cy="14" r="9" fill="#9aa0a6"/>`);
   }
@@ -192,6 +204,12 @@ export function productIcon(p: string): string {
     case "parts":
       // a steel I-beam over a precast panel
       return svg(16, 16, `<rect x="2" y="9" width="12" height="5" rx=".4" fill="#b8bfa8" stroke="#5f6a4c" stroke-width=".9"/><path d="M5 11.5h2M9 11.5h2" stroke="#5f6a4c" stroke-width=".9"/><path d="M1.5 2.5h13v1.6h-5.6v1.8h5.6v1.6h-13V5.9h5.6V4.1H1.5z" fill="#8a96a3" stroke="#4b5560" stroke-width=".7" stroke-linejoin="round"/>`);
+    case "electronics":
+      // a chip on its pins
+      return svg(16, 16, `<path d="M5 2v2M8 2v2M11 2v2M5 12v2M8 12v2M11 12v2M2 5h2M2 8h2M2 11h2M12 5h2M12 8h2M12 11h2" stroke="#4b5560" stroke-width="1.1" stroke-linecap="round"/><rect x="3.6" y="3.6" width="8.8" height="8.8" rx=".8" fill="#3f5f8f" stroke="#253a5a" stroke-width=".9"/><rect x="6" y="6" width="4" height="4" fill="#d8b24a"/>`);
+    case "machinery":
+      // a gear
+      return svg(16, 16, `<path d="M6.9 1.5h2.2l.4 1.9 1.3.6 1.6-1.1 1.6 1.6-1.1 1.6.6 1.3 1.9.4v2.2l-1.9.4-.6 1.3 1.1 1.6-1.6 1.6-1.6-1.1-1.3.6-.4 1.9H6.9l-.4-1.9-1.3-.6-1.6 1.1-1.6-1.6 1.1-1.6-.6-1.3-1.9-.4V6.9l1.9-.4.6-1.3-1.1-1.6 1.6-1.6 1.6 1.1 1.3-.6z" fill="#d8a22e" stroke="#7a5512" stroke-width=".8" stroke-linejoin="round"/><circle cx="8" cy="8" r="2.2" fill="#fbf3df" stroke="#7a5512" stroke-width=".8"/>`);
     default:
       return svg(16, 16, `<circle cx="8" cy="8" r="5.5" fill="#9aa0a6"/>`);
   }

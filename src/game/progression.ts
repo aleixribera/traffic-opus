@@ -2,7 +2,8 @@
 // are open at once (the first OPEN_AT_ONCE not yet reached, in ladder order), so there is always a choice of what
 // to chase next; reaching one opens the next. Each unlocks something concrete: a building, a road type or tool,
 // land, town slots, truck bays or bigger loads. The company starts with tier 1 (farms, logging camps, food plants,
-// sawmills), founding towns and the basic roads. This ladder covers tiers 1 to 3 (to a City); tier 4 comes after.
+// sawmills), founding towns and the basic roads. This ladder covers tiers 1 to 4: copper, electronics and machinery
+// open on the way to a City (which needs them) and its last steps reward a City supplied and tier 4 volume.
 
 import type { RoadTypeId } from "../config";
 import { PLANTS, type Product } from "./industry";
@@ -223,11 +224,61 @@ export const MILESTONES: Milestone[] = [
     measure: (v) => [v.towns.filter((t) => sizeOf(t.pop) >= 2).length, 2],
     unlocks: { towns: 1, grant: 80000 },
   },
+  // ---------------------------------------------------------------- tier 4: copper, electronics and machinery
+  // (one block: copper opens while the towns are still Towns, so the chains a City needs are running when one gets
+  // there, the way oil opens before a town wants fuel; the last ones reward a City supplied and tier 4 volume)
   {
-    // (tier 4 hook: copper, electronics and machinery unlock along here, for a City's needs)
+    // (the copper deposits lie 10-20 km out in the high ranges: land to reach them comes with it)
+    id: "parts50", name: "Prefab streets", goal: "Deliver 50 loads of construction parts to building sites",
+    measure: (v) => [n(v.sold, "parts"), 50],
+    unlocks: { buildings: ["coppermine"], tiles: 4 },
+  },
+  {
+    id: "copperore1", name: "Copper country", goal: "Mine your first load of copper ore",
+    measure: (v) => [n(v.made, "copperore"), 1],
+    unlocks: { buildings: ["coppersmelter"], tiles: 2, grant: 60000 },
+  },
+  {
+    // (the refinery's plastics finally have a buyer)
+    id: "goods60", name: "Shopping streets", goal: "Deliver 60 loads of household goods in one day",
+    measure: (v) => [n(v.bestDay, "goods"), 60],
+    unlocks: { buildings: ["electronics"], bays: 1 },
+  },
+  {
+    id: "copper1", name: "Red metal", goal: "Smelt your first load of copper",
+    measure: (v) => [n(v.made, "copper"), 1],
+    unlocks: { buildings: ["machineworks"], tiles: 2 },
+  },
+  {
     id: "city", name: "City", goal: "Grow a town to City size: 6,000 people",
     measure: (v) => [biggest(v), 6000],
     unlocks: { towns: 2, tiles: 6, grant: 100000 },
+  },
+  {
+    id: "electronics1", name: "Circuit boards", goal: "Make your first load of electronics",
+    measure: (v) => [n(v.made, "electronics"), 1],
+    unlocks: { tiles: 3, grant: 80000 },
+  },
+  {
+    id: "machinery1", name: "Heavy industry", goal: "Build your first load of machinery",
+    measure: (v) => [n(v.made, "machinery"), 1],
+    unlocks: { bays: 1, tiles: 2 },
+  },
+  {
+    id: "citySupplied", name: "City supplied", goal: "Keep a City of 6,000+ in everything it needs for a day",
+    measure: (v) => [v.towns.some((t) => sizeOf(t.pop) >= 3 && fullySupplied(t)) ? 1 : 0, 1],
+    unlocks: { towns: 1, bays: 1, grant: 150000 },
+  },
+  {
+    id: "electronics40", name: "Wired city", goal: "Deliver 40 loads of electronics in one day",
+    measure: (v) => [n(v.bestDay, "electronics"), 40],
+    unlocks: { tiles: 4, bays: 1 },
+  },
+  {
+    // (the top of the ladder for now: Metropolis needs and company projects come after)
+    id: "machinery40", name: "Tooled up", goal: "Deliver 40 loads of machinery in one day",
+    measure: (v) => [n(v.bestDay, "machinery"), 40],
+    unlocks: { towns: 1, tiles: 4, bays: 1 },
   },
 ];
 

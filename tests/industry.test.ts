@@ -280,11 +280,11 @@ describe("Industry", () => {
     sm.plant!.stock = { ore: 2, coal: 2 };
     w.ind.tick(HOUR);
     expect(w.pending.length).toBe(0);
-    expect(sm.problem).toBe("Full of steel: not enough trucks, or no construction plant on its roads");
+    expect(sm.problem).toBe("Full of steel: not enough trucks, or no construction plant or machine works on its roads");
     sm.plant!.out.steel = 2;
     sm.problem = null;
     w.ind.tick(0);
-    expect(sm.problem).toBe("No construction plant on your roads takes steel");
+    expect(sm.problem).toBe("No construction plant or machine works on your roads takes steel");
     const cp = w.plant("constructionplant", 400);
     delete cp.plant!.site;
     w.ind.tick(0);
@@ -479,5 +479,166 @@ describe("Tier 3 chains", () => {
     w.ind.tick(0);
     expect(w.pending.length).toBe(0);
     expect(cp.problem).toMatch(/^No town on your roads is putting up a block/);
+  });
+});
+
+describe("Tier 4 chains", () => {
+  const ready = (w: ReturnType<typeof world>, kind: PlantKind, x: number) => {
+    const b = w.plant(kind, x);
+    delete b.plant!.site;
+    return b;
+  };
+
+  it("the copper mine digs copper ore on its deposit, with no power", () => {
+    const w = world();
+    expect(PLANTS.coppermine.deposit!.field).toBe(F.copper);
+    expect(PLANTS.coppermine.tier).toBe(4);
+    expect(PLANTS.coppermine.power ?? 0).toBe(0);
+    const b = ready(w, "coppermine", 0);
+    w.ind.produce(b, PLANTS.coppermine.cycle * 3.01);
+    expect(b.plant!.out.copperore).toBe(3);
+    expect(b.problem).toBeNull();
+  });
+
+  it("each plant turns its inputs into its outputs: copper, electronics, machinery", () => {
+    const cases: [PlantKind, Record<string, number>, string][] = [
+      ["coppersmelter", { copperore: 4, coal: 4 }, "copper"],
+      ["electronics", { copper: 4, plastics: 4 }, "electronics"],
+      ["machineworks", { steel: 4, copper: 4 }, "machinery"],
+    ];
+    for (const [kind, stock, out] of cases) {
+      const w = world();
+      const b = ready(w, kind, 0);
+      expect(PLANTS[kind].tier, kind).toBe(4);
+      expect(Object.keys(PLANTS[kind].inputs).sort()).toEqual(Object.keys(stock).sort());
+      b.plant!.stock = { ...stock };
+      w.ind.produce(b, PLANTS[kind].cycle * 2.01);
+      expect(b.plant!.out[out as never], kind).toBe(2);
+      for (const p of Object.keys(stock)) expect(b.plant!.stock[p as never], `${kind} ${p}`).toBe(2);
+      const first = Object.keys(stock)[0];
+      b.plant!.stock = { ...stock, [first]: 0 };
+      w.ind.produce(b, PLANTS[kind].cycle);
+      expect(b.problem).toBe(`Waiting for ${PRODUCTS[first as keyof typeof PRODUCTS].name.toLowerCase()}`);
+    }
+    // a City buys the finished products; copper is only for the company's plants
+    expect(PRODUCTS.electronics.price).toBeGreaterThan(PRODUCTS.goods.price);
+    expect(PRODUCTS.machinery.price).toBeGreaterThan(PRODUCTS.goods.price);
+    expect(PRODUCTS.copper.price).toBe(0);
+    expect(PRODUCTS.copperore.price).toBe(0);
+  });
+
+  it("the copper smelter, electronics plant and machine works draw power, and work at 40% without it", () => {
+    for (const k of ["coppersmelter", "electronics", "machineworks"] as PlantKind[]) {
+      expect(PLANTS[k].power, k).toBeGreaterThan(0);
+      const w = world();
+      let share = 0;
+      (w.host as { power?: () => number }).power = () => share;
+      const b = ready(w, k, 0);
+      b.plant!.stock = Object.fromEntries(Object.keys(PLANTS[k].inputs).map((p) => [p, 9]));
+      w.ind.produce(b, PLANTS[k].cycle * 5.01);
+      expect(Object.values(b.plant!.out)[0], k).toBe(2);
+      expect(b.problem).toBe("No power: working at 40%");
+      share = 1;
+      w.ind.produce(b, PLANTS[k].cycle * 1.01);
+      expect(b.problem, k).toBeNull();
+    }
+  });
+
+  it("a tier 4 building site waits for construction parts on top of planks and cement; the construction plant sends them there first", () => {
+    for (const k of ["coppermine", "coppersmelter", "electronics", "machineworks"] as PlantKind[]) {
+      const s = PLANTS[k].site!;
+      expect(s.planks, k).toBeGreaterThan(0);
+      expect(s.cement, k).toBeGreaterThan(0);
+      expect(s.parts, k).toBeGreaterThan(0);
+    }
+    const w = world();
+    const cp = ready(w, "constructionplant", 0);
+    const block = w.shop(300);
+    block.kind = "apartments";
+    block.built = 0;
+    block.site = { need: { parts: 2 }, got: {} };
+    const el = w.plant("electronics", 1500);
+    w.ind.produce(el, HOUR);
+    expect(el.problem).toMatch(/^Building site: waiting for .*loads of construction parts$/);
+    cp.plant!.out.parts = 2;
+    w.ind.tick(0);
+    // (the plant's site comes before a town's block, even one nearer)
+    const legs = w.pending.filter((p) => p.trip.haul!.leg === "out");
+    expect(legs.length).toBeGreaterThan(0);
+    for (const p of legs) expect(p.trip.haul!.dest).toBe(el.id);
+    w.ind.deliver(el, "planks", 50);
+    w.ind.deliver(el, "cement", 50);
+    expect(el.plant!.site).toBeDefined();
+    w.ind.deliver(el, "parts", 50, cp);
+    expect(el.plant!.site).toBeUndefined();
+  });
+
+  it("each chain's trucks take its product on: copper ore to the copper smelter, copper to the electronics plant and machine works, plastics to the electronics plant", () => {
+    const w = world();
+    const mine = ready(w, "coppermine", 0), cs = ready(w, "coppersmelter", 300), rf = ready(w, "refinery", 600);
+    const el = ready(w, "electronics", 900), mw = ready(w, "machineworks", 1200);
+    mine.plant!.out.copperore = 1;
+    rf.plant!.out.plastics = 1;
+    cs.plant!.out.copper = 2;
+    w.ind.tick(0);
+    const to = (p: string) => w.pending.filter((x) => x.trip.haul!.product === p).map((x) => x.trip.haul!.dest);
+    expect(to("copperore")).toEqual([cs.id]);
+    expect(to("plastics")).toEqual([el.id]);
+    expect(to("copper").length).toBe(2);
+    expect(to("copper").every((id) => id === el.id || id === mw.id)).toBe(true);
+  });
+
+  it("the refinery ships its plastics once the company has an electronics plant, and flares them quietly till then", () => {
+    const w = world();
+    const rf = ready(w, "refinery", 0);
+    rf.plant!.out.plastics = 4;
+    w.ind.tick(0);
+    expect(w.pending.length).toBe(0);
+    expect(rf.problem ?? "").not.toMatch(/plastics/);
+    expect(w.ind.wants("plastics")).toBe(false);
+    // an electronics plant still a site takes no plastics yet: they stay quietly in the yard
+    const el = w.plant("electronics", 400);
+    expect(w.ind.wants("plastics")).toBe(true);
+    w.ind.tick(0);
+    expect(w.pending.length).toBe(0);
+    expect(rf.problem ?? "").not.toMatch(/plastics/);
+    delete el.plant!.site;
+    w.ind.tick(0);
+    expect(w.pending.length).toBeGreaterThan(0);
+    expect(w.pending.every((p) => p.trip.haul!.product === "plastics" && p.trip.haul!.dest === el.id)).toBe(true);
+  });
+
+  it("electronics go to a City's shops; machinery to its offices and towers, or its shops while it has none", () => {
+    const w = world();
+    (w.host as { townOf: (b: Building) => number | null }).townOf = (b) => b.town ?? null;
+    const el = ready(w, "electronics", 0), mw = ready(w, "machineworks", 10);
+    const shopA = w.shop(300), office = w.shop(400), shopB = w.shop(3000), station = w.shop(500);
+    shopA.town = 1; office.town = 1; station.town = 1; shopB.town = 2;
+    office.kind = "tower";
+    station.kind = "fuelstation";
+    const ids = (p: "electronics" | "machinery", from: Building) => w.ind.customers(from, p).map((c) => c.b.id);
+    const e = ids("electronics", el);
+    expect(e).toContain(shopA.id);
+    expect(e).toContain(shopB.id);
+    expect(e).not.toContain(station.id);
+    let m = ids("machinery", mw);
+    expect(m).toContain(office.id);
+    expect(m).not.toContain(shopA.id); // town 1 has an office tower
+    expect(m).toContain(shopB.id); // town 2 has none: its shops take it
+    expect(m).not.toContain(station.id);
+    office.built = 0; // a tower still going up doesn't count yet
+    m = ids("machinery", mw);
+    expect(m).toContain(shopA.id);
+  });
+
+  it("with no City on its roads, electronics wait and the plant says towns want them from City size", () => {
+    const w = world();
+    (w.host as { want: (t: number, p: string) => number }).want = (_t, p) => (p === "food" ? 10 : -Infinity);
+    const el = ready(w, "electronics", 0);
+    w.shop(200);
+    el.plant!.out.electronics = 3;
+    w.ind.tick(0);
+    expect(w.pending.length).toBe(0);
+    expect(el.problem).toBe("No town on your roads uses electronics yet: towns want it from City size");
   });
 });

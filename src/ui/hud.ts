@@ -658,7 +658,7 @@ export class Hud {
           <span class="bar gl-bar" role="progressbar" aria-label="${m.name}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p * 100)}"><i style="width:${Math.max(2, p * 100)}%"></i></span>
           <p class="gl-gift">${unlockList(m.unlocks).join(" · ")}</p></li>`;
       }).join("");
-      body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : `<p class="gl-done">Every milestone of tiers 1 to 3 reached. Tier 4 comes next.</p>`}${tip ? `<p class="gl-tip">${tip.html}</p>` : ""}</div>`;
+      body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : `<p class="gl-done">Every milestone reached, to a City supplied with electronics and machinery. More comes with the Metropolis.</p>`}${tip ? `<p class="gl-tip">${tip.html}</p>` : ""}</div>`;
     }
     const html = head + body;
     if (this.tut.dataset.html !== html) {
@@ -702,6 +702,12 @@ export class Hud {
     if (g.placedUnlocked("furniture") && (!has("sandpit") || !has("glassworks"))) return { key: "glass", cat: "industry", html: `<b>Towns of ${fmtNum(town)} want household goods.</b> Place a <b>Sand pit</b> on the sand along a river or lake shore, and a <b>Glassworks</b> your sand pit and coal mine reach: it makes glass.` };
     if (g.placedUnlocked("furniture") && !has("furniture")) return { key: "goods", cat: "industry", html: `<b>Build a Furniture factory</b> on a road your glassworks and sawmill reach: it makes household goods from planks and glass, and its trucks sell them to the towns' shops.` };
     if (g.placedUnlocked("constructionplant") && !has("constructionplant")) return { key: "parts", cat: "industry", html: `<b>Towns of ${fmtNum(town)} build in prefab.</b> Their new blocks wait for construction parts. Build a <b>Construction plant</b> your smelter and cement works reach: it makes parts from steel and cement.` };
+    // tier 4: copper, then electronics and machinery for a City
+    const city = TOWN_SIZES[3].pop;
+    if (g.placedUnlocked("coppermine") && !has("coppermine")) return { key: "copper", cat: "industry", html: `<b>Cities of ${fmtNum(city)} want electronics and machinery,</b> and both start with copper. Place a <b>Copper mine</b> on copper ore, ${km(10000)} or more out in the high ranges (the Resources view shows it). Its building site waits for construction parts as well as planks and cement.` };
+    if (g.placedUnlocked("coppersmelter") && !has("coppersmelter")) return { key: "coppersmelter", cat: "industry", html: `<b>Build a Copper smelter</b> on a road your copper mine and a coal mine reach: it smelts the ore with coal into copper. It draws power.` };
+    if (g.placedUnlocked("electronics") && !has("electronics")) return { key: "electronics", cat: "industry", html: `<b>Build an Electronics plant</b> your copper smelter and refinery reach: it makes electronics from copper and the refinery's plastics, and its trucks sell them to the shops of your cities.` };
+    if (g.placedUnlocked("machineworks") && !has("machineworks")) return { key: "machineworks", cat: "industry", html: `<b>Build a Machine works</b> your copper smelter and steel smelter reach: it makes machinery from steel and copper, and its flatbeds take it to the offices and towers of your cities.` };
     return null;
   }
 
@@ -1159,8 +1165,9 @@ export class Hud {
     // its needs: what it takes to grow (the mark), what its shops buy at most (the whole bar), what came yesterday
     const mine = g.towns.buildingsOf(t);
     const stations = mine.filter((b) => BUILDING_TYPES[b.kind].fuel).length;
+    const offices = mine.some((b) => Industry.isOffice(b) && b.built >= 1 && !b.abandoned);
     const needs = needsOf(t.pop).map((p) => {
-      const buyer = p === "fuel" && stations ? "Filling stations buy" : "Shops buy";
+      const buyer = p === "fuel" && stations ? "Filling stations buy" : p === "machinery" && offices ? "Offices buy" : "Shops buy";
       const share = t.supply[p];
       const want = demandPerDay(p, t.pop), market = want * MARKET;
       const got = t.yesterday[p] ?? 0, today = t.today[p] ?? 0;
@@ -1280,7 +1287,7 @@ export class Hud {
         <p class="status ${statusCls}">${status}</p>
         ${ins ? `<h3 class="sub-h">In the yard</h3><dl class="facts">${ins}</dl>` : ""}
         ${outs ? `<h3 class="sub-h">Ready to ship</h3><dl class="facts">${outs}</dl>` : ""}
-        ${flare ? `<p class="small muted">Its yard is full of ${PRODUCTS[flare].name.toLowerCase()}: nothing of yours uses it until tier ${Industry.laterTier(flare)}, so it burns off the rest and keeps making ${(Object.keys(D.outputs) as Product[]).filter((p) => p !== flare).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ")}.</p>` : ""}
+        ${flare ? `<p class="small muted">Its yard is full of ${PRODUCTS[flare].name.toLowerCase()}: ${g.industry.wants(flare) ? `your ${Industry.takers(flare)} can't take more for now` : Industry.usedBy(flare) ? `nothing of yours uses it until you build a ${Industry.takers(flare)}` : `nothing of yours uses it until tier ${Industry.laterTier(flare)}`}, so it burns off the rest and keeps making ${(Object.keys(D.outputs) as Product[]).filter((p) => p !== flare).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ")}.</p>` : ""}
         ${siteLevel(b)}
         <dl class="facts">
           ${plantRows}${powerRow}
@@ -1333,6 +1340,9 @@ export class Hud {
       if (grp === "com" && T.fuel) rows.push(["Sells", `${productIcon("fuel")} the town's fuel`]);
       else if (grp === "com") {
         rows.push(["Food on the shelves", stockBar(b.stock, 6)]);
+        // (a City's offices and towers take its machinery)
+        const tw = b.town !== undefined ? g.towns.byId.get(b.town) : undefined;
+        if (Industry.isOffice(b) && tw && needsOf(tw.pop).includes("machinery")) rows.push(["Buys", `${productIcon("machinery")} the town's machinery`]);
         rows.push(["Customers", b.custDay !== undefined ? `${fmtNum(b.custDay)} <span class="muted">yesterday</span>` : `${fmtNum(b.custToday ?? 0)} <span class="muted">so far</span>`]);
       }
       if (b.built >= 1 && !b.abandoned) rows.push(["Efficiency", `${Math.round(health * 100)}%`]);

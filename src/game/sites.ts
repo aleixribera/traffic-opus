@@ -56,6 +56,12 @@ const PLAN: Record<PlantKind, { core: string; mods: string[] }> = {
   glassworks: { core: "glassworks", mods: ["site_heap_sand", "site_hall_l", "site_heap_coal", "glassworks", "site_hall_m", "site_silos", "site_office"] },
   furniture: { core: "furniture", mods: ["site_logyard", "site_hall_l", "furniture", "site_hall_m", "site_workshop", "site_hall_l", "site_office"] },
   constructionplant: { core: "constructionplant", mods: ["site_hall_l", "site_silos", "constructionplant", "site_hall_l", "site_workshop", "site_office", "site_hall_m"] },
+  // tier 4: green-grey copper ore heaps by the mine; ore and coal heaps by the smelter's halls; assembly halls and a
+  // plastics silo round the electronics plant; machine halls and workshops round the machine works
+  coppermine: { core: "coppermine", mods: ["site_heap_cu", "site_heap_cu", "site_workshop", "coppermine", "site_heap_cu", "site_office"] },
+  coppersmelter: { core: "coppersmelter", mods: ["site_hall_l", "site_heap_cu", "site_heap_coal", "coppersmelter", "site_tanks", "site_office", "site_heap_cu", "site_hall_m"] },
+  electronics: { core: "electronics", mods: ["site_hall_l", "site_hall_m", "electronics", "site_silos", "site_hall_l", "site_office", "site_hall_m"] },
+  machineworks: { core: "machineworks", mods: ["site_hall_l", "site_workshop", "machineworks", "site_hall_l", "site_hall_m", "site_office", "site_workshop"] },
 };
 
 /** The model a kind's site is centred on (its core, by the gate). */
