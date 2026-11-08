@@ -10,7 +10,7 @@ import type { Game } from "../game/city";
 import { BIG_NAME, LOADS_PER_PIECE, MAX_TURBINES, PIECE_YARD, TURBINE_BOOST, convoysOut } from "../game/convoys";
 import { MEGAS, isMega, megaProgress, megaStage } from "../game/megaprojects";
 import { PLANTS, PRODUCTS, isPlantKind, type Product } from "../game/industry";
-import { SEASONAL, SEASON_NAME, seasonAvg, seasonMult, seasonOf, seasonPart, yearPhase, YEAR, type Season } from "../game/calendar";
+import { SEASONAL, SEASONS, SEASON_DAYS, SEASON_NAME, seasonAvg, seasonDay, seasonMult, seasonOf, yearOf, type Season } from "../game/calendar";
 
 type Bar = (n: number, max: number, color?: number) => string;
 
@@ -28,11 +28,12 @@ export function seasonGlyph(s: Season): string {
   return `<svg class="season-glyph s-${s}" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${SEASON_GLYPH[s]}</svg>`;
 }
 
-/** The clock's second line: the season with its glyph, the year and the day ("Autumn · Year 2, day 7"). */
-export function seasonLine(t: number, day: number): string {
-  const s = seasonOf(t);
-  const year = Math.floor((t + yearPhase(0) * YEAR) / YEAR) + 1;
-  return `<span class="cb-day cb-season s-${s}" title="${SEASON_NAME[s]} of year ${year}, ${Math.round(seasonPart(t) * 100)}% through. Farms bring in the harvest in autumn; logging camps fell most in winter">${seasonGlyph(s)}${SEASON_NAME[s]} · Day ${day}</span>`;
+/** The clock's second line: the season with its glyph and the day within it ("Autumn · Day 7"); the year in its tooltip. */
+export function seasonLine(t: number): string {
+  const s = seasonOf(t), d = seasonDay(t), wait = SEASON_DAYS - d + 1;
+  const next = SEASON_NAME[SEASONS[(SEASONS.indexOf(s) + 1) % 4]];
+  const title = `Day ${d} of ${SEASON_DAYS} of ${SEASON_NAME[s].toLowerCase()}, year ${yearOf(t)}; ${next} ${wait === 1 ? "tomorrow" : `in ${wait} days`}. Farms bring in the harvest in autumn; logging camps fell most in winter`;
+  return `<span class="cb-day cb-season s-${s}" title="${title}">${seasonGlyph(s)}${SEASON_NAME[s]} · Day ${d}</span>`;
 }
 
 /** What each season means for the harvest, in a word or two, for the panels. */
