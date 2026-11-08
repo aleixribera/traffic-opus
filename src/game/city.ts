@@ -1,19 +1,19 @@
 import { loadCompany, makeCompany, type Company } from "./company";
 import {
-  BUILDING_TYPES, BULLDOZE_REFUND, ROAD_TYPES, SIGNAL_COST, SIM, isHighway, roadWidth, type RoadTypeId,
+  BUILDING_TYPES, BULLDOZE_REFUND, DEMOLISH_PER_LEVEL, ROAD_TYPES, SIGNAL_COST, SIM, isHighway, roadWidth, type RoadTypeId,
 } from "../config";
 import { add, dist, dist2, rectCorners, rectDistance, scale, sub, type V2 } from "../core/math";
 import { mulberry32 } from "../core/noise";
 import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/network";
 import {
-  applyTrim, chainPoints, cubicClosest, planRoad, snap, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type LanePlan, type Plan, type PlanError,
+  applyTrim, chainPoints, cubicClosest, planRoad, snap, strokeProfile, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type LanePlan, type Plan, type PlanError,
 } from "../roads/planner";
 import { Traffic, type Trip, type Vehicle } from "../sim/traffic";
-import { siteFrame } from "./sites";
+import { SITE_LEVELS, siteFrame } from "./sites";
 import { Terrain } from "../world/terrain";
 import { Buildings, obbOverlap, type Building, type BuildingMove } from "./buildings";
 import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, type LotTemplate } from "./growables";
-import { Progress, type Feature, type Milestone, type ProgressView } from "./progression";
+import { Progress, levelBy, levelCap, type Feature, type Milestone, type ProgressView } from "./progression";
 import { DAY, HOUR, Society } from "./society";
 import { PLACED, SHORE_REACH, type PlacedKind } from "./placed";
 import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, isPlantKind, type Delivery, type Product } from "./industry";
@@ -30,7 +30,7 @@ import { PARK_SMOKE, Parks } from "./parks";
 import { sizeOf } from "./towns";
 import type { PlaceOpts, Placement } from "./buildings";
 import type { BuildingKind } from "../config";
-import { CELL, DEPTH, ZoneMap, type Block, type Cell, type ZoneGroup, type ZoneId } from "./zones";
+import { CELL, DEPTH, ZoneMap, zoneEdge, type Block, type Cell, type ZoneGroup, type ZoneId } from "./zones";
 
 interface UndoEntry {
   label: string;
@@ -169,8 +169,12 @@ export class Game {
       held: () => this.heldTrips(),
       earn: (v) => { this.money += v; this.budgetNow.income.sales += v; this.progress.onEarned(v); },
       spend: (v, what) => { this.money -= v; this.budgetNow.expense[what] += v; },
-      bays: () => this.progress.unlocked.bays,
-      load: () => this.progress.unlocked.load,
+      levelCap: (kind, at) => {
+        const level = levelCap(this.progress.unlocked, kind, SITE_LEVELS);
+        // (a site loaded above its kind's cap waits for the goal of the level after its own)
+        const next = Math.max(level, at) + 1;
+        return { level, goal: next <= SITE_LEVELS ? levelBy(kind, next)?.name : undefined };
+      },
       truckClass: () => this.bestTruck(),
       power: (b) => this.utilities.supplyOf(b),
       wanted: (b) => this.utilities.wanted(b),
@@ -221,6 +225,7 @@ export class Game {
       inBounds: (p) => t.inBounds(p, 2),
       buildingsHit: (pts, hw) => this.buildings.hit(pts, hw).filter((id) => !this.buildings.byId.get(id)?.zone),
       money: () => this.money,
+      buildingAt: (id) => this.buildings.byId.get(id)?.c,
     };
     this.zones.rebuildAll();
   }
@@ -538,8 +543,11 @@ export class Game {
   lotsUnder(plan: Plan): Building[] {
     const out = new Set<Building>();
     for (const st of [...plan.strokes, ...(plan.ghosts ?? [])]) {
-      if (st.h0 > 6 && st.h1 > 6) continue; // bridges pass over
-      const pts = chainPoints(st.show ?? st.chain, 2);
+      if (st.h0 > 6 && st.h1 > 6 && !st.hj) continue; // bridges pass over
+      // (only where it is low enough to need the ground: a bridge's deck passes over, its ramps don't)
+      const prof = strokeProfile(this.net, st, 2);
+      const pts = prof.pts.filter((_, i) => prof.hs[i] <= 6);
+      if (!pts.length) continue;
       const lim = roadWidth(ROAD_TYPES[st.type]) / 2 - 0.5;
       for (const id of this.buildings.hit(pts, lim)) {
         const b = this.buildings.byId.get(id);
@@ -547,6 +555,11 @@ export class Game {
       }
     }
     return [...out];
+  }
+
+  /** What the owners of these homes and shops are paid when a road clears them. */
+  demolishCost(lots: Building[]): number {
+    return lots.reduce((s, b) => s + DEMOLISH_PER_LEVEL * Math.max(1, b.level), 0);
   }
 
   /** Zoned buildings a new lane's outline (a closed polygon) would clear. */
@@ -625,6 +638,9 @@ export class Game {
 
   build(plan: Plan): boolean {
     if (plan.errors.length) return false;
+    // (the homes and shops it clears are paid for: the ones the preview showed, before anything is built)
+    const owed = this.demolishCost(this.lotsUnder(plan));
+    if (plan.cost + owed > this.money + 0.5) return false;
     const ops = this.applyRoads(() => {
       if (plan.kind === "roundabout") commitRoundabout(this.net, plan);
       else {
@@ -654,8 +670,9 @@ export class Game {
       }
     });
     const gone = this.clearRoadsOverLots(ops);
-    this.money -= plan.cost;
-    this.pushUndo({ label: plan.kind, ops, money: plan.cost, added: [], removed: gone });
+    const paid = plan.cost + owed;
+    this.money -= paid;
+    this.pushUndo({ label: plan.kind, ops, money: paid, added: [], removed: gone });
     this.emit({ t: "money" });
     if (gone.length) this.emit({ t: "buildings" });
     return true;
@@ -952,7 +969,7 @@ export class Game {
     for (const cd of cands.slice(0, 6)) {
       const end = snap(net, cd.p, { mpp: 0.4, level: 0, type: "street" });
       if (end.seg === undefined && end.node === undefined) continue;
-      const plan = planRoad(net, world, { start: { p: S, h: 0, guides: [] }, end, mode: "continuous", type: "street", startTangent: out });
+      const plan = planRoad(net, world, { start: { p: S, h: 0, guides: [] }, end, mode: "curve", squareEnd: true, type: "street", startTangent: out });
       if (plan.errors.length || !plan.strokes.length) continue;
       const pts = plan.strokes.flatMap((st) => chainPoints(st.chain, 3));
       if (pts.some((q) => rectDistance(q, c, hw, hd, rot) < 6)) continue;
@@ -1361,7 +1378,8 @@ export class Game {
     const sMid = (b.colS[col0] + b.colS[col0 + t.w - 1]) / 2;
     // kerb point in front of the lot's middle
     const away = { x: -Math.sin(rot) * b.side, y: Math.cos(rot) * b.side };
-    const front = add(c, scale(away, -(depth * CELL) / 2));
+    // (the kerb: the lot starts behind the front strip its driveway crosses)
+    const front = add(c, scale(away, -((depth * CELL) / 2 + zoneEdge(g.width) - g.width / 2)));
     const M = BUILDING_TYPES[t.model];
     const tall = t.tall ? t.tall[0] + this.rng() * (t.tall[1] - t.tall[0]) : 1;
     const seg = this.net.segs.get(b.seg);

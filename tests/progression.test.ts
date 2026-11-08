@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { BASE, MILESTONES, OPEN_AT_ONCE, Progress, unlockedBy, unlocksOf, type ProgressView } from "../src/game/progression";
+import { BASE, FIRST_CAP, MILESTONES, OPEN_AT_ONCE, Progress, levelBy, levelCap, unlockedBy, unlocksOf, type ProgressView } from "../src/game/progression";
+import { SITE_LEVELS } from "../src/game/sites";
 import { PLANTS, type PlantKind } from "../src/game/industry";
 import { Game } from "../src/game/city";
 
@@ -13,7 +14,7 @@ describe("Milestones", () => {
     for (const m of MILESTONES) {
       expect(m.goal.length).toBeGreaterThan(5);
       const u = m.unlocks;
-      const n = (u.roads?.length ?? 0) + (u.features?.length ?? 0) + (u.buildings?.length ?? 0) + (u.towns ?? 0) + (u.bays ?? 0) + (u.load ?? 0) + (u.trucks?.length ?? 0) + (u.grant ? 1 : 0);
+      const n = (u.roads?.length ?? 0) + (u.features?.length ?? 0) + (u.buildings?.length ?? 0) + (u.towns ?? 0) + (u.levels ? 1 : 0) + (u.trucks?.length ?? 0) + (u.grant ? 1 : 0);
       expect(n, m.id).toBeGreaterThan(0);
     }
   });
@@ -29,8 +30,44 @@ describe("Milestones", () => {
     }
     const all = unlocksOf(MILESTONES.map((m) => m.id));
     expect(all.buildings.size).toBe(Object.keys(PLANTS).length);
-    expect(all.bays).toBeGreaterThan(0);
-    expect(all.load).toBe(4);
+    // (every kind of site a milestone holds back is cleared to the top level by the end of the ladder)
+    for (const k of Object.keys(PLANTS) as PlantKind[]) expect(levelCap(all, k, SITE_LEVELS), k).toBe(SITE_LEVELS);
+  });
+
+  it("milestones clear named kinds of site for their next level: no extra trucks or loads, the fleet comes with the level", () => {
+    for (const m of MILESTONES) expect(Object.keys(m.unlocks).some((k) => k === "bays" || k === "load"), m.id).toBe(false);
+    const start = unlocksOf([]);
+    expect(levelCap(start, "sawmill", SITE_LEVELS)).toBe(FIRST_CAP);
+    // (a kind no milestone names, a warehouse, grows to the top)
+    expect(levelCap(start, "warehouse", SITE_LEVELS)).toBe(SITE_LEVELS);
+    const goal = levelBy("sawmill", 3)!;
+    expect(goal.unlocks.levels!.kinds).toContain("sawmill");
+    const upTo = MILESTONES.slice(0, MILESTONES.indexOf(goal) + 1).map((m) => m.id);
+    expect(levelCap(unlocksOf(upTo), "sawmill", SITE_LEVELS)).toBe(3);
+    // a kind whose level 3 needs the chemical works' supplies (a farm: fertilizer) is never cleared for it by a goal
+    // the player can't yet use: the supplies are its gate, and goals name only its level 4
+    for (const m of MILESTONES) for (const k of m.unlocks.levels?.kinds ?? []) if (PLANTS[k].supplies) expect(m.unlocks.levels!.to, `${m.id} ${k}`).toBe(SITE_LEVELS);
+    expect(levelCap(start, "farm", SITE_LEVELS)).toBe(3);
+    // every capped kind has a goal for each level past the first cap, after the one that unlocks it
+    for (const k of Object.keys(PLANTS) as PlantKind[]) {
+      if (levelCap(start, k, SITE_LEVELS) === SITE_LEVELS) continue;
+      const open = MILESTONES.findIndex((m) => m.unlocks.buildings?.includes(k));
+      for (let L = FIRST_CAP + 1; L <= SITE_LEVELS; L++) {
+        const by = levelBy(k, L);
+        expect(by, `${k} ${L}`).toBeDefined();
+        expect(MILESTONES.indexOf(by!), `${k} ${L}`).toBeGreaterThanOrEqual(open);
+      }
+    }
+  });
+
+  it("a site at its kind's cap is told which goal clears the next level", () => {
+    const g = new Game(7);
+    const h = (g.industry as unknown as { h: { levelCap(k: PlantKind, at: number): { level: number; goal?: string } } }).h;
+    expect(h.levelCap("sawmill", FIRST_CAP)).toEqual({ level: FIRST_CAP, goal: levelBy("sawmill", FIRST_CAP + 1)!.name });
+    // (a sawmill an older save left at level 3 waits for level 4's goal, not the one it already passed)
+    expect(h.levelCap("sawmill", 3)).toEqual({ level: FIRST_CAP, goal: levelBy("sawmill", 4)!.name });
+    g.progress.done = MILESTONES.map((m) => m.id);
+    expect(h.levelCap("sawmill", SITE_LEVELS)).toEqual({ level: SITE_LEVELS, goal: undefined });
   });
 
   it("tier 3 opens on the way to Town size: oil first, then glass and goods, then construction parts", () => {

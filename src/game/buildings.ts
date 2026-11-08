@@ -1,5 +1,5 @@
-import { BUILDING_TYPES, ROAD_TYPES, type BuildingKind } from "../config";
-import { type V2, add, angleOf, cubicTangent, dist, dot, norm, polyAt, polyDir, rectCorners, rectDistance, right, scale, sub, wrapAngle } from "../core/math";
+import { BUILDING_TYPES, ROAD_TYPES, ZONE_SETBACK, type BuildingKind } from "../config";
+import { type V2, add, angleOf, cubicAt, cubicTangent, dist, dot, norm, polyAt, polyDir, rectCorners, rectDistance, right, scale, sub, wrapAngle } from "../core/math";
 import type { RoadNetwork } from "../roads/network";
 import { cubicClosest } from "../roads/planner";
 import type { Access } from "../sim/router";
@@ -427,8 +427,10 @@ export class Buildings {
         const g = net.segGeom.get(a.seg)!;
         const s = net.segs.get(a.seg)!;
         const r = cubicClosest(s.c, b.front);
-        if (r.d < g.width / 2 + 1.5) {
+        if (r.d < reach(b, g.width)) {
           a.s = g.center.length * arcFrac(s.c, r.t, g.center.pts);
+          // (a home's driveway starts at the kerb, wherever an upgrade or downgrade moved it)
+          if (b.zone) { b.front = kerbAt(s.c, r.t, g.width, b.c); a.p = b.front; }
           // (a site's gate stays off the junction mouths: a road that now meets the road by it moves it along)
           const sC = b.placed && b.plant ? this.gateS(a.seg, a.s, true) : a.s;
           if (sC !== null && sC !== a.s) { b.front = this.gateKerb(a.seg, a.s, sC, b.front); a.p = b.front; a.s = sC; }
@@ -453,12 +455,14 @@ export class Buildings {
         }
         continue;
       }
-      for (const id of net.segsNear(b.front.x - 6, b.front.y - 6, b.front.x + 6, b.front.y + 6)) {
+      const look = b.zone ? ZONE_SETBACK : 6;
+      for (const id of net.segsNear(b.front.x - look, b.front.y - look, b.front.x + look, b.front.y + look)) {
         const s = net.segs.get(id)!;
         if (!ROAD_TYPES[s.type].allowsAccess) continue;
         const g = net.segGeom.get(id)!;
         const r = cubicClosest(s.c, b.front);
-        if (r.d < g.width / 2 + 1.5 && net.heightOnSeg(id, r.t) < 0.5) {
+        if (r.d < reach(b, g.width) && net.heightOnSeg(id, r.t) < 0.5) {
+          if (b.zone) b.front = kerbAt(s.c, r.t, g.width, b.c);
           b.access = { seg: id, s: g.center.length * arcFrac(s.c, r.t, g.center.pts), p: b.front };
           b.side = sideOf(s.c, r.t, b.c);
           this.attachedTo.set(b, g);
@@ -537,6 +541,17 @@ export class Buildings {
  * Which side of the road p is on. A road that ends square-on at a site's gate has the plot straight ahead, on
  * neither side: then it keeps `keep`, so the site's driveway doesn't flip kerbs from one rebuild to the next.
  */
+/** How far a building's kerb point may be from a road's centreline and still be on it (a home: across its front strip). */
+const reach = (b: Building, width: number) => (b.zone ? Math.max(width / 2, ZONE_SETBACK) : width / 2) + 1.5;
+
+/** The kerb of a road at t, on the side of p. */
+function kerbAt(c: import("../core/math").Cubic, t: number, width: number, p: V2): V2 {
+  const q = cubicAt(c, t);
+  const n = right(norm(cubicTangent(c, t)));
+  const sd = dot(sub(p, q), n) >= 0 ? 1 : -1;
+  return add(q, scale(n, (sd * width) / 2));
+}
+
 function sideOf(c: import("../core/math").Cubic, t: number, p: V2, keep?: 1 | -1): 1 | -1 {
   const tan = norm(cubicTangent(c, t));
   const q = cubicClosest(c, p).p;

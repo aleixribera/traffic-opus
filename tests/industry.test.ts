@@ -250,23 +250,28 @@ describe("Industry", () => {
     expect(Industry.running(sm)).toBe(true);
   });
 
-  it("a truck carries as many loads as the milestones allow, and the bays add trucks", () => {
+  it("a truck carries its class's payload and a site's fleet is its level's: nothing from milestones; a capped site waits for its goal", () => {
     const w = world();
     const farm = w.plant("farm", 0);
     const fp = w.plant("foodplant", 1000);
-    (w.host as { load?: () => number }).load = () => 2;
-    (w.host as { bays?: () => number }).bays = () => 1;
-    expect(w.ind.trucksOf(farm)).toBe(Industry.fleetAt("farm", 1) + 1);
-    farm.plant!.out.crops = 6;
+    expect(w.ind.trucksOf(farm)).toBe(Industry.fleetAt("farm", 1));
+    farm.plant!.out.crops = 3;
     w.ind.tick(0);
-    expect(w.pending.length).toBe(3);
-    expect(w.pending.map((p) => p.trip.haul!.n)).toEqual([2, 2, 2]);
-    expect(farm.plant!.out.crops).toBe(0);
+    // light trucks: one load each
+    expect(w.pending.map((p) => p.trip.haul!.n)).toEqual(w.pending.map(() => 1));
     w.arrive(w.pending[0]);
-    expect(fp.plant!.stock.crops).toBe(2);
-    // a power plant runs no trucks, bays or not
+    expect(fp.plant!.stock.crops).toBe(1);
+    // a power plant runs no trucks
     const pp = w.plant("coalplant", 500);
     expect(w.ind.trucksOf(pp)).toBe(0);
+    // at its kind's cap a site stops growing and names the goal that opens its next level
+    (w.host as { levelCap?: () => { level: number; goal?: string } }).levelCap = () => ({ level: 2, goal: "Market day" });
+    farm.plant!.level = 2;
+    farm.plant!.grow = 5;
+    (w.ind as unknown as { growth(b: unknown, span: number, working: boolean, staff: number, pw: number, store: number): void }).growth(farm, 100, true, 1, 1, 10);
+    expect(farm.plant!.why).toBe('Level 3 opens with the goal "Market day"');
+    expect(farm.plant!.grow).toBe(0);
+    expect(farm.plant!.level).toBe(2);
   });
 
   it("a power plant burns coal only while wanted; a building short of power works slower", () => {

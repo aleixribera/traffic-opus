@@ -13,7 +13,7 @@ import type { PendingSpawn, Vehicle } from "../src/sim/traffic";
 import { placeAlong, road } from "./helpers";
 
 /** A tiny world: buildings on numbered road components along the x axis, everyone fully staffed. */
-function world(load = 1) {
+function world() {
   const list: Building[] = [];
   const byId = new Map<number, Building>();
   const pending: PendingSpawn[] = [];
@@ -35,7 +35,6 @@ function world(load = 1) {
     trips: () => pending.map((p) => p.trip),
     earn: (v) => { money += v; },
     spend: (v, what) => { money -= v; spent[what] = (spent[what] ?? 0) + v; },
-    load: () => load,
     truckClass: () => fleet,
   };
   const ind = new Industry(host);
@@ -87,7 +86,7 @@ describe("Truck classes", () => {
   });
 
   it("a site's level sets its fleet's mix, up to the best class unlocked; each class carries, drives and burns as it should; trucks out finish as they are", () => {
-    const w = world(2);
+    const w = world();
     const mine = w.plant("coalmine", 0);
     const plant = w.plant("smelter", 2000);
     plant.plant!.level = 4;
@@ -95,13 +94,15 @@ describe("Truck classes", () => {
     // level 1: light trucks only, whatever is unlocked
     const n1 = w.ind.trucksOf(mine);
     expect(w.ind.mixOf(mine)).toEqual({ light: n1, heavy: 0, roadtrain: 0 });
-    expect(w.ind.capOf(mine, "light")).toBe(2);
-    expect(w.ind.capOf(mine, "heavy")).toBe(4);
-    mine.plant!.out.coal = 2;
+    // (a bigger class is the only way a truck carries more)
+    expect(w.ind.capOf(mine, "light")).toBe(1);
+    expect(w.ind.capOf(mine, "heavy")).toBe(2);
+    expect(w.ind.capOf(mine, "roadtrain")).toBe(4);
+    mine.plant!.out.coal = 1;
     w.ind.tick(0);
     const [first] = w.out();
     expect(first.trip.haul!.cls).toBeUndefined();
-    expect(first.trip.haul!.n).toBe(2);
+    expect(first.trip.haul!.n).toBe(1);
     expect(first.len).toBeUndefined();
     // each level swaps light trucks for bigger ones; the top level runs mostly road trains
     let light = 1;
@@ -120,11 +121,11 @@ describe("Truck classes", () => {
     expect(w.ind.mixOf(mine)).toEqual({ light: top.light, heavy: top.heavy + top.roadtrain, roadtrain: 0 });
     // the class furthest behind its share loads next (one light truck is out, no heavy one): a heavy truck
     const fuel0 = w.spent.fuel;
-    mine.plant!.out.coal = 4;
+    mine.plant!.out.coal = 2;
     w.ind.tick(0);
     const t = w.out()[1];
     expect(t.trip.haul!.dest).toBe(plant.id);
-    expect(t.trip.haul!.n).toBe(4);
+    expect(t.trip.haul!.n).toBe(2);
     expect(t.trip.haul!.cls).toBe("heavy");
     expect(t.len).toBe(TRUCK_CLASSES.heavy.len);
     expect(t.vf).toBe(TRUCK_CLASSES.heavy.speed);
@@ -138,17 +139,17 @@ describe("Truck classes", () => {
     const back = w.pending.find((p) => p.trip.haul?.leg === "back")!;
     expect(back.len).toBe(TRUCK_CLASSES.heavy.len);
     expect(back.trip.haul!.cls).toBe("heavy");
-    mine.plant!.out.coal = 8;
+    mine.plant!.out.coal = 4;
     w.ind.tick(0);
     const next = w.out().find((p) => p.trip.haul!.cls === "roadtrain")!;
-    expect(next.trip.haul!.n).toBe(8);
+    expect(next.trip.haul!.n).toBe(4);
     expect(next.units).toBe(ROAD_TRAIN_UNITS);
     expect(Industry.body(undefined)).toEqual({});
   });
 
   it("the truck at the dock waits for a full load, up to an hour, then goes with what there is", () => {
     // a new site's light trucks carry one load: each goes as soon as its load is in
-    const w = world(1);
+    const w = world();
     const mine = w.plant("coalmine", 0);
     w.plant("smelter", 2000);
     mine.plant!.out.coal = 1;
@@ -156,7 +157,7 @@ describe("Truck classes", () => {
     expect(w.out().length).toBe(1);
     expect(w.out()[0].trip.haul!.n).toBe(1);
     // a top-level site: its first road train doesn't set off with one load on board
-    const v = world(1);
+    const v = world();
     const m2 = v.plant("coalmine", 0);
     v.plant("smelter", 2000).plant!.level = 4;
     v.setFleet("roadtrain");
@@ -193,7 +194,7 @@ describe("Truck classes", () => {
   });
 
   it("each product waits on its own clock: a steady one shipping doesn't keep a small one waiting past HOLD", () => {
-    const w = world(2);
+    const w = world();
     w.setFleet("roadtrain");
     const wh = w.plant("warehouse", 0);
     w.shop(1000); w.shop(1200); w.shop(1400);
@@ -207,12 +208,13 @@ describe("Truck classes", () => {
       for (const p of [...w.out()]) { if (p.trip.haul!.product === "planks" && plankSent < 0) plankSent = s; w.arrive(p); }
       for (const p of [...w.pending]) { w.pending.splice(w.pending.indexOf(p), 1); w.ind.onArrive({ trip: p.trip } as Vehicle); }
     }
-    expect(plankSent).toBeGreaterThanOrEqual(HOLD);
+    // (sent by HOLD at the latest: sooner if a light truck, full with that one load, has its turn)
+    expect(plankSent).toBeGreaterThanOrEqual(0);
     expect(plankSent).toBeLessThanOrEqual(HOLD + 10);
   });
 
   it("a warehouse truck that gives up brings its loads back into store, where it ships from", () => {
-    const w = world(1);
+    const w = world();
     const wh = w.plant("warehouse", 0);
     w.shop(1000);
     w.setWant(1e6);
@@ -423,7 +425,7 @@ describe("Logistics in the game", () => {
     g.progress.done = all.filter((id) => !MILESTONES.find((m) => m.id === id)?.unlocks.trucks?.includes("roadtrain"));
     expect(g.truckUnlocked("roadtrain")).toBe(false);
     expect(g.bestTruck()).toBe("heavy");
-    expect(g.industry.capOf(wh)).toBe(TRUCK_CLASSES.heavy.payload * g.progress.unlocked.load);
+    expect(g.industry.capOf(wh)).toBe(TRUCK_CLASSES.heavy.payload);
     g.progress.done = all;
     expect(g.bestTruck()).toBe("roadtrain");
     expect(g.industry.fleetClass()).toBe("roadtrain");
@@ -475,7 +477,7 @@ describe("Logistics in the game", () => {
     const k = Game.load(old);
     const P = k.buildings.byId.get(wh.id)!.plant!;
     expect(P.takes).toBeUndefined();
-    expect(k.industry.capOf(k.buildings.byId.get(wh.id)!)).toBe(TRUCK_CLASSES[k.bestTruck()].payload * k.progress.unlocked.load);
+    expect(k.industry.capOf(k.buildings.byId.get(wh.id)!)).toBe(TRUCK_CLASSES[k.bestTruck()].payload);
     expect(k.buildings.byId.get(dp.id)!.plant!.served).toBeUndefined();
     k.step(1 / 30);
   }, 60000);

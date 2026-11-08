@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { RoadNetwork, type Connector, type RSeg } from "../src/roads/network";
 import { Traffic, type Trip } from "../src/sim/traffic";
-import { hermiteCubic, minRadius, polyAt, polyClosest, rampCurve, sampleCubic, straightCubic, v2, type V2 } from "../src/core/math";
+import { hermiteCubic, minRadius, norm, polyAt, polyClosest, rampCurve, sampleCubic, straightCubic, v2, type V2 } from "../src/core/math";
 import type { RoadTypeId } from "../src/config";
 import type { Access } from "../src/sim/router";
 import { chainPoints, commitStrokes, planRoad, slipLaneEnd, snap, type BuildWorld } from "../src/roads/planner";
@@ -253,7 +253,7 @@ describe("Drawn ramps are smooth where they leave and join", () => {
   });
   it("keeps a curve's own handle when it leaves a highway steeply", () => {
     const net = carriageway();
-    const plan = planRoad(net, world, { start: on(net, v2(500, 0)), end: free(v2(560, 120)), ctrl: v2(505, 60), mode: "curve", type: "hw1" });
+    const plan = planRoad(net, world, { start: on(net, v2(500, 0)), end: free(v2(560, 120)), startTangent: norm(v2(5, 60)), mode: "curve", type: "hw1" });
     expect(plan.errors.map((e) => e.msg)).toEqual([]);
     expect(minRadius(sampleCubic(plan.strokes[0].chain[0], 1.5), 4)).toBeGreaterThan(100);
   });

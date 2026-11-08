@@ -46,6 +46,8 @@ export const PAL = {
   sidewalkEdge: 0xa9a283,
   deckSide: 0x2b2d31,
   pillar: 0xb9b5a8,
+  // a bridge's parapets: the cream of the Deco courses on its piers and pylons
+  parapet: 0xe6dcc3,
   driveway: 0x77787a,
   bg: 0x9d955a,
 };

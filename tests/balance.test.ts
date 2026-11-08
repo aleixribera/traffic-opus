@@ -36,8 +36,15 @@ declare const process: { env: Record<string, string | undefined>; stderr: { writ
  * Motor Works, until the first car is sold to a town. It implies BALANCE_T4 and is the longest run of all.
  */
 const T5 = !!process.env.BALANCE_T5;
-const T4 = !!process.env.BALANCE_T4 || T5;
-const MAX_DAYS = Number(process.env.BALANCE_DAYS ?? (T5 ? 170 : T4 ? 120 : 70));
+/**
+ * SHOWCASE=1 builds the city behind the main menu instead of checking the pace: it plays into tier 4, founds up to five
+ * towns (past the milestone slots: it is a picture, never a player's save) and stops once the five hold
+ * SHOWCASE_POP people between them (3000 by default), writing the save to tools/out/showcase.json (copy it to public/).
+ */
+const SHOWCASE = !!process.env.SHOWCASE;
+const SHOWCASE_POP = Number(process.env.SHOWCASE_POP ?? 3000);
+const T4 = !!process.env.BALANCE_T4 || T5 || SHOWCASE;
+const MAX_DAYS = Number(process.env.BALANCE_DAYS ?? (SHOWCASE ? 240 : T5 ? 170 : T4 ? 120 : 70));
 /**
  * BALANCE_T3=1 plays on past first cement through tier 3 to a supplied Town and checks that leg too. It runs an hour or
  * more (the towns grow to thousands of people, all driving), so the everyday suite stops at first cement.
@@ -119,12 +126,18 @@ function play() {
     }
     return null;
   };
-  /** The town's street end nearest a point (where a road out of it starts). */
-  const edge = (t: Town, toward: V2) => {
+  const isBuilt = (q: V2) => [...g.net.nodes.values()].some((n) => dist(n.p, q) < 3 && g.net.segsAt(n.id).length > 0);
+  /**
+   * The town's street end nearest a point (where a road out of it starts). `built`: only a junction the town has
+   * already built (a corner of its grid it hasn't reached yet would leave the road short of its streets, the way a
+   * player wouldn't).
+   */
+  const edge = (t: Town, toward: V2, built = false) => {
     let best = gridPt(t.c, t.ang, 1, 0), bd = Infinity;
     for (const [i, j] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
       const q = gridPt(t.c, t.ang, i, j);
-      if (dist(q, toward) < bd) { bd = dist(q, toward); best = q; }
+      const d = dist(q, toward) + (built && !isBuilt(q) ? 1e5 : 0);
+      if (d < bd) { bd = d; best = q; }
     }
     return best;
   };
@@ -156,8 +169,9 @@ function play() {
   /** When a deposit had no way through (a player tries again later, once there is money for it). */
   const blocked = new Map<string, number>();
   /** Where a new road to q starts: the nearest of the company's road ends and the towns' street ends. */
-  const startFor = (q: V2): V2 =>
-    [edge(A, q), ...(B ? [edge(B, q)] : []), ...extra.map((t) => edge(t, q)), ...Object.values(roads).flat()].sort((x, y) => dist(x, q) - dist(y, q))[0];
+  const startsFor = (q: V2): V2[] =>
+    [edge(A, q), ...(B ? [edge(B, q)] : []), ...extra.map((t) => edge(t, q)), ...Object.values(roads).flat()].sort((x, y) => dist(x, q) - dist(y, q));
+  const startFor = (q: V2): V2 => startsFor(q)[0];
   /**
    * A site on a deposit, the way a player places one: the plot near `near` with the most of the field under it,
    * standing free with its gate toward the nearest road end, then a street from there to the gate. (With no street
@@ -211,8 +225,14 @@ function play() {
     for (const d of tier2[key]) {
       // (a road into the deposit first: the site faces it)
       if (!roads[key] || dist(roads[key][1], d) > 600) {
-        const a = startFor(d);
-        const r = road(`to the ${name}`, a, d);
+        // (from the nearest road end, or the next ones if a road from there is blocked: houses along the road it
+        // would run beside, a river it can't bridge there)
+        let a = startFor(d), r: ReturnType<typeof road> = "blocked";
+        for (const st of startsFor(d).filter((x, i, xs) => xs.findIndex((y) => dist(x, y) < 50) === i).slice(0, 3)) {
+          a = st;
+          r = road(`to the ${name}`, a, d);
+          if (r === true || r === "money") break;
+        }
         if (r === "money") return;
         if (r !== true) { why.push(`road ${(dist(a, d) / 1000).toFixed(1)} km: ${roadErrors[0] ?? r}`); continue; }
         roads[key] = [a, d];
@@ -300,7 +320,7 @@ function play() {
         if (typeof t !== "string") { B = t; say(`found ${t.name}, ${(dist(A.c, t.c) / 1000).toFixed(1)} km away`); }
       }
     }
-    if (B && !roads.towns) { const a = edge(A, B.c), b = edge(B, A.c); if (road("between the towns", a, b) === true) roads.towns = [a, b]; }
+    if (B && !roads.towns) { const a = edge(A, B.c, true), b = edge(B, A.c, true); if (road("between the towns", a, b) === true) roads.towns = [a, b]; }
     if (roads.towns && has("sawmill") && count("foodplant") < 2) place("foodplant", ...roads.towns, 0.3, 0.7);
     // tier 2: the mines first (they wait as building sites for planks), then the power plant and the smelter
     if (u.has("ironmine") && has("sawmill")) mine("ore", "ironmine", F.ore, "iron ore");
@@ -321,7 +341,7 @@ function play() {
     if (u.has("furniture") && has("glassworks") && !has("furniture")) place("furniture", ...roads.wood!, 0.1, 0.7);
     if (u.has("constructionplant") && !has("constructionplant")) hub("constructionplant");
     // more towns as the milestones allow, a few kilometres out and joined by road
-    if (g.towns.list.length < Math.min(3, g.townSlots) && g.money > TOWN_COST + RESERVE + 20000) foundTown();
+    if (g.towns.list.length < (SHOWCASE ? 5 : Math.min(3, g.townSlots)) && g.money > TOWN_COST + RESERVE + 20000) foundTown();
     if (!T4) return;
     // tier 4: copper far out in the ranges; the copper smelter, electronics plant and machine works at the hub, by the
     // coal, the refinery's plastics and the smelter's steel
@@ -346,14 +366,14 @@ function play() {
       const an = A.ang + Math.PI / 2 + (k / 24) * Math.PI * 2;
       const q = v2(A.c.x + Math.cos(an) * r, A.c.y + Math.sin(an) * r);
       if (g.towns.foundBlock(q) || g.terrain.has(F.fert, q) || g.terrain.has(F.forest, q)) continue;
-      const t = g.towns.found(q);
+      const t = g.towns.found(q, { free: SHOWCASE });
       if (typeof t === "string") continue;
       say(`found ${t.name}, ${(dist(A.c, t.c) / 1000).toFixed(1)} km away`);
       extra.push(t);
       // (the nearest road end first; a river or a site in the way: the next nearest)
       const ends = [edge(A, t.c), ...(B ? [edge(B, t.c)] : []), ...extra.filter((e) => e !== t).map((e) => edge(e, t.c)), ...Object.values(roads).flat()].sort((x, y) => dist(x, t.c) - dist(y, t.c));
       const got: string[] = [];
-      for (const a of ends.slice(0, 6)) { const r = road(`to ${t.name}`, a, edge(t, a)); if (r === true) return; got.push(r); }
+      for (const a of ends.slice(0, 6)) { const r = road(`to ${t.name}`, a, edge(t, a, true)); if (r === true) return; got.push(r); }
       say(`no road to ${t.name}: ${got.join(", ")} (last: ${roadErrors.join(" / ")})`);
       return;
     }
@@ -452,6 +472,8 @@ function play() {
       put(`             trucks: ${tv.length} on the road (${still} stood still, ${jammed} stuck 30 s+), ${tp.length} waiting to set off (avg ${gate.toFixed(0)} s)${[...gaveUp].map(([k, n]) => ` · ${k} ${n}`).join("")}`);
       gaveUp.clear();
     }
+    if (SHOWCASE && g.towns.list.length >= 5 && g.towns.list.reduce((s, t) => s + t.pop, 0) >= SHOWCASE_POP) break;
+    if (SHOWCASE) continue;
     if (T5 ? car >= 0 : T4 ? electronics >= 0 && machinery >= 0 : T3 ? g.progress.isDone("townSupplied") : cement >= 0) break;
   }
   const supplied = reached.find((r) => r.id === "townSupplied")?.t ?? -1;
@@ -469,11 +491,20 @@ describe("Balance: the game to Town size", () => {
   });
   afterAll(() => vi.restoreAllMocks());
 
-  it(`a scripted company reaches steel and cement${T3 ? ", then fuel, goods and a supplied Town," : ""}${T4 ? " then copper, electronics and machinery," : ""}${T5 ? " then milk, supplies and a car," : ""} in ladder order, and stays solvent`, () => {
+  it(`a scripted company reaches steel and cement${T3 ? ", then fuel, goods and a supplied Town," : ""}${T4 ? " then copper, electronics and machinery," : ""}${T5 ? " then milk, supplies and a car," : ""} in ladder order, and stays solvent`, async () => {
     const t0 = Date.now();
     const r = play();
     const { g, lines, reached, low, steel, cement } = r;
     const ids = reached.map((x) => x.id);
+    if (SHOWCASE) {
+      console.log(`showcase: ${g.towns.list.map((t) => `${t.name} ${t.pop}`).join(", ")} · ${g.buildings.list.filter((b) => b.plant).length} plants · day ${(g.time / DAY).toFixed(1)}`);
+      // (node's fs, loaded by name: the tests are typed for the browser)
+      const fs = await import(/* @vite-ignore */ ["node", "fs"].join(":"));
+      fs.mkdirSync("tools/out", { recursive: true });
+      fs.writeFileSync("tools/out/showcase.json", JSON.stringify(g.serialize()));
+      fs.writeFileSync("tools/out/showcase.log", lines.join("\n"));
+      return;
+    }
     const day = (t: number) => (t < 0 ? "never" : (t / DAY).toFixed(2));
     console.log(["", "Balance timeline (seed 7):", ...lines,
       `milestones: ${reached.map((x) => `${x.id}@${(x.t / DAY).toFixed(2)}`).join(" ")}`,

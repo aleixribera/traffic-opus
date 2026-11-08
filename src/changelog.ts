@@ -15,6 +15,29 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.67", date: "2026-11-08", title: "Sites earn their levels",
+    notes: [
+      "Goals no longer hand out an extra truck at every building or an extra load on every truck. A site's fleet comes from its level, and trucks carry more only as bigger classes: a light truck 1 load, a heavy truck 2, a road train 4.",
+      "Instead, goals clear named kinds of site for their next level: \"Logging Camps and Sawmills grow to level 3\". Every site grows to level 2 by itself; levels 3 and 4 open with the goals (farms, mines, wells and pits reach level 3 with fertilizer or explosives, as before).",
+      "A site waiting at its cap says which goal opens its next level.",
+      "Towns keep rebuilding their high streets as shops: a building with no room to grow along its street no longer holds up the ones behind it.",
+    ],
+  },
+  {
+    v: "v0.0.66", date: "2026-11-08", title: "A road tool that helps",
+    notes: [
+      "Two ways to draw, like the classics: Curve (the default) bends freely from where the last road left off, and each click carries on smoothly from the end; Straight draws straight lines. Right click or Esc ends the chain.",
+      "Snapping helps instead of fighting: ends catch roads and junctions from further out when zoomed out, hold steady instead of flickering, and slide to a clean right angle when you aim nearly square.",
+      "Guide lines like CS2's: parallels a lot or a town block away, perpendiculars, and stops level with nearby junctions.",
+      "Rivers and roads in the way get a bridge by themselves, with its cost shown before you click. Built bridges now stand out with parapets, piers and a steel truss over wide water.",
+      "Homes in the way are outlined with the compensation the owners get; click again to build through. Sites and civic buildings are never demolished.",
+      "Small misses fix themselves: an end just short of a junction joins it, and one that overshoots a road ends on it. Anything else says at the cursor why it can't be built and what to do.",
+      "Replace is now called Upgrade. The 3-click curve, complex curve, continuous and grid modes are gone.",
+      "Homes, shops and the town hall's square now stand back from the street behind a front strip their driveways cross, so upgrading a town street, even to a divided avenue, keeps every building: the road fills the strip and the driveways get shorter. (Homes already built in older saves keep their old place by the kerb.)",
+      "A road whose cost plus the owners' compensation is more than you have isn't built (no more going into debt), and roundabouts and lanes through homes ask for the second click too.",
+    ],
+  },
+  {
     v: "v0.0.65", date: "2026-11-08", title: "Freight jams ease",
     notes: [
       "A site's gate now stands well clear of a junction, so trucks turning in no longer stop with their tails across the crossing.",

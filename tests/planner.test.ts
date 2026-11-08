@@ -110,7 +110,7 @@ describe("planner", () => {
     expect(s.node !== undefined || s.seg !== undefined).toBe(true);
     // a road straight through the island is refused
     const through = planRoad(net, w, { start: free(v2(40, 100)), end: free(v2(160, 100)), mode: "straight", type: "street" });
-    expect(through.errors.map((e) => e.msg)).toContain("Can't cross a roundabout's centre");
+    expect(through.errors.map((e) => e.msg)).toContain("Can't cross a roundabout's centre: end on its ring instead");
   });
 
   it.each([[1, "street"], [2, "avenue"]] as const)("joins four arms to a %i-lane roundabout exactly where they are aimed (%s)", (lanes, type) => {

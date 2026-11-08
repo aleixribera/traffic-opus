@@ -111,6 +111,9 @@ def palette():
         "bs_frame": "#3c4148", "bs_glass": "#cfe6f2", "bs_roof": "#3f5470", "bs_sign": "#2f6fd0",
         # industry site fence: galvanised posts and rails on a concrete kerb
         "fn_post": "#5f625f", "fn_rail": "#7d807c", "fn_kerb": "#b9b6ad",
+        # bridges: warm poured concrete with cream Deco courses, red-oxide steel trusses, brass and a pale lamp
+        "br_concrete": "#c7c0ae", "br_footing": "#a8a191", "br_cream": "#ece3cb", "br_steel": "#97432f",
+        "br_steel2": "#7e3626", "br_brass": "#b88a3a", "br_lamp": "#f6ecc4",
         # utilities: wind (white tower, grey nacelle), coal (warm grey brick, red-white chimney, pale cooling
         # tower), solar (deep blue panels on grass), water (white + blue), sewage (sand concrete, olive roof)
         "tb_white": "#f2f3f1", "tb_grey": "#bfc4ca", "gravel": "#d3cbb9", "concrete": "#c8c6c0",
@@ -1276,6 +1279,91 @@ def b_fence(M, P):
     box(M, -4.3, 4.5, -0.04, 0.04, 0.22, 0.28, P["fn_rail"])
     # a slim stay halfway along keeps the mesh taut
     box(M, -0.04, 0.04, -0.05, 0.05, 0.18, 2.0, P["fn_rail"])
+    return L
+
+
+# ------------------------------------------------------------------ bridges (pieces the road renderer places)
+# Every piece is built for a 10 m wide deck, across the road along X and along it Y; the game scales X to the
+# deck's real width. A pier and an abutment stand on the ground and reach the underside of a 6 m deck (z = 5.1;
+# the game stretches Z for a higher one); a pylon and a truss panel stand on the deck itself (z = 0 = deck).
+
+def b_bridge_pier(M, P):
+    """One concrete pier: a cutwater footing pointed at both ends, a battered wall shaft with three raised Deco
+    flutes on each face, and a hammerhead cap reaching past the deck's edges (top-down it shows either side of
+    the deck as a pale bar, with its shadow)."""
+    L = Lot(12.0, 3.2)
+    L.bays = []
+    foot = [(-5.1, -1.6), (5.1, -1.6), (6.0, 0.0), (5.1, 1.6), (-5.1, 1.6), (-6.0, 0.0)]
+    poly_prism(M, foot, 0.0, 0.7, P["br_footing"])
+    taper(M, (-4.0, 4.0, -0.85, 0.85), (-3.6, 3.6, -0.68, 0.68), 0.7, 4.25, P["br_concrete"])
+    for x in (-2.1, 0.0, 2.1):
+        for y0, y1 in ((-0.9, -0.66), (0.66, 0.9)):
+            box(M, x - 0.22, x + 0.22, y0, y1, 1.1, 3.9, P["br_concrete"])
+    taper(M, (-3.7, 3.7, -0.72, 0.72), (-5.6, 5.6, -0.95, 0.95), 4.25, 4.75, P["br_concrete"])
+    box(M, -5.6, 5.6, -0.95, 0.95, 4.75, 4.95, P["br_concrete"])
+    box(M, -5.7, 5.7, -1.0, 1.0, 4.95, 5.1, P["br_cream"])
+    return L
+
+
+def b_bridge_abutment(M, P):
+    """The abutment at a deck's end: a breast wall across the road under the deck's last metres (the deck is at
+    +Y), a cream bearing course along its top, and wing walls flaring back along the ramp (-Y), each stepping
+    down in three courses as the embankment falls away."""
+    L = Lot(15.8, 8.0)
+    L.bays = []
+    box(M, -5.6, 5.6, 2.6, 4.0, 0.0, 4.9, P["br_concrete"])
+    box(M, -5.75, 5.75, 2.5, 4.0, 4.9, 5.1, P["br_cream"])
+    box(M, -6.0, 6.0, 2.3, 4.0, 0.0, 0.6, P["br_footing"])
+    for s in (-1, 1):
+        for k, (y0, y1, z1) in enumerate(((0.2, 2.6, 5.1), (-1.9, 0.2, 3.6), (-4.0, -1.9, 2.0))):
+            x0 = 5.6 + (2.6 - y1) * 0.25
+            x1 = 5.6 + (2.6 - y0) * 0.25
+            poly_prism(M, [(s * x0, y1), (s * (x0 + 0.6), y1), (s * (x1 + 0.6), y0), (s * x1, y0)], 0.0, z1, P["br_concrete"])
+            poly_prism(M, [(s * (x0 - 0.05), y1), (s * (x0 + 0.65), y1), (s * (x1 + 0.65), y0), (s * (x1 - 0.05), y0)],
+                       z1, z1 + 0.18, P["br_cream"])
+    return L
+
+
+def b_bridge_pylon(M, P):
+    """A Deco pylon at a bridge's end, standing on the deck beside the roadway: a plinth, a fluted concrete shaft,
+    two cream setbacks and a lamp on top (top-down: stepped squares round a pale light)."""
+    L = Lot(1.6, 1.6)
+    L.bays = []
+    box(M, -0.8, 0.8, -0.8, 0.8, 0.0, 0.3, P["br_footing"])
+    box(M, -0.6, 0.6, -0.6, 0.6, 0.3, 2.3, P["br_concrete"])
+    for a in (-0.3, 0.0, 0.3):
+        box(M, a - 0.07, a + 0.07, -0.66, 0.66, 0.6, 2.0, P["br_concrete"])
+        box(M, -0.66, 0.66, a - 0.07, a + 0.07, 0.6, 2.0, P["br_concrete"])
+    box(M, -0.72, 0.72, -0.72, 0.72, 2.3, 2.5, P["br_cream"])
+    box(M, -0.48, 0.48, -0.48, 0.48, 2.5, 2.85, P["br_concrete"])
+    box(M, -0.34, 0.34, -0.34, 0.34, 2.85, 3.0, P["br_cream"])
+    cyl(M, 0.0, 0.0, 0.08, 3.0, 3.15, P["br_brass"], n=8)
+    cyl(M, 0.0, 0.0, 0.24, 3.15, 3.55, P["br_lamp"], n=10)
+    cone(M, 0.0, 0.0, 0.26, 3.55, 3.7, P["br_brass"], n=10)
+    return L
+
+
+def b_bridge_truss(M, P):
+    """One 10 m panel of a red-oxide steel through truss: on each side of the deck a bottom chord along its edge,
+    a top chord 6 m up, half posts at the panel's ends and a diagonal; overhead a strut across at each end and an
+    X of lateral bracing. Laid end to end (the game stretches them to the span) they make the truss; top-down
+    the two chords and the bracing read as a steel bridge."""
+    L = Lot(11.6, 10.0)
+    L.bays = []
+    st, st2 = P["br_steel"], P["br_steel2"]
+    for x in (-5.4, 5.4):
+        box(M, x - 0.4, x + 0.4, -5.0, 5.0, 0.0, 0.75, st)
+        box(M, x - 0.4, x + 0.4, -5.0, 5.0, 5.55, 6.2, st)
+        for y0, y1 in ((-5.0, -4.72), (4.72, 5.0)):
+            box(M, x - 0.32, x + 0.32, y0, y1, 0.75, 5.55, st)
+        # a V of diagonals from the panel's bottom corners up to the middle of the top chord
+        extrude_profile(M, [(-4.72, 0.75), (-4.17, 0.75), (0.28, 5.55), (-0.27, 5.55)], "x", x - 0.22, x + 0.22, st2)
+        extrude_profile(M, [(-0.28, 5.55), (0.27, 5.55), (4.72, 0.75), (4.17, 0.75)], "x", x - 0.22, x + 0.22, st2)
+        box(M, x - 0.24, x + 0.24, -0.25, 0.25, 0.75, 5.55, st2)
+    for y in (-4.86, 4.86):
+        box(M, -5.0, 5.0, y - 0.14, y + 0.14, 5.75, 6.05, st)
+    bar(M, (-5.0, -4.6), (5.0, 4.6), 0.28, 5.8, 6.0, st2)
+    bar(M, (-5.0, 4.6), (5.0, -4.6), 0.28, 5.8, 6.0, st2)
     return L
 
 
@@ -4180,6 +4268,10 @@ BUILDINGS = {
     "parklarge": (b_parklarge, 48, 48, 0),
     "busstop": (b_busstop, 4.4, 1.8, 0),
     "fence": (b_fence, 9.0, 0.28, 0),
+    "bridge_pier": (b_bridge_pier, 12.0, 3.2, 0),
+    "bridge_abutment": (b_bridge_abutment, 15.8, 8.0, 0),
+    "bridge_pylon": (b_bridge_pylon, 1.6, 1.6, 0),
+    "bridge_truss": (b_bridge_truss, 11.6, 10.0, 0),
     # utilities
     "windturbine": (b_windturbine, 16, 16, 0),
     "coalplant": (b_coalplant, 64, 52, 6),

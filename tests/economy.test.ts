@@ -173,10 +173,10 @@ describe("The company economy", () => {
     const g = new Game(7);
     const { foodplant } = chain(g);
     const P = foodplant.plant!;
-    expect(g.industry.trucksOf(foodplant)).toBe(Industry.fleetAt("foodplant", 1, P.yld) + g.progress.unlocked.bays);
+    expect(g.industry.trucksOf(foodplant)).toBe(Industry.fleetAt("foodplant", 1, P.yld));
     expect("buyTruck" in g).toBe(false);
     P.level = 3;
-    expect(g.industry.trucksOf(foodplant)).toBe(Industry.fleetAt("foodplant", 3, P.yld) + g.progress.unlocked.bays);
+    expect(g.industry.trucksOf(foodplant)).toBe(Industry.fleetAt("foodplant", 3, P.yld));
     expect(Industry.fleetAt("foodplant", 3)).toBeGreaterThan(Industry.fleetAt("foodplant", 1));
   });
 });

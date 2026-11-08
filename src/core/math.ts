@@ -115,7 +115,8 @@ export function tangentArc(a: V2, ta: V2, b: V2, maxPiece = Math.PI / 2): Cubic[
   const n = right(ta);
   const h = dot(ab, n);
   const along = dot(ab, ta);
-  if (Math.abs(h) < 0.05 * Math.max(1, len(ab))) {
+  // (only a straight when the end is in line to within ~0.1°: a curve carried on from the last must keep its heading)
+  if (Math.abs(h) < 0.002 * Math.max(1, len(ab))) {
     return along > 0 ? [straightCubic(a, b)] : [];
   }
   const r = dot(ab, ab) / (2 * h); // signed radius along right normal
@@ -126,6 +127,8 @@ export function tangentArc(a: V2, ta: V2, b: V2, maxPiece = Math.PI / 2): Cubic[
   let sweep = wrapAngle(a1 - a0);
   if (r > 0 && sweep < 0) sweep += Math.PI * 2;
   if (r < 0 && sweep > 0) sweep -= Math.PI * 2;
+  // (an end just behind the start would need a loop kilometres round: no road)
+  if (Math.abs(sweep) > Math.PI * 1.5) return [];
   return arcCubics(c, Math.abs(r), a0, sweep, maxPiece);
 }
 

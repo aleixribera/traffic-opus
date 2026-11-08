@@ -304,7 +304,7 @@ export const FUEL_PER_KM = 4;
 /**
  * The haul a site's fleet is sized for (m, one way): at every level it has the trucks to carry its whole output,
  * fully staffed, this far over streets, with the smallest truck and load. Nothing to buy: the fleet grows with the
- * site, and bigger loads and truck classes stretch the same fleet over longer hauls. Idle trucks wait in the yard,
+ * site, and bigger truck classes stretch the same fleet over longer hauls. Idle trucks wait in the yard,
  * so a fleet bigger than a short haul needs puts no extra traffic on the road.
  */
 export const FLEET_HAUL = 3000;
@@ -464,10 +464,8 @@ export interface IndustryHost {
   held?(): Map<Trip, "gate" | "road">;
   earn(v: number): void;
   spend(v: number, what: "wages" | "upkeep" | "fuel"): void;
-  /** truck bays every building has gained from milestones, on top of its own trucks */
-  bays?(): number;
-  /** loads one truck carries */
-  load?(): number;
+  /** the level a kind of site may grow to now, and the goal that clears it for the next (none: it is at the top) */
+  levelCap?(kind: PlantKind, level: number): { level: number; goal?: string };
   /** the best class of truck unlocked (every fleet runs it) */
   truckClass?(): TruckClass;
   /** share of the power a building needs that it gets (0..1) */
@@ -527,11 +525,10 @@ export class Industry {
     if (d.mega) b.plant.landmark = { pieces: 0 };
   }
 
-  /** Trucks a plant runs: its site level's fleet (Industry.fleetAt) and the bays milestones added (a power plant has none). */
+  /** Trucks a plant runs: its site level's fleet (Industry.fleetAt; a power plant has none). */
   trucksOf(b: Building): number {
     const P = b.plant!;
-    const n = Industry.fleetAt(b.kind as PlantKind, P.level, P.yld);
-    return n > 0 ? n + (this.h.bays?.() ?? 0) : 0;
+    return Industry.fleetAt(b.kind as PlantKind, P.level, P.yld);
   }
 
   /**
@@ -580,9 +577,9 @@ export class Industry {
     return this.h.truckClass?.() ?? "light";
   }
 
-  /** Loads a truck of a class carries (the best unlocked when not given): its payload times the company's load per truck. */
+  /** Loads a truck of a class carries (the best unlocked when not given): bigger trucks carry more, nothing else does. */
   capOf(_b?: Building, cls: TruckClass = this.fleetClass()): number {
-    return classOf(cls).payload * Math.max(1, this.h.load?.() ?? 1);
+    return classOf(cls).payload;
   }
 
   /** A site's trucks of each class: the mix its level runs, up to the best class unlocked (a warehouse: level 3's). */
@@ -871,6 +868,13 @@ export class Industry {
   private growth(b: Building, span: number, working: boolean, staff: number, pw: number, store: number) {
     const P = b.plant!, d = PLANTS[b.kind as PlantKind];
     if (P.level >= SITE_LEVELS) { P.why = null; P.grow = 0; return; }
+    // (a kind of site grows past its first levels once a goal clears it for the next)
+    const cap = this.h.levelCap?.(b.kind as PlantKind, P.level);
+    if (cap && P.level >= cap.level) {
+      P.why = cap.goal ? `Level ${P.level + 1} opens with the goal "${cap.goal}"` : null;
+      P.grow = 0;
+      return;
+    }
     // (only the main product counts: the refinery flares the plastics it can't ship and grows on its fuel)
     const main = entries(d.outputs)[0]?.[0];
     const piled = !!main && (P.out[main] ?? 0) > store * 0.75;

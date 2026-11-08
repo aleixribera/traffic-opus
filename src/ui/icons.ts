@@ -184,14 +184,12 @@ export const ICON = {
   arc: svg(22, 22, `<path d="M4 18 Q4 4 18 4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>`),
   smooth: svg(22, 22, `<path d="M3 17 C11 17 11 5 19 5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>`),
   curve: svg(22, 22, `<path d="M4 18 Q4 4 18 4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="4" cy="4" r="1.8" fill="currentColor"/>`),
-  complex: svg(22, 22, `<path d="M3 18 C3 6 19 16 19 4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M3 18 V9 M19 4 V12" stroke="currentColor" stroke-width="1.2" stroke-dasharray="1.6 1.6"/>`),
-  continuous: svg(22, 22, `<path d="M3 18 H8 Q13 18 13 12 Q13 5 19 5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="8" cy="18" r="1.7" fill="currentColor"/><circle cx="13" cy="12" r="1.7" fill="currentColor"/>`),
-  gridMode: svg(22, 22, `<rect x="3.5" y="3.5" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3.5 11 h15 M11 3.5 v15" stroke="currentColor" stroke-width="1.5"/>`),
   replace: svg(22, 22, `<path d="M4 8 H16 M13 5 L16 8 L13 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M18 15 H6 M9 12 L6 15 L9 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`),
   parallel: svg(22, 22, `<path d="M5 19 L15 3 M10 19 L20 3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>`),
   magnet: svg(18, 18, `<path d="M4 3 V9 a5 5 0 0 0 10 0 V3" fill="none" stroke="currentColor" stroke-width="2.6"/><path d="M2.8 4.5 h2.4 M12.8 4.5 h2.4" stroke="${C.ochre}" stroke-width="1.4"/>`),
   // (north: a Deco compass needle, brick to the north)
   north: svg(22, 22, `<path d="M11 1.5 L15 11 H7 Z" fill="${C.brick}"/><path d="M7 11 H15 L11 20.5 Z" fill="${C.cream2}"/><circle cx="11" cy="11" r="1.6" fill="${C.navy}"/>`),
+  bridge: svg(12, 12, `<path d="M1 5 H11 M2 5 V10 M10 5 V10 M2 5 Q6 9.5 10 5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>`),
   angle: svg(12, 12, `<path d="M2 10 H10 M2 10 L8 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>`),
   // the build bar's company categories: a works with a chimney, and a town of roofs round a spire
   industry: svg(28, 28, `<path d="M2 25 V13 L8 9 V13 L14 9 V13 L20 9 V25 Z" fill="${C.cream}"/><rect x="20.5" y="4" width="4.5" height="21" fill="${C.cream2}"/><rect x="5" y="17" width="3.2" height="3.2" fill="${C.ochre}"/><rect x="11" y="17" width="3.2" height="3.2" fill="${C.ochre}"/><rect x="20.5" y="7" width="4.5" height="1.6" fill="${C.brick}"/><circle cx="22.8" cy="2.4" r="1.7" fill="${C.cream2}"/>`),

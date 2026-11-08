@@ -4,7 +4,7 @@
 // that moves once a day with how well the company supplied its needs. Homes and shops belong to the town whose
 // streets they front (Building.town).
 
-import { BUILDING_TYPES, ROAD_TYPES, SIDEWALK, roadWidth, type BuildingKind } from "../config";
+import { BUILDING_TYPES, ROAD_TYPES, SIDEWALK, ZONE_SETBACK, roadWidth, type BuildingKind } from "../config";
 import { angleOf, cubicTangent, dist, dot, norm, right, sub, type V2 } from "../core/math";
 import { cubicClosest, planRoad, snap, type Plan, type Snap } from "../roads/planner";
 import { townName } from "./names";
@@ -35,8 +35,11 @@ export const MARKET = 3;
 const HH_PER_SHOP = 25;
 /** Cells this close (m) to a grid line a street may still be laid on stay empty, so the street never has to clear homes. */
 const CORRIDOR = 10;
-/** How far the town square keeps from the grid lines round it (m): half a street, its pavement and a margin. */
-const SQUARE_INSET = roadWidth(ROAD_TYPES.street) / 2 + SIDEWALK.small + 1.5;
+/**
+ * How far the town square keeps from the grid lines round it (m): half a street, its pavement and a margin, and at
+ * least the setback homes keep, so the streets round it can be upgraded as theirs can.
+ */
+const SQUARE_INSET = Math.max(roadWidth(ROAD_TYPES.street) / 2 + SIDEWALK.small, ZONE_SETBACK) + 1.5;
 /** A town opens its first filling station at Town size and its second at this many people. */
 export const STATION2_POP = 4000;
 /**
@@ -499,6 +502,9 @@ export class TownSystem {
     return g0 === "res" && t.shops < this.shopsWanted(t) ? want : null;
   }
 
+  /** buildings whose last redevelopment found no room along their street, and when (not saved: they are looked at again after a load) */
+  private stuck = new Map<number, number>();
+
   /** May the town start another rebuild now: within its pace for the day, and not too many sites at once? */
   private mayRebuild(t: Town, mine: Building[]): boolean {
     if (!t.built.size || t.trend < 0 || t.size < 1) return false;
@@ -527,9 +533,16 @@ export class TownSystem {
       if (z) cands.push({ b, z, d: dist(b.c, t.c) });
     }
     cands.sort((p, q) => p.d - q.d);
-    for (const { b, z } of cands.slice(0, 40)) {
+    // (a building whose street front has no room for what its land wants waits a day before it is looked at again,
+    // so it never keeps the ones behind it from their turn)
+    if (this.stuck.size > 4000) for (const [id, at] of this.stuck) if (this.g.time - at >= DAY) this.stuck.delete(id);
+    let tried = 0;
+    for (const { b, z } of cands) {
+      if (this.g.time - (this.stuck.get(b.id) ?? -Infinity) < DAY) continue;
+      if (++tried > 40) break;
       const run = this.redevRun(t, b, z);
-      if (!run) continue;
+      if (!run) { this.stuck.set(b.id, this.g.time); continue; }
+      this.stuck.delete(b.id);
       t.redevAt = this.g.time;
       t.redevToday++;
       this.g.rebuildLots(t.id, run.ids, z, run.block, run.lo, run.hi);

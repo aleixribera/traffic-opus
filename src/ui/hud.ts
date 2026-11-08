@@ -1,4 +1,4 @@
-import { BUILDING_TYPES, LEVEL_H, MAX_LEVEL, ROAD_TYPES, SIGNAL_COST, type RoadTypeId } from "../config";
+import { BUILDING_TYPES, LEVEL_H, MAX_LEVEL, ROAD_TYPES, SIGNAL_COST, type BuildingKind, type RoadTypeId } from "../config";
 import { formatMoney, type V2 } from "../core/math";
 import type { Building } from "../game/buildings";
 import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
@@ -121,8 +121,16 @@ const onPlate = (c: number) => {
   return hex(x);
 };
 
-const FEATURE_NAME = { roundabout: "Roundabouts", signals: "Traffic lights", grid: "Grid tool", parallel: "Parallel roads", transit: "Buses" } as const;
+const FEATURE_NAME = { roundabout: "Roundabouts", signals: "Traffic lights", parallel: "Parallel roads", transit: "Buses" } as const;
 const plural = (n: number, one: string, many = one + "s") => `${n} ${n === 1 ? one : many}`;
+
+/** A kind of site, plural: "Farms", "Quarries", "Cement Works". */
+const plantsName = (k: BuildingKind) => {
+  const n = BUILDING_TYPES[k].name;
+  return /(works|s)$/i.test(n) ? n : /[^aeiou]y$/i.test(n) ? `${n.slice(0, -1)}ies` : `${n}s`;
+};
+/** "a", "a and b", "a, b and c" */
+const andList = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}` : xs[0] ?? "");
 
 /** What a milestone unlocks, item by item: "Iron Mine", "+1 town to run", "$15,000 grant". */
 function unlockList(u: Unlocks): string[] {
@@ -132,8 +140,7 @@ function unlockList(u: Unlocks): string[] {
     ...(u.roads ?? []).map((r) => ROAD_TYPES[r].name),
     ...(u.features ?? []).map((f) => FEATURE_NAME[f]),
     ...(u.towns ? [`+${plural(u.towns, "town")} to run`] : []),
-    ...(u.bays ? ["+1 truck at every building"] : []),
-    ...(u.load ? ["+1 load on every truck"] : []),
+    ...(u.levels ? [`${andList(u.levels.kinds.map((k) => plantsName(k)))} grow to level ${u.levels.to}`] : []),
     ...(u.grant ? [`${formatMoney(u.grant)} grant`] : []),
   ];
 }
@@ -144,17 +151,27 @@ function measureText(m: Milestone, have: number, need: number): string {
   return `${f(Math.min(have, need))} / ${f(need)}`;
 }
 
+/** What each snapping switch does (the road tool's snapping menu). */
+const SNAP_HELP = {
+  geometry: "Ends join the road or junction you aim at; near a junction they join the junction, and aimed nearly square they meet the road square.",
+  guides: "Dashed guides: straight on from a dead end, square to nearby roads and through their junctions, right angles off the start, and level with nearby junctions.",
+  netSide: "Guides parallel to nearby straight roads: kerb to kerb, a verge apart, one lot deep, and a town block apart.",
+  length: "Straight roads come in 8 m steps of length.",
+  angle: "Straight roads turn in 15° steps. Hold Shift to flip this while drawing; hold Alt to ignore all snapping.",
+} as const;
+
 const KEYS: [string, string][] = [
   ["Esc", "Back: close a panel, drop the tool, then the pause menu"],
   ["Right click", "Undo the last click of a road; again to drop the tool"],
   ["W A S D / drag", "Move the camera"],
   ["Q / E", "Rotate the camera"],
   ["R / F, wheel", "Zoom in / out (placing a building: the wheel turns it, Shift + wheel by 1°, Ctrl + wheel zooms)"],
-  ["Tab", "Next road mode"],
-  ["Page Up / Down", "Raise or lower the road"],
+  ["Tab", "Next road mode: curve, straight, upgrade"],
+  ["Page Up / Down", "Raise or lower the road (bridges over water and motorways rise on their own)"],
   ["[ / ]", "Parallel road spacing"],
   [", / .", "Turn the building you are placing 15° (with Shift: 1°)"],
-  ["Shift", "15° angle steps"],
+  ["Shift", "15° angle steps while drawing"],
+  ["Alt (hold)", "Ignore snapping and guides for a moment"],
   ["B", "Bulldozer"],
   ["L", "Add lane (Shift or right click removes)"],
   ["P / Z / C / X", "Progression / Economy / Towns / Transport"],
@@ -509,7 +526,7 @@ export class Hud {
   // ---------------------------------------------------------------- tool options
 
   private renderToolOpts() {
-    const app = this.app, st = app.st, g = app.game;
+    const app = this.app, st = app.st;
     const el = this.toolOpts;
     const fa = document.activeElement;
     const focusKey = fa instanceof HTMLElement && el.contains(fa) ? fa.getAttribute("aria-label") : null;
@@ -519,14 +536,15 @@ export class Hud {
       s.append(h("span", "to-label", title), ...kids);
       return s;
     };
-    const seg = (items: { html: string; on: boolean; title: string; fn: () => void; cls?: string; disabled?: boolean }[], cls = "") => {
+    const seg = (items: { html: string; on: boolean; title: string; label?: string; fn: () => void; cls?: string; disabled?: boolean }[], cls = "") => {
       const w = h("div", "seg " + cls);
       for (const it of items) {
         const b = h("button", "seg-btn " + (it.cls ?? ""), it.html);
         b.classList.toggle("on", it.on);
         b.setAttribute("aria-pressed", String(it.on));
         b.title = it.title;
-        b.setAttribute("aria-label", it.title);
+        // (the tooltip can run long: a short name for screen readers when there is one)
+        b.setAttribute("aria-label", it.label ?? it.title);
         b.disabled = !!it.disabled;
         b.onclick = () => { it.fn(); this.sfx.play("click"); };
         w.appendChild(b);
@@ -546,41 +564,36 @@ export class Hud {
     const items: HTMLElement[] = [];
     if (st.tool === "road") {
       const T = ROAD_TYPES[st.roadType];
-      const MODE: Record<RoadMode, { icon: string; title: string }> = {
-        straight: { icon: ICON.straight, title: "Straight: click the start, then the end" },
-        curve: { icon: ICON.curve, title: "Simple curve: start, bend point, end" },
-        complex: { icon: ICON.complex, title: "Complex curve: start, two handles, end" },
-        continuous: { icon: ICON.continuous, title: "Continuous: each click carries the road on smoothly" },
-        grid: { icon: ICON.gridMode, title: "Grid: click a corner, the width, then the depth" },
-        replace: { icon: ICON.replace, title: "Replace: click a road to change it to this type" },
+      const MODE: Record<RoadMode, { icon: string; title: string; label: string }> = {
+        curve: { icon: ICON.curve, label: "Curve", title: "Curve: click the start; the road bends after the cursor, leaving its start smoothly. Click to set the end and carry on; right click ends the chain" },
+        straight: { icon: ICON.straight, label: "Straight", title: "Straight: click the start, then the end; carries on from the end" },
+        replace: { icon: ICON.replace, label: "Upgrade", title: "Upgrade: click a road to change it to this type" },
       };
-      items.push(sec("Mode", seg(ROAD_MODES.map((m) => ({ html: MODE[m].icon, on: st.mode === m, title: MODE[m].title + " (Tab)", fn: () => app.setTool({ mode: m }), disabled: m === "grid" && !g.featureUnlocked("grid") })))));
+      items.push(sec("Mode", seg(ROAD_MODES.map((m) => ({ html: MODE[m].icon, on: st.mode === m, title: MODE[m].title + " (Tab)", label: `${MODE[m].label} mode`, fn: () => app.setTool({ mode: m }) })))));
       if (st.mode === "replace") {
-        items.push(sec("Replace", seg([
+        items.push(sec("Upgrade", seg([
           { html: "Type", on: !st.reverse, title: `Turn a road into ${T.name}`, fn: () => app.setTool({ reverse: false }) },
           { html: "Reverse", on: st.reverse, title: "Flip a one-way road (Shift+click)", fn: () => app.setTool({ reverse: true }) },
         ])));
       } else {
-        if (st.mode !== "grid") {
-          const off = Math.round(app.parallelOffset());
-          const par = seg([{ html: ICON.parallel, on: st.parallel, title: T.bwd === 0 ? "Parallel: also build the opposite carriageway" : "Parallel: also build a second road alongside", fn: () => app.setTool({ parallel: !st.parallel }) }]);
-          items.push(st.parallel
-            ? sec("Parallel", par, stepper(`${off} m`, "", () => app.nudgeParallel(-1), () => app.nudgeParallel(1), ["Closer ([)", "Further apart (])"], [false, false]))
-            : sec("Parallel", par));
-        }
+        const off = Math.round(app.parallelOffset());
+        const par = seg([{ html: ICON.parallel, on: st.parallel, title: T.bwd === 0 ? "Parallel: also build the opposite carriageway" : "Parallel: also build a second road alongside", fn: () => app.setTool({ parallel: !st.parallel }) }]);
+        items.push(st.parallel
+          ? sec("Parallel", par, stepper(`${off} m`, "", () => app.nudgeParallel(-1), () => app.nudgeParallel(1), ["Closer ([)", "Further apart (])"], [false, false]))
+          : sec("Parallel", par));
         items.push(elevation());
         const snap = h("div", "snaps");
         const opts: { k: "geometry" | "guides" | "netSide" | "length" | "angle"; label: string; on: boolean }[] = [
-          { k: "angle", label: "15° angles", on: st.angleLock },
-          { k: "geometry", label: "Existing roads", on: !st.snapOff.geometry },
+          { k: "geometry", label: "Roads", on: !st.snapOff.geometry },
           { k: "guides", label: "Guidelines", on: !st.snapOff.guides },
-          { k: "netSide", label: "Road sides", on: !st.snapOff.netSide },
+          { k: "netSide", label: "Parallels", on: !st.snapOff.netSide },
           { k: "length", label: "8 m lengths", on: st.snapLength },
+          { k: "angle", label: "15° angles", on: st.angleLock },
         ];
         for (const o of opts) {
           const l = h("label", "snap-row", `<input type="checkbox" ${o.on ? "checked" : ""}><span>${o.label}</span>`);
           const cb = l.querySelector("input")!;
-          if (o.k === "angle") l.title = "Straight roads turn in 15° steps. Hold Shift to flip this while drawing.";
+          l.title = SNAP_HELP[o.k];
           cb.setAttribute("aria-label", o.k === "angle" ? "Lock road angles to 15 degree steps" : `Snap to ${o.label.toLowerCase()}`);
           cb.onchange = () => {
             if (o.k === "angle") app.setTool({ angleLock: cb.checked });

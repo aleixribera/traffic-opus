@@ -72,10 +72,21 @@ export function roadWidth(t: RoadType): number {
   return (t.fwd + t.bwd) * LANE_W + SHOULDER * 2 + (t.median ?? 0);
 }
 
+/**
+ * Homes and shops stand this far back from a street's centreline (m), behind a front strip their driveways cross:
+ * room for the street to be upgraded to any road that still takes driveways (up to a divided avenue, with its
+ * pavement) without touching them. About 11.7 m: four rows of lots each side of a 96 m town block.
+ */
+export const ZONE_SETBACK = Math.max(
+  ...Object.values(ROAD_TYPES).filter((t) => t.allowsAccess).map((t) => roadWidth(t) / 2 + SIDEWALK[roadGroup(t)] + 0.3),
+);
+
 export const ELEVATED_COST_MULT = [1, 2.2, 2.8, 3.4];
 export const WATER_BRIDGE_MULT = 1.6;
 export const BULLDOZE_REFUND = 0.75;
 export const ROUNDABOUT_COST = 900;
+/** Compensation for each home or shop a new road demolishes, per level of the building (TF2 charges for clearing land). */
+export const DEMOLISH_PER_LEVEL = 150;
 export const SIGNAL_COST = 300;
 
 // ---------- Buildings ----------

@@ -315,7 +315,8 @@ describe("Zoned land fills up", () => {
     const id = hostTown(g, 0).id;
     let houses = 0;
     for (let i = 0; i < 3000; i++) if (g.growIn(id, "res")) houses++;
-    expect(houses).toBeGreaterThan(70);
+    // (fewer than before the front strips: the land in front of the lots is kept for wider roads)
+    expect(houses).toBeGreaterThan(60);
     expect(cells.filter((c) => c.zone && !c.lot).length).toBe(0);
   }, 120000);
 

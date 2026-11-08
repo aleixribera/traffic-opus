@@ -45,17 +45,20 @@ describe("road modes", () => {
     }
   });
 
-  it("complex curve uses the two handles; continuous meets a road square", () => {
-    const ch = makeChain("complex", v2(0, 0), v2(100, 0), undefined, undefined, v2(30, 40), v2(70, -40));
-    expect(ch).toHaveLength(1);
-    expect(ch[0].p1).toEqual(v2(30, 40));
-    expect(ch[0].p2).toEqual(v2(70, -40));
+  it("a curve is an arc leaving along its start direction; squareEnd always meets a road square", () => {
+    const ch = makeChain("curve", v2(0, 0), v2(100, 60), v2(1, 0));
+    expect(norm(cubicTangent(ch[0], 0))).toEqual(v2(1, 0));
+    // a true circular arc: every point the same distance from the centre
+    const r = (100 * 100 + 60 * 60) / (2 * 60), c = v2(0, r);
+    for (const cb of ch) for (const t of [0, 0.3, 0.6, 1]) expect(Math.abs(dist(cubicAt(cb, t), c) - r)).toBeLessThan(0.05);
+    // no start direction: a straight
+    expect(makeChain("curve", v2(0, 0), v2(100, 60))).toHaveLength(1);
     const net = new RoadNetwork();
     const w = world();
     build(net, w, { start: free(v2(0, 200)), end: free(v2(300, 200)), mode: "straight", type: "street" });
     const end = snap(net, v2(150, 199), { mpp: 0.5, level: 0, type: "street", from: { p: v2(60, 60) } });
     expect(end.seg).toBeDefined();
-    const plan = planRoad(net, w, { start: free(v2(60, 60)), end, mode: "continuous", type: "street", startTangent: v2(1, 0) });
+    const plan = planRoad(net, w, { start: free(v2(60, 60)), end, mode: "curve", squareEnd: true, type: "street", startTangent: v2(1, 0) });
     const last = plan.strokes[0].chain[plan.strokes[0].chain.length - 1];
     const t = norm(cubicTangent(last, 1));
     expect(Math.abs(dot(t, v2(1, 0)))).toBeLessThan(0.02);
@@ -187,10 +190,10 @@ describe("parallel pairs (review fixes)", () => {
   it("follows a curve in as few pieces as the road itself", () => {
     const net = new RoadNetwork();
     const w = world();
-    build(net, w, { start: free(v2(0, 0)), end: free(v2(200, 0)), mode: "curve", type: "avenue", ctrl: v2(100, 80), parallel: { offset: parallelSpacing("avenue") } });
+    build(net, w, { start: free(v2(0, 0)), end: free(v2(200, 0)), mode: "curve", type: "avenue", startTangent: norm(v2(100, 80)), parallel: { offset: parallelSpacing("avenue") } });
     expect(net.segs.size).toBeLessThanOrEqual(3);
     // the twin really is parallel: every point the spacing away from the road (within a few cm)
-    const chain = makeChain("curve", v2(0, 0), v2(200, 0), undefined, undefined, v2(100, 80));
+    const chain = makeChain("curve", v2(0, 0), v2(200, 0), norm(v2(100, 80)));
     for (const cb of offsetChain(chain, -parallelSpacing("avenue"))) {
       for (const t of [0.1, 0.3, 0.5, 0.7, 0.9]) {
         const p = cubicAt(cb, t);
@@ -269,7 +272,7 @@ describe("parallel pairs (review fixes)", () => {
     const a = snap(net, v2(200, 0), { mpp: 0.05, level: 0, type: "one2" });
     const from = snap(net, q1.parallelEnds!.b, { mpp: 0.05, level: 0, type: "one2" });
     // loops back over the old twin (y = -off) well away from the corner
-    const plan = planRoad(net, w, { start: a, end: free(v2(50, 60)), mode: "complex", ctrl: v2(200, -250), ctrl2: v2(50, -250), type: "one2", parallel: { offset: off, from } });
+    const plan = planRoad(net, w, { start: a, end: free(v2(50, 60)), mode: "curve", startTangent: v2(0, -1), type: "one2", parallel: { offset: off, from } });
     expect(plan.crossings.some((c) => Math.abs(c.y + off) < 1 && c.x < 150)).toBe(true);
   });
 

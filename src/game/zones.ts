@@ -3,12 +3,14 @@
 // cells; buildings grow on runs of cells (lots). Cells are rebuilt around road edits and keep their zone and lot by
 // position, so splitting or reshaping a road doesn't wipe the zoning next to it.
 
-import { LANE_W, ROAD_TYPES } from "../config";
+import { LANE_W, ROAD_TYPES, ZONE_SETBACK } from "../config";
 import { add, dist, fromAngle, pointSegDist2, polyAt, polyDir, right, scale, type V2 } from "../core/math";
 import type { ChangeSet, RoadNetwork } from "../roads/network";
 
 export const CELL = 8;
 export const DEPTH = 6;
+/** Where a road's lots start, from its centreline (m): past its kerb, and at least the zone setback. */
+export const zoneEdge = (width: number) => Math.max(width / 2, ZONE_SETBACK);
 /** The shallowest lot any zone grows (cells): shallower strips aren't zoneable. */
 export const MIN_LOT_DEPTH = 2;
 
@@ -391,7 +393,7 @@ export class ZoneMap {
         const n = scale(right(t), side);
         const rot = Math.atan2(t.y, t.x);
         for (let r = 0; r < DEPTH; r++) {
-          const c = add(p, scale(n, g.width / 2 + (r + 0.5) * CELL));
+          const c = add(p, scale(n, zoneEdge(g.width) + (r + 0.5) * CELL));
           b.cells.push({ c, rot, ok: true, zone: null, lot: 0, block: b, col: k, row: r });
         }
       }

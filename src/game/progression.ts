@@ -1,19 +1,19 @@
 // Milestones (docs/design.md, "Milestones"): concrete achievements in a rough ladder, never accumulated XP. A few
 // are open at once (the first OPEN_AT_ONCE not yet reached, in ladder order), so there is always a choice of what
 // to chase next; reaching one opens the next. Each unlocks something concrete: a building, a road type or tool,
-// town slots, truck bays, bigger loads, bigger trucks or a grant. There is no land to buy: the company builds anywhere
+// town slots, bigger truck classes, the next level for named kinds of site, or a grant. There is no land to buy: the company builds anywhere
 // its roads reach, and the deposits of each tier, kilometres apart, are what open the map up. The company starts with
 // tier 1 (farms, logging camps, food plants, sawmills), founding towns and the basic roads. This ladder covers tiers 1
 // to 4: copper, electronics and machinery open on the way to a City (which needs them) and its last steps reward a City
 // supplied and tier 4 volume.
 
 import type { RoadTypeId } from "../config";
-import { PLANTS, type Product } from "./industry";
+import { PLANTS, type PlantKind, type Product } from "./industry";
 import type { PlacedKind } from "./placed";
 import { needsOf, sizeOf } from "./towns";
 import type { TruckClass } from "./trucks";
 
-export type Feature = "roundabout" | "signals" | "grid" | "parallel" | "transit";
+export type Feature = "roundabout" | "signals" | "parallel" | "transit";
 
 export interface Unlocks {
   roads?: RoadTypeId[];
@@ -21,10 +21,11 @@ export interface Unlocks {
   buildings?: PlacedKind[];
   /** more towns it may run */
   towns?: number;
-  /** a truck bay more at every building */
-  bays?: number;
-  /** a load more on every truck */
-  load?: number;
+  /**
+   * The level these kinds of site may now grow to (a site grows itself, up to the level its kind is cleared for: see
+   * levelCap). Fleets and loads come from a site's level and the truck classes, never from a milestone.
+   */
+  levels?: { kinds: PlantKind[]; to: number };
   /** truck classes the buildings may run (see trucks.ts) */
   trucks?: TruckClass[];
   /** money paid on reaching it */
@@ -61,14 +62,15 @@ export interface Milestone {
 }
 
 /** What a company has before any milestone. */
-export const BASE: Required<Pick<Unlocks, "roads" | "features" | "towns">> & { bays: number; load: number } = {
+export const BASE: Required<Pick<Unlocks, "roads" | "features" | "towns">> = {
   // (the one- and two-lane highways too: hauls between deposits kilometres apart want them from the start)
   roads: ["street", "one1", "hw1", "hw2"],
-  features: ["grid", "parallel"],
+  features: ["parallel"],
   towns: 2,
-  bays: 0,
-  load: 1,
 };
+
+/** The level a site of a kind some milestone clears for more may grow to before that milestone. */
+export const FIRST_CAP = 2;
 
 /** How many milestones are open at once. */
 export const OPEN_AT_ONCE = 3;
@@ -101,12 +103,12 @@ export const MILESTONES: Milestone[] = [
   {
     id: "planks10", name: "Sawn timber", goal: "Saw 10 loads of planks",
     measure: (v) => [n(v.made, "planks"), 10],
-    unlocks: { bays: 1, features: ["signals"] },
+    unlocks: { levels: { kinds: ["loggingcamp", "sawmill"], to: 3 }, features: ["signals"] },
   },
   {
     id: "food20", name: "Market day", goal: "Deliver 20 loads of food in one day",
     measure: (v) => [n(v.bestDay, "food"), 20],
-    unlocks: { buildings: ["smelter"], load: 1 },
+    unlocks: { buildings: ["smelter"], levels: { kinds: ["foodplant"], to: 3 } },
   },
   {
     // (food and planks only: a village of 600 also wants cement, and this is the milestone that unlocks it)
@@ -122,7 +124,7 @@ export const MILESTONES: Milestone[] = [
   {
     id: "powered3", name: "Lights on", goal: "Run three buildings at full power",
     measure: (v) => [v.powered, 3],
-    unlocks: { bays: 1 },
+    unlocks: { levels: { kinds: ["coalplant"], to: 3 } },
   },
   {
     id: "cement", name: "First cement", goal: "Make your first load of cement",
@@ -137,7 +139,7 @@ export const MILESTONES: Milestone[] = [
   {
     id: "cement20", name: "Concrete", goal: "Deliver 20 loads of cement to your towns",
     measure: (v) => [n(v.sold, "cement"), 20],
-    unlocks: { load: 1 },
+    unlocks: { levels: { kinds: ["cementworks", "smelter"], to: 3 } },
   },
   {
     id: "supplied2", name: "Two towns supplied", goal: "Supply every need of two towns of 100+ people for a day",
@@ -147,7 +149,7 @@ export const MILESTONES: Milestone[] = [
   {
     id: "trade20k", name: "Good trading day", goal: "Take $20,000 from deliveries in one day",
     measure: (v) => [Math.floor(v.bestEarned), 20000], money: true,
-    unlocks: { bays: 1 },
+    unlocks: { levels: { kinds: ["creamery"], to: 3 } },
   },
   {
     id: "pop1000", name: "Big village", goal: "Grow a town to 1,000 people",
@@ -173,7 +175,7 @@ export const MILESTONES: Milestone[] = [
   {
     id: "cement30", name: "Concrete age", goal: "Deliver 30 loads of cement in one day",
     measure: (v) => [n(v.bestDay, "cement"), 30],
-    unlocks: { buildings: ["constructionplant"], bays: 1 },
+    unlocks: { buildings: ["constructionplant"] },
   },
   {
     id: "goods1", name: "Home comforts", goal: "Make your first load of household goods",
@@ -188,7 +190,7 @@ export const MILESTONES: Milestone[] = [
   {
     id: "parts1", name: "Prefab", goal: "Deliver your first load of construction parts to a town building site",
     measure: (v) => [n(v.sold, "parts"), 1],
-    unlocks: { bays: 1 },
+    unlocks: { levels: { kinds: ["constructionplant"], to: 3 } },
   },
   {
     id: "towns5", name: "Five towns", goal: "Run five towns",
@@ -198,12 +200,12 @@ export const MILESTONES: Milestone[] = [
   {
     id: "townSupplied", name: "Town supplied", goal: "Keep a Town of 1,500+ in everything it needs for a day",
     measure: (v) => [v.towns.some((t) => sizeOf(t.pop) >= 2 && fullySupplied(t)) ? 1 : 0, 1],
-    unlocks: { load: 1, grant: 60000 },
+    unlocks: { grant: 60000 },
   },
   {
     id: "fuel30", name: "Fuelling the roads", goal: "Deliver 30 loads of fuel in one day",
     measure: (v) => [n(v.bestDay, "fuel"), 30],
-    unlocks: { bays: 1 },
+    unlocks: { levels: { kinds: ["refinery"], to: 3 } },
   },
   {
     id: "goods30", name: "Furnished", goal: "Deliver 30 loads of household goods in one day",
@@ -213,7 +215,7 @@ export const MILESTONES: Milestone[] = [
   {
     id: "parts20", name: "Rising blocks", goal: "Deliver 20 loads of construction parts to building sites",
     measure: (v) => [n(v.sold, "parts"), 20],
-    unlocks: { bays: 1 },
+    unlocks: { levels: { kinds: ["glassworks", "furniture"], to: 3 } },
   },
   {
     id: "trade100k", name: "Big trading day", goal: "Take $100,000 from deliveries in one day",
@@ -223,7 +225,7 @@ export const MILESTONES: Milestone[] = [
   {
     id: "pop4000", name: "Market town", goal: "Grow a town to 4,000 people",
     measure: (v) => [biggest(v), 4000],
-    unlocks: { bays: 1 },
+    unlocks: { grant: 40000 },
   },
   {
     id: "towns2town", name: "Twin towns", goal: "Grow two towns to Town size",
@@ -248,7 +250,7 @@ export const MILESTONES: Milestone[] = [
     // (the refinery's plastics finally have a buyer)
     id: "goods60", name: "Shopping streets", goal: "Deliver 60 loads of household goods in one day",
     measure: (v) => [n(v.bestDay, "goods"), 60],
-    unlocks: { buildings: ["electronics"], bays: 1 },
+    unlocks: { buildings: ["electronics"], levels: { kinds: ["coppersmelter"], to: 3 } },
   },
   {
     id: "copper1", name: "Red metal", goal: "Smelt your first load of copper",
@@ -268,23 +270,23 @@ export const MILESTONES: Milestone[] = [
   {
     id: "machinery1", name: "Heavy industry", goal: "Build your first load of machinery",
     measure: (v) => [n(v.made, "machinery"), 1],
-    unlocks: { bays: 1 },
+    unlocks: { levels: { kinds: ["farm", "foodplant", "loggingcamp", "sawmill", "electronics", "machineworks"], to: 4 } },
   },
   {
     id: "citySupplied", name: "City supplied", goal: "Keep a City of 6,000+ in everything it needs for a day",
     measure: (v) => [v.towns.some((t) => sizeOf(t.pop) >= 3 && fullySupplied(t)) ? 1 : 0, 1],
-    unlocks: { towns: 1, bays: 1, grant: 150000 },
+    unlocks: { towns: 1, levels: { kinds: ["ironmine", "coalmine", "quarry", "smelter", "cementworks", "coalplant", "dairyfarm", "creamery"], to: 4 }, grant: 150000 },
   },
   {
     id: "electronics40", name: "Wired city", goal: "Deliver 40 loads of electronics in one day",
     measure: (v) => [n(v.bestDay, "electronics"), 40],
-    unlocks: { bays: 1 },
+    unlocks: { levels: { kinds: ["oilwell", "sandpit", "refinery", "glassworks", "furniture", "constructionplant", "chemworks"], to: 4 } },
   },
   {
     // (the top of the ladder for now: Metropolis needs and company projects come after)
     id: "machinery40", name: "Tooled up", goal: "Deliver 40 loads of machinery in one day",
     measure: (v) => [n(v.bestDay, "machinery"), 40],
-    unlocks: { towns: 1, bays: 1 },
+    unlocks: { towns: 1, levels: { kinds: ["coppermine", "coppersmelter", "electronics", "machineworks"], to: 4 } },
   },
 ];
 
@@ -368,7 +370,7 @@ const CHAINS: (Milestone & { after: string })[] = [
   {
     after: "chemworks", id: "supplies20", name: "Fed back", goal: "Make 20 loads of fertilizer",
     measure: (v) => [n(v.made, "fertilizer"), 20],
-    unlocks: { bays: 1, grant: 30000 },
+    unlocks: { levels: { kinds: ["chemworks"], to: 3 }, grant: 30000 },
   },
   {
     after: "worldsfair", id: "rubber", name: "Synthetic rubber", goal: "Make 60 loads of plastics",
@@ -383,13 +385,13 @@ const CHAINS: (Milestone & { after: string })[] = [
   {
     after: "motorworks", id: "cars1", name: "Motor age", goal: "Deliver your first load of cars to a town",
     measure: (v) => [n(v.sold, "cars"), 1],
-    unlocks: { grant: 100000 },
+    unlocks: { levels: { kinds: ["rubberplant", "motorworks"], to: 3 }, grant: 100000 },
   },
   {
     // (the top of the ladder for now: every car sold is more traffic, so this one is earned on the roads)
     after: "cars1", id: "cars30", name: "Rush hour", goal: "Deliver 30 loads of cars in one day",
     measure: (v) => [n(v.bestDay, "cars"), 30],
-    unlocks: { towns: 1, bays: 1 },
+    unlocks: { towns: 1, levels: { kinds: ["rubberplant", "motorworks"], to: 4 } },
   },
 ];
 for (const { after, ...m } of CHAINS) MILESTONES.splice(MILESTONES.findIndex((x) => x.id === after) + 1, 0, m);
@@ -405,16 +407,34 @@ export interface Unlocked {
   features: Set<Feature>;
   buildings: Set<PlacedKind>;
   towns: number;
-  bays: number;
-  load: number;
   trucks: Set<TruckClass>;
+  /** the level each kind of site is cleared to grow to, for the kinds a milestone clears (see levelCap) */
+  levels: Map<PlantKind, number>;
 }
+
+/**
+ * Kinds of site some milestone clears for a higher level, and the level they stop at until one does: one below the
+ * first level a milestone names for them. Most stop at FIRST_CAP; the farms, mines, wells and pits name only level 4,
+ * as their level 3 waits on the chemical works' fertilizer or explosives (their supplies) instead.
+ */
+const CAPPED = new Map<PlantKind, number>();
+for (const m of MILESTONES) for (const k of m.unlocks.levels?.kinds ?? []) CAPPED.set(k, Math.min(CAPPED.get(k) ?? Infinity, m.unlocks.levels!.to - 1));
+
+/** The level a site of a kind may grow to with these unlocks (a kind no milestone names grows to the top). */
+export const levelCap = (u: Unlocked, kind: PlantKind, top: number): number => {
+  const floor = CAPPED.get(kind);
+  return floor === undefined ? top : Math.min(top, Math.max(floor, u.levels.get(kind) ?? 0));
+};
+
+/** The milestone that clears a kind of site for a level, if one does. */
+export const levelBy = (kind: PlantKind, level: number): Milestone | undefined =>
+  MILESTONES.find((m) => !!m.unlocks.levels && m.unlocks.levels.to >= level && m.unlocks.levels.kinds.includes(kind));
 
 export function unlocksOf(done: Iterable<string>): Unlocked {
   const u: Unlocked = {
     roads: new Set(BASE.roads), features: new Set(BASE.features),
     buildings: new Set((Object.keys(PLANTS) as PlacedKind[]).filter((k) => PLANTS[k].tier === 1)),
-    towns: BASE.towns, bays: BASE.bays, load: BASE.load, trucks: new Set<TruckClass>(["light"]),
+    towns: BASE.towns, trucks: new Set<TruckClass>(["light"]), levels: new Map(),
   };
   for (const id of done) {
     const m = milestoneById.get(id)?.unlocks;
@@ -424,8 +444,7 @@ export function unlocksOf(done: Iterable<string>): Unlocked {
     for (const b of m.buildings ?? []) u.buildings.add(b);
     for (const t of m.trucks ?? []) u.trucks.add(t);
     u.towns += m.towns ?? 0;
-    u.bays += m.bays ?? 0;
-    u.load += m.load ?? 0;
+    if (m.levels) for (const k of m.levels.kinds) u.levels.set(k, Math.max(u.levels.get(k) ?? 0, m.levels.to));
   }
   return u;
 }
