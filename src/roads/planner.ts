@@ -5,7 +5,7 @@ import {
 import {
   type Cubic, type V2, add, angleOf, arcCubics, arcThenLine, rampCurve, rampCurves, clamp, cubicAt, cubicTangent, dist, dot, fromAngle, hermiteCubic,
   lerpV, makePolyline, minRadius, norm, polyAt, polyClosest, polyDir, quadCubic, right, sampleCubic, scale, segIntersect, signedAngle, smoothstep,
-  splitCubic, straightCubic, sub, tangentArc, pointSegDist2, len, cross,
+  splitCubic, straightCubic, sub, tangentArc, pointSegDist2, len, cross, rectDistance,
 } from "../core/math";
 import { glueGap, glueRun, pocketTaper, type Pocket, type RoadNetwork, type RSeg } from "./network";
 
@@ -49,6 +49,22 @@ export interface Snap {
   guides: Guide[];
   label?: string;
   ringRaw?: V2; // picked inside a roundabout: the rim point follows where the road heads
+  /** picked over a company site: the road goes to (or leaves from) its gate instead */
+  site?: { id: number; name: string; gate: V2 };
+}
+
+/** A company site as the road tool sees it: a road drawn to or from anywhere over it connects at its gate. */
+export interface SiteTarget {
+  id: number;
+  name: string;
+  /** its plot: centre, half sizes, turn */
+  c: V2; hw: number; hd: number; rot: number;
+  /** the middle of its gate (on the fence), and the way out of it */
+  gate: V2; out: V2;
+  /** where a new road meets a site with no road yet (just outside its gate) */
+  entry: V2;
+  /** the road its gate is on, when it has one */
+  access?: number;
 }
 
 export interface Guide {
@@ -69,6 +85,8 @@ export interface SnapOpts {
   lengthStep?: number;
   /** Where a road ending would join a company site waiting for one (just outside its gate); ground level only. */
   gates?: V2[];
+  /** The company's sites: a point over one snaps to its way in. */
+  sites?: SiteTarget[];
 }
 
 export function cubicClosest(c: Cubic, p: V2): { t: number; d: number; p: V2 } {
@@ -98,6 +116,23 @@ function deadEndTangent(net: RoadNetwork, nodeId: number): V2 | undefined {
   if (segs.length !== 1) return undefined;
   const s = segs[0];
   return s.a === nodeId ? scale(cubicTangent(s.c, 0), -1) : cubicTangent(s.c, 1);
+}
+
+/**
+ * Where a road joins a site: the end of the street out of its gate (a dead end there), else the road its gate is on,
+ * in front of the gate, else (no road yet) the ground just outside its gate, leaving it square.
+ */
+export function siteEntry(net: RoadNetwork, t: SiteTarget): Omit<Snap, "guides"> {
+  const s = t.access !== undefined ? net.segs.get(t.access) : undefined;
+  if (s) {
+    for (const n of [s.a, s.b]) {
+      const nd = net.nodes.get(n)!;
+      if (net.segsAt(n).length === 1 && Math.abs(nd.h) < 0.5 && dist(nd.p, t.gate) < 16) return { p: { ...nd.p }, h: nd.h, node: n, tangent: deadEndTangent(net, n) };
+    }
+    const r = cubicClosest(s.c, t.entry);
+    return { p: r.p, h: net.heightOnSeg(s.id, r.t), seg: s.id, t: r.t };
+  }
+  return { p: { ...t.entry }, h: 0, tangent: { ...t.out } };
 }
 
 /** Roundabout rings around p: centre and radius from three of their nodes. */
@@ -169,6 +204,12 @@ export function snap(net: RoadNetwork, raw: V2, o: SnapOpts): Snap {
   const geo = !o.off?.geometry, gd = !o.off?.guides;
   const rs = geo ? ringSnap(net, raw, o) : null;
   if (rs) return rs;
+  // 0) over a company site: its gate (never a road through its yard)
+  if (geo && o.level === 0) for (const t of o.sites ?? []) {
+    if (rectDistance(raw, t.c, t.hw, t.hd, t.rot) > 0) continue;
+    const e = siteEntry(net, t);
+    return { ...e, guides, label: `Connects to ${t.name}`, site: { id: t.id, name: t.name, gate: { ...t.gate } } };
+  }
   // 1) nodes
   const nr = NODE_SNAP_PX * o.mpp;
   let bestN: { id: number; d: number } | null = null;
@@ -382,6 +423,8 @@ export interface Plan {
   endAngleDeg?: number;
   /** The start or end was moved by an automatic fix (onto a road it stopped just short of). */
   fixed?: string[];
+  /** The company site it connects to ("Connects to Food Plant"). */
+  connects?: string;
 }
 
 export function chainPoints(chain: Cubic[], step = 2): V2[] {
@@ -1245,7 +1288,7 @@ export function ontoJunction(net: RoadNetwork, sn: Snap): Snap {
   }
   if (!best) return sn;
   const nd = net.nodes.get(best.id)!;
-  return { p: { ...nd.p }, h: nd.h, node: best.id, tangent: deadEndTangent(net, best.id), guides: sn.guides, label: sn.label };
+  return { p: { ...nd.p }, h: nd.h, node: best.id, tangent: deadEndTangent(net, best.id), guides: sn.guides, label: sn.label, site: sn.site };
 }
 
 /** The road whose centreline passes through p at about height h, as a snap on it. */
@@ -1399,6 +1442,7 @@ function planRoadOnce(net: RoadNetwork, world: BuildWorld, inp: PlanInput): Plan
   }
   const plan = validateStrokes(net, world, strokes, "road", anchors, undefined, par ? strokes.map((_, i) => anchors.slice(i * 2, i * 2 + 2)) : undefined, skip, slips);
   plan.errors.unshift(...extra);
+  siteErrors(plan, start, end);
   // (a bridge that can't fit has said why and what to do: not also "raise it with Page Up")
   if (noBridge) plan.errors = plan.errors.filter((e) => !e.msg.startsWith("Needs a bridge here"));
   if (spans.length) plan.bridges = spans;
@@ -1432,6 +1476,25 @@ function planRoadOnce(net: RoadNetwork, world: BuildWorld, inp: PlanInput): Plan
     }
   }
   return plan;
+}
+
+/**
+ * A road from or to a site's gate that would cut back across that site: not "Building in the way" (the player meant
+ * to connect it) but where its gate is, marked. Other buildings in the way still say so.
+ */
+function siteErrors(plan: Plan, start: Snap, end: Snap) {
+  const own = [start.site, end.site].filter((x): x is NonNullable<Snap["site"]> => !!x);
+  if (!own.length) return;
+  const out: PlanError[] = [];
+  for (const e of plan.errors) {
+    const mine = own.find((o) => e.buildings?.includes(o.id));
+    if (!mine) { out.push(e); continue; }
+    out.push({ msg: `${mine.name}'s gate faces the other way: draw the road round to it`, p: mine.gate });
+    const rest = e.buildings!.filter((id) => !own.some((o) => o.id === id));
+    if (rest.length) out.push({ ...e, msg: rest.length === 1 ? "Building in the way" : `${rest.length} buildings in the way`, buildings: rest });
+  }
+  plan.errors = out;
+  plan.connects = `Connects to ${(end.site ?? start.site)!.name}`;
 }
 
 /** Directions of the roads at a snap (both ways along a road; each road out of a junction). */

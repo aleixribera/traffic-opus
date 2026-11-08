@@ -1,11 +1,11 @@
 import { BUILDING_TYPES, ROAD_TYPES, ZONE_SETBACK, type BuildingKind } from "../config";
 import { type V2, add, angleOf, cubicAt, cubicTangent, dist, dot, norm, polyAt, polyDir, rectCorners, rectDistance, right, scale, sub, wrapAngle } from "../core/math";
 import type { RoadNetwork } from "../roads/network";
-import { cubicClosest } from "../roads/planner";
+import { cubicClosest, type SiteTarget } from "../roads/planner";
 import type { Access } from "../sim/router";
 import type { ZoneId } from "./zones";
 import type { PlantState, Product } from "./industry";
-import { GATE_CLEAR, GATE_REACH, GATE_SETBACK, siteFrame } from "./sites";
+import { GATE_CLEAR, GATE_ENTRY, GATE_REACH, GATE_SETBACK, siteFrame } from "./sites";
 import { isPlantKind } from "./industry";
 
 export interface Lot {
@@ -126,6 +126,18 @@ export class Buildings {
   get sites(): Building[] {
     if (this.sitesAt !== this.version) { this.sitesCache = this.list.filter((b) => b.placed); this.sitesAt = this.version; }
     return this.sitesCache;
+  }
+
+  /**
+   * The placed sites as the road tool sees them: a road drawn from or to anywhere over one goes to its gate (the street
+   * out of it, the road it's on, or just outside it when it has none yet).
+   */
+  siteTargets(): SiteTarget[] {
+    return this.sites.map((b) => {
+      const f = siteFrame(b.c, b.rot, b.side, b.hd);
+      const out = scale(f.into, -1);
+      return { id: b.id, name: BUILDING_TYPES[b.kind].name, c: b.c, hw: b.hw, hd: b.hd, rot: b.rot, gate: f.gate, out, entry: add(f.gate, scale(out, GATE_ENTRY)), access: b.access?.seg };
+    });
   }
 
   footprint(b: { c: V2; hw: number; hd: number; rot: number }, pad = 0): V2[] {

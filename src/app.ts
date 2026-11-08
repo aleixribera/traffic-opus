@@ -718,6 +718,7 @@ export class App {
       off: this.st.snapOff,
       lengthStep: this.st.snapLength ? 8 : 0,
       gates: this.waitingGates(),
+      sites: this.game.buildings.siteTargets(),
     };
   }
 
@@ -1079,7 +1080,7 @@ export class App {
 
   private computeRoundabout(): Plan | null {
     const g = this.game;
-    const s = snap(g.net, this.cursor, { ...this.snapOpts(), from: undefined });
+    const s = snap(g.net, this.cursor, { ...this.snapOpts(), from: undefined, sites: undefined });
     const c = s.node !== undefined ? s.p : this.cursor;
     const h = s.node !== undefined ? g.net.nodes.get(s.node)!.h : this.st.level * LEVEL_H;
     return planRoundabout(g.net, g.world, c, this.st.rbSize, Math.round(h / LEVEL_H));
@@ -1192,7 +1193,7 @@ export class App {
         pv.refs(s.refs);
         pv.target(g.net, s);
         chips.push({ text: `${T.name}: ${this.st.mode === "straight" ? "straight" : "curve"}`, kind: "info" });
-        const joins = s.node !== undefined ? (g.net.segsAt(s.node).length === 1 ? "Carries on the road" : "From the junction") : s.seg !== undefined ? `From the ${ROAD_TYPES[g.net.segs.get(s.seg)!.type].name.toLowerCase()}` : s.label;
+        const joins = s.site ? s.label : s.node !== undefined ? (g.net.segsAt(s.node).length === 1 ? "Carries on the road" : "From the junction") : s.seg !== undefined ? `From the ${ROAD_TYPES[g.net.segs.get(s.seg)!.type].name.toLowerCase()}` : s.label;
         if (joins) chips.push({ text: joins, kind: "info" });
         if (this.st.level > 0) chips.push({ text: `Elevation ${this.st.level * LEVEL_H} m`, kind: "info" });
         if (this.keys.has("Alt")) chips.push({ text: "No snapping (Alt)", kind: "info" });
@@ -1228,8 +1229,10 @@ export class App {
           const grade = lead ? this.maxGrade(plan) : 0;
           if (grade > 0.5) chips.push({ text: `↗ ${grade.toFixed(1)}%`, kind: "info" });
           for (const sp of plan.bridges ?? []) chips.push({ text: `Bridge ${Math.round(sp.length)} m over ${sp.over === "water" ? "water" : sp.over === "road" ? "the road" : "water and road"} · ${formatMoney(sp.cost)}`, kind: "info", icon: "bridge" });
-          if (plan.joins) chips.push({ text: plan.endAngleDeg !== undefined && plan.joins.startsWith("Joins the") && !plan.joins.includes("junction") ? `${plan.joins} at ${Math.round(plan.endAngleDeg)}°` : plan.joins, kind: "info" });
-          else if (end.label) chips.push({ text: end.label, kind: "info" });
+          // (to or from a company site: which one it connects; ending at its gate, that says it all)
+          if (plan.connects) chips.push({ text: plan.connects, kind: "info" });
+          if (plan.joins && !end.site) chips.push({ text: plan.endAngleDeg !== undefined && plan.joins.startsWith("Joins the") && !plan.joins.includes("junction") ? `${plan.joins} at ${Math.round(plan.endAngleDeg)}°` : plan.joins, kind: "info" });
+          else if (end.label && !end.site) chips.push({ text: end.label, kind: "info" });
           if (plan.angleDeg !== undefined && L > 3 && !plan.joins) chips.push({ text: plan.angleToRoad ? `${plan.angleDeg.toFixed(1)}° to the road` : `${plan.angleDeg.toFixed(1)}°`, kind: "info", icon: "angle" });
           // right angles: where it leaves the road it starts on and where it meets the one it ends on
           if (lead?.chain.length && !plan.errors.length) this.squareMarks(plan, end);
