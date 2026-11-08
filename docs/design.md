@@ -78,6 +78,8 @@ Our own names, look and art throughout.
   heaps tinted to the material, offices, workshops, truck yards; fields for farms, log yards for camps).
 - **Trucks** stop at the truck yard by the gate; internal movement isn't simulated.
 - **Towns** never grow into a site's fence.
+- **Land:** a site needs only the tile under its centre (a 290 m plot spans several 640 m tiles; owning every one
+  made land, not traffic, the wall by day 8).
 
 ## Freight (routes itself)
 
