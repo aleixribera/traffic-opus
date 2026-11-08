@@ -359,7 +359,8 @@ describe("free placement and the gate", () => {
     for (let r = 250; r <= 700; r += 75) for (let k = 0; k < 16; k++) for (let q = 0; q < 4; q++) {
       const a = (k / 16) * 6.283, p = v2(town.c.x + Math.cos(a) * r, town.c.y + Math.sin(a) * r), rot = (q / 4) * 6.283;
       const pl = g.placedPlan("foodplant", p, { rot });
-      if (!pl?.ok || !pl.link) continue;
+      // (a spot whose own footprint takes homes is no test of the street to its gate)
+      if (!pl?.ok || !pl.link || pl.clears?.length) continue;
       links++;
       expect(g.lotsUnder(pl.link)).toEqual([]);
       if (tried) continue;

@@ -586,6 +586,13 @@ export class Game {
 
   /** Zoned buildings standing where a road now runs: demolished (CS2 clears growables in a road's path). */
   private clearRoadsOverLots(ops?: Op[]): Building[] {
+    const gone = this.roadsOverLots(ops);
+    for (const b of gone) this.removeBuildingRaw(b);
+    return gone;
+  }
+
+  /** Zoned buildings standing where a road now runs (only round the edits `ops` made, when given). */
+  private roadsOverLots(ops?: Op[]): Building[] {
     const gone: Building[] = [];
     // only the area a set of road edits touched (a town laying a street shouldn't scan a whole city's lots)
     let box: [number, number, number, number] | null = null;
@@ -646,7 +653,7 @@ export class Game {
         }
         if (hit) break;
       }
-      if (hit) { gone.push(b); this.removeBuildingRaw(b); }
+      if (hit) gone.push(b);
     }
     return gone;
   }
@@ -715,6 +722,39 @@ export class Game {
       }
     });
     if (!ops.length) return false;
+    this.dropUndoOf(ops);
+    this.clearRoadsOverLots(ops);
+    this.emit({ t: "buildings" });
+    return true;
+  }
+
+  /**
+   * A town widens one of its own streets (free, and no undo entry: the town's doing, not the player's). It never
+   * pulls anything down nor pushes anything back: when the wider road, or the wider mouths of its junctions, would
+   * touch any building, it is left as it was and this returns false.
+   */
+  upgradeFree(segId: number, to: RoadTypeId): boolean {
+    const s = this.net.segs.get(segId), g = this.net.segGeom.get(segId);
+    if (!s || !g || s.type === to) return false;
+    // (a curve too tight for it, or anything in its way: homes and shops too, which a player's upgrade would clear)
+    const u = upgradeCost(this.net, { ...this.world, money: () => Infinity }, segId, to);
+    if (u.errors.length) return false;
+    if (this.buildings.hit(g.center.pts, roadWidth(ROAD_TYPES[to]) / 2 + 0.5).length) return false;
+    const from = s.type;
+    const ops = this.applyRoads(() => this.net.setType(segId, to));
+    if (!ops.length) return false;
+    // (the junctions at its ends reshape too: if a lot is now under any of it, it goes back as it was)
+    const back = this.roadsOverLots(ops).length > 0;
+    if (back) ops.push(...this.applyRoads(() => this.net.setType(segId, from)));
+    this.dropUndoOf(ops);
+    return !back;
+  }
+
+  /**
+   * Drop the undo entries an edit the player didn't make invalidated (they touch a road or junction it changed),
+   * with everything older than them; and the redo entries.
+   */
+  private dropUndoOf(ops: Op[]) {
     // ids the edit removed or changed (a road it split, a junction it joined)
     const hit = new Set<number>();
     for (const op of ops) {
@@ -732,9 +772,6 @@ export class Game {
     for (let i = 0; i < this.undoStack.length; i++) if (touches(this.undoStack[i])) last = i;
     if (last >= 0) this.undoStack.splice(0, last + 1);
     this.redoStack = [];
-    this.clearRoadsOverLots(ops);
-    this.emit({ t: "buildings" });
-    return true;
   }
 
   /** Add lane: a turn pocket set (or taken away) before a junction, or a motorway slip lane lengthened. */
@@ -1059,7 +1096,9 @@ export class Game {
     if (!this.buildings.byId.has(b.id)) return;
     this.buildings.remove(b.id);
     this.people.onBuildingRemoved(b.id);
-    for (const c of this.lotCells(b)) if (c.lot === b.id) c.lot = 0;
+    // (a zoned lot took its cells by row and column, which can reach a little past its footprint, so every cell
+    // round it that still names it is freed: a cell left naming a building that's gone could never be built on again)
+    if (b.zone || b.placed || isHall(b.kind)) for (const c of this.zones.inPoly(rectCorners(b.c, b.hw + 16, b.hd + 16, b.rot))) if (c.lot === b.id) c.lot = 0;
     this.shopCache = null;
     this.candVersion = -1;
   }
@@ -1239,7 +1278,8 @@ export class Game {
    * Debug and tests: run a town's own growth for some game hours without the traffic, every need met. Construction,
    * streets, zoning, redevelopment, households and its history all run as in play; trips and the plants don't.
    */
-  fastForward(town: number, hours: number) {
+  fastForward(town: number, hours: number, ample = 1) {
+    const AMPLE = ample;
     const t = this.towns.byId.get(town);
     if (!t) return;
     const TICK = HOUR / 8;
@@ -1255,11 +1295,13 @@ export class Game {
           if (b.built < 1 && !b.plant?.site) b.built = Math.min(1, b.built + TICK / BUILD_TIME);
         }
         for (const b of this.shops) { b.stock = Math.max(b.stock, 4); b.badT = 0; }
-        // every need met: deliveries come in through the day, and the town wants to grow
-        for (const p of needsOf(t.pop)) t.today[p] = Math.max(t.today[p] ?? 0, demandPerDay(p, t.pop) * ((k % 192) + 1) / 192);
+        // every need met, `ample` times over (at 1, exactly what it uses: it grows, slowly, a step behind its own
+        // supply, as a town grows only on a supply that has run ahead of it for two days): deliveries come in through
+        // the day
+        for (const p of needsOf(t.pop)) t.today[p] = Math.max(t.today[p] ?? 0, AMPLE * demandPerDay(p, t.pop) * ((k % 192) + 1) / 192);
         this.towns.tick();
         // (and an hour's worth of each need came in this hour, for the supply that rolls hour by hour)
-        if (k % 8 === 7) { t.hourNow = Object.fromEntries(needsOf(t.pop).map((p) => [p, demandPerDay(p, t.pop) / 24])); this.towns.hourly(); }
+        if (k % 8 === 7) { t.hourNow = Object.fromEntries(needsOf(t.pop).map((p) => [p, (AMPLE * demandPerDay(p, t.pop)) / 24])); this.towns.hourly(); }
         const day = Math.floor(this.time / DAY);
         if (day !== this.dayN) { this.towns.daily(); this.dayN = day; }
       }

@@ -363,11 +363,38 @@ itself across modes; you build tracks, docks and the transfer points, never line
   | Town | 1,500+ | + household goods and fuel |
   | City | 6,000+ | + electronics and machinery |
 
-  Supply is the share of each need delivered over the last 24 game hours, rolling hour by hour. Towns grow hour
-  by hour too, so a delivery shows in the town within the hour, not at the next day's end. Good supply speeds
-  growth, bigger and denser buildings, and more workers; shortfalls stall growth and finally shrink the town (a
-  need that opens ahead of the town's size, a hamlet's planks, only stalls it). A small town grows fastest for
-  its size (several times faster at a few dozen people, tapering off by 450), so the first hour moves.
+  Supply is the loads a day of each need delivered, averaged over the last 48 game hours (32 minutes at 1x) and
+  rolling hour by hour. Towns grow hour by hour on it. Good supply speeds growth, bigger and denser buildings, and
+  more workers; a long shortfall shrinks the town, slowly (a need that opens ahead of the town's size, a hamlet's
+  planks, only stalls it). A small town grows fastest for its size (several times faster at a few dozen people,
+  tapering off by 450), so the first hour moves.
+- **Steady growth on a proven supply (owner, 2026-11-08: "it should be 100% sure the supplies will continue before
+  growing crazily"; "the last 48h-72h average or something"; "keep the early game fast as it is now, but more
+  'sure' before growing").** Towns used to grow while the last day's supply covered 80% of their needs, overshoot
+  what it could feed, then lose people the first bad day: waves of growth and regression. Now:
+  - *Proven supply* is the 48-hour average above. A supply that began less than two days ago is averaged over the
+    hours since its first load (the empty hours before it are not a shortfall), but over at least 8 hours, so a
+    first truckload alone never counts as a supply.
+  - *Grow only toward what it supports.* A town grows toward the people whose needs its proven supply covers 80%
+    of (the "supplied" bar of the panels), each size eating 1.6x a head more. The worst-supplied need sets the
+    level and the panel names it. It eases in over the last stretch and never passes it. The further the supply
+    runs ahead of the town, the faster it fills in (up to 4/3 of the base pace at three times its needs). The
+    safety is in time, not in quantity: two days of proof before growing. (A bigger margin, tried at 100% and 110%,
+    stalled the start town: its plants are worked by its own people.)
+  - *Crossing a size line.* A supply that covers a size's people all the way to the next size line carries the town
+    3% past the line on the appetite it had. Beyond that it needs the new size's appetite covered.
+  - *Shrinking, with hysteresis.* A town shrinks only after 48 hours in a row of its supply covering less than 85%
+    of what its households need, judged on the better of the two-day and the last day's average, so a day without
+    deliveries, made good since, never counts. Then it loses at most 3% of its households a day, never below what
+    the supply still covers. A town held back by a need it can't buy yet, or one opened ahead of its size, holds
+    rather than shrinks.
+  - Measured with steady deliveries of 100 food, 40 planks and 20 cement a day, no traffic (households every 6 h,
+    tests/growth.test.ts): the start town rises without a dip to 257 households (about 620 people) by day 2.5 and
+    holds there; its people vary by 1-2% as homes are rebuilt (before: up to ~660 people with dips back to ~620, and a day without deliveries cost 30 people in a
+    day). A day without deliveries now changes nothing. A cut lets it hold two days, then lose about 1% of its
+    people a day (633 to 551 over four days; before, 624 to 433 by day 14, much of it at once).
+  - The town panel shows the same two-day average in its needs ("X a day (2-day average) of Y needed"), what its
+    supply supports ("supplies support N"), and what holds it back and how many more loads a day would grow it.
 - Deliveries go to the town's shops, filling stations and building sites, so trucks drive into town streets.
 - **Towns grow away from the works (owner, 2026-11-08: "avoid pollution/noise").** A dirty plant's smoke reaches
   its pollution radius ×1.6 past its fence (further in a park) and its noise 60 m beyond that; building sites count
@@ -429,6 +456,54 @@ A town should visibly turn from a hamlet into a city over a playthrough: bigger,
   with a bar each, growth toward the next size, deliveries per product, homes, jobs, and what it is short of.
   The map shows each town's label with a supply bar and an icon for any need in shortage.
 
+### Towns run themselves (owner, 2026-11-08)
+
+"Make the cities less dense overall, have more of an outwards expansion rather than having the centre crammed with
+houses." "Let villages fully control themselves apart from just growing, let them upgrade some roads and build a
+cool layout aswell, not just squared, let them eventually build an outwards road that ends up connecting to maybe
+an external road, but don't overdo it, this is the player's job."
+
+- **A plan of its own (townplan.ts).** Every town still grows a street at a time on a lattice of 96 m blocks, but
+  the lattice is bent into a plan seeded from the town, the same every time it is loaded. Each town has its own
+  character, somewhere between long straight American blocks and rings and spokes round the centre. Its main street runs
+  straight through the hall's crossroads. The side streets curve with low-frequency noise and the outer ones
+  swirl a little round the centre. Junctions that would fall in water or on a mountain are drawn back toward the
+  centre by up to half a block, so the street along a shore follows it, or they are left out. From the second
+  ring out, 10 to 20% of the streets are left out (more at the edge), which gives bigger, uneven blocks,
+  T-junctions and closes. The crossroads and the four blocks round it stay square, so the hall's square is the
+  same in every town. Bent streets are laid as arcs with the road tool's own curve mode. Towns from saves
+  before this keep their square grid.
+- **Less crowded, spreading outward.** About one block in ten is kept as a green: a lawn inside its pavements with
+  a row of trees round it and clumps within. There are more greens among the inner streets, and always the town
+  green across the main street from the hall's square. The green shows once three of the block's streets are laid. A
+  sixth of the house and terrace fronts are left as gardens (26 m gaps between homes). Lots keep 12 m clear of
+  the streets still to come. The town's radius for its people grows faster (200 + 12·√people m, up to 2.2 km;
+  was 150 + 9·√people, up to 1.6 km), so it spreads instead of packing in. On seed 7, with every need well served
+  (twice what it uses: `Game.fastForward` with `ample` 2), the start town reaches Village on day 2.1, Town on day
+  7.0 and City on day 13.5 (the growth before steady growth, on the same supply: 2.0, 7.4 and 15.1). With every
+  need met exactly (`ample` 1, the tests' default) it grows a step behind its own supply, as steady growth means
+  it to: Village on day 10.7, Town on day 20.0, City on day 29.7 (before: 4.9, 11.8 and 20.5). A real supply
+  doesn't shrink to fit the town like that. At Town size it
+  houses 4.4 homes a hectare within 150 m of its hall (was 7.2) and reaches 720 m out (was 547). At City size it
+  has 6.5 homes a hectare within 150 m (was 68) and reaches 1.3 km. It lays about a third more street for the same
+  people.
+- **It widens its own busy streets.** A town watches the traffic on its own streets every eighth of an hour,
+  smoothed over about two hours. Once a day it takes its busiest street, if that carried at least 1.6 cars per
+  100 m of lane at its peak (a street at capacity carries about 3.5), and widens the run of it that carries on
+  straight through its junctions, up to 700 m: a street becomes an avenue, and at City size an avenue becomes a
+  divided avenue. The ticker says "Alder Run widened Main Street", with no banner. It widens a street once at
+  Village size and up to 3, 6 and 10 times in all at Town, City and Metropolis. It touches only streets it laid
+  itself, never the player's. It never pulls down or pushes back a building: the front strips leave room for it,
+  and if the wider road or a reshaped junction mouth would still touch a lot, the street is left as it was.
+- **One road out, once.** From Town size, a town looks every three days for a road within 2 km of its centre
+  that isn't its own. That is the player's road, or another town's, that it doesn't yet reach that way (a road it
+  is already joined to only counts in a direction at least 60° from its existing ways out). It builds one street
+  from a junction or dead end on its edge that faces the road, curving to meet it square. The street keeps 30 m
+  from the company's sites, never crosses water, a mountain or another road, and never goes through a home. The
+  ticker says "Alder Run built a road out to the north-east, joining yours" (or "... to Fort Pryor"). It builds
+  only one, ever, and with nothing in reach it builds nothing at all, not even a stub: joining towns up stays
+  the player's job.
+
 ## Company
 
 - Income: payment for every load delivered to a town. Plant-to-plant transfers earn nothing; they keep the
@@ -470,7 +545,9 @@ demand has outgrown even road trains on a good highway network), and barges afte
   in 20 to 30 minutes; first steel and first cement inside about an hour and a half. The flow: road to the farm,
   food plant, first deliveries, the hamlet asks for planks at 100 people, sawmill, the first new town springs up
   at 150, a road to it, Village. A site's first level comes in under a day of work; the later ones take longer.
-  The milestones around Village pay grants (Market day $10k, Village $40k, Village supplied $30k, Heavy haulage
+  Measured by the balance bot on seed 7: Village at 34 minutes, a minute behind the growth before steady growth on
+  the same bot and layout (33); the start town's first twelve households drew 27 people there against 36 on the
+  denser layout (29 minutes). The milestones around Village pay grants (Market day $10k, Village $40k, Village supplied $30k, Heavy haulage
   $30k) so the steel chain is in reach as soon as it opens: traffic, not money, is what holds the player up.
   The late game is unchanged.
 - The bottleneck moves on its own: more towns mean more commuters on the roads trucks use, and longer chains

@@ -11,6 +11,7 @@ import { toolSnap, type ToolSnap } from "./roads/snapping";
 import { armsAt, slipTangents } from "./roads/planner";
 import { Buildings3D } from "./render/buildings3d";
 import { Parks3D } from "./render/parks3d";
+import { Greens3D } from "./render/greens3d";
 import { Fireworks } from "./render/fx3d";
 import { ConvoyTags } from "./ui/convoyTags";
 import { GATE_GAP, siteFrame, siteToWorld } from "./game/sites";
@@ -96,6 +97,7 @@ export class App {
   /** a camera glide under way; `lift`: how much further out (m of half height) it pulls at the middle of the way */
   private glide: { from: { x: number; y: number; h: number }; to: { x: number; y: number; h: number }; t: number; dur: number; lift: number } | null = null;
   parks3d!: Parks3D;
+  greens3d!: Greens3D;
   fireworks = new Fireworks();
   /** money and moments rising off the map, and the shelf-time rings over refrigerated trucks */
   pops = new Pops();
@@ -297,11 +299,13 @@ export class App {
     this.vehicles.lotOf = (id) => { const b = g.buildings.byId.get(id); return b ? this.buildings3d.lotWay(b) : null; };
     this.transit3d = new Transit3D(this.models.props.get("busstop"));
     this.parks3d = new Parks3D(this.models);
+    this.greens3d = new Greens3D();
     this.convoyTags.follow(null);
     this.glide = null;
-    this.worldRoot.add(this.terrain3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.fireworks.group);
+    this.worldRoot.add(this.terrain3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.greens3d.group, this.fireworks.group);
     this.roads.rebuildAll();
     this.buildings3d.rebuild(g.buildings.list);
+    { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }
     this.groundOverlay();
     this.pops.clear();
     this.icons.boostOf = (b) => g.industry.boosts(b);
@@ -312,6 +316,7 @@ export class App {
       if (e.t === "roads") { this.roads.apply(e.cs); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
       else if (e.t === "buildings") {
         this.buildings3d.rebuild(g.buildings.list); this.applyTint(); this.dirtyPreview = true;
+        { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }
         // (street trees make way for new driveways: at most twice a second while a town grows)
         if (!this.treesDue) this.treesDue = setTimeout(() => { this.treesDue = 0; this.roads.refreshTrees(); }, 500);
       }
