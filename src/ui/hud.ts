@@ -1763,6 +1763,8 @@ function chainText(k: keyof typeof PLANTS): string {
   const D = PLANTS[k];
   if (D.logistics === "warehouse") return "Any product → stored, shipped on";
   if (D.logistics === "depot") return "Fuel → your trucks, at cost";
+  // (a landmark makes nothing to ship: the dam turns the river into power, the others are one of a kind)
+  if (D.mega) return D.makes ? "Landmark · the river → power" : "Landmark · one of a kind";
   const to = D.makes ? "power" : productList(D.outputs);
   // (a mine digs what its deposit is: "Coal deposit → coal", not "Coal → coal")
   const from = D.deposit ? `${cap(D.deposit.name)}${D.deposit.name === to ? " deposit" : ""}` : cap(productList(D.inputs));

@@ -49,21 +49,43 @@ export class ConvoyTags {
     this.onFollow(id);
   }
 
-  /** Where a convoy is now (the middle of its 33 m, between its last two sim steps). */
+  /** Where a convoy is now: the middle of its pieces as drawn, between its last two sim steps. */
   static centre(v: Vehicle, alpha: number) {
+    const U = v.uPose, P = v.puPose ?? U;
+    if (U && P && U.length >= 4) {
+      let x = 0, y = 0;
+      const n = U.length / 4;
+      for (let i = 0; i < n; i++) {
+        x += P[i * 4] + (U[i * 4] - P[i * 4]) * alpha;
+        y += P[i * 4 + 1] + (U[i * 4 + 1] - P[i * 4 + 1]) * alpha;
+      }
+      return { x: x / n, y: y / n };
+    }
+    // (before its pieces are posed: back from its front along its heading)
     const x = v.px + (v.x - v.px) * alpha, y = v.py + (v.y - v.py) * alpha;
-    const back = CONVOY_LEN * 0.45;
-    return { x: x - Math.cos(v.ang) * back, y: y - Math.sin(v.ang) * back };
+    return { x: x - Math.cos(v.ang) * CONVOY_LEN * 0.5, y: y - Math.sin(v.ang) * CONVOY_LEN * 0.5 };
   }
 
-  /** Follow the camera and the convoys (every frame). */
+  /**
+   * Follow the camera and the convoys (every frame). A tag hangs just above the convoy as it looks on screen (over
+   * the top end of whichever of its pieces reaches highest), so zoomed in it never covers the vehicles.
+   */
   update(view: View, alpha: number) {
-    const lift = Math.min(46, 14 / Math.max(0.12, view.mpp));
     for (const { el, v } of this.tags.values()) {
-      const s = view.toScreen(ConvoyTags.centre(v, alpha));
-      const on = view.halfH < 2600 && s.x > -120 && s.y > -60 && s.x < view.w + 120 && s.y < view.h + 60;
+      const c = view.toScreen(ConvoyTags.centre(v, alpha));
+      let top = c.y;
+      const U = v.uPose, P = v.puPose ?? U, units = v.units;
+      if (U && P && units && units.length * 4 === U.length) {
+        for (let i = 0; i < units.length; i++) {
+          const o = i * 4, k = units[i].len / 2;
+          const x = P[o] + (U[o] - P[o]) * alpha, y = P[o + 1] + (U[o + 1] - P[o + 1]) * alpha, a = U[o + 3];
+          for (const s of [-1, 1]) top = Math.min(top, view.toScreen({ x: x + Math.cos(a) * k * s, y: y + Math.sin(a) * k * s }).y);
+        }
+      }
+      const y = top - 12;
+      const on = view.halfH < 2600 && c.x > -120 && y > -60 && c.x < view.w + 120 && c.y < view.h + 60;
       el.style.display = on ? "" : "none";
-      if (on) el.style.transform = `translate(${s.x.toFixed(1)}px, ${(s.y - lift).toFixed(1)}px) translate(-50%, -100%)`;
+      if (on) el.style.transform = `translate(${c.x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%)`;
     }
   }
 }

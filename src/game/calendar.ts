@@ -80,8 +80,10 @@ export function fieldLook(t: number): FieldLook {
   return seasonPart(t) < 0.5 ? "ripe" : "cut";
 }
 
-/** The model a farm field slot (planted as site_field_g or site_field_w) is drawn with in this look. */
+/** The model a farm field slot (planted as site_field_g or site_field_w), or the farmyard itself, is drawn with in this look. */
 export function fieldModel(slot: string, look: FieldLook): string {
+  // (the farmyard's own plots: summer is the model as it always was)
+  if (slot === "farm") return look === "green" ? "farm" : `farm_${look}`;
   if (look === "young") return "site_field_young";
   if (look === "green") return "site_field_g";
   if (look === "bare") return "site_field_bare";

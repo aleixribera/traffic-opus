@@ -31,7 +31,7 @@ function glowTexture(): THREE.Texture {
   return t;
 }
 /** How fast a convoy's beacons flash (flashes a second), and the glow's size (m) and colour. */
-const BEACON_HZ = 1.6, GLOW = 5.5, GLOW_COLOR = 0xffa11c;
+const BEACON_HZ = 1.6, GLOW = 9, GLOW_COLOR = 0xffa11c;
 
 const LIFT = 0.07;
 
@@ -136,7 +136,7 @@ export class Vehicles3D {
     for (const k of VEHICLE_MODELS) this.batches.set(k, this.makeBatch(k, k === "car" || k === "van" || k === "truck" ? 256 : k === "bus" ? 16 : 64));
     const plane = new THREE.PlaneGeometry(GLOW, GLOW).rotateX(-Math.PI / 2);
     const gm = new THREE.MeshBasicMaterial({
-      map: glowTexture(), color: GLOW_COLOR, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending,
+      map: glowTexture(), color: GLOW_COLOR, transparent: true, opacity: 1, blending: THREE.AdditiveBlending,
       depthWrite: false, toneMapped: false,
     });
     this.glow = new THREE.InstancedMesh(plane, gm, 64);

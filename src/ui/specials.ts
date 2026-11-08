@@ -72,7 +72,7 @@ function worksRows(g: Game, b: Building, bar: Bar): string {
   const full = B.n >= PIECE_YARD;
   return `<dt title="Every ${LOADS_PER_PIECE} loads of machinery it makes, it builds one oversized piece besides, shipped by escorted convoy">Next big piece</dt>
     <dd>${full ? `<span class="muted">yard full</span>` : `${bar(B.prog * 12, 12, 0xd9a52c)}<span class="num">${Math.floor(B.prog * 100)}%</span>`}</dd>
-    <dt>In the yard</dt><dd>${B.n} of ${PIECE_YARD}${B.n && !out.length ? ` · <span class="muted">nowhere to go</span>` : ""}</dd>
+    <dt>Pieces waiting</dt><dd>${B.n} of ${PIECE_YARD}${B.n && !out.length ? ` · <span class="muted">nowhere to go</span>` : ""}</dd>
     <dt>On the road</dt><dd class="${out.length ? "good" : "muted"}">${out.length ? esc(road.join(", ")) : "no convoy out"}</dd>
     ${B.shipped ? `<dt>Delivered</dt><dd>${B.shipped}</dd>` : ""}`;
 }
@@ -103,14 +103,16 @@ function ring(k: number, label: string): string {
 
 /** A landmark's building site in its panel: the ring, the stage, the materials and pieces, and what it will do. */
 export function landmarkSite(g: Game, b: Building, bar: Bar): string | null {
-  if (!isMega(b.kind) || !b.plant || b.built >= 1) return null;
+  if (!isMega(b.kind) || !b.plant || (!b.plant.site && b.built >= 1)) return null;
   const D = PLANTS[b.kind], P = b.plant, M = MEGAS[b.kind];
   const site = P.site;
   const k = site ? megaProgress(b, D) : 1;
   const stage = site ? megaStage(b, D) : 3;
   const mats = site ? (Object.keys(site.need) as Product[]).map((p) => {
     const need = site.need[p]!, got = Math.min(need, site.got[p] ?? 0);
-    return `<dt>${PRODUCTS[p].name}</dt><dd>${bar(got, need, PRODUCTS[p].color)}<span class="num">${Math.floor(got)} / ${need}</span></dd>`;
+    // (a slim bar, not pips: a landmark wants a hundred loads of some things)
+    const pc = `#${PRODUCTS[p].color.toString(16).padStart(6, "0")}`;
+    return `<dt>${PRODUCTS[p].name}</dt><dd><span class="lm-bar" role="img" aria-label="${Math.floor(got)} of ${need}" style="--pc:${pc}"><i style="width:${((got / need) * 100).toFixed(1)}%"></i></span><span class="num">${Math.floor(got)} / ${need}</span></dd>`;
   }).join("") : "";
   let loads = 0, pieces = 0;
   for (const tr of g.trips()) {

@@ -35,7 +35,7 @@ export const SITE_PIECES: string[] = [
   "mega_hydrodam_1", "mega_hydrodam_2", "mega_hydrodam_3", "mega_skylinetower_1", "mega_skylinetower_2", "mega_skylinetower_3",
   "mega_exposition_1", "mega_exposition_2", "mega_exposition_3",
   // the farms' fields through the year (see calendar.fieldModel)
-  "site_field_young", "site_field_cut", "site_field_bare",
+  "site_field_young", "site_field_cut", "site_field_bare", "farm_young", "farm_ripe", "farm_cut", "farm_bare",
   // industrial-park links: a belt or pipe segment, the transfer towers at its ends, and what moves along them
   "link_conveyor", "link_pipe", "link_tower", "link_load", "link_flow",
 ];

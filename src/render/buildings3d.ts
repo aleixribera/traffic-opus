@@ -21,7 +21,7 @@ import { fieldLook, fieldModel } from "../game/calendar";
  */
 function slotModel(b: Building | null, model: string, time: number, stage?: 1 | 2 | 3): string {
   if (model.startsWith("mega_")) return `${model}_${stage ?? (b ? megaStage(b, PLANTS[b.kind as PlantKind]) : 3)}`;
-  if (model === "site_field_g" || model === "site_field_w") return fieldModel(model, fieldLook(time));
+  if (model === "site_field_g" || model === "site_field_w" || model === "farm") return fieldModel(model, fieldLook(time));
   return model;
 }
 

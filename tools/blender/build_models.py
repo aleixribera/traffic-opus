@@ -602,7 +602,26 @@ def b_mine(M, P):
     return L
 
 
-def b_farm(M, P):
+def farm_crops(P, look):
+    """The farmyard's three plots through the year (docs/design.md, "Seasons"), as (soil, row colours, row height,
+    row width) for its green plot and its wheat plots: summer green and wheat, spring shoots, the autumn harvest
+    ripe and then cut to stubble, winter's frosted furrows."""
+    if look == "young":
+        y = (mat("soil_tilled", "#86704f"), (mat("crop_y1", "#9fbd5c"), mat("crop_y2", "#8aab4c")), 0.14, 0.3)
+        return y, y
+    if look == "ripe":
+        w = (P["soil"], (P["crop_w1"], P["crop_w2"]), 0.36, 0.55)
+        return w, w
+    if look == "cut":
+        s = (P["soil"], (mat("stubble1", "#dcc98e"), mat("stubble2", "#cdb87a")), 0.1, 0.62)
+        return s, (P["soil"], (P["crop_w1"], P["crop_w2"]), 0.32, 0.55)
+    if look == "bare":
+        b = (mat("furrow2", "#6b583f"), (mat("furrow1", "#7a6447"), mat("frost", "#b9b6aa")), 0.12, 0.7)
+        return b, b
+    return (P["soil"], (P["crop_g1"], P["crop_g2"]), 0.32, 0.55), (P["soil"], (P["crop_w1"], P["crop_w2"]), 0.32, 0.55)
+
+
+def b_farm(M, P, look="green"):
     L = lot(M, P, 40, 40, bay_row(2, -15.6), asphalt=(-20.0, -11.2))
     # barn: grey walls, white roof, green doors and ridge cap
     bx0, bx1, by0, by1 = -18.5, -10.0, L.y0, L.y0 + 9.0
@@ -622,20 +641,30 @@ def b_farm(M, P):
         (1.0, 19.2, 1.0, 19.2, "x", "w"),
         (-19.2, -1.0, 4.0, 19.2, "y", "w"),
     ]
+    green, wheat = farm_crops(P, look)
     for x0, x1, y0, y1, along, crop in plots:
-        box(M, x0, x1, y0, y1, 0, 0.1, P["soil"])
-        c1, c2 = (P["crop_g1"], P["crop_g2"]) if crop == "g" else (P["crop_w1"], P["crop_w2"])
+        soil, (c1, c2), h, hw = green if crop == "g" else wheat
+        box(M, x0, x1, y0, y1, 0, 0.1, soil)
         span = (x1 - x0) if along == "y" else (y1 - y0)
         n = int(span / 1.5)
         for i in range(n):
             m = c1 if i % 2 == 0 else c2
             if along == "y":
                 c = x0 + span * (i + 0.5) / n
-                box(M, c - 0.55, c + 0.55, y0 + 0.4, y1 - 0.4, 0.1, 0.32, m)
+                box(M, c - hw, c + hw, y0 + 0.4, y1 - 0.4, 0.1, 0.1 + h, m)
             else:
                 c = y0 + span * (i + 0.5) / n
-                box(M, x0 + 0.4, x1 - 0.4, c - 0.55, c + 0.55, 0.1, 0.32, m)
+                box(M, x0 + 0.4, x1 - 0.4, c - hw, c + hw, 0.1, 0.1 + h, m)
+    if look == "cut":
+        # the green plot cut first: round bales lying on its stubble, waiting for the trucks
+        hay = mat("hay_bale", "#c4a052")
+        for x, y in ((4.0, -16.0), (9.5, -11.0), (15.0, -15.5), (6.0, -5.0), (13.5, -4.0)):
+            pipe_x(M, y, 0.85, 0.75, x - 0.7, x + 0.7, hay, n=8)
     return L
+
+
+def farm_look(look):
+    return lambda M, P: b_farm(M, P, look)
 
 
 def b_works(M, P):
@@ -2618,7 +2647,7 @@ def b_site_field_cut(M, P):
 
 def b_site_field_bare(M, P):
     """Winter: ploughed furrows, frost lying in their hollows."""
-    return _field(M, P, mat("furrow1", "#7a6447"), mat("frost", "#dfe2de"), h=0.1, inset=0.1, soil=mat("furrow2", "#6b583f"))
+    return _field(M, P, mat("furrow1", "#7a6447"), mat("frost", "#b9b6aa"), h=0.1, inset=0.1, soil=mat("furrow2", "#6b583f"))
 
 
 def b_site_barn(M, P):
@@ -3700,6 +3729,11 @@ BUILDINGS = {
     "aptower": (b_aptower, 30, 30, 6),
     "mine": (b_mine, 26, 30, 2),
     "farm": (b_farm, 40, 40, 2),
+    # (the farmyard through the year: the renderer swaps it with the season, as it does the fields)
+    "farm_young": (farm_look("young"), 40, 40, 2),
+    "farm_ripe": (farm_look("ripe"), 40, 40, 2),
+    "farm_cut": (farm_look("cut"), 40, 40, 2),
+    "farm_bare": (farm_look("bare"), 40, 40, 2),
     "works": (b_works, 36, 32, 4),
     "foodplant": (b_foodplant, 32, 30, 4),
     "loggingcamp": (b_loggingcamp, 36, 32, 2),
@@ -4195,8 +4229,8 @@ def convoy_mats():
         "paint": mat("haul_paint", "#9e2f26"), "trim": mat("haul_trim", "#efe6cf"),
         "escort": mat("escort_paint", "#e2b13a"), "escort_trim": mat("escort_trim", "#2b2d31"),
         "beacon": mat("beacon", "#ffa21f", rough=0.4), "wood": mat("crib_wood", "#a97c50"),
-        "turbine": mat("turbine_casing", "#4f6f86"), "turbine2": mat("turbine_flange", "#3a4f60"),
-        "girder": mat("girder_oxide", "#a4472f"), "chain": mat("chain_dark", "#3b3e43"),
+        "turbine": mat("turbine_casing", "#7d9bb0"), "turbine2": mat("turbine_flange", "#43596b"),
+        "girder": mat("girder_grey", "#a9b1b5"), "girder2": mat("girder_rivets", "#6c767d"), "chain": mat("chain_dark", "#3b3e43"),
         "flag": mat("wide_flag", "#d8322a"),
     }
 
@@ -4298,7 +4332,7 @@ def ll_trailer(piece):
                 box(pc, x - 0.38, x + 0.38, -3.3, 6.9, zb + 2.0, zb + 2.14, S["girder"])  # top flange
             for y in (-2.4, 0.6, 3.6):                                                # stiffeners on the outside
                 for s in (-1, 1):
-                    box(pc, s * 0.88 - 0.05, s * 0.88 + 0.05, y - 0.08, y + 0.08, zb + 0.14, zb + 2.0, S["girder"])
+                    box(pc, s * 0.88 - 0.05, s * 0.88 + 0.05, y - 0.08, y + 0.08, zb + 0.14, zb + 2.0, S["girder2"])
             for y in (-2.9, -0.4, 2.1, 4.6, 6.6):                                     # bracing across the top
                 box(pc, -0.45, 0.45, y - 0.07, y + 0.07, zb + 2.0, zb + 2.1, S["chain"])
             for x in (-0.9, 0.9):                                                     # red flags on the overhang

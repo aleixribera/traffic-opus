@@ -24,7 +24,7 @@ import { Transit } from "./transit";
 import { Utilities } from "./utilities";
 import { fieldLook, seasonMult } from "./calendar";
 import { BIG_NAME, Convoys, TURBINE_BOOST, type BigKind } from "./convoys";
-import { isMega, megaBlock, megaStage, piecesLeft, townAt, MEGAS } from "./megaprojects";
+import { isMega, megaBlock, megaStage, piecesLeft, townAt } from "./megaprojects";
 import { PARK_SMOKE, Parks } from "./parks";
 import { sizeOf } from "./towns";
 import type { PlaceOpts, Placement } from "./buildings";
@@ -1261,7 +1261,7 @@ export class Game {
       L.done = this.time;
       const t = townAt(b.c, this.towns.list, b.kind === "exposition" ? 800 : 0);
       if (t) L.town = t.id;
-      this.toast(`${BUILDING_TYPES[b.kind].name} is finished! ${MEGAS[b.kind].reward}`);
+      // (its opening is the HUD's banner, the camera and the fireworks: no toast underneath them)
       this.emit({ t: "landmark", b: b.id });
       this.checkMilestones();
       any = true;
