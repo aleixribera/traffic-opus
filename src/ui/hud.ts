@@ -1342,7 +1342,7 @@ export class Hud {
         rows.push(["Food on the shelves", stockBar(b.stock, 6)]);
         // (a City's offices and towers take its machinery)
         const tw = b.town !== undefined ? g.towns.byId.get(b.town) : undefined;
-        if (Industry.isOffice(b) && tw && needsOf(tw.pop).includes("machinery")) rows.push(["Buys", `${productIcon("machinery")} the town's machinery`]);
+        if (Industry.isOffice(b) && tw && needsOf(tw.pop).includes("machinery")) rows.push(["Buys", `${productIcon("machinery")} Machinery`]);
         rows.push(["Customers", b.custDay !== undefined ? `${fmtNum(b.custDay)} <span class="muted">yesterday</span>` : `${fmtNum(b.custToday ?? 0)} <span class="muted">so far</span>`]);
       }
       if (b.built >= 1 && !b.abandoned) rows.push(["Efficiency", `${Math.round(health * 100)}%`]);

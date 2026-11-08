@@ -417,7 +417,9 @@ export class Industry {
     const P = b.plant!, d = PLANTS[b.kind as PlantKind];
     if (P.site) {
       const left = entries(P.site.need).map(([p, n]) => [p, n - (P.site!.got[p] ?? 0)] as [Product, number]).filter(([, n]) => n > 0);
-      b.problem = left.length ? `Building site: waiting for ${left.map(([p, n]) => `${n} load${n === 1 ? "" : "s"} of ${PRODUCTS[p].name.toLowerCase()}`).join(" and ")}` : null;
+      const parts = left.map(([p, n]) => `${n} load${n === 1 ? "" : "s"} of ${PRODUCTS[p].name.toLowerCase()}`);
+      const list = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0];
+      b.problem = left.length ? `Building site: waiting for ${list}` : null;
       return;
     }
     if (b.built < 1) { b.problem = null; return; }
