@@ -330,7 +330,9 @@ describe("Zoned land fills up", () => {
     // every road of the grid has its zone blocks (not just the last one drawn): the same as building them afresh
     const built = okCells(g).length;
     g.zones.rebuildAll();
-    expect(built).toBeGreaterThan(800);
+    // (740: blocks run five rows behind the front strip, so the open side of the grid's outer roads has a row fewer
+    // than the six it had; inside the grid the blocks still meet in the middle)
+    expect(built).toBeGreaterThan(700);
     expect(okCells(g).length).toBe(built);
     const cells = okCells(g);
     zoneFor(g, cells, "resLow");
