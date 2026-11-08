@@ -285,8 +285,9 @@ sinks the milestones promise.
 
 ## Seasons
 
-A game year is four game days, one per season, so a session sees the harvest come and go. Day 1 at dawn is
-the start of spring.
+A game year is 64 game days, **16 per season** (owner, 2026-11-08: "For the seasons, let's have 16 days for each
+season"), long enough to settle into a season and enjoy its scenery: at 1x a season is about four hours of play
+and the year about seventeen. Day 1 at dawn is the start of spring, so the first harvest comes in on day 33.
 
 - **Towns eat the same all year.** The farms swing instead:
   - crops: spring 0.85, summer 1.05, an autumn surge of 1.6, winter 0.5;
@@ -295,17 +296,21 @@ the start of spring.
   The pace eases smoothly between the middles of the seasons. Its year-round average is exactly 1, so a
   year's output, money and balance are unchanged; only the timing moves. Warehouses buffer the harvest for
   the lean months.
+- **The harvest rush** comes once a year, in autumn: the farms run above 1.3x from the eve of autumn to about
+  its 13th day, peaking at 1.6x mid-autumn.
 - **On the map.** Every farm's fields change with the season, the farmyard's own plots as well as the fields
   that come with its levels:
   - spring shoots on tilled soil;
   - summer green;
-  - ripe gold in early autumn, then cut to stubble with round bales;
+  - ripe gold for the first half of autumn (days 1-8), then cut to stubble with round bales;
   - winter's frosted furrows.
 - **In the HUD.**
-  - The clock shows the season with its glyph ("Autumn · Day 7").
+  - The clock shows the season with its glyph and the day within it, 1 to 16 ("Autumn · Day 7"); its tooltip
+    adds the year and how long until the next season.
   - A farm's or logging camp's panel shows its season pace now ("Autumn harvest · x1.54") and the next
     season's average.
-- Pure functions of the sim clock: nothing to save.
+- Pure functions of the sim clock: nothing to save. A save from the four-day year keeps its clock and lands in
+  whichever season that day falls in now.
 
 ## Transport modes
 

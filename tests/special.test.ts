@@ -5,7 +5,8 @@
 import { describe, expect, it } from "vitest";
 import { Industry, PLANTS, type IndustryHost, type PlantKind } from "../src/game/industry";
 import { Parks, LINK_CAP, LINK_REACH, LINK_UPKEEP, fenceGap } from "../src/game/parks";
-import { SEASONAL, YEAR, seasonAvg, seasonMult, seasonOf } from "../src/game/calendar";
+import { SEASONAL, SEASON_DAYS, YEAR, YEAR_DAYS, fieldLook, seasonAvg, seasonDay, seasonMult, seasonOf, yearOf } from "../src/game/calendar";
+import { seasonLine } from "../src/ui/specials";
 import { LOADS_PER_PIECE, MAX_TURBINES, PIECE_YARD, TURBINE_BOOST } from "../src/game/convoys";
 import { MEGAS, megaBlock, megaProgress, townBoost } from "../src/game/megaprojects";
 import { MILESTONES } from "../src/game/progression";
@@ -123,13 +124,77 @@ describe("Industrial parks", () => {
 });
 
 describe("Seasons", () => {
-  it("a year of four days: spring, summer, autumn, winter, a day each, from the first morning", () => {
-    expect(YEAR).toBe(4 * DAY);
+  it("a year of 64 days, 16 a season: spring, summer, autumn, winter, from the first morning", () => {
+    expect(SEASON_DAYS).toBe(16);
+    expect(YEAR_DAYS).toBe(64);
+    expect(YEAR).toBe(64 * DAY);
+    // the clock starts at dawn on day 1 (START_HOUR): calendar day n (1-based) runs from `at(n, 0)` to `at(n + 1, 0)`
+    const at = (day: number, hour = 12) => (day - 1) * DAY + (hour - 6) * HOUR;
     expect(seasonOf(0)).toBe("spring");
-    expect(seasonOf(DAY * 0.8)).toBe("summer");
-    expect(seasonOf(DAY * 1.8)).toBe("autumn");
-    expect(seasonOf(DAY * 2.8)).toBe("winter");
-    expect(seasonOf(DAY * 3.8)).toBe("spring");
+    expect(seasonDay(0)).toBe(1);
+    expect(yearOf(0)).toBe(1);
+    // every calendar day of the year: the season and its day, 1..16, in order
+    const seasons = ["spring", "summer", "autumn", "winter"] as const;
+    for (let n = 1; n <= YEAR_DAYS; n++) {
+      for (const hour of [0.01, 12, 23.99]) {
+        expect(seasonOf(at(n, hour)), `day ${n} ${hour}h`).toBe(seasons[Math.floor((n - 1) / 16)]);
+        expect(seasonDay(at(n, hour)), `day ${n} ${hour}h`).toBe(((n - 1) % 16) + 1);
+      }
+    }
+    expect(seasonOf(at(16, 23.9))).toBe("spring");
+    expect(seasonOf(at(17, 0.1))).toBe("summer");
+    expect(seasonOf(at(33))).toBe("autumn");
+    expect(seasonOf(at(49))).toBe("winter");
+    // and round again: day 65 is the first of spring in year 2
+    expect(seasonOf(at(65))).toBe("spring");
+    expect(seasonDay(at(65))).toBe(1);
+    expect(yearOf(at(64))).toBe(1);
+    expect(yearOf(at(65))).toBe(2);
+    // the clock shows the day within the season
+    expect(seasonLine(at(39))).toContain("Autumn · Day 7");
+    expect(seasonLine(at(39))).toContain("Day 7 of 16 of autumn, year 1; Winter in 10 days");
+    expect(seasonLine(at(64))).toContain("Winter · Day 16");
+    expect(seasonLine(at(64))).toContain("Spring tomorrow");
+    expect(seasonLine(at(64 + 20))).toContain("Summer · Day 4");
+    expect(seasonLine(at(64 + 20))).toContain("year 2");
+  });
+
+  it("the harvest rush comes once a year, over most of autumn, peaking mid-autumn", () => {
+    const at = (day: number, hour = 12) => (day - 1) * DAY + (hour - 6) * HOUR;
+    // above 1.3x is the rush: find each stretch of it over two years, hour by hour
+    const runs: { from: number; to: number }[] = [];
+    let open: { from: number; to: number } | null = null;
+    for (let h = 0; h < 2 * YEAR_DAYS * 24; h++) {
+      const t = h * HOUR;
+      if (seasonMult("farm", t) > 1.3) {
+        if (!open) runs.push((open = { from: t, to: t }));
+        open.to = t;
+      } else open = null;
+    }
+    expect(runs.length).toBe(2);
+    for (const r of runs) {
+      // (it eases in: the farms pass 1.3x on the eve of autumn, the last day of summer)
+      expect(seasonOf(r.from + DAY)).toBe("autumn");
+      expect(seasonDay(r.from + DAY)).toBe(1);
+      expect(seasonOf(r.to)).toBe("autumn");
+      expect(seasonOf((r.from + r.to) / 2)).toBe("autumn");
+      // it lasts most of the season: from its first day to about its 13th
+      const days = (r.to - r.from) / DAY;
+      expect(days).toBeGreaterThan(SEASON_DAYS * 0.75);
+      expect(days).toBeLessThan(SEASON_DAYS);
+    }
+    // the peak: the middle of autumn, at the season's full 1.6
+    expect(seasonMult("farm", at(33 + 8, 0))).toBeCloseTo(SEASONAL.farm[2], 2);
+    expect(seasonMult("farm", at(33 + 8, 0))).toBeGreaterThan(seasonMult("farm", at(34)));
+    expect(seasonMult("farm", at(33 + 8, 0))).toBeGreaterThan(seasonMult("farm", at(47)));
+    // the fields: ripe gold for the first half of autumn, cut after it, bare through winter, shoots in spring
+    expect(fieldLook(at(33))).toBe("ripe");
+    expect(fieldLook(at(40))).toBe("ripe");
+    expect(fieldLook(at(41, 1))).toBe("cut");
+    expect(fieldLook(at(48))).toBe("cut");
+    expect(fieldLook(at(49))).toBe("bare");
+    expect(fieldLook(at(1))).toBe("young");
+    expect(fieldLook(at(17))).toBe("green");
   });
 
   it("farms surge in autumn and dip in winter, logging peaks in winter, the rest is steady; each year's average is 1", () => {
@@ -145,7 +210,7 @@ describe("Seasons", () => {
     const lg = (["spring", "summer", "autumn", "winter"] as const).map((s) => seasonAvg("loggingcamp", s));
     expect(Math.max(...lg)).toBe(lg[3]);
     expect(seasonMult("smelter", 123)).toBe(1);
-    expect(seasonMult("foodplant", DAY * 2.5)).toBe(1);
+    expect(seasonMult("foodplant", DAY * 40)).toBe(1);
   });
 
   it("a farm's output follows the seasons and its year's total is what it was without them", () => {
@@ -153,24 +218,42 @@ describe("Seasons", () => {
       let t = 0;
       const w = world(seasons ? (k) => seasonMult(k, t) : undefined);
       const f = w.plant("farm", 0);
-      const byDay = [0, 0, 0, 0];
+      const bySeason = { spring: 0, summer: 0, autumn: 0, winter: 0 };
       const TICK = HOUR / 8;
       for (; t < YEAR - 1e-6; t += TICK) {
         const before = f.plant!.now.made;
         w.ind.produce(f, TICK);
-        byDay[Math.floor(t / DAY)] += f.plant!.now.made - before;
+        bySeason[seasonOf(t)] += f.plant!.now.made - before;
         f.plant!.out.crops = 0; // (shipped at once: the yard never fills)
         f.plant!.grow = 0; // (and it stays at level 1: only the seasons change its pace)
       }
-      return { total: f.plant!.now.made, byDay };
+      return { total: f.plant!.now.made, bySeason };
     };
     const flat = year(false), wavy = year(true);
-    expect(flat.total).toBeGreaterThan(20);
+    expect(flat.total).toBeGreaterThan(20 * 16);
     expect(Math.abs(wavy.total - flat.total)).toBeLessThanOrEqual(1);
-    // (day 3 of the clock's year is mostly autumn; day 4 mostly winter)
-    expect(wavy.byDay[2]).toBeGreaterThan(flat.byDay[2] * 1.25);
-    expect(wavy.byDay[3]).toBeLessThan(flat.byDay[3] * 0.8);
+    expect(wavy.bySeason.autumn).toBeGreaterThan(flat.bySeason.autumn * 1.25);
+    expect(wavy.bySeason.winter).toBeLessThan(flat.bySeason.winter * 0.8);
+    expect(wavy.bySeason.spring).toBeLessThan(flat.bySeason.spring);
   });
+  it("a save from the four-day year loads and carries on in the season its clock falls in now", () => {
+    const g = new Game(7);
+    g.start();
+    // day 23 at noon: under the four-day year the third autumn; now the seventh day of summer
+    g.time = 22 * DAY + 6 * HOUR;
+    const json = JSON.parse(JSON.stringify(g.serialize()));
+    const h = Game.load(json);
+    expect(h.time).toBe(g.time);
+    expect(h.day).toBe(23);
+    expect(seasonOf(h.time)).toBe("summer");
+    expect(seasonDay(h.time)).toBe(7);
+    expect(seasonLine(h.time)).toContain("Summer · Day 7");
+    expect(fieldLook(h.time)).toBe("green");
+    // and it plays on into the next day without trouble
+    run(h, 13);
+    expect(h.day).toBe(24);
+    expect(seasonDay(h.time)).toBe(8);
+  }, 60000);
 });
 
 describe("Convoys and landmarks in the game", () => {

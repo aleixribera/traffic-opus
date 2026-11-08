@@ -1,15 +1,19 @@
-// Seasons (docs/design.md, "Seasons"): a game year of four game days, one a season, so a play session sees the
-// harvest come and go. The towns eat the same all year; the farms don't grow the same all year: crops come in as an
-// autumn surge after a lean winter and spring, and the logging camps fell most in winter, when the ground is hard.
-// The swing eases smoothly through the year and its year-round average is exactly 1, so a site's output over a whole year, and with
-// it the money and the balance, is what it was before seasons: only its timing changes. Warehouses buffer the
-// harvest for the lean months; a chain without one sees its plants run dry in spring and its yards fill in autumn.
-// Pure functions of the sim clock: nothing to save.
+// Seasons (docs/design.md, "Seasons"): a game year of 64 game days, 16 a season, long enough to settle into each
+// season and watch its fields. The towns eat the same all year; the farms don't grow the same all year: crops come
+// in as an autumn surge (the harvest rush) after a lean winter and spring, and the logging camps fell most in winter,
+// when the ground is hard. The swing eases smoothly through the year and its year-round average is exactly 1, so a
+// site's output over a whole year, and with it the money and the balance, is what it was before seasons: only its
+// timing changes. Warehouses buffer the harvest for the lean months; a chain without one sees its plants run dry in
+// spring and its yards fill in autumn.
+// Pure functions of the sim clock: nothing to save (a save from the four-day year loads into whichever season its
+// clock falls in now).
 
 import { DAY, START_HOUR } from "./society";
 
-/** Game days in a year: one per season. */
-export const YEAR_DAYS = 4;
+/** Game days in a season (2026-11-08, the owner: "16 days for each season"). */
+export const SEASON_DAYS = 16;
+/** Game days in a year: four seasons. */
+export const YEAR_DAYS = 4 * SEASON_DAYS;
 /** Sim seconds in a year. */
 export const YEAR = YEAR_DAYS * DAY;
 
@@ -30,7 +34,7 @@ export const SEASONAL: Record<string, [number, number, number, number]> = {
 
 /** Where in the year a sim time falls, 0..1 (day 1 at dawn is the start of spring). */
 export function yearPhase(t: number): number {
-  // (the clock starts at START_HOUR on day 1: count the year from that day's midnight, so a season is a calendar day)
+  // (the clock starts at START_HOUR on day 1: count the year from that day's midnight, so a season starts at midnight)
   const s = t + (START_HOUR / 24) * DAY;
   return (((s / YEAR) % 1) + 1) % 1;
 }
@@ -44,6 +48,16 @@ export function seasonOf(t: number): Season {
 export function seasonPart(t: number): number {
   const q = yearPhase(t) * 4;
   return q - Math.floor(q);
+}
+
+/** The day within its season at a sim time, 1..SEASON_DAYS (the clock: "Autumn · Day 7"). */
+export function seasonDay(t: number): number {
+  return Math.min(SEASON_DAYS, Math.floor(seasonPart(t) * SEASON_DAYS) + 1);
+}
+
+/** The year a sim time falls in, from 1. */
+export function yearOf(t: number): number {
+  return Math.floor((t + (START_HOUR / 24) * DAY) / YEAR) + 1;
 }
 
 /** A kind's pace at a sim time against its year-round average (1 for kinds without seasons). */
