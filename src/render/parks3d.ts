@@ -8,6 +8,7 @@ import { LINK_CAP } from "../game/parks";
 import type { ModelSet } from "./models";
 import { CARGO_COLOR } from "./palette";
 import { faceMatrix } from "./buildings3d";
+import { seasonal } from "./envShader";
 
 /** A segment model's length (m), and how high the belt and the pipe's middle stand (m; from the Blender models). */
 const SEG = 12, BELT_Y = 7.16, PIPE_Y = 6.77, PIPE_X = -0.75;
@@ -18,7 +19,7 @@ const BELT_V = 1.8, FLOW_V = 3.2;
 
 export class Parks3D {
   readonly group = new THREE.Group();
-  private mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  private mat = seasonal(new THREE.MeshLambertMaterial({ vertexColors: true }), { roofs: true });
   private statics: THREE.InstancedMesh[] = [];
   private loads: THREE.InstancedMesh | null = null;
   private flows: THREE.InstancedMesh | null = null;

@@ -3,6 +3,7 @@ import { F, NF, RIVER_K, RIVER_S } from "../world/gen";
 import { CH, RES, type Terrain } from "../world/terrain";
 import { PAL } from "./palette";
 import { CLEAR_K } from "./clearing";
+import { ENV, ENV_GLSL } from "./envShader";
 import type { View } from "./view";
 
 export const MOUNTAIN_STEP_H = 7;
@@ -40,7 +41,6 @@ export class Terrain3D {
   readonly shared = {
     uOverlay: { value: 0 }, // 0 none, 1 resources
     uFocus: { value: -1 }, // the one deposit field shown at full strength (an extractor being placed); -1 all of them
-    uSun: { value: new THREE.Vector2(-0.56, -0.83) },
     uRot: { value: new THREE.Vector2(1, 0) },
     // where scenery is cleared (see clearing.ts): a mask round the view, its world origin and size
     uClear: { value: blankMask() as THREE.Texture },
@@ -159,15 +159,15 @@ export class Terrain3D {
       uRes: { value: res },
     };
     mat.onBeforeCompile = (sh) => {
-      Object.assign(sh.uniforms, local, this.shared);
+      Object.assign(sh.uniforms, local, this.shared, ENV);
       sh.vertexShader = sh.vertexShader
         .replace("#include <common>", "#include <common>\nvarying vec2 vWorld;")
         .replace("#include <begin_vertex>", "#include <begin_vertex>\nvWorld = (modelMatrix * vec4(position, 1.0)).xz;");
       sh.fragmentShader = sh.fragmentShader
-        .replace("#include <common>", `#include <common>\n${GROUND_GLSL}`)
-        .replace("#include <color_fragment>", "#include <color_fragment>\ndiffuseColor.rgb = groundColor(vWorld);");
+        .replace("#include <common>", `#include <common>\n${ENV_GLSL}\n${GROUND_GLSL}`)
+        .replace("#include <color_fragment>", "#include <color_fragment>\ndiffuseColor.rgb = envGrade(groundColor(vWorld));");
     };
-    mat.customProgramCacheKey = () => "ground-v3";
+    mat.customProgramCacheKey = () => "ground-v4";
     return mat;
   }
 }
@@ -180,7 +180,7 @@ const c3 = (c: number) => {
 const GROUND_GLSL = /* glsl */ `
 varying vec2 vWorld;
 uniform sampler2D uF0; uniform sampler2D uF1; uniform sampler2D uF2;
-uniform vec2 uOrigin; uniform float uRes; uniform float uOverlay; uniform float uFocus; uniform vec2 uSun; uniform vec2 uRot;
+uniform vec2 uOrigin; uniform float uRes; uniform float uOverlay; uniform float uFocus; uniform vec2 uRot;
 uniform sampler2D uClear; uniform vec2 uClearO; uniform float uClearS;
 // would a crown (centre, radius in metres) reach built ground: a road, its pavement or verge, a site, a plot?
 bool cleared(vec2 c, float r) {
@@ -256,6 +256,8 @@ vec3 groundColor(vec2 p) {
   c = mix(c, ${c3(PAL.grass)}, smoothstep(0.55, 0.8, n2 * 0.6 + n3 * 0.4 + (fert - 0.5) * 0.3) * 0.6 * decoK);
   c = mix(c, ${c3(PAL.sand)}, smoothstep(0.64, 0.86, n1 * 0.45 + n3 * 0.55) * 0.45 * decoK);
   c *= 1.0 + ((n3 - 0.5) * 0.06 + (n4 - 0.5) * 0.08 * fineK) * decoK;
+  // the season's grass (render/envShader.ts)
+  c = envGrass(c);
   // dry soil along the water
   c = mix(c, ${c3(PAL.sand)}, cov(water + 0.07) * 0.8);
   // specks: tufts and stones a metre or less across
@@ -265,7 +267,11 @@ vec3 groundColor(vec2 p) {
     vec2 ctr = gi + 0.5 + (vec2(hash12(gi + 7.7), hash12(gi + 9.9)) - 0.5) * 0.7;
     float r = 0.07 + 0.08 * hash12(gi + 1.3);
     float d = length(g - ctr), aa = fwidth(d) + 1e-4;
-    c = mix(c, ${c3(PAL.speck)}, step(0.55, h) * (1.0 - smoothstep(r - aa, r + aa, d)) * 0.7 * fineK);
+    // (in autumn more of them, and most are fallen leaves: rust, ochre and brown)
+    float hl = hash12(gi + 12.4);
+    vec3 lc = hl < 0.4 ? vec3(0.6, 0.2, 0.05) : hl < 0.72 ? vec3(0.64, 0.4, 0.07) : vec3(0.33, 0.16, 0.05);
+    vec3 sc = mix(${c3(PAL.speck)}, lc, step(0.3, hl + envLitter * 0.6) * envLitter);
+    c = mix(c, sc, step(0.55 - envLitter * 0.25, h) * (1.0 - smoothstep(r - aa, r + aa, d)) * 0.7 * fineK);
   }
   // shrubs and trees: round crowns, lit from the sun's side, each with a soft shadow down-right.
   // Scrub is scattered in loose clumps; in a forest they close up into canopy.
@@ -274,10 +280,16 @@ vec3 groundColor(vec2 p) {
   float clump = smoothstep(0.42, 0.75, vnoise(p / 90.0 + 4.4) * 0.7 + n3 * 0.3);
   float density = mix(0.1 + 0.42 * clump, 0.85, fo);
   float cell = mix(15.0, 7.5, fo);
-  vec3 under = mix(c, ${c3(PAL.forestFloor)}, fo * 0.85);
+  vec3 under = mix(c, envGrass(${c3(PAL.forestFloor)}), fo * 0.85);
+  // snow on the open ground, thinner on the forest floor
+  under = mix(under, envSnowCol(p), envSnowAt(p, fo * 0.35));
+  // the share of evergreens among the trees: most in the forests
+  float everK = mix(0.28, 0.55, fo);
   if (crownK > 0.0) {
     vec2 g = p / cell, gi = floor(g);
-    vec2 sh = -uSun * 0.55;
+    vec2 sh = -uSun * 0.55 * uShade.y;
+    float hT = 0.0;
+    vec2 qT = vec2(0.0);
     float crown = 0.0, shade = 0.0, lit = 0.0, tone = 0.0;
     for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
       vec2 cl = gi + vec2(x, y);
@@ -295,17 +307,26 @@ vec3 groundColor(vec2 p) {
       if (cr > crown) {
         crown = cr;
         tone = hash12(cl + 5.3);
-        lit = 1.0 - smoothstep(0.0, r * 1.35, length(q + sh * r * 0.6));
+        hT = hash12(cl + 23.1);
+        qT = q / r;
+        lit = 1.0 - smoothstep(0.0, r * 1.35, length(q + sh * r * 0.6 / max(uShade.y, 0.5)));
       }
     }
     vec3 leaf = mix(${c3(PAL.shrub)}, ${c3(PAL.tree)}, fo * 0.8 + tone * 0.25);
     leaf = mix(leaf * 0.78, mix(${c3(PAL.shrubLight)}, ${c3(PAL.treeLight)}, fo), lit * 0.85);
-    vec3 near = under * (1.0 - shade * 0.5);
-    near = mix(near, leaf, crown);
+    // the season's crown: new green and blossom, autumn colour, bare branches with snow on them, snowy conifers
+    vec4 lf = envLeaf(leaf, tone, hT, qT, lit, everK);
+    // (bare trees throw thinner shadows; the light sets how strong and how long they are)
+    vec3 near = under * (1.0 - shade * 0.5 * uShade.x * (1.0 - 0.6 * envBare * (1.0 - everK)));
+    near = mix(near, lf.rgb, crown * lf.a);
     under = mix(under, near, crownK);
   }
-  // far out, scrub and forest read as a tint
-  vec3 farTone = mix(under, mix(${c3(PAL.shrub)}, ${c3(PAL.tree)}, fo) * 0.9, density * mix(0.14, 0.85, fo));
+  // far out, scrub and forest read as a tint (the season's: an average of its evergreens and the rest)
+  vec3 farLeaf = mix(${c3(PAL.shrub)}, ${c3(PAL.tree)}, fo) * 0.9;
+  vec4 farD = envLeaf(farLeaf, 0.5, 0.999, vec2(0.0, 0.5), 0.5, 0.0);
+  vec4 farE = envLeaf(farLeaf, 0.5, 0.0, vec2(0.0, 0.5), 0.5, 1.0);
+  farLeaf = mix(mix(under, farD.rgb, farD.a * 0.8 + 0.2), farE.rgb, everK);
+  vec3 farTone = mix(under, farLeaf, density * mix(0.14, 0.85, fo));
   c = mix(farTone, under, crownK);
   // mineral deposits show through the grass as patches of their own soil or rock, mottled so they read as ground
   float mott = 0.55 + 0.45 * smoothstep(0.3, 0.7, n3 * 0.6 + n4 * 0.4 * fineK + 0.2);
@@ -350,13 +371,19 @@ vec3 groundColor(vec2 p) {
       if (up - lvl >= float(k)) sh = 1.0;
     }
   }
-  c *= 1.0 - sh * 0.3;
-  // water: periwinkle with a darker rim
+  // (snow on the hills' tiers, as on the grass)
+  c = mix(c, envSnowCol(p), envSnowAt(p, -0.15) * step(0.5, lvl));
+  c *= 1.0 - sh * 0.3 * uShade.x;
+  // water: periwinkle with a darker rim; in winter, colder, with ice along the edge
   float wa = cov(water);
   if (wa > 0.0) {
     float wd = (water - 0.5) / max(fwidth(water), 1e-5);
     vec3 wc = mix(${c3(PAL.waterEdge)}, ${c3(PAL.water)}, smoothstep(1.0, 3.0, wd));
-    c = mix(c, wc, wa);
+    wc = mix(wc, wc * vec3(0.86, 0.94, 1.04), envFrost);
+    // (ice a few metres out from the bank, broken at its edge)
+    float wm = (water - 0.5) / max(fwidth(water), 1e-5) * fwidth(p.x); // metres from the bank, about
+    float ice = 1.0 - smoothstep(2.0, 5.0 + 6.0 * vnoise(p / 9.0), wm);
+    c = mix(c, mix(wc, vec3(0.83, 0.88, 0.92), ice * envFrost * 0.9), wa);
   }
   // resources overlay
   if (uOverlay > 0.5) {

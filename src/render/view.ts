@@ -145,6 +145,21 @@ export class View {
     this.cy = clamp(this.cy, y0, y1);
   }
 
+  /**
+   * Light the map for a moment of the day (render/daylight.ts): `amb` and `sun` are what each gives a flat top (1 =
+   * the palette's own colour), `dir` points from the ground to the sun or the moon.
+   */
+  setLight(amb: readonly number[], sun: readonly number[], dir: readonly number[]) {
+    this.sunDir.set(dir[0], dir[1], dir[2]).normalize();
+    this.ambient.color.setRGB(amb[0], amb[1], amb[2]);
+    this.ambient.groundColor.setRGB(amb[0] * 0.85, amb[1] * 0.85, amb[2] * 0.85);
+    this.ambient.intensity = Math.PI;
+    // (the light's own strength is what reaches a flat top over how squarely it falls there)
+    const m = Math.max(sun[0], sun[1], sun[2], 1e-4);
+    this.sun.color.setRGB(sun[0] / m, sun[1] / m, sun[2] / m);
+    this.sun.intensity = (m / Math.max(0.05, this.sunDir.y)) * Math.PI;
+  }
+
   render() {
     this.updateCamera();
     this.renderer.render(this.scene, this.camera);

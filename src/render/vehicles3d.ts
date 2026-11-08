@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import type { Lamps3D } from "./lamps3d";
 import { SIM } from "../config";
 import { carColor, EMERGE, fromLot, TRAIN, type PendingSpawn, type Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import type { V2 } from "../core/math";
@@ -141,6 +142,10 @@ export class Vehicles3D {
   private S = new THREE.Vector3();
   /** How cars get into a building's lot (set by the app); null when the building is gone. */
   lotOf: ((building: number) => LotWay | null) | null = null;
+  /** The lamps layer: at night every vehicle's headlights and tail lights are drawn there. */
+  lamps: Lamps3D | null = null;
+  /** Each model's bumpers and half width (model space: front +z, rear -z), for its lights. */
+  private ends = new Map<VehicleKind, { front: number; rear: number; half: number }>();
   private seen = new Map<number, Vehicle>();
   private arriving: Ghost[] = [];
   private leaving = new Map<PendingSpawn, Ghost>();
@@ -289,6 +294,19 @@ export class Vehicles3D {
     return { x: p.x, y: p.y, ang, s };
   }
 
+  private endsOf(kind: VehicleKind) {
+    let e = this.ends.get(kind);
+    if (e) return e;
+    const box = new THREE.Box3(), b = new THREE.Box3();
+    for (const p of this.models.vehicles.get(kind)?.parts ?? []) {
+      p.geo.computeBoundingBox();
+      if (p.geo.boundingBox) box.union(b.copy(p.geo.boundingBox));
+    }
+    e = box.isEmpty() ? { front: 2, rear: -2, half: 0.9 } : { front: box.max.z, rear: box.min.z, half: Math.max(-box.min.x, box.max.x) };
+    this.ends.set(kind, e);
+    return e;
+  }
+
   update(traffic: Traffic, alpha: number) {
     const now = traffic.time + (alpha - 1) * SIM.dt;
     this.noteArrivals(traffic, now);
@@ -325,8 +343,11 @@ export class Vehicles3D {
       this.gv.copy(at).applyMatrix4(this.m);
       this.glow.setMatrixAt(nGlow++, this.tmpG.makeTranslation(this.gv.x, this.gv.y - at.y + 0.3, this.gv.z));
     };
+    const L = this.lamps?.carsLit ? this.lamps : null;
+    L?.beginCars();
     for (const kind of VEHICLE_MODELS) {
       const vs = lists[kind], gs = ghosts[kind];
+      const E = L ? this.endsOf(kind) : null;
       const b = this.ensure(kind, vs.length + gs.length);
       for (const { mesh } of b.meshes) mesh.count = vs.length + gs.length;
       for (let j = 0; j < gs.length; j++) {
@@ -338,6 +359,11 @@ export class Vehicles3D {
           if (tint === "beacon" && !bare) glowAt(kind);
           if (tint === "body") mesh.setColorAt(vs.length + j, this.c.setHex(q.g.color));
           else if (tint === "cargo") mesh.setColorAt(vs.length + j, this.c.setHex(q.g.load ?? EMPTY_BOX));
+        }
+        // (in a lot: the leading piece's headlamps, every piece's tail lights only if it is the last)
+        if (L && E) {
+          const pcs = q.g.pieces, last = !pcs || pcs.length < 2 || q.g.pieces![pcs.length - 1].kind === kind;
+          L.car(this.m, E.front, E.rear, E.half, !pcs || pcs.length < 2 || pcs[0].kind === kind, last);
         }
       }
       for (let i = 0; i < vs.length; i++) {
@@ -371,6 +397,10 @@ export class Vehicles3D {
           if (tint === "body") mesh.setColorAt(i, this.c.setHex(v.trip.motor ? livery(v.look) : v.color));
           else if (tint === "cargo") mesh.setColorAt(i, this.c.setHex(load ?? EMPTY_BOX));
         }
+        if (L && E && v.fade >= 1) {
+          const n = v.uPose ? v.uPose.length / 4 : 1;
+          L.car(this.m, E.front, E.rear, E.half, unit <= 0, unit < 0 || unit === n - 1);
+        }
       }
       for (const { mesh } of b.meshes) {
         mesh.instanceMatrix.needsUpdate = true;
@@ -379,6 +409,7 @@ export class Vehicles3D {
     }
     this.glow.count = nGlow;
     this.glow.instanceMatrix.needsUpdate = true;
+    L?.endCars();
   }
   private tmpG = new THREE.Matrix4();
 }

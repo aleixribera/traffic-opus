@@ -322,6 +322,49 @@ and the year about seventeen. Day 1 at dawn is the start of spring, so the first
 - Pure functions of the sim clock: nothing to save. A save from the four-day year keeps its clock and lands in
   whichever season that day falls in now.
 
+## Day and night, and the seasons' looks (owner, 2026-11-08)
+
+"Add a day-night cycle with illumination and everything." "Also the different seasons should have different
+visuals." Time to enjoy the scenery: the light moves through the day, and the map turns through the year.
+
+- **The light** follows the sun, from the sim clock (render/daylight.ts):
+  - a warm, pale dawn; a neutral midday (the palette as drawn); a golden evening; a blue hour after sunset; then
+    a moonlit blue-grey night, never black;
+  - the sun rises in the east-north-east, stands to the north-west at noon (as the art has always been lit) and
+    sets in the west-south-west, and the shadows follow it, longer when it is low;
+  - the days lengthen and shorten with the year: about 15 hours of daylight and a 73° noon sun in midsummer, 9
+    hours and 27° in midwinter, so a winter 6 pm is dark and a summer one isn't;
+  - autumn's light is a touch warmer.
+- **Lamps.** Deco cast-iron street lamps (a Blender model) stand along the kerbs, closer on main streets, on both
+  sides of avenues and along highways; they come on through dusk and throw warm pools on the road. From far out
+  a lit town is a string of pearls.
+- **Windows** light the ground round homes, shops, offices and town halls, each kind on its own evening: homes
+  fill up after work and most are lit at 9 pm, fewer by midnight, a few early risers before dawn; shops stay lit
+  into the evening; offices empty after work; the hall is lit late. The lit share eases through the hours and
+  each building's windows come on in their own order.
+- **Works** get lattice floodlight masts (a Blender model) round the yard as built so far, throwing an even
+  white light over it; farms work by daylight and have none.
+- **Vehicles** carry headlights (a beam on the road ahead) and red tail lights; **signals** keep a halo so they
+  read at night. The HUD, labels and overlays are unaffected: an overlay lifts the night most of the way to day
+  so its colours read.
+- **No real lights.** The lamps, windows and beams are instanced quads that brighten what is under them (a little
+  light added, then a multiply against the night's own light, so lit grass stays grass), and a shared set of
+  shader uniforms grades every material at night and in each season. Nothing is duplicated per season.
+- **The seasons' looks** blend in over a few days and never pop (render/daylight.ts, render/envShader.ts):
+  - spring: a fresh, yellow-green grass and new leaves, blossom on about a third of the trees;
+  - summer: lush green, drying to gold late on;
+  - autumn: the deciduous trees turn orange, red, gold and russet one by one, the grass browns, fallen leaves
+    gather on the ground late in the season;
+  - winter: bare grey-brown branches, the evergreens dark with snow on their lit side, partial snow in drifts on
+    the ground and settling on roofs, the roads ploughed clear, frost at the water's edge.
+- **The setting** (pause menu, Nights; saved as `flowtown.nights`): Full cycle (the default: the nights are
+  moonlit, not black, and the lamps are the point), Soft nights (the darkness lifted to about half), Always day.
+- **The title menu** runs an autumn day as a time-lapse, a day every two minutes: afternoon, golden hour, a
+  lamplit night, dawn. Its clock follows the light.
+- **Dev hook**: `__env.set({ hour: 20, season: "winter", day: 6 })` fixes the look at a moment, `__env.set({ speed:
+  40 })` lets it run, `__env.set({ mode: "soft" })` tries a setting, `__env.clear()` goes back to the sim's clock.
+- Pure functions of the sim clock: nothing to save.
+
 ## Transport modes
 
 Every mode makes roads matter more: it crosses them, feeds them, or forces new junctions. Freight still routes

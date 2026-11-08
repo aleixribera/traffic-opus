@@ -116,6 +116,10 @@ def palette():
         # bridges: warm poured concrete with cream Deco courses, red-oxide steel trusses, brass and a pale lamp
         "br_concrete": "#c7c0ae", "br_footing": "#a8a191", "br_cream": "#ece3cb", "br_steel": "#97432f",
         "br_steel2": "#7e3626", "br_brass": "#b88a3a", "br_lamp": "#f6ecc4",
+        # lights: cast-iron street lamps (deep bottle green, brass bands, a frosted globe), galvanised floodlight
+        # masts with dark lamp housings
+        "lp_iron": "#2f3d36", "lp_iron2": "#3d4c44", "lp_glass": "#f3e8c6", "fl_steel": "#8d918c",
+        "fl_house": "#474c4a", "fl_lens": "#eef0ea",
         # utilities: wind (white tower, grey nacelle), coal (warm grey brick, red-white chimney, pale cooling
         # tower), solar (deep blue panels on grass), water (white + blue), sewage (sand concrete, olive roof)
         "tb_white": "#f2f3f1", "tb_grey": "#bfc4ca", "gravel": "#d3cbb9", "concrete": "#c8c6c0",
@@ -1379,6 +1383,99 @@ def b_bridge_pylon(M, P):
     cyl(M, 0.0, 0.0, 0.08, 3.0, 3.15, P["br_brass"], n=8)
     cyl(M, 0.0, 0.0, 0.24, 3.15, 3.55, P["br_lamp"], n=10)
     cone(M, 0.0, 0.0, 0.26, 3.55, 3.7, P["br_brass"], n=10)
+    return L
+
+
+# ------------------------------------------------------------------ lights (the lamps layer places them)
+
+# Models whose origin is the foot of a post (the lamps layer stands them there), not their footprint's middle.
+POST_ORIGIN = {"streetlamp", "floodmast"}
+
+
+def b_streetlamp(M, P):
+    """A 1930s cast-iron street lamp, standing on the pavement at the kerb: a stepped octagonal base, a fluted
+    shaft tapering up with brass bands, and at the top a Deco bracket arm reaching out over the road (-Y, the
+    game's +z) to a stepped hood over a frosted globe, its middle 5.6 m up and 1.25 m out. Top-down: a dark dot,
+    the arm and the hood's stepped rings round a pale glass rim."""
+    L = Lot(0.8, 2.0)
+    L.bays = []
+    iron, iron2, brass, glass = P["lp_iron"], P["lp_iron2"], P["br_brass"], P["lp_glass"]
+    # base: two octagonal steps and a bell
+    cyl(M, 0, 0, 0.36, 0.0, 0.18, iron, n=8)
+    cyl(M, 0, 0, 0.29, 0.18, 0.42, iron2, n=8)
+    revolve(M, 0, 0, [(0.25, 0.42), (0.2, 0.62), (0.13, 0.9), (0.0, 0.9)], iron, n=8)
+    # the shaft, tapering, banded in brass
+    revolve(M, 0, 0, [(0.11, 0.9), (0.075, 4.9), (0.0, 4.9)], iron, n=8, rot=math.pi / 8)
+    for z in (1.05, 3.4):
+        cyl(M, 0, 0, 0.125, z, z + 0.08, brass, n=8)
+    # the capital and the arm out to the lantern, with a stay below it
+    cyl(M, 0, 0, 0.14, 4.9, 5.05, iron2, n=8)
+    box(M, -0.05, 0.05, -1.3, 0.06, 5.86, 5.96, iron)
+    bar(M, (0.0, 0.0), (0.0, -0.95), 0.07, 5.86, 5.9, iron)
+    # (the stay: a slanting strut from the shaft to the arm)
+    for k in range(4):
+        y0, y1 = -0.2 * k, -0.2 * (k + 1)
+        box(M, -0.035, 0.035, y1, y0, 5.05 + 0.2 * k, 5.05 + 0.2 * (k + 1), iron2)
+    cyl(M, 0, 0, 0.07, 5.05, 6.08, iron, n=6)
+    cone(M, 0, 0, 0.09, 6.08, 6.28, brass, n=6)
+    # the lantern: a hanger, a stepped hood, the globe and a finial below
+    cy = -1.25
+    cyl(M, 0, cy, 0.04, 5.75, 5.86, iron, n=6)
+    revolve(M, 0, cy, [(0.42, 5.62), (0.44, 5.67), (0.33, 5.72), (0.22, 5.78), (0.1, 5.82), (0.0, 5.82)], iron, n=10)
+    cyl(M, 0, cy, 0.3, 5.58, 5.62, brass, n=10)
+    revolve(M, 0, cy, [(0.0, 5.18), (0.17, 5.22), (0.27, 5.36), (0.29, 5.48), (0.27, 5.58), (0.0, 5.58)], glass, n=10)
+    cone(M, 0, cy, 0.05, 5.18, 5.08, brass, n=6)
+    return L
+
+
+def b_floodmast(M, P):
+    """A floodlight mast over a works yard: a concrete footing, a tapering galvanised lattice tower (four legs,
+    braced every couple of metres), a railed platform at the top, and a bank of four floodlights on a crossbar
+    aimed out and down over the yard (-Y, the game's +z), 13.6 m up. Top-down: the platform's square, the dark
+    lamp housings with pale lenses in a row."""
+    L = Lot(2.4, 2.4)
+    L.bays = []
+    st, house, lens = P["fl_steel"], P["fl_house"], P["fl_lens"]
+    box(M, -0.9, 0.9, -0.9, 0.9, 0.0, 0.3, P["concrete"])
+    top = 12.6
+    r0, r1 = 0.7, 0.32
+    def leg_at(z):
+        return r0 + (r1 - r0) * (z / top)
+    # four legs
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            M.loft([(sx * r0 + dx, sy * r0 + dy, 0.3) for dx, dy in ((-0.06, -0.06), (0.06, -0.06), (0.06, 0.06), (-0.06, 0.06))],
+                   [(sx * r1 + dx, sy * r1 + dy, top) for dx, dy in ((-0.05, -0.05), (0.05, -0.05), (0.05, 0.05), (-0.05, 0.05))], st)
+    # bracing: a ring of struts every 2 m, and a diagonal on each face between them
+    zs = [0.3 + 2.05 * k for k in range(7)]
+    for z in zs:
+        r = leg_at(z)
+        frame(M, -r - 0.03, r + 0.03, -r - 0.03, r + 0.03, z, z + 0.07, 0.06, st)
+    for a, b in zip(zs, zs[1:]):
+        ra, rb = leg_at(a), leg_at(b)
+        for face in range(4):
+            # alternating diagonals (a zig-zag up each face)
+            s = 1 if (face + zs.index(a)) % 2 == 0 else -1
+            p0 = (-s * ra, -ra) if face == 0 else (ra, -s * ra) if face == 1 else (s * ra, ra) if face == 2 else (-ra, s * ra)
+            p1 = (s * rb, -rb) if face == 0 else (rb, s * rb) if face == 1 else (-s * rb, rb) if face == 2 else (-rb, -s * rb)
+            # (a slanting square bar: the same small square at both ends, one end at the lower ring, one at the upper)
+            q = 0.03
+            M.loft(rect(p0[0] - q, p0[0] + q, p0[1] - q, p0[1] + q, a + 0.07), rect(p1[0] - q, p1[0] + q, p1[1] - q, p1[1] + q, b), st)
+    # the platform and its rail
+    box(M, -0.75, 0.75, -0.95, 0.75, top, top + 0.12, st)
+    frame(M, -0.75, 0.75, -0.95, 0.75, top + 0.12, top + 0.95, 0.05, P["fn_rail"])
+    # (the grating's slats, top-down a ribbed pale square)
+    for k in range(6):
+        y = -0.85 + 0.28 * k
+        box(M, -0.7, 0.7, y, y + 0.12, top + 0.12, top + 0.15, P["fn_rail"])
+    # the lamp bank: a crossbar on two posts, four lamps tilted out over the yard
+    for x in (-0.7, 0.7):
+        box(M, x - 0.05, x + 0.05, -0.75, -0.65, top + 0.12, top + 1.25, st)
+    box(M, -1.15, 1.15, -0.76, -0.64, top + 1.15, top + 1.27, st)
+    for x in (-0.84, -0.28, 0.28, 0.84):
+        # (each housing a box, its face sloped toward -Y and down; the lens a pale panel on it)
+        M.loft(rect(x - 0.24, x + 0.24, -1.05, -0.62, top + 0.82), rect(x - 0.24, x + 0.24, -1.2, -0.72, top + 1.16), house)
+        M.loft(rect(x - 0.2, x + 0.2, -1.12, -1.06, top + 0.86), rect(x - 0.2, x + 0.2, -1.25, -1.19, top + 1.12), lens)
     return L
 
 
@@ -4309,6 +4406,8 @@ BUILDINGS = {
     "fence": (b_fence, 9.0, 0.28, 0),
     "hedge": (b_hedge, 4.0, 0.8, 0),
     "picket": (b_picket, 4.0, 0.2, 0),
+    "streetlamp": (b_streetlamp, 0.88, 2.05, 0),
+    "floodmast": (b_floodmast, 2.3, 2.15, 0),
     "bridge_pier": (b_bridge_pier, 12.0, 3.2, 0),
     "bridge_abutment": (b_bridge_abutment, 15.8, 8.0, 0),
     "bridge_pylon": (b_bridge_pylon, 1.6, 1.6, 0),
@@ -5194,7 +5293,8 @@ def verify(names):
             _, w, d, nb = BUILDINGS[name]
             if abs(size.x - w) > 0.1 or abs(size.y - d) > 0.1:
                 st["issues"].append(f"footprint {size.x:.2f}x{size.y:.2f} != {w}x{d}")
-            if abs(lo.x + w / 2) > 0.1 or abs(lo.y + d / 2) > 0.1:
+            # (a lamp's origin is the foot of its post, not the middle of what it reaches over)
+            if name not in POST_ORIGIN and (abs(lo.x + w / 2) > 0.1 or abs(lo.y + d / 2) > 0.1):
                 st["issues"].append("footprint not centred on the origin")
             if len(empties) != nb:
                 st["issues"].append(f"{len(empties)} park empties, expected {nb}")
