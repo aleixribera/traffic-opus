@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { RoadNetwork } from "../src/roads/network";
 import { commitRoundabout, planRoundabout, type BuildWorld } from "../src/roads/planner";
-import { Traffic, type PendingSpawn, type Trip, type Vehicle } from "../src/sim/traffic";
+import { TRAIN, Traffic, type PendingSpawn, type Trip, type Vehicle } from "../src/sim/traffic";
 import { polyAt, polyClosest, straightCubic, v2 } from "../src/core/math";
 import type { Access } from "../src/sim/router";
 import { Industry } from "../src/game/industry";
@@ -207,7 +207,7 @@ describe("a lot's gate", () => {
       const before = new Set(tr.pending.filter((p) => p.go !== undefined));
       tr.step(DT);
       // only one long truck rolls out of the gate at a time (the renderer draws just that one)
-      const going = tr.pending.filter((p) => (p.len ?? 0) >= 10 && p.go !== undefined);
+      const going = tr.pending.filter((p) => (p.len ?? 0) >= TRAIN && p.go !== undefined);
       expect(going.length).toBeLessThanOrEqual(1);
       for (const p of going) {
         if (before.has(p)) continue;
@@ -228,5 +228,27 @@ describe("a lot's gate", () => {
     expect(rt[2] - rt[1]).toBeGreaterThanOrEqual(2.5);
     // a car doesn't queue for the gate
     expect(out.get(ps[2])!).toBeLessThan(rt[1]);
+  });
+
+  it("heavy trucks don't queue for it: a fleet of them leaves a lot about as fast as light trucks do", () => {
+    // (gating them too held whole heavy fleets at their gates: the company's trade fell by half in the balance run)
+    const leave = (cls: TruckClass | null) => {
+      const { net, arms } = net4(0);
+      const tr = new Traffic(net, { arrive: () => {}, fail: () => {} });
+      const ps = [0, 1, 2, 3].map(() => {
+        const p = want(net, arms[0], arms[1], cls);
+        p.through = false; p.t0 = 0; p.trip.from = 7;
+        return p;
+      });
+      for (const p of ps) tr.request(p);
+      let t = 0;
+      for (; t < 90 && ps.some((p) => tr.pending.includes(p)); t += DT) {
+        tr.step(DT);
+        expect(ps.every((p) => p.go === undefined)).toBe(true);
+      }
+      return t;
+    };
+    const light = leave(null), heavy = leave("heavy");
+    expect(heavy, `heavy ${heavy.toFixed(1)} s, light ${light.toFixed(1)} s`).toBeLessThan(light * 1.6 + 1);
   });
 });

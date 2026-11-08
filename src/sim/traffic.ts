@@ -159,8 +159,16 @@ export const fromLot = (p: PendingSpawn) => !p.through && !p.trip.bus;
 export const goesIn = (ph: SignalPhase, seg: number, turn?: string) => ph.arms.includes(seg) && (!ph.left || turn === "L" || turn === "U");
 
 const TR_N = 72, TR_STEP = 0.35; // drawn-path samples per car (25 m: enough for a road train)
-/** A vehicle at least this long is tracked over the edges its body still trails back across. */
+/**
+ * A vehicle at least this long (a bus, a heavy truck, a road train) is tracked over the edges its body still trails
+ * back across: it holds a junction box until its tail is out and books ring room by its length.
+ */
 export const LONG = 10;
+/**
+ * An articulated road train (22 m): it also waits its turn out of a lot (gating the rigid 12 m heavy trucks too held
+ * whole fleets in queues at their gates and halved what they moved: tests/balance.test.ts).
+ */
+export const TRAIN = 16;
 /** Edges kept in a vehicle's history (a road train spans a lane, a junction and the lane before it). */
 const HIST = 6;
 /** A car's paint from its look. */
@@ -388,7 +396,7 @@ export class Traffic {
       const gated = new Set<number>(); // lots whose gate a long truck already has this step
       for (const p of this.pending) {
         let t0 = p.t0 ?? 0;
-        if (fromLot(p) && (p.len ?? 0) >= LONG) {
+        if (fromLot(p) && (p.len ?? 0) >= TRAIN) {
           // a long truck needs the lot's gate to itself: it rolls out once the one before it has pulled away
           const b = p.trip.from;
           if (gated.has(b)) { p.go = undefined; keep.push(p); continue; }

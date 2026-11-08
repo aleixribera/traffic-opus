@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { BUILDING_TYPES } from "../src/config";
 import { add, rectDistance, scale, v2, type V2 } from "../src/core/math";
 import { Game } from "../src/game/city";
-import { Industry, PLANT_KINDS, type IndustryHost } from "../src/game/industry";
+import { Industry, PLANTS, PLANT_KINDS, type IndustryHost } from "../src/game/industry";
 import type { Building } from "../src/game/buildings";
 import { GATE_REACH, GROW_NEED, LEVEL_MULT, SITE_LEVELS, siteFrame, siteLayout, slotHalf, type SiteLayout } from "../src/game/sites";
 import type { PendingSpawn } from "../src/sim/traffic";
@@ -17,6 +17,14 @@ const boxes = (L: SiteLayout) => L.slots.map((s) => ({ s, ...slotHalf(s) }));
 describe("site layout", () => {
   it("is the same for the same plot and seed, and fits every kind's plot", () => {
     for (const kind of PLANT_KINDS) {
+      // (a warehouse or a fuel depot is a single building on a small lot: it never grows)
+      if (PLANTS[kind].logistics) {
+        const T = BUILDING_TYPES[kind];
+        const L = siteLayout(kind, T.w, T.d, 1);
+        expect(L.slots.map((s) => [s.model, s.role, s.level])).toEqual([[kind, "core", 1]]);
+        expect(L.roads).toEqual([]);
+        continue;
+      }
       const T = BUILDING_TYPES[kind];
       for (const seed of [1, 2, 17, 404]) {
         const L = siteLayout(kind, T.w, T.d, seed);
