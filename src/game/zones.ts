@@ -1,5 +1,5 @@
 // Zoning, the way Cities: Skylines 2 does it: blocks of 8 m cells along both sides of every road that allows
-// driveways, 6 cells deep, following curves. Overlapping cells go to the older block. Zone types are painted onto
+// driveways, 5 cells deep, following curves. Overlapping cells go to the older block. Zone types are painted onto
 // cells; buildings grow on runs of cells (lots). Cells are rebuilt around road edits and keep their zone and lot by
 // position, so splitting or reshaping a road doesn't wipe the zoning next to it.
 
@@ -8,7 +8,14 @@ import { add, dist, fromAngle, pointSegDist2, polyAt, polyDir, right, scale, typ
 import type { ChangeSet, RoadNetwork } from "../roads/network";
 
 export const CELL = 8;
-export const DEPTH = 6;
+/**
+ * Rows of cells a block runs back from its road. Five: behind the front strip (ZONE_SETBACK) a block reaches about
+ * 52 m from its road's centreline, as six rows from the kerb did before the strips. Six behind the strip would cross
+ * the middle of a 96 m town block: the older side took all six rows and left the other side three, too shallow for
+ * the deeper lots (apartments, stores, towers), and a City had a tenth less high-street frontage and jobs. Five
+ * splits a town block five and four.
+ */
+export const DEPTH = 5;
 /** Where a road's lots start, from its centreline (m): past its kerb, and at least the zone setback. */
 export const zoneEdge = (width: number) => Math.max(width / 2, ZONE_SETBACK);
 /** The shallowest lot any zone grows (cells): shallower strips aren't zoneable. */

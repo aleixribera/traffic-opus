@@ -1,6 +1,7 @@
 import * as THREE from "three";
-import { BUILDING_TYPES, type BuildingKind } from "../config";
-import { add, fromAngle, right, scale, type V2 } from "../core/math";
+import { BUILDING_TYPES, ROAD_TYPES, SIDEWALK, roadGroup, type BuildingKind } from "../config";
+import { add, dot, fromAngle, pointSegDist2, right, scale, type V2 } from "../core/math";
+import type { RoadNetwork } from "../roads/network";
 import type { Building } from "../game/buildings";
 import { ZONE_GROUP } from "../game/growables";
 import type { PlantKind } from "../game/industry";
@@ -66,6 +67,13 @@ const SQUARE_PAVING = 0xc9c2ae;
 const SQUARE_PATH = 0xd4ccb7;
 /** Paving pattern per piece: slab size (m, 0 for none), border band (m). */
 const PAVE_FIELD = [2, 1.4], PAVE_RECT = [1.4, 0.8], PAVE_PATH = [0.7, 0.4], PAVE_NONE = [0, 0];
+/** A shop's apron, between its lot and the pavement: concrete flags a shade warmer than the pavement's. */
+const APRON = 0xc2b9a1;
+const PAVE_APRON = [1.2, 0.25];
+/** Front gardens: a hedge or picket fence comes in runs of this length (m; the Blender models), scaled to fit. */
+const FRONT_RUN = 4;
+/** How far a corner lot's side, and a town square's edges, reach out to a kerb (m). */
+const SIDE_REACH = 14, SQUARE_REACH = 16;
 
 /** Paving seen from above: slabs in running bond with faint joints and a little tone each, a darker kerb band round. */
 function pavingMaterial(): THREE.MeshLambertMaterial {
@@ -164,6 +172,9 @@ export class Buildings3D {
   private squareTrees: THREE.InstancedMesh | null = null;
   private yardGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
   private drives: THREE.Mesh | null = null;
+  /** The front strips' lawns, aprons, hedges, fences and trees (rebuilt with the driveways, on any road edit). */
+  private strips: THREE.Object3D[] = [];
+  private stripTrees: THREE.InstancedMesh | null = null;
   private siteParts: THREE.Object3D[] = [];
   private mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   private driveMat = new THREE.MeshLambertMaterial({ color: PAL.driveway });
@@ -180,8 +191,11 @@ export class Buildings3D {
   /** Pieces still going up: zoned buildings under construction, and a site's newest buildings after it grows. */
   private building: { p: Piece; i: number }[] = [];
 
-  /** `clock` gives the sim time (a site's new buildings rise for a while after it grows). */
-  constructor(private models: ModelSet, private clock: () => number = () => 0) {}
+  /**
+   * `clock` gives the sim time (a site's new buildings rise for a while after it grows); `net`, the roads the front
+   * strips run out to.
+   */
+  constructor(private models: ModelSet, private clock: () => number = () => 0, private net: RoadNetwork | null = null) {}
 
   private geoOf(name: string): MergedModel | undefined {
     return this.models.buildings.get(name as BuildingKind) ?? this.models.sites.get(name);
@@ -625,10 +639,229 @@ export class Buildings3D {
       q.strip(a, ex, w * 2, 0.08);
     }
     const m = q.mesh(this.driveMat, 3);
-    if (!m) return;
-    m.receiveShadow = true;
-    this.drives = m;
-    this.group.add(m);
+    if (m) {
+      m.receiveShadow = true;
+      this.drives = m;
+      this.group.add(m);
+    }
+    this.rebuildStrips(list);
+  }
+
+  /**
+   * The front strips (config ZONE_SETBACK): the ground between each home, shop and town square and its kerb. A home
+   * has its lawn out to the pavement, many a hedge or a white picket fence along the pavement (open at the driveway)
+   * and some a tree; a shop, office or filling station a paved apron; a town square its paving or lawn, and its path
+   * on to the kerb. A corner lot's side runs on to the side street's pavement too. Drawn under the pavements and
+   * roads, so a road widened over the strip simply covers it: the lawn narrows, and hedges and trees that no longer
+   * fit go.
+   */
+  private rebuildStrips(list: Building[]) {
+    for (const o of this.strips) {
+      this.group.remove(o);
+      if (!(o instanceof THREE.InstancedMesh)) continue;
+      if (o === this.stripTrees) (o.material as THREE.Material).dispose();
+      if (o.geometry !== this.yardGeo) o.geometry.dispose();
+      o.dispose();
+    }
+    this.strips = [];
+    this.stripTrees = null;
+    const lawns: { m: THREE.Matrix4; c: number }[] = [];
+    const paved: { m: THREE.Matrix4; c: number; pat: number[] }[] = [];
+    const props: Record<"hedge" | "picket", THREE.Matrix4[]> = { hedge: [], picket: [] };
+    const trees: THREE.Matrix4[] = [];
+    const L = new THREE.Matrix4(), T = new THREE.Matrix4(), S = new THREE.Matrix4();
+    /** A rect in a lot's frame (x along the road, z toward it), at height y (turned rot about its centre). */
+    const rect = (b: Building, x0: number, x1: number, z0: number, z1: number, y: number, rot = 0) =>
+      lotMatrix(L, b.c, b.rot, b.side, y).clone()
+        .multiply(T.makeRotationY(rot).setPosition((x0 + x1) / 2, 0, (z0 + z1) / 2))
+        .multiply(S.makeScale(Math.abs(x1 - x0), 1, Math.abs(z1 - z0)));
+    for (const b of list) {
+      if (!b.access || !(b.zone || isHall(b.kind))) continue;
+      const toward = scale(right(fromAngle(b.rot)), -b.side);
+      const along = { x: toward.y, y: -toward.x };
+      const rel = { x: b.front.x - b.c.x, y: b.front.y - b.c.y };
+      const kd = dot(rel, toward), xd = dot(rel, along);
+      const pave = this.paveOf(b.access.seg);
+      if (isHall(b.kind)) { this.squareStrip(b, kd, toward, along, rect, lawns, paved); continue; }
+      const grp = ZONE_GROUP[b.zone!];
+      const home = grp === "res";
+      const site = b.built < 1;
+      const H = b.hw - 0.4, z0 = b.hd - 0.4;
+      // the strip itself: lawn (or a construction site's bare earth) for a home, a paved apron for business
+      const put = (m: THREE.Matrix4) => {
+        if (home || site) lawns.push({ m, c: site ? SITE : YARD.res });
+        else paved.push({ m, c: APRON, pat: PAVE_APRON });
+      };
+      if (kd - z0 > 0.2) put(rect(b, -H, H, z0, kd, 0.04));
+      // a corner lot: its side on to the side street's kerb (a hair lower, so a neighbour's lot or strip wins)
+      const sides = this.sidesOf(b, along, H);
+      for (const [s, e] of [[1, sides[0]], [-1, sides[1]]] as const) if (e > 0.2) put(rect(b, s * H, s * (H + e), -z0, kd, 0.03));
+      if (!home || site || b.abandoned) continue;
+      // the front garden: from the lot's edge to the back of the pavement
+      const garden = kd - pave - b.hd;
+      const h = Math.imul(b.id, 2654435761) >>> 0;
+      const small = b.zone === "resLow" || b.zone === "resRow";
+      const pick = h % 10;
+      const kind = small ? (pick < 3 ? "picket" : pick < 6 ? "hedge" : null) : pick < 5 ? "hedge" : null;
+      const dw = b.hw > 14 ? 2.6 : 1.7;
+      if (kind && garden > (kind === "hedge" ? 1.0 : 0.6)) {
+        const z = kd - pave - (kind === "hedge" ? 0.5 : 0.25);
+        // along the pavement, open where the driveway crosses it
+        const runs = [[-H - 0.2, xd - dw - 0.5], [xd + dw + 0.5, H + 0.2]];
+        for (const [a, e] of runs) {
+          const len = e - a;
+          if (len < 1) continue;
+          const n = Math.max(1, Math.round(len / FRONT_RUN));
+          for (let k = 0; k < n; k++) {
+            const x = a + ((k + 0.5) * len) / n;
+            props[kind].push(lotMatrix(L, b.c, b.rot, b.side, 0).clone().multiply(T.makeTranslation(x, 0, z)).multiply(S.makeScale(len / n / FRONT_RUN, 1, 1)));
+          }
+        }
+      }
+      // a tree in a deep enough front lawn, clear of the driveway (on the roomier side of it)
+      // (its crown clear of the hedge or fence, which stand taller than it is drawn)
+      const lawn = garden - (kind ? 1 : 0);
+      const r = Math.min(lawn / 2 - 0.2, 1.7 + ((h >>> 12) % 8) * 0.1);
+      const off = dw + r + 0.6;
+      const x = Math.abs(xd - off) <= Math.abs(xd + off) ? xd - off : xd + off;
+      if (lawn >= 3.6 && ((h >>> 8) % 10) < 4 && Math.abs(x) <= H - r * 0.5) {
+        const w = this.v3.set(x, 0, b.hd + lawn / 2 - 0.3).applyMatrix4(lotMatrix(L, b.c, b.rot, b.side, 0));
+        trees.push(new THREE.Matrix4().makeScale(r * 2, 1, r * 2).setPosition(w.x, 0.12 + (trees.length % 8) * 0.0005, w.z));
+      }
+    }
+    if (this.sideCache.size > list.length + 64) {
+      const live = new Set(list.map((b) => b.id));
+      for (const id of this.sideCache.keys()) if (!live.has(id)) this.sideCache.delete(id);
+    }
+    if (lawns.length) {
+      const m = new THREE.InstancedMesh(this.yardGeo, this.yardMat, lawns.length);
+      lawns.forEach((q, i) => { m.setMatrixAt(i, q.m); m.setColorAt(i, this.col.setHex(q.c)); });
+      m.receiveShadow = true;
+      m.renderOrder = 1;
+      m.computeBoundingSphere();
+      this.strips.push(m);
+    }
+    if (paved.length) {
+      const m = new THREE.InstancedMesh(this.yardGeo.clone(), this.paveMat, paved.length);
+      const pat = new THREE.InstancedBufferAttribute(new Float32Array(paved.length * 2), 2);
+      m.geometry.setAttribute("aPat", pat);
+      paved.forEach((q, i) => { m.setMatrixAt(i, q.m); m.setColorAt(i, this.col.setHex(q.c)); pat.setXY(i, q.pat[0], q.pat[1]); });
+      m.receiveShadow = true;
+      m.renderOrder = 1;
+      m.computeBoundingSphere();
+      this.strips.push(m);
+    }
+    for (const kind of ["hedge", "picket"] as const) {
+      const mm = this.models.props.get(kind);
+      if (!mm || !props[kind].length) continue;
+      const m = new THREE.InstancedMesh(mm.geo, this.mat, props[kind].length);
+      props[kind].forEach((x, i) => m.setMatrixAt(i, x));
+      m.castShadow = true;
+      m.receiveShadow = true;
+      m.computeBoundingSphere();
+      this.strips.push(m);
+    }
+    if (trees.length) {
+      const m = makeTreeMesh(trees.length);
+      trees.forEach((x, i) => m.setMatrixAt(i, x));
+      m.count = trees.length;
+      this.stripTrees = m;
+      this.strips.push(m);
+    }
+    for (const o of this.strips) this.group.add(o);
+  }
+
+  /**
+   * A town square's strip: its ground (lawn or paving) out to the kerbs of the streets round it, and its path on from
+   * the square's edge to the kerb in front.
+   */
+  private squareStrip(
+    b: Building, kd: number, toward: V2, along: V2,
+    rect: (b: Building, x0: number, x1: number, z0: number, z1: number, y: number, rot?: number) => THREE.Matrix4,
+    lawns: { m: THREE.Matrix4; c: number }[], paved: { m: THREE.Matrix4; c: number; pat: number[] }[],
+  ) {
+    const plan = this.squareOf(b);
+    const site = b.built < 1;
+    const H = b.hw - 0.4;
+    const put = (m: THREE.Matrix4, kind: string, pat: number[]) => {
+      if (kind === "lawn") lawns.push({ m, c: site ? SITE : SQUARE_LAWN });
+      else paved.push({ m, c: site && kind !== "path" ? SITE : kind === "path" ? SQUARE_PATH : SQUARE_PAVING, pat: site && kind !== "path" ? PAVE_NONE : pat });
+    };
+    const out = (dir: V2) => {
+      const e = this.kerbOut(add(b.c, scale(dir, H)), dir, SQUARE_REACH);
+      return e !== null && e > 0.2 ? e : 0;
+    };
+    const eF = Math.max(out(toward), kd - H), eB = out(scale(toward, -1)), eR = out(along), eL = out(scale(along, -1));
+    // (its slabs, without the border band: that stays round the square)
+    const pat = [PAVE_FIELD[0], 0];
+    if (eF > 0) put(rect(b, -H - eL, H + eR, H, H + eF, 0.04), plan.base, pat);
+    if (eB > 0) put(rect(b, -H - eL, H + eR, -H - eB, -H, 0.04), plan.base, pat);
+    if (eR > 0) put(rect(b, H, H + eR, -H, H, 0.04), plan.base, pat);
+    if (eL > 0) put(rect(b, -H - eL, -H, -H, H, 0.04), plan.base, pat);
+    // the path, on from where the square's ends to the kerb
+    const p = plan.rects.find((r) => r.kind === "path");
+    if (!p) return;
+    const ex = p.x + (Math.sin(p.rot) * p.d) / 2, ez = p.z + (Math.cos(p.rot) * p.d) / 2;
+    const kx = dot({ x: b.front.x - b.c.x, y: b.front.y - b.c.y }, along);
+    const len = Math.hypot(kx - ex, kd - ez);
+    if (len < 0.3) return;
+    const m = lotMatrix(new THREE.Matrix4(), b.c, b.rot, b.side, 0.07)
+      .multiply(new THREE.Matrix4().makeRotationY(Math.atan2(kx - ex, kd - ez)).setPosition((ex + kx) / 2, 0, (ez + kd) / 2))
+      .multiply(new THREE.Matrix4().makeScale(p.w, 1, len));
+    put(m, "path", PAVE_PATH);
+  }
+
+  /**
+   * How far out a lot's two sides (+x, -x in its frame) reach a side street's kerb (0: none in reach). Kept until the
+   * roads or the lot change: a growing town rebuilds its buildings often, its roads seldom.
+   */
+  private sidesOf(b: Building, along: V2, H: number): [number, number] {
+    const v = this.net?.version ?? 0;
+    const key = `${b.c.x},${b.c.y},${b.rot},${H},${b.access?.seg}`;
+    const got = this.sideCache.get(b.id);
+    if (got && got.v === v && got.key === key) return got.e;
+    const e = [1, -1].map((s) => {
+      const dir = scale(along, s);
+      return this.kerbOut(add(b.c, scale(dir, H)), dir, SIDE_REACH, b.access?.seg) ?? 0;
+    }) as [number, number];
+    this.sideCache.set(b.id, { v, key, e });
+    return e;
+  }
+  private sideCache = new Map<number, { v: number; key: string; e: [number, number] }>();
+
+  /** The pavement's width beside a road (none for a road without one). */
+  private paveOf(seg: number): number {
+    const s = this.net?.segs.get(seg);
+    return s ? SIDEWALK[roadGroup(ROAD_TYPES[s.type])] : 0;
+  }
+
+  /**
+   * How far out from p, along the unit dir, the nearest kerb of a road with a pavement lies (within reach m;
+   * null: none, or one that runs off to the side rather than across dir). `skip` is a road not to count.
+   */
+  private kerbOut(p: V2, dir: V2, reach: number, skip = -1): number | null {
+    const net = this.net;
+    if (!net) return null;
+    let best: number | null = null;
+    const r = reach + 12;
+    for (const id of net.segsNear(p.x - r, p.y - r, p.x + r, p.y + r)) {
+      if (id === skip) continue;
+      const s = net.segs.get(id), g = net.segGeom.get(id);
+      if (!s || !g || !SIDEWALK[roadGroup(ROAD_TYPES[s.type])]) continue;
+      const pts = g.center.pts;
+      let d2 = Infinity, k = 0, t = 0;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const q = pointSegDist2(p, pts[i], pts[i + 1]);
+        if (q.d2 < d2) { d2 = q.d2; k = i; t = q.t; }
+      }
+      if (g.hs[k] > 0.3) continue;
+      const q = { x: pts[k].x + (pts[k + 1].x - pts[k].x) * t - p.x, y: pts[k].y + (pts[k + 1].y - pts[k].y) * t - p.y };
+      const d = Math.sqrt(d2);
+      if (d < 1e-3 || dot(q, dir) / d < 0.9) continue;
+      const e = d - g.width / 2;
+      if (e <= reach && (best === null || e < best)) best = e;
+    }
+    return best;
   }
 
   /** A piece's colour: its building's tint, going from bare earth to its own colours as a site's new building rises. */

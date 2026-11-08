@@ -18,7 +18,7 @@ import { DAY, HOUR, Society } from "./society";
 import { PLACED, SHORE_REACH, type PlacedKind } from "./placed";
 import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, isPlantKind, type Delivery, type Product } from "./industry";
 import { TRUCK_CLASS_ORDER, type TruckClass } from "./trucks";
-import { PARTS_FOR, TownSystem, type Spawned } from "./settlements";
+import { PARTS_FOR, SQUARE_INSET, TownSystem, type Spawned } from "./settlements";
 import { BLOCK, CARS_PER_LOAD, demandPerDay, gridPt, isHall, needsOf, smokeReach } from "./towns";
 import { F } from "../world/gen";
 import { Transit } from "./transit";
@@ -30,7 +30,7 @@ import { PARK_SMOKE, Parks } from "./parks";
 import { sizeOf } from "./towns";
 import type { PlaceOpts, Placement } from "./buildings";
 import type { BuildingKind } from "../config";
-import { CELL, DEPTH, ZoneMap, zoneEdge, type Block, type Cell, type ZoneGroup, type ZoneId } from "./zones";
+import { CELL, DEPTH, MIN_LOT_DEPTH, ZoneMap, zoneEdge, type Block, type Cell, type ZoneGroup, type ZoneId } from "./zones";
 
 interface UndoEntry {
   label: string;
@@ -656,6 +656,7 @@ export class Game {
     // (the homes and shops it clears are paid for: the ones the preview showed, before anything is built)
     const owed = this.demolishCost(this.lotsUnder(plan));
     if (plan.cost + owed > this.money + 0.5) return false;
+    const was = new Set(this.buildings.sites.filter((b) => b.access).map((b) => b.id));
     const ops = this.applyRoads(() => {
       if (plan.kind === "roundabout") commitRoundabout(this.net, plan);
       else {
@@ -685,12 +686,41 @@ export class Game {
       }
     });
     const gone = this.clearRoadsOverLots(ops);
+    const moved = this.setBackJoined(was);
     const paid = plan.cost + owed;
     this.money -= paid;
-    this.pushUndo({ label: plan.kind, ops, money: paid, added: [], removed: gone });
+    this.pushUndo({ label: plan.kind, ops, money: paid, added: [], removed: gone, moved: moved.length ? moved : undefined });
     this.emit({ t: "money" });
-    if (gone.length) this.emit({ t: "buildings" });
+    if (gone.length || moved.length) this.emit({ t: "buildings" });
     return true;
+  }
+
+  /**
+   * Sites a new road just reached (not in `was`) that it runs past inside their front strip: each steps back behind
+   * the strip (Buildings.siteSetback) where the land behind it is free, so the road can be widened later without
+   * touching them. A site with no room stays where it is (an upgrade later names it).
+   */
+  private setBackJoined(was: Set<number>): BuildingMove[] {
+    const out: BuildingMove[] = [];
+    for (const b of this.buildings.sites) {
+      if (!b.access || was.has(b.id) || this.buildings.stripShort(b) < 0.05) continue;
+      const g = this.net.segGeom.get(b.access.seg)!;
+      const r = this.buildings.pushBack(b.access.seg, g.width / 2, [b.id], this.world);
+      if (!r.moves.length) continue;
+      this.moveBuildings(r.moves, true);
+      out.push(...r.moves);
+    }
+    if (out.length) this.buildings.reattach();
+    return out;
+  }
+
+  /** Move buildings to one end of their moves (`to`: the new spots), and the zone cells they cover with them. */
+  private moveBuildings(moves: BuildingMove[], to: boolean) {
+    const bs = moves.map((m) => this.buildings.byId.get(m.id)).filter((b): b is Building => !!b);
+    for (const b of bs) for (const c of this.lotCells(b)) if (c.lot === b.id) c.lot = 0;
+    this.buildings.applyMoves(moves, to);
+    for (const b of bs) for (const c of this.lotCells(b)) c.lot ||= b.id;
+    this.candVersion = -1;
   }
 
   /**
@@ -772,16 +802,21 @@ export class Game {
     return refund;
   }
 
-  /** Cost and problems of changing a road's type. Placed buildings a wider road would cover are pushed back. */
+  /**
+   * Cost and problems of changing a road's type. A company site stands behind its road's front strip, so a wider road
+   * misses it; one that doesn't (an old save's, or one hemmed in) and that a wider road would cover is pushed back to
+   * behind the strip, and when it can't move the problem names it.
+   */
   upgradePlan(segId: number, to: RoadTypeId): { cost: number; errors: PlanError[]; moves: BuildingMove[] } {
     const u = upgradeCost(this.net, this.world, segId, to);
-    const T = ROAD_TYPES[to];
     const hit = u.errors.find((e) => e.buildings?.length);
-    if (!hit || !T.allowsAccess) return { ...u, moves: [] };
-    const r = this.buildings.pushBack(segId, roadWidth(T) / 2, hit.buildings!, this.world);
+    if (!hit) return { ...u, moves: [] };
+    const r = this.buildings.pushBack(segId, roadWidth(ROAD_TYPES[to]) / 2, hit.buildings!, this.world);
     if (!r.stuck.length) return { cost: u.cost, errors: u.errors.filter((e) => e !== hit), moves: r.moves };
     const n = r.stuck.length;
-    const errors = u.errors.map((e) => (e === hit ? { ...e, msg: n === 1 ? "Building in the way" : `${n} buildings in the way`, buildings: r.stuck } : e));
+    const one = this.buildings.byId.get(r.stuck[0]);
+    const msg = n === 1 ? `${one ? BUILDING_TYPES[one.kind].name : "Building"} in the way` : `${n} buildings in the way`;
+    const errors = u.errors.map((e) => (e === hit ? { ...e, msg, buildings: r.stuck } : e));
     return { cost: u.cost, errors, moves: [] };
   }
 
@@ -790,7 +825,7 @@ export class Game {
     if (!s || s.type === to) return false;
     const u = this.upgradePlan(segId, to);
     if (u.errors.length) return false;
-    this.buildings.applyMoves(u.moves, true);
+    this.moveBuildings(u.moves, true);
     const ops = this.applyRoads(() => this.net.setType(segId, to));
     const gone = this.clearRoadsOverLots(ops);
     this.money -= u.cost;
@@ -884,7 +919,7 @@ export class Game {
   undo() {
     const e = this.undoStack.pop();
     if (!e) return;
-    if (e.moved) this.buildings.applyMoves(e.moved, false);
+    if (e.moved) this.moveBuildings(e.moved, false);
     if (e.ops.length) {
       this.net.undo(e.ops);
       this.afterRoads(this.net.rebuild());
@@ -901,7 +936,7 @@ export class Game {
   redo() {
     const e = this.redoStack.pop();
     if (!e) return;
-    if (e.moved) this.buildings.applyMoves(e.moved, true);
+    if (e.moved) this.moveBuildings(e.moved, true);
     if (e.ops.length) {
       this.net.redo(e.ops);
       this.afterRoads(this.net.rebuild());
@@ -1788,6 +1823,7 @@ export class Game {
       for (const c of g.lotCells(b)) c.lot = b.id;
     }
     g.buildings.nextId = data.nextBuilding;
+    g.moveBehindStrips();
     g.buildings.reattach();
     g.refreshLots();
     // (saves from before shops kept daily books: a day's custom from how busy they were)
@@ -1797,6 +1833,81 @@ export class Game {
     g.towns.load(data.towns);
     g.utilities.tick(0);
     return g;
+  }
+
+  /**
+   * Saves from before the front strips (v0.0.65 and older) had their homes and shops right at the kerb and each town
+   * hall's square a pavement from it. On load each home and shop moves back onto its block's cells behind the strip,
+   * as deep as its block has room for (its old depth at most, its model refitted to it), and each square shrinks to
+   * the inset squares keep now, so upgrading their streets keeps them as it keeps newer ones. A building with no
+   * room behind the strip (its block cut short) stays where it stood. Returns how many moved.
+   */
+  moveBehindStrips(): number {
+    const B = this.buildings;
+    for (const h of B.list) {
+      if (!isHall(h.kind) || h.zone) continue;
+      const half = BLOCK / 2 - SQUARE_INSET;
+      if (h.hw <= half + 0.25) continue;
+      for (const c of this.lotCells(h)) if (c.lot === h.id) c.lot = 0;
+      h.hw = h.hd = half;
+      for (const c of this.lotCells(h)) c.lot = h.id;
+    }
+    // a home or shop whose lot starts in front of its block's first row: it stands in the strip
+    const cellsOf = (b: Building, blk: Block, rows: number) => {
+      const out: Cell[] = [];
+      for (let k = b.lot!.col0; k < b.lot!.col0 + b.lot!.w; k++) for (let r = 0; r < rows; r++) out.push(blk.cells[k * DEPTH + r]);
+      return out;
+    };
+    const old: { b: Building; blk: Block }[] = [];
+    for (const b of B.list) {
+      const L = b.lot;
+      const blk = L && this.zones.blocks.get(L.block);
+      if (!b.zone || !L || !blk || L.col0 + L.w > blk.cols) continue;
+      const k = L.col0 + (L.w >> 1);
+      const c0 = blk.cells[k * DEPTH].c, c1 = blk.cells[k * DEPTH + 1].c;
+      const into = scale(sub(c1, c0), 1 / CELL);
+      const edge = sub(c0, scale(into, CELL / 2));
+      const gap = (b.c.x - b.hd * into.x - edge.x) * into.x + (b.c.y - b.hd * into.y - edge.y) * into.y;
+      if (gap < -1) old.push({ b, blk });
+    }
+    if (!old.length) return 0;
+    for (const { b } of old) for (const c of this.lotCells(b)) if (c.lot === b.id) c.lot = 0;
+    // rows free behind the strip, all along its columns (none of them under a hall or a building that stays)
+    const room = (b: Building, blk: Block) => {
+      let d = 0;
+      for (; d < Math.min(DEPTH, b.lot!.d); d++) {
+        let free = true;
+        for (let k = b.lot!.col0; k < b.lot!.col0 + b.lot!.w && free; k++) { const c = blk.cells[k * DEPTH + d]; free = c.ok && !c.lot; }
+        if (!free) break;
+      }
+      return d;
+    };
+    const stay = old.filter(({ b, blk }) => room(b, blk) < MIN_LOT_DEPTH);
+    for (const { b } of stay) for (const c of this.lotCells(b)) c.lot ||= b.id;
+    let moved = 0;
+    for (const { b, blk } of old) {
+      if (stay.some((x) => x.b === b)) continue;
+      const d = room(b, blk);
+      if (d < MIN_LOT_DEPTH) { for (const c of this.lotCells(b)) c.lot ||= b.id; continue; }
+      const cells = cellsOf(b, blk, d);
+      let cx = 0, cy = 0, ux = 0, uy = 0;
+      for (const c of cells) { cx += c.c.x; cy += c.c.y; ux += Math.cos(c.rot); uy += Math.sin(c.rot); }
+      const c = { x: cx / cells.length, y: cy / cells.length };
+      const rot = Math.atan2(uy, ux);
+      const away = { x: -Math.sin(rot) * blk.side, y: Math.cos(rot) * blk.side };
+      const g = this.net.segGeom.get(blk.seg);
+      const strip = g ? zoneEdge(g.width) - g.width / 2 : 0;
+      Object.assign(b, { c, rot, side: blk.side, hd: (d * CELL) / 2, front: add(c, scale(away, -((d * CELL) / 2 + strip))), access: null });
+      b.lot = { ...b.lot!, d };
+      // (a model too deep for the shallower lot is fitted to it, as a new one would be)
+      const M = BUILDING_TYPES[b.kind];
+      b.fit = Math.min(b.fit, (d * CELL - 3) / M.d);
+      for (const cc of cells) { cc.lot = b.id; cc.zone ??= b.zone!; }
+      moved++;
+    }
+    B.version++;
+    this.zones.version++;
+    return moved;
   }
 
   /** A plant's state as saved: loads its trucks are carrying count as still in its yard. */

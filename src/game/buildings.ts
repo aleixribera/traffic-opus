@@ -7,6 +7,7 @@ import type { ZoneId } from "./zones";
 import type { PlantState, Product } from "./industry";
 import { GATE_CLEAR, GATE_REACH, GATE_SETBACK, siteFrame } from "./sites";
 import { isPlantKind } from "./industry";
+import { isHall } from "./towns";
 
 export interface Lot {
   block: string; // zone block key
@@ -163,11 +164,18 @@ export class Buildings {
     }
     if (T.zone !== "placed") return null;
     const pose = this.freePose(kind, p, opts);
+    let ga = this.gateAccess(p, pose.rot, 1, T.d / 2, isPlantKind(kind));
+    // (a road running past where its gate would be, inside its front strip: it stands back behind the strip)
+    const short = ga ? this.stripShort({ placed: true, access: ga.access, c: p, rot: pose.rot, side: 1, hd: T.d / 2 } as Building) : 0;
+    if (short > 0.05) {
+      p = add(p, scale(siteFrame(p, pose.rot, 1, T.d / 2).into, short));
+      pose.front = add(pose.front, scale(siteFrame(p, pose.rot, 1, T.d / 2).into, short));
+      ga = this.gateAccess(p, pose.rot, 1, T.d / 2, isPlantKind(kind));
+    }
     const pl = this.check(T, p, pose.rot, 1, pose.front, world, soft);
     pl.free = true;
     if (!pl.ok) return snapped ?? pl;
     // a road already runs past where its gate would be: it is connected straight away
-    const ga = this.gateAccess(p, pose.rot, 1, T.d / 2, isPlantKind(kind));
     if (ga) Object.assign(pl, { access: ga.access, front: ga.front, side: ga.side, rot: ga.rot, free: false, faces: ga.type });
     return pl;
   }
@@ -194,7 +202,9 @@ export class Buildings {
     const n = right(tan);
     const side: 1 | -1 = dot(sub(p, best.q), n) >= 0 ? 1 : -1;
     const hw = T.w / 2, hd = T.d / 2;
-    const setback = g.width / 2 + GATE_SETBACK; // driveway length before the lot starts
+    // (behind the front strip, as a town's homes and shops stand: the road can widen up to a divided avenue, or a
+    // boulevard's carriageway, without touching the fence; its drive crosses the strip to the gate)
+    const setback = siteSetback(g.width);
     // slide along the road so lots pack neatly against neighbours on the same side
     let q = best.q;
     let c = add(q, scale(n, side * (setback + hd)));
@@ -429,11 +439,21 @@ export class Buildings {
         const r = cubicClosest(s.c, b.front);
         if (r.d < reach(b, g.width)) {
           a.s = g.center.length * arcFrac(s.c, r.t, g.center.pts);
-          // (a home's driveway starts at the kerb, wherever an upgrade or downgrade moved it)
-          if (b.zone) { b.front = kerbAt(s.c, r.t, g.width, b.c); a.p = b.front; }
+          // (a home's driveway, or a hall's path, starts at the kerb, wherever an upgrade or downgrade moved it)
+          if (behindStrip(b)) { b.front = kerbAt(s.c, r.t, g.width, b.c); a.p = b.front; }
           // (a site's gate stays off the junction mouths: a road that now meets the road by it moves it along)
           const sC = b.placed && b.plant ? this.gateS(a.seg, a.s, true) : a.s;
           if (sC !== null && sC !== a.s) { b.front = this.gateKerb(a.seg, a.s, sC, b.front); a.p = b.front; a.s = sC; }
+          // (and its drive, across the front strip from a road running past the gate, starts at the kerb: shorter
+          // when the road is widened, longer again when it is narrowed)
+          if (b.placed) {
+            const q = polyAt(g.center, a.s), dir = polyDir(g.center, a.s);
+            if (Math.abs(dot(dir, siteFrame(b.c, b.rot, b.side, b.hd).into)) < 0.3) {
+              const n = right(dir), k = dot(sub(b.c, q), n) >= 0 ? 1 : -1;
+              b.front = add(q, scale(n, (k * g.width) / 2));
+              a.p = b.front;
+            }
+          }
           const side = sideOf(s.c, r.t, b.c, b.placed ? b.side : undefined);
           // (a site keeps its gate where it is whichever way the road now runs)
           if (b.placed && side !== b.side) b.rot = wrapAngle(b.rot + Math.PI);
@@ -455,14 +475,14 @@ export class Buildings {
         }
         continue;
       }
-      const look = b.zone ? ZONE_SETBACK : 6;
+      const look = behindStrip(b) ? ZONE_SETBACK : 6;
       for (const id of net.segsNear(b.front.x - look, b.front.y - look, b.front.x + look, b.front.y + look)) {
         const s = net.segs.get(id)!;
         if (!ROAD_TYPES[s.type].allowsAccess) continue;
         const g = net.segGeom.get(id)!;
         const r = cubicClosest(s.c, b.front);
         if (r.d < reach(b, g.width) && net.heightOnSeg(id, r.t) < 0.5) {
-          if (b.zone) b.front = kerbAt(s.c, r.t, g.width, b.c);
+          if (behindStrip(b)) b.front = kerbAt(s.c, r.t, g.width, b.c);
           b.access = { seg: id, s: g.center.length * arcFrac(s.c, r.t, g.center.pts), p: b.front };
           b.side = sideOf(s.c, r.t, b.c);
           this.attachedTo.set(b, g);
@@ -474,9 +494,9 @@ export class Buildings {
   }
 
   /**
-   * Widening `segId` to half-width `halfW` covers the lots in `ids`: push each one straight back so it
-   * keeps the usual driveway setback. A lot that faces another road, is a mine, or has no free land
-   * behind it can't move, and is returned in `stuck`.
+   * Widening `segId` to half-width `halfW` covers the lots in `ids` (or they stand inside its front strip): push each
+   * one straight back to behind the strip (siteSetback). A lot that faces another road, or has no free land behind
+   * it, can't move, and is returned in `stuck`.
    */
   pushBack(segId: number, halfW: number, ids: number[], world: PlaceWorld): { moves: BuildingMove[]; stuck: number[] } {
     const net = this.net;
@@ -490,7 +510,8 @@ export class Buildings {
       if (b.access?.seg !== segId) { stuck.push(id); continue; }
       const rc = cubicClosest(s.c, b.c);
       const n = norm(sub(b.c, rc.p));
-      const mv = halfW + 2.2 + b.hd - rc.d;
+      // (back to behind the front strip, so the next widening needs no move)
+      const mv = siteSetback(halfW * 2) + b.hd - rc.d;
       if (mv <= 0) continue;
       const rf = cubicClosest(s.c, b.front);
       const nf = norm(sub(b.front, rf.p));
@@ -525,6 +546,21 @@ export class Buildings {
     return { moves: stuck.length ? [] : moves, stuck };
   }
 
+  /**
+   * How far a site's fence stands inside the front strip (siteSetback) of the road running past its gate (m). 0:
+   * behind it, no road yet, or a road that ends at the gate (it widens sideways, clear of the fence).
+   */
+  stripShort(b: Building): number {
+    const a = b.access;
+    if (!a || !b.placed) return 0;
+    const s = this.net.segs.get(a.seg), g = this.net.segGeom.get(a.seg);
+    if (!s || !g) return 0;
+    const f = siteFrame(b.c, b.rot, b.side, b.hd);
+    const r = cubicClosest(s.c, f.gate);
+    if (Math.abs(dot(norm(cubicTangent(s.c, r.t)), f.into)) > 0.3) return 0;
+    return Math.max(0, siteSetback(g.width) - r.d);
+  }
+
   /** Put buildings at one end of their moves (`to` = true: the new spots). */
   applyMoves(moves: BuildingMove[], to: boolean) {
     for (const m of moves) {
@@ -541,8 +577,18 @@ export class Buildings {
  * Which side of the road p is on. A road that ends square-on at a site's gate has the plot straight ahead, on
  * neither side: then it keeps `keep`, so the site's driveway doesn't flip kerbs from one rebuild to the next.
  */
+/** Homes, shops and the town halls' squares stand behind a front strip (config ZONE_SETBACK); their kerb point follows the kerb. */
+const behindStrip = (b: Building) => !!b.zone || isHall(b.kind);
+
 /** How far a building's kerb point may be from a road's centreline and still be on it (a home: across its front strip). */
-const reach = (b: Building, width: number) => (b.zone ? Math.max(width / 2, ZONE_SETBACK) : width / 2) + 1.5;
+const reach = (b: Building, width: number) => (behindStrip(b) ? Math.max(width / 2, ZONE_SETBACK) : width / 2) + 1.5;
+
+/**
+ * How far a company site's fence stands from the centreline of the road at its gate (m): behind the front strip
+ * (config ZONE_SETBACK) like a town's lots, and never closer than the drive (GATE_SETBACK) off the kerb of a road wider
+ * than the strip allows for.
+ */
+export const siteSetback = (width: number) => Math.max(ZONE_SETBACK, width / 2 + GATE_SETBACK);
 
 /** The kerb of a road at t, on the side of p. */
 function kerbAt(c: import("../core/math").Cubic, t: number, width: number, p: V2): V2 {

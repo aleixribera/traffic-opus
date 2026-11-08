@@ -12,15 +12,15 @@
 // Whatever it caught last frame it keeps until the cursor moves clearly away (hysteresis), so it never flickers
 // between two targets. Alt held ignores it all for a moment.
 
-import { LEVEL_H, NODE_SNAP_PX, ROAD_SNAP_PX, ROAD_TYPES, roadWidth } from "../config";
+import { LEVEL_H, NODE_SNAP_PX, ROAD_SNAP_PX, ROAD_TYPES, ZONE_SETBACK, roadWidth } from "../config";
 import { add, angleOf, clamp, cross, cubicTangent, dist, dot, fromAngle, len, norm, right, scale, sub, type V2 } from "../core/math";
 import { BLOCK } from "../game/towns";
 import { CELL, DEPTH } from "../game/zones";
 import type { RoadNetwork } from "./network";
 import { cubicClosest, ontoJunction, snap, type Guide, type Snap, type SnapOpts } from "./planner";
 
-/** One lot's depth (m): how deep a town builds beside a street. */
-export const LOT_DEPTH = CELL * DEPTH;
+/** One lot's depth (m): how deep a town builds beside a street, from its kerb (the front strip, then the lot). */
+export const LOT_DEPTH = ZONE_SETBACK - roadWidth(ROAD_TYPES.street) / 2 + CELL * DEPTH;
 
 export type GuideKind = "ext" | "par" | "perp" | "angle" | "align" | "square";
 
