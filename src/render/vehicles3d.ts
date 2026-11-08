@@ -25,10 +25,10 @@ interface Piece { kind: VehicleKind; back: number }
 
 /** The truck body that carries each product: loose bulk in tippers, liquids in tankers, long loads on flatbeds. */
 const TRUCK_BODY: Record<string, VehicleKind> = {
-  crops: "tipper", ore: "tipper", coal: "tipper", lime: "tipper", sand: "tipper", gravel: "tipper", copper: "tipper",
+  crops: "tipper", ore: "tipper", coal: "tipper", lime: "tipper", sand: "tipper", gravel: "tipper", copperore: "tipper",
   crude: "tanker", fuel: "tanker", chemicals: "tanker", cement: "tanker",
-  logs: "flatbed", planks: "flatbed", steel: "flatbed", parts: "flatbed", machinery: "flatbed",
-  // (glass, plastics and household goods ride in box trucks: the default)
+  logs: "flatbed", planks: "flatbed", steel: "flatbed", parts: "flatbed", machinery: "flatbed", copper: "flatbed",
+  // (glass, plastics, household goods and electronics ride in box trucks: the default)
 };
 type Body = "truck" | "tipper" | "tanker" | "flatbed";
 const truckBody = (t: Trip): Body => (TRUCK_BODY[t.haul?.product ?? t.cargo ?? ""] ?? "truck") as Body;

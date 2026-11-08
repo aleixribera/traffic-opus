@@ -6,9 +6,9 @@ import { Game } from "../src/game/city";
 const view = (o: Partial<ProgressView> = {}): ProgressView => ({ towns: [], made: {}, sold: {}, bestDay: {}, bestEarned: 0, powered: 0, ...o });
 
 describe("Milestones", () => {
-  it("are a ladder of tiers 1 to 3: unique, each with a goal and something concrete to unlock", () => {
-    expect(MILESTONES.length).toBeGreaterThanOrEqual(28);
-    expect(MILESTONES.length).toBeLessThanOrEqual(40);
+  it("are a ladder of tiers 1 to 4: unique, each with a goal and something concrete to unlock", () => {
+    expect(MILESTONES.length).toBeGreaterThanOrEqual(38);
+    expect(MILESTONES.length).toBeLessThanOrEqual(50);
     expect(new Set(MILESTONES.map((m) => m.id)).size).toBe(MILESTONES.length);
     for (const m of MILESTONES) {
       expect(m.goal.length).toBeGreaterThan(5);
@@ -49,7 +49,39 @@ describe("Milestones", () => {
     expect(at("fuel1")).toBeGreaterThan(at("pop1000"));
     expect(at("goods1")).toBeGreaterThan(at("planks30"));
     expect(at("parts1")).toBeGreaterThan(at("cement30"));
-    expect(at("city")).toBe(MILESTONES.length - 1);
+  });
+
+  it("tier 4 opens on the way to a City: copper first, then electronics and the machine works; the last steps reward a City supplied and tier 4 volume", () => {
+    const at = (id: string) => MILESTONES.findIndex((m) => m.id === id);
+    const by = (k: PlantKind) => unlockedBy((u) => u.buildings?.includes(k))!.id;
+    expect(by("coppermine")).toBe("parts50");
+    expect(by("coppersmelter")).toBe("copperore1");
+    expect(by("electronics")).toBe("goods60");
+    expect(by("machineworks")).toBe("copper1");
+    for (const k of ["coppermine", "coppersmelter", "electronics", "machineworks"] as PlantKind[]) {
+      expect(PLANTS[k].tier, k).toBe(4);
+      expect(at(by(k)), k).toBeLessThan(at("city"));
+      // after every tier 3 unlock
+      expect(at(by(k)), k).toBeGreaterThan(at("cement30"));
+    }
+    expect(at("copperore1")).toBeGreaterThan(at("parts50"));
+    expect(at("copper1")).toBeGreaterThan(at("copperore1"));
+    for (const id of ["electronics1", "machinery1", "citySupplied", "electronics40", "machinery40"]) expect(at(id), id).toBeGreaterThan(at("city"));
+    // the tier 4 milestones stand together, as one block
+    const block = ["parts50", "copperore1", "goods60", "copper1", "city", "electronics1", "machinery1", "citySupplied", "electronics40", "machinery40"].map(at);
+    expect(block).toEqual(block.map((_, i) => block[0] + i));
+  });
+
+  it("tier 4 milestones measure copper, electronics and machinery, and a City supplied in everything", () => {
+    const m = (id: string) => MILESTONES.find((x) => x.id === id)!;
+    expect(m("copperore1").measure(view({ made: { copperore: 2 } }))).toEqual([2, 1]);
+    expect(m("electronics40").measure(view({ bestDay: { electronics: 15 } }))).toEqual([15, 40]);
+    expect(m("machinery40").measure(view({ bestDay: { machinery: 41 } }))).toEqual([41, 40]);
+    const sup = m("citySupplied");
+    const town = { food: 1, planks: 1, cement: 1, goods: 1, fuel: 1 };
+    expect(sup.measure(view({ towns: [{ pop: 5000, supply: town }] }))[0]).toBe(0);
+    expect(sup.measure(view({ towns: [{ pop: 6500, supply: town }] }))[0]).toBe(0);
+    expect(sup.measure(view({ towns: [{ pop: 6500, supply: { ...town, electronics: 0.9, machinery: 0.8 } }] }))[0]).toBe(1);
   });
 
   it("tier 3 milestones measure fuel, goods and parts, and a Town supplied in everything", () => {

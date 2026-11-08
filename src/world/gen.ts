@@ -130,19 +130,45 @@ export class WorldGen {
     return true;
   }
 
+  /**
+   * How much of the country round a spot is high range (0..1): the share of points 1.2-2.4 km out that are mountain.
+   * Copper lies in the high ranges (docs/design.md, "The map"): on the flat floors of upland valleys among them.
+   */
+  upland(x: number, y: number): number {
+    const o = this.tmp2;
+    let n = 0;
+    for (const R of [1200, 2400]) for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2 + (R > 2000 ? Math.PI / 8 : 0);
+      this.raw(x + Math.cos(a) * R + this.ox, y + Math.sin(a) * R + this.oy, o);
+      if (o[F.mtn] >= MOUNTAIN_STEPS[0]) n++;
+    }
+    return n / 16;
+  }
+
   /** The guaranteed first deposits: each tier's kinds spread round the start, in its distance band. */
   private placeSites() {
     const rnd = mulberry32(this.seed * 919 + 5);
     const put = (key: DepositKey | "fert" | "forest", field: number, ring: [number, number], ang: number, r: number) => {
-      for (let k = 0; k < 40; k++) {
-        const a = ang + (rnd() - 0.5) * (k < 20 ? 0.7 : 2.4);
+      // (copper looks round for the spot most among the high ranges: a few good candidates, the most upland one)
+      const high = key === "copper";
+      let best: { x: number; y: number; u: number } | null = null, found = 0;
+      for (let k = 0; k < (high ? 200 : 40); k++) {
+        const a = ang + (rnd() - 0.5) * (high ? Math.PI * 2 : k < 20 ? 0.7 : 2.4);
         const R = ring[0] + rnd() * (ring[1] - ring[0]);
         const x = Math.cos(a) * R, y = Math.sin(a) * R;
         // clear of the other kinds' sites
         if (this.sites.some((s) => Math.hypot(s.x - x, s.y - y) < s.r + r + 900)) continue;
-        if (k < 36 && !this.usable(x, y, r)) continue;
-        this.sites.push({ key, field, x, y, r });
-        return;
+        if ((high || k < 36) && !this.usable(x, y, r)) continue;
+        if (!high) { this.sites.push({ key, field, x, y, r }); return; }
+        const u = this.upland(x, y);
+        if (!best || u > best.u) best = { x, y, u };
+        if (++found >= 40) break;
+      }
+      if (best) { this.sites.push({ key, field, x: best.x, y: best.y, r }); return; }
+      if (high) {
+        // (no dry flat land found at all: anywhere in the band, as the other kinds do in the end)
+        const a = ang + (rnd() - 0.5) * 2.4, R = (ring[0] + ring[1]) / 2;
+        this.sites.push({ key, field, x: Math.cos(a) * R, y: Math.sin(a) * R, r });
       }
     };
     // tier 1 near the start: a fertile patch and a forest, on opposite sides
@@ -166,7 +192,11 @@ export class WorldGen {
     const d = Math.hypot(x, y);
     const kinds = DEPOSITS.filter((dd) => d >= dd.from);
     if (kinds.length && rnd() < 0.5) {
-      const kind = kinds[Math.floor(rnd() * kinds.length)];
+      // (copper turns up mostly among the high ranges, seldom on the open plains)
+      const up = kinds.some((dd) => dd.key === "copper") ? this.upland(x, y) : 0;
+      const wt = kinds.map((dd) => (dd.key === "copper" ? 0.15 + 3 * up : 1));
+      let pick = rnd() * wt.reduce((a, b) => a + b, 0), kind = kinds[kinds.length - 1];
+      for (let q = 0; q < kinds.length; q++) { pick -= wt[q]; if (pick < 0) { kind = kinds[q]; break; } }
       const r = 260 + rnd() * 130;
       const clear = this.sites.every((o) => Math.hypot(o.x - x, o.y - y) > o.r + r + 1400);
       if (clear && this.usable(x, y, r)) s = { x, y, r, field: kind.field };

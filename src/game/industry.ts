@@ -14,7 +14,8 @@ import { classOf, type TruckClass } from "./trucks";
 
 export type Product =
   | "crops" | "logs" | "food" | "planks" | "ore" | "coal" | "lime" | "steel" | "cement"
-  | "crude" | "sand" | "fuel" | "plastics" | "glass" | "goods" | "parts";
+  | "crude" | "sand" | "fuel" | "plastics" | "glass" | "goods" | "parts"
+  | "copperore" | "copper" | "electronics" | "machinery";
 
 export interface ProductDef {
   name: string;
@@ -39,17 +40,23 @@ export const PRODUCTS: Record<Product, ProductDef> = {
   crude: { name: "Crude oil", price: 0, color: 0x2e2a26 },
   sand: { name: "Sand", price: 0, color: 0xe0c78e },
   fuel: { name: "Fuel", price: 1500, color: 0xd99a2b },
-  // (plastics wait for the electronics works of tier 4: until then the refinery flares what it can't store)
+  // (plastics wait for the electronics plants of tier 4: until then the refinery flares what it can't store)
   plastics: { name: "Plastics", price: 0, color: 0x6fb7c9 },
   glass: { name: "Glass", price: 0, color: 0x9fd3d6 },
   goods: { name: "Household goods", price: 1600, color: 0xb0603e },
   parts: { name: "Construction parts", price: 1800, color: 0x7f8b6a },
+  // tier 4: electronics and machinery for a City (electronics to its shops, machinery to its offices and towers)
+  copperore: { name: "Copper ore", price: 0, color: 0x4f8a78 },
+  copper: { name: "Copper", price: 0, color: 0xc4703a },
+  electronics: { name: "Electronics", price: 2400, color: 0x3f5f8f },
+  machinery: { name: "Machinery", price: 2600, color: 0xd8a22e },
 };
 
 export type PlantKind =
   | "farm" | "loggingcamp" | "foodplant" | "sawmill"
   | "ironmine" | "coalmine" | "quarry" | "smelter" | "cementworks" | "coalplant"
   | "oilwell" | "sandpit" | "refinery" | "glassworks" | "furniture" | "constructionplant"
+  | "coppermine" | "coppersmelter" | "electronics" | "machineworks"
   // logistics: buildings that store and pass on what the plants make (see "Logistics" below)
   | "warehouse" | "fueldepot";
 
@@ -164,6 +171,27 @@ export const PLANTS: Record<PlantKind, PlantDef> = {
     kind: "constructionplant", tier: 3, inputs: { steel: 1, cement: 1 }, outputs: { parts: 1 },
     cycle: HOUR, cost: 52000, upkeep: 55, trucks: 3, store: 8, power: 14, site: { planks: 10, cement: 10 },
     blurb: "Casts steel and cement into construction parts: towns put up their blocks and towers from them.",
+  },
+  // tier 4: the building sites wait for construction parts as well as planks and cement
+  coppermine: {
+    kind: "coppermine", tier: 4, deposit: { field: F.copper, name: "copper ore" }, inputs: {}, outputs: { copperore: 1 },
+    cycle: HOUR * 1.2, cost: 34000, upkeep: 34, trucks: 4, store: 8, site: { planks: 6, cement: 4, parts: 3 },
+    blurb: "Digs copper ore in the high ranges. Its tippers take it to your copper smelters.",
+  },
+  coppersmelter: {
+    kind: "coppersmelter", tier: 4, inputs: { copperore: 1, coal: 1 }, outputs: { copper: 1 },
+    cycle: HOUR * 1.2, cost: 62000, upkeep: 60, trucks: 3, store: 8, power: 16, site: { planks: 10, cement: 8, parts: 6 },
+    blurb: "Smelts copper ore with coal into copper, for your electronics plants and machine works.",
+  },
+  electronics: {
+    kind: "electronics", tier: 4, inputs: { copper: 1, plastics: 1 }, outputs: { electronics: 1 },
+    cycle: HOUR, cost: 70000, upkeep: 62, trucks: 3, store: 8, power: 12, site: { planks: 10, cement: 8, parts: 6 },
+    blurb: "Builds electronics from copper and plastics. Its trucks sell them to the shops of your cities.",
+  },
+  machineworks: {
+    kind: "machineworks", tier: 4, inputs: { steel: 1, copper: 1 }, outputs: { machinery: 1 },
+    cycle: HOUR * 1.2, cost: 72000, upkeep: 64, trucks: 3, store: 8, power: 14, site: { planks: 12, cement: 10, parts: 8 },
+    blurb: "Builds machinery from steel and copper. Its flatbeds take it to the offices and towers of your cities.",
   },
   // logistics (docs/design.md "Freight"): a warehouse buffers any product and its own trucks carry it on; a fuel
   // depot takes fuel from the refineries and fills the company's trucks that pass it at cost
@@ -455,7 +483,9 @@ export class Industry {
     const P = b.plant!, d = PLANTS[b.kind as PlantKind];
     if (P.site) {
       const left = entries(P.site.need).map(([p, n]) => [p, n - (P.site!.got[p] ?? 0)] as [Product, number]).filter(([, n]) => n > 0);
-      b.problem = left.length ? `Building site: waiting for ${left.map(([p, n]) => `${n} load${n === 1 ? "" : "s"} of ${PRODUCTS[p].name.toLowerCase()}`).join(" and ")}` : null;
+      const parts = left.map(([p, n]) => `${n} load${n === 1 ? "" : "s"} of ${PRODUCTS[p].name.toLowerCase()}`);
+      const list = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0];
+      b.problem = left.length ? `Building site: waiting for ${list}` : null;
       return;
     }
     if (b.built < 1) { b.problem = null; return; }
@@ -505,9 +535,9 @@ export class Industry {
   private growth(b: Building, span: number, working: boolean, staff: number, pw: number, store: number) {
     const P = b.plant!, d = PLANTS[b.kind as PlantKind];
     if (P.level >= SITE_LEVELS) { P.why = null; P.grow = 0; return; }
-    // (a side product nothing uses yet doesn't count: the refinery flares its plastics and grows on its fuel)
-    const outs = entries(d.outputs);
-    const piled = outs.some(([p]) => (outs.length < 2 || Industry.useful(p)) && (P.out[p] ?? 0) > store * 0.75);
+    // (only the main product counts: the refinery flares the plastics it can't ship and grows on its fuel)
+    const main = entries(d.outputs)[0]?.[0];
+    const piled = !!main && (P.out[main] ?? 0) > store * 0.75;
     const why = !b.access ? "No road to the gate"
       : !working ? (b.problem ?? "Not working")
       : staff < 0.8 ? "Needs more workers"
@@ -556,18 +586,31 @@ export class Industry {
     return PRODUCTS[p].price > 0 || Industry.usedBy(p);
   }
 
+  /** Does the company have a buyer for a side product: a town (it has a price), or one of its own plants that takes it in? */
+  wants(p: Product): boolean {
+    return PRODUCTS[p].price > 0 || this.plants().some((o) => !!PLANTS[o.kind as PlantKind].inputs[p]);
+  }
+
   /**
    * The town buildings that take a product in: fuel goes to filling stations (or, in a town with none standing yet,
-   * to its shops); construction parts to no shop at all (only to building sites); everything else to the shops.
+   * to its shops); machinery to offices and office towers (the same: to its shops while it has none); construction
+   * parts to no shop at all (only to building sites); everything else to the shops.
    */
   private outlets(product: Product): Building[] {
-    const isStation = (o: Building) => !!BUILDING_TYPES[o.kind].fuel;
     // (construction parts go to the towns' building sites, never over a shop counter)
     if (product === "parts") return [];
-    if (product !== "fuel") return this.h.shops.filter((o) => !isStation(o));
+    const isStation = (o: Building) => !!BUILDING_TYPES[o.kind].fuel;
+    const special = product === "fuel" ? isStation : product === "machinery" ? Industry.isOffice : null;
+    const shops = this.h.shops.filter((o) => !isStation(o) || special === isStation);
+    if (!special) return shops;
     const has = new Set<number>();
-    for (const o of this.h.shops) if (isStation(o) && o.built >= 1 && !o.abandoned && o.town !== undefined) has.add(o.town);
-    return this.h.shops.filter((o) => (isStation(o) ? true : o.town === undefined || !has.has(o.town)));
+    for (const o of shops) if (special(o) && o.built >= 1 && !o.abandoned && o.town !== undefined) has.add(o.town);
+    return shops.filter((o) => special(o) || o.town === undefined || !has.has(o.town));
+  }
+
+  /** The town buildings that take machinery: offices and office towers, the firms that fit out a city's works. */
+  static isOffice(o: Building): boolean {
+    return o.kind === "office" || o.kind === "tower" || o.kind === "glasstower";
   }
 
   /** Who would take a load of `product` from `from`, best first. */
@@ -667,12 +710,14 @@ export class Industry {
     // half the yard), so it doesn't set off with one load on board
     const yard = Industry.storeOf(b);
     for (const [p] of outs) {
-      // (a side product nothing uses yet stays in the yard without a word: the panel says it is flared)
-      if (!store && outs.length > 1 && !Industry.useful(p)) continue;
+      // (a side product none of the company's plants takes stays in the yard without a word: the panel says it is
+      // flared; and one with nowhere to go now is flared too, never the plant's problem)
+      const side = !store && outs.length > 1 && p !== outs[0][0];
+      if (!store && outs.length > 1 && !this.wants(p)) continue;
       while (free > 0 && (src[p] ?? 0) >= 1) {
         const c = this.customers(b, p, coming)[0];
         if (!c) {
-          if (!store && (src[p] ?? 0) >= 2 && b.access && !b.problem?.startsWith("Full of")) b.problem = this.noBuyer(b, p);
+          if (!store && !side && (src[p] ?? 0) >= 2 && b.access && !b.problem?.startsWith("Full of")) b.problem = this.noBuyer(b, p);
           break;
         }
         const n = Math.max(1, Math.min(load, Math.floor(src[p]!), c.room));
@@ -703,6 +748,11 @@ export class Industry {
     }
     // (construction parts: towns build with them once they put up blocks, from Town size)
     if (p === "parts") return `No town on your roads is putting up a block: towns build with ${name} from Town size`;
+    // (a City's needs: no town on its roads uses them yet)
+    if ((p === "electronics" || p === "machinery") && seg !== undefined && !this.h.shops.some((o) => {
+      const t = o.access && this.h.connected(seg, o.access.seg) ? this.h.townOf(o) : null;
+      return t !== null && Number.isFinite(this.h.want(t, p));
+    })) return `No town on your roads uses ${name} yet: towns want it from City size`;
     if (PRODUCTS[p].price > 0 && seg !== undefined) {
       for (const o of this.h.shops) {
         if (!o.access || !this.h.connected(seg, o.access.seg)) continue;
