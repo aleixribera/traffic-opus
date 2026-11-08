@@ -19,16 +19,16 @@ export interface WindowSpot { x: number; y: number; ux: number; uy: number; hx: 
 /** How a lamp of each kind lights the ground: the pool's radius (m), how far out from the post its middle is, its
  * colour, and its glow's size (m) and height on the model. */
 const LAMP = {
-  street: { r: 11, reach: 1.6, color: [1.0, 0.74, 0.42], glow: 2.6, head: 5.6 },
+  street: { r: 13, reach: 1.8, color: [1.0, 0.72, 0.4], glow: 2.6, head: 5.6 },
   highway: { r: 14, reach: 2.2, color: [1.0, 0.7, 0.36], glow: 3.0, head: 5.6 },
-  flood: { r: 27, reach: 15, color: [0.78, 0.86, 1.0], glow: 4.2, head: 13.6 },
+  flood: { r: 26, reach: 14, color: [0.5, 0.5, 0.46], glow: 4.2, head: 13.6 },
 } as const;
 /** The head of the street lamp model (model space; +z is the way its arm reaches). */
 const STREET_HEAD = new THREE.Vector3(0, 5.6, 1.25);
 const FLOOD_HEAD = new THREE.Vector3(0, 13.4, 1.0);
 /** Window light by kind: the colour that spills out, and the window spacing along a wall (m). */
 const WIN: Record<WindowKind, { color: [number, number, number]; every: number }> = {
-  home: { color: [1.0, 0.68, 0.34], every: 2.6 },
+  home: { color: [1.0, 0.62, 0.28], every: 2.6 },
   shop: { color: [1.0, 0.88, 0.7], every: 2.2 },
   office: { color: [0.82, 0.9, 1.0], every: 2.0 },
   hall: { color: [1.0, 0.8, 0.5], every: 2.4 },
@@ -199,7 +199,7 @@ export class Lamps3D {
   readonly group = new THREE.Group();
   private mpp = { value: 1 };
   private occ = { value: new THREE.Vector4() };
-  private poolMat = brighten(POOL_VS, POOL_FS, 0.45, 0.32);
+  private poolMat = brighten(POOL_VS, POOL_FS, 0.5, 0.42);
   private beamMat = brighten(POOL_VS, BEAM_FS, 0.5, 0.3);
   private spillMat = brighten(SPILL_VS, SPILL_FS, 0.25, 0.08, { uOcc: this.occ });
   private glowMat = glowMaterial(1.0, 3.2, this.mpp);

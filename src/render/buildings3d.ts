@@ -511,7 +511,8 @@ export class Buildings3D {
       }
     }
     for (const b of list) {
-      if (!b.placed || !b.plant || b.built < 1) continue;
+      // (a farm works by daylight: no masts over its fields)
+      if (!b.placed || !b.plant || b.built < 1 || b.kind === "farm") continue;
       const fr = siteFrame(b.c, b.rot, b.side, b.hd);
       const hw = b.hw, d = b.hd * 2, inset = 4;
       const mid = siteToWorld(fr, 0, d / 2);

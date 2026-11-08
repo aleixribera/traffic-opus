@@ -47,7 +47,7 @@ export const v3 = (hex: number) => {
 };
 
 /** Snow, as it shows from above in the noon light: a cool white, a touch blue in its hollows. */
-export const SNOW = 0xeef1f4;
+export const SNOW = 0xe6eaee;
 const SNOW_SHADE = 0xc9d3e0;
 
 /**
@@ -69,7 +69,7 @@ uniform vec2 uSun; uniform vec2 uShade; uniform vec2 uNight; uniform vec2 uGrade
 /* Night drains colour towards a moonlit blue-grey (applied to every map surface's own colour). */
 vec3 envGrade(vec3 c) {
   float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-  return mix(c, l * vec3(0.8, 0.97, 1.3), uGrade.x);
+  return mix(c, l * vec3(0.86, 0.97, 1.18), uGrade.x);
 }
 float envHash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float envNoise(vec2 p) {
@@ -85,17 +85,22 @@ vec3 envGrass(vec3 c) {
   t = mix(t, vec3(1.3, 1.16, 1.0), envDry);
   t = mix(t, vec3(0.74, 1.2, 0.6), envFresh);
   t = mix(t, vec3(0.92, 0.8, 0.7), envFall * (1.0 - envDry * 0.5));
-  t = mix(t, vec3(0.78, 0.76, 0.82), envBare * (1.0 - envFresh));
-  return c * t;
+  t = mix(t, vec3(0.72, 0.66, 0.64), envBare * (1.0 - envFresh));
+  c *= t;
+  // (winter's grass is dead: a dun brown-grey, most of its colour gone)
+  float w = envBare * (1.0 - envFresh) * 0.55;
+  return mix(c, dot(c, vec3(0.2126, 0.7152, 0.0722)) * vec3(1.08, 1.0, 0.86), w);
 }
 /* How much snow lies at a ground point (0..1): drifts and bare patches at a few scales, more of it the deeper the
    winter; 'shelter' > 0 keeps it thinner (under eaves, on warm ground). */
 float envSnowAt(vec2 p, float shelter) {
   if (envSnow <= 0.001) return 0.0;
-  float n = envNoise(p / 41.0) * 0.55 + envNoise(p / 13.0 + 7.1) * 0.3 + envNoise(p / 3.3 - 2.7) * 0.15;
+  // (each octave turned against the last, so the drifts never line up with the grid)
+  vec2 q1 = mat2(0.8, -0.6, 0.6, 0.8) * p, q2 = mat2(0.28, 0.96, -0.96, 0.28) * p;
+  float n = envNoise(p / 41.0) * 0.55 + envNoise(q1 / 13.0 + 7.1) * 0.3 + envNoise(q2 / 3.3 - 2.7) * 0.15;
   float k = envSnow * (1.0 - shelter);
   float aa = max(fwidth(n), 0.004) * 1.5;
-  return smoothstep(1.02 - k * 0.92 - aa, 1.02 - k * 0.92 + aa + 0.05, n) * smoothstep(0.0, 0.2, envSnow);
+  return smoothstep(1.02 - k * 0.64 - aa, 1.02 - k * 0.64 + aa + 0.05, n) * smoothstep(0.0, 0.2, envSnow);
 }
 /* Snow's colour at a point: a little blue in the hollows. */
 vec3 envSnowCol(vec2 p) {
@@ -200,7 +205,7 @@ export function seasonal(mat: THREE.MeshLambertMaterial, opts: { roofs?: boolean
       // (grey, darkish and low: asphalt, a yard's concrete, a drive: ploughed and swept)
       float paved = (1.0 - smoothstep(0.03, 0.06, sat)) * (1.0 - smoothstep(0.12, 0.3, l)) * (1.0 - smoothstep(0.3, 0.8, vEnvW.y));
       float roof = ${opts.roofs ? "smoothstep(0.6, 1.6, vEnvW.y)" : "0.0"};
-      float s = envSnowAt(vEnvW.xz, mix(${(opts.shelter ?? 0).toFixed(2)}, -0.3, roof)) * up * (1.0 - paved * 0.92);
+      float s = envSnowAt(vEnvW.xz, mix(${(opts.shelter ?? 0).toFixed(2)}, -0.05, roof)) * up * (1.0 - paved * 0.92);
       dc = mix(dc, envSnowCol(vEnvW.xz) * (0.95 + 0.05 * n.y), s);
     }
     diffuseColor.rgb = envGrade(dc);

@@ -1,4 +1,5 @@
 import { BUILDING_TYPES, LEVEL_H, MAX_LEVEL, ROAD_TYPES, SIGNAL_COST, type BuildingKind, type RoadTypeId } from "../config";
+import { wireNights } from "./nightsSetting";
 import { formatMoney, type V2 } from "../core/math";
 import type { Building } from "../game/buildings";
 import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
@@ -1728,6 +1729,7 @@ export class Hud {
         <button class="pm save">Save game</button>
         <button class="pm load">Load game</button>
         <button class="pm keys">Controls</button>
+        <button class="pm nights"></button>
         <button class="pm home">Main menu</button>
         <button class="pm new">New company</button>
       </div>`, "Pause menu");
@@ -1737,6 +1739,7 @@ export class Hud {
     on(".save", () => this.openSaves(true));
     on(".load", () => this.openSaves(false));
     on(".keys", () => this.openKeys());
+    wireNights(dlg.querySelector(".nights"), app.dayCycle, () => this.sfx.play("click"));
     on(".pm.co", () => this.openCompany("pause"));
     on(".home", () => {
       if (app.mode === "play") app.saves.autosave(app.game);
