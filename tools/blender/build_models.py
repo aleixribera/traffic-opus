@@ -602,7 +602,26 @@ def b_mine(M, P):
     return L
 
 
-def b_farm(M, P):
+def farm_crops(P, look):
+    """The farmyard's three plots through the year (docs/design.md, "Seasons"), as (soil, row colours, row height,
+    row width) for its green plot and its wheat plots: summer green and wheat, spring shoots, the autumn harvest
+    ripe and then cut to stubble, winter's frosted furrows."""
+    if look == "young":
+        y = (mat("soil_tilled", "#86704f"), (mat("crop_y1", "#9fbd5c"), mat("crop_y2", "#8aab4c")), 0.14, 0.3)
+        return y, y
+    if look == "ripe":
+        w = (P["soil"], (P["crop_w1"], P["crop_w2"]), 0.36, 0.55)
+        return w, w
+    if look == "cut":
+        s = (P["soil"], (mat("stubble1", "#dcc98e"), mat("stubble2", "#cdb87a")), 0.1, 0.62)
+        return s, (P["soil"], (P["crop_w1"], P["crop_w2"]), 0.32, 0.55)
+    if look == "bare":
+        b = (mat("furrow2", "#6b583f"), (mat("furrow1", "#7a6447"), mat("frost", "#b9b6aa")), 0.12, 0.7)
+        return b, b
+    return (P["soil"], (P["crop_g1"], P["crop_g2"]), 0.32, 0.55), (P["soil"], (P["crop_w1"], P["crop_w2"]), 0.32, 0.55)
+
+
+def b_farm(M, P, look="green"):
     L = lot(M, P, 40, 40, bay_row(2, -15.6), asphalt=(-20.0, -11.2))
     # barn: grey walls, white roof, green doors and ridge cap
     bx0, bx1, by0, by1 = -18.5, -10.0, L.y0, L.y0 + 9.0
@@ -622,20 +641,30 @@ def b_farm(M, P):
         (1.0, 19.2, 1.0, 19.2, "x", "w"),
         (-19.2, -1.0, 4.0, 19.2, "y", "w"),
     ]
+    green, wheat = farm_crops(P, look)
     for x0, x1, y0, y1, along, crop in plots:
-        box(M, x0, x1, y0, y1, 0, 0.1, P["soil"])
-        c1, c2 = (P["crop_g1"], P["crop_g2"]) if crop == "g" else (P["crop_w1"], P["crop_w2"])
+        soil, (c1, c2), h, hw = green if crop == "g" else wheat
+        box(M, x0, x1, y0, y1, 0, 0.1, soil)
         span = (x1 - x0) if along == "y" else (y1 - y0)
         n = int(span / 1.5)
         for i in range(n):
             m = c1 if i % 2 == 0 else c2
             if along == "y":
                 c = x0 + span * (i + 0.5) / n
-                box(M, c - 0.55, c + 0.55, y0 + 0.4, y1 - 0.4, 0.1, 0.32, m)
+                box(M, c - hw, c + hw, y0 + 0.4, y1 - 0.4, 0.1, 0.1 + h, m)
             else:
                 c = y0 + span * (i + 0.5) / n
-                box(M, x0 + 0.4, x1 - 0.4, c - 0.55, c + 0.55, 0.1, 0.32, m)
+                box(M, x0 + 0.4, x1 - 0.4, c - hw, c + hw, 0.1, 0.1 + h, m)
+    if look == "cut":
+        # the green plot cut first: round bales lying on its stubble, waiting for the trucks
+        hay = mat("hay_bale", "#c4a052")
+        for x, y in ((4.0, -16.0), (9.5, -11.0), (15.0, -15.5), (6.0, -5.0), (13.5, -4.0)):
+            pipe_x(M, y, 0.85, 0.75, x - 0.7, x + 0.7, hay, n=8)
     return L
+
+
+def farm_look(look):
+    return lambda M, P: b_farm(M, P, look)
 
 
 def b_works(M, P):
@@ -2571,16 +2600,17 @@ def b_site_workshop(M, P):
     return L
 
 
-def _field(M, P, a, b):
-    """A crop field in rows (colours a, b alternating), with a farm track along its front."""
+def _field(M, P, a, b, h=0.34, inset=0.25, soil=None):
+    """A crop field in rows (colours a, b alternating, h tall, inset from each other), with a farm track along its
+    front."""
     L = lot(M, P, 64, 64, [], asphalt=(-32.0, -26.0))
     y0, y1 = L.yf + PARK_DEPTH, L.y1 + 0.6
-    box(M, -31.6, 31.6, y0, y1, PAD_H, PAD_H + 0.02, P["soil"])
+    box(M, -31.6, 31.6, y0, y1, PAD_H, PAD_H + 0.02, soil or P["soil"])
     n = 16
     w = (63.2 - 0.8) / n
     for i in range(n):
         x = -31.2 + i * w
-        box(M, x + 0.25, x + w - 0.25, y0 + 0.6, y1 - 0.6, PAD_H + 0.02, PAD_H + 0.34 + 0.06 * (i % 2), a if i % 2 else b)
+        box(M, x + inset, x + w - inset, y0 + 0.6, y1 - 0.6, PAD_H + 0.02, PAD_H + h + 0.06 * (i % 2), a if i % 2 else b)
     return L
 
 
@@ -2590,6 +2620,34 @@ def b_site_field_g(M, P):
 
 def b_site_field_w(M, P):
     return _field(M, P, P["crop_w1"], P["crop_w2"])
+
+
+# The farm's fields through the year (docs/design.md, "Seasons"): the renderer swaps a field's model with the season,
+# spring shoots, summer green (site_field_g), the autumn harvest (golden wheat, site_field_w, and fields already cut
+# to stubble with round bales waiting), and winter's bare ploughed furrows under frost.
+
+def b_site_field_young(M, P):
+    """Spring: thin rows of fresh shoots in dark tilled soil."""
+    return _field(M, P, mat("crop_y1", "#9fbd5c"), mat("crop_y2", "#8aab4c"), h=0.12, inset=1.05,
+                  soil=mat("soil_tilled", "#86704f"))
+
+
+def b_site_field_cut(M, P):
+    """Autumn, harvested: pale stubble rows and round bales lying about, ready to haul."""
+    L = _field(M, P, mat("stubble1", "#dcc98e"), mat("stubble2", "#cdb87a"), h=0.08, inset=0.15)
+    hay = mat("hay_bale", "#c4a052")
+    for i, (x, y) in enumerate(((-24.0, -14.0), (-12.0, -4.0), (-20.0, 10.0), (-4.0, 18.0), (6.0, -12.0),
+                                (14.0, 4.0), (22.0, -6.0), (24.0, 16.0), (2.0, 4.0), (-8.0, 26.0))):
+        if i % 2:
+            pipe_x(M, y, PAD_H + 0.75, 0.75, x - 0.7, x + 0.7, hay, n=8)
+        else:
+            cyl(M, x, y, 0.75, PAD_H, PAD_H + 1.4, hay, n=8)
+    return L
+
+
+def b_site_field_bare(M, P):
+    """Winter: ploughed furrows, frost lying in their hollows."""
+    return _field(M, P, mat("furrow1", "#7a6447"), mat("frost", "#b9b6aa"), h=0.1, inset=0.1, soil=mat("furrow2", "#6b583f"))
 
 
 def b_site_barn(M, P):
@@ -3101,6 +3159,555 @@ def b_fueldepot(M, P):
     return L
 
 
+# ------------------------------------------------------------------ landmarks (megaprojects)
+# One-off company landmarks (docs/design.md, "Landmarks"), each in three construction stages that share one
+# footprint: 1 foundations and cranes, 2 the structure rising in scaffolding, 3 finished. In the period's Deco dress:
+# limestone and bronze, vertical piers, stepped setbacks. The front (-Y) faces the site's spine road.
+
+def RUST():
+    return mat("steel_rust", "#a4472f")
+
+
+def deco_mats():
+    return {
+        "stone": mat("deco_stone", "#e6dcc6"),
+        "stone2": mat("deco_stone2", "#d3c7ad"),
+        "gilt": mat("deco_gilt", "#c49a3e"),
+        "win": mat("deco_win", "#46505e"),
+        "conc": mat("dam_conc", "#cec8b9"),
+        "conc2": mat("dam_conc2", "#bdb6a6"),
+        "earth": mat("site_earth", "#a58c69"),
+        "earth2": mat("site_earth2", "#8d7658"),
+        "pav1": mat("expo_pav1", "#ebcfae"),
+        "pav2": mat("expo_pav2", "#b9d5c8"),
+        "pav3": mat("expo_pav3", "#e7b8a2"),
+        "pav4": mat("expo_pav4", "#cbc6e2"),
+        "navy": mat("deco_navy", "#2f4a78"),
+    }
+
+
+def tower_crane(M, P, x, y, h, ang, jib=28.0):
+    """A tower crane: a lattice mast (a slim box with corner posts), the slewing cab, the jib out at `ang`
+    (radians from +X) with its trolley and hook block, and the counter-jib with its concrete weights."""
+    y_, d = P["ind_yellow"], P["ind_dark"]
+    box(M, x - 0.9, x + 0.9, y - 0.9, y + 0.9, PAD_H, 1.2, P["concrete"])
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            box(M, x + sx * 0.75 - 0.12, x + sx * 0.75 + 0.12, y + sy * 0.75 - 0.12, y + sy * 0.75 + 0.12, 1.2, h, y_)
+    for k in range(int(h // 6)):
+        z = 3.0 + k * 6.0
+        frame(M, x - 0.75, x + 0.75, y - 0.75, y + 0.75, z, z + 0.2, 0.18, y_)
+    box(M, x - 1.1, x + 1.1, y - 1.1, y + 1.1, h, h + 2.2, d)
+    c, s = math.cos(ang), math.sin(ang)
+    tip = (x + c * jib, y + s * jib)
+    back = (x - c * jib * 0.32, y - s * jib * 0.32)
+    bar(M, (x, y), tip, 1.0, h + 1.4, h + 2.4, y_)
+    bar(M, (x, y), back, 1.0, h + 1.4, h + 2.0, y_)
+    bx, by = x - c * jib * 0.27, y - s * jib * 0.27
+    box(M, bx - 1.2, bx + 1.2, by - 1.2, by + 1.2, h + 0.4, h + 1.4, P["concrete"])
+    cyl(M, x, y, 0.35, h + 2.2, h + 5.0, y_, n=4)                       # the A-frame peak
+    tx, ty = x + c * jib * 0.7, y + s * jib * 0.7
+    box(M, tx - 0.6, tx + 0.6, ty - 0.6, ty + 0.6, h + 0.8, h + 1.4, d)  # trolley
+    cyl(M, tx, ty, 0.06, h * 0.45, h + 0.8, d, n=4)                       # cable and hook block
+    box(M, tx - 0.4, tx + 0.4, ty - 0.4, ty + 0.4, h * 0.45 - 0.8, h * 0.45, d)
+
+
+def site_huts(M, P, x, y, n=3):
+    """Site cabins stacked two high, in a row along x: the contractor's offices."""
+    for i in range(n):
+        cx = x + i * 3.2
+        box(M, cx - 1.4, cx + 1.4, y - 3.0, y + 3.0, PAD_H, 2.7, P["tb_white"] if i % 2 else P["tb_grey"], bevel=0.04)
+        if i % 2 == 0:
+            box(M, cx - 1.4, cx + 1.4, y - 3.0, y + 3.0, 2.75, 5.4, P["tb_grey"], bevel=0.04)
+
+
+def material_stacks(M, P, x0, y0, n, seed=0):
+    """Stacks of steel and timber and pallets of bags in a row: a builder's laydown yard."""
+    for i in range(n):
+        x = x0 + i * 4.2
+        k = (i + seed) % 3
+        if k == 0:
+            for j in range(3):
+                box(M, x - 1.6, x + 1.6, y0 - 4.0, y0 + 4.0, PAD_H + j * 0.5, PAD_H + j * 0.5 + 0.42, RUST() if j % 2 else P["ind_steel"])
+        elif k == 1:
+            box(M, x - 1.6, x + 1.6, y0 - 3.0, y0 + 3.0, PAD_H, 1.2, P["wood"], bevel=0.04)
+        else:
+            for j in range(2):
+                box(M, x - 1.5, x + 1.5, y0 - 1.6 + j * 2.2, y0 - 0.2 + j * 2.2, PAD_H, 1.1, P["cp_white"], bevel=0.05)
+
+
+def scaffold(M, P, x0, x1, y0, y1, z0, z1, step=4.0):
+    """Scaffolding round a block: posts on a grid along its outline with a deck at every lift."""
+    m = P["ind_steel"]
+    nx, ny = max(1, int((x1 - x0) / step)), max(1, int((y1 - y0) / step))
+    for i in range(nx + 1):
+        x = x0 + (x1 - x0) * i / nx
+        for y in (y0, y1):
+            box(M, x - 0.07, x + 0.07, y - 0.07, y + 0.07, z0, z1, m)
+    for j in range(1, ny):
+        y = y0 + (y1 - y0) * j / ny
+        for x in (x0, x1):
+            box(M, x - 0.07, x + 0.07, y - 0.07, y + 0.07, z0, z1, m)
+    z = z0 + 2.0
+    while z < z1:
+        frame(M, x0 - 0.5, x1 + 0.5, y0 - 0.5, y1 + 0.5, z, z + 0.08, 0.9, P["wood"])
+        z += 2.0 * 3
+
+
+def piers(M, x0, x1, y0, y1, z0, z1, n, m, d=0.45, wd=0.9):
+    """Deco piers: n slim vertical ribs standing proud of each face of a block, running its full height."""
+    for i in range(n):
+        u = (i + 0.5) / n
+        x = x0 + (x1 - x0) * u
+        box(M, x - wd / 2, x + wd / 2, y0 - d, y0, z0, z1, m)
+        box(M, x - wd / 2, x + wd / 2, y1, y1 + d, z0, z1, m)
+        y = y0 + (y1 - y0) * u
+        box(M, x0 - d, x0, y - wd / 2, y + wd / 2, z0, z1, m)
+        box(M, x1, x1 + d, y - wd / 2, y + wd / 2, z0, z1, m)
+
+
+def steel_frame(M, P, x0, x1, y0, y1, z0, z1, bay=6.0, floor=4.0, slabs=True):
+    """An open steel skeleton in red primer: columns on a grid round the outline, beams and (grey) floor slabs at
+    every few storeys."""
+    m = RUST()
+    nx, ny = max(1, round((x1 - x0) / bay)), max(1, round((y1 - y0) / bay))
+    for i in range(nx + 1):
+        x = x0 + (x1 - x0) * i / nx
+        for y in (y0, y1):
+            box(M, x - 0.25, x + 0.25, y - 0.25, y + 0.25, z0, z1, m)
+    for j in range(1, ny):
+        y = y0 + (y1 - y0) * j / ny
+        for x in (x0, x1):
+            box(M, x - 0.25, x + 0.25, y - 0.25, y + 0.25, z0, z1, m)
+    z = z0 + floor
+    k = 0
+    while z <= z1 + 1e-6:
+        frame(M, x0 - 0.2, x1 + 0.2, y0 - 0.2, y1 + 0.2, z - 0.5, z, 0.4, m)
+        if slabs and k % 3 == 2:
+            box(M, x0 + 0.2, x1 - 0.2, y0 + 0.2, y1 - 0.2, z - 0.45, z - 0.15, P["concrete"])
+        z += floor
+        k += 1
+
+
+def hoarding(M, P, x0, x1, y0, y1, gap=8.0):
+    """A plank hoarding round a building site with a gap for the gate at the front middle."""
+    m, h = P["wood"], 2.4
+    box(M, x0, -gap / 2, y0, y0 + 0.2, PAD_H, h, m)
+    box(M, gap / 2, x1, y0, y0 + 0.2, PAD_H, h, m)
+    box(M, x0, x1, y1 - 0.2, y1, PAD_H, h, m)
+    box(M, x0, x0 + 0.2, y0 + 0.2, y1 - 0.2, PAD_H, h, m)
+    box(M, x1 - 0.2, x1, y0 + 0.2, y1 - 0.2, PAD_H, h, m)
+
+
+# ---- Hydro Dam (150 x 80): a gravity dam bowed upstream across the back with its reservoir behind, Deco intake
+# towers on its face, the powerhouse at its foot with the tailrace running out to the river, a stepped spillway at
+# the left end, and the switchyard and a pylon at the front right.
+
+DAM_W, DAM_D = 150, 80
+DAM_R, DAM_C = 400.0, -388.0      # the dam's upstream face: an arc bowed toward +Y
+
+
+def _dam_y(x):
+    return DAM_C + math.sqrt(DAM_R * DAM_R - x * x)
+
+
+def b_hydrodam(stage):
+    def fn(M, P):
+        L = Lot(DAM_W, DAM_D)
+        D = deco_mats()
+        hw, hd = DAM_W / 2, DAM_D / 2
+        box(M, -hw, hw, -hd, hd, 0, PAD_H, P["gravel"] if stage < 3 else P["pad"])
+        # the dam: segments of a gravity section between the upstream face and the sloping downstream face
+        crest = [0.0, 0.0, 9.0, 21.0][stage]
+        xs = [-66.0 + 132.0 * i / 12 for i in range(13)]
+        for i in range(12):
+            xa, xb = xs[i], xs[i + 1]
+            # (stage 2: the blocks stand at uneven heights, poured column by column)
+            top = crest if stage != 2 else crest + (5.0 if i % 3 == 0 else -2.0 if i % 3 == 1 else 2.5)
+            if stage == 1:
+                top = 3.0 if i % 2 == 0 else 1.6
+            base_t, crest_t = 15.0, 4.5
+            t_top = crest_t + (base_t - crest_t) * max(0.0, 1.0 - top / 21.0)
+            ya, yb = _dam_y(xa), _dam_y(xb)
+            lo = [(xa, ya - base_t, PAD_H), (xb, yb - base_t, PAD_H), (xb, yb, PAD_H), (xa, ya, PAD_H)]
+            hi = [(xa, ya - t_top, top), (xb, yb - t_top, top), (xb, yb, top), (xa, ya, top)]
+            M.loft(lo, hi, D["conc"] if (i % 2 == 0 or stage == 3) else D["conc2"])
+            if stage == 3:
+                # crest road and parapets
+                lo2 = [(xa, ya - t_top, top), (xb, yb - t_top, top), (xb, yb, top), (xa, ya, top)]
+                M.loft(lo2, [(x, y, top + 0.08) for x, y, _ in lo2], P["asphalt"])
+                for off, wdt in ((0.0, 0.4), (t_top - 0.4, 0.4)):
+                    q = [(xa, ya - off - wdt, top), (xb, yb - off - wdt, top), (xb, yb - off, top), (xa, ya - off, top)]
+                    M.loft(q, [(x, y, top + 1.1) for x, y, _ in q], D["stone"])
+        # abutments: the dam keys into banks of earth at either end
+        for s in (-1, 1):
+            x0, x1 = (66.0, hw) if s > 0 else (-hw, -66.0)
+            yb0 = _dam_y(66.0) - 16.0
+            h_ab = [0, 4.0, 12.0, 22.0][stage]
+            taper(M, (x0, x1, yb0, hd), (x0 + (2.0 if s > 0 else 0), x1 - (0 if s > 0 else 2.0), yb0 + 6.0, hd), PAD_H, h_ab,
+                  P["grass"] if stage == 3 else D["earth"])
+        # the reservoir: rising water behind the dam, held at the back by an embankment
+        water = [0, 1.2, 7.0, 18.5][stage]
+        if water > 0:
+            poly_prism(M, [(x, _dam_y(x)) for x in xs] + [(66.0, hd - 4.0), (-66.0, hd - 4.0)], PAD_H, water, P["water"])
+        if stage == 1:
+            # the cofferdam: an earth bank holding the river off the foundations, the excavation in front of it
+            ribbon(M, [(x, _dam_y(x) + 3.0) for x in xs], 4.0, PAD_H, 3.6, D["earth2"])
+            box(M, -60.0, 60.0, -24.0, _dam_y(60.0) - 16.0, PAD_H, PAD_H + 0.04, D["earth2"])
+        taper(M, (-hw + 9.0, hw - 9.0, hd - 4.0, hd), (-hw + 9.0, hw - 9.0, hd - 1.5, hd), PAD_H, max(water + 1.5, 3.0),
+              P["grass"] if stage == 3 else D["earth"])
+        # intake towers in the reservoir against the dam's face: fluted Deco drums with bronze crowns
+        for x in (-33.0, -11.0, 11.0, 33.0):
+            yt = _dam_y(x) + 5.0
+            tz = [0, 0, 11.0, 26.0][stage]
+            if tz <= 0:
+                cyl(M, x, yt, 3.2, PAD_H, 1.0, D["conc2"], n=12)
+                continue
+            cyl(M, x, yt, 3.0, PAD_H, tz, D["stone"], n=12)
+            for k in range(8):
+                a = 2 * math.pi * k / 8
+                fx, fy = x + math.cos(a) * 3.0, yt + math.sin(a) * 3.0
+                box(M, fx - 0.35, fx + 0.35, fy - 0.35, fy + 0.35, PAD_H, tz - 1.5, D["stone2"])
+            if stage == 3:
+                cyl(M, x, yt, 3.4, tz, tz + 1.4, D["gilt"], n=12)
+                cyl(M, x, yt, 2.2, tz + 1.4, tz + 3.4, D["stone"], n=12)
+                cone(M, x, yt, 2.2, tz + 3.4, tz + 5.0, D["gilt"], n=12)
+                bar(M, (x, yt - 3.0), (x, _dam_y(x) - 0.2), 2.0, 20.5, 21.1, D["stone"])   # its footbridge
+            else:
+                scaffold(M, P, x - 4.0, x + 4.0, yt - 4.0, yt + 4.0, PAD_H, tz + 2.0)
+        # the powerhouse at the foot of the dam: a long Deco hall with piers and a stepped parapet
+        py0, py1 = -20.0, _dam_y(0.0) - 15.5
+        if stage == 1:
+            box(M, -48.0, 48.0, py0, py1, PAD_H, 1.2, P["concrete"])
+            steel_frame(M, P, -46.0, -10.0, py0 + 1.0, py1 - 1.0, 1.2, 9.2, bay=6.0, floor=4.0, slabs=False)
+        else:
+            ph = 9.0 if stage == 2 else 15.0
+            box(M, -48.0, 48.0, py0, py1, PAD_H, ph, D["stone"] if stage == 3 else D["conc"])
+            if stage == 3:
+                piers(M, -48.0, 48.0, py0, py1, PAD_H, ph + 1.0, 16, D["stone2"], d=0.5, wd=1.2)
+                for k in range(14):
+                    x = -45.5 + k * 7.0
+                    box(M, x - 1.6, x + 1.6, py0 - 0.08, py0, 3.0, ph - 2.0, D["win"])
+                box(M, -48.6, 48.6, py0 - 0.6, py1 + 0.6, ph, ph + 0.8, D["stone2"])
+                box(M, -14.0, 14.0, py0 - 0.8, py0 + 4.0, ph, ph + 4.5, D["stone"])
+                box(M, -6.0, 6.0, py0 - 1.0, py0 + 3.0, ph + 4.5, ph + 7.0, D["gilt"])
+                for x in (-36.0, -24.0, 24.0, 36.0):                                     # transformers on the roof
+                    box(M, x - 2.4, x + 2.4, py0 + 3.0, py0 + 8.0, ph + 0.8, ph + 3.6, P["ind_dark"], bevel=0.05)
+            else:
+                scaffold(M, P, -48.5, 48.5, py0 - 1.0, py1 + 0.2, PAD_H, ph + 2.0, step=6.0)
+        # the tailrace: the turbines' water running out of the powerhouse to the river at the right
+        if stage >= 2:
+            box(M, -40.0, hw, -31.0, py0 - 1.5, PAD_H, 0.3, P["concrete"])
+            box(M, -38.5, hw, -29.5, py0 - 3.0, 0.3, 0.42 if stage == 2 else 0.9, P["water"])
+        # the spillway: a stepped chute down from the left end of the crest
+        if stage >= 2:
+            for k in range(7):
+                y = _dam_y(-60.0) - 15.0 - k * 2.4
+                z = (crest - 1.0) * (1.0 - k / 7.0)
+                box(M, -66.0, -56.0, y - 2.4, y, PAD_H, max(z, 0.5), D["conc"])
+                for x in (-66.0, -56.4):
+                    box(M, x, x + 0.4, y - 2.4, y, max(z, 0.5), max(z, 0.5) + 1.2, D["conc2"])
+        # the switchyard at the front right: transformers and gantries behind a fence, and a big pylon
+        if stage == 3:
+            box(M, 46.0, 73.0, -39.0, -33.0, PAD_H, PAD_H + 0.03, P["gravel"])
+            for k in range(3):
+                x = 50.0 + k * 7.5
+                box(M, x - 2.0, x + 2.0, -38.0, -34.0, PAD_H, 3.2, P["ind_dark"], bevel=0.05)
+                for xx in (x - 2.6, x + 2.6):
+                    box(M, xx - 0.15, xx + 0.15, -36.2, -35.8, PAD_H, 9.0, P["ind_steel"])
+                box(M, x - 2.8, x + 2.8, -36.2, -35.8, 8.6, 9.0, P["ind_steel"])
+            px, py = 68.0, -15.0
+            taper(M, (px - 3.0, px + 3.0, py - 3.0, py + 3.0), (px - 0.5, px + 0.5, py - 0.5, py + 0.5), PAD_H, 30.0, P["ind_steel"])
+            box(M, px - 7.0, px + 7.0, py - 0.4, py + 0.4, 22.0, 23.0, P["ind_steel"])
+            box(M, px - 5.0, px + 5.0, py - 0.4, py + 0.4, 27.0, 27.8, P["ind_steel"])
+        else:
+            tower_crane(M, P, -52.0, -28.0, [0, 34.0, 44.0][stage], 0.9, jib=34.0)
+            tower_crane(M, P, 56.0, -8.0, [0, 30.0, 40.0][stage], 2.6, jib=30.0)
+            site_huts(M, P, 50.0, -35.5, n=5)
+            material_stacks(M, P, -66.0, -35.0, 7, seed=stage)
+        return L
+    return fn
+
+
+# ---- Skyline Tower (80 x 80): a stepped limestone skyscraper with bronze piers and a gilded sunburst crown and
+# spire, on a granite plaza with trees, flagpoles and a fountain at the front.
+
+SKY_STEPS = [(26.0, 22.0), (19.0, 52.0), (14.5, 80.0), (10.5, 100.0), (7.0, 112.0)]   # (half width, top z)
+
+
+def b_skylinetower(stage):
+    def fn(M, P):
+        L = Lot(80, 80)
+        D = deco_mats()
+        box(M, -40.0, 40.0, -40.0, 40.0, 0, PAD_H, P["gravel"] if stage < 3 else P["lm_paving"])
+        cy = 6.0
+        if stage == 1:
+            hoarding(M, P, -37.0, 37.0, -37.0, 37.0)
+            box(M, -28.0, 28.0, cy - 28.0, cy + 28.0, PAD_H, PAD_H + 0.05, D["earth2"])     # the excavation
+            box(M, -26.0, 26.0, cy - 26.0, cy + 26.0, PAD_H, 1.4, P["concrete"])            # the raft
+            steel_frame(M, P, -26.0, 26.0, cy - 26.0, cy + 26.0, 1.4, 13.4, bay=6.5, floor=4.0)
+            tower_crane(M, P, 0.0, cy, 40.0, 0.6, jib=34.0)
+            tower_crane(M, P, -32.0, 20.0, 24.0, 0.3, jib=24.0)
+            site_huts(M, P, 18.0, -31.0, n=4)
+            material_stacks(M, P, -30.0, -31.0, 4, seed=1)
+            return L
+        # the finished part: each setback a dark glazed block with limestone piers and a bronze band at its top
+        clad_to = 52.0 if stage == 2 else 999.0
+        z0 = PAD_H
+        for k, (h, z1) in enumerate(SKY_STEPS):
+            zt = min(z1, clad_to)
+            if zt <= z0:
+                break
+            box(M, -h, h, cy - h, cy + h, z0, zt, D["win"])
+            piers(M, -h, h, cy - h, cy + h, z0, zt, max(4, int(h / 2.2)), D["stone"], d=0.5, wd=1.4 if k == 0 else 1.0)
+            for s in (-1, 1):   # corner pylons
+                for t in (-1, 1):
+                    box(M, s * h - (1.6 if s > 0 else 0), s * h + (0 if s > 0 else 1.6), cy + t * h - (1.6 if t > 0 else 0),
+                        cy + t * h + (0 if t > 0 else 1.6), z0, zt + (1.2 if zt == z1 else 0), D["stone"])
+            if zt == z1:
+                # (a rim round each setback's roof, gilded on the upper three; the roof inside it pale stone)
+                frame(M, -h - 0.5, h + 0.5, cy - h - 0.5, cy + h + 0.5, z1 - 1.2, z1, 1.3, D["gilt"] if k >= 2 else D["stone2"])
+                box(M, -h + 0.8, h - 0.8, cy - h + 0.8, cy + h - 0.8, z1 - 0.3, z1 - 0.1, D["stone2"])
+            z0 = zt
+        if stage == 2:
+            # the steel above the cladding, a climbing crane on top, scaffold up the clad part's face
+            h, z1 = SKY_STEPS[2]
+            steel_frame(M, P, -h, h, cy - h, cy + h, 52.0, 76.0, bay=5.0, floor=4.0)
+            tower_crane(M, P, 4.0, cy + 4.0, 92.0, 2.2, jib=30.0)
+            scaffold(M, P, -20.0, 20.0, cy - 20.0, cy - 19.0, 22.0, 52.0, step=5.0)
+            hoarding(M, P, -37.0, 37.0, -37.0, 37.0)
+            site_huts(M, P, 18.0, -31.0, n=4)
+            return L
+        # the crown: stepped gilded chevrons on each face round a lantern, and the spire
+        h, z1 = SKY_STEPS[-1]
+        for k in range(3):
+            w = h - 1.2 - k * 1.6
+            zb = z1 + k * 3.2
+            f = h - k * 1.6
+            tri = [(-w, zb), (w, zb), (0.0, zb + 7.0 - k)]
+            for s in (-1, 1):
+                flat_prism(M, tri, cy + s * f - 0.3, cy + s * f + 0.3, D["gilt"])
+                M.loft([(s * f - 0.3, cy + u, z) for u, z in tri], [(s * f + 0.3, cy + u, z) for u, z in tri], D["gilt"])
+        box(M, -4.0, 4.0, cy - 4.0, cy + 4.0, z1, z1 + 12.0, D["stone"])
+        cone(M, 0.0, cy, 3.0, z1 + 12.0, z1 + 40.0, D["gilt"], n=8)
+        # the plaza: entrance canopy, granite steps, flagpoles, trees in planters, a fountain
+        box(M, -10.0, 10.0, cy - 26.0 - 5.0, cy - 26.0, 7.0, 7.8, D["gilt"])
+        for x in (-9.4, 9.4):
+            box(M, x - 0.3, x + 0.3, cy - 30.6, cy - 30.0, PAD_H, 7.0, D["stone"])
+        box(M, -14.0, 14.0, cy - 33.0, cy - 30.6, PAD_H, 0.5, D["stone2"])
+        fountain(M, P, 0.0, -32.0, r=3.5)
+        for x in (-30.0, -22.0, 22.0, 30.0):
+            _flagpole(M, P, x, -34.0, h=12.0)
+        for x, y in ((-34.0, -20.0), (-34.0, 0.0), (-34.0, 20.0), (34.0, -20.0), (34.0, 0.0), (34.0, 20.0)):
+            box(M, x - 1.8, x + 1.8, y - 1.8, y + 1.8, PAD_H, 0.7, D["stone2"])
+            tree(M, P, x, y, s=1.0)
+        return L
+    return fn
+
+
+# ---- Grand Exposition (170 x 120): a world's fair round a long reflecting pool, the great hall at its head under
+# a shallow dome with a tall entrance pylon, a stepped Tower of Light on the left and a round Hall of Industry on
+# the right, pastel pavilions down either side with flags, and an entrance colonnade at the front.
+
+def _pavilion(M, P, D, x0, x1, y0, y1, h, m, stage, k):
+    if stage == 1 or (stage == 2 and k % 2):
+        box(M, x0, x1, y0, y1, PAD_H, 0.6, P["concrete"])
+        if stage == 2:
+            steel_frame(M, P, x0 + 0.5, x1 - 0.5, y0 + 0.5, y1 - 0.5, 0.6, h * 0.7, bay=5.0, floor=4.0, slabs=False)
+        return
+    top = flat_block(M, x0, x1, y0, y1, h, m, D["stone2"], parapet=D["stone"])
+    cx = (x0 + x1) / 2
+    face = y0 if abs(x0) > abs(x1) else y0
+    box(M, cx - 3.0, cx + 3.0, face - 0.6, face + 2.0, PAD_H, h + 4.0, D["stone"])    # entrance pylon
+    box(M, cx - 1.6, cx + 1.6, face - 0.7, face, 2.0, h + 2.0, D["win"])
+    band(M, x0, x1, y0, y1, h - 2.2, h - 1.4, D["navy"], o=0.05)
+    _flagpole(M, P, cx - 4.5, face - 2.5, h=12.0)
+    _flagpole(M, P, cx + 4.5, face - 2.5, h=12.0)
+
+
+def b_exposition(stage):
+    def fn(M, P):
+        L = Lot(170, 120)
+        D = deco_mats()
+        hw, hd = 85.0, 60.0
+        box(M, -hw, hw, -hd, hd, 0, PAD_H, D["earth"] if stage == 1 else P["gravel"] if stage == 2 else P["lm_paving"])
+        if stage == 3:
+            for s in (-1, 1):   # lawns either side of the pool
+                box(M, s * 10.5 if s > 0 else -19.0, 19.0 if s > 0 else -10.5, -46.0, 12.0, PAD_H, PAD_H + 0.05, P["grass"])
+        # the reflecting pool down the axis, fountains at its ends
+        if stage == 1:
+            box(M, -9.0, 9.0, -44.0, 12.0, PAD_H, PAD_H + 0.04, D["earth2"])
+        else:
+            box(M, -9.0, 9.0, -44.0, 12.0, PAD_H, 0.5, D["stone2"])
+            box(M, -8.0, 8.0, -43.0, 11.0, 0.5, 0.56, P["water"] if stage == 3 else P["concrete"])
+            if stage == 3:
+                fountain(M, P, 0.0, -48.0, r=3.0)
+                for y in (-30.0, -14.0, 2.0):
+                    cyl(M, 0.0, y, 0.25, 0.56, 3.5, P["water"], n=6)
+        # the great hall at the head of the pool
+        hx0, hx1, hy0, hy1 = -36.0, 36.0, 18.0, 54.0
+        if stage == 1:
+            box(M, hx0, hx1, hy0, hy1, PAD_H, 1.2, P["concrete"])
+            steel_frame(M, P, -12.0, 12.0, hy0 + 2.0, hy0 + 10.0, 1.2, 9.2, bay=6.0, floor=4.0, slabs=False)
+        elif stage == 2:
+            box(M, hx0, hx1, hy0, hy1, PAD_H, 8.0, D["stone"])
+            steel_frame(M, P, hx0 + 1.0, hx1 - 1.0, hy0 + 1.0, hy1 - 1.0, 8.0, 18.0, bay=8.0, floor=5.0, slabs=False)
+            scaffold(M, P, hx0 - 0.5, hx1 + 0.5, hy0 - 1.0, hy0 + 0.5, PAD_H, 10.0, step=6.0)
+        else:
+            flat_block(M, hx0, hx1, hy0, hy1, 18.0, D["stone"], D["stone2"], parapet=D["stone"])
+            piers(M, hx0, hx1, hy0, hy1, PAD_H, 18.5, 12, D["stone2"], d=0.5, wd=1.4)
+            revolve(M, 0.0, (hy0 + hy1) / 2, [(15.0, 18.2), (14.6, 21.0), (12.6, 25.5), (9.0, 29.0), (4.0, 31.0), (0.0, 31.6)], D["navy"], n=16)
+            cyl(M, 0.0, (hy0 + hy1) / 2, 15.4, 18.2, 19.2, D["gilt"], n=16)
+            # the entrance pylon: a tall stepped block with fins and a gilded top
+            box(M, -9.0, 9.0, hy0 - 3.0, hy0 + 4.0, PAD_H, 30.0, D["stone"])
+            box(M, -6.0, 6.0, hy0 - 3.5, hy0 + 3.0, 30.0, 36.0, D["stone"])
+            box(M, -3.0, 3.0, hy0 - 3.8, hy0 + 2.0, 36.0, 40.0, D["gilt"])
+            for x in (-6.5, -3.5, -0.5, 2.5, 5.5):
+                box(M, x - 0.5, x + 0.5, hy0 - 3.6, hy0 - 3.0, 4.0, 28.0, D["win"])
+        # the Tower of Light on the left
+        tx, ty = -62.0, 30.0
+        if stage == 1:
+            box(M, tx - 8.0, tx + 8.0, ty - 8.0, ty + 8.0, PAD_H, 1.2, P["concrete"])
+            tower_crane(M, P, tx + 12.0, ty - 14.0, 30.0, 0.4, jib=26.0)
+        else:
+            steps = [(6.0, 26.0), (4.6, 46.0), (3.4, 60.0)] if stage == 3 else [(6.0, 26.0)]
+            z0 = PAD_H
+            for h, z1 in steps:
+                box(M, tx - h, tx + h, ty - h, ty + h, z0, z1, D["stone"])
+                piers(M, tx - h, tx + h, ty - h, ty + h, z0, z1, 3, D["stone2"], d=0.5, wd=0.9)
+                z0 = z1
+            if stage == 3:
+                box(M, tx - 2.6, tx + 2.6, ty - 2.6, ty + 2.6, 60.0, 64.0, D["gilt"])
+                cone(M, tx, ty, 2.2, 64.0, 74.0, D["gilt"], n=8)
+            else:
+                steel_frame(M, P, tx - 4.6, tx + 4.6, ty - 4.6, ty + 4.6, 26.0, 42.0, bay=4.6, floor=4.0, slabs=False)
+                tower_crane(M, P, tx + 12.0, ty - 14.0, 52.0, 0.4, jib=26.0)
+        # the Hall of Industry on the right: a ribbed drum under a gilt-rimmed shallow dome
+        rx, ry = 60.0, 30.0
+        if stage == 1:
+            cyl(M, rx, ry, 17.0, PAD_H, 1.2, P["concrete"], n=16)
+        else:
+            hh = 16.0 if stage == 3 else 7.0
+            cyl(M, rx, ry, 16.0, PAD_H, hh, D["pav2"] if stage == 3 else D["conc"], n=16)
+            if stage == 3:
+                for k in range(16):
+                    a = 2 * math.pi * (k + 0.5) / 16
+                    fx, fy = rx + math.cos(a) * 16.0, ry + math.sin(a) * 16.0
+                    box(M, fx - 0.6, fx + 0.6, fy - 0.6, fy + 0.6, PAD_H, hh + 0.6, D["stone"])
+                cyl(M, rx, ry, 16.6, hh, hh + 1.0, D["gilt"], n=16)
+                revolve(M, rx, ry, [(16.0, hh + 1.0), (13.0, hh + 4.5), (7.0, hh + 7.0), (0.0, hh + 7.8)], D["stone2"], n=16)
+            else:
+                scaffold(M, P, rx - 17.0, rx + 17.0, ry - 17.0, ry - 16.0, PAD_H, 10.0, step=6.0)
+        # pavilions down either side of the pool
+        mats = [D["pav1"], D["pav3"], D["pav2"], D["pav4"], D["pav3"], D["pav1"]]
+        k = 0
+        for s in (-1, 1):
+            for j, (y0, y1) in enumerate(((-46.0, -30.0), (-25.0, -9.0), (-4.0, 10.0))):
+                x0, x1 = (24.0, 46.0) if s > 0 else (-46.0, -24.0)
+                _pavilion(M, P, D, x0, x1, y0, y1, 9.0 + 2.0 * (j % 2), mats[k], stage, k)
+                k += 1
+            # (and a row of trees between the pavilions and the lawn)
+            if stage == 3:
+                for y in (-40.0, -22.0, -4.0):
+                    tree(M, P, s * 21.0, y, s=0.9)
+        # the entrance: a colonnade either side of the axis with twin pylons at the gate
+        if stage == 3:
+            for s in (-1, 1):
+                x0, x1 = (12.0, 70.0) if s > 0 else (-70.0, -12.0)
+                box(M, x0, x1, -57.5, -54.5, 7.0, 8.0, D["stone"])
+                n = int((x1 - x0) / 4.0)
+                for i in range(n + 1):
+                    x = x0 + (x1 - x0) * i / n
+                    cyl(M, x, -56.0, 0.6, PAD_H, 7.0, D["stone"], n=6)
+                box(M, s * 10.0 - 2.5, s * 10.0 + 2.5, -58.5, -53.5, PAD_H, 16.0, D["stone"])
+                box(M, s * 10.0 - 1.5, s * 10.0 + 1.5, -58.8, -53.2, 16.0, 19.0, D["gilt"])
+        elif stage == 2:
+            tower_crane(M, P, 0.0, 14.0, 36.0, 4.4, jib=34.0)
+            site_huts(M, P, 52.0, -53.0, n=5)
+            material_stacks(M, P, -78.0, -53.0, 6, seed=2)
+        else:
+            tower_crane(M, P, 0.0, 14.0, 26.0, 4.4, jib=34.0)
+            site_huts(M, P, 52.0, -53.0, n=5)
+            material_stacks(M, P, -78.0, -53.0, 8, seed=0)
+            material_stacks(M, P, -78.0, -40.0, 5, seed=1)
+        return L
+    return fn
+
+
+# ---- Industrial parks: the link between two plants built fence to fence, drawn piece by piece between them: a
+# covered conveyor gallery or a pipe bridge on trestles, 12 m a segment (scaled to fit), and a transfer tower at each
+# end. High enough for trucks to pass under.
+
+def b_link_conveyor(M, P):
+    """One 12 m conveyor segment along Y: an open troughed belt (the goods ride it in sight, see link_load) on a
+    steel truss with a walkway and yellow handrail, carried on a trestle bent at its middle."""
+    L = Lot(3, 12)
+    z0 = 6.5
+    for x in (-0.95, 0.95):                                                       # the truss: top and bottom chords
+        box(M, x - 0.1, x + 0.1, -6.0, 6.0, z0, z0 + 0.22, P["ind_dark"])
+        box(M, x - 0.08, x + 0.08, -6.0, 6.0, z0 + 0.95, z0 + 1.1, P["ind_dark"])
+        for y in (-4.5, -1.5, 1.5, 4.5):                                          # and its posts
+            box(M, x - 0.07, x + 0.07, y - 0.07, y + 0.07, z0 + 0.22, z0 + 0.95, P["ind_dark"])
+    box(M, -0.85, 0.85, -6.0, 6.0, z0 + 0.22, z0 + 0.4, P["ind_steel"])           # floor plate
+    taper(M, (-0.55, 0.55, -6.0, 6.0), (-0.72, 0.72, -6.0, 6.0), z0 + 0.4, z0 + 0.62, P["ind_dark"])  # the trough
+    box(M, -0.5, 0.5, -6.0, 6.0, z0 + 0.62, z0 + 0.66, mat("belt", "#2a2c30"))     # the belt
+    box(M, 1.05, 1.5, -6.0, 6.0, z0 + 0.1, z0 + 0.2, P["ind_steel"])                # walkway
+    box(M, 1.42, 1.5, -6.0, 6.0, z0 + 1.05, z0 + 1.15, P["ind_yellow"])            # handrail
+    for y in (-5.5, 0.0, 5.5):
+        box(M, 1.42, 1.5, y - 0.05, y + 0.05, z0 + 0.2, z0 + 1.05, P["ind_yellow"])
+    for x in (-1.15, 1.15):                                                       # the trestle bent
+        box(M, x - 0.18, x + 0.18, -0.25, 0.25, 0, z0, P["ind_dark"])
+    box(M, -1.5, 1.5, -0.3, 0.3, z0 - 0.6, z0, P["ind_dark"])
+    bar(M, (-1.15, -0.1), (1.15, 0.1), 0.16, 1.0, 1.3, P["ind_dark"])
+    box(M, -1.5, 1.5, -0.3, 0.3, 0, 0.3, P["concrete"])
+    return L
+
+
+def b_link_load(M, P):
+    """A load riding a belt: a heap of goods on a cleat, pale so the renderer tints it the product's colour. Drawn
+    lifted onto the belt (it is modelled on the ground for the lot rules)."""
+    L = Lot(1.0, 1.4)
+    box(M, -0.5, 0.5, -0.7, 0.7, 0, 0.06, mat("cleat", "#cfd2d4"))
+    taper(M, (-0.46, 0.46, -0.64, 0.64), (-0.14, 0.14, -0.3, 0.3), 0.06, 0.55, mat("load_white", "#f4f4f0"))
+    return L
+
+
+def b_link_flow(M, P):
+    """A pulse of flow along a pipe: a collar round it, pale so the renderer tints it the product's colour (lifted
+    onto the pipe when drawn)."""
+    L = Lot(1.0, 0.9)
+    pipe_y(M, 0.0, 0.5, 0.5, -0.45, 0.45, mat("load_white", "#f4f4f0"), n=10)
+    return L
+
+
+def b_link_pipe(M, P):
+    """One 12 m pipe-bridge segment along Y: three pipes on a trestle bent with a walkway beside them."""
+    L = Lot(3, 12)
+    z0 = 6.5
+    for x, r, m in ((-0.75, 0.42, P["ind_tank"]), (0.2, 0.32, P["ind_orange"]), (0.95, 0.26, P["ind_steel"])):
+        pipe_y(M, x, z0 + 0.35 + r, r, -6.0, 6.0, m, n=8)
+    box(M, -1.4, 1.4, -6.0, 6.0, z0, z0 + 0.3, P["ind_dark"])
+    for x in (-1.2, 1.2):
+        box(M, x - 0.18, x + 0.18, -0.25, 0.25, 0, z0, P["ind_dark"])
+    box(M, -1.5, 1.5, -0.3, 0.3, z0 - 0.6, z0, P["ind_dark"])
+    box(M, -1.5, 1.5, -0.3, 0.3, 0, 0.3, P["concrete"])
+    return L
+
+
+def b_link_tower(M, P):
+    """The transfer tower at each end of a link: a clad steel tower with a pitched top, a stair up its side."""
+    L = Lot(6, 6)
+    box(M, -3.0, 3.0, -3.0, 3.0, 0, 0.3, P["concrete"])
+    box(M, -2.4, 2.4, -2.4, 2.4, 0.3, 9.8, P["ind_wall"])
+    band(M, -2.4, 2.4, -2.4, 2.4, 7.0, 7.6, P["ind_dark"], o=0.05)
+    gable(M, -2.4, 2.4, -2.4, 2.4, 9.8, 11.2, "y", P["ind_roof"], P["ind_wall"], oh_u=(0.3, 0.3), oh_a=(0.3, 0.3))
+    for k in range(4):
+        z = 0.3 + k * 2.4
+        bar(M, (2.6, -2.2 + (k % 2) * 4.0), (2.6, 2.2 - (k % 2) * 4.0), 0.8, z, z + 0.15, P["ind_yellow"])
+    box(M, 2.4, 3.0, -2.4, 2.4, 0.3, 0.45, P["ind_yellow"])
+    return L
+
+
 SERVICES = ("garbage", "firestation", "police", "clinic", "hospital", "school", "highschool", "university",
             "park", "parklarge", "windturbine", "coalplant", "solarfarm", "waterpump", "sewageoutlet",
             "townhall", "hamlethall", "villagehall", "cityhall", "stadium", "obstower", "concerthall", "skytower")
@@ -3122,6 +3729,11 @@ BUILDINGS = {
     "aptower": (b_aptower, 30, 30, 6),
     "mine": (b_mine, 26, 30, 2),
     "farm": (b_farm, 40, 40, 2),
+    # (the farmyard through the year: the renderer swaps it with the season, as it does the fields)
+    "farm_young": (farm_look("young"), 40, 40, 2),
+    "farm_ripe": (farm_look("ripe"), 40, 40, 2),
+    "farm_cut": (farm_look("cut"), 40, 40, 2),
+    "farm_bare": (farm_look("bare"), 40, 40, 2),
     "works": (b_works, 36, 32, 4),
     "foodplant": (b_foodplant, 32, 30, 4),
     "loggingcamp": (b_loggingcamp, 36, 32, 2),
@@ -3152,6 +3764,9 @@ BUILDINGS = {
     "site_workshop": (b_site_workshop, 30, 22, 0),
     "site_field_g": (b_site_field_g, 64, 64, 0),
     "site_field_w": (b_site_field_w, 64, 64, 0),
+    "site_field_young": (b_site_field_young, 64, 64, 0),
+    "site_field_cut": (b_site_field_cut, 64, 64, 0),
+    "site_field_bare": (b_site_field_bare, 64, 64, 0),
     "site_barn": (b_site_barn, 30, 24, 0),
     "site_logyard": (b_site_logyard, 40, 30, 0),
     "site_heap_ore": (b_site_heap_ore, 30, 24, 0),
@@ -3187,6 +3802,21 @@ BUILDINGS = {
     "obstower": (b_obstower, 28, 28, 2),
     "concerthall": (b_concerthall, 52, 44, 6),
     "skytower": (b_skytower, 36, 36, 4),
+    # company landmarks, three stages each (docs/design.md, "Landmarks"), and the industrial-park link pieces
+    "mega_hydrodam_1": (b_hydrodam(1), 150, 80, 0),
+    "mega_hydrodam_2": (b_hydrodam(2), 150, 80, 0),
+    "mega_hydrodam_3": (b_hydrodam(3), 150, 80, 0),
+    "mega_skylinetower_1": (b_skylinetower(1), 80, 80, 0),
+    "mega_skylinetower_2": (b_skylinetower(2), 80, 80, 0),
+    "mega_skylinetower_3": (b_skylinetower(3), 80, 80, 0),
+    "mega_exposition_1": (b_exposition(1), 170, 120, 0),
+    "mega_exposition_2": (b_exposition(2), 170, 120, 0),
+    "mega_exposition_3": (b_exposition(3), 170, 120, 0),
+    "link_conveyor": (b_link_conveyor, 3, 12, 0),
+    "link_pipe": (b_link_pipe, 3, 12, 0),
+    "link_tower": (b_link_tower, 6, 6, 0),
+    "link_load": (b_link_load, 1.0, 1.4, 0),
+    "link_flow": (b_link_flow, 1.0, 0.9, 0),
 }
 
 
@@ -3589,6 +4219,127 @@ def rt_trailer(kind, lead):
     return fn
 
 
+# Oversized-load convoys (src/game/convoys.ts, CONVOY_UNITS): a pilot car, a heavy-haul tractor, a low-loader with
+# the piece, and an escort car behind, each drawn on the driven path like a road train's pieces. Fixed colours (the
+# company's haulage red and cream, the escorts in warning yellow) and nothing tinted; `beacon` is the amber lamps,
+# which the renderer flashes. Lengths and axles match CONVOY_UNITS: pivot = front axle (or kingpin) from the front.
+
+def convoy_mats():
+    return {
+        "paint": mat("haul_paint", "#9e2f26"), "trim": mat("haul_trim", "#efe6cf"),
+        "escort": mat("escort_paint", "#e2b13a"), "escort_trim": mat("escort_trim", "#2b2d31"),
+        "beacon": mat("beacon", "#ffa21f", rough=0.4), "wood": mat("crib_wood", "#a97c50"),
+        "turbine": mat("turbine_casing", "#7d9bb0"), "turbine2": mat("turbine_flange", "#43596b"),
+        "girder": mat("girder_grey", "#a9b1b5"), "girder2": mat("girder_rivets", "#6c767d"), "chain": mat("chain_dark", "#3b3e43"),
+        "flag": mat("wide_flag", "#d8322a"),
+    }
+
+
+def v_escort_car(Ms, P):
+    """The pilot / escort car (4.6 m): a 1930s sedan in warning yellow with black wings and running boards, an
+    'OVERSIZE LOAD' board across its roof and an amber lamp at each end of it."""
+    S = convoy_mats()
+    paint, trim, beacon, glass, dark = Ms["paint"], Ms["trim"], Ms["beacon"], Ms["glass"], Ms["dark"]
+    side_profile(paint, [(-2.22, 0.42), (2.22, 0.42), (2.22, 0.8), (2.0, 0.95), (-1.9, 0.95), (-2.22, 0.82)], 0.72, S["escort"])
+    wing = [(-2.15, 0.42), (-1.95, 0.74), (-1.2, 0.78), (-0.9, 0.48), (0.95, 0.48), (1.25, 0.78), (1.95, 0.72), (2.15, 0.45)]
+    for s in (-1, 1):
+        extrude_profile(trim, wing, "x", 0.72 if s > 0 else -0.95, 0.95 if s > 0 else -0.72, S["escort_trim"])
+    taper(glass, (-0.7, 0.7, -0.55, 1.65), (-0.64, 0.64, -0.3, 1.5), 0.95, 1.4, P["glass"])
+    taper(paint, (-0.66, 0.66, -0.32, 1.52), (-0.62, 0.62, -0.25, 1.45), 1.4, 1.5, S["escort"])
+    box(dark, -0.38, 0.38, -2.25, -2.2, 0.48, 0.92, P["dark"])                       # grille
+    box(trim, -0.88, 0.88, -2.3, -2.22, 0.35, 0.5, S["escort_trim"])                 # bumpers
+    box(trim, -0.88, 0.88, 2.22, 2.3, 0.35, 0.5, S["escort_trim"])
+    # the roof board: yellow with a black lettering band, a lamp at each end over a dark base
+    box(paint, -0.86, 0.86, 0.38, 0.48, 1.5, 1.84, S["escort"])
+    box(trim, -0.72, 0.72, 0.37, 0.49, 1.6, 1.74, S["escort_trim"])
+    for x in (-0.76, 0.76):
+        box(dark, x - 0.1, x + 0.1, 0.33, 0.53, 1.84, 1.87, P["dark"])
+        cyl(beacon, x, 0.43, 0.09, 1.87, 2.0, S["beacon"], n=6)
+    wheel_axle(dark, -1.3, 0.36, 0.9, P["dark"])
+    wheel_axle(dark, 1.3, 0.36, 0.9, P["dark"])
+
+
+def v_ll_tractor(Ms, P):
+    """The heavy-haul tractor (6.6 m): a long-bonneted 1930s ballast tractor in haulage red, cream radiator and
+    stripe, a set-back cab with an amber lamp, and a tandem drive with the fifth wheel on it."""
+    S = convoy_mats()
+    paint, trim, beacon, glass, dark = Ms["paint"], Ms["trim"], Ms["beacon"], Ms["glass"], Ms["dark"]
+    box(paint, -0.78, 0.78, -3.2, -0.95, 1.0, 2.05, S["paint"], bevel=0.1)          # bonnet
+    box(trim, -0.74, 0.74, -3.3, -3.18, 0.95, 2.0, S["trim"])                         # radiator shell
+    box(dark, -0.56, 0.56, -3.32, -3.29, 1.08, 1.88, P["dark"])                       # its grille
+    wing = [(-3.1, 0.92), (-2.85, 1.3), (-1.3, 1.34), (-0.95, 1.0), (-0.95, 0.85), (-3.1, 0.85)]
+    for s in (-1, 1):
+        extrude_profile(paint, wing, "x", 0.8 if s > 0 else -1.28, 1.28 if s > 0 else -0.8, S["paint"])
+    side_profile(paint, [(-0.98, 0.95), (0.42, 0.95), (0.42, 2.98), (-0.75, 2.98), (-0.98, 2.7)], 1.2, S["paint"])
+    box(paint, -1.28, 1.28, -1.12, 0.52, 2.98, 3.1, S["paint"])                       # roof
+    box(trim, -1.22, 1.22, -0.98, 0.42, 1.25, 1.42, S["trim"])                        # cream stripe
+    box(glass, -1.0, 1.0, -1.0, -0.97, 1.85, 2.72, P["glass"])
+    for s in (-1, 1):
+        x0, x1 = (1.2, 1.23) if s > 0 else (-1.23, -1.2)
+        box(glass, x0, x1, -0.75, 0.2, 1.9, 2.72, P["glass"])
+    box(dark, -0.24, 0.24, -0.62, -0.34, 3.1, 3.13, P["dark"])
+    cyl(beacon, 0.0, -0.48, 0.13, 3.13, 3.3, S["beacon"], n=6)
+    box(dark, -0.62, 0.62, -3.1, 3.23, 0.55, 0.98, P["dark"])                          # chassis
+    box(dark, -1.0, 1.0, 0.62, 2.0, 0.98, 1.18, P["dark"])                            # fifth wheel
+    for s in (-1, 1):
+        box(paint, s * 1.25 - 0.07, s * 1.25 + 0.07, 0.15, 2.5, 1.05, 1.2, S["paint"])  # rear wings
+        box(dark, s * 0.95 - 0.25, s * 0.95 + 0.25, -0.85, 0.35, 0.5, 0.95, P["dark"])  # fuel tanks
+    cyl(dark, 0.95, 0.62, 0.08, 1.0, 3.3, P["dark"], n=5)                             # exhaust stack
+    box(dark, -1.2, 1.2, -3.3, -3.18, 0.45, 0.78, P["dark"])                          # bumper
+    box(trim, -1.1, 1.1, -3.36, -3.3, 0.5, 0.76, S["escort"])                        # OVERSIZE LOAD board on it
+    box(trim, -0.9, 0.9, -3.37, -3.36, 0.58, 0.68, S["escort_trim"])
+    for y in (-2.0, 0.75, 1.85):
+        wheel_axle(dark, y, 0.55, 1.24, P["dark"])
+
+
+def ll_trailer(piece):
+    """The low-loader (14 m): a gooseneck over the tractor's fifth wheel (kingpin 0.8 m from its front), a well deck
+    slung low between it and a four-axle rear bogie, and the oversized piece chained down on timber cribs."""
+    def fn(Ms, P):
+        S = convoy_mats()
+        paint, dark, pc = Ms["paint"], Ms["dark"], Ms["piece"]
+        prof = [(-7.0, 1.25), (-7.0, 1.75), (-4.1, 1.75), (-3.4, 0.75), (3.5, 0.75), (3.9, 1.25), (7.0, 1.25),
+                (7.0, 0.85), (3.8, 0.85), (3.4, 0.4), (-3.5, 0.4), (-4.3, 1.25)]
+        side_profile(paint, prof, 1.25, S["paint"])
+        box(dark, -0.9, 0.9, -6.6, -5.8, 1.18, 1.25, P["dark"])                       # kingpin plate
+        for y in (4.2, 5.0, 5.8, 6.6):
+            wheel_axle(dark, y, 0.38, 1.22, P["dark"])
+        box(dark, -1.0, 1.0, 6.9, 7.0, 0.5, 0.85, P["dark"])                          # rear lamps bar
+        box(pc, -1.25, 1.25, 6.88, 6.96, 1.25, 1.95, S["escort"])                       # OVERSIZE LOAD banner
+        box(pc, -1.0, 1.0, 6.96, 6.98, 1.45, 1.72, S["escort_trim"])
+        if piece == "turbine":
+            # a generator stator: a casing on two cribs, flanged at each end, the shaft stub at the back
+            cz = 0.75 + 0.35 + 1.55
+            for y in (-1.9, 1.5):
+                box(pc, -1.2, 1.2, y - 0.4, y + 0.4, 0.75, 1.5, S["wood"])
+            _tube_y(pc, -2.8, 2.4, 1.55, 1.55, cz, S["turbine"])
+            for y0, y1 in ((-3.0, -2.8), (2.4, 2.6)):
+                _tube_y(pc, y0, y1, 1.7, 1.7, cz, S["turbine2"])
+            _tube_y(pc, 2.6, 3.2, 0.42, 0.42, cz, S["chain"], n=8)
+            for y in (-1.3, 0.9):                                                     # chains over the top
+                box(pc, -1.6, 1.6, y - 0.06, y + 0.06, cz + 1.5, cz + 1.6, S["chain"])
+            for x in (-1.62, 1.62):                                                   # red flags at its widest
+                for y in (-2.9, 2.5):
+                    box(pc, x - 0.06, x + 0.06, y - 0.25, y + 0.25, cz - 0.3, cz + 0.2, S["flag"])
+        else:
+            # a pair of plate girders braced together, on cribs at the well and over the bogie
+            zb = 1.45
+            box(pc, -1.2, 1.2, -2.9, -2.1, 0.75, zb, S["wood"])
+            box(pc, -1.2, 1.2, 5.0, 5.8, 1.25, zb, S["wood"])
+            for x in (-0.8, 0.8):
+                box(pc, x - 0.38, x + 0.38, -3.3, 6.9, zb, zb + 0.14, S["girder"])     # bottom flange
+                box(pc, x - 0.08, x + 0.08, -3.3, 6.9, zb + 0.14, zb + 2.0, S["girder"])  # web
+                box(pc, x - 0.38, x + 0.38, -3.3, 6.9, zb + 2.0, zb + 2.14, S["girder"])  # top flange
+            for y in (-2.4, 0.6, 3.6):                                                # stiffeners on the outside
+                for s in (-1, 1):
+                    box(pc, s * 0.88 - 0.05, s * 0.88 + 0.05, y - 0.08, y + 0.08, zb + 0.14, zb + 2.0, S["girder2"])
+            for y in (-2.9, -0.4, 2.1, 4.6, 6.6):                                     # bracing across the top
+                box(pc, -0.45, 0.45, y - 0.07, y + 0.07, zb + 2.0, zb + 2.1, S["chain"])
+            for x in (-0.9, 0.9):                                                     # red flags on the overhang
+                box(pc, x - 0.25, x + 0.25, 6.86, 6.9, zb + 1.4, zb + 2.0, S["flag"])
+    return fn
+
+
 VEHICLES = {
     "car": (v_car, ("body", "glass", "dark"), (1.85, 4.4, 1.45)),
     "van": (v_van, ("body", "glass", "dark"), (2.0, 5.0, 2.0)),
@@ -3615,6 +4366,11 @@ VEHICLES = {
     "firetruck": (v_firetruck, ("paint", "trim", "lights", "ladder", "glass", "dark"), (2.5, 8.5, 3.15)),
     "ambulance": (v_ambulance, ("paint", "trim", "lights", "glass", "dark"), (2.0, 5.5, 2.62)),
     "policecar": (v_policecar, ("paint", "trim", "lights", "glass", "dark"), (1.86, 4.6, 1.6)),
+    # oversized-load convoy (fixed colours; `beacon` flashes)
+    "escort_car": (v_escort_car, ("paint", "trim", "beacon", "glass", "dark"), (1.9, 4.6, 2.0)),
+    "ll_tractor": (v_ll_tractor, ("paint", "trim", "beacon", "glass", "dark"), (2.64, 6.6, 3.3)),
+    "ll_trailer_turbine": (ll_trailer("turbine"), ("paint", "dark", "piece"), (3.4, 14.0, 4.35)),
+    "ll_trailer_girder": (ll_trailer("girder"), ("paint", "dark", "piece"), (2.5, 14.0, 3.59)),
 }
 
 
@@ -3832,8 +4588,9 @@ def verify(names):
                 if abs(p.z - PAD_H) > 1e-3 or p.y > 0 or fwd.y < 0.99:
                     st["issues"].append(f"{e.name} at {tuple(round(v, 2) for v in p)} fwd {tuple(round(v, 2) for v in fwd)}")
             st["park_y"] = round(empties[0].matrix_world.translation.y, 2) if empties else None
-            if tris > 2500:
-                st["issues"].append(f"{tris} tris over 2500")
+            cap = 14000 if name.startswith("mega_") else 2500   # (a landmark is one of a kind, and there are three)
+            if tris > cap:
+                st["issues"].append(f"{tris} tris over {cap}")
         else:
             _, parts, (W, Ln, H) = VEHICLES[name]
             if sorted(parts) != st["meshes"]:
@@ -3842,7 +4599,7 @@ def verify(names):
                 if abs(want - got) > 0.03:
                     st["issues"].append(f"size {[round(v, 3) for v in size]} != {(W, Ln, H)}")
                     break
-            cap = 480 if "cargo" in parts else 300   # freight bodies carry more detail; there are far fewer of them
+            cap = 480 if {"cargo", "piece", "beacon"} & set(parts) else 300   # freight and convoys carry more detail; there are far fewer of them
             if tris > cap:
                 st["issues"].append(f"{tris} tris over {cap}")
             for o in meshes:

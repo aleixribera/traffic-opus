@@ -23,6 +23,11 @@ import { BLOCK, demandPerDay, gridPt, isHall, needsOf } from "./towns";
 import { F } from "../world/gen";
 import { Transit } from "./transit";
 import { Utilities } from "./utilities";
+import { fieldLook, seasonMult } from "./calendar";
+import { BIG_NAME, Convoys, TURBINE_BOOST, type BigKind } from "./convoys";
+import { isMega, megaBlock, megaStage, piecesLeft, townAt } from "./megaprojects";
+import { PARK_SMOKE, Parks } from "./parks";
+import { sizeOf } from "./towns";
 import type { PlaceOpts, Placement } from "./buildings";
 import type { BuildingKind } from "../config";
 import { CELL, DEPTH, ZoneMap, type Block, type Cell, type ZoneGroup, type ZoneId } from "./zones";
@@ -44,7 +49,11 @@ export type GameEvent =
   | { t: "money" }
   | { t: "toast"; msg: string }
   /** a town has grown into a new size */
-  | { t: "townSize"; town: number; size: number };
+  | { t: "townSize"; town: number; size: number }
+  /** one of the company's landmarks is finished (its banner) */
+  | { t: "landmark"; b: number }
+  /** an oversized-load convoy set off ("out") or got there ("in") */
+  | { t: "convoy"; phase: "out" | "in"; kind: BigKind; from: number; to: number };
 
 /** The company's books for an hour. Income comes only from loads delivered to towns (and bus fares). */
 export interface Budget {
@@ -74,6 +83,10 @@ export class Game {
   transit: Transit;
   utilities: Utilities;
   industry: Industry;
+  /** oversized pieces from the machine works, shipped by convoy (convoys.ts) */
+  convoys: Convoys;
+  /** conveyors and pipes between neighbouring plants (parks.ts) */
+  parks: Parks;
   towns: TownSystem;
   money = 0;
   time = 0;
@@ -157,7 +170,41 @@ export class Game {
       power: (b) => this.utilities.supplyOf(b),
       wanted: (b) => this.utilities.wanted(b),
       made: (p, n) => this.progress.onMade(p, n),
+      madeAt: (b, _p, n) => this.convoys.made(b, n),
+      season: (k) => seasonMult(k, this.time),
       grew: (b, level) => { this.toast(`${BUILDING_TYPES[b.kind].name} grew to level ${level}: more output, jobs and trucks`); this.emit({ t: "buildings" }); },
+    });
+    this.convoys = new Convoys({
+      get time() { return game.time; },
+      buildings: this.buildings,
+      connected: (a, b) => this.connected(a, b),
+      request: (sp) => this.traffic.request(sp),
+      trips: () => this.trips(),
+      piecesLeft: (b) => piecesLeft(b, isPlantKind(b.kind) ? PLANTS[b.kind] : undefined),
+      pieceIn: (b) => {
+        const L = (b.plant!.landmark ??= { pieces: 0 });
+        L.pieces++;
+        Industry.finishSite(b);
+      },
+      delivered: (kind, to) => {
+        this.progress.onPiece();
+        this.checkMilestones();
+        const name = BUILDING_TYPES[to.kind].name;
+        const mega = isMega(to.kind);
+        this.toast(mega
+          ? `${BIG_NAME[kind]} delivered to the ${name} site`
+          : `${BIG_NAME[kind]} installed at the ${name}: +${Math.round(TURBINE_BOOST * 100)}% power for good`);
+        this.emit({ t: "convoy", phase: "in", kind, from: -1, to: to.id });
+      },
+      departed: (kind, from, to) => {
+        this.toast(`Oversized load: a ${BIG_NAME[kind].toLowerCase()} leaves the ${BUILDING_TYPES[from.kind].name} for the ${BUILDING_TYPES[to.kind].name}, under escort`);
+        this.emit({ t: "convoy", phase: "out", kind, from: from.id, to: to.id });
+      },
+      toast: (msg) => this.toast(msg),
+    });
+    this.parks = new Parks({
+      buildings: this.buildings,
+      pay: (v) => { this.money -= v; this.budgetNow.expense.upkeep += v; },
     });
     this.world = {
       isWater: (p) => t.isWater(p),
@@ -299,7 +346,9 @@ export class Game {
 
   /** What the milestones are measured on, now. */
   progressView(): ProgressView {
-    return this.progress.view(this.towns.list.map((t) => ({ pop: t.pop, supply: t.supply })), this.utilities.powered);
+    const v = this.progress.view(this.towns.list.map((t) => ({ pop: t.pop, supply: t.supply })), this.utilities.powered);
+    v.landmarks = this.buildings.sites.filter((b) => b.plant?.landmark?.done !== undefined).length;
+    return v;
   }
 
   /** Reach any open milestone whose goal is met: pay its grant and say so. */
@@ -811,6 +860,9 @@ export class Game {
     if (pl.ok && D.unique && this.buildings.list.some((b) => b.kind === kind)) return { ...pl, ok: false, reason: "Only one per city", cost };
     if (pl.ok && this.onTownSquare(pl.c, pl.rot, BUILDING_TYPES[kind].w / 2, BUILDING_TYPES[kind].d / 2)) return { ...pl, ok: false, reason: "On a town's square: that's for its hall", cost };
     if (pl.ok && D.shore && !this.nearWater(pl.c, pl.rot, BUILDING_TYPES[kind].w / 2, BUILDING_TYPES[kind].d / 2)) return { ...pl, ok: false, reason: "Has to be on a shore", cost };
+    // (a landmark has its own rules: a tower in a City, the fair beside a town)
+    const why = pl.ok && isMega(kind) ? megaBlock(kind, pl.c, this.towns.list, sizeOf, this.buildings.list) : null;
+    if (why) return { ...pl, ok: false, reason: why, cost };
     const dep = isPlantKind(kind) ? PLANTS[kind].deposit : undefined;
     let deposit: { name: string; share: number } | undefined;
     if (dep) {
@@ -1137,6 +1189,34 @@ export class Game {
     this.emit({ t: "buildings" });
   }
 
+  /**
+   * A landmark whose construction is over is finished: it serves the town it stands in or beside, and the company
+   * gets its banner. True when one was.
+   */
+  private lookWas = "";
+  /** What the buildings look like beyond their level: each landmark's stage, and the season. */
+  private lookSig(): string {
+    let s = fieldLook(this.time) as string;
+    for (const b of this.buildings.sites) if (isMega(b.kind) && isPlantKind(b.kind)) s += `|${b.id}:${megaStage(b, PLANTS[b.kind])}`;
+    return s;
+  }
+
+  private landmarks(): boolean {
+    let any = false;
+    for (const b of this.buildings.sites) {
+      const L = b.plant?.landmark;
+      if (!L || L.done !== undefined || !Industry.running(b) || !isMega(b.kind)) continue;
+      L.done = this.time;
+      const t = townAt(b.c, this.towns.list, b.kind === "exposition" ? 800 : 0);
+      if (t) L.town = t.id;
+      // (its opening is the HUD's banner, the camera and the fireworks: no toast underneath them)
+      this.emit({ t: "landmark", b: b.id });
+      this.checkMilestones();
+      any = true;
+    }
+    return any;
+  }
+
   /** A town has grown into a new size (its banner). */
   townGrew(t: { id: number }, size: number) {
     this.emit({ t: "townSize", town: t.id, size });
@@ -1370,7 +1450,14 @@ export class Game {
     this.grew = false;
     try { this.towns.tick(); } finally { this.ticking = false; }
     if (this.grew) changed = true;
+    // (the conveyors first, so the trucks carry only what they can't; then the convoys, and the landmarks' news)
+    this.parks.tick(span);
     this.industry.tick(span);
+    this.convoys.tick();
+    if (this.landmarks()) changed = true;
+    // (a landmark's site rising to its next stage, or a new season on the farms' fields, is drawn anew)
+    const look = this.lookSig();
+    if (look !== this.lookWas) { this.lookWas = look; changed = true; }
     this.utilities.tick(span);
     this.transit.tick();
     for (const b of [...this.buildings.list]) this.stepBuilding(b, span);
@@ -1447,6 +1534,7 @@ export class Game {
     const trip = v.trip;
     if (trip.bus) { this.transit.onGone(trip.bus, { x: v.x, y: v.y }); return; }
     this.traffic.recordTrip(trip.freeFlow, now - trip.startT);
+    if (trip.haul?.big) { this.convoys.arrive(v); return; }
     if (trip.haul) { this.industry.onArrive(v); return; }
     if (trip.kind === "cargo" || trip.kind === "empty") return;
     this.people.onArrive(v);
@@ -1456,7 +1544,8 @@ export class Game {
     if (trip.bus) { this.transit.onGone(trip.bus); return; }
     this.failedTrips++;
     if (trip.haul) {
-      this.industry.onFail(trip);
+      if (trip.haul.big) this.convoys.fail(trip);
+      else this.industry.onFail(trip);
       const from = this.buildings.byId.get(trip.from), to = this.buildings.byId.get(trip.to);
       // (held up in traffic is not "no road there": that warning is for real dead ends)
       if (reason === "no route" || reason === "missed its turn" || reason === "road removed") this.noRoute(from ?? to ?? null);
@@ -1473,6 +1562,7 @@ export class Game {
     const B = this.budgetNow;
     // wages, plant upkeep and the plants' books (deliveries and fuel are booked as they happen)
     this.industry.hourly();
+    this.parks.hourly();
     // the company keeps up its own roads; the towns look after their streets
     let roads = 0;
     for (const s of this.net.segs.values()) {
@@ -1505,7 +1595,8 @@ export class Game {
     const list = all.filter((b) => b.id % 8 === part);
     // dirty plants, with how far from their middle they can reach (a home farther off is untouched: no need to measure)
     const ind = this.buildings.list.filter((b) => b.plant && !b.plant.site && BUILDING_TYPES[b.kind].pollution > 0).map((o) => {
-      const r = BUILDING_TYPES[o.kind].pollution * 1.6, R = r + Math.hypot(o.hw, o.hd);
+      // (plants packed into a park pollute together: each one's smoke reaches further, see parks.ts)
+      const r = BUILDING_TYPES[o.kind].pollution * 1.6 * (this.parks.isLinked(o.id) ? PARK_SMOKE : 1), R = r + Math.hypot(o.hw, o.hd);
       return { o, r, R2: R * R };
     });
     // shops in 320 m squares (a home looks only in the nine round it)
@@ -1632,8 +1723,11 @@ export class Game {
     const P = structuredClone(b.plant!);
     for (const t of this.trips()) {
       const r = t.haul;
+      if (!r || r.done || r.leg !== "out" || r.plant !== b.id) continue;
+      // (an oversized piece on its way goes back to the works' yard, to be sent again)
+      if (r.big) { const B = (P.big ??= { prog: 0, n: 0 }); B.n++; continue; }
       // (a warehouse's loads go back into store, where it ships from)
-      if (r && !r.done && r.leg === "out" && r.plant === b.id) { const s = Industry.logisticsOf(b) === "warehouse" ? P.stock : P.out; s[r.product] = (s[r.product] ?? 0) + r.n; }
+      const s = Industry.logisticsOf(b) === "warehouse" ? P.stock : P.out; s[r.product] = (s[r.product] ?? 0) + r.n;
     }
     return P;
   }

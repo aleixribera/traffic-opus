@@ -131,6 +131,15 @@ export function placedIcon(kind: string): string {
     case "machineworks":
       // a tall machine hall under a gantry crane, and a gear in front
       return svg(28, 28, `<rect x="2" y="9" width="20" height="16" fill="#7d8790"/><path d="M2 9 L12 5 L22 9 Z" fill="#5b6168"/><path d="M4 4 V25 M24 4 V25 M3 4 H25" fill="none" stroke="#d9b13a" stroke-width="1.6"/><path d="M15 4 V12" stroke="#545a61" stroke-width="1"/><rect x="13" y="12" width="4" height="2" fill="#545a61"/><circle cx="10" cy="19" r="4.3" fill="#d8a22e" stroke="#7a5512" stroke-width="0.9" stroke-dasharray="2.1 1.3"/><circle cx="10" cy="19" r="1.4" fill="#7d8790"/>`);
+    case "hydrodam":
+      // the river held back behind a curved concrete wall, a powerhouse at its foot and the spillway's white water
+      return svg(28, 28, `<path d="M2 3 H26 V9 Q14 13 2 9 Z" fill="#4c86b4"/><path d="M2 9 Q14 13 26 9 V13 Q14 17 2 13 Z" fill="#cfccc2" stroke="#8d8a80" stroke-width="0.8"/><path d="M9 12.6 V16 M14 13.8 V17 M19 12.6 V16" stroke="#8d8a80" stroke-width="0.9"/><rect x="8" y="17" width="12" height="7" fill="#b9b4a6"/><path d="M8 17 H20 L18.5 15.5 H9.5 Z" fill="#d9a52c"/><path d="M10 19 V22 M13 19 V22 M16 19 V22" stroke="#6d6a62" stroke-width="1.1"/><path d="M21.5 16 Q23 20 21 25 M24 15 Q25.5 20 24 25" fill="none" stroke="#e8f2f8" stroke-width="1.6" stroke-linecap="round"/>`);
+    case "skylinetower":
+      // a stepped tower in setbacks under a spire, gilt at each step
+      return svg(28, 28, `<path d="M14 1 V6" stroke="#8d6516" stroke-width="1.2"/><path d="M11.5 6 H16.5 V10 H18.5 V15 H20.5 V26 H7.5 V15 H9.5 V10 H11.5 Z" fill="#c9c3b2" stroke="#7d786a" stroke-width="0.8" stroke-linejoin="round"/><path d="M11.5 10 H16.5 M9.5 15 H18.5" stroke="#d9a52c" stroke-width="1.4"/><path d="M12 18 V24 M14 17 V24 M16 18 V24 M12.6 7.5 V9 M15.4 7.5 V9" stroke="#7d786a" stroke-width="0.9"/><path d="M4 26 H24" stroke="#5b6168" stroke-width="1.4"/>`);
+    case "exposition":
+      // the fair: a domed hall, the Tower of Light beside it, and flags
+      return svg(28, 28, `<path d="M3 25 V17 H17 V25 Z" fill="#efe6cf" stroke="#9a8f74" stroke-width="0.8"/><path d="M5 17 A5 5 0 0 1 15 17 Z" fill="#d9a52c" stroke="#8d6516" stroke-width="0.8"/><path d="M6 20 V24 M10 20 V24 M14 20 V24" stroke="#9a8f74" stroke-width="1"/><path d="M20 25 L21.2 6 H22.8 L24 25 Z" fill="#efe6cf" stroke="#9a8f74" stroke-width="0.8"/><circle cx="22" cy="5" r="1.8" fill="#ffd36a"/><path d="M10 12 V9.5" stroke="#5b6168" stroke-width="0.9"/><path d="M10 9.5 L13 10.3 L10 11.1 Z" fill="#d8322a"/><path d="M2 25 H26" stroke="#5b6168" stroke-width="1.4"/>`);
     default:
       return svg(28, 28, `<circle cx="14" cy="14" r="9" fill="#9aa0a6"/>`);
   }

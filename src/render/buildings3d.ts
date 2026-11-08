@@ -10,6 +10,20 @@ import { isHall } from "../game/towns";
 import { CAR_COLORS, PAL } from "./palette";
 import { HALL_TIER, squarePlan, type SquarePlan } from "./civic";
 import { makeTreeMesh } from "./roads3d";
+import { PLANTS } from "../game/industry";
+import { isMega, megaStage } from "../game/megaprojects";
+import { fieldLook, fieldModel } from "../game/calendar";
+
+/**
+ * The model a site's slot is drawn with now: a landmark's core by how far its building has got (foundations, the
+ * structure in scaffolding, finished), a farm's fields by the season; anything else as planned. `stage` overrides
+ * the landmark's (the placement ghost shows it finished).
+ */
+function slotModel(b: Building | null, model: string, time: number, stage?: 1 | 2 | 3): string {
+  if (model.startsWith("mega_")) return `${model}_${stage ?? (b ? megaStage(b, PLANTS[b.kind as PlantKind]) : 3)}`;
+  if (model === "site_field_g" || model === "site_field_w" || model === "farm") return fieldModel(model, fieldLook(time));
+  return model;
+}
 
 /** Model matrix for a lot: model +z (its front) faces the road, origin at the footprint centre. */
 export function lotMatrix(out: THREE.Matrix4, c: V2, rot: number, side: 1 | -1, y = 0) {
@@ -204,7 +218,7 @@ export class Buildings3D {
     const L = siteLayout(kind as PlantKind, T.w, T.d, seed);
     const out: { geo: THREE.BufferGeometry; m: THREE.Matrix4 }[] = [];
     for (const s of L.slots) {
-      const mm = s.level <= 1 ? this.geoOf(s.model) : undefined;
+      const mm = s.level <= 1 ? this.geoOf(slotModel(null, s.model, this.clock(), 3)) : undefined;
       if (mm) out.push({ geo: mm.geo, m: this.slotMatrix(new THREE.Matrix4(), f, s, 1, 0.1) });
     }
     return out;
@@ -232,6 +246,8 @@ export class Buildings3D {
   /** How far a piece has gone up (1: standing). */
   private rise(p: Piece): number {
     const b = p.b;
+    // (a landmark is drawn by its stage models instead: its site stands at full height from the start)
+    if (isMega(b.kind)) return 1;
     if (b.built < 1) return 0.08 + 0.92 * b.built;
     const P = b.plant;
     if (!p.slot || !P || p.slot.level !== P.level || P.level <= 1) return 1;
@@ -260,7 +276,7 @@ export class Buildings3D {
 
   private baseColor(b: Building): number | null {
     if (b.abandoned) return ABANDONED;
-    if (b.built < 1) return SITE;
+    if (b.built < 1 && !isMega(b.kind)) return SITE;
     // a street of the same model shouldn't look stamped: weathering and paint vary a little from one to the next
     return VARY[(Math.imul(b.id, 2654435761) >>> 28) % VARY.length];
   }
@@ -269,7 +285,8 @@ export class Buildings3D {
   private piecesOf(b: Building): Piece[] {
     if (!b.placed || !b.plant) return [{ b, model: b.kind, slot: null }];
     const level = b.plant.level ?? 1;
-    return this.layoutOf(b).slots.filter((s) => s.level <= level).map((s) => ({ b, model: s.model, slot: s }));
+    const now = this.clock();
+    return this.layoutOf(b).slots.filter((s) => s.level <= level).map((s) => ({ b, model: slotModel(b, s.model, now), slot: s }));
   }
 
   rebuild(list: Building[]) {

@@ -15,6 +15,16 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.60", date: "2026-11-08", title: "Convoys, landmarks, parks and seasons",
+    notes: [
+      "A machine works builds turbines and steel girders that leave as escorted convoys: a pilot car, a low-loader and an escort, beacons flashing, traffic queuing behind. Click its tag to follow it.",
+      "Turbines delivered to a power plant raise its output for good, up to three.",
+      "Landmarks: a Hydro Dam, a Skyline Tower and a Grand Exposition rise in three stages from the loads you deliver, then open with fireworks and boost the towns around them.",
+      "Plants within 60 m of each other link up with conveyors or pipes and pass goods along them.",
+      "A four-day year: fields go from shoots to ripe gold to stubble and frost, farms work faster at harvest, and the clock shows the season.",
+    ],
+  },
+  {
     v: "v0.0.59", date: "2026-11-08", title: "Industry Booming America",
     notes: [
       "Your company has a name and a Deco badge: pick them when you start, change them from the top-left corner or the pause menu.",

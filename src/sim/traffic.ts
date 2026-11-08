@@ -42,6 +42,10 @@ export interface Vehicle {
   vf?: number;
   /** share of a car's acceleration (a heavy truck pulls away slower) */
   af?: number;
+  /** a speed it never goes above, whatever the limit (m/s): an escorted oversized load */
+  vmax?: number;
+  /** never changes lane to overtake (only when its route needs it): an escorted convoy holds its lane */
+  keepLane?: boolean;
   /** an articulated vehicle's pieces, and each one's drawn pose now and last step ([x, y, h, angle] per piece) */
   units?: Unit[];
   uPose?: Float32Array;
@@ -140,6 +144,9 @@ export interface PendingSpawn {
   vf?: number;
   af?: number;
   units?: Unit[];
+  /** an escorted convoy: its top speed (m/s), and it holds its lane */
+  vmax?: number;
+  keepLane?: boolean;
   /**
    * A long truck leaving a lot: when it starts rolling out of the gate (one at a time per lot, after the one before
    * it has pulled out); unset while it waits behind another.
@@ -158,11 +165,11 @@ export const fromLot = (p: PendingSpawn) => !p.through && !p.trip.bus;
 /** Whether phase `ph` lets traffic from arm `seg` turning `turn` go (a left-turn phase: only left turns and U-turns). */
 export const goesIn = (ph: SignalPhase, seg: number, turn?: string) => ph.arms.includes(seg) && (!ph.left || turn === "L" || turn === "U");
 
-const TR_N = 72, TR_STEP = 0.35; // drawn-path samples per car (25 m: enough for a road train)
+const TR_N = 100, TR_STEP = 0.35; // drawn-path samples per car (35 m: enough for a road train or an escorted convoy)
 /** A vehicle at least this long is tracked over the edges its body still trails back across. */
 export const LONG = 10;
 /** Edges kept in a vehicle's history (a road train spans a lane, a junction and the lane before it). */
-const HIST = 6;
+const HIST = 8;
 /** A car's paint from its look. */
 export const carColor = (look: number) => CAR_COLORS[look % CAR_COLORS.length];
 // real traffic: mostly white, silver, grey and black, with some red, blue, beige and green
@@ -325,10 +332,12 @@ export class Traffic {
     if (p.vf !== undefined) v.vf = p.vf;
     if (p.af !== undefined) v.af = p.af;
     if (p.units) v.units = p.units;
+    if (p.vmax !== undefined) v.vmax = p.vmax;
+    if (p.keepLane) v.keepLane = true;
     if (p.exit) v.exit = true;
     if (p.through) {
       // driving in at speed, but never faster than it can comfortably slow to the car ahead (the tail of a queue)
-      let sp = ROAD_TYPES[net.segs.get(lane.seg)!.type].speed * 0.85;
+      let sp = Math.min(ROAD_TYPES[net.segs.get(lane.seg)!.type].speed * 0.85, v.vmax ?? Infinity);
       const ahead = (lane.occ as Vehicle[]).find((o) => o.s > ls);
       if (ahead) {
         const gap = ahead.s - ahead.len - ls - SIM.idm.s0;
@@ -1440,6 +1449,7 @@ export class Traffic {
     const e = v.edge;
     const tf = v.vf ?? (v.truck ? 0.85 : 1); // trucks take everything a bit slower
     let v0 = e.speed * tf;
+    if (v.vmax !== undefined) v0 = Math.min(v0, v.vmax);
     // everything ahead to keep behind, as (gap, its speed): the hardest one to follow decides
     const G = this.conG, L = this.conL;
     G.length = 0; L.length = 0;
@@ -1779,7 +1789,9 @@ export class Traffic {
       target = all.find((l) => l.idx === lane.idx + dirIdx) ?? null;
       mandatory = true;
     } else {
-      // discretionary: overtake a slow leader if a neighbouring good lane is clearly better
+      // discretionary: overtake a slow leader if a neighbouring good lane is clearly better (an escorted convoy
+      // holds its lane: traffic goes round it, never it round traffic)
+      if (v.keepLane) return;
       const occ = lane.occ as Vehicle[];
       const lead = occ[occ.indexOf(v) + 1];
       if (!lead || lead.s - v.s > 45 || lead.v > v.edge.speed * 0.75) return;

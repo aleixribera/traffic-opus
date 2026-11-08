@@ -23,6 +23,8 @@ import { Sfx } from "./sfx";
 import { heraldSvg } from "./herald";
 import { cleanName, COMPANY_NAME_MAX, randomHerald } from "../game/company";
 import { companyName } from "../game/names";
+import { landmarkDone, landmarkSite, parkSection, seasonLine, specialRows } from "./specials";
+import { MEGAS, isMega } from "../game/megaprojects";
 
 export interface Chip {
   text: string;
@@ -99,7 +101,7 @@ const fmtTime = (s: number) => {
 
 const fmtNum = (n: number) => (n >= 10000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : n.toLocaleString("en-US"));
 /** A banner waiting its turn: a milestone reached, or a town grown into a new size. */
-type Banner = { m: Milestone } | { town: number; size: number };
+type Banner = { m: Milestone } | { town: number; size: number } | { landmark: number };
 const signed = (n: number) => `${n >= 0 ? "+" : "−"}${formatMoney(Math.abs(Math.round(n)))}`;
 const hex = (c: number) => "#" + c.toString(16).padStart(6, "0");
 
@@ -625,7 +627,7 @@ export class Hud {
     this.moneyBtn.innerHTML = `<b class="${g.money < 0 ? "bad" : ""}">${formatMoney(Math.round(g.money))}</b><span class="${net >= 0 ? "good" : "bad"}">${signed(net)}/h</span>`;
     this.moneyBtn.setAttribute("aria-label", `Money ${formatMoney(Math.round(g.money))}, ${signed(net)} per hour. Open economy`);
     const hr = g.hour, mm = Math.floor((hr % 1) * 60 / 10) * 10;
-    this.clockEl.innerHTML = `<b>${String(Math.floor(hr)).padStart(2, "0")}:${String(mm).padStart(2, "0")}</b><span class="cb-day">Day ${g.day}</span>`;
+    this.clockEl.innerHTML = `<b>${String(Math.floor(hr)).padStart(2, "0")}:${String(mm).padStart(2, "0")}</b>${seasonLine(g.time, g.day)}`;
     this.clockEl.classList.toggle("night", hr < 6 || hr >= 21);
     this.renderTips();
     if (this.panelKind === "town") this.fillTown();
@@ -770,6 +772,11 @@ export class Hud {
     this.queueBanner({ town, size });
   }
 
+  /** One of the company's landmarks is finished: its opening, the biggest moment in the game. */
+  landmarkDone(b: number) {
+    this.queueBanner({ landmark: b });
+  }
+
   /** Drop every banner still showing or waiting (a new game or a load: they belonged to the last one). */
   clearBanners() {
     clearTimeout(this.bannerT);
@@ -792,14 +799,22 @@ export class Hud {
     const g = this.app.game;
     const t = "town" in X ? g.towns.byId.get(X.town) : undefined;
     if ("town" in X && !t) { this.nextBanner(); return; }
-    if ("m" in X) {
+    const lm = "landmark" in X ? g.buildings.byId.get(X.landmark) : undefined;
+    if ("landmark" in X && (!lm || !isMega(lm.kind))) { this.nextBanner(); return; }
+    this.banner.classList.toggle("lm", !!lm);
+    if (lm && isMega(lm.kind)) {
+      this.banner.innerHTML = `<p class="lm-kicker">The company presents</p>
+        <header>The ${BUILDING_TYPES[lm.kind].name} is open</header>
+        <p class="gifts">${escapeHtml(MEGAS[lm.kind].reward)}</p>
+        <div class="banner-btns"><button class="btn" data-k="show">Show me</button><button class="btn primary" data-k="ok">Continue</button></div>`;
+    } else if ("m" in X) {
       const M = X.m;
       const co = g.company;
       this.banner.innerHTML = `<header class="banner-co">${heraldSvg(co.herald, co.name, 26)}<span>${M.name}</span></header>
         <p class="sub">${escapeHtml(co.name)} · milestone reached · ${M.goal}</p>
         <p class="gifts">Unlocked: ${unlockList(M.unlocks).join(" · ")}</p>
         <div class="banner-btns"><button class="btn primary" data-k="ok">Continue</button></div>`;
-    } else {
+    } else if ("town" in X) {
       const S = TOWN_SIZES[X.size];
       const adds = S.adds.filter((p) => needFrom(p) === S.pop).map((p) => PRODUCTS[p].name.toLowerCase());
       const what = [
@@ -820,9 +835,11 @@ export class Hud {
     ok.onclick = () => this.nextBanner();
     const open = this.banner.querySelector<HTMLButtonElement>('[data-k="town"]');
     if (open && t) open.onclick = () => { this.nextBanner(); this.openTown(t.id); };
+    const show = this.banner.querySelector<HTMLButtonElement>('[data-k="show"]');
+    if (show && lm) show.onclick = () => { this.app.glideTo(lm.c, Math.max(220, Math.hypot(lm.hw, lm.hd) * 1.6)); this.nextBanner(); this.app.selected = lm; this.openBuilding(lm); };
     this.bannerMore();
     // a milestone waits to be read; a town's news steps aside by itself after a while (and doesn't take the keyboard)
-    if ("m" in X) requestAnimationFrame(() => ok.focus({ preventScroll: true }));
+    if ("m" in X || lm) requestAnimationFrame(() => ok.focus({ preventScroll: true }));
     else this.bannerT = window.setTimeout(() => { if (!this.banner.matches(":hover, :focus-within")) this.nextBanner(); }, 12000);
   }
 
@@ -1329,6 +1346,16 @@ export class Hud {
       else if (b.built < 1) { status = `Under construction · ${Math.round(b.built * 100)}%`; }
       else if (b.problem) { status = b.problem; statusCls = "bad"; }
       else { status = "Working normally"; statusCls = "good"; }
+      // a landmark's site: its ring and stage, materials and pieces, and what it will do once open
+      const lmSite = landmarkSite(g, b);
+      if (lmSite) {
+        const html = `<header><span class="svc-tag">${placedIcon(b.kind)}</span>${T.name}</header>
+          <p class="muted small">${chainText(b.kind)}</p>
+          ${lmSite}
+          <button class="btn quiet danger demolish">Demolish</button>`;
+        if (this.setPanel(html)) this.bindDemolish(b);
+        return;
+      }
       // a site: the materials trucked to it so far
       if (P.site) {
         const mats = (Object.keys(P.site.need) as Product[]).map((p) => {
@@ -1386,14 +1413,15 @@ export class Hud {
         ${ins ? `<h3 class="sub-h">In the yard</h3><dl class="facts">${ins}</dl>` : ""}
         ${outs ? `<h3 class="sub-h">Ready to ship</h3><dl class="facts">${outs}</dl>` : ""}
         ${flare ? `<p class="small muted">Its yard is full of ${PRODUCTS[flare].name.toLowerCase()}: ${g.industry.wants(flare) ? `your ${Industry.takers(flare)} can't take more for now` : Industry.usedBy(flare) ? `nothing of yours uses it until you build a ${Industry.takers(flare)}` : `nothing of yours uses it until tier ${Industry.laterTier(flare)}`}, so it burns off the rest and keeps making ${(Object.keys(D.outputs) as Product[]).filter((p) => p !== flare).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ")}.</p>` : ""}
-        ${siteLevel(b)}
+        ${isMega(b.kind) ? landmarkDone(g, b) : siteLevel(b)}
         <dl class="facts">
-          ${plantRows}${powerRow}
+          ${plantRows}${powerRow}${specialRows(g, b, stockBar)}
           ${classRow}
           ${D.trucks ? `<dt>Trucks out</dt><dd title="Its fleet comes with its level: enough trucks to carry everything it makes ${FLEET_HAUL / 1000} km away and back">${busy} of ${g.industry.trucksOf(b)}</dd>` : ""}
           <dt>Staff</dt><dd>${g.people.workersAt(b.id)} / ${b.cap}</dd>
           ${D.deposit ? `<dt>${cap(D.deposit.name)}</dt><dd>${Math.round(P.yld * 100)}% of full yield</dd>` : ""}
         </dl>
+        ${parkSection(g, b)}
         <h3 class="sub-h">Last hour</h3>
         <dl class="facts">
           <dt>Made</dt><dd>${L.made} load${L.made === 1 ? "" : "s"}</dd>
@@ -1877,6 +1905,8 @@ function chainText(k: keyof typeof PLANTS): string {
   const D = PLANTS[k];
   if (D.logistics === "warehouse") return "Any product → stored, shipped on";
   if (D.logistics === "depot") return "Fuel → your trucks, at cost";
+  // (a landmark makes nothing to ship: the dam turns the river into power, the others are one of a kind)
+  if (D.mega) return D.makes ? "Landmark · the river → power" : "Landmark · one of a kind";
   const to = D.makes ? "power" : productList(D.outputs);
   // (a mine digs what its deposit is: "Coal deposit → coal", not "Coal → coal")
   const from = D.deposit ? `${cap(D.deposit.name)}${D.deposit.name === to ? " deposit" : ""}` : cap(productList(D.inputs));

@@ -12,6 +12,7 @@ import type { Building } from "./buildings";
 import type { Game } from "./city";
 import { ZONE_GROUP, ZONE_LOTS } from "./growables";
 import type { Product } from "./industry";
+import { townBoost } from "./megaprojects";
 import { DAY } from "./society";
 import {
   BLOCK, HALLS, HIGH_STREET, REDEV_SHARE, SEED_EDGES, TOWN_SIZES, demandPerDay, edgeKey, gridPt, growthPerDay, highLine, highStreetReach, needsOf,
@@ -149,7 +150,8 @@ export class TownSystem {
   want(id: number, p: Product): number {
     const t = this.byId.get(id);
     if (!t || !needsOf(t.pop).includes(p)) return -Infinity;
-    return demandPerDay(p, t.pop) * MARKET - (t.today[p] ?? 0);
+    // (a finished Skyline Tower in it: its shops and offices buy more of everything, see megaprojects.ts)
+    return demandPerDay(p, t.pop) * MARKET * townBoost(id, this.g.buildings.sites).demand - (t.today[p] ?? 0);
   }
 
   /** Loads a town still needs today to grow (0 when its needs are met or it doesn't use the product). */
@@ -638,7 +640,9 @@ export class TownSystem {
       t.yesterday = t.today;
       t.today = {};
       t.supply = supplyShare(t.yesterday, t.pop);
-      const d = growthPerDay(t.supply, t.pop);
+      // (the company's landmarks make a town grow faster: never shrink faster)
+      const g0 = growthPerDay(t.supply, t.pop);
+      const d = g0 > 0 ? g0 * townBoost(t.id, this.g.buildings.sites).growth : g0;
       // (the target never runs far ahead of the town: a dry spell isn't banked as growth for later)
       const before = t.target;
       t.target = Math.max(0, Math.min(t.target + d, Math.max(t.households, START_HOUSEHOLDS) * 1.4 + 6));

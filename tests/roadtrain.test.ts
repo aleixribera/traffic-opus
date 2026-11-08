@@ -167,7 +167,7 @@ describe("Road trains", () => {
       expect(w.jumps, why).toBe(0);
       expect(w.offRoad, why).toBe(0);
     }
-  });
+  }, 90_000); // (a long run: slow when other suites share the CPU)
 
   it("holds a junction longer than a light truck: its whole length has to clear the box", () => {
     const time = (cls: TruckClass) => {

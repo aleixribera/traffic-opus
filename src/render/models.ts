@@ -11,7 +11,8 @@ export interface MergedModel {
   bays: THREE.Matrix4[];
 }
 
-/** A vehicle split by material: tinted parts get the per-vehicle colour. */
+/** A vehicle split by material: tinted parts get the per-vehicle colour; a "beacon" part (a convoy's amber lamps)
+ * is drawn on its own so it can flash. */
 export interface VehicleModel {
   parts: { geo: THREE.BufferGeometry; tint: boolean; name: string }[];
 }
@@ -30,6 +31,13 @@ export const SITE_PIECES: string[] = [
   "coppersmelter", "electronics", "machineworks",
   // logistics (a warehouse, a fuel depot)
   "warehouse", "fueldepot",
+  // the company's landmarks, three stages each (foundations, the structure rising, finished)
+  "mega_hydrodam_1", "mega_hydrodam_2", "mega_hydrodam_3", "mega_skylinetower_1", "mega_skylinetower_2", "mega_skylinetower_3",
+  "mega_exposition_1", "mega_exposition_2", "mega_exposition_3",
+  // the farms' fields through the year (see calendar.fieldModel)
+  "site_field_young", "site_field_cut", "site_field_bare", "farm_young", "farm_ripe", "farm_cut", "farm_bare",
+  // industrial-park links: a belt or pipe segment, the transfer towers at its ends, and what moves along them
+  "link_conveyor", "link_pipe", "link_tower", "link_load", "link_flow",
 ];
 export const VEHICLE_MODELS = [
   "car", "van", "truck", "tipper", "tanker", "flatbed", "bus",
@@ -38,6 +46,8 @@ export const VEHICLE_MODELS = [
   "heavy_truck", "heavy_tipper", "heavy_tanker", "heavy_flatbed",
   "rt_tractor", "rt_truck_a", "rt_truck_b", "rt_tipper_a", "rt_tipper_b", "rt_tanker_a", "rt_tanker_b",
   "rt_flatbed_a", "rt_flatbed_b",
+  // an oversized-load convoy (game/convoys.ts): escort cars front and back, the heavy-haul tractor and its low-loader
+  "escort_car", "ll_tractor", "ll_trailer_turbine", "ll_trailer_girder",
 ] as const;
 /** Street furniture, drawn on its own (not a lot). */
 export const PROP_MODELS = ["busstop", "fence"] as const;
@@ -146,12 +156,15 @@ function splitVehicle(sc: THREE.Object3D): VehicleModel {
     const col = meshColor(m);
     parts.push({ geo: prepGeometry(m, tint ? null : col), tint, name });
   });
-  // merge by role so a vehicle kind is at most 3 draw calls: body (tinted), cargo (tinted), fixed
+  // merge by role so a vehicle kind is at most 3 draw calls: body (tinted), cargo (tinted), fixed (and a convoy's
+  // flashing beacons)
   const out: VehicleModel["parts"] = [];
+  const beacon = (p: VehicleModel["parts"][number]) => p.name.includes("beacon");
   const groups: [string, (p: VehicleModel["parts"][number]) => boolean, boolean][] = [
     ["body", (p) => p.tint && !p.name.includes("cargo"), true],
     ["cargo", (p) => p.tint && p.name.includes("cargo"), true],
-    ["fixed", (p) => !p.tint, false],
+    ["fixed", (p) => !p.tint && !beacon(p), false],
+    ["beacon", (p) => !p.tint && beacon(p), false],
   ];
   for (const [name, pick, tint] of groups) {
     const ps = parts.filter(pick);

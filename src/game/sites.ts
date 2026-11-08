@@ -34,6 +34,8 @@ export const SITE_MODEL_SIZE: Record<string, [number, number]> = {
   oilwell: [30, 30], sandpit: [40, 38], refinery: [60, 50], glassworks: [46, 38], furniture: [40, 34],
   warehouse: [72, 44], fueldepot: [38, 28],
   constructionplant: [50, 42], coppermine: [44, 40], coppersmelter: [50, 42], electronics: [44, 36], machineworks: [52, 44],
+  // the landmarks' cores (one model per construction stage, all the same footprint: megaprojects.ts)
+  mega_hydrodam: [150, 80], mega_skylinetower: [80, 80], mega_exposition: [170, 120],
 };
 /** Every model a site can use (the renderer loads them all). */
 export const SITE_MODELS = Object.keys(SITE_MODEL_SIZE).filter((k) => k.startsWith("site_"));
@@ -66,6 +68,10 @@ const PLAN: Record<PlantKind, { core: string; mods: string[] }> = {
   // (small plots: the shed or the depot alone, facing the gate)
   warehouse: { core: "warehouse", mods: ["site_hall_m", "site_office"] },
   fueldepot: { core: "fueldepot", mods: ["site_tanks"] },
+  // (a landmark: the one great structure at the back of its plot, and a truck yard and a site office by the gate)
+  hydrodam: { core: "mega_hydrodam", mods: ["site_office"] },
+  skylinetower: { core: "mega_skylinetower", mods: ["site_office"] },
+  exposition: { core: "mega_exposition", mods: ["site_office"] },
 };
 
 /** The model a kind's site is centred on (its core, by the gate). */
@@ -107,6 +113,7 @@ export function slotHalf(s: SiteSlot): { hx: number; hy: number } {
  */
 export function siteLayout(kind: PlantKind, w: number, d: number, seed: number): SiteLayout {
   const P = PLAN[kind];
+  if (P.core.startsWith("mega_")) return megaLayout(P.core, w, d);
   const rng = mulberry32((seed * 2654435761) ^ 0x5f3759df);
   const [cw, cd] = SITE_MODEL_SIZE[P.core];
   const [yw, yd] = SITE_MODEL_SIZE.site_truckyard;
@@ -170,6 +177,25 @@ export function siteLayout(kind: PlantKind, w: number, d: number, seed: number):
   }
   out.roads.unshift({ a: { x: 0, y: 0 }, b: { x: 0, y: spineEnd }, w: SPINE });
   assignLevels(out.slots);
+  return out;
+}
+
+/**
+ * A landmark's plot: a spine road from the gate to the landmark, which stands centred at the back facing it, with
+ * the truck yard and the site office either side of the spine by the gate. All of it at level 1 (a landmark
+ * doesn't grow; its construction stages are its model).
+ */
+function megaLayout(core: string, w: number, d: number): SiteLayout {
+  const [cw, cd] = SITE_MODEL_SIZE[core];
+  const [yw, yd] = SITE_MODEL_SIZE.site_truckyard;
+  const [ow, od] = SITE_MODEL_SIZE.site_office;
+  const out: SiteLayout = { w, d, roads: [], slots: [] };
+  const cy = Math.max(d - MARGIN - cd / 2, MARGIN + yw + SET + cd / 2);
+  out.slots.push({ model: core, level: 1, x: 0, y: cy, fx: 0, fy: -1, w: cw, d: cd, role: "core" });
+  const yx = SPINE / 2 + SET + yd / 2, ox = SPINE / 2 + SET + od / 2;
+  out.slots.push({ model: "site_truckyard", level: 1, x: yx, y: MARGIN + yw / 2, fx: -1, fy: 0, w: yw, d: yd, role: "yard" });
+  out.slots.push({ model: "site_office", level: 1, x: -ox, y: MARGIN + ow / 2, fx: 1, fy: 0, w: ow, d: od });
+  out.roads.push({ a: { x: 0, y: 0 }, b: { x: 0, y: cy - cd / 2 - SET }, w: SPINE });
   return out;
 }
 
