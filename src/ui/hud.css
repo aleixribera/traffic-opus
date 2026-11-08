@@ -137,7 +137,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 
 
 /* ------------------------------------------------------------ asset panel (above the bar) */
-.assets { width: min(760px, calc(100vw - 16px)); margin-bottom: 10px; padding: 0 0 8px; overflow: hidden; }
+/* (wide enough for a full tab of 8 cards on one row, but clear of the tool options on the left) */
+.assets { width: min(900px, max(520px, calc(100vw - 520px))); margin-bottom: 10px; padding: 0 0 8px; overflow: hidden; }
 .assets[hidden] { display: none; }
 .as-head { display: flex; align-items: center; gap: 10px; padding: 0 34px 0 12px; border-bottom: 1px solid var(--line); background: var(--paper); position: relative; }
 .as-title { font-weight: 600; font-size: 13px; flex: none; }
@@ -147,14 +148,16 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .as-tab:hover:not(.on) { color: var(--ink); }
 .as-tab.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 500; }
 .as-head .close { top: 50%; transform: translateY(-50%); }
-.as-cards { display: flex; gap: 6px; padding: 8px 10px 0; overflow-x: auto; scrollbar-width: thin; }
+/* (a tab with more cards than fit wraps to a second row instead of hiding the last ones off the edge) */
+.as-cards { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 0; max-height: min(330px, 42vh); overflow-y: auto; scrollbar-width: thin; }
 .asset { width: 104px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px 6px; background: #fff; border: 1px solid var(--line); border-radius: 5px; position: relative; }
 .asset:hover:not(:disabled):not(.on) { border-color: #aeb0a9; background: #fbfbf8; }
 .asset.on { border-color: var(--sel-line); background: #f1f9fd; box-shadow: 0 0 0 1px var(--sel-line) inset; }
 .asset b { font-weight: 500; text-align: center; line-height: 1.2; }
 .as-icon { height: 34px; display: grid; place-items: center; }
 .as-icon svg { width: 32px; height: 32px; }
-.as-sub { color: var(--ink-2); font-size: 11px; display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
+.as-sub { color: var(--ink-2); font-size: 11px; display: block; text-align: center; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.as-sub svg { vertical-align: -2px; margin-right: 3px; }
 .as-sub svg { width: 11px; height: 11px; }
 .asset.locked { opacity: 1; background: #f4f3ee; }
 .asset.locked .as-icon, .asset.locked b { opacity: 0.45; }
