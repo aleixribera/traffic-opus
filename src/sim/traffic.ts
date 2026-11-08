@@ -169,6 +169,8 @@ export const LONG = 10;
  * whole fleets in queues at their gates and halved what they moved: tests/balance.test.ts).
  */
 export const TRAIN = 16;
+/** How far past a lane change a long vehicle's trailers can still swing over the lane it left (m). */
+const SWEEP = 20;
 /** Edges kept in a vehicle's history (a road train spans a lane, a junction and the lane before it). */
 const HIST = 6;
 /** A car's paint from its look. */
@@ -628,15 +630,27 @@ export class Traffic {
   /** Where each long vehicle's body trails back over the edges its front has left (see tails). */
   private collectTails() {
     this.tails.clear();
+    const put = (e: Edge, v: Vehicle, rear: number) => {
+      const a = this.tails.get(e);
+      if (a) a.push({ v, rear }); else this.tails.set(e, [{ v, rear }]);
+    };
     for (const v of this.vehicles) {
       if (v.len < LONG || !v.hist?.length) continue;
       let rem = this.behind(v);
+      // after a lane change the trailers follow the path the front steered across, so for a while the body is still
+      // partly over the lane it left: it stays a tail there until its rear is SWEEP past where it changed
+      const swept = (from: Edge, onto: Edge, a0: number, rear: number) => {
+        if (a0 > 0 && rear < a0 + SWEEP && from.kind === "lane" && onto.kind === "lane" && from !== onto
+          && (from as Lane).seg === (onto as Lane).seg && (from as Lane).dir === (onto as Lane).dir) put(from, v, rear);
+      };
+      const e0 = v.edge, s0 = v.entS ?? 0;
+      swept(v.hist[v.hist.length - 1], e0, s0, Math.max(s0, v.s - v.len));
       for (let k = v.hist.length - 1; k >= 0 && rem > 0; k--) {
         const e = v.hist[k];
         const [a0, a1] = v.histSpan?.[k] ?? [0, e.pl.length];
         const rear = Math.max(a0, a1 - rem);
-        const a = this.tails.get(e);
-        if (a) a.push({ v, rear }); else this.tails.set(e, [{ v, rear }]);
+        put(e, v, rear);
+        if (k > 0) swept(v.hist[k - 1], e, a0, rear);
         rem -= a1 - a0;
       }
     }
@@ -1096,7 +1110,9 @@ export class Traffic {
       const m = v.granted ? -0.3 : 0.8;
       for (const h of o.holders as Vehicle[]) {
         if (h === v) continue;
-        if (isNear && (cf.wide ? v.len < LONG || h.len < LONG : v.len < LONG && h.len < LONG)) continue;
+        // (near paths: only where a road train is one of the two; paths further apart only matter between a road
+        // train and another long vehicle, whose bodies sweep wide on the turn)
+        if (isNear && (v.len < TRAIN && h.len < TRAIN || cf.wide && (v.len < LONG || h.len < LONG))) continue;
         // it got its go-ahead after ours, knowing about us: it fits round us, not we round it
         // (unless it was let out ahead of us: then it is us who hold back)
         if (v.granted && (h.grantT ?? 0) > (v.grantT ?? 0) && h.edge === o.from && !h.overrode) continue;
