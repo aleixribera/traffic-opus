@@ -71,8 +71,8 @@ export interface Budget {
  * building sites, company power and the milestone ladder. */
 export const SAVE_V = 5;
 
-/** Money a new company starts with: a farm, a food plant and some road, with a little to spare. */
-export const START_MONEY = 80000;
+/** Money a new company starts with: the first chain and plenty of road, room to try things (owner, 2026-11-08: $250k). */
+export const START_MONEY = 250000;
 /** A new site's street starts this far out of its gate (where a road drawn to the gate ends too)... */
 export const GATE_LINK_OUT = 7;
 /** ...and joins a road at most this far away (m); further out the site waits for the player's road. */

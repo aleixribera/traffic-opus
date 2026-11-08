@@ -15,6 +15,22 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.69", date: "2026-11-08", title: "Day and night, seasons, and a road anyone can afford",
+    notes: [
+      "Day turns to night: street lamps, floodlit works and lit windows come on at dusk, and headlights sweep the roads. The Nights setting in the pause menu softens them or turns them off.",
+      "Seasons you can see: spring blossom, deep summer green, autumn colour and the harvest rush, and snow in winter. A season lasts 16 days, a year 64.",
+      "Dirt road: a cheap track for the early game at a quarter of a street's price. Draw a street over it later to pave it in place.",
+      "Smoother junctions: roads meet in one clean surface, forks get a paved gore, site gates have an apron, and trees no longer grow on roads.",
+      "Traffic lights run a fixed clock, 24 seconds a phase. Roundabouts flow, trucks pull out of driveways cleanly, drivers are brisker, and a jam that locks solid breaks itself up.",
+      "Towns run themselves: they grow outward along their own roads, widen their busy streets, build one road out of town, and grow steadily on a supply they can count on instead of booming and crashing.",
+      "Front strips: the ground between a road and the homes along it becomes gardens, hedges and picket fences, and company sites sit back behind it.",
+      "Click anything: trucks, roads, junctions, homes, shops, deposits and stuck traffic all open the Inspector, and the map shows their story. A town's needs read in words and crates.",
+      "Cameras: follow a truck (G or its Follow button), a cinematic Tour of the busiest places (T), and a Vehicle cam that rides along (Shift+T).",
+      "Fewer, clearer goals: 20 real steps instead of 56, and tips that fit what is on your map and can be dismissed. A Towns list shows every town at a glance.",
+      "A new company starts with $250,000.",
+    ],
+  },
+  {
     v: "v0.0.68", date: "2026-11-08", title: "Towns spring up, and building takes material",
     notes: [
       "You no longer found towns. Goals about towns growing bring new hamlets of their own, each a little further out than the last, with a banner to fly there and a pointer at the screen's edge until your road reaches them.",
