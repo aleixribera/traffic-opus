@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { F, NF, RIVER_K, RIVER_S } from "../world/gen";
 import { CH, RES, type Terrain } from "../world/terrain";
 import { PAL } from "./palette";
+import { CLEAR_K } from "./clearing";
 import type { View } from "./view";
 
 export const MOUNTAIN_STEP_H = 7;
@@ -10,6 +11,13 @@ const LODS = 5; // chunk size 1 km * 4^L
 const MAX_PER_LOD = 220;
 
 const col = (c: number) => new THREE.Color(c);
+
+/** Nothing cleared (till the clearing mask is first drawn). */
+function blankMask(): THREE.Texture {
+  const t = new THREE.DataTexture(new Uint8Array(4), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+  t.needsUpdate = true;
+  return t;
+}
 
 interface Chunk {
   mesh: THREE.Mesh;
@@ -34,6 +42,10 @@ export class Terrain3D {
     uFocus: { value: -1 }, // the one deposit field shown at full strength (an extractor being placed); -1 all of them
     uSun: { value: new THREE.Vector2(-0.56, -0.83) },
     uRot: { value: new THREE.Vector2(1, 0) },
+    // where scenery is cleared (see clearing.ts): a mask round the view, its world origin and size
+    uClear: { value: blankMask() as THREE.Texture },
+    uClearO: { value: new THREE.Vector2(0, 0) },
+    uClearS: { value: 1 },
   };
 
   constructor(private terrain: Terrain, _small: boolean) {
@@ -169,6 +181,13 @@ const GROUND_GLSL = /* glsl */ `
 varying vec2 vWorld;
 uniform sampler2D uF0; uniform sampler2D uF1; uniform sampler2D uF2;
 uniform vec2 uOrigin; uniform float uRes; uniform float uOverlay; uniform float uFocus; uniform vec2 uSun; uniform vec2 uRot;
+uniform sampler2D uClear; uniform vec2 uClearO; uniform float uClearS;
+// would a crown (centre, radius in metres) reach built ground: a road, its pavement or verge, a site, a plot?
+bool cleared(vec2 c, float r) {
+  vec2 u = (c - uClearO) / uClearS;
+  if (any(lessThan(u, vec2(0.0))) || any(greaterThan(u, vec2(1.0)))) return false;
+  return (1.0 - textureLod(uClear, u, 0.0).r) * ${CLEAR_K.toFixed(4)} < r;
+}
 
 vec4 bsw(float t) {
   float t2 = t * t, t3 = t2 * t;
@@ -265,6 +284,7 @@ vec3 groundColor(vec2 p) {
       if (hash12(cl + 2.9) > density) continue;
       vec2 ctr = cl + 0.5 + (vec2(hash12(cl + 17.1), hash12(cl + 41.7)) - 0.5) * 0.55;
       float r = (mix(1.1, 2.4, hash12(cl)) + fo * 1.4) / cell;
+      if (cleared(ctr * cell, r * cell)) continue;
       vec2 q = g - ctr;
       float wob = 1.0 + 0.09 * sin(atan(q.y, q.x) * 5.0 + hash12(cl + 8.0) * 6.28);
       float d = length(q) / wob;

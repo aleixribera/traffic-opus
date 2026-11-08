@@ -40,6 +40,7 @@ import { MapLabels } from "./ui/labels";
 import { MapIcons } from "./ui/mapIcons";
 import { Pops } from "./ui/pops";
 import { Terrain3D } from "./render/terrain3d";
+import { Clearing, clearShapes } from "./render/clearing";
 import { Vehicles3D } from "./render/vehicles3d";
 import { Transit3D, legPoints } from "./render/transit3d";
 import { STOP_COST } from "./game/transit";
@@ -110,6 +111,7 @@ export class App {
   vehicles!: Vehicles3D;
   buildings3d!: Buildings3D;
   terrain3d!: Terrain3D;
+  private clearing!: Clearing;
   preview = new Preview3D();
   saves = new Saves();
   hud!: Hud;
@@ -320,9 +322,15 @@ export class App {
     for (const c of [...this.worldRoot.children]) this.worldRoot.remove(c);
     const small = Math.min(window.innerWidth, window.innerHeight) < 700;
     this.terrain3d = new Terrain3D(g.terrain, small);
+    // (no trees on roads, their verges, sites or plots: the ground's crowns give way round whatever is built)
+    this.clearing?.dispose();
+    this.clearing = new Clearing(() => clearShapes(g.net, g.buildings.list));
+    const sh = this.terrain3d.shared;
+    sh.uClear.value = this.clearing.tex; sh.uClearO.value = this.clearing.origin; sh.uClearS.value = this.clearing.size;
     this.roads = new Roads3D(g.net, {
       props: this.models.props, isWater: (p) => g.terrain.isWater(p),
       drives: () => g.buildings.list.filter((b) => b.access && !b.plant).map((b) => b.front),
+      gates: () => g.buildings.list.filter((b) => b.placed && b.plant).map((b) => ({ ...siteFrame(b.c, b.rot, b.side, b.hd), front: b.front })),
     });
     this.roadsFar = new RoadsFar(g.net);
     this.labels.set([]);
@@ -350,9 +358,9 @@ export class App {
       // (a delivery or a by-product leaving only pops over the map: nothing else on screen changes)
       if (e.t === "delivery") { if (this.mode !== "menu") this.pops.delivery(e.d, this.view); return; }
       if (e.t === "shipped") { if (this.mode !== "menu") this.pops.shipped(e.from, e.to, e.p, this.view); return; }
-      if (e.t === "roads") { this.roads.apply(e.cs); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
+      if (e.t === "roads") { this.roads.apply(e.cs); this.clearing.invalidate(); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
       else if (e.t === "buildings") {
-        this.buildings3d.rebuild(g.buildings.list); this.applyTint(); this.dirtyPreview = true;
+        this.buildings3d.rebuild(g.buildings.list); this.roads.refreshGates(); this.clearing.invalidate(); this.applyTint(); this.dirtyPreview = true;
         // (street trees make way for new driveways: at most twice a second while a town grows)
         if (!this.treesDue) this.treesDue = setTimeout(() => { this.treesDue = 0; this.roads.refreshTrees(); }, 500);
       }
@@ -752,6 +760,7 @@ export class App {
       off: this.st.snapOff,
       lengthStep: this.st.snapLength ? 8 : 0,
       gates: this.waitingGates(),
+      sites: this.game.buildings.siteTargets(),
     };
   }
 
@@ -1098,7 +1107,7 @@ export class App {
 
   private computeRoundabout(): Plan | null {
     const g = this.game;
-    const s = snap(g.net, this.cursor, { ...this.snapOpts(), from: undefined });
+    const s = snap(g.net, this.cursor, { ...this.snapOpts(), from: undefined, sites: undefined });
     const c = s.node !== undefined ? s.p : this.cursor;
     const h = s.node !== undefined ? g.net.nodes.get(s.node)!.h : this.st.level * LEVEL_H;
     return planRoundabout(g.net, g.world, c, this.st.rbSize, Math.round(h / LEVEL_H));
@@ -1213,7 +1222,7 @@ export class App {
         pv.refs(s.refs);
         pv.target(g.net, s);
         chips.push({ text: `${T.name}: ${this.st.mode === "straight" ? "straight" : "curve"}`, kind: "info" });
-        const joins = s.node !== undefined ? (g.net.segsAt(s.node).length === 1 ? "Carries on the road" : "From the junction") : s.seg !== undefined ? `From the ${ROAD_TYPES[g.net.segs.get(s.seg)!.type].name.toLowerCase()}` : s.label;
+        const joins = s.site ? s.label : s.node !== undefined ? (g.net.segsAt(s.node).length === 1 ? "Carries on the road" : "From the junction") : s.seg !== undefined ? `From the ${ROAD_TYPES[g.net.segs.get(s.seg)!.type].name.toLowerCase()}` : s.label;
         if (joins) chips.push({ text: joins, kind: "info" });
         if (this.st.level > 0) chips.push({ text: `Elevation ${this.st.level * LEVEL_H} m`, kind: "info" });
         if (this.keys.has("Alt")) chips.push({ text: "No snapping (Alt)", kind: "info" });
@@ -1249,8 +1258,10 @@ export class App {
           const grade = lead ? this.maxGrade(plan) : 0;
           if (grade > 0.5) chips.push({ text: `↗ ${grade.toFixed(1)}%`, kind: "info" });
           for (const sp of plan.bridges ?? []) chips.push({ text: `Bridge ${Math.round(sp.length)} m over ${sp.over === "water" ? "water" : sp.over === "road" ? "the road" : "water and road"} · ${formatMoney(sp.cost)}`, kind: "info", icon: "bridge" });
-          if (plan.joins) chips.push({ text: plan.endAngleDeg !== undefined && plan.joins.startsWith("Joins the") && !plan.joins.includes("junction") ? `${plan.joins} at ${Math.round(plan.endAngleDeg)}°` : plan.joins, kind: "info" });
-          else if (end.label) chips.push({ text: end.label, kind: "info" });
+          // (to or from a company site: which one it connects; ending at its gate, that says it all)
+          if (plan.connects) chips.push({ text: plan.connects, kind: "info" });
+          if (plan.joins && !end.site) chips.push({ text: plan.endAngleDeg !== undefined && plan.joins.startsWith("Joins the") && !plan.joins.includes("junction") ? `${plan.joins} at ${Math.round(plan.endAngleDeg)}°` : plan.joins, kind: "info" });
+          else if (end.label && !end.site) chips.push({ text: end.label, kind: "info" });
           if (plan.angleDeg !== undefined && L > 3 && !plan.joins) chips.push({ text: plan.angleToRoad ? `${plan.angleDeg.toFixed(1)}° to the road` : `${plan.angleDeg.toFixed(1)}°`, kind: "info", icon: "angle" });
           // right angles: where it leaves the road it starts on and where it meets the one it ends on
           if (lead?.chain.length && !plan.errors.length) this.squareMarks(plan, end);
@@ -1486,6 +1497,7 @@ export class App {
     const far = this.view.halfH > 1800;
     this.vehicles.group.visible = !far;
     this.view.sun.castShadow = this.view.halfH < 2400;
+    this.clearing.update(this.view.renderer, this.view.cx, this.view.cy);
     this.terrain3d.update(this.view);
     this.roadsFar.update(this.view.mpp, this.view.w, this.view.h);
     this.labels.update(this.view);

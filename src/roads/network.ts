@@ -2,7 +2,7 @@ import { LANE_W, ROAD_TYPES, SHOULDER, SIM, roadWidth, type RoadTypeId } from ".
 import {
   type Cubic, type Polyline, type V2,
   add, angleOf, clamp, cubicTangent, dist, dot, lineIntersect, makePolyline, minRadius, norm, offsetPolyline,
-  polyAt, polyClosest, polyDir, right, sampleCubic, scale, segIntersect, signedAngle, smoothstep, splitCubic, sub, trimPolyline, hermiteCubic,
+  polyAt, polyClosest, polyDir, polyDirSmooth, right, sampleCubic, scale, segIntersect, signedAngle, smoothstep, splitCubic, sub, trimPolyline, hermiteCubic,
   cubicAt,
 } from "../core/math";
 
@@ -128,6 +128,21 @@ export interface Arm {
   trim: number;
   /** extra width on the arm's left (seen from the junction): the turn pockets of the traffic arriving on it */
   wL?: number;
+  /**
+   * Where the junction's surface meets the road (set once the road's centreline and trims are known): the middle of
+   * the mouth on the centreline a trim's length along it, and the road's direction there, away from the node. On a
+   * curving road that is off the straight line along `dir`.
+   */
+  mouth?: { p: V2; dir: V2 };
+}
+
+/**
+ * Where a junction's surface meets an arm's road (node at c): the two ends of its mouth, square across the arm at its
+ * trim, the arm's left edge (pockets and all) and its right. The road's own surface ends exactly there.
+ */
+export function armMouth(c: V2, a: Arm): { l: V2; r: V2 } {
+  const m = a.mouth?.p ?? add(c, scale(a.dir, a.trim)), rt = right(a.mouth?.dir ?? a.dir);
+  return { l: add(m, scale(rt, -(a.halfW + (a.wL ?? 0)))), r: add(m, scale(rt, a.halfW)) };
 }
 
 /**
@@ -1161,24 +1176,47 @@ export class RoadNetwork {
       const poly: V2[] = [];
       const kerbs: V2[][] = [];
       const n = arms.length;
-      const edgeL = (a: Arm) => add(add(c, scale(a.dir, a.trim)), scale(right(a.dir), -(a.halfW + (a.wL ?? 0))));
-      const edgeR = (a: Arm) => add(add(c, scale(a.dir, a.trim)), scale(right(a.dir), a.halfW));
+      // each mouth on its road as built: a trim's length along the centreline, square across it
+      // (not round a roundabout: its mouths are flared into the ring along each arm's line)
+      for (const a of segs.some((x) => x.ring) ? [] : arms) {
+        const g = this.segGeom.get(a.seg);
+        if (!g) continue;
+        const L = g.center.length, sAt = a.end === "a" ? g.trimA : L - g.trimB;
+        const d = polyDirSmooth(g.center, sAt, 0.75);
+        a.mouth = { p: polyAt(g.center, sAt), dir: a.end === "a" ? d : scale(d, -1) };
+      }
+      const mdir = (a: Arm) => a.mouth?.dir ?? a.dir;
+      const edgeL = (a: Arm) => armMouth(c, a).l;
+      const edgeR = (a: Arm) => armMouth(c, a).r;
       for (let i = 0; i < n; i++) {
         const A = arms[i], B = arms[(i + 1) % n];
         const l = edgeL(A), r = edgeR(A);
         poly.push(l, r);
         // fillet from A's right edge to B's left edge
         const bl = edgeL(B);
-        const hit = lineIntersect(r, A.dir, bl, B.dir);
+        const hit = lineIntersect(r, mdir(A), bl, mdir(B));
         const fillet: V2[] = [];
         if (hit && hit.t < 0 && hit.u < 0) {
-          const q = add(r, scale(A.dir, hit.t));
+          const q = add(r, scale(mdir(A), hit.t));
           for (let k = 1; k < 8; k++) {
             const t = k / 8;
             const u = 1 - t;
             fillet.push({
               x: u * u * r.x + 2 * u * t * q.x + t * t * bl.x,
               y: u * u * r.y + 2 * u * t * q.y + t * t * bl.y,
+            });
+          }
+        } else {
+          // the far side of a road running on through the junction (straight, or bending a little): a curve leaving
+          // each mouth square, so the kerb carries on round from one piece of road to the next with no corner in it
+          // (a straight chord cuts across the edge of a bending road and leaves a step in its kerb)
+          const k = dist(r, bl) / 3;
+          const p1 = add(r, scale(mdir(A), -k)), p2 = add(bl, scale(mdir(B), -k));
+          for (let j = 1; j < 8; j++) {
+            const t = j / 8, u = 1 - t;
+            fillet.push({
+              x: u * u * u * r.x + 3 * u * u * t * p1.x + 3 * u * t * t * p2.x + t * t * t * bl.x,
+              y: u * u * u * r.y + 3 * u * u * t * p1.y + 3 * u * t * t * p2.y + t * t * t * bl.y,
             });
           }
         }
