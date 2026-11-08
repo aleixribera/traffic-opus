@@ -1,0 +1,63 @@
+/*
+ * Kilometre Zero: the visual system's tokens, in one place (docs/ui-style.md explains them).
+ * 1920s-40s Deco industry: deep navy enamel plates, cream lettering, ochre pinstripes, brick for trouble.
+ * Every text pair below is measured against the plate it sits on; ratios in the comments.
+ */
+
+/* fonts: self-hosted, SIL OFL (public/fonts/OFL-*.txt) */
+@font-face { font-family: "Big Shoulders Display"; font-style: normal; font-weight: 600; font-display: swap; src: url("/fonts/big-shoulders-display-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "Big Shoulders Display"; font-style: normal; font-weight: 700; font-display: swap; src: url("/fonts/big-shoulders-display-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "Big Shoulders Display"; font-style: normal; font-weight: 800; font-display: swap; src: url("/fonts/big-shoulders-display-latin-800-normal.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-style: normal; font-weight: 400; font-display: swap; src: url("/fonts/barlow-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-style: normal; font-weight: 500; font-display: swap; src: url("/fonts/barlow-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-style: normal; font-weight: 600; font-display: swap; src: url("/fonts/barlow-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-style: normal; font-weight: 700; font-display: swap; src: url("/fonts/barlow-latin-700-normal.woff2") format("woff2"); }
+
+:root {
+  color-scheme: dark;
+  /* ---- enamel: the plates, darkest to lightest */
+  --ink: #070d17;       /* readouts (money, clock), inputs, bar tracks */
+  --bar: #0c1524;       /* the bottom bar, chips */
+  --plate: #122036;     /* panel body */
+  --plate-2: #1a2c47;   /* header plates, cards, raised buttons */
+  --plate-3: #24385a;   /* pressed / selected, strong rules */
+  --edge: #050a12;      /* the dark rim round every plate */
+  --rule: rgba(243, 234, 214, 0.13);   /* hairlines between rows */
+  --rule-2: rgba(243, 234, 214, 0.24); /* control borders */
+
+  /* ---- lettering (ratios on --plate / --plate-2 / --plate-3) */
+  --cream: #f3ead6;     /* body: 13.7 / 11.7 / 9.8 */
+  --cream-2: #cfc4ab;   /* secondary: 9.4 / 8.1 / 6.8 */
+  --cream-3: #a99f8a;   /* tertiary, hints: 6.2 / 5.4 / 4.5 */
+
+  /* ---- signal colours, each with one meaning */
+  --ochre: #e0a833;     /* accent: selection, progress, focus, primary button (navy text on it 8.6) */
+  --ochre-hi: #f0c25a;  /* accent lettering: section heads, costs (9.8 on --plate) */
+  --pin: rgba(224, 168, 51, 0.42); /* the pinstripe */
+  --brick: #9c3a28;     /* trouble fills (cream on it 5.8) */
+  --bad: #ef8a6c;       /* trouble lettering (6.6 on --plate) */
+  --good: #93c97a;      /* good lettering (8.5 on --plate) */
+  --good-fill: #3a7036; /* go fills (cream on it 4.9) */
+  --info: #7fb6e0;      /* neutral data lines, power plants (7.5) */
+  --bar-ok: #6fae5c;
+  --bar-mid: #e0a833;
+  --bar-low: #d4573d;
+
+  /* ---- type */
+  --f-display: "Big Shoulders Display", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --f-text: "Barlow", "Segoe UI", system-ui, sans-serif;
+  --t-xs: 12px;    /* the floor: units, captions */
+  --t-sm: 13px;    /* body, rows */
+  --t-md: 14px;    /* menu items, emphasised rows */
+  --t-plate: 18px; /* panel titles (display caps) */
+  --t-big: 18px;   /* money and clock readouts */
+  --t-banner: 30px;
+  --t-title: 52px;
+
+  /* ---- shape */
+  --r: 2px;        /* stamped plates are nearly square */
+  --gap: 8px;
+  --bar-h: 62px;
+  --shadow: 0 1px 0 rgba(0, 0, 0, 0.5), 0 4px 14px rgba(3, 7, 14, 0.45);
+  --rivet: radial-gradient(circle at 45% 40%, #8796ad 0 0.8px, #3a4c6c 1.3px, #1b2a42 2.1px, transparent 2.6px);
+}

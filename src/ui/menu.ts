@@ -130,7 +130,7 @@ export class MainMenu {
     this.root.innerHTML = `
       <nav class="card mm-card" aria-label="Main menu">
         <header class="mm-head">
-          <h1 class="mm-title">Kilometre Zero</h1>
+          <h1 class="mm-title">Kilometre <span>Zero</span></h1>
           <p class="mm-tag">Farms, mills and the roads between them. Keep the towns supplied and they grow.</p>
         </header>
         <div class="mm-list">

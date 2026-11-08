@@ -165,6 +165,8 @@ export class Hud {
   private rectEl = h("div", "selrect");
   private banner = h("section", "card banner");
   private compass = h("button", "btn icon-btn compass");
+  /** The company's herald and name, top left (filled in by setCompany; hidden until then). */
+  private companyEl = h("div", "company", `<span class="company-herald"></span><span class="company-name"></span>`);
   private compassRot = NaN;
   private undoBtn = h("button", "cat hist");
   private redoBtn = h("button", "cat hist");
@@ -203,6 +205,9 @@ export class Hud {
       this.tlBtns.set(k, b);
       row.appendChild(b);
     };
+    // ---- COMPANY SLOT: herald + name, see setCompany()
+    this.companyEl.hidden = true;
+    row.appendChild(this.companyEl);
     tlb("menu", ICON.menu, "Pause menu (Esc)", () => this.openPause());
     row.appendChild(h("span", "tl-sep"));
     tlb("info", ICON.layers, "Info views", () => this.toggleWin("info"));
@@ -592,6 +597,14 @@ export class Hud {
     el.hidden = false;
     el.append(h("header", "to-head", "Tool options"), ...items);
     if (focusKey) [...el.querySelectorAll<HTMLElement>("[aria-label]")].find((e) => e.getAttribute("aria-label") === focusKey)?.focus();
+  }
+
+  /** Show the company's name and herald (svg markup) at the top left; null hides the plate. */
+  setCompany(name: string | null, herald = "") {
+    this.companyEl.hidden = !name;
+    (this.companyEl.firstElementChild as HTMLElement).innerHTML = herald;
+    (this.companyEl.lastElementChild as HTMLElement).textContent = name ?? "";
+    this.companyEl.title = name ?? "";
   }
 
   compassAngle(rot: number) {
@@ -1617,7 +1630,7 @@ function sparkline(vs: number[], what: string): string {
 
 function rbIcon(size: RoundaboutSize): string {
   const r = 4 + size * 1.6, w = 1.6 + size * 0.5;
-  return `<svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true" focusable="false"><path d="M14 1 v${14 - r - 1} M14 ${14 + r + 1} V27 M1 14 h${14 - r - 1} M${14 + r + 1} 14 H27" stroke="#8d939a" stroke-width="3"/><circle cx="14" cy="14" r="${r}" fill="#cfe6b8" stroke="#5b6168" stroke-width="${w}"/></svg>`;
+  return `<svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true" focusable="false"><path d="M14 1 v${14 - r - 1} M14 ${14 + r + 1} V27 M1 14 h${14 - r - 1} M${14 + r + 1} 14 H27" stroke="#cfc4ab" stroke-width="3.4"/><circle cx="14" cy="14" r="${r}" fill="#6f8a45" stroke="#f3ead6" stroke-width="${w}"/></svg>`;
 }
 
 function stockBar(n: number, max: number, color?: number): string {
