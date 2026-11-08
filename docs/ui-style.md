@@ -118,21 +118,36 @@ built from one model (`src/ui/inspect.ts`, pure and tested) and drawn by `Hud.an
 
 - **Key numbers per kind**: a producing site shows output an hour against what it can make now (season included),
   profit last hour (or loads shipped, for a feeder product nobody pays for) and trucks out of its fleet; a town shows
-  people (+homes a day), needs supplied and its most-missing need; a vehicle its speed, distance to go and arrival
-  time; a road its vehicles, speed against the limit and how full it is; a junction the vehicles queued, the worst
-  approach and those crossing now.
+  people (+homes a day), needs supplied and its most-missing need; a loaded truck its loads, their worth (or "for
+  your own plant") and arrival, any other vehicle its speed, distance to go and arrival time; a road its vehicles,
+  speed against the limit and how full it is; a junction the vehicles queued, the longest wait (and from where) and
+  those crossing now; a resource patch the yield an extractor would get there, its size and the sites working it; a
+  stuck spot the vehicles standing, the longest stood and the roads held up.
 - **Hide what doesn't apply**: no chart until something is made ("No output yet"), no level bar on warehouses and
   depots, the season only as the status tag (never rows).
 - **Colour carries meaning only**, always with words beside it: good (green), trouble (`--bad`), neutral cream.
 - **Picking** (`src/ui/pick.ts`): a vehicle first, measured to its whole body within ~9 screen px (not when zoomed out
-  past where vehicles are drawn), then a bus stop, a building (a town hall selects the town), a junction, a road.
-  Hover draws a thin cream outline and shows the pointer cursor; Esc or a click on empty ground clears the selection.
-- **On the map** (`src/render/highlight3d.ts`): the selected building outlined ochre with a faint fill, its suppliers
-  cream and buyers amber, each over a navy underlay; its trucks on the road ringed small. A vehicle gets an ochre
-  ring and its route ahead as cream dashes over navy (anchored to the destination, so they don't crawl). A road gets
-  ochre lines down both edges, so the traffic on it stays visible. All of it is drawn over the map at every zoom, line
-  widths a few pixels at any scale, rebuilt only when the selection or the zoom step changes, the rings moved each
-  frame without allocating.
+  past where vehicles are drawn), then a bus stop, a building (a town hall selects the town), a junction, a road,
+  and last the open ground (`groundAt`): water, a mined deposit, hills, forest, fertile soil. A deposit always opens;
+  soil, forest, water and hills (most of the map) only when nothing else is selected, ground is, or the Resources
+  view is on, so a click beside a selected site still clears it. Plain land always clears. Hover draws a thin cream
+  outline and shows the pointer cursor (also over a deposit); Esc or a click on empty ground clears the selection. A
+  stuck-traffic diamond and a deposit's tag open their panels too.
+- **On the map** (`src/render/highlight3d.ts`), all batched into a few line meshes of one shader (per-vertex colour,
+  alpha and dash distance; dashes run with time and stop under reduced motion), rebuilt only when the selection or
+  the zoom step changes, line widths a few pixels at any scale:
+  - the selected building outlined ochre with a faint fill, its suppliers cream and buyers amber; its trucks ringed;
+  - **flow lines** for trade and people: a gentle arc per partner in the product's colour (people: ochre to work,
+    cream out now), thicker for more loads or people, an arrowhead at the receiving end, trimmed to the lots' edges;
+  - **rings**: a power plant's or depot's reach (ochre, a faint wash inside), a deposit's extent (cream dashes), a
+    stuck spot (brick), and a small ochre ring with a dot where open ground was clicked;
+  - **a vehicle's route**: the way ahead as cream dashes over navy to a square at its end (dashes anchored to the
+    destination, so they don't crawl), the way it came a faded cream line (kept while selected, through reroutes);
+  - **a road's routes through** (CS's route view): every vehicle on it now, its whole planned route, summed per lane
+    and direction, thicker where more share a road, ochre where mostly your freight, cream otherwise;
+  - **a junction's arms** tinted by the lights (green now, red now) or brick for an approach waiting a minute or more.
+- **Ground**: a resource selection turns the Resources view on, focused on that kind (its deposits tagged), for as
+  long as it stays selected, and offers "Place a … here" (the extractor's placing tool).
 - **Live numbers without losing clicks**: the panel refreshes four times a second but holds still while a button is
   pressed in it, and keyboard focus returns to the same control after a refresh.
 

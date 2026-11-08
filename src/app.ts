@@ -34,6 +34,7 @@ import type { ModelSet } from "./render/models";
 import { Preview3D } from "./render/preview3d";
 import { Highlight3D } from "./render/highlight3d";
 import { junctionAt, pickAt, poseOf } from "./ui/pick";
+import { groundAt, isMined } from "./ui/inspect";
 import type { Sel } from "./ui/inspect";
 import { Roads3D } from "./render/roads3d";
 import { RoadsFar } from "./render/roadsFar";
@@ -93,8 +94,15 @@ export class App {
   convoyTags = new ConvoyTags((id) => { this.followT = id === null ? 0 : 1; });
   /** markers on towns that have just sprung up (click the edge pointer to fly there) */
   /** the deposits' tags and the "nearest coal" pointers (while an extractor is placed, and in the Resources view) */
-  depositMarks = new DepositMarks(() => this.game.terrain.gen, (c) => this.flyTo(c));
-  stuckAlerts = new StuckAlerts((c) => this.flyTo(c, 140));
+  // (a deposit's tag, clicked while looking round, opens the deposit too; a stuck diamond opens what is stuck there)
+  depositMarks = new DepositMarks(() => this.game.terrain.gen, (c, field) => {
+    this.flyTo(c);
+    if (field !== undefined && this.st.tool === "inspect") this.hud?.openSel({ k: "ground", id: field, x: Math.round(c.x), y: Math.round(c.y) });
+  });
+  stuckAlerts = new StuckAlerts((c, id) => {
+    this.flyTo(c, 140);
+    if (id !== undefined && this.st.tool === "inspect") this.hud?.openSel({ k: "stuck", id, x: Math.round(c.x), y: Math.round(c.y) });
+  });
   townPings = new TownPings({ fly: (id) => this.flyToTown(id), open: (id) => { this.setTool({ tool: "inspect" }); this.hud?.openTown(id); } });
   private followT = 0;
   /** the camera gliding to a place (a finished landmark): from, to, start and length (s) */
@@ -135,6 +143,8 @@ export class App {
   selected: Building | null = null;
   /** what the inspector has selected (the HUD sets it; one at a time) */
   sel: Sel | null = null;
+  /** the ground field the terrain overlay was last focused on for a selection (null: none) */
+  private groundKey: number | null = null;
   /** the map's lit-up view of the selection (docs/ui-style.md "Inspector") */
   readonly highlight = new Highlight3D();
   /** an ordinary vehicle the camera follows (convoys use their tags' follow) */
@@ -267,6 +277,8 @@ export class App {
     if (this.uiHidden || this.mode === "menu") return { kinds: [], focus: false };
     const k = this.st.placed;
     if (this.st.tool === "place" && isPlantKind(k) && PLANTS[k].deposit) return { kinds: [DEPOSIT_KINDS.get(PLANTS[k].deposit!.field)!], focus: true };
+    const gf = this.groundField();
+    if (gf !== null && DEPOSIT_KINDS.has(gf)) return { kinds: [DEPOSIT_KINDS.get(gf)!], focus: false };
     if (this.overlay === "resources") return { kinds: [...DEPOSIT_KINDS.values()], focus: false };
     return { kinds: [], focus: false };
   }
@@ -421,7 +433,15 @@ export class App {
   private groundOverlay() {
     const k = this.st.placed;
     const extractor = this.st.tool === "place" && isPlantKind(k) && !!PLANTS[k].deposit;
-    this.terrain3d?.setOverlay(this.overlay === "resources" || extractor ? "resources" : "none", extractor && isPlantKind(k) ? PLANTS[k].deposit?.field ?? -1 : -1);
+    // a resource ground selected: the Resources view, focused on its kind, for as long as it stays selected
+    const gf = extractor ? null : this.groundField();
+    this.terrain3d?.setOverlay(this.overlay === "resources" || extractor || gf !== null ? "resources" : "none", extractor && isPlantKind(k) ? PLANTS[k].deposit?.field ?? -1 : gf ?? -1);
+    this.groundKey = gf;
+  }
+
+  /** The resource field of the selected ground (a deposit, soil or forest), or null. */
+  private groundField(): number | null {
+    return this.sel?.k === "ground" && this.sel.id >= 0 ? this.sel.id : null;
   }
 
   /** The utility on show: its info view, or the one whose plant is being placed. */
@@ -935,7 +955,13 @@ export class App {
     }
     if (t === "inspect") {
       // anything on the map opens its panel; empty ground clears the selection
-      const s = this.pickAt(c);
+      let s = this.pickAt(c);
+      // open ground: a mined deposit always opens; soil, forest, water and hills (which are most of the map) only
+      // when nothing else is selected, ground is, or the Resources view is on; otherwise a click there clears
+      if (!s) {
+        const gr = groundAt(g, c);
+        if (gr && (isMined(gr.id) || !this.sel || this.sel.k === "ground" || this.overlay === "resources")) s = gr;
+      }
       if (!s) { this.hud?.closePanels(); return; }
       if (s.k === "node") this.hud?.openSignal(s.id);
       else this.hud?.openSel(s);
@@ -1392,7 +1418,8 @@ export class App {
       // what a click would select: a thin cream outline and a pointer (the selection itself is lit by Highlight3D)
       const h = this.pickAt(c);
       this.highlight.hoverV = h?.k === "vehicle" ? h.id : null;
-      this.view.canvas.style.cursor = h ? "pointer" : "";
+      const gr = h ? null : groundAt(g, c);
+      this.view.canvas.style.cursor = h || (gr && isMined(gr.id)) ? "pointer" : "";
       const w = Math.max(0.8, 1.6 * this.view.mpp), cream = 0xf3ead6;
       if (h && (h.k === "building" || h.k === "town") && !(this.sel && this.sel.k === h.k && this.sel.id === h.id)) {
         const b = h.k === "building" ? g.buildings.byId.get(h.id) : g.buildings.at(c);
@@ -1515,6 +1542,7 @@ export class App {
     this.townPings.update(this.view);
     this.depositMarks.update(this.view);
     this.stuckAlerts.update(this.view);
+    if (this.groundField() !== this.groundKey) { this.groundOverlay(); this.iconT = 1; }
     this.highlight.group.visible = this.mode !== "menu";
     this.highlight.update(g, g.alpha, this.view.mpp, dt);
     this.iconT += dt;

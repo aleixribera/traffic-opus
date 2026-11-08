@@ -4,13 +4,16 @@
 // Pure over the game state, so tests can check the numbers each kind picks.
 
 import { BUILDING_TYPES, ROAD_TYPES } from "../config";
-import { formatMoney } from "../core/math";
+import { formatMoney, type V2 } from "../core/math";
 import type { Building } from "../game/buildings";
 import type { Game } from "../game/city";
 import { SEASONAL, SEASON_NAME, seasonMult, seasonOf } from "../game/calendar";
 import { SEASON_WORD } from "./specials";
 import { ZONE_GROUP } from "../game/growables";
-import { Industry, PLANTS, PRODUCTS, isPlantKind, type Product } from "../game/industry";
+import { DEPOT_REACH, Industry, MIN_DEPOSIT, PLANTS, PLANT_KINDS, PRODUCTS, isPlantKind, type PlantKind, type Product } from "../game/industry";
+import { unlockedBy } from "../game/progression";
+import { DEPOSITS, F } from "../world/gen";
+import { STUCK_KEEP } from "./stuckAlerts";
 import { LEVEL_MULT, SITE_LEVELS, growNeed } from "../game/sites";
 import { HOUR } from "../game/society";
 import { TOWN_SIZES, sizeOf } from "../game/towns";
@@ -18,7 +21,8 @@ import { TRUCK_CLASSES } from "../game/trucks";
 import { served, type Town } from "../game/settlements";
 import { growthOf, townNeeds } from "./needs";
 import type { Lane } from "../roads/network";
-import { dkSeg } from "../sim/router";
+import { dkDir, dkSeg } from "../sim/router";
+import { poseOf } from "./pick";
 import type { Vehicle } from "../sim/traffic";
 
 /** The one thing selected on the map. */
@@ -28,9 +32,14 @@ export type Sel =
   | { k: "vehicle"; id: number }
   | { k: "seg"; id: number }
   | { k: "node"; id: number }
-  | { k: "stop"; id: number };
+  | { k: "stop"; id: number }
+  /** open ground where you clicked: a deposit, fertile soil, forest, water or hills (id: the field, GROUND_*) */
+  | { k: "ground"; id: number; x: number; y: number }
+  /** a stuck-traffic diamond: the vehicles standing round (x, y) */
+  | { k: "stuck"; id: number; x: number; y: number };
 
-export const sameSel = (a: Sel | null, b: Sel | null) => !!a && !!b && a.k === b.k && a.id === b.id;
+export const sameSel = (a: Sel | null, b: Sel | null) =>
+  !!a && !!b && a.k === b.k && a.id === b.id && (!("x" in a) || !("x" in b) || (a.x === b.x && a.y === b.y));
 
 /** Good or bad (never colour alone: the words say it too); "" is neutral. */
 export type Tone = "good" | "bad" | "";
@@ -91,7 +100,19 @@ export interface Related {
   segs: number[];
   /** a vehicle whose remaining route is drawn */
   route?: number;
+  /** goods (product-coloured, arrowed) and people (thin cream) moving between places, a to b */
+  flows?: FlowLine[];
+  /** rings on the ground: a plant's reach, a deposit's extent, a spot */
+  rings?: Ring[];
+  /** vehicles whose whole routes are drawn together, thicker where more of them share a road (a road's routes) */
+  routes?: number[];
+  /** road pieces drawn by their state instead of plain ochre: green now, red now, held up */
+  segTone?: Record<number, "go" | "stop" | "bad">;
 }
+
+/** A line of goods or people from a to b; `ra` / `rb` how far short of each end to stop (a plot's half-size). */
+export interface FlowLine { a: V2; b: V2; color: number; n: number; kind: "goods" | "people"; ra?: number; rb?: number }
+export interface Ring { c: V2; r: number; tone: "reach" | "deposit" | "spot" | "here" }
 
 const emptyRel = (): Related => ({ self: [], from: [], to: [], vehicles: [], segs: [] });
 
@@ -360,10 +381,75 @@ export function siteModel(g: Game, b: Building, led?: TradeLedger): PanelModel {
         : { label: `Lv ${L + 1}`, pct: k, line: held ? `held back: ${P.why}` : `${Math.round(k * 100)}% · then ×${LEVEL_MULT[L]} output`, tone: held ? "bad" : "" };
     }
   }
+  siteViz(g, b, flow, rel);
   return {
     title: T.name, icon: b.kind, badge: b.placed && !D.mega && !D.logistics ? `Lv ${L}/${SITE_LEVELS}` : undefined,
     status, keys, flow, level, related: rel,
   };
+}
+
+/** Where a chip's place stands on the map, and about how far its plot reaches from there. */
+function chipAt(g: Game, c: FlowChip): { p: V2; r: number } | null {
+  if (c.ref?.k === "building") {
+    const o = g.buildings.byId.get(c.ref.id);
+    return o ? { p: o.c, r: Math.min(o.hw, o.hd) } : null;
+  }
+  if (c.ref?.k === "town") {
+    const t = g.towns.byId.get(c.ref.id);
+    const h = t ? g.buildings.byId.get(t.hall) : undefined;
+    return t ? { p: h?.c ?? t.c, r: h ? Math.min(h.hw, h.hd) : 20 } : null;
+  }
+  return null;
+}
+
+/** Loads on the road now, by run ("plant>dest"): the company's outbound trucks. */
+function loadsOnRuns(g: Game): Map<string, number> {
+  const on = new Map<string, number>();
+  for (const tr of g.trips()) {
+    const h = tr.haul;
+    if (!h || h.done || h.big || h.leg !== "out") continue;
+    const k = `${h.plant}>${h.dest}`;
+    on.set(k, (on.get(k) ?? 0) + h.n);
+  }
+  return on;
+}
+
+/**
+ * A site's goods on the map: a product-coloured line from each supplier in its From row to it, and from it to each
+ * buyer in its To row, thicker for more loads on that run now; and its reach as a ring (a power plant's power, a
+ * depot's detour).
+ */
+function siteViz(g: Game, b: Building, flow: FlowRow[], rel: Related) {
+  const on = loadsOnRuns(g);
+  // (a town's shops all count as the town)
+  const runs = (from: number, to: number, town?: number) => {
+    if (town === undefined) return on.get(`${from}>${to}`) ?? 0;
+    let n = 0;
+    for (const [k, x] of on) {
+      const [a, d] = k.split(">").map(Number);
+      if (a === from && g.buildings.byId.get(d)?.town === town) n += x;
+    }
+    return n;
+  };
+  const self = Math.min(b.hw, b.hd);
+  const flows: FlowLine[] = [];
+  for (const row of flow) {
+    const into = row.label === "From";
+    if (!into && row.label !== "To") continue;
+    for (const c of row.chips) {
+      const at = chipAt(g, c);
+      if (!at) continue;
+      const color = c.product ? PRODUCTS[c.product].color : 0xcfc4ab;
+      const town = c.ref?.k === "town" ? c.ref.id : undefined;
+      flows.push(into
+        ? { a: at.p, b: b.c, color, n: runs(c.ref!.id, b.id), kind: "goods", ra: at.r, rb: self }
+        : { a: b.c, b: at.p, color, n: runs(b.id, c.ref!.id, town), kind: "goods", ra: self, rb: at.r });
+    }
+  }
+  rel.flows = flows;
+  const D = PLANTS[b.kind as keyof typeof PLANTS];
+  if (D.reach && b.built >= 1) rel.rings = [{ c: b.c, r: D.reach, tone: "reach" }];
+  else if (D.logistics === "depot" && b.built >= 1) rel.rings = [{ c: b.c, r: DEPOT_REACH, tone: "reach" }];
 }
 
 function nearest(list: Building[], to: Building): Building | null {
@@ -449,8 +535,69 @@ export function homeModel(g: Game, b: Building): PanelModel {
   if (town?.hall) rel.from.push(town.hall);
   const flow: FlowRow[] = town ? [{ label: "Town", chips: [{ town: true, text: town.name, note: TOWN_SIZES[sizeOf(town.pop)].name.toLowerCase(), ref: { k: "town", id: town.id } }] }] : [];
   if (town && grp === "res") flow.push({ label: "Needs", chips: townNeeds(town).map((v) => ({ product: v.p, text: PRODUCTS[v.p].name, note: v.word.toLowerCase(), tone: v.state === "plenty" || v.state === "enough" ? "good" : "bad" })) });
+  if (grp === "com" && T.shelves && b.built >= 1 && !b.abandoned) flow.push({ label: "Shelves", chips: [{ product: "food", text: "Food", note: b.stock >= 1 ? `${Math.floor(b.stock)} in stock` : "empty", tone: b.stock >= 1 ? "" : "bad" }] });
+  if (b.zone) peopleOf(g, b, grp === "res", flow, rel);
   const name = T.fuel || !b.zone ? T.name : grp === "res" ? "Home" : grp === "com" ? "Shop" : T.name;
   return { title: name, sub: town?.name, icon: b.kind, badge: b.zone ? `Lv ${b.level}/5` : undefined, status, keys, flow, related: rel };
+}
+
+/** A workplace's short name for a chip: the site's kind, or "Shop" / "Offices" for a town's. */
+function workName(b: Building): string {
+  if (b.plant || !b.zone) return BUILDING_TYPES[b.kind].name;
+  const grp = ZONE_GROUP[b.zone];
+  return grp === "res" ? "Home" : grp === "com" ? (BUILDING_TYPES[b.kind].fuel ? BUILDING_TYPES[b.kind].name : b.kind === "office" || b.kind === "tower" ? "Offices" : "Shop") : BUILDING_TYPES[b.kind].name;
+}
+
+// (Citizen.st: travelling to, or at, the building in `at`)
+const ST_TRAVEL = 1, ST_AWAY = 2;
+/** Colours of people's lines: to work (ochre) and out now (cream). */
+export const WORK_LINE = 0xe0a833, OUT_LINE = 0xf3ead6;
+
+/**
+ * Who lives or works in a town building and where they go: a home's people to their jobs and wherever they are out
+ * at now; a workplace's staff from their homes and its customers in now. The rows name the places, the map draws a
+ * line to each (thicker for more people).
+ */
+function peopleOf(g: Game, b: Building, home: boolean, flow: FlowRow[], rel: Related) {
+  const work = new Map<number, number>(), out = new Map<number, number>();
+  for (const c of g.people.citizens.values()) {
+    if (home) {
+      if (c.home !== b.id) continue;
+      if (c.job >= 0) work.set(c.job, (work.get(c.job) ?? 0) + 1);
+      if ((c.st === ST_TRAVEL || c.st === ST_AWAY) && c.at >= 0 && c.at !== b.id && c.at !== c.job) out.set(c.at, (out.get(c.at) ?? 0) + 1);
+    } else {
+      if (c.job === b.id) work.set(c.home, (work.get(c.home) ?? 0) + 1);
+      else if ((c.st === ST_TRAVEL || c.st === ST_AWAY) && c.at === b.id) out.set(c.home, (out.get(c.home) ?? 0) + 1);
+    }
+  }
+  const flows: FlowLine[] = [];
+  const me = Math.min(b.hw, b.hd);
+  const line = (id: number, n: number, color: number) => {
+    const o = g.buildings.byId.get(id);
+    if (!o) return;
+    const r = Math.min(o.hw, o.hd);
+    flows.push(home ? { a: b.c, b: o.c, color, n, kind: "people", ra: me, rb: r } : { a: o.c, b: b.c, color, n, kind: "people", ra: r, rb: me });
+  };
+  // (the busiest few lines: a big store's dozens of staff would be a hairball)
+  const top = (m: Map<number, number>, k: number) => [...m].sort((x, y) => y[1] - x[1]).slice(0, k);
+  for (const [id, n] of top(work, 24)) line(id, n, WORK_LINE);
+  for (const [id, n] of top(out, 24)) line(id, n, OUT_LINE);
+  rel.flows = flows;
+  if (home) {
+    const chips = top(work, 4).map(([id, n]): FlowChip | null => {
+      const o = g.buildings.byId.get(id);
+      return o ? { kind: o.kind, text: workName(o), note: plural(n, "person", "people"), ref: { k: "building", id } } : null;
+    }).filter((c): c is FlowChip => !!c);
+    if (chips.length) flow.push({ label: "Work at", chips });
+    const away = [...out.values()].reduce((a, n) => a + n, 0);
+    if (away) flow.push({ label: "Out now", chips: top(out, 3).map(([id, n]) => { const o = g.buildings.byId.get(id); return { kind: o?.kind, text: o ? workName(o) : "Out", note: String(n), ref: o ? { k: "building", id } as Sel : undefined }; }) });
+  } else {
+    // its staff by the town they come from (a site's crew often drives in from two)
+    const towns = new Map<number, number>();
+    for (const [id, n] of work) { const t = g.buildings.byId.get(id)?.town; if (t !== undefined) towns.set(t, (towns.get(t) ?? 0) + n); }
+    const chips: FlowChip[] = [...towns].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([id, n]) => ({ town: true, text: g.towns.byId.get(id)?.name ?? "Town", note: plural(n, "worker"), ref: { k: "town", id } }));
+    if (chips.length) flow.push({ label: "Staff from", chips });
+  }
 }
 
 // ------------------------------------------------------------------------------------------- vehicles
@@ -478,13 +625,30 @@ export function vehicleKind(v: Vehicle): "convoy" | "truck" | "bus" | "car" {
 export function vehicleState(v: Vehicle): { text: string; tone: Tone; fix?: string } {
   if (v.dwell !== undefined && v.dwell > 0) return { text: "At a stop", tone: "" };
   if (v.leaving > 0) return { text: "Turning in at its destination", tone: "good" };
-  if (v.stuck >= 30) return { text: `Stuck for ${Math.round(v.stuck)} s`, tone: "bad", fix: v.block ? `Held at the junction ahead: ${v.block}` : "Its road is jammed ahead" };
+  if (v.stuck >= 30) return { text: `Stuck for ${dur(v.stuck)}`, tone: "bad", fix: v.block ? `Held at the junction ahead: ${v.block}` : "Its road is jammed ahead" };
   if (v.v < 0.5) {
-    if (v.edge.kind === "conn") return { text: "Waiting in a junction", tone: "" };
+    const t = v.wait >= 3 ? ` · ${dur(v.wait)}` : "";
+    if (v.edge.kind === "conn") return { text: `Waiting in a junction${t}`, tone: "" };
     const atEnd = v.edge.pl.length - v.s < 30;
-    return atEnd ? { text: "Waiting at a junction", tone: "", fix: v.block } : { text: "Queueing", tone: "" };
+    return atEnd ? { text: `Waiting at a junction${t}`, tone: "", fix: v.block } : { text: `Queueing${t}`, tone: "" };
   }
   return { text: "Driving", tone: "good" };
+}
+
+/** Seconds as "45 s" or "3 min". */
+const dur = (s: number) => (s < 90 ? `${Math.round(s)} s` : `${Math.round(s / 60)} min`);
+
+/** What a resident's trip is for, as its panel's sub-title. */
+const PURPOSE: Partial<Record<string, string>> = { work: "Going to work", home: "Heading home", shop: "Going shopping", leisure: "Out for the evening" };
+
+/** The clock time it should arrive, at the speeds of the roads ahead (about 80% of their limits). */
+function eta(g: Game, v: Vehicle, left: number): string {
+  let lim = 0, n = 0;
+  for (let i = v.ri + 1; i < v.route.length && n < 30; i++, n++) lim += ROAD_TYPES[g.net.segs.get(dkSeg(v.route[i]))?.type ?? "street"].speed;
+  const vEst = Math.max(4, (n ? lim / n : v.edge.speed) * 0.8);
+  const secs = left / vEst + (v.stuck > 5 ? v.stuck : 0);
+  const at = (g.hour + secs / HOUR) % 24;
+  return `${String(Math.floor(at)).padStart(2, "0")}:${String(Math.floor((at % 1) * 6) * 10).padStart(2, "0")}`;
 }
 
 export function vehicleModel(g: Game, v: Vehicle): PanelModel {
@@ -495,35 +659,72 @@ export function vehicleModel(g: Game, v: Vehicle): PanelModel {
   const toB = g.buildings.byId.get(h ? (h.leg === "out" ? h.dest : h.plant) : tr.to);
   if (fromB) rel.from.push(fromB.id);
   if (toB) rel.to.push(toB.id);
+  const loaded = !!h && h.leg === "out" && !h.big;
   let title = "Car", sub: string | undefined;
   if (kind === "convoy") { title = "Oversize load"; sub = h!.big === "turbine" ? "Turbine" : "Girders"; }
   else if (kind === "bus") { const l = g.transit.lines.get(tr.bus!.line); title = "Bus"; sub = l?.name; }
   else if (kind === "truck") {
     title = TRUCK_CLASSES[h?.cls ?? "light"].name;
-    sub = h ? (h.leg === "out" ? `${h.n} ${h.n === 1 ? "load" : "loads"} of ${lower(h.product)}` : "returning empty") : tr.cargo ?? undefined;
-  } else if (tr.motor) { title = "Motor Works sedan"; sub = "A resident's car"; }
-  else sub = "A resident's car";
+    sub = h ? (loaded ? `${plural(h.n, "load")} of ${lower(h.product)}` : "Returning empty") : tr.cargo ?? undefined;
+  } else {
+    title = tr.motor ? "Motor Works sedan" : "Car";
+    sub = PURPOSE[tr.kind] ?? "A resident's car";
+  }
   const left = metresLeft(g, v);
-  // (an estimate at the speeds of the roads ahead, about 80% of their limits)
-  let lim = 0, n = 0;
-  for (let i = v.ri + 1; i < v.route.length && n < 30; i++, n++) lim += ROAD_TYPES[g.net.segs.get(dkSeg(v.route[i]))?.type ?? "street"].speed;
-  const vEst = Math.max(4, (n ? lim / n : v.edge.speed) * 0.8);
-  const secs = left / vEst + (v.stuck > 5 ? v.stuck : 0);
-  const at = (g.hour + secs / HOUR) % 24;
-  const clock = `${String(Math.floor(at)).padStart(2, "0")}:${String(Math.floor((at % 1) * 6) * 10).padStart(2, "0")}`;
-  const keys: KeyNum[] = [
-    { value: String(Math.round(v.v * 3.6)), unit: " km/h", label: `speed, limit ${Math.round(v.edge.speed * 3.6)}` },
-    { value: km(left).replace(/ (k?m)$/, ""), unit: ` ${km(left).split(" ")[1]}`, label: "to go" },
-    { value: clock, label: "arrives about", title: "At the speeds of the roads ahead" },
-  ];
+  const togo = km(left);
+  const speed: KeyNum = { value: String(Math.round(v.v * 3.6)), unit: " km/h", label: `speed, limit ${Math.round(v.edge.speed * 3.6)}` };
+  const arrives: KeyNum = { value: eta(g, v, left), label: `arrives · ${togo} to go`, title: "At the speeds of the roads ahead" };
+  let keys: KeyNum[];
+  if (loaded) {
+    // a loaded truck: what it carries and what that is worth where it is going
+    const worth = PRODUCTS[h!.product].price * h!.n;
+    keys = [
+      { value: String(h!.n), unit: h!.n === 1 ? " load" : " loads", label: lower(h!.product) },
+      worth > 0
+        ? { value: formatMoney(Math.round(worth)), label: "cargo value", title: "What its buyer pays on delivery (less if a perishable load goes off on the way)" }
+        : { value: "–", label: "for your own plant", title: `Nobody pays for ${lower(h!.product)}: it feeds the company's plant at the other end` },
+      arrives,
+    ];
+  } else if (kind === "bus") keys = [{ value: String(tr.bus!.pax.length), label: tr.bus!.pax.length === 1 ? "rider aboard" : "riders aboard" }, speed, arrives];
+  else keys = [speed, { value: togo.replace(/ (k?m)$/, ""), unit: ` ${togo.split(" ")[1]}`, label: "to go" }, { ...arrives, label: "arrives" }];
+  // its places: a site by name; a town building as what it is, with its town ("Shop · Elton")
   const what = (b: Building | undefined, role: "from" | "to"): FlowChip[] => {
     if (!b) return [{ text: role === "from" ? "Out of town" : "Leaving", note: "" }];
-    return [placeChip(g, b)];
+    if (b.plant || b.town === undefined || h) return [placeChip(g, b)];
+    return [{ kind: b.kind, text: workName(b), note: g.towns.byId.get(b.town)?.name, ref: { k: "building", id: b.id } }];
   };
-  const flow: FlowRow[] = [{ label: "From", chips: what(fromB, "from") }, { label: "To", chips: what(toB, "to") }];
-  if (kind === "car" && tr.kind) flow[1].chips[0].note = ({ work: "to work", home: "home", shop: "shopping", leisure: "out", cargo: "", empty: "", bus: "" } as Record<string, string>)[tr.kind] || undefined;
-  const status = vehicleState(v);
+  const flow: FlowRow[] = [];
+  if (loaded) flow.push({ label: "Cargo", chips: [{ product: h!.product, text: PRODUCTS[h!.product].name, note: plural(h!.n, "load") }] });
+  flow.push({ label: "From", chips: what(fromB, "from") }, { label: "To", chips: what(toB, "to") });
+  const status: PanelModel["status"] = vehicleState(v);
+  if (h && !h.big) status.tag = h.leg === "out" ? "Outbound" : "Heading back";
   return { title, sub, icon: kind, status, keys, flow, related: rel };
+}
+
+/**
+ * A vehicle's route as a line to draw, from where it started (`driven`: the directed road pieces behind it, by
+ * default those still in its plan) through where it is now to its destination: x, y pairs, and `cut`, the pair it
+ * is at (the line before it is the leg it drove).
+ */
+export function routeLine(g: Game, v: Vehicle, driven: readonly number[] = v.route.slice(0, Math.max(0, v.ri))): { pts: number[]; cut: number } {
+  const pts: number[] = [];
+  const piece = (k: number) => {
+    const P = g.net.segGeom.get(dkSeg(k))?.center.pts;
+    if (!P) return;
+    if (dkDir(k) === 1) for (const p of P) pts.push(p.x, p.y);
+    else for (let j = P.length - 1; j >= 0; j--) pts.push(P[j].x, P[j].y);
+  };
+  for (const k of driven) piece(k);
+  const pl = v.edge.pl;
+  // in a junction, the piece it came off is behind it; on a lane, the part of it up to here
+  if (v.edge.kind === "conn") { if (v.ri >= 0 && driven[driven.length - 1] !== v.route[v.ri]) piece(v.route[v.ri]); }
+  else for (let i = 0; i < pl.pts.length && pl.cum[i] < v.s; i++) pts.push(pl.pts[i].x, pl.pts[i].y);
+  const q = poseOf(v, 1);
+  const cut = pts.length / 2;
+  pts.push(q.x, q.y);
+  for (let i = 0; i < pl.pts.length; i++) if (pl.cum[i] > v.s) pts.push(pl.pts[i].x, pl.pts[i].y);
+  for (let i = v.ri + 1; i < v.route.length; i++) piece(v.route[i]);
+  return { pts, cut };
 }
 
 // ------------------------------------------------------------------------------------------- roads and junctions
@@ -546,6 +747,22 @@ export function congestion(ratio: number, n: number): { word: string; tone: Tone
   return { word: "Jammed", tone: "bad" };
 }
 
+/**
+ * The trips through a road piece (CS's route view): every vehicle on it now, where it set out from and where it is
+ * going, and whether it hauls freight. Its whole planned route is what the map draws.
+ */
+export function routesThrough(g: Game, seg: number): { id: number; from: number; to: number; freight: boolean }[] {
+  return vehiclesOnSeg(g, seg).all.map((v) => {
+    const h = v.trip.haul;
+    return {
+      id: v.id,
+      from: h ? (h.leg === "out" ? h.plant : h.dest) : v.trip.from,
+      to: h ? (h.leg === "out" ? h.dest : h.plant) : v.trip.to,
+      freight: !!h,
+    };
+  });
+}
+
 export function roadModel(g: Game, seg: number): PanelModel | null {
   const s = g.net.segs.get(seg), geo = g.net.segGeom.get(seg);
   if (!s || !geo) return null;
@@ -563,21 +780,30 @@ export function roadModel(g: Game, seg: number): PanelModel | null {
   const rel = emptyRel();
   rel.segs.push(seg);
   rel.vehicles = all.map((v) => v.id);
-  // what mostly uses it: where its vehicles are going, and the trucks' loads
-  const dest = new Map<string, { chip: FlowChip; n: number }>();
-  for (const v of all) {
-    const h = v.trip.haul;
-    const b = g.buildings.byId.get(h ? (h.leg === "out" ? h.dest : h.plant) : v.trip.to);
-    if (!b) continue;
-    const chip = placeChip(g, b);
-    if (h && h.leg === "out") chip.product = h.product;
-    const k = chip.ref ? `${chip.ref.k}:${chip.ref.id}` : chip.text;
-    const e = dest.get(k);
-    if (e) e.n++; else dest.set(k, { chip, n: 1 });
-  }
-  const top = [...dest.values()].sort((a, b) => b.n - a.n).slice(0, 4).map((e) => ({ ...e.chip, note: `${e.n}` }));
-  for (const t of top) if (t.ref?.k === "building") rel.to.push(t.ref.id);
+  const trips = routesThrough(g, seg);
+  rel.routes = trips.map((t) => t.id);
+  // what mostly uses it: where its vehicles come from and are going, and the trucks' loads
+  const tally = (end: "from" | "to") => {
+    const m = new Map<string, { chip: FlowChip; n: number }>();
+    for (const t of trips) {
+      const b = g.buildings.byId.get(t[end]);
+      if (!b) continue;
+      const chip = placeChip(g, b);
+      const h = all.find((v) => v.id === t.id)?.trip.haul;
+      if (h && h.leg === "out" && !h.big) chip.product = h.product;
+      const k = chip.ref ? `${chip.ref.k}:${chip.ref.id}` : chip.text;
+      const e = m.get(k);
+      if (e) e.n++; else m.set(k, { chip, n: 1 });
+    }
+    return [...m.values()].sort((a, b) => b.n - a.n).slice(0, 4).map((e) => ({ ...e.chip, note: `${e.n}` }));
+  };
+  const from = tally("from"), to = tally("to");
+  for (const t of to) if (t.ref?.k === "building") rel.to.push(t.ref.id);
+  for (const t of from) if (t.ref?.k === "building") rel.from.push(t.ref.id);
   const ring = s.ring ? "Roundabout" : "";
+  const flow: FlowRow[] = [];
+  if (from.length) flow.push({ label: "Coming from", chips: from });
+  if (to.length) flow.push({ label: "Heading to", chips: to });
   return {
     title: ring || T.name, sub: ring ? T.name : `${lanes} ${lanes === 1 ? "lane" : "lanes"} · ${Math.round(T.speed * 3.6)} km/h`, icon: ring ? "roundabout" : `road:${s.type}`,
     status: { text: c.word, tone: c.tone, fix: c.tone === "bad" ? "A junction ahead may be holding it up: click it, or try lights, a roundabout or more lanes" : undefined },
@@ -586,47 +812,73 @@ export function roadModel(g: Game, seg: number): PanelModel | null {
       { value: `${Math.round(speed * 100)}%`, label: "of the speed limit", tone: toneOf(speed, 0.8, 0.45) },
       { value: `${Math.round(full * 100)}%`, label: "full", tone: full > 0.6 ? "bad" : "", title: "How much of its lanes its vehicles and their gaps take up" },
     ],
-    flow: top.length ? [{ label: "Heading to", chips: top }] : [],
+    flow,
     related: rel,
   };
 }
 
-/** The approaches of a junction: arriving lanes per road, and the vehicles queued on each. */
-export function approaches(g: Game, node: number): { seg: number; dir: { x: number; y: number }; queue: number; cars: number }[] {
+/** An approach to a junction: its road, the way it comes in, the vehicles queued and on it, and the longest wait (s). */
+export interface Approach { seg: number; dir: { x: number; y: number }; queue: number; cars: number; wait: number }
+
+/** The approaches of a junction: arriving lanes per road, the vehicles queued on each, and how long the first has stood. */
+export function approaches(g: Game, node: number): Approach[] {
   const ng = g.net.nodeGeom.get(node);
   if (!ng) return [];
-  const out: { seg: number; dir: { x: number; y: number }; queue: number; cars: number }[] = [];
+  const out: Approach[] = [];
   for (const a of ng.arms) {
     const geo = g.net.segGeom.get(a.seg);
-    let queue = 0, cars = 0;
+    let queue = 0, cars = 0, wait = 0;
     for (const l of (geo?.lanes ?? []) as Lane[]) {
       if (l.to !== node) continue;
-      for (const v of l.occ as Vehicle[]) { cars++; if (v.v < 0.5 && l.pl.length - v.s < 120) queue++; }
+      for (const v of l.occ as Vehicle[]) {
+        cars++;
+        if (v.v < 0.5 && l.pl.length - v.s < 120) { queue++; wait = Math.max(wait, v.wait); }
+      }
     }
-    if (geo?.lanes.some((l) => l.to === node)) out.push({ seg: a.seg, dir: a.dir, queue, cars });
+    if (geo?.lanes.some((l) => l.to === node)) out.push({ seg: a.seg, dir: a.dir, queue, cars, wait });
   }
   return out;
 }
+
+/** An approach's wait as trouble: a minute and more on red is a long wait. */
+export const waitTone = (s: number): Tone => (s >= 60 ? "bad" : s < 20 ? "good" : "");
 
 export function junctionModel(g: Game, node: number, compass: (d: { x: number; y: number }) => string): PanelModel | null {
   const n = g.net.nodes.get(node), ng = g.net.nodeGeom.get(node);
   if (!n || !ng) return null;
   const ap = approaches(g, node);
   const queued = ap.reduce((a, x) => a + x.queue, 0);
-  const worst = ap.reduce<(typeof ap)[number] | null>((a, x) => (!a || x.queue > a.queue ? x : a), null);
+  const worst = ap.reduce<Approach | null>((a, x) => (!a || x.wait > a.wait || (x.wait === a.wait && x.queue > a.queue) ? x : a), null);
   let inBox = 0;
   for (const c of ng.conns) inBox += c.occ.length;
-  const control = n.signal ? "Traffic lights" : n.stops?.length ? "Stop signs" : "Give way";
+  const ring = ng.arms.some((a) => g.net.segs.get(a.seg)?.ring);
+  const control = n.signal ? "Traffic lights" : ring ? "Roundabout entry" : n.stops?.length ? "Stop signs" : "Give way";
   const jam = g.traffic.jams.get(node) ?? 0;
-  const tone: Tone = queued >= 8 || jam > 6 ? "bad" : queued <= 2 ? "good" : "";
+  const tone: Tone = queued >= 8 || jam > 6 || (worst?.wait ?? 0) >= 90 ? "bad" : queued <= 2 ? "good" : "";
   const rel = emptyRel();
   rel.segs = ap.map((a) => a.seg);
+  // on the map: lights show which approaches have green now; otherwise an approach held a long time shows red
+  const tones: Record<number, "go" | "stop" | "bad"> = {};
+  const now = n.signal ? g.traffic.signalNow(node) : null;
+  let tag: string | undefined;
+  if (n.signal && now) {
+    const ph = n.signal.phases[Math.min(now.i, n.signal.phases.length - 1)];
+    for (const a of ap) tones[a.seg] = now.st === 0 && ph.arms.includes(a.seg) ? "go" : "stop";
+    tag = now.st === 0 ? `Phase ${now.i + 1} green` : now.st === 1 ? `Phase ${now.i + 1} amber` : "All red";
+  } else for (const a of ap) if (a.wait >= 60) tones[a.seg] = "bad";
+  rel.segTone = tones;
+  rel.vehicles = [];
+  for (const a of ap) if (a.queue) {
+    for (const l of (g.net.segGeom.get(a.seg)?.lanes ?? []) as Lane[]) if (l.to === node) for (const v of l.occ as Vehicle[]) if (v.v < 0.5 && v.wait >= 20) rel.vehicles.push(v.id);
+  }
   return {
     title: "Junction", sub: control, icon: "junction",
-    status: { text: queued === 0 ? "Clear" : tone === "bad" ? "Backing up" : "Busy", tone, fix: tone === "bad" ? (n.signal ? "Give the worst approach a longer green, or add turn pockets" : "Try lights, stop signs on the quiet roads, or a roundabout") : undefined },
+    status: { text: queued === 0 ? "Clear" : tone === "bad" ? "Backing up" : "Busy", tone, tag, fix: tone === "bad" ? (n.signal ? "Give the worst approach a longer green, or add turn pockets" : "Try lights, stop signs on the quiet roads, or a roundabout") : undefined },
     keys: [
       { value: String(queued), label: queued === 1 ? "vehicle queued" : "vehicles queued", tone },
-      { value: worst && worst.queue ? `${compass(worst.dir)}` : "–", unit: worst && worst.queue ? ` ${worst.queue}` : "", label: "worst approach", tone: worst && worst.queue >= 6 ? "bad" : "" },
+      worst && worst.queue
+        ? { value: compass(worst.dir), unit: ` ${dur(worst.wait)}`, label: "longest wait", tone: waitTone(worst.wait), title: `${plural(worst.queue, "vehicle")} queued from the ${compass(worst.dir)}` }
+        : { value: "–", label: "longest wait" },
       { value: String(inBox), label: "crossing now" },
     ],
     flow: [],
@@ -653,6 +905,195 @@ export function stopModel(g: Game, id: number): PanelModel | null {
   };
 }
 
+// ------------------------------------------------------------------------------------------- open ground
+
+/** Ground selections that aren't a resource field: water, and hills too steep to build on. */
+export const GROUND_WATER = -1, GROUND_HILLS = -2;
+
+/** The extractors that work each resource field (a farm and a dairy farm both want fertile soil). */
+export const WORKED_BY = new Map<number, PlantKind[]>();
+for (const k of PLANT_KINDS) {
+  const d = PLANTS[k].deposit;
+  if (d) WORKED_BY.set(d.field, [...(WORKED_BY.get(d.field) ?? []), k]);
+}
+
+/**
+ * What open ground at p is, for the inspector: water, a mined deposit, hills, forest or fertile soil (in that order:
+ * what the eye sees there first); null for plain land, which has nothing to say.
+ */
+export function groundAt(g: Game, p: V2): Sel | null {
+  const t = g.terrain, at = (id: number): Sel => ({ k: "ground", id, x: Math.round(p.x), y: Math.round(p.y) });
+  if (t.isWater(p)) return at(GROUND_WATER);
+  for (const d of DEPOSITS) if (t.has(d.field, p)) return at(d.field);
+  if (t.isMountain(p)) return at(GROUND_HILLS);
+  if (t.has(F.forest, p)) return at(F.forest);
+  if (t.has(F.fert, p)) return at(F.fert);
+  return null;
+}
+
+/** Whether a field is one of the mined deposits (kilometres apart, each a blob), not soil or forest (everywhere). */
+export const isMined = (field: number) => DEPOSITS.some((d) => d.field === field);
+
+/**
+ * The patch of a field round p: a mined deposit's blob (centre and radius), or for soil and forest the land of it
+ * joined to p, flooded over a 40 m grid out to 1.2 km (area in hectares; `capped` when it runs on past that).
+ */
+export function patchAt(g: Game, field: number, p: V2): { c: V2; r: number; ha: number; capped: boolean } {
+  if (isMined(field)) {
+    const d = g.terrain.gen.depositsNear(field, p.x, p.y, 1600).find((o) => Math.hypot(o.x - p.x, o.y - p.y) <= o.r * 1.4);
+    if (d) return { c: { x: d.x, y: d.y }, r: d.r, ha: (Math.PI * d.r * d.r) / 1e4, capped: false };
+  }
+  const S = 40, N = 30;
+  const key = (i: number, j: number) => (i + N) * 1000 + (j + N);
+  const seen = new Set<number>([key(0, 0)]), q: number[] = [key(0, 0)];
+  let n = 0, capped = false, sx = 0, sy = 0;
+  while (q.length) {
+    const k = q.pop()!, i = Math.floor(k / 1000) - N, j = (k % 1000) - N;
+    n++; sx += i; sy += j;
+    for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const a = i + di, b = j + dj;
+      if (Math.abs(a) > N || Math.abs(b) > N) { capped = true; continue; }
+      const kk = key(a, b);
+      if (seen.has(kk)) continue;
+      seen.add(kk);
+      if (g.terrain.has(field, { x: p.x + a * S, y: p.y + b * S })) q.push(kk);
+    }
+  }
+  const ha = (n * S * S) / 1e4;
+  return { c: { x: p.x + (sx / n) * S, y: p.y + (sy / n) * S }, r: Math.sqrt((n * S * S) / Math.PI), ha, capped };
+}
+
+/** The last patch worked out (a panel refreshes four times a second; the flood fill needn't). */
+let patchMemo: { k: string; v: ReturnType<typeof patchAt> } | null = null;
+
+/** How much of an extractor's lot would sit on its field with its middle at p, and the yield that gives it. */
+export function yieldHere(g: Game, kind: PlantKind, p: V2): { share: number; yld: number } {
+  const T = BUILDING_TYPES[kind], f = PLANTS[kind].deposit!.field;
+  const share = g.industry.depositShare(f, p, 0, T.w / 2, T.d / 2);
+  return { share, yld: Math.min(1, share / 0.8) };
+}
+
+export function groundModel(g: Game, sel: Extract<Sel, { k: "ground" }>): PanelModel {
+  const p = { x: sel.x, y: sel.y };
+  const rel = emptyRel();
+  if (sel.id === GROUND_WATER) {
+    const lake = g.terrain.sample(F.lake, p.x, p.y) >= 0.5;
+    rel.rings = [{ c: p, r: 0, tone: "here" }];
+    return { title: lake ? "Lake" : "River", icon: "water", status: { text: "Your roads cross it on bridges", tone: "", fix: "The road tool raises a bridge on its own wherever a road you draw meets water" }, keys: [], flow: [], related: rel };
+  }
+  if (sel.id === GROUND_HILLS) {
+    rel.rings = [{ c: p, r: 0, tone: "here" }];
+    return { title: "Hills", icon: "hills", status: { text: "Too steep to build on", tone: "", fix: "Roads go round them, and towns grow on the flat land below" }, keys: [], flow: [], related: rel };
+  }
+  const field = sel.id, kinds = WORKED_BY.get(field) ?? [];
+  const D0 = PLANTS[kinds[0]].deposit!;
+  const mined = isMined(field);
+  const name = D0.name[0].toUpperCase() + D0.name.slice(1);
+  const mk = `${field}:${sel.x}:${sel.y}`;
+  const patch = patchMemo?.k === mk ? patchMemo.v : (patchMemo = { k: mk, v: patchAt(g, field, p) }).v;
+  // the company's extractors on this patch
+  // (a deposit: those on its blob; soil or forest, which runs on for miles: those with part of their lot on it
+  // within a little over a kilometre of the click)
+  const sites = g.industry.plants().filter((b) => PLANTS[b.kind as PlantKind].deposit?.field === field && (mined
+    ? Math.hypot(b.c.x - patch.c.x, b.c.y - patch.c.y) <= patch.r + 120 + Math.max(b.hw, b.hd)
+    : Math.hypot(b.c.x - p.x, b.c.y - p.y) <= 1300 && g.industry.depositShare(field, b.c, b.rot, b.hw, b.hd) > 0));
+  rel.to = sites.map((b) => b.id);
+  for (const b of sites) rel.vehicles.push(...trucksOut(g, b).ids);
+  rel.rings = mined ? [{ c: patch.c, r: patch.r, tone: "deposit" }, { c: p, r: 0, tone: "here" }] : [{ c: p, r: 0, tone: "here" }];
+  const open = kinds.filter((k) => g.placedUnlocked(k));
+  const first = open[0] ?? kinds[0];
+  const here = yieldHere(g, first, p);
+  const what = BUILDING_TYPES[first].name;
+  let status: PanelModel["status"];
+  if (sites.length) status = { text: `Worked by ${sites.length === 1 ? `your ${BUILDING_TYPES[sites[0].kind].name.toLowerCase()}` : `${sites.length} of your sites`}`, tone: "good" };
+  else if (open.length) status = { text: "Unworked", tone: "", fix: `A ${what.toLowerCase()} placed here would work at ${Math.round(here.yld * 100)}%: the more of its lot on ${D0.name}, the faster` };
+  else {
+    const m = unlockedBy((u) => u.buildings?.includes(first));
+    status = { text: "Not open yet", tone: "", fix: `${what}s open with the goal “${m?.name ?? "a later tier"}”` };
+  }
+  const keys: KeyNum[] = [
+    here.share < MIN_DEPOSIT
+      ? { value: `${Math.round(here.share * 100)}%`, label: "too thin here to work", tone: "bad", title: `An extractor needs at least ${Math.round(MIN_DEPOSIT * 100)}% of its lot on ${D0.name}: try nearer the middle` }
+      : { value: `${Math.round(here.yld * 100)}%`, label: `yield, ${what.toLowerCase()} here`, tone: toneOf(here.yld, 0.9, 0.6), title: `${Math.round(here.share * 100)}% of a ${what.toLowerCase()}'s lot would sit on it here` },
+    { value: patch.capped ? `${fmtNum(Math.round(patch.ha))}+` : fmtNum(Math.round(patch.ha)), unit: " ha", label: mined ? "deposit" : patch.capped ? "of it, and on past 1 km" : "in this patch" },
+    { value: String(sites.length), label: sites.length === 1 ? "site working it" : "sites working it" },
+  ];
+  const flow: FlowRow[] = [];
+  if (sites.length) flow.push({ label: "Worked by", chips: sites.slice(0, 4).map((b) => ({ ...placeChip(g, b), note: `Lv ${b.plant?.level ?? 1}` })) });
+  flow.push({ label: "Extractor", chips: kinds.map((k): FlowChip => ({ kind: k, text: BUILDING_TYPES[k].name, note: g.placedUnlocked(k) ? undefined : `tier ${PLANTS[k].tier}` })) });
+  const prod = Object.keys(PLANTS[first].outputs)[0];
+  return { title: mined ? `${name} deposit` : name, sub: `${PRODUCTS[prod as Product].name} for your ${BUILDING_TYPES[first].name.toLowerCase()}s`, icon: `product:${prod}`, status, keys, flow, related: rel };
+}
+
+/** The extractor a "Place … here" shortcut offers on a ground selection (the first unlocked one), if any. */
+export function extractorFor(g: Game, field: number): PlantKind | null {
+  return (WORKED_BY.get(field) ?? []).find((k) => g.placedUnlocked(k)) ?? null;
+}
+
+// ------------------------------------------------------------------------------------------- stuck traffic
+
+/** How far from a stuck-traffic diamond (m) a standing vehicle counts as stuck there. */
+export const STUCK_NEAR = 130;
+
+/** The vehicles stuck round a diamond (standing a while), the longest first. */
+export function stuckAt(g: Game, c: V2): Vehicle[] {
+  return g.traffic.vehicles.filter((v) => v.stuck >= STUCK_KEEP && !v.dwell && Math.hypot(v.x - c.x, v.y - c.y) <= STUCK_NEAR).sort((a, b) => b.stuck - a.stuck);
+}
+
+export function stuckModel(g: Game, sel: Extract<Sel, { k: "stuck" }>): PanelModel {
+  const c = { x: sel.x, y: sel.y };
+  const vs = stuckAt(g, c);
+  const rel = emptyRel();
+  rel.vehicles = vs.map((v) => v.id);
+  rel.rings = [{ c, r: STUCK_NEAR, tone: "spot" }];
+  // where they stand: the roads they are on, and the junctions they wait at
+  const segs = new Set<number>(), nodes = new Map<number, number>();
+  for (const v of vs) {
+    if (v.edge.kind === "lane") segs.add((v.edge as Lane).seg);
+    const node = v.edge.kind === "conn" ? (v.edge as unknown as { node: number }).node : v.next?.node;
+    if (node !== undefined) nodes.set(node, (nodes.get(node) ?? 0) + 1);
+  }
+  rel.segs = [...segs];
+  const worst = vs[0]?.stuck ?? 0;
+  const why = vs.find((v) => v.block)?.block;
+  const status: PanelModel["status"] = vs.length
+    ? { text: `${plural(vs.length, "vehicle")} standing still`, tone: "bad", fix: why ? `The first is held at the junction ahead: ${why}. Open the junction to see its queues` : "Open the junction they wait at to see its queues" }
+    : { text: "Moving again", tone: "good" };
+  const flow: FlowRow[] = [];
+  const held = [...nodes].sort((a, b) => b[1] - a[1]).slice(0, 3);
+  if (held.length) flow.push({ label: "Held at", chips: held.map(([id, n]) => ({ kind: "junction", text: g.net.nodes.get(id)?.signal ? "Lights" : "Junction", note: plural(n, "vehicle"), ref: { k: "node", id } as Sel })) });
+  if (vs.length) flow.push({ label: "Vehicles", chips: vs.slice(0, 4).map((v) => ({ kind: vehicleKind(v), text: vehicleModel(g, v).title, note: dur(v.stuck), tone: "bad" as Tone, ref: { k: "vehicle", id: v.id } as Sel })) });
+  return {
+    title: "Traffic stuck", icon: "stuck", status,
+    keys: [
+      { value: String(vs.length), label: vs.length === 1 ? "vehicle standing" : "vehicles standing", tone: vs.length ? "bad" : "good" },
+      { value: vs.length ? dur(worst) : "–", label: "longest stood", tone: worst >= 90 ? "bad" : "" },
+      { value: String(segs.size), label: segs.size === 1 ? "road held up" : "roads held up" },
+    ],
+    flow, related: rel,
+  };
+}
+
+// ------------------------------------------------------------------------------------------- towns, on the map
+
+/** A town's supply lines: from each site in its From row to the town hall, in its product's colour. */
+function townFlows(g: Game, t: Town, m: PanelModel) {
+  const on = loadsOnRuns(g);
+  const hall = g.buildings.byId.get(t.hall);
+  const to = hall?.c ?? t.c, rb = hall ? Math.min(hall.hw, hall.hd) : 20;
+  const flows: FlowLine[] = [];
+  for (const c of m.flow.find((r) => r.label === "From")?.chips ?? []) {
+    const at = chipAt(g, c);
+    if (!at || c.ref?.k !== "building") continue;
+    let n = 0;
+    for (const [k, x] of on) {
+      const [a, d] = k.split(">").map(Number);
+      if (a === c.ref.id && g.buildings.byId.get(d)?.town === t.id) n += x;
+    }
+    flows.push({ a: at.p, b: to, color: c.product ? PRODUCTS[c.product].color : 0xcfc4ab, n, kind: "goods", ra: at.r, rb });
+  }
+  m.related.flows = flows;
+}
 /** The panel model of whatever is selected (null: it is gone). */
 export function modelOf(g: Game, sel: Sel, led: TradeLedger | undefined, compass: (d: { x: number; y: number }) => string): PanelModel | null {
   switch (sel.k) {
@@ -661,10 +1102,18 @@ export function modelOf(g: Game, sel: Sel, led: TradeLedger | undefined, compass
       if (!b) return null;
       return b.plant && isPlantKind(b.kind) ? siteModel(g, b, led) : homeModel(g, b);
     }
-    case "town": { const t = g.towns.byId.get(sel.id); return t ? townModel(g, t, led) : null; }
+    case "town": {
+      const t = g.towns.byId.get(sel.id);
+      if (!t) return null;
+      const m = townModel(g, t, led);
+      townFlows(g, t, m);
+      return m;
+    }
     case "vehicle": { const v = g.traffic.vehicles.find((x) => x.id === sel.id); return v ? vehicleModel(g, v) : null; }
     case "seg": return roadModel(g, sel.id);
     case "node": return junctionModel(g, sel.id, compass);
     case "stop": return stopModel(g, sel.id);
+    case "ground": return groundModel(g, sel);
+    case "stuck": return stuckModel(g, sel);
   }
 }
