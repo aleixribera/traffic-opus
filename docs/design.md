@@ -130,7 +130,7 @@ Our own names, look and art throughout.
 - **Giving up.** A driver gives up ("gave up in traffic": the load goes back to its yard) only after standing
   150 s without getting 8 m further on, the last resort against a broken layout. A queue that crawls on gets there.
 - **Jammed hauls in the panels.** A full site whose trucks are held up says so: "the road at its gate is jammed"
-  (trucks still in its yard a minute after they were called) or "its trucks are stuck in traffic on the haul"
+  (the first truck out of its yard has waited 20 s+ for a gap) or "its trucks are stuck in traffic on the haul"
   (standing 30 s+), and a plant waiting for an input says when the loads on their way are stuck in traffic. So
   the panel tells a road to fix from a long haul or no buyer.
 - **Fuel** is a running cost per km at a market price ($4 per light-truck km, both ways). Once your refinery's

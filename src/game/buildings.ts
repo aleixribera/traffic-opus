@@ -6,6 +6,7 @@ import type { Access } from "../sim/router";
 import type { ZoneId } from "./zones";
 import type { PlantState, Product } from "./industry";
 import { GATE_CLEAR, GATE_REACH, GATE_SETBACK, siteFrame } from "./sites";
+import { isPlantKind } from "./industry";
 
 export interface Lot {
   block: string; // zone block key
@@ -149,7 +150,11 @@ export class Buildings {
       if (!pl.ok) snapped = pl;
       else if (sC < g.trimA + 4 || sC > g.center.length - g.trimB - 4) snapped = { ...pl, ok: false, reason: "Too close to a junction" };
       else {
-        pl.access = { seg: snap.seg, s: sC, p: snap.front };
+        // (a company site's gate keeps a road train's length off the junction mouths: its drive runs along to there)
+        const sG = isPlantKind(kind) ? this.gateS(snap.seg, sC, true) : sC;
+        if (sG === null) return { ...pl, ok: false, reason: "Too close to a junction" };
+        if (sG !== sC) pl.front = this.gateKerb(snap.seg, sC, sG, pl.front);
+        pl.access = { seg: snap.seg, s: sG, p: pl.front };
         pl.faces = ROAD_TYPES[s.type].name;
         return pl;
       }
@@ -162,7 +167,7 @@ export class Buildings {
     pl.free = true;
     if (!pl.ok) return snapped ?? pl;
     // a road already runs past where its gate would be: it is connected straight away
-    const ga = this.gateAccess(p, pose.rot, 1, T.d / 2);
+    const ga = this.gateAccess(p, pose.rot, 1, T.d / 2, isPlantKind(kind));
     if (ga) Object.assign(pl, { access: ga.access, front: ga.front, side: ga.side, rot: ga.rot, free: false, faces: ga.type });
     return pl;
   }
@@ -297,7 +302,7 @@ export class Buildings {
    * The road a site's gate joins: one that passes in front of the gate, or ends there, within GATE_REACH of it.
    * Null: none (the site waits for one).
    */
-  gateAccess(c: V2, rot: number, side: 1 | -1, hd: number): GateAccess | null {
+  gateAccess(c: V2, rot: number, side: 1 | -1, hd: number, site = true): GateAccess | null {
     const net = this.net;
     const f = siteFrame(c, rot, side, hd);
     const G = f.gate, out = scale(f.into, -1);
@@ -320,7 +325,7 @@ export class Buildings {
     const to = sub(G, best.q), L = Math.hypot(to.x, to.y) || 1;
     const front = add(best.q, scale(to, Math.min(g.width / 2, L) / L));
     const s0 = g.center.length * arcFrac(s.c, best.t, g.center.pts);
-    const sC = this.gateS(best.seg, s0);
+    const sC = this.gateS(best.seg, s0, site);
     if (sC === null) return null; // (a road all junction mouth: no room for a driveway)
     const rs = sideOf(s.c, best.t, c, side);
     // (rot, side) and (rot + PI, -side) are the same plot: keep its gate where it is
@@ -333,11 +338,11 @@ export class Buildings {
    * mouths, by GATE_CLEAR at a junction (a long truck waiting to turn in, or to pull out, stands clear of the box) and
    * 2 m at a plain end or bend; on a road too short for that, halfway between its junctions. Null: no room at all.
    */
-  private gateS(id: number, s: number): number | null {
+  private gateS(id: number, s: number, site: boolean): number | null {
     const net = this.net, g = net.segGeom.get(id)!, sg = net.segs.get(id)!, L = g.center.length;
     const lo = g.trimA + 2, hi = L - g.trimB - 2;
     if (hi <= lo) return null;
-    const clear = (n: number) => (net.segsAt(n).length >= 3 ? GATE_CLEAR : 2);
+    const clear = (n: number) => (site && net.segsAt(n).length >= 3 ? GATE_CLEAR : 2);
     const lo2 = g.trimA + clear(sg.a), hi2 = L - g.trimB - clear(sg.b);
     if (hi2 < lo2) return Math.max(lo, Math.min(hi, (lo2 + hi2) / 2));
     return Math.max(lo2, Math.min(hi2, s));
@@ -425,7 +430,7 @@ export class Buildings {
         if (r.d < g.width / 2 + 1.5) {
           a.s = g.center.length * arcFrac(s.c, r.t, g.center.pts);
           // (a site's gate stays off the junction mouths: a road that now meets the road by it moves it along)
-          const sC = b.placed && b.plant ? this.gateS(a.seg, a.s) : a.s;
+          const sC = b.placed && b.plant ? this.gateS(a.seg, a.s, true) : a.s;
           if (sC !== null && sC !== a.s) { b.front = this.gateKerb(a.seg, a.s, sC, b.front); a.p = b.front; a.s = sC; }
           const side = sideOf(s.c, r.t, b.c, b.placed ? b.side : undefined);
           // (a site keeps its gate where it is whichever way the road now runs)
@@ -438,7 +443,7 @@ export class Buildings {
       const had = !!b.access;
       b.access = null;
       if (b.placed) {
-        const ga = this.gateAccess(b.c, b.rot, b.side, b.hd);
+        const ga = this.gateAccess(b.c, b.rot, b.side, b.hd, isPlantKind(b.kind));
         if (ga) {
           Object.assign(b, { access: ga.access, front: ga.front, side: ga.side, rot: ga.rot });
           if (!had) joined.push(b);

@@ -281,11 +281,16 @@ export class Game {
     for (const p of this.traffic.pending) yield p.trip;
   }
 
-  /** The trips held up now: still in their yard a minute after they were called, or standing in traffic 30 s+. */
+  /**
+   * The trips held up now: standing in traffic 30 s+ ("road"), or in a yard whose first truck out has waited 20 s+
+   * for a gap in the traffic ("gate": a yard just sending a lot of long trucks one after another isn't one).
+   */
   private heldTrips(): Map<Trip, "gate" | "road"> {
-    const m = new Map<Trip, "gate" | "road">(), now = this.traffic.time;
+    const m = new Map<Trip, "gate" | "road">();
     for (const v of this.traffic.vehicles) if (v.trip.haul && v.stuck > 30) m.set(v.trip, "road");
-    for (const p of this.traffic.pending) if (p.trip.haul && now - (p.t0 ?? now) > 60) m.set(p.trip, "gate");
+    const blocked = new Set<number>();
+    for (const p of this.traffic.pending) if (p.trip.haul && p.wait > 20) blocked.add(p.trip.from);
+    if (blocked.size) for (const p of this.traffic.pending) if (p.trip.haul && blocked.has(p.trip.from)) m.set(p.trip, "gate");
     return m;
   }
 

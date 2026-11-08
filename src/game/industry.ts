@@ -342,8 +342,8 @@ export interface IndustryHost {
   request(p: PendingSpawn): void;
   /** vehicles on the road and trips waiting to set off */
   trips(): Iterable<Trip>;
-  /** the trips held up now: still in their yard a minute after they were called ("gate"), or standing in traffic
-   *  30 s and more ("road") */
+  /** the trips held up now: in a yard whose first truck out can't find a gap in the traffic ("gate"), or standing in
+   *  traffic 30 s and more ("road") */
   held?(): Map<Trip, "gate" | "road">;
   earn(v: number): void;
   spend(v: number, what: "wages" | "upkeep" | "fuel"): void;
@@ -551,7 +551,9 @@ export class Industry {
       if (!r || r.done || r.big) continue;
       busy.set(r.plant, (busy.get(r.plant) ?? 0) + 1);
       const h = held?.get(t);
-      if (h) { const j = this.jamOf(r.plant); if (h === "gate" && r.leg === "out") j.gate++; else j.road++; }
+      // (an empty truck waiting at its customer's gate to come back isn't held up on the haul)
+      if (h === "road") this.jamOf(r.plant).road++;
+      else if (h === "gate" && r.leg === "out") this.jamOf(r.plant).gate++;
       if (held && r.leg === "out") {
         const d = this.jamOf(r.dest);
         d.on[r.product] = (d.on[r.product] ?? 0) + r.n;

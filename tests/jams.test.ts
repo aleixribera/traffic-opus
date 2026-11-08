@@ -126,4 +126,35 @@ describe("a site's gate by a junction", () => {
     // and its kerb is still on the road in front of the plant
     expect(dist(b.front, at(8, 0))).toBeLessThan(BUILDING_TYPES.foodplant.w / 2 + GATE_CLEAR);
   });
+
+  it("moves along when the road it is on becomes a junction's arm at its end (the road isn't split)", () => {
+    const g = new Game(7);
+    const { b, at } = site(g);
+    // a road ending 12 m past the gate: a plain end, so the gate joins it right in front
+    road(g, at(8, -200), at(8, 12));
+    const s0 = b.access!.s;
+    expect(dist(b.access!.p, at(8, 12))).toBeLessThan(GATE_CLEAR);
+    // two roads on from its end: that end is a junction now
+    road(g, at(8, 12), at(8, 200));
+    road(g, at(8, 12), at(160, 12));
+    expect(b.access).not.toBeNull();
+    expect(b.access!.s).not.toBe(s0);
+    expect(dist(b.access!.p, at(8, 12))).toBeGreaterThan(GATE_CLEAR);
+    expect(dist(b.front, b.access!.p)).toBeLessThan(0.01);
+  });
+
+  it("is placed clear of the junction when it snaps to the road beside it", () => {
+    const g = new Game(7);
+    // (a free-standing one just to find open ground and its frame; the real one goes down on a fresh map)
+    const { b, at } = site(g);
+    const p = b.c;
+    const g2 = new Game(7);
+    road(g2, at(8, -200), at(8, 200));
+    road(g2, at(8, 15), at(160, 15));
+    expect(g2.placedPlan("foodplant", p)?.free).toBeFalsy(); // (it faces the road: snapped, not standing free)
+    const s = g2.place("foodplant", p)!;
+    expect(s).toBeTruthy();
+    expect(s.access).not.toBeNull();
+    expect(dist(s.access!.p, at(8, 15))).toBeGreaterThan(GATE_CLEAR);
+  });
 });
