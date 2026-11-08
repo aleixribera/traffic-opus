@@ -642,7 +642,7 @@ export class Hud {
     this.moneyBtn.innerHTML = `<b class="${g.money < 0 ? "bad" : ""}">${formatMoney(Math.round(g.money))}</b><span class="${net >= 0 ? "good" : "bad"}">${signed(net)}/h</span>`;
     this.moneyBtn.setAttribute("aria-label", `Money ${formatMoney(Math.round(g.money))}, ${signed(net)} per hour. Open economy`);
     const hr = g.hour, mm = Math.floor((hr % 1) * 60 / 10) * 10;
-    this.clockEl.innerHTML = `<b>${String(Math.floor(hr)).padStart(2, "0")}:${String(mm).padStart(2, "0")}</b>${seasonLine(g.time, g.day)}`;
+    this.clockEl.innerHTML = `<b>${String(Math.floor(hr)).padStart(2, "0")}:${String(mm).padStart(2, "0")}</b>${seasonLine(g.time)}`;
     this.clockEl.classList.toggle("night", hr < 6 || hr >= 21);
     this.renderTips();
     if (this.panelKind === "town") this.fillTown();
