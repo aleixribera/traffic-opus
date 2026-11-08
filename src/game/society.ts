@@ -135,7 +135,7 @@ export class Society {
   moveIn(home: Building): Household {
     const rng = this.g.rng;
     const hh: Household = { id: this.nextH++, home: home.id, members: [], since: this.now };
-    const high = home.zone === "resHigh" || home.zone === "resMed";
+    const high = home.zone === "resHigh" || home.zone === "resMed" || home.zone === "resTower";
     const r = rng();
     const adults = r < 0.3 ? 1 : 2;
     const seniorHh = rng() < 0.14;
@@ -383,7 +383,7 @@ export class Society {
       const b = shops.length <= 24 ? shops[k] : shops[(rng() * shops.length) | 0];
       if (!b.access || b.built < 1 || b.abandoned) continue;
       if (near.access && !g.connected(near.access.seg, b.access.seg)) continue;
-      const pull = b.zone === "comHigh" ? 1.8 : 1;
+      const pull = b.zone === "comHigh" || b.zone === "comTower" ? 1.8 : 1;
       const s = (dist(b.c, near.c) / pull) * (0.6 + rng() * 0.8);
       if (s < bs) { bs = s; best = b; }
     }
@@ -416,7 +416,7 @@ export class Society {
     if (!walk && g.transit.lines.size) {
       // (about one household in four has no car; more in flats)
       const home = g.buildings.byId.get(c.home);
-      const carless = c.hh >= 0 && (c.hh * 7919) % 100 < (home?.zone === "resHigh" || home?.zone === "resMed" ? 40 : 22);
+      const carless = c.hh >= 0 && (c.hh * 7919) % 100 < (home?.zone === "resHigh" || home?.zone === "resMed" || home?.zone === "resTower" ? 40 : 22);
       const bus = g.transit.plan(fromP, toP, carless);
       if (bus && g.rng() < Math.min(0.95, bus.p)) {
         this.busTrips++;
