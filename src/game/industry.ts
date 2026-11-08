@@ -10,7 +10,7 @@ import { BUILDING_TYPES, ROAD_TYPES, type BuildingKind } from "../config";
 import type { PendingSpawn, Trip, Vehicle } from "../sim/traffic";
 import { F } from "../world/gen";
 import { GROW_DECAY, GROW_NEED, SITE_LEVELS, levelMult } from "./sites";
-import { classOf, type TruckClass } from "./trucks";
+import { TRUCK_CLASS_ORDER, classOf, fleetMix, type FleetMix, type TruckClass } from "./trucks";
 
 export type Product =
   | "crops" | "logs" | "food" | "planks" | "ore" | "coal" | "lime" | "steel" | "cement"
@@ -90,6 +90,8 @@ export interface PlantDef {
 
 const HOUR = 40;
 const DAY_S = 24 * HOUR;
+/** The longest a docked truck waits for a fuller load before it goes with what there is (sim s: a game hour). */
+export const HOLD = HOUR;
 
 export const PLANTS: Record<PlantKind, PlantDef> = {
   farm: {
@@ -270,6 +272,8 @@ export interface PlantState {
   /** a fuel depot: trucks it filled and what that saved against the market price, all time */
   served?: number;
   saved?: number;
+  /** per product, the sim time its docked truck began waiting for a fuller load (unset: none waiting) */
+  hold?: Partial<Record<Product, number>>;
   /** loads of each product it made in each of the last HIST_HOURS game hours, oldest first */
   hist?: Partial<Record<Product, number>>[];
 }
@@ -420,9 +424,30 @@ export class Industry {
     return this.h.truckClass?.() ?? "light";
   }
 
-  /** Loads one of a building's trucks carries: its class's payload times the company's load per truck. */
-  capOf(_b?: Building): number {
-    return classOf(this.fleetClass()).payload * Math.max(1, this.h.load?.() ?? 1);
+  /** Loads a truck of a class carries (the best unlocked when not given): its payload times the company's load per truck. */
+  capOf(_b?: Building, cls: TruckClass = this.fleetClass()): number {
+    return classOf(cls).payload * Math.max(1, this.h.load?.() ?? 1);
+  }
+
+  /** A site's trucks of each class: the mix its level runs, up to the best class unlocked (a warehouse: level 3's). */
+  mixOf(b: Building): FleetMix {
+    const level = Industry.logisticsOf(b) === "warehouse" ? 3 : b.plant?.level ?? 1;
+    return fleetMix(this.trucksOf(b), level, this.fleetClass());
+  }
+
+  /**
+   * The class to load next: of those with a truck in the yard, the one with the most of its trucks at home (the
+   * furthest behind its share of the work); ties go to the bigger class.
+   */
+  static nextClass(mix: FleetMix, out: Partial<FleetMix>): TruckClass | null {
+    let best: TruckClass | null = null, bestUse = Infinity;
+    for (const c of TRUCK_CLASS_ORDER) {
+      const n = mix[c], o = out[c] ?? 0;
+      if (n - o <= 0) continue;
+      const use = o / n;
+      if (use <= bestUse) { best = c; bestUse = use; }
+    }
+    return best;
   }
 
   /** A logistics building's kind, if it is one. */
@@ -478,26 +503,30 @@ export class Industry {
     return PLANT_KINDS.some((k) => PLANTS[k].inputs[p] || PLANTS[k].site?.[p]);
   }
 
-  /** Trucks out per plant, and loads on their way to each customer (counted fresh each tick). */
+  /** Trucks out per plant (in all and by class), and loads on their way to each customer (counted fresh each tick). */
   private census() {
-    const busy = new Map<number, number>(), coming = new Map<number, Map<Product, number>>();
+    const busy = new Map<number, number>(), busyBy = new Map<number, Partial<FleetMix>>(), coming = new Map<number, Map<Product, number>>();
     for (const t of this.h.trips()) {
       const r = t.haul;
       if (!r || r.done) continue;
       busy.set(r.plant, (busy.get(r.plant) ?? 0) + 1);
+      let by = busyBy.get(r.plant);
+      if (!by) busyBy.set(r.plant, (by = {}));
+      const c = r.cls ?? "light";
+      by[c] = (by[c] ?? 0) + 1;
       if (r.leg !== "out") continue;
       let m = coming.get(r.dest);
       if (!m) coming.set(r.dest, (m = new Map()));
       m.set(r.product, (m.get(r.product) ?? 0) + r.n);
     }
-    return { busy, coming };
+    return { busy, busyBy, coming };
   }
 
   tick(span: number) {
-    const { busy, coming } = this.census();
+    const { busy, busyBy, coming } = this.census();
     for (const b of this.plants()) {
       this.produce(b, span, busy.get(b.id) ?? 0);
-      this.dispatch(b, busy, coming);
+      this.dispatch(b, busy, busyBy, coming);
     }
   }
 
@@ -721,20 +750,25 @@ export class Industry {
     return out;
   }
 
-  /** Send free trucks off with whatever is waiting (a truck takes as many loads as it carries and the customer takes). */
-  private dispatch(b: Building, busy: Map<number, number>, coming: Map<number, Map<Product, number>>) {
+  /**
+   * Send free trucks off with whatever is waiting. The site's trucks take turns by class (the one furthest behind its
+   * share of the work goes next), and the truck at the dock waits for a full load, as much as the customer takes, or
+   * half the yard, whichever is least, for up to HOLD: a road train doesn't set off with one load on board.
+   */
+  private dispatch(b: Building, busy: Map<number, number>, busyBy: Map<number, Partial<FleetMix>>, coming: Map<number, Map<Product, number>>) {
     const P = b.plant!;
     if (!b.access || P.site) return;
     let free = this.trucksOf(b) - (busy.get(b.id) ?? 0);
-    if (free <= 0) return;
-    const load = this.capOf(b);
+    if (free <= 0) { P.hold = undefined; return; }
+    const hold = (P.hold ??= {});
+    const mix = this.mixOf(b);
+    let by = busyBy.get(b.id);
+    if (!by) busyBy.set(b.id, (by = {}));
     // a warehouse ships what it has in store; a plant what it made
     const store = Industry.logisticsOf(b) === "warehouse";
     if (store && b.built < 1) return;
     const src = store ? P.stock : P.out;
     const outs: [Product, number][] = store ? entries(P.stock).filter(([, n]) => n >= 1).sort((x, y) => y[1] - x[1]) : entries(PLANTS[b.kind as PlantKind].outputs);
-    // a heavy truck or a road train waits for a fuller load while the yard has room for it to (half a truck, or
-    // half the yard), so it doesn't set off with one load on board
     const yard = Industry.storeOf(b);
     for (const [p] of outs) {
       // (a side product none of the company's plants takes stays in the yard without a word: the panel says it is
@@ -747,11 +781,20 @@ export class Industry {
           if (!store && !side && (src[p] ?? 0) >= 2 && b.access && !b.problem?.startsWith("Full of")) b.problem = this.noBuyer(b, p);
           break;
         }
+        const cls = Industry.nextClass(mix, by);
+        if (!cls) { free = 0; break; }
+        const load = this.capOf(b, cls);
         const n = Math.max(1, Math.min(load, Math.floor(src[p]!), c.room));
-        if (this.fleetClass() !== "light" && n < Math.min(Math.ceil(load / 2), c.room, Math.floor(yard / 2))) break;
-        this.send(b, c.b, p, n);
+        if (n < Math.min(load, c.room, Math.max(1, Math.floor(yard / 2)))) {
+          // (not full yet: it waits at the dock, up to HOLD)
+          hold[p] ??= this.h.time;
+          if (this.h.time - hold[p]! < HOLD) break;
+        }
+        this.send(b, c.b, p, n, cls);
+        delete hold[p];
         src[p]! -= n;
         free--;
+        by[cls] = (by[cls] ?? 0) + 1;
         busy.set(b.id, (busy.get(b.id) ?? 0) + 1);
         let m = coming.get(c.b.id);
         if (!m) coming.set(c.b.id, (m = new Map()));
@@ -792,8 +835,7 @@ export class Industry {
     return `Nobody your roads reach buys ${name}`;
   }
 
-  private send(from: Building, to: Building, product: Product, n: number) {
-    const cls = this.fleetClass();
+  private send(from: Building, to: Building, product: Product, n: number, cls: TruckClass = this.fleetClass()) {
     const fuel = this.fuelFor(from, to, classOf(cls).fuel);
     this.h.spend(fuel, "fuel");
     from.plant!.now.spent += fuel;
@@ -873,7 +915,8 @@ export class Industry {
     if (r.done) return;
     r.done = true;
     const home = this.h.buildings.byId.get(r.plant);
-    if (r.leg === "out" && home?.plant) home.plant.out[r.product] = (home.plant.out[r.product] ?? 0) + r.n;
+    // (a warehouse's loads go back into store, where it ships from)
+    if (r.leg === "out" && home?.plant) { const s = Industry.logisticsOf(home) === "warehouse" ? home.plant.stock : home.plant.out; s[r.product] = (s[r.product] ?? 0) + r.n; }
   }
 
   /**

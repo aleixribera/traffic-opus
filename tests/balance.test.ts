@@ -208,7 +208,8 @@ function play() {
         say(`place ${kind}${b.plant!.yld < 1 ? ` (${Math.round(b.plant!.yld * 100)}% on its deposit)` : ""}, ${(dist(b.c, A.c) / 1000).toFixed(1)} km from ${A.name} · $${Math.round(g.money).toLocaleString("en-US")} left`);
         return b;
       };
-      if (b.access) return done();
+      // (placing it lays a street from its gate to the nearest road: the chain's next plant goes along that way)
+      if (b.access) { if (key && !roads[key]) { roads[key] = [a, b.front]; paths[key] = []; } return done(); }
       // a street to 4 m past the kerb in front of its gate
       const e = add(b.front, scale(norm(sub(b.front, b.c)), 4));
       const r = road(`to the ${T.name.toLowerCase()}`, a, e);

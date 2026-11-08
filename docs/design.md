@@ -91,10 +91,15 @@ Our own names, look and art throughout.
   fills: the fix is the road, never a purchase.
 - Destinations are automatic. Your own plants short of an input come first, then towns that need the product,
   nearest and neediest first. You never draw lines; you can block a destination for a building if you need to.
-- **Truck classes** unlock over the levels, and every fleet moves up on its own (owner, 2026-11-08: no truck
-  micromanagement). Once a milestone unlocks heavy trucks or road trains, every building's new trips use the
-  best class unlocked; trucks already on the road finish their trip as they are. Nothing to buy or pick per
-  building: the panel shows the class read-only. The class sets the load and the road it takes; the body still
+- **Truck classes** unlock with milestones, and a site's level sets its fleet's mix (owner, 2026-11-08: no truck
+  micromanagement; "each level increases the number of higher tier trucks ... up until last level, where they
+  should be greatly favoring the better option"). LEVEL_MIX (light / heavy / road train): level 1 all light,
+  level 2 55/40/5, level 3 25/50/25, level 4 10/30/60; a class not unlocked yet hands its share to the best one
+  that is, and a warehouse runs level 3's mix. The classes take turns: the one with the most of its trucks at
+  home goes next. The truck at the dock waits for a full load (or what the customer takes, or half the yard,
+  whichever is least) for up to HOLD, a game hour, per product, so a big truck never sets off with one load on
+  board (owner: "they will keep sending the lightest truck as soon as 1 food is available"). Trucks already on
+  the road finish their trip as they are. Nothing to buy or pick per building: the panel shows the mix read-only. The class sets the load and the road it takes; the body still
   comes from the product: tankers (crude, fuel, chemicals, cement), flatbeds (logs, planks, steel, parts),
   tippers (ore, coal, sand, limestone, gravel), box trucks for the rest.
 
@@ -106,7 +111,7 @@ Our own names, look and art throughout.
 
   Each step up roughly doubles what one truck moves, so the same flow puts fewer trucks on the road: that is
   the traffic payoff. Moving up costs no money (pillar 5) and fuel per load falls. What it costs is road: a
-  road train waits for half a load before it sets off, takes a long time to clear a junction, and fills a ring.
+  road train takes a long time to clear a junction, and fills a ring.
 - **Long vehicles in traffic.** A heavy or a road train is drawn piece by piece along the path its front drove,
   so trailers cut corners through a turn. The sim keeps the whole body in mind, not just its front:
   - a junction movement stays reserved until the last trailer has left it, and its tail blocks the lanes and

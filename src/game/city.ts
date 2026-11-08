@@ -1682,7 +1682,8 @@ export class Game {
     const P = structuredClone(b.plant!);
     for (const t of this.trips()) {
       const r = t.haul;
-      if (r && !r.done && r.leg === "out" && r.plant === b.id) P.out[r.product] = (P.out[r.product] ?? 0) + r.n;
+      // (a warehouse's loads go back into store, where it ships from)
+      if (r && !r.done && r.leg === "out" && r.plant === b.id) { const s = Industry.logisticsOf(b) === "warehouse" ? P.stock : P.out; s[r.product] = (s[r.product] ?? 0) + r.n; }
     }
     return P;
   }

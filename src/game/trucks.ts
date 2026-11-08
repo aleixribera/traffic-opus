@@ -62,3 +62,33 @@ export const TRUCK_CLASS_ORDER: TruckClass[] = ["light", "heavy", "roadtrain"];
 
 /** A class's numbers (a trip from before classes, or a light truck's: unset). */
 export const classOf = (c: TruckClass | undefined): TruckClassDef => TRUCK_CLASSES[c ?? "light"];
+
+/**
+ * Each class's share of a site's fleet by its level (light, heavy, road train): a new site runs light trucks only,
+ * each level swaps some for bigger ones, and a top-level site runs mostly road trains (owner, 2026-11-08).
+ */
+export const LEVEL_MIX: readonly (readonly number[])[] = [
+  [1, 0, 0],
+  [0.55, 0.4, 0.05],
+  [0.25, 0.5, 0.25],
+  [0.1, 0.3, 0.6],
+];
+
+export type FleetMix = Record<TruckClass, number>;
+
+/**
+ * The trucks of each class in a fleet of `n` at a site level, with `best` the biggest class unlocked: a locked
+ * class's share goes to the best one unlocked below it. Whole trucks by largest remainder, so they add up to n.
+ */
+export function fleetMix(n: number, level: number, best: TruckClass): FleetMix {
+  const L = Math.max(1, Math.min(LEVEL_MIX.length, Math.round(level)));
+  const share = [...LEVEL_MIX[L - 1]];
+  const top = TRUCK_CLASS_ORDER.indexOf(best);
+  for (let i = share.length - 1; i > top; i--) { share[top] += share[i]; share[i] = 0; }
+  const raw = share.map((s) => s * n), whole = raw.map(Math.floor);
+  let left = n - whole.reduce((a, v) => a + v, 0);
+  // (ties go to the bigger class)
+  const order = raw.map((r, i) => [r - whole[i], i] as const).sort((a, b) => b[0] - a[0] || b[1] - a[1]);
+  for (const [, i] of order) { if (left <= 0) break; if (share[i] > 0) { whole[i]++; left--; } }
+  return { light: whole[0], heavy: whole[1], roadtrain: whole[2] };
+}

@@ -495,3 +495,26 @@ kbd { font: inherit; font-size: 11px; font-weight: 500; padding: 1px 5px; border
 .pd-list .num { text-align: right; font-variant-numeric: tabular-nums; }
 .pd-ticks { width: 72px; height: 16px; display: block; }
 .sub-h .muted { font-weight: 400; text-transform: none; letter-spacing: 0; }
+
+/* ------------------------------------------------------------ what's new */
+.dialog.news { width: min(480px, calc(100vw - 24px)); display: flex; flex-direction: column; max-height: min(640px, calc(100vh - 40px)); overflow: hidden; }
+.cl-list { overflow-y: auto; margin: 0 -14px -14px; padding: 0 14px 14px; overscroll-behavior: contain; }
+.cl-list:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cl-rel { padding: 10px 0 8px; border-top: 1px solid var(--line); }
+.cl-rel:first-child { border-top: 0; padding-top: 0; }
+.cl-rel h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+.cl-v { font-variant-numeric: tabular-nums; font-size: 11px; font-weight: 500; color: var(--ink-2); min-width: 46px; }
+.cl-rel.latest .cl-v { color: var(--accent); }
+.cl-t { flex: 1; min-width: 0; text-wrap: balance; }
+.cl-rel time { font-size: 11px; font-weight: 400; color: var(--ink-3); white-space: nowrap; }
+.cl-rel ul { margin: 0; padding: 0 0 0 54px; list-style: none; }
+.cl-rel li { position: relative; font-size: 12.5px; line-height: 17px; color: var(--ink-2); margin: 2px 0; text-wrap: pretty; }
+.cl-rel li::before { content: ""; position: absolute; left: -10px; top: 7px; width: 4px; height: 4px; border-radius: 50%; background: var(--line-2); }
+/* a site's fleet by class: a split bar and its key under the Fleet row */
+.facts dd.fm-row { grid-column: 1 / -1; flex-direction: column; align-items: stretch; gap: 3px; margin-top: -1px; }
+.fm-bar { display: flex; height: 6px; border-radius: 2px; overflow: hidden; gap: 1px; background: var(--line); }
+.fm-bar i { display: block; min-width: 3px; }
+.fm-light { background: #a9b4bf; }
+.fm-heavy { background: #5f7f9e; }
+.fm-roadtrain { background: #2b4a6b; }
+.fm-key { font-size: 11px; color: var(--ink-2); text-align: right; }

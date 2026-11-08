@@ -5,7 +5,7 @@ import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
 import { MILESTONES, unlockedBy, type Milestone, type Unlocks } from "../game/progression";
 import { ZONES } from "../game/zones";
 import { BUILD_TIME, DEPOT_REACH, FLEET_HAUL, HIST_HOURS, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, UNPOWERED, isPlantKind, powerPace, type PlantKind, type Product } from "../game/industry";
-import { TRUCK_CLASSES, TRUCK_CLASS_ORDER } from "../game/trucks";
+import { TRUCK_CLASSES, TRUCK_CLASS_ORDER, type TruckClass } from "../game/trucks";
 import { GROW_NEED, LEVEL_MULT, SITE_LEVELS } from "../game/sites";
 import { MARKET, TOWN_COST, TOWN_SPACING, type Town } from "../game/settlements";
 import { HALLS, TOWN_SIZES, demandPerDay, growthPerDay, needFrom, needsOf, nextNeed, sizeOf } from "../game/towns";
@@ -15,6 +15,7 @@ import type { SignalPlan } from "../roads/network";
 import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId } from "../app";
 import { ROUNDABOUTS, type RoundaboutSize } from "../roads/planner";
 import { ICON, placedIcon, productIcon, roadIcon } from "./icons";
+import { CHANGELOG } from "../changelog";
 import { PLACED, PLACED_TABS, type PlacedKind } from "../game/placed";
 import { GATE_LINK_REACH, SAVE_V } from "../game/city";
 import { BUS_UPKEEP, STOP_COST } from "../game/transit";
@@ -965,7 +966,8 @@ export class Hud {
       if (b.built < 1 || b.plant!.site) continue;
       for (const p of Object.keys(PLANTS[b.kind as PlantKind].outputs) as Product[]) {
         const m = Industry.madeLately(b, p), e = made.get(p) ?? { made: 0, can: 0, byHour: Array(HIST_HOURS).fill(0) };
-        e.made += m.made; e.can += Industry.perDay(b, p);
+        // (a plant not a day old yet: what it could make in the hours it has worked)
+        e.made += m.made; e.can += Industry.perDay(b, p) * Math.min(1, m.hours / HIST_HOURS);
         m.byHour.forEach((v, i) => { e.byHour[HIST_HOURS - m.byHour.length + i] += v; });
         made.set(p, e);
       }
@@ -1298,11 +1300,16 @@ export class Hud {
       const L = P.last;
       const flare = b.built >= 1 ? Industry.flaring(b) : undefined;
       const logi = D.logistics;
-      // the class its trucks are: the company's best unlocked, the same for every fleet (read-only: nothing to pick)
-      const C = TRUCK_CLASSES[g.industry.fleetClass()];
+      // its fleet by class: the mix its level runs, up to the best class unlocked (read-only: nothing to pick)
+      const mix = D.trucks ? g.industry.mixOf(b) : null;
+      const short: Record<TruckClass, [string, string]> = { light: ["light", "light"], heavy: ["heavy", "heavy"], roadtrain: ["road train", "road trains"] };
+      const used = mix ? TRUCK_CLASS_ORDER.filter((c) => mix[c] > 0) : [];
+      const mixText = mix ? used.map((c) => `${mix[c]} ${short[c][mix[c] === 1 ? 0 : 1]}`).join(" · ") : "";
+      const mixBar = mix && used.length > 1 ? `<span class="fm-bar" aria-hidden="true">${used.map((c) => `<i class="fm-${c}" style="flex:${mix[c]}"></i>`).join("")}</span>` : "";
       const next = TRUCK_CLASS_ORDER.find((c) => !g.truckUnlocked(c));
-      const classTip = `${C.blurb}${next ? ` Every fleet moves up to ${TRUCK_CLASSES[next].name.toLowerCase()}s with the “${unlockedBy((u) => u.trucks?.includes(next))?.name}” milestone.` : ""}`;
-      const classRow = D.trucks ? `<dt>Trucks</dt><dd title="${escapeHtml(classTip)}">${C.name}s · ${plural(g.industry.capOf(b), "load")} a trip</dd>` : "";
+      const loads = TRUCK_CLASS_ORDER.filter((c) => g.truckUnlocked(c)).map((c) => `${TRUCK_CLASSES[c].name.toLowerCase()}s carry ${plural(g.industry.capOf(b, c), "load")}`).join(", ");
+      const classTip = `Its level sets the mix: each level swaps light trucks for bigger ones, and a level ${SITE_LEVELS} site runs mostly the biggest. ${cap(loads)}. A truck at the dock waits for a full load, up to an hour, so a big one doesn't set off half empty.${next ? ` ${TRUCK_CLASSES[next].name}s join the mix with the “${unlockedBy((u) => u.trucks?.includes(next))?.name}” milestone.` : ""}`;
+      const classRow = D.trucks ? `<dt>Fleet</dt><dd title="${escapeHtml(classTip)}">${used.length > 1 ? plural(g.industry.trucksOf(b), "truck") : mixText}</dd>${mixBar ? `<dd class="fm-row" title="${escapeHtml(classTip)}">${mixBar}<span class="fm-key">${mixText}</span></dd>` : ""}` : "";
       if (logi) {
         const held = Industry.stored(b);
         const body = logi === "warehouse" ? this.warehouseBody(b, store, held) : this.depotBody(b, store);
@@ -1582,6 +1589,18 @@ export class Hud {
     dlg.prepend(b);
   }
 
+  /** What's new: every release, newest first, scrolling back to the first. */
+  openNews(back = true) {
+    const when = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    const rels = CHANGELOG.map((r, i) => `<section class="cl-rel${i === 0 ? " latest" : ""}">
+        <h3><span class="cl-v">${r.v}</span><span class="cl-t">${escapeHtml(r.title)}</span><time datetime="${r.date}">${when(r.date)}</time></h3>
+        <ul>${r.notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("")}</ul>
+      </section>`).join("");
+    const dlg = this.showModal(`<header>What's new</header><div class="cl-list" tabindex="0" aria-label="Updates, newest first">${rels}</div>`, "What's new");
+    dlg.classList.add("news");
+    if (back) this.backButton(dlg);
+  }
+
   openKeys() {
     const dlg = this.showModal(`<header>Controls</header><dl class="keys">${KEYS.map(([k, v]) => `<dt><kbd>${k}</kbd></dt><dd>${v}</dd>`).join("")}</dl>`, "Controls");
     this.backButton(dlg);
@@ -1681,7 +1700,7 @@ function outputDay(b: Building): string {
   const ps = (Object.keys(D.outputs) as Product[]);
   if (!ps.length) return "";
   const rows = ps.map((p) => {
-    const m = Industry.madeLately(b, p), can = Industry.perDay(b, p);
+    const m = Industry.madeLately(b, p), can = Industry.perDay(b, p) * Math.min(1, Math.max(m.hours, 1) / HIST_HOURS);
     const made = m.hours ? fmtNum(Math.round(m.made)) : "–";
     const share = m.hours >= HIST_HOURS && can > 0 ? m.made / can : null;
     const cls = share === null ? "" : share >= 0.8 ? "good" : share < 0.4 ? "bad" : "";
@@ -1689,7 +1708,7 @@ function outputDay(b: Building): string {
   }).join("");
   const m = Industry.madeLately(b, ps[0]);
   const hrs = m.hours;
-  const head = hrs >= HIST_HOURS ? "A day, last 24 hours" : hrs ? `A day · first ${plural(hrs, "hour")} so far` : "A day";
+  const head = hrs >= HIST_HOURS ? "A day, last 24 hours" : hrs ? `Its first ${plural(hrs, "hour")}` : "Its first hour";
   return `<h3 class="sub-h">${head}</h3><dl class="facts">${rows}</dl>${hourBars(m.byHour, Industry.perDay(b, ps[0]) / 24, PRODUCTS[ps[0]])}`;
 }
 

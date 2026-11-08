@@ -2,7 +2,7 @@
 // fake world) and through the Game (unlocks, the panel's setters, saves).
 
 import { describe, expect, it } from "vitest";
-import { DEPOT_KM, FUEL_AT_COST, FUEL_PER_KM, Industry, PLANTS, type IndustryHost, type PlantKind } from "../src/game/industry";
+import { DEPOT_KM, FUEL_AT_COST, FUEL_PER_KM, HOLD, Industry, PLANTS, type IndustryHost, type PlantKind } from "../src/game/industry";
 import { HEAVY_UNITS, ROAD_TRAIN_UNITS, TRUCK_CLASSES, TRUCK_CLASS_ORDER, classOf, type TruckClass } from "../src/game/trucks";
 import { MILESTONES, unlockedBy, unlocksOf } from "../src/game/progression";
 import { PLACED_TABS } from "../src/game/placed";
@@ -86,18 +86,43 @@ describe("Truck classes", () => {
     for (let i = 1; i < U.length; i++) expect(U[i].at + U[i].pivot).toBeCloseTo(U[i - 1].at + U[i - 1].axle, 6);
   });
 
-  it("every fleet runs the best class unlocked: its load, how it drives, its fuel; trucks out finish as they are", () => {
+  it("a site's level sets its fleet's mix, up to the best class unlocked; each class carries, drives and burns as it should; trucks out finish as they are", () => {
     const w = world(2);
     const mine = w.plant("coalmine", 0);
     const plant = w.plant("smelter", 2000);
-    expect(w.ind.fleetClass()).toBe("light");
-    expect(w.ind.capOf(mine)).toBe(2);
+    plant.plant!.level = 4;
+    w.setFleet("roadtrain");
+    // level 1: light trucks only, whatever is unlocked
+    const n1 = w.ind.trucksOf(mine);
+    expect(w.ind.mixOf(mine)).toEqual({ light: n1, heavy: 0, roadtrain: 0 });
+    expect(w.ind.capOf(mine, "light")).toBe(2);
+    expect(w.ind.capOf(mine, "heavy")).toBe(4);
+    mine.plant!.out.coal = 2;
+    w.ind.tick(0);
+    const [first] = w.out();
+    expect(first.trip.haul!.cls).toBeUndefined();
+    expect(first.trip.haul!.n).toBe(2);
+    expect(first.len).toBeUndefined();
+    // each level swaps light trucks for bigger ones; the top level runs mostly road trains
+    let light = 1;
+    for (let L = 2; L <= 4; L++) {
+      mine.plant!.level = L;
+      const m = w.ind.mixOf(mine), n = w.ind.trucksOf(mine);
+      expect(m.light + m.heavy + m.roadtrain).toBe(n);
+      expect(m.light / n).toBeLessThan(light);
+      light = m.light / n;
+    }
+    const top = w.ind.mixOf(mine);
+    expect(top.roadtrain).toBeGreaterThan(top.heavy);
+    expect(top.heavy).toBeGreaterThan(top.light);
+    // a class not unlocked yet: its share runs the best one that is
     w.setFleet("heavy");
-    expect(w.ind.capOf(mine)).toBe(4);
-    expect(w.ind.capOf(plant)).toBe(4); // (every building's fleet: nothing is set per building)
+    expect(w.ind.mixOf(mine)).toEqual({ light: top.light, heavy: top.heavy + top.roadtrain, roadtrain: 0 });
+    // the class furthest behind its share loads next (one light truck is out, no heavy one): a heavy truck
+    const fuel0 = w.spent.fuel;
     mine.plant!.out.coal = 4;
     w.ind.tick(0);
-    const [t] = w.out();
+    const t = w.out()[1];
     expect(t.trip.haul!.dest).toBe(plant.id);
     expect(t.trip.haul!.n).toBe(4);
     expect(t.trip.haul!.cls).toBe("heavy");
@@ -106,8 +131,8 @@ describe("Truck classes", () => {
     expect(t.af).toBe(TRUCK_CLASSES.heavy.accel);
     expect(t.units).toBe(HEAVY_UNITS); // drawn on its axles
     // fuel: 2 km each way at the heavy class's rate
-    expect(w.spent.fuel).toBeCloseTo(2 * 2 * FUEL_PER_KM * TRUCK_CLASSES.heavy.fuel, 6);
-    // road trains unlock while it is out: it comes home as the heavy truck it is; the next one out is a road train
+    expect(w.spent.fuel - fuel0).toBeCloseTo(2 * 2 * FUEL_PER_KM * TRUCK_CLASSES.heavy.fuel, 6);
+    // road trains unlock while it is out: it comes home as the heavy truck it is; road trains join the mix
     w.setFleet("roadtrain");
     w.arrive(t);
     const back = w.pending.find((p) => p.trip.haul?.leg === "back")!;
@@ -115,13 +140,14 @@ describe("Truck classes", () => {
     expect(back.trip.haul!.cls).toBe("heavy");
     mine.plant!.out.coal = 8;
     w.ind.tick(0);
-    const next = w.out()[0];
-    expect(next.trip.haul!.cls).toBe("roadtrain");
+    const next = w.out().find((p) => p.trip.haul!.cls === "roadtrain")!;
+    expect(next.trip.haul!.n).toBe(8);
     expect(next.units).toBe(ROAD_TRAIN_UNITS);
     expect(Industry.body(undefined)).toEqual({});
   });
 
-  it("a road train waits for half a load before it sets off; a light truck goes with what there is", () => {
+  it("the truck at the dock waits for a full load, up to an hour, then goes with what there is", () => {
+    // a new site's light trucks carry one load: each goes as soon as its load is in
     const w = world(1);
     const mine = w.plant("coalmine", 0);
     w.plant("smelter", 2000);
@@ -129,18 +155,76 @@ describe("Truck classes", () => {
     w.ind.tick(0);
     expect(w.out().length).toBe(1);
     expect(w.out()[0].trip.haul!.n).toBe(1);
+    // a top-level site: its first road train doesn't set off with one load on board
     const v = world(1);
     const m2 = v.plant("coalmine", 0);
-    v.plant("smelter", 2000);
+    v.plant("smelter", 2000).plant!.level = 4;
     v.setFleet("roadtrain");
+    m2.plant!.level = 4;
     m2.plant!.out.coal = 1;
     v.ind.tick(0);
     expect(v.out().length).toBe(0);
-    m2.plant!.out.coal = 3;
+    m2.plant!.out.coal = 4;
     v.ind.tick(0);
     expect(v.out().length).toBe(1);
-    expect(v.out()[0].trip.haul!.n).toBe(3);
+    expect(v.out()[0].trip.haul!.n).toBe(4);
+    expect(v.out()[0].trip.haul!.cls).toBe("roadtrain");
     expect(v.out()[0].units).toBe(ROAD_TRAIN_UNITS);
+    // one more load: the next truck (whichever class is behind) waits for its load, for up to HOLD
+    m2.plant!.out.coal = 1;
+    v.ind.tick(0);
+    expect(v.out().length).toBe(1);
+    v.host.time += HOLD - 1;
+    v.ind.tick(0);
+    expect(v.out().length).toBe(1);
+    v.host.time += 2;
+    v.ind.tick(0);
+    expect(v.out().length).toBe(2);
+    expect(v.out()[1].trip.haul!.n).toBe(1);
+    // a light truck is furthest behind now: one load fills it and it goes; then a road train's turn, and it waits afresh
+    m2.plant!.out.coal = 1;
+    v.ind.tick(0);
+    expect(v.out().length).toBe(3);
+    expect(v.out()[2].trip.haul!.cls).toBeUndefined();
+    m2.plant!.out.coal = 1;
+    v.ind.tick(0);
+    expect(v.out().length).toBe(3);
+    expect(m2.plant!.hold!.coal).toBe(v.host.time);
+  });
+
+  it("each product waits on its own clock: a steady one shipping doesn't keep a small one waiting past HOLD", () => {
+    const w = world(2);
+    w.setFleet("roadtrain");
+    const wh = w.plant("warehouse", 0);
+    w.shop(1000); w.shop(1200); w.shop(1400);
+    w.setWant(1e6);
+    wh.plant!.stock.planks = 1;
+    let plankSent = -1;
+    for (let s = 0; s < 40 * 12; s += 10) {
+      w.host.time = s;
+      wh.plant!.stock.food = (wh.plant!.stock.food ?? 0) + 3;
+      w.ind.tick(10);
+      for (const p of [...w.out()]) { if (p.trip.haul!.product === "planks" && plankSent < 0) plankSent = s; w.arrive(p); }
+      for (const p of [...w.pending]) { w.pending.splice(w.pending.indexOf(p), 1); w.ind.onArrive({ trip: p.trip } as Vehicle); }
+    }
+    expect(plankSent).toBeGreaterThanOrEqual(HOLD);
+    expect(plankSent).toBeLessThanOrEqual(HOLD + 10);
+  });
+
+  it("a warehouse truck that gives up brings its loads back into store, where it ships from", () => {
+    const w = world(1);
+    const wh = w.plant("warehouse", 0);
+    w.shop(1000);
+    w.setWant(1e6);
+    wh.plant!.stock.food = 1;
+    w.ind.tick(0);
+    const [t] = w.out();
+    expect(t.trip.haul!.product).toBe("food");
+    expect(wh.plant!.stock.food).toBe(0);
+    w.pending.splice(w.pending.indexOf(t), 1);
+    w.ind.onFail(t.trip);
+    expect(wh.plant!.stock.food).toBe(1);
+    expect(wh.plant!.out.food ?? 0).toBe(0);
   });
 
   it("moving up a class costs no money: the same upkeep every hour, the price is paid in road space", () => {
