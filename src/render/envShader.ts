@@ -83,7 +83,7 @@ vec3 envGrass(vec3 c) {
   vec3 t = vec3(1.0);
   t = mix(t, vec3(0.62, 0.95, 0.5), envLush);
   t = mix(t, vec3(1.3, 1.16, 1.0), envDry);
-  t = mix(t, vec3(0.74, 1.2, 0.6), envFresh);
+  t = mix(t, vec3(0.8, 1.14, 0.66), envFresh);
   t = mix(t, vec3(0.92, 0.8, 0.7), envFall * (1.0 - envDry * 0.5));
   t = mix(t, vec3(0.72, 0.66, 0.64), envBare * (1.0 - envFresh));
   c *= t;

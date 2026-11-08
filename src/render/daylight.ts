@@ -263,7 +263,7 @@ export function seasonLook(yday: number): SeasonLook {
     fresh: bump(d, 0.5, 4, 14, 19),
     blossom: bump(d, 1.5, 4.5, 10, 13.5),
     lush: bump(d, 13, 18, 23, 28),
-    dry: bump(d, 21, 27, 32, 36.5),
+    dry: bump(d, 24, 29, 32, 36.5),
     fall: bump(d, 31.5, 35.5, 44, 48),
     litter: bump(d, 37, 43, 47.5, 50.5),
     bare: bump(d, 41, 46.5, 64.5, 67.5),
