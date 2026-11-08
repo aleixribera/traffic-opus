@@ -510,13 +510,12 @@ kbd { font: inherit; font-size: 11px; font-weight: 500; padding: 1px 5px; border
 .lm-ring { flex: none; }
 .lm-ring circle { fill: none; stroke-width: 7; }
 .lm-ring-bg { stroke: #e7e5dc; }
-.lm-ring-fg { stroke: var(--ind); stroke-linecap: butt; transition: stroke-dasharray .6s ease; }
+.lm-ring-fg { stroke: var(--ind); stroke-linecap: butt; }
 .lm-ring text { font: 600 13px "Lexend", system-ui, sans-serif; fill: var(--ink); font-variant-numeric: tabular-nums; }
 .lm-reward { color: var(--ink); margin: 2px 0 6px; line-height: 1.4; }
 .lm-bar { display: inline-block; width: 64px; height: 6px; background: #e7e5dc; border-radius: 1px; overflow: hidden; }
 .lm-bar i { display: block; height: 100%; background: var(--pc, var(--ind)); }
 .lm-bar + .num { min-width: 4.6em; text-align: right; white-space: nowrap; }
-@media (prefers-reduced-motion: reduce) { .lm-ring-fg { transition: none; } }
 
 /* a plant's conveyors and pipes */
 .park-lines { list-style: none; margin: 4px 0; padding: 0; display: grid; gap: 3px; }

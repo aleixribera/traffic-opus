@@ -1275,7 +1275,7 @@ export class Hud {
       else if (b.problem) { status = b.problem; statusCls = "bad"; }
       else { status = "Working normally"; statusCls = "good"; }
       // a landmark's site: its ring and stage, materials and pieces, and what it will do once open
-      const lmSite = landmarkSite(g, b, stockBar);
+      const lmSite = landmarkSite(g, b);
       if (lmSite) {
         const html = `<header><span class="svc-tag">${placedIcon(b.kind)}</span>${T.name}</header>
           <p class="muted small">${chainText(b.kind)}</p>

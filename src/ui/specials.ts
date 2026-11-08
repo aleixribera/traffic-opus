@@ -32,7 +32,7 @@ export function seasonGlyph(s: Season): string {
 export function seasonLine(t: number, day: number): string {
   const s = seasonOf(t);
   const year = Math.floor((t + yearPhase(0) * YEAR) / YEAR) + 1;
-  return `<span class="cb-day cb-season s-${s}" title="${SEASON_NAME[s]} of year ${year}, ${Math.round(seasonPart(t) * 100)}% through. Farms bring the harvest in in autumn; logging camps fell most in winter">${seasonGlyph(s)}${SEASON_NAME[s]} · Day ${day}</span>`;
+  return `<span class="cb-day cb-season s-${s}" title="${SEASON_NAME[s]} of year ${year}, ${Math.round(seasonPart(t) * 100)}% through. Farms bring in the harvest in autumn; logging camps fell most in winter">${seasonGlyph(s)}${SEASON_NAME[s]} · Day ${day}</span>`;
 }
 
 /** What each season means for the harvest, in a word or two, for the panels. */
@@ -45,7 +45,8 @@ const SEASON_WORD: Record<string, Record<Season, string>> = {
 function seasonRows(b: Building, t: number): string {
   if (!SEASONAL[b.kind]) return "";
   const s = seasonOf(t), m = seasonMult(b.kind, t);
-  const next = (["spring", "summer", "autumn", "winter"] as Season[])[(["spring", "summer", "autumn", "winter"].indexOf(s) + 1) % 4];
+  const order: Season[] = ["spring", "summer", "autumn", "winter"];
+  const next = order[(order.indexOf(s) + 1) % 4];
   const cls = m >= 1.15 ? "good" : m <= 0.85 ? "bad" : "";
   const word = SEASON_WORD[b.kind]?.[s] ?? "";
   return `<dt>Season</dt><dd class="${cls}">${seasonGlyph(s)}${SEASON_NAME[s]} ${word} · ×${m.toFixed(2)}</dd>
@@ -102,7 +103,7 @@ function ring(k: number, label: string): string {
 }
 
 /** A landmark's building site in its panel: the ring, the stage, the materials and pieces, and what it will do. */
-export function landmarkSite(g: Game, b: Building, bar: Bar): string | null {
+export function landmarkSite(g: Game, b: Building): string | null {
   if (!isMega(b.kind) || !b.plant || (!b.plant.site && b.built >= 1)) return null;
   const D = PLANTS[b.kind], P = b.plant, M = MEGAS[b.kind];
   const site = P.site;

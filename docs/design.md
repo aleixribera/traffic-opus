@@ -132,6 +132,119 @@ Our own names, look and art throughout.
   "Stockpiles" (tier 2), depots with "Own pumps" (the first refined fuel), road trains with "Road trains"
   (on the way to a Town).
 
+## Freight: oversized loads (owner, 2026-11-08: "make it look cool and feel special")
+
+Some loads are too big for any truck, and moving one is an event the whole map notices. The player never
+manages or approves it; their part is the road it takes.
+
+- **Where pieces come from.** A machine works builds one oversized piece for every 12 loads of machinery it
+  makes, at no extra input. That is a turbine, or a steel girder for a landmark. Its yard holds two, and it
+  builds no more until one ships.
+- **Where they go.** One convoy at a time leaves each works, by itself:
+  - first to a landmark that still waits for that kind of piece;
+  - otherwise a turbine goes to one of the company's coal power plants. It takes three at most, and each adds
+    25% to its output for good. The plant's panel shows the turbines as slots.
+  - A piece with nowhere to go waits in the yard.
+- **The convoy.** It is one vehicle in the traffic sim, 33 m long, drawn piece by piece along the path its
+  front drove, like a road train. Front to back:
+  - a yellow pilot car;
+  - the haulier's red tractor;
+  - a low-loader with the piece chained down on cribs: a blue-grey generator stator, or a pair of grey plate
+    girders, with red flags at its widest and an OVERSIZE LOAD banner on the back;
+  - a trailing escort car.
+
+  All of these are Blender models. The cars carry roof boards, and amber beacons flash on every vehicle at
+  1.6 Hz, each on its own beat, throwing a glow on the road around them.
+- **In traffic.** It crawls at 8.5 m/s at most, pulls away slowly and never changes lane to overtake, so
+  traffic queues behind it. The same junction and roundabout rules as long vehicles apply. There are no route
+  or curve rules: it takes the route any truck would.
+- **The moment.**
+  - A toast when it sets off ("Oversized load: a turbine leaves the Machine Works for the Power Plant, under
+    escort") and when it arrives.
+  - A tag rides just above it on the map: "OVERSIZE LOAD · Turbine", with a lamp flashing like its beacons.
+  - Click the tag to follow the convoy with the camera. Panning lets it go.
+- **Panels.** The machine works panel shows:
+  - the next piece's progress;
+  - pieces waiting;
+  - the convoy on the road and its destination;
+  - pieces delivered.
+- **Milestones.**
+  - "Oversized load" (the first piece shipped) unlocks the Hydro Dam.
+  - "Skyline" (three pieces) unlocks the Skyline Tower.
+
+## Industrial parks
+
+Two of the company's plants placed fence to fence (within 60 m), where one makes what the other uses, are
+linked automatically. The link is a belt conveyor on trestles, or a pipe bridge for crude and fuel, with a
+transfer tower in each yard. It can bridge a street.
+
+- Loads cross the link from yard to yard with no truck, up to 3 an hour; the trucks carry the rest.
+- The goods visibly move: loads ride the belt in the product's colour, and pulses run along the pipe. They
+  run closer together the busier the link is, and stop while the game is paused.
+- **It is a trade-off, not a free win:**
+  - it carries only a few loads an hour, so a busy chain still needs its trucks;
+  - it costs $60 an hour in upkeep;
+  - linked plants pollute together: each one's smoke reaches 30% further into the towns' land value;
+  - the park's other freight funnels through gates a stone's throw apart.
+- Nothing to build or set: put the plants close and the link appears; pull one down and it goes. Both panels
+  list the link ("Conveyor to Construction Plant: 2 of 3 loads/h of steel").
+
+## Landmarks
+
+Three one-off megaprojects at the top of the ladder, one of each. They are the long-term goals and goods
+sinks the milestones promise.
+
+| Landmark | Where | Waits for | When it opens |
+|---|---|---|---|
+| Hydro Dam | on a river or lake shore | 160 cement, 100 steel, 60 parts, 30 machinery, 3 turbines | 360 MW with no coal, to every building on its roads within 15 km |
+| Skyline Tower | in a City (6,000+ people) | 120 steel, 80 glass, 100 parts, 30 electronics, 4 girders | its city grows 1.5x as fast and buys 30% more |
+| Grand Exposition | within 800 m of a town's edge | 100 planks, 60 glass, 60 parts, 50 goods, 40 electronics, 2 girders | that town grows 2x as fast; every other town 20% faster |
+
+- **Construction.** The player places it like any site.
+  - The usual freight trucks its materials in over days: after the chains' own needs, ahead of a town's
+    extra sales. Trucks from every chain converging on one site make a traffic crunch the player plans for.
+  - The pieces come by convoy. Deliveries earn nothing.
+- **Visible stages.** The model on the map grows with its progress (a piece counts as 10 loads):
+  - foundations and scaffolding with tower cranes, below 40%;
+  - the frame rising, from 40% until the last load is in and while it is finished off;
+  - the finished landmark.
+- **The panel** shows:
+  - a progress ring and the stage;
+  - each material as a bar;
+  - the pieces as slots (outlined while a convoy is on its way);
+  - the loads and convoys coming;
+  - what it will do once open.
+- **The opening.**
+  - A banner in the period's manner ("The Company Presents · The Grand Exposition is open") with its reward
+    and a "Show me" button.
+  - The camera glides over to it, and a fireworks show goes up above it.
+- **Unlocks.** "Finish a landmark" ("World's fair") unlocks the Grand Exposition and a town slot. The catalog
+  has a Landmarks tab.
+
+## Seasons
+
+A game year is four game days, one per season, so a session sees the harvest come and go. Day 1 at dawn is
+the start of spring.
+
+- **Towns eat the same all year.** The farms swing instead:
+  - crops: spring 0.85, summer 1.05, an autumn surge of 1.6, winter 0.5;
+  - logging camps fell most in winter on hard ground: 0.9 / 0.75 / 1.0 / 1.35.
+
+  The pace eases smoothly between the middles of the seasons. Its year-round average is exactly 1, so a
+  year's output, money and balance are unchanged; only the timing moves. Warehouses buffer the harvest for
+  the lean months.
+- **On the map.** Every farm's fields change with the season, the farmyard's own plots as well as the fields
+  that come with its levels:
+  - spring shoots on tilled soil;
+  - summer green;
+  - ripe gold in early autumn, then cut to stubble with round bales;
+  - winter's frosted furrows.
+- **In the HUD.**
+  - The clock shows the season with its glyph ("Autumn · Day 7").
+  - A farm's or logging camp's panel shows its season pace now ("Autumn harvest · x1.54") and the next
+    season's average.
+- Pure functions of the sim clock: nothing to save.
+
 ## Transport modes
 
 Every mode makes roads matter more: it crosses them, feeds them, or forces new junctions. Freight still routes

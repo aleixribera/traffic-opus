@@ -30,6 +30,8 @@ export class ConvoyTags {
       const to = byId.get(r.dest);
       const el = document.createElement("button");
       el.className = "convoy-tag";
+      el.type = "button";
+      el.setAttribute("aria-pressed", "false");
       const where = to ? BUILDING_TYPES[to.kind].name : "its site";
       el.innerHTML = `<i class="ct-lamp" aria-hidden="true"></i><span class="ct-k">Oversize load</span><b></b><span class="ct-to"></span>`;
       el.querySelector("b")!.textContent = BIG_NAME[r.big];
@@ -45,7 +47,10 @@ export class ConvoyTags {
 
   follow(id: number | null) {
     this.following = id;
-    for (const [k, t] of this.tags) t.el.classList.toggle("on", k === id);
+    for (const [k, t] of this.tags) {
+      t.el.classList.toggle("on", k === id);
+      t.el.setAttribute("aria-pressed", String(k === id));
+    }
     this.onFollow(id);
   }
 
