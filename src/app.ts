@@ -1051,7 +1051,7 @@ export class App {
   /** Right-angle marks where the planned road leaves or meets another road square. */
   private squareMarks(plan: Plan, end: Snap) {
     const g = this.game, st = plan.strokes[0];
-    const size = Math.max(2.2, this.view.mpp * 9);
+    const size = Math.max(3, this.view.mpp * 16);
     const mark = (sn: Snap, out: V2) => {
       for (const d of armsAt(g.net, sn)) {
         if (Math.abs(dot(d, out)) < Math.sin((0.6 * Math.PI) / 180)) { this.preview.rightAngle(sn.p, out, d, sn.h, size); return true; }
@@ -1149,7 +1149,7 @@ export class App {
           for (const sp of plan.bridges ?? []) chips.push({ text: `Bridge ${Math.round(sp.length)} m over ${sp.over === "water" ? "water" : sp.over === "road" ? "the road" : "water and road"} · ${formatMoney(sp.cost)}`, kind: "info", icon: "bridge" });
           if (plan.joins) chips.push({ text: plan.endAngleDeg !== undefined && plan.joins.startsWith("Joins the") && !plan.joins.includes("junction") ? `${plan.joins} at ${Math.round(plan.endAngleDeg)}°` : plan.joins, kind: "info" });
           else if (end.label) chips.push({ text: end.label, kind: "info" });
-          if (plan.angleDeg !== undefined && L > 3 && !plan.joins) chips.push({ text: `${plan.angleDeg.toFixed(1)}°`, kind: "info", icon: "angle" });
+          if (plan.angleDeg !== undefined && L > 3 && !plan.joins) chips.push({ text: plan.angleToRoad ? `${plan.angleDeg.toFixed(1)}° to the road` : `${plan.angleDeg.toFixed(1)}°`, kind: "info", icon: "angle" });
           // right angles: where it leaves the road it starts on and where it meets the one it ends on
           if (lead?.chain.length && !plan.errors.length) this.squareMarks(plan, end);
           if (this.st.parallel) chips.push({ text: `Parallel ${Math.round(this.parallelOffset())} m`, kind: "info" });

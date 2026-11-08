@@ -358,6 +358,8 @@ export interface Plan {
   crossings: V2[];
   endTangent?: V2;
   angleDeg?: number;
+  /** angleDeg is to the road it starts on (0-90°), not a heading. */
+  angleToRoad?: boolean;
   kind: "road" | "roundabout" | "grid";
   removeSegs?: number[]; // segments replaced (roundabout interior)
   removeNodes?: number[];
@@ -1408,7 +1410,12 @@ function planRoadOnce(net: RoadNetwork, world: BuildWorld, inp: PlanInput): Plan
     plan.endTangent = norm(cubicTangent(last, 1));
     const t0 = norm(cubicTangent(chain[0], 0));
     const ref = ta ?? { x: 1, y: 0 };
-    plan.angleDeg = Math.abs((signedAngle(ref, ta ? plan.endTangent : t0) * 180) / Math.PI);
+    // off a road with no set start direction (a straight from mid-road or a junction): the angle to that road
+    const sArms = ta ? [] : armsAt(net, start);
+    plan.angleDeg = sArms.length
+      ? Math.min(...sArms.map((d) => (Math.acos(clamp(Math.abs(dot(d, t0)), 0, 1)) * 180) / Math.PI))
+      : Math.abs((signedAngle(ref, ta ? plan.endTangent : t0) * 180) / Math.PI);
+    if (sArms.length) plan.angleToRoad = true;
     // what the end joins, and at what angle
     const arms = armsAt(net, end);
     if (arms.length) {

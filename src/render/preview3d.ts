@@ -28,7 +28,8 @@ export class Preview3D {
   private refOff = [0.42, 0.24, 0.1].map((o) => new THREE.LineDashedMaterial({ color: 0x122036, dashSize: 2, gapSize: 2.4, transparent: true, opacity: o, depthTest: false }));
   private targetMat = new THREE.MeshBasicMaterial({ color: 0xe0a833, transparent: true, opacity: 0.5, depthTest: false });
   private targetRing = new THREE.MeshBasicMaterial({ color: 0xe0a833, depthTest: false, transparent: true, opacity: 0.95 });
-  private squareMat = new THREE.LineBasicMaterial({ color: 0xf3ead6, depthTest: false, transparent: true, opacity: 0.95 });
+  private squareMat = new THREE.MeshBasicMaterial({ color: 0xf3ead6, depthTest: false, transparent: true, opacity: 0.95, side: THREE.DoubleSide });
+  private squareLine = new THREE.MeshBasicMaterial({ color: 0x122036, depthTest: false, transparent: true, opacity: 0.85, side: THREE.DoubleSide });
   private spanMat = new THREE.MeshBasicMaterial({ color: 0xf3ead6, depthTest: false, transparent: true, opacity: 0.9 });
   ghost: THREE.Mesh | null = null;
   /** Shared geometry (building models) that clear() must not dispose. */
@@ -126,9 +127,14 @@ export class Preview3D {
 
   /** A right-angle mark where two roads meet square: a small square in the corner. */
   rightAngle(p: P2, u: P2, v: P2, h: number, size: number) {
-    const q = (a: number, b: number) => new THREE.Vector3(p.x + u.x * a + v.x * b, h + 1.5, p.y + u.y * a + v.y * b);
-    const geo = new THREE.BufferGeometry().setFromPoints([q(size, 0), q(size, size), q(0, size)]);
-    this.add(new THREE.Line(geo, this.squareMat), 11);
+    // a solid cream L on a navy keyline, its stroke scaled with the mark so it reads on asphalt and on the preview
+    const q = (a: number, b: number): P2 => ({ x: p.x + u.x * a + v.x * b, y: p.y + u.y * a + v.y * b });
+    const w = size * 0.15;
+    for (const [k, mat, order] of [[2.4, this.squareLine, 10], [1, this.squareMat, 11]] as const) {
+      const e = (w * k) / 2;
+      this.add(new THREE.Mesh(strip([q(size, -e), q(size, size + e)], h + 1.5, w * k), mat), order);
+      this.add(new THREE.Mesh(strip([q(size + e, size), q(-e, size)], h + 1.5, w * k), mat), order);
+    }
   }
 
   /** Where a bridge the road rises onto by itself starts and ends: a bar across each end of its deck. */
