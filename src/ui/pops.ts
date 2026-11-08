@@ -19,7 +19,8 @@ const NEAR = 900;
 
 const money = (v: number) => formatMoney(Math.abs(v));
 /** Under reduced motion a pop fades in place instead of rising. */
-const still = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+const REDUCED = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
+const still = () => !!REDUCED?.matches;
 const SNOW = `<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v10M1.7 3.5l8.6 5M1.7 8.5l8.6-5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
 
 /** Where a building's loads change hands: by a company site's gate, else its middle. */
