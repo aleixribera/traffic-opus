@@ -227,9 +227,11 @@ export class Buildings {
       samples.push({ x: c.x + u.x * a + v.x * b, y: c.y + u.y * a + v.y * b });
     }
     samples.push(c);
+    // (a site claims its whole plot from the tile its middle stands on: a big plot needn't own every tile it spills over)
+    if (T.zone === "placed" && world.inBounds(c) && !world.unlocked(c)) return fail("Not your land: buy the tile under its middle first (M)");
     for (const k of samples) {
       if (!world.inBounds(k)) return fail("Outside the map");
-      if (!world.unlocked(k)) return fail("Not your land: buy this tile first (M)");
+      if (T.zone !== "placed" && !world.unlocked(k)) return fail("Not your land: buy this tile first (M)");
       if (world.isWater(k)) return fail("Can't build on water");
     }
     // mountains

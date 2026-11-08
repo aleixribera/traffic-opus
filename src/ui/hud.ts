@@ -4,7 +4,7 @@ import type { Building } from "../game/buildings";
 import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
 import { MILESTONES, unlockedBy, type Milestone, type Unlocks } from "../game/progression";
 import { ZONES } from "../game/zones";
-import { BUILD_TIME, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, UNPOWERED, isPlantKind, powerPace, type Product } from "../game/industry";
+import { BUILD_TIME, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, TRUCK_COST, TRUCK_UPKEEP, UNPOWERED, isPlantKind, powerPace, type Product } from "../game/industry";
 import { GROW_NEED, LEVEL_MULT, SITE_LEVELS } from "../game/sites";
 import { TOWN_COST, TOWN_SPACING, type Town } from "../game/settlements";
 import { TOWN_SIZES, demandPerDay, needFrom, needsOf, nextNeed, sizeOf } from "../game/towns";
@@ -1175,7 +1175,7 @@ export class Hud {
         ${siteLevel(b)}
         <dl class="facts">
           ${plantRows}${powerRow}
-          ${D.trucks ? `<dt>Trucks out</dt><dd>${busy} of ${g.industry.trucksOf(b)}</dd>` : ""}
+          ${D.trucks ? `<dt>Trucks out</dt><dd>${busy} of ${g.industry.trucksOf(b)}<button class="btn buy-truck" ${g.industry.canBuyTruck(b, g.money) ? "disabled" : ""} title="${escapeHtml(g.industry.canBuyTruck(b, g.money) ?? `Another truck for this plant: ${formatMoney(TRUCK_COST)}, then ${formatMoney(TRUCK_UPKEEP)}/h`)}">+ Truck · ${formatMoney(TRUCK_COST)}</button></dd>` : ""}
           <dt>Staff</dt><dd>${g.people.workersAt(b.id)} / ${b.cap}</dd>
           ${D.deposit ? `<dt>${cap(D.deposit.name)}</dt><dd>${Math.round(P.yld * 100)}% of full yield</dd>` : ""}
         </dl>
@@ -1242,6 +1242,11 @@ export class Hud {
     const g = this.app.game;
     const btn = this.panel.querySelector(".demolish") as HTMLButtonElement | null;
     if (btn) btn.onclick = () => { g.bulldoze([], [b.id]); this.closeSelection(); this.app.selected = null; this.sfx.play("remove"); };
+    const buy = this.panel.querySelector(".buy-truck") as HTMLButtonElement | null;
+    if (buy) buy.onclick = () => {
+      const why = g.buyTruck(b.id);
+      if (why) this.toast(why); else { this.sfx.play("place"); this.lastPanel = ""; this.fillBuilding(b); }
+    };
   }
 
   openSignal(node: number) {

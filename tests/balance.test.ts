@@ -15,11 +15,11 @@ import { F } from "../src/world/gen";
 import { BUILDING_TYPES } from "../src/config";
 import { add, dist, norm, scale, sub, v2, type V2 } from "../src/core/math";
 import { layRoad } from "./helpers";
-import type { Building } from "../src/game/buildings";
+import type { Building, PlaceOpts } from "../src/game/buildings";
 
 const MAX_DAYS = 40;
 /** The pace the early game is held to: first steel and first cement by these days. */
-const STEEL_BY = 32, CEMENT_BY = 38;
+const STEEL_BY = 18, CEMENT_BY = 22;
 /** What the company keeps in hand for wages and fuel: it doesn't build with its last dollars. */
 const RESERVE = 8000;
 
@@ -56,7 +56,7 @@ function play() {
       for (const side of [1, -1]) for (const o of [35, 50]) {
         const p = v2(q.x + side * n.x * o, q.y + side * n.y * o);
         let pl = g.placedPlan(kind, p);
-        if (pl && !pl.ok && pl.reason?.startsWith("Not your land") && buyLand(kind, p)) pl = g.placedPlan(kind, p);
+        if (pl && !pl.ok && pl.reason?.startsWith("Not your land") && buyLand(kind, p) === true) pl = g.placedPlan(kind, p);
         if (pl?.ok) {
           const x = g.place(kind, p)!;
           say(`place ${kind}${x.plant!.yld < 1 ? ` (${Math.round(x.plant!.yld * 100)}% on its deposit)` : ""}, ${(dist(p, A.c) / 1000).toFixed(1)} km from ${A.name} · $${Math.round(g.money).toLocaleString("en-US")} left`);
@@ -66,26 +66,22 @@ function play() {
     }
     return null;
   };
-  /** Buy the tiles a lot at p stands on (only when it would then fit, on its deposit, with money to spare). */
-  const buyLand = (kind: PlantKind, p: V2): boolean => {
-    const T = BUILDING_TYPES[kind], half = Math.hypot(T.w, T.d) / 2;
-    const need = new Set<string>();
-    for (const [dx, dy] of [[0, 0], [half, 0], [-half, 0], [0, half], [0, -half], [half, half], [-half, -half], [half, -half], [-half, half]]) {
-      const [i, j] = g.tileOf(v2(p.x + dx, p.y + dy));
-      if (!g.tiles.has(`${i},${j}`)) need.add(`${i},${j}`);
-    }
-    if (!need.size || need.size > g.tileSlotsLeft) return false;
-    let price = 0;
-    for (let k = 0; k < need.size; k++) price += tilePrice(g.tiles.size + k);
-    if (price + PLANTS[kind].cost > g.money - RESERVE) return false;
-    // (a lot only partly on a deposit isn't worth the land)
-    const D = PLANTS[kind].deposit;
-    if (D && g.industry.depositShare(D.field, p, 0, T.w / 2, T.d / 2) < 0.5) return false;
-    for (const key of need) {
-      const [i, j] = key.split(",").map(Number);
-      if (!g.unlockTile(i, j)) return false;
-    }
-    say(`bought ${need.size} tile${need.size > 1 ? "s" : ""} of land for $${price.toLocaleString("en-US")}`);
+  /**
+   * Buy the tile under the middle of a site at p (all a site needs), only when it would then stand there, on its
+   * deposit (a player sees that while placing), with money to spare. "money": not for now.
+   */
+  const buyLand = (kind: PlantKind, p: V2, opts?: PlaceOpts): boolean | "money" => {
+    const pl = g.placedPlan(kind, p, opts);
+    if (!pl) return false;
+    const [i, j] = g.tileOf(pl.c), key = `${i},${j}`;
+    if (g.tiles.has(key) || g.tileSlotsLeft < 1 || g.tileBlock(i, j)?.startsWith("Must border")) return false;
+    const price = tilePrice(g.tiles.size);
+    if (price + PLANTS[kind].cost > g.money - RESERVE) return "money";
+    g.tiles.add(key);
+    const fits = !!g.placedPlan(kind, p, opts)?.ok;
+    g.tiles.delete(key);
+    if (!fits || !g.unlockTile(i, j)) return false;
+    say(`bought 1 tile of land for $${price.toLocaleString("en-US")}`);
     return true;
   };
   /** The nearest spot to p (from `from` m out) whose 75 m square is mostly on a deposit field. */
@@ -156,7 +152,12 @@ function play() {
       const a = startFor(q);
       const opts = { down: norm(sub(a, q)) };
       let pl = g.placedPlan(kind, q, opts);
-      if (pl && !pl.ok && pl.reason?.startsWith("Not your land") && buyLand(kind, q)) pl = g.placedPlan(kind, q, opts);
+      if (pl && !pl.ok && pl.reason?.startsWith("Not your land")) {
+        const got = buyLand(kind, q, opts);
+        // (land it can't pay for yet: it waits rather than settle for a worse plot)
+        if (got === "money") return "money";
+        if (got) pl = g.placedPlan(kind, q, opts);
+      }
       if (!pl?.ok) continue;
       tries++;
       const b = g.place(kind, q, opts)!;
@@ -169,7 +170,7 @@ function play() {
       const e = add(b.front, scale(norm(sub(b.front, b.c)), 4));
       const r = road(`to the ${T.name.toLowerCase()}`, a, e);
       if (r !== true) { g.undo(); if (r === "money") return "money"; continue; }
-      if (key) { roads[key] = [a, e]; paths[key] = lastLegs; }
+      if (key && !roads[key]) { roads[key] = [a, e]; paths[key] = lastLegs; }
       return done();
     }
     return null;
@@ -178,6 +179,15 @@ function play() {
   const mine = (key: "ore" | "coal" | "lime", kind: PlantKind, field: number, name: string) => {
     if (has(kind) || blocked.has(key) || g.money < RESERVE + PLANTS[kind].cost + 8000) return;
     for (const d of tier2[key]) {
+      // (land out there can only be bought once one of the company's roads is in it: a road into the deposit first)
+      if (!roads[key] || dist(roads[key][1], d) > 600) {
+        const a = startFor(d);
+        const r = road(`to the ${name}`, a, d);
+        if (r === "money") return;
+        if (r !== true) continue;
+        roads[key] = [a, d];
+        paths[key] = lastLegs;
+      }
       const r = site(kind, field, d, key, 500);
       if (r) return;
     }
@@ -188,7 +198,7 @@ function play() {
   const roads: Record<string, [V2, V2]> = {};
   const paths: Record<string, [V2, V2][]> = {};
   let B: Town | null = null;
-  let lastFarm = 0;
+  let lastFarm = 0, lastCamp = 0;
   let low = g.money;
   const plan = () => {
     const u = g.progress.unlocked.buildings;
@@ -201,10 +211,20 @@ function play() {
     if (has("loggingcamp") && !has("sawmill")) place("sawmill", ...roads.wood, 0.15, 0.6);
     // a second farm with the second town, and more (one every two days) while the towns go short of food
     if (B && count("farm") < 2) site("farm", F.fert, soil);
-    const hungry = g.towns.list.some((t) => t.pop > 150 && (t.supply.food ?? 0) < 0.7);
-    if (hungry && count("farm") >= 2 && count("farm") < 2 * count("foodplant") && g.time - lastFarm > 2 * DAY && g.money > PLANTS.farm.cost + RESERVE) {
-      lastFarm = g.time;
-      site("farm", F.fert, soil, undefined, 1200);
+    // (as a player watching the Towns window would: a town short of food gets another farm, and a food plant
+    // for every two farms)
+    const hungry = g.towns.list.some((t) => t.pop > 40 && (t.supply.food ?? 1) < 0.8);
+    if (hungry && count("farm") >= 2 && g.time - lastFarm > DAY) {
+      if (count("farm") < 2 * count("foodplant")) {
+        if (g.money > PLANTS.farm.cost + RESERVE) { lastFarm = g.time; site("farm", F.fert, soil, undefined, 1200); }
+      } else if (g.money > PLANTS.foodplant.cost + RESERVE) { lastFarm = g.time; place("foodplant", ...(roads.towns ?? roads.farm!), 0.3, 0.7); }
+    }
+    // the same for timber once the towns want planks: another camp, and a sawmill for every two camps
+    const noPlanks = g.towns.list.some((t) => t.supply.planks !== undefined && t.supply.planks < 0.8);
+    if (noPlanks && roads.wood && has("sawmill") && g.time - lastCamp > DAY) {
+      if (count("loggingcamp") < 2 * count("sawmill")) {
+        if (g.money > PLANTS.loggingcamp.cost + RESERVE) { lastCamp = g.time; site("loggingcamp", F.forest, wood, undefined, 1200); }
+      } else if (g.money > PLANTS.sawmill.cost + RESERVE) { lastCamp = g.time; place("sawmill", ...roads.wood, 0.2, 0.4); }
     }
     // a second town, down the road, once there is money for it
     if (has("foodplant") && !B && g.money > TOWN_COST + RESERVE + 7000 && g.townSlots > 1) {
@@ -228,7 +248,13 @@ function play() {
         opts.push({ r, t, d: mines.reduce((s, m) => s + dist(m, q), 0) });
       }
       opts.sort((x, y) => x.d - y.d);
-      for (const o of opts.slice(0, 3)) {
+      // (the best few spots, apart: a big site beside the road may not fit by a river)
+      const tried: V2[] = [];
+      for (const o of opts) {
+        if (tried.length >= 6) break;
+        const q = v2(o.r[0].x + (o.r[1].x - o.r[0].x) * o.t, o.r[0].y + (o.r[1].y - o.r[0].y) * o.t);
+        if (tried.some((p) => dist(p, q) < 300)) continue;
+        tried.push(q);
         const x = place(k, ...o.r, Math.max(0, o.t - 0.1), Math.min(1, o.t + 0.15));
         if (x) return x;
       }
@@ -285,8 +311,8 @@ describe("Balance: the early game", () => {
     // solvent all the way
     expect(low).toBeGreaterThanOrEqual(0);
     expect(g.money).toBeGreaterThan(0);
-    // first steel and first cement made, at a pace that keeps the early game moving (seed 7 runs day 27 and day 33;
-    // a day is 4 minutes at 4x)
+    // first steel and first cement made, at a pace that keeps the early game moving (seed 7 runs day 14 and day
+    // 17.5; a day is 4 minutes at 4x)
     expect(steel).toBeGreaterThan(0);
     expect(cement).toBeGreaterThan(0);
     expect(steel / DAY).toBeLessThan(STEEL_BY);

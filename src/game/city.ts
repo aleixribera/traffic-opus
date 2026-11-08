@@ -14,7 +14,7 @@ import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, type LotTemplate }
 import { Progress, tilePrice, type Feature, type Milestone, type ProgressView } from "./progression";
 import { DAY, HOUR, Society } from "./society";
 import { PLACED, SHORE_REACH, type PlacedKind } from "./placed";
-import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, isPlantKind } from "./industry";
+import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, TRUCK_COST, isPlantKind } from "./industry";
 import { TownSystem } from "./settlements";
 import { BLOCK, gridPt } from "./towns";
 import { F } from "../world/gen";
@@ -135,6 +135,7 @@ export class Game {
       get shops() { return game.shops; },
       townOf: (b) => b.town ?? null,
       want: (town, p) => this.towns.want(town, p),
+      short: (town, p) => this.towns.short(town, p),
       sold: (town, p, n) => { this.towns.sold(town, p, n); this.progress.onSold(p, n); },
       request: (sp) => this.traffic.request(sp),
       trips: () => this.trips(),
@@ -220,6 +221,18 @@ export class Game {
   *trips(): Iterable<Trip> {
     for (const v of this.traffic.vehicles) yield v.trip;
     for (const p of this.traffic.pending) yield p.trip;
+  }
+
+  /** Buy one of the company's plants another truck. Null when bought, else why not. */
+  buyTruck(id: number): string | null {
+    const b = this.buildings.byId.get(id);
+    if (!b?.plant) return "Not a plant";
+    const why = this.industry.canBuyTruck(b, this.money);
+    if (why) return why;
+    b.plant.trucks++;
+    b.plant.bought = (b.plant.bought ?? 0) + 1;
+    this.charge(TRUCK_COST);
+    return null;
   }
 
   /** Pay for something that isn't part of the hourly books (a building, a new town). */

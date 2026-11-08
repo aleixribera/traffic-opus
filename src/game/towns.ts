@@ -57,8 +57,8 @@ export function nextNeed(pop: number): { p: Product; pop: number } | null {
  * there being more residents: demand climbs exponentially through the sizes, as the design asks.
  */
 export function demandPerDay(p: Product, pop: number): number {
-  const per: Partial<Record<Product, number>> = { food: 1 / 12, planks: 1 / 30, cement: 1 / 50 };
-  const base = per[p] ?? 1 / 40;
+  const per: Partial<Record<Product, number>> = { food: 1 / 8, planks: 1 / 20, cement: 1 / 30 };
+  const base = per[p] ?? 1 / 24;
   return Math.max(1, pop * base * Math.pow(1.6, sizeOf(pop)));
 }
 
@@ -77,7 +77,8 @@ export function growthPerDay(supply: Partial<Record<Product, number>>, pop: numb
   const shares = Object.values(supply) as number[];
   const worst = shares.length ? Math.min(...shares) : 1;
   if (pop < 60) return 6; // a new settlement fills its first streets regardless
-  if (worst >= 0.8) return Math.max(4, pop * 0.06 * (0.5 + worst)); // well supplied: ~6-9% a day
+  // well supplied: a hamlet or village grows ~30% a day, slowing to ~12% for a city
+  if (worst >= 0.8) return Math.max(4, pop * [0.09, 0.08, 0.06, 0.045, 0.035][sizeOf(pop)] * (0.5 + worst));
   if (worst >= 0.5) return 2;
   if (worst >= 0.2) return 0;
   return -Math.max(1, pop * 0.02);

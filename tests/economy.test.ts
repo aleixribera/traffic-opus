@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { Game, START_MONEY } from "../src/game/city";
 import { DAY, HOUR } from "../src/game/society";
 import { BLOCK, gridPt } from "../src/game/towns";
-import { MIN_DEPOSIT } from "../src/game/industry";
+import { MAX_BOUGHT, MIN_DEPOSIT, PLANTS, TRUCK_COST, TRUCK_UPKEEP } from "../src/game/industry";
 import { F } from "../src/world/gen";
 import type { V2 } from "../src/core/math";
 import type { Building } from "../src/game/buildings";
@@ -71,7 +71,7 @@ describe("The company economy", () => {
   it("farm -> food plant -> town: real trucks carry the loads, the company is paid, and the town grows", () => {
     const g = new Game(7);
     const { t, farm, foodplant } = chain(g);
-    expect(g.money).toBeLessThan(START_MONEY - 37000); // the two plants and the road
+    expect(g.money).toBeLessThan(START_MONEY - PLANTS.farm.cost - PLANTS.foodplant.cost); // the two plants and the road
     const pop0 = t.pop, households0 = t.households;
     // watch the trucks: crops leave the farm for the food plant, food leaves the food plant for the town's shops
     const seen = { crops: new Set<number>(), food: new Set<number>() };
@@ -146,4 +146,23 @@ describe("The company economy", () => {
     run(h, 6);
     expect(delivered).toBeGreaterThan(0);
   }, 300000);
+  it("a plant can be bought more trucks, each with a price and an hourly upkeep, up to a limit", () => {
+    const g = new Game(7);
+    const { farm, foodplant } = chain(g);
+    const before = g.industry.trucksOf(foodplant), money = g.money;
+    expect(g.buyTruck(foodplant.id)).toBeNull();
+    expect(g.industry.trucksOf(foodplant)).toBe(before + 1);
+    expect(g.money).toBe(money - TRUCK_COST);
+    // the bought truck is kept up every hour on top of the plant's own upkeep
+    const P = foodplant.plant!;
+    const hourSpent = () => { P.now.spent = 0; g.industry.hourly(); return P.last.spent; };
+    const withTruck = hourSpent();
+    P.bought = 0;
+    expect(withTruck - hourSpent()).toBe(TRUCK_UPKEEP);
+    P.bought = 1;
+    for (let i = 1; i < MAX_BOUGHT; i++) expect(g.buyTruck(foodplant.id)).toBeNull();
+    expect(g.buyTruck(foodplant.id)).toMatch(/all the trucks/);
+    g.money = 10;
+    expect(g.buyTruck(farm.id)).toBe("Not enough money");
+  });
 });
