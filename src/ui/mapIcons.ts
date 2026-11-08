@@ -35,12 +35,15 @@ export class MapIcons {
   /** Rebuild the set (a few times a second). */
   set(list: Building[], view: View) {
     const on = view.halfH < 1100;
+    // (a town's homes and shops only show theirs up close: further out, the town's label shows what it is short of,
+    // and a city's dozens of "Out of food" pins would bury the company's own warnings)
+    const town = view.halfH < 260;
     this.shown = [];
     let n = 0;
     if (on) {
       const pad = 40;
       for (const b of list) {
-        if (!b.problem || b.abandoned || b.built < 1) continue;
+        if (!b.problem || b.abandoned || b.built < 1 || (b.zone && !town)) continue;
         // (a company site's trouble shows by its gate, where its plant and truck yard are, not out in its fields)
         const f = b.placed ? siteFrame(b.c, b.rot, b.side, b.hd) : null;
         const at = !f ? b.c : b.problem === GATE_PROBLEM ? f.gate : { x: f.gate.x + f.into.x * 30, y: f.gate.y + f.into.y * 30 };
