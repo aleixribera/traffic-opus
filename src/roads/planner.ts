@@ -521,9 +521,17 @@ function findCrossings(net: RoadNetwork, pts: V2[], cum: number[], hsPlan: numbe
     const g = net.segGeom.get(id);
     const s = net.segs.get(id);
     if (!g || !s) continue;
+    // (a road whose box the plan's doesn't reach can't cross it; nor can two pieces whose boxes don't meet)
+    const bb = g.bbox;
+    if (bb.x0 > x1 || bb.x1 < x0 || bb.y0 > y1 || bb.y1 < y0) continue;
     const cp = g.center.pts;
     for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      const ax0 = Math.min(a.x, b.x), ax1 = Math.max(a.x, b.x), ay0 = Math.min(a.y, b.y), ay1 = Math.max(a.y, b.y);
+      if (bb.x0 > ax1 || bb.x1 < ax0 || bb.y0 > ay1 || bb.y1 < ay0) continue;
       for (let j = 0; j < cp.length - 1; j++) {
+        const c = cp[j], d = cp[j + 1];
+        if ((c.x < ax0 && d.x < ax0) || (c.x > ax1 && d.x > ax1) || (c.y < ay0 && d.y < ay0) || (c.y > ay1 && d.y > ay1)) continue;
         const r = segIntersect(pts[i], pts[i + 1], cp[j], cp[j + 1]);
         if (!r) continue;
         const p = lerpV(pts[i], pts[i + 1], r.t);

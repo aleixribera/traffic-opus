@@ -509,8 +509,10 @@ export class App {
   }
 
   quickSave() {
-    if (this.saves.save(this.game, "Quicksave", "quick")) this.hud?.toast("Quicksaved (F9 to load)");
-    else this.reject("Couldn't save: browser storage is full");
+    void this.saves.saveSoon(this.game, "Quicksave", "quick").then((m) => {
+      if (m) this.hud?.toast("Quicksaved (F9 to load)");
+      else this.reject("Couldn't save: browser storage is full");
+    });
   }
 
   quickLoad() {
@@ -1237,7 +1239,7 @@ export class App {
       if ((this.overlay !== "none" && this.overlay !== "flow") || this.st.tool === "place") this.applyTint();
     }
     this.saveT += dt;
-    if (this.saveT > 60) { this.saveT = 0; if (this.mode === "play") this.saves.autosave(g); }
+    if (this.saveT > 60) { this.saveT = 0; if (this.mode === "play") void this.saves.autosaveSoon(g); }
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - dt * 4);
       this.hud?.shake(this.shake);
