@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { SIM } from "../config";
-import { carColor, EMERGE, fromLot, LONG, type PendingSpawn, type Traffic, type Trip, type Vehicle } from "../sim/traffic";
+import { carColor, EMERGE, fromLot, TRAIN, type PendingSpawn, type Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import type { V2 } from "../core/math";
 import type { LotWay } from "./buildings3d";
 import { VEHICLE_MODELS, type ModelSet, type VehicleKind } from "./models";
@@ -220,7 +220,7 @@ export class Vehicles3D {
       const P = { x: v.x, y: v.y }, d0 = { x: Math.cos(v.ang), y: Math.sin(v.ang) };
       const legs = [leg(P, d0, w.kerb, w.into)];
       // (a heavy rigid or a road train doesn't fit a car bay: it drives straight up the drive to the yard)
-      if (w.bays.length && v.len < LONG) {
+      if (w.bays.length && v.len < TRAIN) {
         const bay = w.bays[v.id % w.bays.length];
         legs.push(leg(w.kerb, w.into, bay.p, bay.dir));
       } else if (dst(w.kerb, w.drive) > 2) legs.push(leg(w.kerb, w.into, add(w.drive, w.into, -1), w.into));
@@ -239,14 +239,14 @@ export class Vehicles3D {
     for (const p of traffic.pending) {
       if (!fromLot(p) || !this.lotOf) continue;
       // (a long truck waiting behind another at its lot's gate stays out of sight till its turn)
-      if ((p.len ?? 0) >= LONG && p.go === undefined) continue;
+      if ((p.len ?? 0) >= TRAIN && p.go === undefined) continue;
       want.add(p);
       if (this.leaving.has(p)) continue;
       const w = this.lotOf(p.trip.from);
       if (!w) continue;
       const out = { x: -w.into.x, y: -w.into.y };
       const legs: Leg[] = [];
-      if (w.bays.length && (p.len ?? 0) < LONG) {
+      if (w.bays.length && (p.len ?? 0) < TRAIN) {
         const bay = w.bays[(p.look ?? 0) % w.bays.length];
         const R = add(bay.p, bay.dir, -5.5);
         const ex = { x: w.kerb.x - R.x, y: w.kerb.y - R.y }, el = Math.hypot(ex.x, ex.y) || 1;

@@ -17,8 +17,16 @@ const boxes = (L: SiteLayout) => L.slots.map((s) => ({ s, ...slotHalf(s) }));
 
 describe("site layout", () => {
   it("is the same for the same plot and seed, and fits every kind's plot", () => {
-    // (a warehouse and a fuel depot are single buildings, not growing complexes; nor are the landmarks: special.test.ts has theirs)
-    for (const kind of PLANT_KINDS.filter((k) => !PLANTS[k].logistics && !PLANTS[k].mega)) {
+    // (the landmarks are not growing complexes: special.test.ts has theirs)
+    for (const kind of PLANT_KINDS.filter((k) => !PLANTS[k].mega)) {
+      // (a warehouse or a fuel depot is a single building on a small lot: it never grows)
+      if (PLANTS[kind].logistics) {
+        const T = BUILDING_TYPES[kind];
+        const L = siteLayout(kind, T.w, T.d, 1);
+        expect(L.slots.map((s) => [s.model, s.role, s.level])).toEqual([[kind, "core", 1]]);
+        expect(L.roads).toEqual([]);
+        continue;
+      }
       const T = BUILDING_TYPES[kind];
       for (const seed of [1, 2, 17, 404]) {
         const L = siteLayout(kind, T.w, T.d, seed);

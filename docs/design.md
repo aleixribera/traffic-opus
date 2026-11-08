@@ -161,8 +161,9 @@ Our own names, look and art throughout.
   - a roundabout counts its load in car-sized slots, so a road train counts as about three cars and a heavy as two. It won't enter unless the
     ring has room for its whole length, counting the long trucks already waiting at the other entries;
   - a lane change needs a gap beside its whole length;
-  - one long truck at a time pulls out of a lot's gate: the next waits in the yard until the last trailer
-    has cleared the kerb.
+  - one road train at a time pulls out of a lot's gate: the next waits in the yard until the last trailer
+    has cleared the kerb. Heavies pull out of the yard's bays like light trucks (gating them too halved what
+    a heavy fleet moved in the balance run).
 - **Fuel** is a running cost per km at a market price ($4 per light-truck km, both ways). Once your refinery's
   tankers stock a **fuel depot**, every truck whose run passes within 1.5 km of it fills up there at cost
   ($1 per km): one load of fuel lasts 400 light-truck km. The depot's panel shows its fuel, the trucks it
