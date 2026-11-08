@@ -45,10 +45,11 @@ Our own names, look and art throughout.
 
 | Tier | Extractors (on a deposit) | Plants |
 |---|---|---|
-| 1 | Farm: crops. Logging camp: logs | Food plant: crops to food. Sawmill: logs to planks |
-| 2 | Iron mine: iron ore. Coal mine: coal. Quarry: limestone | Smelter: iron ore + coal to steel. Cement works: limestone + coal to cement. Power plant: coal to power |
-| 3 | Oil well: crude. Sand pit: sand | Refinery: crude to fuel + plastics. Glassworks: sand + coal to glass. Furniture factory: planks + glass to household goods. Construction plant: steel + cement to construction parts |
+| 1 | Farm: crops. Logging camp: logs | Food plant: crops to food. Sawmill: logs to planks (+ wood chips) |
+| 2 | Iron mine: iron ore. Coal mine: coal. Quarry: limestone. Dairy farm (fertile soil): milk | Smelter: iron ore + coal to steel (+ slag). Cement works: limestone (or slag) + coal to cement. Power plant: coal (or chips) to power. Creamery: milk to cheese |
+| 3 | Oil well: crude. Sand pit: sand | Refinery: crude to fuel + plastics. Glassworks: sand + coal to glass. Furniture factory: planks + glass to household goods. Construction plant: steel + cement to construction parts. Chemical works: limestone + coal to fertilizer + explosives |
 | 4 | Copper mine: copper ore | Copper smelter: copper ore + coal to copper. Electronics: copper + plastics to electronics. Machine works: steel + copper to machinery |
+| 5 | | Rubber plant: plastics + coal to rubber. Motor Works: steel + glass + rubber + electronics to cars |
 
 - Each building has jobs, input stores, output stores and a rate. Rate = base x staffing x inputs on hand
   (x power, from tier 2). A full output store stops production, and the building says so.
@@ -58,6 +59,44 @@ Our own names, look and art throughout.
 - **Construction:** tier 1 buildings cost money only. From tier 2 a new plant is a construction site that waits
   for materials trucked to it: planks (tier 2), planks + cement (tier 3), construction parts (tier 4).
 - **Power** runs along the roads from power plants that burn coal brought by truck.
+- **Supplies (2026-11-08): the chain feeds itself.** The chemical works' fertilizer goes back to farms and dairy
+  farms from level 3; its explosives go to iron, coal and copper mines, quarries, sand pits and oil wells from
+  level 3. Every site except the machine works draws machinery at level 4. A site keeps a small store of each
+  (shown as a Supplies row in its panel) and draws it down as it works. Out of a supply, it drops back to the pace
+  of the level below (never under level 2), and it only grows to a level once that level's supply is in stock. No
+  town buys supplies; the company's own trucks route them like any input. **In the world:** a site running on
+  supplies shows a badge by its gate: a green chevron, the supply icons and the total it adds ("+50%"). Its panel
+  says what each one adds, e.g. "+50% from fertilizer" (a level-3 farm on fertilizer vs. the level-2 pace).
+- **Perishables (2026-11-08).** Milk (dairy farm) and cheese (creamery) travel in refrigerated trucks. A load keeps
+  its full value for its shelf time (milk 540 s, about 13 in-game hours; cheese 1500 s, about 37 hours). After
+  that it loses value linearly to a 20% floor at twice the shelf time. Spoiled loads still sell for what is left.
+  Villages buy milk and cheese as extras (they add to growth but never hold it back). The panel shows the share
+  that arrived fresh and what spoiled. The answer is a nearer buyer or a quicker road, never a purchase.
+  **In the world:**
+  - The reefer bodies (light, heavy and road-train) are banded in their load's colour (blue for milk, gold for
+    cheese) with a dark fridge unit.
+  - Every reefer on screen carries a ring that runs down its shelf time: teal, amber in the last third, then red
+    and pulsing once it spoils.
+  - At the shop a fresh load pops "Fresh +$", a late one pops "47% fresh −$1,440 spoiled".
+  - The ticker calls out a spoiled plant at most once an in-game hour, naming the plant, the town and the money
+    lost.
+- **Alternate inputs and by-products (2026-11-08).** The sawmill also makes wood chips and the smelter slag. A
+  power plant burns chips in place of coal, and a cement works takes slag in place of limestone. By-products only
+  go to plants that take them (no town buys them). When a load of one leaves, a tag pops at the gate ("Slag ·
+  by-product, to the cement works") so it reads as its own cargo, on its own trucks.
+- **Motor Works (tier 5, 2026-11-08).** The rubber plant turns the refinery's plastics and coal into rubber. The
+  Motor Works builds cars from steel, glass, rubber and electronics and stops when any of the four runs out. A
+  Town (1,500+) buys cars as an extra; each truckload is 4 cars, and towns scrap 2% of their cars a day. Cars
+  sold raise the town's **motoring**: up to +50% more of its people's trips are driven, full at one new car per
+  household. More income, more traffic on the town's own streets: the Motor Works is a traffic multiplier, not just
+  a money one. **In the world:**
+  - The cars go out on car transporters (two decks of cars painted in the company's four livery colours).
+  - The town pops "8 new cars +$8,000", and the ticker says it took delivery once an hour.
+  - The households that bought them drive 1930s Motor Works sedans in livery colours through town, a share that
+    grows with motoring.
+  - The Motor Works is a showpiece: a deco front with a stepped tower crowned by a winged brass emblem, sawtooth
+    roof lights, a paint shop, a lot of finished cars, a loaded transporter at the dock, and a test track with a
+    grandstand round the back.
 
 ## Industry sites (owner, 2026-11-08)
 

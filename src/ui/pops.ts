@@ -1,4 +1,4 @@
-import type { V2 } from "../core/math";
+import { formatMoney, type V2 } from "../core/math";
 import type { Building } from "../game/buildings";
 import { PRODUCTS, SHELF, freshness, perishable, type Delivery, type Product } from "../game/industry";
 import { siteFrame } from "../game/sites";
@@ -17,7 +17,9 @@ const MAX_RINGS = 48;
 /** Pops and rings only show this close in (half the view's height, m): further out they would be noise. */
 const NEAR = 900;
 
-const money = (v: number) => `$${Math.round(Math.abs(v)).toLocaleString("en-US")}`;
+const money = (v: number) => formatMoney(Math.abs(v));
+/** Under reduced motion a pop fades in place instead of rising. */
+const still = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 const SNOW = `<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v10M1.7 3.5l8.6 5M1.7 8.5l8.6-5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
 
 /** Where a building's loads change hands: by a company site's gate, else its middle. */
@@ -42,6 +44,8 @@ export class Pops {
 
   constructor() {
     this.el.className = "map-pops";
+    // (what they say is in the ticker, which is read out: these are only the picture of it)
+    this.el.setAttribute("aria-hidden", "true");
     document.body.appendChild(this.el);
   }
 
@@ -82,11 +86,12 @@ export class Pops {
   /** Every frame: the pops rise and fade, the rings follow their trucks. */
   update(view: View, traffic: Traffic | null, alpha: number) {
     const now = performance.now();
+    const calm = this.pops.length > 0 && still();
     this.pops = this.pops.filter((p) => {
       const f = (now - p.t0) / 1000 / LIFE;
       if (f >= 1) { p.el.remove(); return false; }
       const s = view.toScreen(p.at);
-      const rise = 14 + 34 * (1 - (1 - f) * (1 - f));
+      const rise = calm ? 24 : 14 + 34 * (1 - (1 - f) * (1 - f));
       p.el.style.transform = `translate(${s.x.toFixed(1)}px, ${(s.y - rise).toFixed(1)}px) translate(-50%, -100%)`;
       p.el.style.opacity = f < 0.05 ? (f / 0.05).toFixed(2) : f > 0.72 ? ((1 - f) / 0.28).toFixed(2) : "1";
       return true;

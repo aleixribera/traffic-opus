@@ -443,9 +443,11 @@ kbd { font: inherit; font-size: 11px; font-weight: 500; padding: 1px 5px; border
 .fresh-ring i { width: 18px; height: 18px; border-radius: 50%; background: #fff; display: grid; place-items: center; }
 .fresh-ring i svg { width: 12px; height: 12px; display: block; }
 .fresh-ring.late { --c: #d9901f; }
-.fresh-ring.spoiling { --c: var(--bad); animation: ring-pulse 0.8s ease-in-out infinite alternate; }
-@keyframes ring-pulse { to { box-shadow: 0 0 0 3px rgba(192, 51, 46, 0.35), 0 1px 3px rgba(0, 0, 0, 0.3); } }
-@media (prefers-reduced-motion: reduce) { .fresh-ring.spoiling { animation: none; } }
+.fresh-ring.spoiling { --c: var(--bad); }
+.fresh-ring.spoiling::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; box-shadow: 0 0 0 3px rgba(192, 51, 46, 0.4);
+  opacity: 0; animation: ring-pulse 0.8s ease-in-out infinite alternate; pointer-events: none; }
+@keyframes ring-pulse { to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .fresh-ring.spoiling::after { animation: none; opacity: 1; } }
 body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 
 .map-label { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; white-space: nowrap; color: #232529;
