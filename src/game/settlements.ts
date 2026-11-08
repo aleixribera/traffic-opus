@@ -20,7 +20,9 @@ export const TOWN_SPACING = 1200;
 /** A town needs one of the company's roads this close (m), or it starts cut off. */
 export const TOWN_ROAD_REACH = 300;
 /** Households a new town starts out wanting. */
-const START_HOUSEHOLDS = 8;
+const START_HOUSEHOLDS = 24;
+/** How many times its needs a town's shops will buy in a day. */
+export const MARKET = 3;
 /** Households per shop the town keeps open. */
 const HH_PER_SHOP = 25;
 /** Shops grow within this distance of the centre (m); from Village size, further out. */
@@ -82,11 +84,21 @@ export class TownSystem {
     return best;
   }
 
-  /** Loads of a product a town still wants today; -Infinity when it doesn't use it at its size. */
+  /**
+   * Loads of a product a town will still buy today; -Infinity when it doesn't use it at its size. Its shops buy
+   * up to MARKET times what it needs to grow, so more supply always sells (docs/design.md, pillar 5).
+   */
   want(id: number, p: Product): number {
     const t = this.byId.get(id);
     if (!t || !needsOf(t.pop).includes(p)) return -Infinity;
-    return demandPerDay(p, t.pop) - (t.today[p] ?? 0);
+    return demandPerDay(p, t.pop) * MARKET - (t.today[p] ?? 0);
+  }
+
+  /** Loads a town still needs today to grow (0 when its needs are met or it doesn't use the product). */
+  short(id: number, p: Product): number {
+    const t = this.byId.get(id);
+    if (!t || !needsOf(t.pop).includes(p)) return 0;
+    return Math.max(0, demandPerDay(p, t.pop) - (t.today[p] ?? 0));
   }
 
   /** A load reached one of the town's shops. */

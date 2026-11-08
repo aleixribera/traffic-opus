@@ -19,7 +19,7 @@ import type { Building } from "../src/game/buildings";
 
 const MAX_DAYS = 40;
 /** The pace the early game is held to: first steel and first cement by these days. */
-const STEEL_BY = 32, CEMENT_BY = 38;
+const STEEL_BY = 18, CEMENT_BY = 22;
 /** What the company keeps in hand for wages and fuel: it doesn't build with its last dollars. */
 const RESERVE = 8000;
 
@@ -157,7 +157,7 @@ function play() {
   const roads: Record<string, [V2, V2]> = {};
   const paths: Record<string, [V2, V2][]> = {};
   let B: Town | null = null;
-  let lastFarm = 0;
+  let lastFarm = 0, lastCamp = 0;
   let low = g.money;
   const plan = () => {
     const u = g.progress.unlocked.buildings;
@@ -172,10 +172,20 @@ function play() {
     if (has("loggingcamp") && !has("sawmill")) place("sawmill", ...roads.wood, 0.15, 0.6);
     // a second farm with the second town, and more (one every two days) while the towns go short of food
     if (B && count("farm") < 2) place("farm", ...roads.farm!, 0.9, 0.4);
-    const hungry = g.towns.list.some((t) => t.pop > 150 && (t.supply.food ?? 0) < 0.7);
-    if (hungry && count("farm") >= 2 && count("farm") < 2 * count("foodplant") && g.time - lastFarm > 2 * DAY && g.money > PLANTS.farm.cost + RESERVE) {
-      lastFarm = g.time;
-      place("farm", ...roads.farm!, 0.95, 0.15);
+    // (as a player watching the Towns window would: a town short of food gets another farm, and a food plant
+    // for every two farms)
+    const hungry = g.towns.list.some((t) => t.pop > 40 && (t.supply.food ?? 1) < 0.8);
+    if (hungry && count("farm") >= 2 && g.time - lastFarm > DAY) {
+      if (count("farm") < 2 * count("foodplant")) {
+        if (g.money > PLANTS.farm.cost + RESERVE) { lastFarm = g.time; place("farm", ...roads.farm!, 0.95, 0.15); }
+      } else if (g.money > PLANTS.foodplant.cost + RESERVE) { lastFarm = g.time; place("foodplant", ...(roads.towns ?? roads.farm!), 0.3, 0.7); }
+    }
+    // the same for timber once the towns want planks: another camp, and a sawmill for every two camps
+    const noPlanks = g.towns.list.some((t) => t.supply.planks !== undefined && t.supply.planks < 0.8);
+    if (noPlanks && roads.wood && has("sawmill") && g.time - lastCamp > DAY) {
+      if (count("loggingcamp") < 2 * count("sawmill")) {
+        if (g.money > PLANTS.loggingcamp.cost + RESERVE) { lastCamp = g.time; place("loggingcamp", ...roads.wood, 0.92, 0.3); }
+      } else if (g.money > PLANTS.sawmill.cost + RESERVE) { lastCamp = g.time; place("sawmill", ...roads.wood, 0.2, 0.4); }
     }
     // a second town, down the road, once there is money for it
     if (has("foodplant") && !B && g.money > TOWN_COST + RESERVE + 7000 && g.townSlots > 1) {
@@ -259,8 +269,8 @@ describe("Balance: the early game", () => {
     // solvent all the way
     expect(low).toBeGreaterThanOrEqual(0);
     expect(g.money).toBeGreaterThan(0);
-    // first steel and first cement made, at a pace that keeps the early game moving (seed 7 runs day 27 and day 33;
-    // a day is 4 minutes at 4x)
+    // first steel and first cement made, at a pace that keeps the early game moving (seed 7 runs day 14 and day
+    // 17.5; a day is 4 minutes at 4x)
     expect(steel).toBeGreaterThan(0);
     expect(cement).toBeGreaterThan(0);
     expect(steel / DAY).toBeLessThan(STEEL_BY);

@@ -23,14 +23,14 @@ export interface ProductDef {
 export const PRODUCTS: Record<Product, ProductDef> = {
   crops: { name: "Crops", price: 0, color: 0xd9b44a },
   logs: { name: "Logs", price: 0, color: 0x8a5a33 },
-  food: { name: "Food", price: 450, color: 0xe2704a },
-  planks: { name: "Planks", price: 400, color: 0xe8cf8f },
+  food: { name: "Food", price: 700, color: 0xe2704a },
+  planks: { name: "Planks", price: 650, color: 0xe8cf8f },
   ore: { name: "Iron ore", price: 0, color: 0x93603f },
   coal: { name: "Coal", price: 0, color: 0x3a3a3e },
   lime: { name: "Limestone", price: 0, color: 0xd9d3bd },
   // (steel goes to the construction plants of tier 3: no town buys it)
   steel: { name: "Steel", price: 0, color: 0x8a96a3 },
-  cement: { name: "Cement", price: 650, color: 0xb9b6ae },
+  cement: { name: "Cement", price: 1000, color: 0xb9b6ae },
 };
 
 export type PlantKind = "farm" | "loggingcamp" | "foodplant" | "sawmill" | "ironmine" | "coalmine" | "quarry" | "smelter" | "cementworks" | "coalplant";
@@ -66,22 +66,22 @@ const HOUR = 40;
 export const PLANTS: Record<PlantKind, PlantDef> = {
   farm: {
     kind: "farm", tier: 1, deposit: { field: F.fert, name: "fertile soil" }, inputs: {}, outputs: { crops: 1 },
-    cycle: HOUR * 1.5, cost: 12000, upkeep: 12, trucks: 2, store: 8,
+    cycle: HOUR * 1.5, cost: 8000, upkeep: 12, trucks: 2, store: 8,
     blurb: "Grows crops on fertile soil. Its trucks take them to your food plants.",
   },
   loggingcamp: {
     kind: "loggingcamp", tier: 1, deposit: { field: F.forest, name: "forest" }, inputs: {}, outputs: { logs: 1 },
-    cycle: HOUR * 1.5, cost: 10000, upkeep: 10, trucks: 2, store: 8,
+    cycle: HOUR * 1.5, cost: 7000, upkeep: 10, trucks: 2, store: 8,
     blurb: "Fells timber in the forest. Its trucks take the logs to your sawmills.",
   },
   foodplant: {
     kind: "foodplant", tier: 1, inputs: { crops: 1 }, outputs: { food: 1 },
-    cycle: HOUR, cost: 25000, upkeep: 25, trucks: 2, store: 8,
+    cycle: HOUR, cost: 15000, upkeep: 25, trucks: 2, store: 8,
     blurb: "Turns crops into food. Its trucks sell the food to the towns' shops.",
   },
   sawmill: {
     kind: "sawmill", tier: 1, inputs: { logs: 1 }, outputs: { planks: 1 },
-    cycle: HOUR, cost: 22000, upkeep: 22, trucks: 2, store: 8,
+    cycle: HOUR, cost: 14000, upkeep: 22, trucks: 2, store: 8,
     blurb: "Saws logs into planks. Its trucks sell the planks to the towns and take them to your building sites.",
   },
   ironmine: {
@@ -124,6 +124,8 @@ export const WAGE = 1;
 export const MIN_DEPOSIT = 0.35;
 /** Fuel and wear per km a truck drives (both ways), charged when it sets off. */
 export const FUEL_PER_KM = 4;
+/** A truck bought for a plant: its price, its upkeep per hour, and how many a plant may buy. */
+export const TRUCK_COST = 4000, TRUCK_UPKEEP = 4, MAX_BOUGHT = 8;
 /** Pace of a building that needs power and has none (it scales up to 1 with the share of power it gets). */
 export const UNPOWERED = 0.4;
 /** Time to put a building up once its site has every material (and a tier 1 building, from the start). */
@@ -141,8 +143,10 @@ export interface PlantState {
   prog: number;
   /** share of the lot on its deposit (1 for plants) */
   yld: number;
-  /** trucks it owns (on top of the bays every building gains from milestones) */
+  /** trucks it owns (on top of the bays every building gains from milestones), bought ones included */
   trucks: number;
+  /** how many of those the player bought */
+  bought?: number;
   /** a construction site: the materials it waits for, and what has arrived */
   site?: { need: Partial<Record<Product, number>>; got: Partial<Record<Product, number>> };
   /** this hour's and the last full hour's books */
@@ -179,6 +183,8 @@ export interface IndustryHost {
   townOf(b: Building): number | null;
   /** loads of a product a town still wants today (0 or less: it has enough; -Infinity: it doesn't use it) */
   want(town: number, p: Product): number;
+  /** loads a town still needs today to grow (its shops buy more than that; this part comes first), 0 if none */
+  short?(town: number, p: Product): number;
   /** a load reached one of a town's shops */
   sold(town: number, p: Product, n: number): void;
   request(p: PendingSpawn): void;
@@ -231,6 +237,15 @@ export class Industry {
   trucksOf(b: Building): number {
     const P = b.plant!;
     return P.trucks > 0 ? P.trucks + (this.h.bays?.() ?? 0) : 0;
+  }
+
+  /** Can the player buy this plant another truck (null) or why not. */
+  canBuyTruck(b: Building, money: number): string | null {
+    const P = b.plant;
+    if (!P || P.trucks <= 0) return "It runs no trucks";
+    if ((P.bought ?? 0) >= MAX_BOUGHT) return `It has all the trucks it can load (${MAX_BOUGHT} bought)`;
+    if (money < TRUCK_COST) return "Not enough money";
+    return null;
   }
 
   /** Is it up and working (not a site, not being built)? */
@@ -338,18 +353,22 @@ export class Industry {
     const price = PRODUCTS[product].price;
     if (price > 0) {
       // what each town still wants today, less what is already on its way to any of its shops
-      const left = new Map<number, number>();
+      const left = new Map<number, number>(), shortLeft = new Map<number, number>();
       for (const o of this.h.shops) {
         const t = this.h.townOf(o);
-        if (t !== null) left.set(t, (left.get(t) ?? this.h.want(t, product)) - on(o.id));
+        if (t === null) continue;
+        left.set(t, (left.get(t) ?? this.h.want(t, product)) - on(o.id));
+        shortLeft.set(t, (shortLeft.get(t) ?? (this.h.short?.(t, product) ?? 0)) - on(o.id));
       }
       for (const o of this.h.shops) {
         if (!o.access || o.abandoned || o.built < 1 || !this.h.connected(seg, o.access.seg)) continue;
         const t = this.h.townOf(o);
         const l = t === null ? 0 : left.get(t)!;
         if (l < 1) continue;
-        // nearest first; a town further short of its need, and a shop with emptier shelves, a little ahead
-        out.push({ b: o, value: price - km(o) * FUEL_PER_KM * 2 + Math.min(3, l) * 15 - (product === "food" ? o.stock * 15 : 0), room: Math.ceil(l) });
+        // a town still short of what it needs to grow comes first (within ~50 km of extra driving), then nearest
+        // first; a town further short, and a shop with emptier shelves, a little ahead
+        const short = t === null ? 0 : (shortLeft.get(t) ?? 0);
+        out.push({ b: o, value: price - km(o) * FUEL_PER_KM * 2 + (short >= 1 ? 400 : 0) + Math.min(3, l) * 15 - (product === "food" ? o.stock * 15 : 0), room: Math.ceil(l) });
       }
     }
     out.sort((a, b) => b.value - a.value);
@@ -476,7 +495,7 @@ export class Industry {
     for (const b of this.plants()) {
       const P = b.plant!;
       if (!P.site) {
-        const wages = this.h.workersAt(b.id) * WAGE, up = PLANTS[b.kind as PlantKind].upkeep;
+        const wages = this.h.workersAt(b.id) * WAGE, up = PLANTS[b.kind as PlantKind].upkeep + (P.bought ?? 0) * TRUCK_UPKEEP;
         this.h.spend(wages, "wages");
         this.h.spend(up, "upkeep");
         P.now.spent += wages + up;

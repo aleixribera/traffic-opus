@@ -18,7 +18,7 @@ describe("town sizes and needs", () => {
     expect(perHead(8000)).toBeGreaterThan(perHead(4000));
     // a city wants far more than 20x what a village does, with 20x the people
     expect(demandPerDay("food", 6000)).toBeGreaterThan(20 * demandPerDay("food", 300) * 1.5);
-    expect(demandPerDay("food", 10)).toBe(1);
+    expect(demandPerDay("food", 4)).toBe(1); // (never less than a load a day)
   });
 
   it("supply is the share of each need delivered, capped at 1", () => {
