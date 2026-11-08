@@ -14,7 +14,8 @@ import { ZONE_GROUP, ZONE_LOTS } from "./growables";
 import type { Product } from "./industry";
 import { DAY } from "./society";
 import {
-  BLOCK, HALLS, REDEV_SHARE, SEED_EDGES, TOWN_SIZES, demandPerDay, edgeKey, gridPt, growthPerDay, needsOf, nextEdge, redevPerDay, ringZone, sizeOf,
+  BLOCK, HALLS, HIGH_STREET, REDEV_SHARE, SEED_EDGES, TOWN_SIZES, demandPerDay, edgeKey, gridPt, growthPerDay, highLine, highStreetReach, needsOf,
+  nextEdge, redevPerDay, ringZone, sizeOf,
   supplyShare, townRadius, type GridEdge,
 } from "./towns";
 import { DEPTH, ZONE_RANK, type Cell, type ZoneId } from "./zones";
@@ -114,6 +115,8 @@ export class TownSystem {
   /** the towns as zone() last saw them, and a number for each new state (see Cell.want) */
   private wantKey = "";
   private wantEpoch = 0;
+  /** How far out each town's high streets run (blocks; only ever further, see highStreetReach). */
+  private highReach = new Map<number, number>();
 
   constructor(private g: Game) {}
 
@@ -280,7 +283,11 @@ export class TownSystem {
     // (never past halfway to the next town, so two towns' grids don't grow into each other)
     let room = Infinity;
     for (const o of this.list) if (o !== t) room = Math.min(room, dist(o.c, t.c) / 2 - BLOCK / 2);
-    return nextEdge(t.built, t.failed, Math.min(townRadius(t.pop), room) / BLOCK, jit);
+    // (a town out of land below the size its households want reaches as far as they would take it: by its people
+    // alone, a town whose land filled up first would wait for growth that needs the land)
+    const wants = t.households > 0 ? (t.target * t.pop) / t.households : t.pop;
+    return nextEdge(t.built, t.failed, Math.min(townRadius(t.pop), room) / BLOCK, jit)
+      ?? (wants > t.pop ? nextEdge(t.built, t.failed, Math.min(townRadius(wants), room) / BLOCK, jit) : null);
   }
 
   // ------------------------------------------------------------------ the town hall and its square
@@ -367,9 +374,16 @@ export class TownSystem {
   private zone() {
     const z = this.g.zones;
     const resized = this.list.some((t) => this.zonedSize.get(t.id) !== t.size);
-    if (this.zonedAt === z.version && !resized) return;
-    // (what a cell's town wants for it is kept on the cell until a town's reach, size, hall or square changes)
-    const key = this.list.map((t) => `${t.id}:${t.reach}:${t.size}:${t.hall ? 1 : 0}:${t.sq}`).join();
+    // the high streets run further as a town wants more shops
+    let spread = false;
+    for (const t of this.list) {
+      const r = Math.max(this.highReach.get(t.id) ?? 0, highStreetReach(t.size, this.shopsWanted(t)));
+      if (r !== this.highReach.get(t.id)) { this.highReach.set(t.id, r); spread = true; }
+    }
+    if (this.zonedAt === z.version && !resized && !spread) return;
+    // (what a cell's town wants for it is kept on the cell until a town's reach, size, hall, square or high streets
+    // change)
+    const key = this.list.map((t) => `${t.id}:${t.reach}:${t.size}:${t.hall ? 1 : 0}:${t.sq}:${this.highReach.get(t.id)}`).join();
     if (key !== this.wantKey) { this.wantKey = key; this.wantEpoch++; }
     const ep = this.wantEpoch;
     const paint = new Map<ZoneId, Cell[]>();
@@ -401,7 +415,23 @@ export class TownSystem {
     const along = Math.abs(Math.cos(c.rot - t.ang));
     if (along > 0.9) { if (Math.abs(a - Math.round(a)) * BLOCK < CORRIDOR) return null; }
     else if (along < 0.44) { if (Math.abs(b - Math.round(b)) * BLOCK < CORRIDOR) return null; }
-    return ringZone(size, Math.hypot(a, b));
+    return this.planZone(t, c.c, c.rot, size);
+  }
+
+  /**
+   * What a town plans for land at p fronting a street that runs at angle rot: its ring for its size, or shops and
+   * offices along its high streets (HIGH_STREET).
+   */
+  planZone(t: Town, p: V2, rot: number, size = t.size): ZoneId {
+    const { a, b } = this.gridOf(t, p);
+    const r = Math.hypot(a, b);
+    const ring = ringZone(size, r);
+    const hs = HIGH_STREET[Math.min(HIGH_STREET.length - 1, size)];
+    if (!hs || ZONE_GROUP[ring] === "com" || r >= (this.highReach.get(t.id) ?? 0)) return ring;
+    // the grid line of the street it fronts (a cell is never more than half a block from its own street)
+    const along = Math.abs(Math.cos(rot - t.ang));
+    const line = along > 0.9 ? Math.round(b) : along < 0.44 ? Math.round(a) : NaN;
+    return line === line && highLine(size, Math.abs(line)) ? hs : ring;
   }
 
   // ------------------------------------------------------------------ redevelopment
@@ -414,7 +444,7 @@ export class TownSystem {
   /** The denser zone an old building's land now has, or null when it is as dense as its ring wants. */
   redevZone(t: Town, b: Building): ZoneId | null {
     if (!b.zone) return null;
-    const want = ringZone(t.size, dist(b.c, t.c) / BLOCK);
+    const want = this.planZone(t, b.c, b.rot);
     if (want === b.zone) return null;
     const g0 = ZONE_GROUP[b.zone], g1 = ZONE_GROUP[want];
     if (g0 === g1) return ZONE_RANK[want] > ZONE_RANK[b.zone] ? want : null;
