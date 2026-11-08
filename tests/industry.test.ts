@@ -282,11 +282,11 @@ describe("Industry", () => {
     sm.plant!.stock = { ore: 2, coal: 2 };
     w.ind.tick(HOUR);
     expect(w.pending.length).toBe(0);
-    expect(sm.problem).toBe("Full of steel: its trucks can't keep up (a long or jammed haul), or no construction plant or machine works on its roads");
+    expect(sm.problem).toBe("Full of steel: its trucks can't keep up (a long or jammed haul), or no construction plant, machine works or motor works on its roads");
     sm.plant!.out.steel = 2;
     sm.problem = null;
     w.ind.tick(0);
-    expect(sm.problem).toBe("No construction plant or machine works on your roads takes steel");
+    expect(sm.problem).toBe("No construction plant, machine works or motor works on your roads takes steel");
     const cp = w.plant("constructionplant", 400);
     delete cp.plant!.site;
     w.ind.tick(0);

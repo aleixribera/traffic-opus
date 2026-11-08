@@ -315,6 +315,58 @@ const LOGISTICS: (Milestone & { after: string })[] = [
 ];
 for (const { after, ...m } of LOGISTICS) MILESTONES.splice(MILESTONES.findIndex((x) => x.id === after) + 1, 0, m);
 
+/**
+ * Deeper chains (docs/design.md "Supplies", "Perishables", "Motor Works"), each just after the milestone named: the
+ * dairy and creamery once the villages build in concrete; the chemical works when the quarries are busy (its
+ * fertilizer and explosives are what sites need past level 2, required only from then on); and tier 5 as a block
+ * after tier 4: the rubber plant once the refinery makes plastics in volume, the Motor Works for a big City kept in
+ * electronics and machinery, and its last steps for cars on the roads.
+ */
+const CHAINS: (Milestone & { after: string })[] = [
+  {
+    after: "cement", id: "dairy", name: "Milk round", goal: "Deliver 300 loads to your towns in all",
+    measure: (v) => [allSold(v), 300],
+    unlocks: { buildings: ["dairyfarm"], grant: 10000 },
+  },
+  {
+    after: "dairy", id: "milk1", name: "Fresh milk", goal: "Deliver your first load of milk to a town",
+    measure: (v) => [n(v.sold, "milk"), 1],
+    unlocks: { buildings: ["creamery"], tiles: 1 },
+  },
+  {
+    after: "goods1", id: "chemworks", name: "Chemistry", goal: "Quarry 120 loads of limestone",
+    measure: (v) => [n(v.made, "lime"), 120],
+    unlocks: { buildings: ["chemworks"], tiles: 2 },
+  },
+  {
+    after: "chemworks", id: "supplies20", name: "Fed back", goal: "Make 20 loads of fertilizer",
+    measure: (v) => [n(v.made, "fertilizer"), 20],
+    unlocks: { bays: 1, grant: 30000 },
+  },
+  {
+    after: "machinery40", id: "rubber", name: "Synthetic rubber", goal: "Make 60 loads of plastics",
+    measure: (v) => [n(v.made, "plastics"), 60],
+    unlocks: { buildings: ["rubberplant"], tiles: 2 },
+  },
+  {
+    after: "rubber", id: "motorworks", name: "Assembly line", goal: "Keep a City of 8,000+ in electronics and machinery for a day",
+    measure: (v) => [v.towns.some((t) => t.pop >= 8000 && fullySupplied(t, ["electronics", "machinery"])) ? 1 : 0, 1],
+    unlocks: { buildings: ["motorworks"], grant: 150000 },
+  },
+  {
+    after: "motorworks", id: "cars1", name: "Motor age", goal: "Deliver your first load of cars to a town",
+    measure: (v) => [n(v.sold, "cars"), 1],
+    unlocks: { tiles: 4, grant: 100000 },
+  },
+  {
+    // (the top of the ladder for now: every car sold is more traffic, so this one is earned on the roads)
+    after: "cars1", id: "cars30", name: "Rush hour", goal: "Deliver 30 loads of cars in one day",
+    measure: (v) => [n(v.bestDay, "cars"), 30],
+    unlocks: { towns: 1, tiles: 4, bays: 1 },
+  },
+];
+for (const { after, ...m } of CHAINS) MILESTONES.splice(MILESTONES.findIndex((x) => x.id === after) + 1, 0, m);
+
 export const milestoneById = new Map(MILESTONES.map((m) => [m.id, m]));
 
 /** The milestone that unlocks something, if one does. */

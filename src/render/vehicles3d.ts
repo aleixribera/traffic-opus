@@ -28,9 +28,12 @@ const TRUCK_BODY: Record<string, VehicleKind> = {
   crops: "tipper", ore: "tipper", coal: "tipper", lime: "tipper", sand: "tipper", gravel: "tipper", copperore: "tipper",
   crude: "tanker", fuel: "tanker", chemicals: "tanker", cement: "tanker",
   logs: "flatbed", planks: "flatbed", steel: "flatbed", parts: "flatbed", machinery: "flatbed", copper: "flatbed",
-  // (glass, plastics, household goods and electronics ride in box trucks: the default)
+  slag: "tipper", chips: "tipper", cars: "flatbed",
+  // perishables ride chilled, in refrigerated box bodies with the cold unit on the front
+  milk: "reefer", cheese: "reefer",
+  // (glass, plastics, household goods, electronics, fertilizer, explosives and rubber ride in box trucks: the default)
 };
-type Body = "truck" | "tipper" | "tanker" | "flatbed";
+type Body = "truck" | "tipper" | "tanker" | "flatbed" | "reefer";
 const truckBody = (t: Trip): Body => (TRUCK_BODY[t.haul?.product ?? t.cargo ?? ""] ?? "truck") as Body;
 /**
  * The models a truck is drawn with, front first: its class's (a light truck's, a heavy rigid's, or a road train's
@@ -50,6 +53,7 @@ const EMPTY_BOX = 0xf2f2ee;
 function loadOf(kind: Body, t: Trip): number | null {
   if (t.cargo) return CARGO_COLOR[t.cargo] ?? EMPTY_BOX;
   if (kind === "tanker") return CARGO_COLOR[t.haul?.product ?? ""] ?? EMPTY_BOX; // the tank stays its product's colour
+  if (kind === "reefer") return CARGO_COLOR[t.haul?.product ?? ""] ?? EMPTY_BOX; // (and a reefer its product's livery band)
   return kind === "tipper" || kind === "flatbed" ? null : EMPTY_BOX;
 }
 

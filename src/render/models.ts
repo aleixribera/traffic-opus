@@ -28,6 +28,8 @@ export const BUILDING_MODELS: BuildingKind[] = [
 export const SITE_PIECES: string[] = [
   ...SITE_MODELS, "oilwell", "sandpit", "refinery", "glassworks", "furniture", "constructionplant", "coppermine",
   "coppersmelter", "electronics", "machineworks",
+  // deeper chains: the chemical works, the dairy and creamery, the rubber plant and the Motor Works
+  "chemworks", "dairyfarm", "creamery", "rubberplant", "motorworks",
   // logistics (a warehouse, a fuel depot)
   "warehouse", "fueldepot",
 ];
@@ -38,6 +40,8 @@ export const VEHICLE_MODELS = [
   "heavy_truck", "heavy_tipper", "heavy_tanker", "heavy_flatbed",
   "rt_tractor", "rt_truck_a", "rt_truck_b", "rt_tipper_a", "rt_tipper_b", "rt_tanker_a", "rt_tanker_b",
   "rt_flatbed_a", "rt_flatbed_b",
+  // refrigerated bodies for perishables (milk, cheese), in every class
+  "reefer", "heavy_reefer", "rt_reefer_a", "rt_reefer_b",
 ] as const;
 /** Street furniture, drawn on its own (not a lot). */
 export const PROP_MODELS = ["busstop", "fence"] as const;

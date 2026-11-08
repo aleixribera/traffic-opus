@@ -14,8 +14,8 @@ import { ZONE_GROUP, ZONE_LOTS } from "./growables";
 import type { Product } from "./industry";
 import { DAY } from "./society";
 import {
-  BLOCK, HALLS, HIGH_STREET, REDEV_SHARE, SEED_EDGES, TOWN_SIZES, demandPerDay, edgeKey, gridPt, growthPerDay, highLine, highStreetReach, needsOf,
-  nextEdge, redevPerDay, ringZone, sizeOf,
+  BLOCK, CAR_SCRAP, HALLS, HIGH_STREET, REDEV_SHARE, SEED_EDGES, TOWN_SIZES, buys, comfortOf, demandPerDay, edgeKey, gridPt, growthPerDay, highLine,
+  highStreetReach, motoring, needsOf, nextEdge, redevPerDay, ringZone, sizeOf,
   supplyShare, townRadius, type GridEdge,
 } from "./towns";
 import { DEPTH, ZONE_RANK, type Cell, type ZoneId } from "./zones";
@@ -98,6 +98,8 @@ export interface Town {
   /** sim time it last started pulling down an old building for a denser one, and how many it has today */
   redevAt: number;
   redevToday: number;
+  /** motor cars the company has sold it (in loads; a few are scrapped each day): its people drive more (motoring) */
+  cars?: number;
   // counted every tick (not saved)
   pop: number;
   households: number;
@@ -148,7 +150,8 @@ export class TownSystem {
    */
   want(id: number, p: Product): number {
     const t = this.byId.get(id);
-    if (!t || !needsOf(t.pop).includes(p)) return -Infinity;
+    // (its extras too: milk and cheese from a Village, cars from a Town, which it buys without needing them to grow)
+    if (!t || !buys(t.pop, p)) return -Infinity;
     return demandPerDay(p, t.pop) * MARKET - (t.today[p] ?? 0);
   }
 
@@ -162,7 +165,16 @@ export class TownSystem {
   /** A load reached one of the town's shops. */
   sold(id: number, p: Product, n: number) {
     const t = this.byId.get(id);
-    if (t) t.today[p] = (t.today[p] ?? 0) + n;
+    if (!t) return;
+    t.today[p] = (t.today[p] ?? 0) + n;
+    // (every car it buys stays on its streets: more of its people's trips are driven, docs/design.md "Motor Works")
+    if (p === "cars") t.cars = (t.cars ?? 0) + n;
+  }
+
+  /** How much more a town drives with the cars sold to it (0..MOTOR_MAX; 0 for none or no town). */
+  motorOf(id: number | undefined): number {
+    const t = id === undefined ? undefined : this.byId.get(id);
+    return t ? motoring(t.cars ?? 0, t.households) : 0;
   }
 
   sizeName(t: Town): string {
@@ -642,7 +654,10 @@ export class TownSystem {
       t.yesterday = t.today;
       t.today = {};
       t.supply = supplyShare(t.yesterday, t.pop);
-      const d = growthPerDay(t.supply, t.pop);
+      // (its extras supplied add a little to its growth, never hold it back)
+      const g = growthPerDay(t.supply, t.pop);
+      const d = g > 0 ? g * comfortOf(t.yesterday, t.pop) : g;
+      if (t.cars) t.cars *= 1 - CAR_SCRAP;
       // (the target never runs far ahead of the town: a dry spell isn't banked as growth for later)
       const before = t.target;
       t.target = Math.max(0, Math.min(t.target + d, Math.max(t.households, START_HOUSEHOLDS) * 1.4 + 6));
@@ -660,7 +675,7 @@ export class TownSystem {
       towns: this.list.map((t) => ({
         id: t.id, name: t.name, c: t.c, ang: t.ang, built: [...t.built], failed: [...t.failed], target: t.target,
         today: t.today, yesterday: t.yesterday, supply: t.supply, trend: t.trend, founded: t.founded,
-        size: t.size, hall: t.hall, sq: t.sq, hist: t.hist, redevToday: t.redevToday,
+        size: t.size, hall: t.hall, sq: t.sq, hist: t.hist, redevToday: t.redevToday, ...(t.cars ? { cars: t.cars } : {}),
       })),
       nextId: this.nextId,
     };

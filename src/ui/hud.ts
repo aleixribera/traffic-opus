@@ -4,7 +4,7 @@ import type { Building } from "../game/buildings";
 import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
 import { MILESTONES, unlockedBy, type Milestone, type Unlocks } from "../game/progression";
 import { ZONES } from "../game/zones";
-import { BUILD_TIME, DEPOT_REACH, FLEET_HAUL, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, UNPOWERED, isPlantKind, powerPace, type Product } from "../game/industry";
+import { BUILD_TIME, DEPOT_REACH, FLEET_HAUL, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, SHELF, SUPPLY_STORE, UNPOWERED, isPlantKind, powerPace, type Product } from "../game/industry";
 import { TRUCK_CLASSES, TRUCK_CLASS_ORDER } from "../game/trucks";
 import { GROW_NEED, LEVEL_MULT, SITE_LEVELS } from "../game/sites";
 import { MARKET, TOWN_COST, TOWN_SPACING, type Town } from "../game/settlements";
@@ -710,6 +710,12 @@ export class Hud {
     if (g.placedUnlocked("coppersmelter") && !has("coppersmelter")) return { key: "coppersmelter", cat: "industry", html: `<b>Build a Copper smelter</b> on a road your copper mine and a coal mine reach: it smelts the ore with coal into copper. It draws power.` };
     if (g.placedUnlocked("electronics") && !has("electronics")) return { key: "electronics", cat: "industry", html: `<b>Build an Electronics plant</b> your copper smelter and refinery reach: it makes electronics from copper and the refinery's plastics, and its trucks sell them to the shops of your cities.` };
     if (g.placedUnlocked("machineworks") && !has("machineworks")) return { key: "machineworks", cat: "industry", html: `<b>Build a Machine works</b> your copper smelter and steel smelter reach: it makes machinery from steel and copper, and its flatbeds take it to the offices and towers of your cities.` };
+    // the deeper chains: fresh milk, supplies fed back up the chain, and the Motor Works (tier 5)
+    if (g.placedUnlocked("dairyfarm") && !has("dairyfarm")) return { key: "dairy", cat: "industry", html: `<b>Villages buy fresh milk.</b> Place a <b>Dairy farm</b> on fertile soil a short, clear drive from your towns: milk keeps for a run of about ${Math.round((SHELF.milk! * 12) / 1000)} km on clear roads, and a jam on the way costs it value.` };
+    if (g.placedUnlocked("creamery") && has("dairyfarm") && !has("creamery")) return { key: "creamery", cat: "industry", html: `<b>Build a Creamery</b> near your dairy farm: it turns milk into cheese, which keeps far longer and sells to towns farther out.` };
+    if (g.placedUnlocked("chemworks") && !has("chemworks")) return { key: "chemworks", cat: "industry", html: `<b>Build a Chemical works</b> your quarry and coal mine reach: its fertilizer and explosives are what farms and mines need past level 2. Without them they work at their level-2 pace and stop growing.` };
+    if (g.placedUnlocked("rubberplant") && !has("rubberplant")) return { key: "rubber", cat: "industry", html: `<b>Build a Rubber plant</b> your refinery and a coal mine reach: it makes rubber from plastics, for the Motor Works to come.` };
+    if (g.placedUnlocked("motorworks") && !has("motorworks")) return { key: "motorworks", cat: "industry", html: `<b>Build the Motor Works</b> where your steel, glass, rubber and electronics all reach it: it stops if any of them runs dry. Its cars sell to Towns and Cities, and every car sold puts more of their people on the road.` };
     return null;
   }
 
@@ -1280,7 +1286,25 @@ export class Hud {
       const plantRows = D.makes ? `<dt>Making</dt><dd>${Math.round(pl?.made ?? 0)} / ${D.makes} MW</dd><dt>Wanted in reach</dt><dd>${Math.round(pl?.used ?? 0)} MW · ${plural(pl?.users ?? 0, "building")}</dd>` : "";
       const store = Industry.storeOf(b);
       const stock = (p: Product, n: number) => `<dt>${PRODUCTS[p].name}</dt><dd>${stockBar(n, store, PRODUCTS[p].color)}<span class="num">${Math.floor(n)}</span></dd>`;
-      const ins = (Object.keys(D.inputs) as Product[]).map((p) => stock(p, P.stock[p] ?? 0)).join("");
+      // (an alternate shows under the input it stands in for: "Slag, for limestone")
+      const ins = (Object.keys(D.inputs) as Product[]).map((p) => {
+        const a = D.alt?.[p];
+        return stock(p, P.stock[p] ?? 0) + (a ? `<dt>${PRODUCTS[a].name}, for ${PRODUCTS[p].name.toLowerCase()}</dt><dd>${stockBar(P.stock[a] ?? 0, store, PRODUCTS[a].color)}<span class="num">${Math.floor(P.stock[a] ?? 0)}</span></dd>` : "");
+      }).join("");
+      // supplies: a small store it draws down while it works (docs/design.md "Supplies")
+      const sup = b.built >= 1 ? g.industry.supplyRows(b) : [];
+      const lvl = P.level ?? 1;
+      const supRows = sup.map(({ p, stock: n, now }) => `<dt title="${now ? `Used up as it works at level ${lvl}` : `Needed in store to grow to level ${lvl + 1}`}">${PRODUCTS[p].name}${now ? "" : ` <span class="muted">(level ${lvl + 1})</span>`}</dt><dd>${stockBar(n, SUPPLY_STORE, PRODUCTS[p].color)}<span class="num">${n.toFixed(1)}</span></dd>`).join("");
+      const supNote = sup.some((s) => s.now)
+        ? `Drawn down as it works. Out of one, it slips back to the pace of a lower level (never below level 2) until your trucks bring more.`
+        : `Its next level works through these: it needs them in store to grow.`;
+      // perishables: what arrived fresh last hour (and all time), and the value lost on the way
+      const pct = (a: number, n: number) => `${Math.round((100 * a) / Math.max(1e-9, n))}%`;
+      const freshRows = P.last.perish || P.perish
+        ? `${P.last.perish ? `<dt>Delivered fresh</dt><dd class="${(P.last.fresh ?? 0) >= P.last.perish * 0.9 ? "good" : "bad"}">${pct(P.last.fresh ?? 0, P.last.perish)} of ${plural(Math.round(P.last.perish), "load")}</dd>` : ""}
+          <dt>Spoiled</dt><dd class="${(P.last.spoiled ?? 0) > 0.5 ? "bad" : ""}">${signed(-Math.round(P.last.spoiled ?? 0))}</dd>
+          ${P.perish ? `<dt title="Every perishable load it has shipped">Fresh, all time</dt><dd>${pct(P.fresh ?? 0, P.perish)}</dd>` : ""}`
+        : "";
       const outs = (Object.keys(D.outputs) as Product[]).map((p) => stock(p, P.out[p] ?? 0)).join("");
       const L = P.last;
       const flare = b.built >= 1 ? Industry.flaring(b) : undefined;
@@ -1308,7 +1332,8 @@ export class Hud {
         ${ins ? `<h3 class="sub-h">In the yard</h3><dl class="facts">${ins}</dl>` : ""}
         ${outs ? `<h3 class="sub-h">Ready to ship</h3><dl class="facts">${outs}</dl>` : ""}
         ${flare ? `<p class="small muted">Its yard is full of ${PRODUCTS[flare].name.toLowerCase()}: ${g.industry.wants(flare) ? `your ${Industry.takers(flare)} can't take more for now` : Industry.usedBy(flare) ? `nothing of yours uses it until you build a ${Industry.takers(flare)}` : `nothing of yours uses it until tier ${Industry.laterTier(flare)}`}, so it burns off the rest and keeps making ${(Object.keys(D.outputs) as Product[]).filter((p) => p !== flare).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ")}.</p>` : ""}
-        ${siteLevel(b)}
+        ${supRows ? `<h3 class="sub-h">Supplies</h3><dl class="facts">${supRows}</dl><p class="small muted">${supNote}</p>` : ""}
+        ${siteLevel(b, sup.filter((s) => !s.now).map((s) => s.p))}
         <dl class="facts">
           ${plantRows}${powerRow}
           ${classRow}
@@ -1321,6 +1346,7 @@ export class Hud {
           <dt>Made</dt><dd>${L.made} load${L.made === 1 ? "" : "s"}</dd>
           <dt>Earned</dt><dd class="${L.earned > 0 ? "good" : ""}">${signed(L.earned)}</dd>
           <dt>Spent</dt><dd class="${L.spent > 0 ? "bad" : ""}">${signed(-L.spent)}</dd>
+          ${freshRows}
         </dl>
         <button class="btn quiet danger demolish">Demolish</button>`;
       if (this.setPanel(html)) this.bindDemolish(b);
@@ -1694,7 +1720,7 @@ function stockBar(n: number, max: number, color?: number): string {
 }
 
 /** A company site's level, how far it is to the next, and what holds it back. */
-function siteLevel(b: Building): string {
+function siteLevel(b: Building, next: Product[] = []): string {
   const P = b.plant;
   if (!P || !b.placed || b.built < 1) return "";
   const L = P.level ?? 1;
@@ -1707,7 +1733,7 @@ function siteLevel(b: Building): string {
     : `<span class="bad">Held back: ${P.why}.</span>`;
   return `<h3 class="sub-h">Site level ${L} of ${SITE_LEVELS}</h3>
     <dl class="facts"><dt>To level ${L + 1}</dt><dd><span class="bar site-grow"><i style="width:${Math.max(2, k * 100)}%"></i></span><span class="num">${Math.round(k * 100)}%</span></dd></dl>
-    <p class="small muted">${why} Now ${mult}; level ${L + 1} gives ×${LEVEL_MULT[L]}.</p>`;
+    <p class="small muted">${why} Now ${mult}; level ${L + 1} gives ×${LEVEL_MULT[L]}${next.length ? ` and works through ${productList(Object.fromEntries(next.map((p) => [p, 1])))}, so it grows once it has some in store` : ""}.</p>`;
 }
 
 const km = (m: number) => `${(m / 1000).toFixed(1)} km`;
@@ -1737,7 +1763,9 @@ function chainText(k: keyof typeof PLANTS): string {
   if (D.logistics === "depot") return "Fuel → your trucks, at cost";
   const to = D.makes ? "power" : productList(D.outputs);
   // (a mine digs what its deposit is: "Coal deposit → coal", not "Coal → coal")
-  const from = D.deposit ? `${cap(D.deposit.name)}${D.deposit.name === to ? " deposit" : ""}` : cap(productList(D.inputs));
+  // (an alternate input reads "limestone or slag")
+  const ins = (Object.keys(D.inputs) as Product[]).map((p) => PRODUCTS[p].name.toLowerCase() + (D.alt?.[p] ? ` or ${PRODUCTS[D.alt[p]!].name.toLowerCase()}` : "")).join(" and ");
+  const from = D.deposit ? `${cap(D.deposit.name)}${D.deposit.name === to ? " deposit" : ""}` : cap(ins);
   return `${from} → ${to}`;
 }
 

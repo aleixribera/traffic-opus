@@ -157,6 +157,8 @@ export class Game {
       power: (b) => this.utilities.supplyOf(b),
       wanted: (b) => this.utilities.wanted(b),
       made: (p, n) => this.progress.onMade(p, n),
+      // a supply (fertilizer, explosives, machinery) is only asked of sites once a plant that makes it is unlocked
+      canMake: (p) => [...this.progress.unlocked.buildings].some((k) => isPlantKind(k) && !!PLANTS[k].outputs[p]),
       grew: (b, level) => { this.toast(`${BUILDING_TYPES[b.kind].name} grew to level ${level}: more output, jobs and trucks`); this.emit({ t: "buildings" }); },
     });
     this.world = {

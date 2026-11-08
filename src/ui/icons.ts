@@ -131,6 +131,21 @@ export function placedIcon(kind: string): string {
     case "machineworks":
       // a tall machine hall under a gantry crane, and a gear in front
       return svg(28, 28, `<rect x="2" y="9" width="20" height="16" fill="#7d8790"/><path d="M2 9 L12 5 L22 9 Z" fill="#5b6168"/><path d="M4 4 V25 M24 4 V25 M3 4 H25" fill="none" stroke="#d9b13a" stroke-width="1.6"/><path d="M15 4 V12" stroke="#545a61" stroke-width="1"/><rect x="13" y="12" width="4" height="2" fill="#545a61"/><circle cx="10" cy="19" r="4.3" fill="#d8a22e" stroke="#7a5512" stroke-width="0.9" stroke-dasharray="2.1 1.3"/><circle cx="10" cy="19" r="1.4" fill="#7d8790"/>`);
+    case "chemworks":
+      // a reaction column and spherical tanks beside a works shed, a hazard-red drum in front
+      return svg(28, 28, `<rect x="3" y="12" width="11" height="13" fill="#7d8790"/><path d="M3 12 L8.5 8 L14 12 Z" fill="#5b6168"/><rect x="15.5" y="3" width="4" height="22" rx="1.4" fill="#b0b5bc" stroke="#6d737a" stroke-width="0.8"/><path d="M15.5 8 H19.5 M15.5 13 H19.5" stroke="#6d737a" stroke-width="0.8"/><circle cx="23.5" cy="19" r="3.4" fill="#dde0e4" stroke="#8d939a" stroke-width="0.8"/><rect x="21.6" y="22" width="1" height="3" fill="#8d939a"/><rect x="24.4" y="22" width="1" height="3" fill="#8d939a"/><rect x="5.5" y="18" width="5" height="6" rx="1" fill="#b8402e"/><path d="M5.5 20 H10.5 M5.5 22 H10.5" stroke="#7a2418" stroke-width="0.7"/>`);
+    case "dairyfarm":
+      // a gambrel-roofed cow barn, a silo and a fenced green pasture
+      return svg(28, 28, `<rect x="2" y="16" width="24" height="9" fill="#8dbb5a"/><path d="M2 19 H26 M2 23 H26" stroke="#f2efe6" stroke-width="0.9"/><path d="M4 16 V9 L6.5 6 H13.5 L16 9 V16 Z" fill="#b2473a"/><path d="M8 16 V11.5 H12 V16" fill="#f2efe6"/><rect x="18" y="4" width="5" height="12" rx="2.5" fill="#c9cdd2" stroke="#8d939a" stroke-width="0.7"/><ellipse cx="21" cy="21" rx="2.6" ry="1.5" fill="#fff" stroke="#3c4148" stroke-width="0.7"/><circle cx="21.6" cy="20.8" r="0.7" fill="#3c4148"/>`);
+    case "creamery":
+      // a white dairy hall with steel milk silos, and a wheel of cheese
+      return svg(28, 28, `<rect x="3" y="11" width="14" height="14" fill="#eceae3" stroke="#9aa0a6" stroke-width="0.8"/><path d="M3 11 L10 6.5 L17 11 Z" fill="#7d8790"/><rect x="18" y="5" width="3.6" height="20" rx="1.8" fill="#c9cdd2" stroke="#8d939a" stroke-width="0.6"/><rect x="22.4" y="7" width="3.6" height="18" rx="1.8" fill="#c9cdd2" stroke="#8d939a" stroke-width="0.6"/><path d="M5 21 L12.5 16.5 L15 21 Z" fill="#e6bf55" stroke="#a9862b" stroke-width="0.8" stroke-linejoin="round"/><circle cx="10" cy="19.5" r="0.7" fill="#a9862b"/>`);
+    case "rubberplant":
+      // a curing hall under a stack, and a stack of black tyres
+      return svg(28, 28, `<rect x="2" y="10" width="15" height="15" fill="#7d8790"/><path d="M2 10 L9.5 5.5 L17 10 Z" fill="#5b6168"/><rect x="12" y="2" width="3" height="8" fill="#545a61"/><rect x="5" y="15" width="5" height="4" fill="#d9b13a"/><g fill="#34322f" stroke="#8d939a" stroke-width="0.6"><ellipse cx="22" cy="23" rx="4.2" ry="1.8"/><ellipse cx="22" cy="19.6" rx="4.2" ry="1.8"/><ellipse cx="22" cy="16.2" rx="4.2" ry="1.8"/></g><ellipse cx="22" cy="16.2" rx="1.6" ry="0.6" fill="#7d8790"/>`);
+    case "motorworks":
+      // a long sawtooth assembly hall, and a finished motor car rolling off the line
+      return svg(28, 28, `<path d="M2 14 L6 9 V14 L10 9 V14 L14 9 V14 L18 9 V14 L22 9 V14 H26 V20 H2 Z" fill="#9aa3ab" stroke="#5b6168" stroke-width="0.8" stroke-linejoin="round"/><path d="M6 9 V14 M10 9 V14 M14 9 V14 M18 9 V14" stroke="#d9e2e8" stroke-width="0.9"/><path d="M6 25 V22.5 L8 20 H16 L18.5 22.5 H21 V25 Z" fill="#7a2e2a" stroke="#3c1714" stroke-width="0.7" stroke-linejoin="round"/><rect x="9" y="20.8" width="5.6" height="1.8" fill="#cfe6f2"/><circle cx="9" cy="25" r="1.6" fill="#24262a"/><circle cx="17.5" cy="25" r="1.6" fill="#24262a"/>`);
     default:
       return svg(28, 28, `<circle cx="14" cy="14" r="9" fill="#9aa0a6"/>`);
   }
@@ -216,6 +231,30 @@ export function productIcon(p: string): string {
     case "machinery":
       // a gear
       return svg(16, 16, `<path d="M6.9 1.5h2.2l.4 1.9 1.3.6 1.6-1.1 1.6 1.6-1.1 1.6.6 1.3 1.9.4v2.2l-1.9.4-.6 1.3 1.1 1.6-1.6 1.6-1.6-1.1-1.3.6-.4 1.9H6.9l-.4-1.9-1.3-.6-1.6 1.1-1.6-1.6 1.1-1.6-.6-1.3-1.9-.4V6.9l1.9-.4.6-1.3-1.1-1.6 1.6-1.6 1.6 1.1 1.3-.6z" fill="#d8a22e" stroke="#7a5512" stroke-width=".8" stroke-linejoin="round"/><circle cx="8" cy="8" r="2.2" fill="#fbf3df" stroke="#7a5512" stroke-width=".8"/>`);
+    case "milk":
+      // a milk churn
+      return svg(16, 16, `<path d="M5.6 2h4.8v1.4l1.4 1.8v8.3a1 1 0 0 1-1 1H5.2a1 1 0 0 1-1-1V5.2l1.4-1.8z" fill="#f2efe6" stroke="#5b6168" stroke-width=".9" stroke-linejoin="round"/><path d="M4.2 7.4h7.6" stroke="#5b6168" stroke-width=".9"/><rect x="5.6" y="1.2" width="4.8" height="1.4" rx=".5" fill="#9aa0a6"/>`);
+    case "cheese":
+      // a wedge of cheese
+      return svg(16, 16, `<path d="M1.8 12.5 L13 5.5 L14.4 12.5 Z" fill="#e6bf55" stroke="#8a6a1e" stroke-width=".9" stroke-linejoin="round"/><path d="M1.8 12.5 L13 5.5 L9 4 Z" fill="#f1d27a" stroke="#8a6a1e" stroke-width=".9" stroke-linejoin="round"/><circle cx="9.5" cy="10.4" r=".9" fill="#b58d2a"/><circle cx="12.2" cy="11.2" r=".6" fill="#b58d2a"/>`);
+    case "cars":
+      // a motor car from the side
+      return svg(16, 16, `<path d="M1.5 12 V9.6 L3.6 9 L5.4 6 H10.2 L12.4 9 L14.5 9.6 V12 Z" fill="#7a2e2a" stroke="#3c1714" stroke-width=".9" stroke-linejoin="round"/><path d="M6 6.8 H9.8 L11.3 9 H5.2 Z" fill="#cfe6f2"/><circle cx="4.6" cy="12" r="1.7" fill="#24262a"/><circle cx="11.4" cy="12" r="1.7" fill="#24262a"/>`);
+    case "fertilizer":
+      // a sack with a sprout on it
+      return svg(16, 16, `<path d="M4 3h8l1.3 2.2-.7 8.8H3.4l-.7-8.8z" fill="#d7dcb8" stroke="#5f6a4c" stroke-width=".9" stroke-linejoin="round"/><path d="M8 12.2V8.2M8 9.6c-1.8 0-2.6-1-2.6-2.4 1.8 0 2.6 1 2.6 2.4zM8 8.8c1.6 0 2.4-.9 2.4-2.2-1.6 0-2.4.9-2.4 2.2z" fill="#6f9a3a" stroke="#4f7a2a" stroke-width=".7"/>`);
+    case "explosives":
+      // a crate of blasting charges
+      return svg(16, 16, `<rect x="1.8" y="6.4" width="12.4" height="7.4" rx=".6" fill="#b88a52" stroke="#6b4a2b" stroke-width=".9"/><path d="M1.8 9.2h12.4" stroke="#6b4a2b" stroke-width=".8"/><g fill="#b8402e" stroke="#6b1e14" stroke-width=".6"><rect x="3.4" y="2.6" width="2.4" height="4"/><rect x="6.8" y="2.6" width="2.4" height="4"/><rect x="10.2" y="2.6" width="2.4" height="4"/></g>`);
+    case "rubber":
+      // a tyre
+      return svg(16, 16, `<circle cx="8" cy="8" r="6.2" fill="#34322f" stroke="#141312" stroke-width=".8"/><circle cx="8" cy="8" r="2.8" fill="#9aa0a6" stroke="#141312" stroke-width=".8"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4" stroke="#5e5a54" stroke-width=".9"/>`);
+    case "slag":
+      // a grey heap of slag
+      return svg(16, 16, `<path d="M1 13.5 Q4 4.5 8 4.2 Q12 4.5 15 13.5 Z" fill="#5e5a54" stroke="#33302c" stroke-width=".9"/><circle cx="6" cy="9.6" r=".9" fill="#8a847a"/><circle cx="9.6" cy="8" r=".7" fill="#8a847a"/><circle cx="10.4" cy="11.4" r=".9" fill="#8a847a"/>`);
+    case "chips":
+      // a pile of wood chips
+      return svg(16, 16, `<path d="M1 13.5 Q4 5.5 8 5.2 Q12 5.5 15 13.5 Z" fill="#c9a46a" stroke="#7d5a26" stroke-width=".9"/><path d="M4.6 10.4l1.6-.8M8 8.2l1.4.6M9.6 11.2l1.8-.4M6.4 12l1-.9" stroke="#8a6a35" stroke-width=".9" stroke-linecap="round"/>`);
     default:
       return svg(16, 16, `<circle cx="8" cy="8" r="5.5" fill="#9aa0a6"/>`);
   }

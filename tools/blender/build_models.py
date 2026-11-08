@@ -154,6 +154,16 @@ def palette():
         # tier 4: copper, electronics, machinery
         "cu_rock": "#8f9389", "cu_rock2": "#7b8077", "cu_floor": "#646d66", "cu_ore": "#5f8f7c", "cu_road": "#a39e90",
         "el_wall": "#e7e8e6", "el_roof": "#c4c8cb", "el_glass": "#6f93b0", "el_accent": "#3d7bb0", "mw_band": "#2f5f8a",
+        # deeper chains: chemical works (brick, hazard-red drums, an earth-bermed magazine), dairy (whitewashed
+        # sheds, green pasture, black-and-white cattle), creamery (white tile, steel), rubber (black stock, tyres),
+        # Motor Works (pale concrete deco front with a brass band, finished cars in maroon, navy, green and cream)
+        "ch_brick": "#9a5a45", "ch_drum": "#b8402e", "ch_drum2": "#d8c24a", "berm": "#7f8f52",
+        "dy_wall": "#f0ede4", "dy_roof": "#8a4a3a", "pasture": "#8aae55", "pasture2": "#7da24c", "cow_w": "#f3f1ea",
+        "cow_b": "#2e2c2a", "trough": "#7d8790",
+        "cr_wall": "#eceee9", "cr_roof": "#a9b0b5", "cr_band": "#4f86a8",
+        "rb_black": "#34322f", "rb_wall": "#8e8a80", "rb_roof": "#5f625f",
+        "mo_wall": "#e3dccb", "mo_brass": "#b88a3a", "mo_glass": "#7d9cb4", "car_red": "#7a2e2a", "car_blue": "#2f4a6a",
+        "car_green": "#3f5a3a", "car_cream": "#d8ccb0", "car_roof": "#2a2c30",
     }.items():
         P[k] = mat(k, v)
     return P
@@ -3106,6 +3116,342 @@ SERVICES = ("garbage", "firestation", "police", "clinic", "hospital", "school", 
             "townhall", "hamlethall", "villagehall", "cityhall", "stadium", "obstower", "concerthall", "skytower")
 
 
+# ------------------------------------------------------------------ deeper chains: supplies, perishables, tier 5
+# The chemical works that feeds fertilizer and explosives back to the farms and mines, the dairy and creamery of
+# the perishables chain, the rubber plant and the Motor Works (docs/design.md "Supplies", "Perishables").
+
+def sphere_tank(M, P, cx, cy, r, z, m):
+    """A spherical pressure tank on four legs, its centre at height z, with a dark equator band."""
+    for dx, dy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+        box(M, cx + dx * r * 0.6 - 0.18, cx + dx * r * 0.6 + 0.18, cy + dy * r * 0.6 - 0.18, cy + dy * r * 0.6 + 0.18,
+            0, z, P["ind_dark"])
+    prof = [(0.0, z - r)] + [(r * math.sin(math.pi * k / 6), z - r * math.cos(math.pi * k / 6)) for k in range(1, 6)]
+    revolve(M, cx, cy, prof + [(0.0, z + r)], m, n=12)
+    cyl(M, cx, cy, r * 1.01, z - 0.15, z + 0.15, P["ind_dark"], n=12)
+
+
+def b_chemworks(M, P):
+    """Chemical works (fertilizer and explosives from limestone and coal): a brick process shed with a tall
+    chimney, a lime-nitrogen kiln on piers, an acid tower ringed with platforms, two spherical tanks, a fenced drum
+    yard, and an earth-bermed explosives magazine with its red door, set apart in the front corner."""
+    L = lot(M, P, 50, 42, bay_row(4, -14.0))
+    y0, y1 = L.y0, L.y1
+    dark, steel = P["ind_dark"], P["ind_steel"]
+    # office at the front left: a small deco block with a stepped parapet over its door
+    top = flat_block(M, -23.5, -15.0, y0, y0 + 5.5, 5.5, P["work_wall"], P["work_roof"])
+    box(M, -21.0, -17.5, y0, y0 + 1.2, top, top + 1.2, P["work_wall"])
+    band(M, -23.5, -15.0, y0, y0 + 5.5, 2.0, 3.2, P["work_glass"], o=0.04)
+    # brick process shed with its chimney behind
+    sx0, sx1, sy0, sy1 = -23.5, -4.0, y0 + 7.0, y1 - 7.0
+    box(M, sx0, sx1, sy0, sy1, 0, 8.0, P["ch_brick"])
+    band(M, sx0, sx1, sy0, sy1, 6.6, 7.1, P["concrete"], o=0.05)
+    gable(M, sx0, sx1, sy0, sy1, 8.0, 11.0, "x", P["ind_roof"], P["ch_brick"], oh_u=(0.4, 0.4), oh_a=(0.4, 0.4))
+    for x in (-19.0, -12.0):
+        box(M, x - 2.0, x + 2.0, sy0 - 0.06, sy0, 0, 5.0, dark)
+    taper(M, (-9.0, -6.0, y1 - 6.0, y1 - 3.0), (-8.2, -6.8, y1 - 5.2, y1 - 3.8), 0, 30.0, P["ch_brick"])
+    box(M, -8.4, -6.6, y1 - 5.4, y1 - 3.6, 26.0, 27.0, P["concrete"])
+    # the kiln: a long rotary drum on three piers, running out of the shed's side
+    ky = sy0 + 3.0
+    for x in (-1.0, 3.5, 8.0):
+        box(M, x - 0.6, x + 0.6, ky - 0.9, ky + 0.9, 0, 2.5, P["concrete"])
+    pipe_x(M, ky, 3.5, 1.1, sx1, 10.0, P["kiln"], n=8)
+    for x in (0.5, 6.0):
+        pipe_x(M, ky, 3.5, 1.25, x - 0.3, x + 0.3, dark, n=8)
+    # acid tower with platforms, piped to the shed
+    cx, cy = 2.5, y1 - 5.0
+    cyl(M, cx, cy, 2.0, 0, 22.0, P["column_steel"], n=12)
+    revolve(M, cx, cy, [(2.0, 22.0), (1.2, 23.4), (0.0, 23.8)], P["column_steel"], n=12)
+    for z in (8.0, 15.0):
+        cyl(M, cx, cy, 2.7, z, z + 0.3, P["ind_yellow"], n=12)
+    pipe_x(M, cy, 12.0, 0.35, sx1, cx - 2.0, steel, n=6)
+    # spherical tanks and the pipe along the back
+    for x in (10.5, 16.5):
+        sphere_tank(M, P, x, y1 - 5.0, 2.6, 4.0, P["ind_tank"])
+    pipe_x(M, y1 - 1.2, 2.0, 0.3, 4.6, 21.0, steel, n=6)
+    # drum yard behind a low rail: pallets of yellow fertilizer drums and red explosive cases
+    dx0, dx1, dy0, dy1 = 4.0, 13.5, y0 + 1.0, y0 + 7.5
+    box(M, dx0, dx1, dy0, dy1, PAD_H, PAD_H + 0.03, P["concrete"])
+    frame(M, dx0, dx1, dy0, dy1, 0, 1.1, 0.12, P["fn_rail"])
+    for i in range(4):
+        for k in range(2):
+            x, y = dx0 + 1.6 + i * 2.1, dy0 + 1.6 + k * 2.9
+            box(M, x - 0.8, x + 0.8, y - 0.8, y + 0.8, PAD_H, 0.2, P["wood"])
+            m = P["ch_drum"] if (i + k) % 3 == 0 else P["ch_drum2"]
+            for dx, dy in ((-0.38, -0.38), (0.38, 0.38)):
+                cyl(M, x + dx, y + dy, 0.34, 0.2, 1.15, m, n=6)
+    # magazine: an earth berm round a squat bunker in the front right corner, its red door facing the yard
+    mx, my = 19.5, y0 + 6.0
+    taper(M, (mx - 4.4, mx + 4.4, my - 4.4, my + 4.4), (mx - 2.6, mx + 2.6, my - 2.6, my + 2.6), 0, 3.0, P["berm"])
+    box(M, mx - 2.0, mx + 2.0, my - 2.0, my + 2.0, 0, 3.4, P["concrete"])
+    box(M, mx - 2.2, mx + 2.2, my - 2.2, my + 2.2, 3.4, 3.7, P["ind_roof"])
+    box(M, mx - 0.9, mx + 0.9, my - 4.5, my - 2.0, 0, 2.4, P["concrete"])
+    box(M, mx - 0.7, mx + 0.7, my - 4.56, my - 4.5, 0, 2.1, P["ch_drum"])
+    return L
+
+
+def cow(M, P, x, y, ang=0.0):
+    """A dairy cow, about 2.4 m long: body with a black patch, a black head, front and back legs."""
+    c, sn = math.cos(ang), math.sin(ang)
+
+    def slab(u0, u1, v0, v1, z0, z1, m):
+        q = [(x + u * c - v * sn, y + u * sn + v * c) for u, v in ((u0, v0), (u1, v0), (u1, v1), (u0, v1))]
+        M.loft([(a, b, z0) for a, b in q], [(a, b, z1) for a, b in q], m)
+    slab(-1.0, 0.9, -0.4, 0.4, 0.75, 1.45, P["cow_w"])
+    slab(-0.6, 0.1, -0.42, 0.42, 1.15, 1.48, P["cow_b"])
+    slab(0.9, 1.4, -0.18, 0.18, 1.05, 1.5, P["cow_b"])
+    for u in (-0.8, 0.7):
+        slab(u - 0.1, u + 0.1, -0.32, 0.32, 0.0, 0.78, P["cow_w"])
+
+
+def fence_run(M, P, pts, h=1.2, step=6.0):
+    """A post-and-rail field fence along a polyline."""
+    m = P["wood"]
+    for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+        bar(M, (ax, ay), (bx, by), 0.1, h - 0.14, h, m)
+        n = max(1, int(math.hypot(bx - ax, by - ay) / step))
+        for i in range(n):
+            px, py = ax + (bx - ax) * i / n, ay + (by - ay) * i / n
+            box(M, px - 0.1, px + 0.1, py - 0.1, py + 0.1, 0, h + 0.05, m)
+
+
+def b_dairyfarm(M, P):
+    """Dairy farm: a whitewashed milking parlour under a red gambrel roof, its milk room with the bulk tank on a
+    pad at the front (where the reefers back in), a tall silo with its auger, and a fenced paddock of grazing
+    cattle with a trough."""
+    L = lot(M, P, 40, 40, bay_row(2, -12.0))
+    y0, y1 = L.y0, L.y1
+    # paddock over the back half
+    px0, px1, py0, py1 = -19.4, 19.4, y0 + 14.0, y1 + 0.6
+    box(M, px0, px1, py0, py1, PAD_H, PAD_H + 0.03, P["pasture"])
+    for i in range(5):
+        box(M, px0 + 2.0 + i * 7.6, px0 + 5.0 + i * 7.6, py0 + 1.5, py1 - 1.5, PAD_H + 0.03, PAD_H + 0.05, P["pasture2"])
+    fence_run(M, P, [(px0 + 0.2, py0 + 0.2), (px1 - 0.2, py0 + 0.2), (px1 - 0.2, py1 - 0.3), (px0 + 0.2, py1 - 0.3),
+                     (px0 + 0.2, py0 + 0.2)])
+    for x, y, a in ((-14.0, py0 + 5.0, 0.3), (-8.0, py0 + 9.0, 2.2), (-2.5, py0 + 4.5, -0.6), (5.0, py0 + 8.0, 1.4),
+                    (11.0, py0 + 4.0, 3.0), (15.0, py0 + 11.0, -2.0)):
+        cow(M, P, x, y, a)
+    box(M, 8.0, 13.0, py1 - 3.4, py1 - 2.4, 0, 0.8, P["trough"])
+    # parlour: a long whitewashed shed under a gambrel roof (two pitches a side) with a ridge vent
+    bx0, bx1, by0, by1 = -17.5, 6.0, y0 + 1.5, y0 + 12.5
+    box(M, bx0, bx1, by0, by1, 0, 4.6, P["dy_wall"])
+    ym, hw = (by0 + by1) / 2, (by1 - by0) / 2
+    prof = [(by0 - 0.4, 4.4), (by0 + hw * 0.35, 7.4), (ym, 8.6), (by1 - hw * 0.35, 7.4), (by1 + 0.4, 4.4),
+            (by1 + 0.4, 4.15), (by1 - hw * 0.35, 7.15), (ym, 8.35), (by0 + hw * 0.35, 7.15), (by0 - 0.4, 4.15)]
+    extrude_profile(M, prof, "x", bx0 - 0.4, bx1 + 0.4, P["dy_roof"])
+    extrude_profile(M, [(by0, 4.6), (by1, 4.6), (by1 - hw * 0.35, 7.1), (ym, 8.3), (by0 + hw * 0.35, 7.1)], "x", bx0, bx1,
+                    P["dy_wall"])
+    box(M, bx0 + 3.0, bx1 - 3.0, ym - 0.6, ym + 0.6, 8.5, 9.3, P["dy_roof"])
+    for x in (-14.0, -6.0):
+        box(M, x - 1.6, x + 1.6, by0 - 0.06, by0, 0, 3.6, P["cabin_dark"])
+    # milk room and the bulk tank on its pad in front
+    flat_block(M, bx1, bx1 + 6.0, by0 + 1.0, by1 - 2.0, 3.8, P["dy_wall"], P["work_roof"])
+    box(M, bx1 + 1.0, bx1 + 5.0, by0 - 1.5, by0 + 1.0, 0, 0.5, P["concrete"])
+    pipe_x(M, by0 - 0.25, 1.6, 0.9, bx1 + 1.3, bx1 + 4.7, P["ind_steel"], n=10)
+    # silo and its feed auger over the milk room to the parlour
+    sx, sy = 15.0, y0 + 6.0
+    revolve(M, sx, sy, [(2.6, 0.0), (2.6, 13.0), (1.6, 14.6), (0.0, 15.2)], P["silo"], n=12)
+    cyl(M, sx, sy, 2.65, 4.0, 4.3, P["dy_roof"], n=12)
+    bar(M, (sx - 2.4, sy), (bx1 - 1.0, sy), 0.5, 8.0, 8.5, P["ind_steel"])
+    return L
+
+
+def b_creamery(M, P):
+    """Creamery: a white-tiled hall with a blue band, ribbon windows and a clerestory, a stepped deco pylon over
+    its door, steel milk silos at the intake, and a cold store with its refrigeration plant on the roof and a dock
+    for the reefers."""
+    L = lot(M, P, 36, 32, bay_row(4, -8.0))
+    y0, y1 = L.y0, L.y1
+    wall, roof = P["cr_wall"], P["cr_roof"]
+    hx0, hx1, hy0, hy1 = -16.5, 4.0, y0 + 1.5, y1
+    top = flat_block(M, hx0, hx1, hy0, hy1, 8.0, wall, roof, parapet=wall)
+    band(M, hx0, hx1, hy0, hy1, 6.4, 7.0, P["cr_band"], o=0.05)
+    band(M, hx0, hx1, hy0, hy1, 2.4, 3.6, P["work_glass"], o=0.03)
+    box(M, hx0 + 3.0, hx1 - 3.0, hy0 + 3.0, hy1 - 3.0, top, top + 1.8, wall)
+    band(M, hx0 + 3.0, hx1 - 3.0, hy0 + 3.0, hy1 - 3.0, top + 0.4, top + 1.4, P["work_glass"], o=0.03)
+    box(M, hx0 + 2.8, hx1 - 2.8, hy0 + 2.8, hy1 - 2.8, top + 1.8, top + 2.0, roof)
+    for k, (a, h) in enumerate(((2.2, 9.6), (1.4, 10.6), (0.7, 11.4))):
+        box(M, -11.0 - a, -11.0 + a, hy0 - 0.4 + 0.1 * k, hy0 + 0.6, 0, h, P["cr_band"] if k == 1 else wall)
+    box(M, -12.2, -9.8, hy0 - 0.46, hy0 - 0.4, 0, 3.0, P["ind_dark"])
+    # milk silos at the intake (back right) with a walkway across their tops
+    for i, x in enumerate((7.5, 11.5, 15.5)):
+        h = 12.0 - 0.6 * i
+        revolve(M, x, y1 - 4.0, [(0.0, 1.5), (1.6, 2.6), (1.6, h), (0.0, h + 0.8)], P["ind_steel"], n=12)
+        for dx in (-1.1, 1.1):
+            box(M, x + dx - 0.12, x + dx + 0.12, y1 - 4.12, y1 - 3.88, 0, 2.6, P["ind_dark"])
+    box(M, 6.0, 17.0, y1 - 4.3, y1 - 3.7, 12.8, 13.1, P["ind_steel"])
+    # cold store with roof plant, and a dock for the reefers
+    cx0, cx1, cy0, cy1 = 5.0, 17.0, y0 + 1.5, y0 + 10.0
+    ctop = flat_block(M, cx0, cx1, cy0, cy1, 6.0, wall, roof)
+    for x in (8.0, 13.0):
+        ac_unit(M, x, (cy0 + cy1) / 2, ctop, P)
+    for x in (8.0, 13.5):
+        box(M, x - 1.6, x + 1.6, cy0 - 0.3, cy0, 0.9, 4.2, P["ind_dark"])
+    box(M, cx0, cx1, cy0 - 1.2, cy0, 0, 0.9, P["concrete"])
+    return L
+
+
+def b_rubberplant(M, P):
+    """Rubber plant (synthetic rubber from refinery plastics and coal): a curing hall under a north-light sawtooth
+    roof with a brick stack, a polymerisation tower and three reactor vessels piped to it, black bales of rubber on
+    pallets and stacks of new tyres in the yard."""
+    L = lot(M, P, 46, 38, bay_row(4, -12.0))
+    y0, y1 = L.y0, L.y1
+    dark, steel = P["ind_dark"], P["ind_steel"]
+    hx0, hx1, hy0, hy1 = -21.5, 4.0, y0 + 2.0, y1
+    box(M, hx0, hx1, hy0, hy1, 0, 7.5, P["rb_wall"])
+    band(M, hx0, hx1, hy0, hy1, 6.2, 6.7, dark, o=0.05)
+    w = (hy1 - hy0) / 4
+    for i in range(4):
+        a, b = hy0 + i * w, hy0 + (i + 1) * w
+        extrude_profile(M, [(a, 7.5), (b, 7.5), (b, 10.0)], "x", hx0, hx1, P["rb_roof"])
+        extrude_profile(M, [(b - 0.12, 7.6), (b, 7.6), (b, 9.8), (b - 0.12, 9.8)], "x", hx0 + 0.3, hx1 - 0.3, P["saw_glass"])
+    for x in (-16.0, -8.0):
+        box(M, x - 2.0, x + 2.0, hy0 - 0.06, hy0, 0, 4.8, dark)
+    cyl(M, -2.0, hy1 - 3.0, 0.9, 9.0, 24.0, P["ch_brick"], n=10)
+    cyl(M, -2.0, hy1 - 3.0, 0.95, 21.5, 22.3, P["concrete"], n=10)
+    # reactor yard: tower, three vessels, a pipe bridge to the hall
+    cyl(M, 9.0, y1 - 5.0, 1.6, 0, 20.0, P["column_steel"], n=12)
+    revolve(M, 9.0, y1 - 5.0, [(1.6, 20.0), (0.9, 21.0), (0.0, 21.3)], P["column_steel"], n=12)
+    cyl(M, 9.0, y1 - 5.0, 2.2, 12.0, 12.3, P["ind_yellow"], n=12)
+    for i, x in enumerate((13.5, 17.0, 20.5)):
+        revolve(M, x, y1 - 4.0, [(0.0, 1.8), (1.3, 2.4), (1.3, 7.5 + 0.5 * i), (0.0, 8.4 + 0.5 * i)], P["ind_tank"], n=10)
+        for dx in (-0.9, 0.9):
+            box(M, x + dx - 0.12, x + dx + 0.12, y1 - 4.12, y1 - 3.88, 0, 2.4, dark)
+    pipe_x(M, y1 - 7.5, 8.0, 0.35, hx1, 21.0, steel, n=6)
+    # yard: bales of black rubber on pallets, and stacks of tyres with their hubs showing
+    for i in range(4):
+        for k in range(2):
+            x, y = 8.0 + i * 3.0, y0 + 1.5 + k * 3.2
+            box(M, x - 1.3, x + 1.3, y - 1.1, y + 1.1, PAD_H, 0.25, P["wood"])
+            box(M, x - 1.2, x + 1.2, y - 1.0, y + 1.0, 0.25, 1.5 + 0.3 * ((i + k) % 2), P["rb_black"], bevel=0.08)
+    for i in range(3):
+        for k in range(2):
+            x, y, h = 21.8 - k * 2.0, y0 + 1.4 + i * 2.2, 1.1 + 0.36 * ((i + k) % 3)
+            cyl(M, x, y, 0.95, PAD_H, h, P["rb_black"], n=10)
+            cyl(M, x, y, 0.45, h, h + 0.02, dark, n=8)
+    return L
+
+
+def motor_car(M, P, x, y, m, ang=0.0, z=0.0):
+    """A 1930s sedan (~4.6 m) for the lots: body on its wings, a long bonnet, the glasshouse and a dark roof;
+    nose toward angle `ang`."""
+    c, sn = math.cos(ang), math.sin(ang)
+
+    def slab(u0, u1, v0, v1, z0, z1, mm):
+        q = [(x + u * c - v * sn, y + u * sn + v * c) for u, v in ((u0, v0), (u1, v0), (u1, v1), (u0, v1))]
+        M.loft([(a, b, z + z0) for a, b in q], [(a, b, z + z1) for a, b in q], mm)
+    slab(-2.3, 2.3, -0.85, 0.85, 0.0, 0.9, m)
+    slab(0.5, 2.2, -0.5, 0.5, 0.9, 1.15, m)
+    slab(-1.5, 0.5, -0.68, 0.68, 0.9, 1.55, P["mo_glass"])
+    slab(-1.55, 0.45, -0.7, 0.7, 1.55, 1.68, P["car_roof"])
+
+
+def b_motorworks(M, P):
+    """Motor Works: a long assembly hall under north-light sawtooth roofs behind a pale concrete deco front with
+    ribbon glazing, a brass band and a stepped tower over the entrance, a paint shop with its stacks, a lot of
+    finished cars nosed toward the gate, and a test track looping round the back."""
+    L = lot(M, P, 64, 50, bay_row(6, -18.0))
+    y0, y1 = L.y0, L.y1
+    dark, wall = P["ind_dark"], P["mo_wall"]
+    hx0, hx1, hy0, hy1 = -30.5, 8.0, y0 + 3.0, y1 - 9.0
+    box(M, hx0, hx1, hy0, hy1, 0, 9.0, P["ind_wall"])
+    w = (hy1 - hy0) / 6
+    for i in range(6):
+        a, b = hy0 + i * w, hy0 + (i + 1) * w
+        extrude_profile(M, [(a, 9.0), (b, 9.0), (b, 12.0)], "x", hx0, hx1, P["ind_roof"])
+        extrude_profile(M, [(b - 0.12, 9.1), (b, 9.1), (b, 11.8), (b - 0.12, 11.8)], "x", hx0 + 0.3, hx1 - 0.3, P["saw_glass"])
+    # the deco front: ribbon glazing, a brass band, a stepped tower with brass fins over the doors
+    fy0, fy1 = hy0 - 3.0, hy0 + 0.2
+    flat_block(M, hx0, hx1, fy0, fy1, 10.0, wall, P["ind_roof"], parapet=wall)
+    band(M, hx0, hx1, fy0, fy1, 3.0, 5.4, P["mo_glass"], o=0.03)
+    band(M, hx0, hx1, fy0, fy1, 8.4, 9.0, P["mo_brass"], o=0.06)
+    tx = -11.0
+    for k, (a, h) in enumerate(((4.0, 13.5), (3.0, 16.0), (2.0, 18.5), (1.0, 20.5))):
+        box(M, tx - a, tx + a, fy0 - 0.6 + 0.15 * k, fy1 - 0.2, 0, h, wall)
+    for dx in (-1.5, -0.5, 0.5, 1.5):
+        box(M, tx + dx - 0.12, tx + dx + 0.12, fy0 - 0.66, fy0 - 0.6, 6.0, 15.5, P["mo_brass"])
+    box(M, tx - 2.6, tx + 2.6, fy0 - 0.7, fy0 - 0.6, 4.6, 5.6, P["mo_brass"])
+    box(M, tx - 1.6, tx + 1.6, fy0 - 0.7, fy0 - 0.6, 0, 4.0, dark)
+    # paint shop with two stacks at the hall's right end
+    px0, px1 = hx1, hx1 + 9.0
+    flat_block(M, px0, px1, hy0 + 4.0, hy1, 11.0, P["ind_wall"], P["ind_roof"])
+    for y in (hy0 + 8.0, hy1 - 4.0):
+        cyl(M, px1 - 2.5, y, 0.7, 11.0, 20.0, P["ind_steel"], n=8)
+    # finished cars in rows on the lot to the right, nose to the gate
+    cols = (P["car_red"], P["car_blue"], P["car_green"], P["car_cream"])
+    box(M, px1 + 1.0, 31.4, y0, hy1, PAD_H, PAD_H + 0.01, P["asphalt"])
+    for i in range(4):
+        for k in range(3):
+            motor_car(M, P, px1 + 3.4 + i * 3.4, y0 + 3.5 + k * 6.0, cols[(i + k) % 4], ang=-math.pi / 2)
+    # the test track: an oval on grass behind the hall, a car out on it
+    box(M, -31.4, 31.4, hy1 + 0.5, y1 + 0.5, PAD_H, PAD_H + 0.02, P["grass"])
+    ty = y1 - 4.0
+    oval = [(py, px + ty) for px, py in stadium_pts(0.0, 0.0, 3.6, 22.0, n=8)]
+    ribbon(M, oval, 1.6, PAD_H + 0.02, PAD_H + 0.07, P["asphalt"], closed=True)
+    motor_car(M, P, -12.0, ty - 3.6, P["car_red"], ang=0.0)
+    return L
+
+
+def b_site_pasture(M, P):
+    """Grazing for a dairy herd: a fenced field of grass with a farm track along its front, cattle, a trough and an
+    open-fronted field shelter."""
+    L = lot(M, P, 64, 64, [], asphalt=(-32.0, -26.0))
+    y0, y1 = L.yf + PARK_DEPTH, L.y1 + 0.6
+    box(M, -31.6, 31.6, y0, y1, PAD_H, PAD_H + 0.02, P["pasture"])
+    for i in range(6):
+        box(M, -28.0 + i * 10.0, -23.5 + i * 10.0, y0 + 2.0, y1 - 2.0, PAD_H + 0.02, PAD_H + 0.04, P["pasture2"])
+    fence_run(M, P, [(-31.4, y0 + 0.3), (31.4, y0 + 0.3), (31.4, y1 - 0.3), (-31.4, y1 - 0.3), (-31.4, y0 + 0.3)], step=8.0)
+    for x, y, a in ((-22.0, 6.0, 0.4), (-16.0, 14.0, 2.0), (-8.0, 2.0, -0.8), (-2.0, 20.0, 1.2), (6.0, 9.0, 2.8),
+                    (12.0, -4.0, -2.2), (18.0, 16.0, 0.9), (24.0, 4.0, 2.4)):
+        cow(M, P, x, y, a)
+    box(M, 22.0, 27.0, -10.0, -9.0, 0, 0.8, P["trough"])
+    box(M, -29.5, -21.5, y1 - 6.5, y1 - 1.0, 0, 3.0, P["cabin"])
+    box(M, -29.3, -21.7, y1 - 6.56, y1 - 6.5, 0.2, 2.6, P["cabin_dark"])
+    extrude_profile(M, [(y1 - 7.2, 2.8), (y1 - 0.8, 3.6), (y1 - 0.8, 3.8), (y1 - 7.2, 3.0)], "x", -30.0, -21.0, P["dy_roof"])
+    return L
+
+
+def b_site_cowshed(M, P):
+    """A long whitewashed cowshed under a red roof with a ridge vent, a round slurry store and a row of hay bales."""
+    L = lot(M, P, 30, 24, [])
+    y0, y1 = L.y0, L.y1
+    box(M, -14.0, 6.0, y0, y1, 0, 4.0, P["dy_wall"])
+    gable(M, -14.0, 6.0, y0, y1, 4.0, 7.0, "x", P["dy_roof"], P["dy_wall"], oh_u=(0.5, 0.5), oh_a=(0.4, 0.4))
+    box(M, -12.0, 4.0, (y0 + y1) / 2 - 0.5, (y0 + y1) / 2 + 0.5, 6.8, 7.4, P["dy_roof"])
+    for x in (-10.0, -2.0):
+        box(M, x - 1.5, x + 1.5, y0 - 0.06, y0, 0, 3.2, P["cabin_dark"])
+    cyl(M, 10.5, y1 - 4.0, 3.2, 0, 2.6, P["concrete"], n=14)
+    cyl(M, 10.5, y1 - 4.0, 2.9, 2.6, 2.62, P["sw_water"], n=14)
+    for i in range(3):
+        box(M, 8.0 + i * 1.8 - 0.8, 8.0 + i * 1.8 + 0.8, y0 + 1.0, y0 + 4.2, PAD_H, 1.7, P["crop_w1"], bevel=0.12)
+    return L
+
+
+def b_site_carlot(M, P):
+    """A finished-car lot: rows of new sedans in four colours on lined asphalt, nosed toward the site road, and a
+    car transporter loading at the side."""
+    L = lot(M, P, 40, 30, [])
+    y0, y1 = L.y0, L.y1
+    box(M, -19.4, 19.4, y0 - 1.0, y1 + 0.6, PAD_H, PAD_H + 0.02, P["asphalt"])
+    cols = (P["car_red"], P["car_blue"], P["car_green"], P["car_cream"])
+    for i in range(11):
+        box(M, -18.9 + i * 2.8 - 0.05, -18.9 + i * 2.8 + 0.05, y0 + 0.4, y1, PAD_H + 0.02, PAD_H + 0.03, P["line"])
+    for i in range(10):
+        for k in range(3):
+            if k == 0 and i > 7:
+                continue
+            motor_car(M, P, -17.5 + i * 2.8, y0 + 3.0 + k * 6.2, cols[(i * 3 + k) % 4], ang=-math.pi / 2)
+    # a car transporter on the right: cab, lower and upper decks, two cars aboard
+    tx = 16.5
+    box(M, tx - 1.25, tx + 1.25, y0 - 0.5, y0 + 2.2, 0, 3.0, P["car_blue"])
+    box(M, tx - 1.2, tx + 1.2, y0 + 2.2, y0 + 13.5, 0.4, 0.8, P["ind_dark"])
+    box(M, tx - 1.2, tx + 1.2, y0 + 5.0, y0 + 13.5, 2.6, 2.8, P["ind_dark"])
+    for y in (y0 + 5.2, y0 + 13.3):
+        box(M, tx - 1.2, tx - 1.05, y - 0.15, y + 0.15, 0.8, 2.6, P["ind_dark"])
+        box(M, tx + 1.05, tx + 1.2, y - 0.15, y + 0.15, 0.8, 2.6, P["ind_dark"])
+    motor_car(M, P, tx, y0 + 8.0, P["car_green"], ang=math.pi / 2, z=0.8)
+    return L
+
 BUILDINGS = {
     "house": (b_house, 12, 15, 1),
     "terrace": (b_terrace, 24, 17, 3),
@@ -3159,6 +3505,15 @@ BUILDINGS = {
     "site_heap_lime": (b_site_heap_lime, 30, 24, 0),
     "site_heap_sand": (b_site_heap_sand, 30, 24, 0),
     "site_heap_cu": (b_site_heap_cu, 30, 24, 0),
+    # deeper chains: the chemical works, dairy and creamery, rubber plant and Motor Works, and their site pieces
+    "chemworks": (b_chemworks, 50, 42, 4),
+    "dairyfarm": (b_dairyfarm, 40, 40, 2),
+    "creamery": (b_creamery, 36, 32, 4),
+    "rubberplant": (b_rubberplant, 46, 38, 4),
+    "motorworks": (b_motorworks, 64, 50, 6),
+    "site_pasture": (b_site_pasture, 64, 64, 0),
+    "site_cowshed": (b_site_cowshed, 30, 24, 0),
+    "site_carlot": (b_site_carlot, 40, 30, 0),
     # services
     "garbage": (b_garbage, 36, 32, 3),
     "firestation": (b_firestation, 26, 24, 3),
@@ -3315,6 +3670,12 @@ def v_tanker(Ms, P):
     for y in (y0 + 1.3, (y0 + y1) / 2 + 0.2, y1 - 1.3):                           # hatches
         cyl(dark, 0.0, y, 0.3, top - 0.02, top + 0.12, P["dark"], n=6)
     box(dark, -1.2, 1.2, y1 - 0.25, y1, 0.98, 1.28, P["dark"])          # rear valves and bumper box
+
+
+def v_reefer(Ms, P):
+    """Refrigerated truck (milk, cheese): the reefer box on the rigid chassis, its fridge unit over the cab."""
+    truck_base(Ms, P)
+    cargo_body(Ms, P, "reefer", -2.25, 4.25, 0.98, 3.3)
 
 
 def v_flatbed(Ms, P):
@@ -3522,6 +3883,20 @@ def cargo_body(Ms, P, kind, y0, y1, zf, top):
         for i in range(n):
             cyl(dark, 0.0, y0 + 1.0 + (y1 - y0 - 2.0) * i / (n - 1), 0.3, t - 0.02, t + 0.12, P["dark"], n=6)
         box(body, -1.15, 1.15, y1 - 0.3, y1, zf - 0.1, zf + 0.3, P["body"])     # rear valve cabinet
+    elif kind == "reefer":
+        # a refrigerated box (milk, cheese): insulated white panels that keep their colour, a band of the load's
+        # colour down each side, the cab-coloured bulkhead frame and skirts, and the fridge unit on the front
+        insul = Ms["insul"]
+        yb = y0 + 0.32
+        box(insul, -1.27, 1.27, yb, y1, zf, top, P["insul"], bevel=0.04)
+        zb = zf + (top - zf) * 0.42
+        box(cargo, -1.29, 1.29, yb + 0.5, y1 - 0.35, zb, zb + 0.42, P["cargo"])
+        box(body, -1.29, 1.29, yb, yb + 0.12, zf, top + 0.02, P["body"])
+        box(body, -1.29, 1.29, y1 - 0.1, y1, zf, top + 0.02, P["body"])           # rear door frame
+        for s in (-1, 1):
+            box(body, s * 1.2 - 0.04, s * 1.2 + 0.04, yb + 0.6, y1 - 2.6, zf - 0.55, zf, P["body"])
+        box(insul, -0.95, 0.95, y0, yb, top - 1.15, top - 0.12, P["insul"], bevel=0.04)   # the fridge unit
+        box(dark, -0.8, 0.8, y0, y0 + 0.04, top - 1.0, top - 0.3, P["dark"])            # its grille
     else:  # flatbed
         zd = zf + 0.2
         box(dark, -1.25, 1.25, y0, y1, zf, zd, P["dark"])
@@ -3609,6 +3984,11 @@ VEHICLES = {
     "rt_tanker_b": (rt_trailer("tanker", False), ("body", "dark", "cargo"), (2.44, 10.0, 4.03)),
     "rt_flatbed_a": (rt_trailer("flatbed", True), ("body", "dark", "cargo"), (2.52, 9.4, 3.95)),
     "rt_flatbed_b": (rt_trailer("flatbed", False), ("body", "dark", "cargo"), (2.52, 10.0, 3.95)),
+    # refrigerated bodies for perishables, in every class (the insulated panels keep their own colour)
+    "reefer": (v_reefer, ("body", "glass", "dark", "cargo", "insul"), (2.58, 8.5, 3.32)),
+    "heavy_reefer": (heavy_rigid("reefer"), ("body", "glass", "dark", "cargo", "insul"), (2.7, 12.0, 3.62)),
+    "rt_reefer_a": (rt_trailer("reefer", True), ("body", "dark", "cargo", "insul"), (2.58, 9.4, 3.97)),
+    "rt_reefer_b": (rt_trailer("reefer", False), ("body", "dark", "cargo", "insul"), (2.58, 10.0, 3.97)),
     "bus": (v_bus, ("body", "trim", "lights", "glass", "dark"), (2.575, 12.17, 3.12)),
     # services (fixed colours)
     "garbagetruck": (v_garbagetruck, ("paint", "trim", "lights", "glass", "dark"), (2.5, 8.5, 3.2)),
@@ -3624,6 +4004,7 @@ def vehicle_mats():
         "cargo": mat("cargo", "#ffffff"),
         "glass": mat("glass", "#2b3440"),
         "dark": mat("dark", "#30343a"),
+        "insul": mat("insul", "#e9ebe8"),
     }
 
 
