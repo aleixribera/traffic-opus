@@ -104,6 +104,22 @@ const fmtNum = (n: number) => (n >= 10000 ? `${(n / 1000).toFixed(n >= 100000 ? 
 type Banner = { m: Milestone } | { town: number; size: number } | { landmark: number };
 const signed = (n: number) => `${n >= 0 ? "+" : "−"}${formatMoney(Math.abs(Math.round(n)))}`;
 const hex = (c: number) => "#" + c.toString(16).padStart(6, "0");
+const lum = (c: number) => {
+  const ch = (v: number) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * ch((c >> 16) & 255) + 0.7152 * ch((c >> 8) & 255) + 0.0722 * ch(c & 255);
+};
+const mixRgb = (a: number, b: number, k: number) =>
+  [16, 8, 0].reduce((o, s) => o | (Math.round(((a >> s) & 255) * (1 - k) + ((b >> s) & 255) * k) << s), 0);
+const PLATE_LUM = lum(0x122036), CREAM_2 = 0xcfc4ab;
+/**
+ * A product's colour for bars and pips on the dark plates (theme --plate): a dark one (coal, crude oil) is lifted
+ * toward cream until it reads at 3:1, the others pass as they are.
+ */
+const onPlate = (c: number) => {
+  let x = c;
+  for (let k = 0.1; k <= 1 && (lum(x) + 0.05) / (PLATE_LUM + 0.05) < 3; k += 0.1) x = mixRgb(c, CREAM_2, k);
+  return hex(x);
+};
 
 const FEATURE_NAME = { roundabout: "Roundabouts", signals: "Traffic lights", grid: "Grid tool", parallel: "Parallel roads", transit: "Buses" } as const;
 const plural = (n: number, one: string, many = one + "s") => `${n} ${n === 1 ? one : many}`;
@@ -1805,7 +1821,7 @@ function outputDay(b: Building): string {
 function hourTicks(vs: number[], color: number): string {
   const hi = Math.max(1, ...vs), W = 72, H = 16, bw = W / vs.length;
   const bars = vs.map((v, i) => v > 0 ? `<rect x="${(i * bw).toFixed(1)}" y="${(H - (v / hi) * H).toFixed(1)}" width="${(bw - 0.6).toFixed(1)}" height="${((v / hi) * H).toFixed(1)}"/>` : "").join("");
-  return `<svg class="pd-ticks" style="--pc:${hex(color)}" viewBox="0 0 ${W} ${H}" aria-hidden="true">${bars}</svg>`;
+  return `<svg class="pd-ticks" style="--pc:${onPlate(color)}" viewBox="0 0 ${W} ${H}" aria-hidden="true">${bars}</svg>`;
 }
 
 /** Bars of loads made each hour (oldest left), with the full pace as a dashed line. */
@@ -1819,7 +1835,7 @@ function hourBars(vs: number[], pace: number, P: { name: string; color: number }
   const bars = vs.map((v, i) => v > 0 ? `<rect x="${(x0 + i * bw + 1).toFixed(1)}" y="${y(v).toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${(bot - y(v)).toFixed(1)}"/>` : "").join("");
   const pl = y(pace);
   const total = vs.reduce((a, v) => a + v, 0);
-  return `<svg class="tn-chart hb-chart" style="--pc:${hex(P.color)}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${P.name} made each hour over the last ${vs.length} hours: ${fmtNum(Math.round(total))} loads, against a full pace of ${pace.toFixed(1)} an hour">
+  return `<svg class="tn-chart hb-chart" style="--pc:${onPlate(P.color)}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${P.name} made each hour over the last ${vs.length} hours: ${fmtNum(Math.round(total))} loads, against a full pace of ${pace.toFixed(1)} an hour">
     <line class="tc-base" x1="0" x2="${W}" y1="${bot}" y2="${bot}"/>
     ${bars}
     <line class="tc-goal" x1="0" x2="${W}" y1="${pl.toFixed(1)}" y2="${pl.toFixed(1)}"/>
@@ -1852,12 +1868,12 @@ function sparkline(vs: number[], what: string): string {
 
 function rbIcon(size: RoundaboutSize): string {
   const r = 4 + size * 1.6, w = 1.6 + size * 0.5;
-  return `<svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true" focusable="false"><path d="M14 1 v${14 - r - 1} M14 ${14 + r + 1} V27 M1 14 h${14 - r - 1} M${14 + r + 1} 14 H27" stroke="#8d939a" stroke-width="3"/><circle cx="14" cy="14" r="${r}" fill="#cfe6b8" stroke="#5b6168" stroke-width="${w}"/></svg>`;
+  return `<svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true" focusable="false"><path d="M14 1 v${14 - r - 1} M14 ${14 + r + 1} V27 M1 14 h${14 - r - 1} M${14 + r + 1} 14 H27" stroke="#cfc4ab" stroke-width="3.4"/><circle cx="14" cy="14" r="${r}" fill="#6f8a45" stroke="#f3ead6" stroke-width="${w}"/></svg>`;
 }
 
 function stockBar(n: number, max: number, color?: number): string {
   const k = Math.max(0, Math.min(max, Math.floor(n)));
-  const st = color === undefined ? "" : ` style="--pc:${hex(color)}"`;
+  const st = color === undefined ? "" : ` style="--pc:${onPlate(color)}"`;
   // (a big store shows as 12 pips, each a share of it)
   const pips = Math.min(max, 12), on = Math.round((k / Math.max(1, max)) * pips);
   return `<span class="pips" role="img" aria-label="${k} of ${max}"${st}>${Array.from({ length: pips }, (_, i) => `<i class="${i < on ? "on" : ""}"></i>`).join("")}</span>`;

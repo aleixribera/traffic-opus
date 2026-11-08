@@ -13,10 +13,12 @@ function iconFor(p: string): { key: string; svg: string; urgent: boolean } {
 
 /** A company site with no road to its gate yet: its icon stands on the gate, where the road has to come. */
 const GATE_PROBLEM = "No road to the gate";
-const GATE = `<svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14" r="11" fill="#2d3a48"/><path d="M7.5 8 V20 M20.5 8 V20" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/><path d="M14 9 V18.5 M10.6 15.4 L14 18.8 L17.4 15.4" stroke="#ffd34a" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-const WARN = `<svg viewBox="0 0 28 28" aria-hidden="true"><path d="M14 3 L26 24 H2 Z" fill="#f2a33a"/><path d="M14 10 v7" stroke="#fff" stroke-width="3" stroke-linecap="round"/><circle cx="14" cy="20.6" r="1.6" fill="#fff"/></svg>`;
-const CARGO = `<svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14" r="11" fill="#f2a33a"/><rect x="8" y="9" width="12" height="10" rx="1" fill="#fff"/><path d="M8 13 H20 M14 9 V13" stroke="#f2a33a" stroke-width="1.6"/></svg>`;
-const ROAD = `<svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14" r="11" fill="#e5484d"/><path d="M10 21 L12 7 M18 21 L16 7" stroke="#fff" stroke-width="2" stroke-linecap="round"/><path d="M7 7 L21 21" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg>`;
+// (enamel roundels, docs/ui-style.md "Map labels": the disc carries the meaning by colour and shape, the CSS adds the
+// cream rim and the tail; navy = the gate, ochre = cargo or a warning, brick = cut off from the roads)
+const GATE = `<svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14" r="13" fill="#1a2c47"/><path d="M7.5 7.5 V20.5 M20.5 7.5 V20.5" stroke="#f3ead6" stroke-width="2.6"/><path d="M14 8 V18.5 M10.4 15 L14 18.8 L17.6 15" stroke="#f0c25a" stroke-width="2.4" fill="none" stroke-linecap="square" stroke-linejoin="miter"/></svg>`;
+const WARN = `<svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14" r="13" fill="#e0a833"/><path d="M14 6.5 V16.5" stroke="#0c1524" stroke-width="3.4"/><rect x="12.3" y="18.8" width="3.4" height="3.4" fill="#0c1524"/></svg>`;
+const CARGO = `<svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14" r="13" fill="#e0a833"/><rect x="7.5" y="8.5" width="13" height="11" fill="#0c1524"/><path d="M7.5 12.5 H20.5 M14 8.5 V12.5" stroke="#e0a833" stroke-width="1.6"/></svg>`;
+const ROAD = `<svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14" r="13" fill="#9c3a28"/><path d="M10 22 L12 6 M18 22 L16 6" stroke="#f3ead6" stroke-width="2.2"/><path d="M6.5 6.5 L21.5 21.5" stroke="#f3ead6" stroke-width="2.8"/></svg>`;
 
 /**
  * Problem icons floating over buildings (CS2's notification icons): no road, and a generic warning for business

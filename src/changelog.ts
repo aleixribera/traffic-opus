@@ -15,6 +15,15 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.61", date: "2026-11-08", title: "A Deco skin for the whole interface",
+    notes: [
+      "Every panel is a navy enamel plate with an ochre pinstripe and rivets, headed in condensed display capitals.",
+      "Every icon is redrawn in one flat period style, and town names sit on station nameplates that read over any ground.",
+      "Money and the clock sit in inset counters; text is never smaller than 12 px and every colour passes contrast.",
+      "Landmark openings get a gilt double frame, and convoy tags, landmark panels and the season in the clock match the rest.",
+    ],
+  },
+  {
     v: "v0.0.60", date: "2026-11-08", title: "Convoys, landmarks, parks and seasons",
     notes: [
       "A machine works builds turbines and steel girders that leave as escorted convoys: a pilot car, a low-loader and an escort, beacons flashing, traffic queuing behind. Click its tag to follow it.",

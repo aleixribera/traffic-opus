@@ -1,0 +1,4 @@
+{ "lens": "hud", "findings": [
+ { "screen": "explore", "viewport": "desktop", "rule": "HUD-04", "severity": "medium", "title": "Money and date, the numbers a company player acts on, are small and plain", "detail": "Money is 13 px bold in the left bar block next to population; the date is 'Day 7' at 11 px. In TF2 the money and date are the anchors of the bottom bar.", "evidence": "'$80,225' 13px, 'Day 7' 11px", "fix": "Money and clock as stamped numeric readouts (larger tabular digits) in their own plates.", "box": [210, 852, 80, 36] },
+ { "screen": "milestone", "viewport": "desktop", "rule": "FB-01", "severity": "low", "title": "Toasts sit behind the milestone banner", "detail": "A toast fired with a milestone shows at top 56 px, the same place as the banner, so it is hidden.", "evidence": "toasts 'Game saved', 'Not enough money' not visible in milestone shot", "fix": "Move toasts below the banner zone or above the bottom bar.", "box": [487, 56, 466, 120] }
+]}

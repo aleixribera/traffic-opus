@@ -1,24 +1,39 @@
 {
-  "name": "traffic-opus",
-  "url": "http://localhost:5317/?new",
+  "name": "kilometre-zero",
+  "url": "http://localhost:5325/",
+  "launch": { "command": "npx vite --port 5325 --strictPort", "readyUrl": "http://localhost:5325/", "timeoutMs": 90000 },
   "browser": { "channel": "chrome" },
-  "viewports": { "desktop": { "width": 1440, "height": 900, "deviceScaleFactor": 1 } },
-  "defaultViewports": ["desktop", "phone"],
+  "viewports": {
+    "desktop": { "width": 1440, "height": 900, "deviceScaleFactor": 1 },
+    "wide": { "width": 1920, "height": 1080, "deviceScaleFactor": 1 }
+  },
+  "defaultViewports": ["desktop", "wide"],
   "settleMs": 900,
   "screens": [
-    { "id": "fresh-city", "title": "New city, first tip", "steps": [{ "waitForJs": "window.app && window.app.game", "timeoutMs": 60000 }, { "wait": 1200 }] },
-    { "id": "city", "title": "In play: street with homes, shop, office", "from": "fresh-city", "steps": [
-      { "eval": "(async () => { const P = await import('/src/roads/planner.ts'); const a = window.app, g = a.game; const road = (x0,y0,x1,y1,type='street') => g.build(P.planRoad(g.net, g.world, { start: { p: {x:x0,y:y0}, h: 0, guides: [] }, end: { p: {x:x1,y:y1}, h: 0, guides: [] }, mode: 'straight', type })); road(1090,1060,1310,1060); road(1200,1060,1200,1180); const at = (k,x,y) => { const pl = g.placement(k,{x,y}); if (pl && pl.ok) g.place(k, pl); }; for (const x of [1105,1125,1145,1165,1185]) at('house',x,1045); for (const x of [1105,1130,1155]) at('house',x,1077); at('shop',1235,1043); at('office',1280,1040); for (let t=0;t<90;t+=1/30) g.step(1/30); a.view.cx=1200; a.view.cy=1075; a.view.halfH=95; a.dirtyPreview = true; })()" },
-      { "wait": 1200 }] },
-    { "id": "drawing-road", "title": "Drawing a road: preview + cursor chips", "from": "city", "steps": [
-      { "eval": "(() => { const a = window.app; a.setTool({ tool: 'road', roadType: 'avenue' }); const s = (x,y) => a.view.toScreen({x,y}); a.updateCursor(s(1240,1150)); a.onClick(false); a.updateCursor(s(1300,1110)); a.dirtyPreview = true; })()" },
-      { "wait": 600 }] },
-    { "id": "overlay-flow", "title": "Overlays menu open, traffic flow on", "from": "city", "steps": [{ "clickText": "Overlays" }, { "wait": 300 }, { "clickText": "Traffic flow" }, { "wait": 500 }] },
-    { "id": "building-panel", "title": "Inspecting a house", "from": "city", "steps": [
-      { "eval": "(() => { const a = window.app; const b = a.game.buildings.list.find(b => b.kind === 'shop'); a.selected = b; a.hud.openBuilding(b); })()" }, { "wait": 500 }] },
-    { "id": "signal-panel", "title": "Traffic light editor", "from": "city", "steps": [
-      { "eval": "(() => { const a = window.app, g = a.game; const n = [...g.net.nodeGeom.entries()].find(([,ng]) => ng.kind === 'junction' && ng.arms.length >= 3)[0]; g.setSignal(n, g.defaultSignal(n)); a.hud.openSignal(n); })()" }, { "wait": 600 }] },
-    { "id": "saves", "title": "Saves dialog", "from": "city", "steps": [{ "eval": "window.app.saves.save(window.app.game, 'Riverside')" }, { "click": "[aria-label='Game menu']" }, { "wait": 500 }] },
-    { "id": "level-up", "title": "Level complete banner", "from": "city", "steps": [{ "eval": "window.app.hud.levelUp(2, 'Copper ore goes from the mine to the works by truck. Shops need the goods.')" }, { "wait": 700 }] }
+    { "id": "main-menu", "title": "Title menu over the showcase company", "steps": [{ "waitForJs": "window.app && window.app.mode === 'menu' && !document.getElementById('loading')", "timeoutMs": 90000 }, { "wait": 1500 }] },
+    { "id": "fresh", "title": "New company: Goals card and first tip", "steps": [{ "goto": "/?new" }, { "waitForJs": "window.app && window.app.game && !document.getElementById('loading')", "timeoutMs": 90000 }, { "wait": 1500 }] },
+    { "id": "explore", "title": "In play: the showcase company, HUD only", "from": "main-menu", "steps": [{ "clickText": "Explore" }, { "wait": 1500 }] },
+    { "id": "industry-catalog", "title": "Industry catalog open, placing a farm", "from": "fresh", "steps": [
+      { "clickText": "Industry" }, { "wait": 400 },
+      { "eval": "(() => { const a = window.app; a.updateCursor({ x: 760, y: 380 }); a.dirtyPreview = true; })()" }, { "wait": 600 }] },
+    { "id": "drawing-road", "title": "Drawing a road: tool options and cursor chips", "from": "fresh", "steps": [
+      { "eval": "(() => { const a = window.app; a.setTool({ tool: 'road', roadType: 'street' }); a.updateCursor({ x: 620, y: 420 }); a.onClick(false); a.updateCursor({ x: 860, y: 330 }); a.dirtyPreview = true; })()" }, { "wait": 700 }] },
+    { "id": "site-panel", "title": "Inspecting a company site", "from": "explore", "steps": [
+      { "eval": "(() => { const a = window.app; const b = a.game.buildings.list.filter(b => b.plant && b.built >= 1 && !b.plant.site).sort((x, y) => (y.plant.level ?? 1) - (x.plant.level ?? 1))[0]; a.lookAt(b.c, 260); a.selected = b; a.hud.openBuilding(b); })()" }, { "wait": 900 }] },
+    { "id": "town-panel", "title": "A town's panel, with its label on the map", "from": "explore", "steps": [
+      { "eval": "(() => { const a = window.app; const t = [...a.game.towns.list].sort((x, y) => y.pop - x.pop)[0]; a.hud.showTown(t.id); })()" }, { "wait": 900 }] },
+    { "id": "towns-window", "title": "Towns window", "from": "explore", "steps": [{ "click": "[aria-label='Towns (C)']" }, { "wait": 500 }] },
+    { "id": "economy", "title": "Economy window", "from": "explore", "steps": [{ "click": "[aria-label='Economy (Z)']" }, { "wait": 500 }] },
+    { "id": "progression", "title": "Progression window", "from": "explore", "steps": [{ "click": "[aria-label='Progression (P)']" }, { "wait": 500 }] },
+    { "id": "info-views", "title": "Info views with the Resources overlay", "from": "explore", "steps": [{ "click": "[aria-label='Info views']" }, { "wait": 300 }, { "clickText": "Resources" }, { "wait": 700 }] },
+    { "id": "signal-panel", "title": "Junction panel", "from": "explore", "steps": [
+      { "eval": "(() => { const a = window.app, g = a.game; const n = [...g.net.nodeGeom.entries()].find(([, ng]) => ng.kind === 'junction' && ng.arms.length >= 3)[0]; const nd = g.net.nodes.get(n); a.lookAt(nd.p, 120); a.hud.openSignal(n); })()" }, { "wait": 700 }] },
+    { "id": "pause", "title": "Pause menu", "from": "explore", "steps": [{ "click": "[aria-label='Pause menu (Esc)']" }, { "wait": 500 }] },
+    { "id": "saves", "title": "Load game dialog", "from": "fresh", "steps": [{ "eval": "window.app.saves.save(window.app.game, 'Millbrook Freight')" }, { "click": "[aria-label='Pause menu (Esc)']" }, { "wait": 300 }, { "clickText": "Load game" }, { "wait": 500 }] },
+    { "id": "controls", "title": "Controls dialog", "from": "explore", "steps": [{ "click": "[aria-label='Pause menu (Esc)']" }, { "wait": 300 }, { "clickText": "Controls" }, { "wait": 500 }] },
+    { "id": "milestone", "title": "Milestone banner, with toasts", "from": "fresh", "steps": [
+      { "eval": "(async () => { const P = await import('/src/game/progression.ts'); const h = window.app.hud; h.milestone(P.MILESTONES[2]); h.toast('Game saved'); h.toast('Not enough money', true); })()" }, { "wait": 700 }] },
+    { "id": "town-grew", "title": "Town grew banner", "from": "explore", "steps": [
+      { "eval": "(() => { const a = window.app; const t = a.game.towns.list[0]; a.hud.townGrew(t.id, 2); })()" }, { "wait": 700 }] }
   ]
 }

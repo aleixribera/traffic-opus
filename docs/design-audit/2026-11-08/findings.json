@@ -1,0 +1,228 @@
+{
+  "project": "kilometre-zero",
+  "date": "2026-11-08",
+  "commit": "d4e177f",
+  "dirty": true,
+  "findings": [
+    {
+      "id": "F01",
+      "screen": "fresh",
+      "viewport": "desktop",
+      "rule": "TYP-01",
+      "severity": "high",
+      "lenses": [
+        "accessibility"
+      ],
+      "title": "Most secondary text is 11 px",
+      "detail": "Category labels, milestone counts, unlock lines, money per hour, the day, chips and asset subtitles are 11 px; at 1440x900 they are hard to read at a glance.",
+      "fix": "Floor of 12 px for secondary text, 13 px for body; data numerals in a wider tabular face.",
+      "evidence": "contrast.md: fresh@desktop 18 size fails, all 11 px ('Roads', '0 / 10', '+$0/h', 'Day 1', unlock lines)",
+      "box": [
+        1160,
+        40,
+        272,
+        300
+      ]
+    },
+    {
+      "id": "F02",
+      "screen": "fresh",
+      "viewport": "desktop",
+      "rule": "COL-01",
+      "severity": "medium",
+      "lenses": [
+        "accessibility"
+      ],
+      "title": "Undo/Redo disabled labels at 1.8:1",
+      "detail": "Disabled Undo and Redo fade to 40% opacity so their labels are 1.79:1; players can't read what the buttons are until they become active.",
+      "fix": "Disabled state at ~3:1 (dimmed colour, not opacity), keep label legible.",
+      "evidence": "'Undo' 856,875 contrast 1.79",
+      "box": [
+        850,
+        850,
+        90,
+        40
+      ]
+    },
+    {
+      "id": "F03",
+      "screen": "explore",
+      "viewport": "desktop",
+      "rule": "COL-01",
+      "severity": "medium",
+      "lenses": [
+        "accessibility"
+      ],
+      "title": "Town label halo is soft; name and size line break up over roads and icons",
+      "detail": "The town name's text-stroke halo is light cream; over the dark asphalt crossroads and the need icons beneath it, 'VILLAGE · 450' runs into the icons and road markings.",
+      "fix": "Put the town name on a small enamel nameplate (solid dark ground, cream caps) so contrast is fixed regardless of terrain.",
+      "evidence": "contrast.md explore: 'Village · 450' p10 1.15 (shadow), 'Elton' p10 1.43",
+      "box": [
+        860,
+        412,
+        110,
+        70
+      ]
+    },
+    {
+      "id": "F04",
+      "screen": "explore",
+      "viewport": "desktop",
+      "rule": "COL-03",
+      "severity": "medium",
+      "lenses": [
+        "hierarchy"
+      ],
+      "title": "The UI has no identity: generic white cards and a pale bar read as a web app, not an industry game",
+      "detail": "Every surface is the same near-white card with a 1px grey line and soft shadow. Nothing ties the HUD to the company/industrial theme; the owner wants a 1920s-40s Deco industry skin over TF2's dense layout.",
+      "fix": "Dark enamel-plate panels (navy), cream data text, ochre accent, condensed Deco display face for headings, tabular sans for data.",
+      "evidence": "--card rgba(255,255,255,.95), --paper #f7f6f1, Lexend everywhere at 11-13 px, blue #1677b3 accent",
+      "box": [
+        0,
+        840,
+        1440,
+        60
+      ]
+    },
+    {
+      "id": "F05",
+      "screen": "explore",
+      "viewport": "desktop",
+      "rule": "HUD-04",
+      "severity": "medium",
+      "lenses": [
+        "hud"
+      ],
+      "title": "Money and date, the numbers a company player acts on, are small and plain",
+      "detail": "Money is 13 px bold in the left bar block next to population; the date is 'Day 7' at 11 px. In TF2 the money and date are the anchors of the bottom bar.",
+      "fix": "Money and clock as stamped numeric readouts (larger tabular digits) in their own plates.",
+      "evidence": "'$80,225' 13px, 'Day 7' 11px",
+      "box": [
+        210,
+        852,
+        80,
+        36
+      ]
+    },
+    {
+      "id": "F06",
+      "screen": "industry-catalog",
+      "viewport": "desktop",
+      "rule": "COL-01",
+      "severity": "medium",
+      "lenses": [
+        "accessibility"
+      ],
+      "title": "Locked cards: name and unlock line wash out",
+      "detail": "Locked catalog cards dim the icon and name to 45% opacity; 'Iron Mine', 'Coal Mine' etc. read at about 2.3:1 so players can't plan what comes next.",
+      "fix": "Keep locked names at full legibility in a muted colour, mark lock with a stamped tag.",
+      "evidence": "industry-catalog@desktop contrast fails on locked card names",
+      "box": [
+        500,
+        724,
+        546,
+        96
+      ]
+    },
+    {
+      "id": "F07",
+      "screen": "drawing-road",
+      "viewport": "desktop",
+      "rule": "COL-03",
+      "severity": "medium",
+      "lenses": [
+        "hierarchy"
+      ],
+      "title": "The tip pulse on Industry looks exactly like the selected Roads button",
+      "detail": "While Roads is the active category, Industry also shows the selected frame because the hint highlight reuses the same blue border; two categories look active at once.",
+      "fix": "Give the hint its own treatment (ochre corner tick / underline pulse), distinct from the selected state.",
+      "evidence": "Roads and Industry both framed blue at x 497-630",
+      "box": [
+        496,
+        844,
+        136,
+        54
+      ]
+    },
+    {
+      "id": "F08",
+      "screen": "site-panel",
+      "viewport": "desktop",
+      "rule": "TYP-02",
+      "severity": "medium",
+      "lenses": [
+        "hierarchy"
+      ],
+      "title": "Panel headings and body text are nearly the same size and weight",
+      "detail": "The site name (13 px/600), section heads (12 px/600) and body (12 px) differ by a pixel, so a player scanning the Farm panel can't find 'Ready to ship' vs 'Last hour' quickly.",
+      "fix": "Plate-style title bar (16 px condensed caps) and small-caps section rules distinct from rows.",
+      "evidence": "Farm 13px, 'Ready to ship' 12px 600, 'Crops' 12px 400",
+      "box": [
+        1160,
+        8,
+        272,
+        436
+      ]
+    },
+    {
+      "id": "F09",
+      "screen": "main-menu",
+      "viewport": "desktop",
+      "rule": "MENU-01",
+      "severity": "low",
+      "lenses": [
+        "hierarchy"
+      ],
+      "title": "Title card: the game's name is a plain bold web heading",
+      "detail": "The title menu is the first impression; the name is a 30px Lexend heading on a white card, no sense of era or company.",
+      "fix": "Enamel nameplate head with a Deco display face and pinstripe rule.",
+      "evidence": "'Kilometre Zero' 30px 600 on #f7f6f1",
+      "box": [
+        28,
+        562,
+        320,
+        104
+      ]
+    },
+    {
+      "id": "F10",
+      "screen": "signal-panel",
+      "viewport": "desktop",
+      "rule": "MENU-03",
+      "severity": "low",
+      "lenses": [
+        "accessibility"
+      ],
+      "title": "Small targets in the junction editor",
+      "detail": "Arm toggles and duration buttons are 20-22 px tall.",
+      "fix": "Raise to 26-28 px on desktop.",
+      "evidence": "contrast.md signal-panel: 11 small targets",
+      "box": [
+        1160,
+        8,
+        272,
+        400
+      ]
+    },
+    {
+      "id": "F11",
+      "screen": "milestone",
+      "viewport": "desktop",
+      "rule": "FB-01",
+      "severity": "low",
+      "lenses": [
+        "hud"
+      ],
+      "title": "Toasts sit behind the milestone banner",
+      "detail": "A toast fired with a milestone shows at top 56 px, the same place as the banner, so it is hidden.",
+      "fix": "Move toasts below the banner zone or above the bottom bar.",
+      "evidence": "toasts 'Game saved', 'Not enough money' not visible in milestone shot",
+      "box": [
+        487,
+        56,
+        466,
+        120
+      ]
+    }
+  ]
+}

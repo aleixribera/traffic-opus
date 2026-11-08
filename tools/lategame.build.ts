@@ -139,10 +139,7 @@ it("builds a late-game company", () => {
     if (!done) say(`FAIL no way out to the ${name}`);
   }
 
-  // a fleet: a few more trucks bought for every plant
-  let bought = 0;
-  for (const b of g.buildings.list) if (b.plant) for (let k = 0; k < 4; k++) if (!g.buyTruck(b.id)) bought++;
-  say(`bought ${bought} trucks`);
+  // (no trucks to buy: each site's fleet comes with its level)
 
   // the real sim, for the trucks and commuters to come out
   for (let h = 1; h <= HOURS; h++) {

@@ -18,7 +18,7 @@ export interface MapLabel {
   iconsMaxHalfH?: number;
 }
 
-/** Place names drawn over the map, like a road atlas. Plain text with a halo, no boxes. */
+/** Place names drawn over the map: station nameplates, so a name reads the same over grass, asphalt or roofs. */
 export class MapLabels {
   readonly el = document.createElement("div");
   private items: { l: MapLabel; el: HTMLElement; icons: HTMLElement | null }[] = [];
@@ -39,14 +39,16 @@ export class MapLabels {
       const e = document.createElement(l.onClick ? "button" : "div");
       e.className = "map-label" + (l.onClick ? " click" : "");
       if (l.onClick) { e.onclick = l.onClick; e.title = l.title ?? l.name; e.setAttribute("aria-label", l.title ?? l.name); }
-      e.innerHTML = `<b></b>${l.sub ? "<span></span>" : ""}`;
-      e.querySelector("b")!.textContent = l.name;
-      if (l.sub) e.querySelector("span")!.textContent = l.sub;
+      // (a nameplate: the name, its size on a tab hung under it, the supply gauge under that)
+      e.innerHTML = `<span class="ml-plate"><b></b>${l.sub ? "<span></span>" : ""}</span>`;
+      const plate = e.firstElementChild as HTMLElement;
+      plate.querySelector("b")!.textContent = l.name;
+      if (l.sub) plate.querySelector("span")!.textContent = l.sub;
       if (l.bar) {
         const bar = document.createElement("i");
         bar.className = `ml-bar ${l.bar.cls}`;
         bar.innerHTML = `<i style="width:${Math.max(4, Math.min(100, l.bar.share * 100)).toFixed(0)}%"></i>`;
-        e.appendChild(bar);
+        plate.appendChild(bar);
       }
       let icons: HTMLElement | null = null;
       if (l.icons?.length) {
