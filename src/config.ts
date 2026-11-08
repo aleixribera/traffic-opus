@@ -92,7 +92,8 @@ export interface BuildingType {
   kind: BuildingKind;
   name: string;
   zone: Zone;
-  w: number; // frontage along the road
+  /** frontage along the road; for the company's buildings, the whole fenced site (docs/design.md "Industry sites") */
+  w: number;
   d: number; // depth away from the road
   residents: number;
   jobs: number;
@@ -110,16 +111,16 @@ export const BUILDING_TYPES: Record<BuildingKind, BuildingType> = {
   shop: { kind: "shop", name: "Small Commercial", zone: "com", w: 18, d: 20, residents: 0, jobs: 3, shelves: true, pollution: 0, parking: 4, blurb: "Sells the town its food: needs customers, staff and the company's food deliveries." },
   store: { kind: "store", name: "Medium Commercial", zone: "com", w: 30, d: 28, residents: 0, jobs: 7, shelves: true, pollution: 0, parking: 8, blurb: "A bigger store that draws customers from further away." },
   mall: { kind: "mall", name: "Large Commercial", zone: "com", w: 48, d: 40, residents: 0, jobs: 14, shelves: true, pollution: 0, parking: 14, blurb: "Shopping centre. Expect heavy traffic at the entrance." },
-  farm: { kind: "farm", name: "Farm", zone: "placed", w: 40, d: 40, residents: 0, jobs: 8, pollution: 0, parking: 2, blurb: "Grows crops on fertile soil. Its trucks take them to your food plants." },
-  loggingcamp: { kind: "loggingcamp", name: "Logging Camp", zone: "placed", w: 36, d: 32, residents: 0, jobs: 8, pollution: 0, parking: 2, blurb: "Fells timber in the forest. Its trucks take the logs to your sawmills." },
-  foodplant: { kind: "foodplant", name: "Food Plant", zone: "placed", w: 32, d: 30, residents: 0, jobs: 12, pollution: 90, parking: 4, blurb: "Turns crops into food. Its trucks sell the food to the towns' shops." },
-  sawmill: { kind: "sawmill", name: "Sawmill", zone: "placed", w: 40, d: 34, residents: 0, jobs: 12, pollution: 60, parking: 3, blurb: "Saws logs into planks. Its trucks sell the planks to the towns." },
-  ironmine: { kind: "ironmine", name: "Iron Mine", zone: "placed", w: 44, d: 40, residents: 0, jobs: 12, pollution: 80, parking: 2, blurb: "Digs iron ore. Its trucks take it to your smelters." },
-  coalmine: { kind: "coalmine", name: "Coal Mine", zone: "placed", w: 44, d: 40, residents: 0, jobs: 12, pollution: 90, parking: 2, blurb: "Digs coal for your smelters, cement works and power plants." },
-  quarry: { kind: "quarry", name: "Quarry", zone: "placed", w: 48, d: 44, residents: 0, jobs: 10, pollution: 80, parking: 2, blurb: "Quarries limestone. Its trucks take it to your cement works." },
-  smelter: { kind: "smelter", name: "Smelter", zone: "placed", w: 56, d: 48, residents: 0, jobs: 16, pollution: 150, parking: 4, blurb: "Smelts iron ore with coal into steel." },
-  cementworks: { kind: "cementworks", name: "Cement Works", zone: "placed", w: 52, d: 44, residents: 0, jobs: 14, pollution: 130, parking: 4, blurb: "Burns limestone with coal into cement for the villages." },
-  coalplant: { kind: "coalplant", name: "Power Plant", zone: "placed", w: 64, d: 52, residents: 0, jobs: 12, pollution: 140, parking: 5, blurb: "Burns coal for power: your tier 2 buildings on its roads within 4 km work at full pace. Its smoke drags land value down for a few hundred metres." },
+  farm: { kind: "farm", name: "Farm", zone: "placed", w: 290, d: 270, residents: 0, jobs: 8, pollution: 0, parking: 2, blurb: "Grows crops on fertile soil. Its trucks take them to your food plants." },
+  loggingcamp: { kind: "loggingcamp", name: "Logging Camp", zone: "placed", w: 250, d: 230, residents: 0, jobs: 8, pollution: 0, parking: 2, blurb: "Fells timber in the forest. Its trucks take the logs to your sawmills." },
+  foodplant: { kind: "foodplant", name: "Food Plant", zone: "placed", w: 180, d: 160, residents: 0, jobs: 12, pollution: 90, parking: 4, blurb: "Turns crops into food. Its trucks sell the food to the towns' shops." },
+  sawmill: { kind: "sawmill", name: "Sawmill", zone: "placed", w: 200, d: 180, residents: 0, jobs: 12, pollution: 60, parking: 3, blurb: "Saws logs into planks. Its trucks sell the planks to the towns." },
+  ironmine: { kind: "ironmine", name: "Iron Mine", zone: "placed", w: 220, d: 200, residents: 0, jobs: 12, pollution: 80, parking: 2, blurb: "Digs iron ore. Its trucks take it to your smelters." },
+  coalmine: { kind: "coalmine", name: "Coal Mine", zone: "placed", w: 220, d: 200, residents: 0, jobs: 12, pollution: 90, parking: 2, blurb: "Digs coal for your smelters, cement works and power plants." },
+  quarry: { kind: "quarry", name: "Quarry", zone: "placed", w: 260, d: 240, residents: 0, jobs: 10, pollution: 80, parking: 2, blurb: "Quarries limestone. Its trucks take it to your cement works." },
+  smelter: { kind: "smelter", name: "Smelter", zone: "placed", w: 220, d: 210, residents: 0, jobs: 16, pollution: 150, parking: 4, blurb: "Smelts iron ore with coal into steel." },
+  cementworks: { kind: "cementworks", name: "Cement Works", zone: "placed", w: 210, d: 200, residents: 0, jobs: 14, pollution: 130, parking: 4, blurb: "Burns limestone with coal into cement for the villages." },
+  coalplant: { kind: "coalplant", name: "Power Plant", zone: "placed", w: 220, d: 200, residents: 0, jobs: 12, pollution: 140, parking: 5, blurb: "Burns coal for power: your tier 2 buildings on its roads within 4 km work at full pace. Its smoke drags land value down for a few hundred metres." },
 };
 
 export const ZONE_LABEL: Record<Zone, string> = { res: "Residential", com: "Commercial", placed: "Company building" };

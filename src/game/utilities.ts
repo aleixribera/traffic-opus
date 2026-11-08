@@ -3,7 +3,7 @@
 // What those plants make is shared among the buildings that draw on them; a building short of power works slower
 // (industry.ts, powerPace). Homes and shops don't use the company's power (no city services).
 
-import { dist } from "../core/math";
+import { dist, rectDistance } from "../core/math";
 import type { Building } from "./buildings";
 import type { Game } from "./city";
 import { Industry, PLANTS, type PlantKind } from "./industry";
@@ -110,8 +110,9 @@ export class Utilities {
   landValueOf(b: Building): number {
     let lv = 0;
     for (const o of this.polluters) {
-      const d = dist(o.c, b.c);
-      if (d < 320) lv -= 26 * (1 - d / 320);
+      // (from the plant's fence: its site is a couple of hundred metres across)
+      const d = rectDistance(b.c, o.c, o.hw, o.hd, o.rot);
+      if (d < 220) lv -= 26 * (1 - d / 220);
     }
     return lv;
   }

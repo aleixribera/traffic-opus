@@ -4,7 +4,8 @@ import type { Building } from "../game/buildings";
 import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
 import { MILESTONES, unlockedBy, type Milestone, type Unlocks } from "../game/progression";
 import { ZONES } from "../game/zones";
-import { BUILD_TIME, PLANTS, PRODUCTS, MIN_DEPOSIT, UNPOWERED, isPlantKind, powerPace, type Product } from "../game/industry";
+import { BUILD_TIME, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, UNPOWERED, isPlantKind, powerPace, type Product } from "../game/industry";
+import { GROW_NEED, LEVEL_MULT, SITE_LEVELS } from "../game/sites";
 import { TOWN_COST, TOWN_SPACING, type Town } from "../game/settlements";
 import { TOWN_SIZES, demandPerDay, needFrom, needsOf, nextNeed, sizeOf } from "../game/towns";
 import { HOUR } from "../game/society";
@@ -127,6 +128,7 @@ const KEYS: [string, string][] = [
   ["Tab", "Next road mode"],
   ["Page Up / Down", "Raise or lower the road"],
   ["[ / ]", "Parallel road spacing"],
+  [", / .", "Turn the building you are placing"],
   ["Shift", "15° angle steps"],
   ["B", "Bulldozer"],
   ["L", "Add lane (Shift or right click removes)"],
@@ -561,8 +563,9 @@ export class Hud {
       items.push(h("p", "to-text", `Click open land at least ${km(TOWN_SPACING)} from other towns, with one of your roads near. The town lays its own streets, and grows while you keep its needs supplied.`));
     } else if (st.tool === "place" && isPlantKind(st.placed)) {
       const D = PLANTS[st.placed];
+      items.push(h("p", "to-text", "Beside a road its gate faces the road. Anywhere else it stands free and waits for a road to its gate. Press , or . to turn it 15°."));
       items.push(h("p", "to-text", D.deposit
-        ? `Place it beside a road where at least ${Math.round(MIN_DEPOSIT * 100)}% of the lot is ${D.deposit.name}: the ground shows it while you place. More of it, faster work.`
+        ? `At least ${Math.round(MIN_DEPOSIT * 100)}% of the plot must be ${D.deposit.name}: the ground shows it while you place. More of it, faster work.`
         : `Your extractors' trucks bring it ${productList(D.inputs)}; ${D.makes ? `it powers your tier 2 buildings on its roads within ${D.reach! / 1000} km`
           : (Object.keys(D.outputs) as Product[]).some((p) => PRODUCTS[p].price > 0) ? `its own trucks sell the ${productList(D.outputs)} to the towns on your roads`
           : `it keeps the ${productList(D.outputs)} in its yard until tier 3 brings plants that use it`}.`));
@@ -676,7 +679,7 @@ export class Hud {
     const has = (k: string) => plants.some((b) => b.kind === k);
     const home = g.towns.list[0];
     const name = home ? escapeHtml(home.name) : "your town";
-    if (!has("farm")) return { key: "farm", cat: "industry", html: `<b>Start a food chain.</b> ${name} needs food. Lay a road out to fertile soil, then open <b>Industry</b> and place a <b>Farm</b> beside it: the ground shows the soil while you place.` };
+    if (!has("farm")) return { key: "farm", cat: "industry", html: `<b>Start a food chain.</b> ${name} needs food. Lay a road out to fertile soil, then open <b>Industry</b> and place a <b>Farm</b> on it: the ground shows the soil while you place.` };
     if (!has("foodplant")) return { key: "foodplant", cat: "industry", html: `<b>Build a food plant</b> (Industry › Processing) on a road between your farm and ${name}. Farm trucks bring it crops; its own trucks sell the food to the town's shops.` };
     const stuck = plants.find((b) => b.built >= 1 && b.problem?.startsWith("Nobody your roads reach"));
     if (stuck) return { key: "connect-" + stuck.id, cat: "roads", html: `<b>Your ${BUILDING_TYPES[stuck.kind].name.toLowerCase()} has nobody to sell to.</b> Join it by road to a plant or a town that uses what it makes.` };
@@ -1159,7 +1162,8 @@ export class Hud {
       const powerRow = pw === null ? "" : `<dt>Power</dt><dd class="${pw >= 0.999 ? "good" : "bad"}">${pw >= 0.999 ? `${D.power} MW · full` : pw <= 0 ? `none · working at ${Math.round(UNPOWERED * 100)}%` : `${Math.round(pw * 100)}% · working at ${Math.round(powerPace(pw) * 100)}%`}</dd>`;
       const pl = D.makes ? g.utilities.plants.get(b.id) : undefined;
       const plantRows = D.makes ? `<dt>Making</dt><dd>${Math.round(pl?.made ?? 0)} / ${D.makes} MW</dd><dt>Wanted in reach</dt><dd>${Math.round(pl?.used ?? 0)} MW · ${plural(pl?.users ?? 0, "building")}</dd>` : "";
-      const stock = (p: Product, n: number) => `<dt>${PRODUCTS[p].name}</dt><dd>${stockBar(n, D.store, PRODUCTS[p].color)}<span class="num">${Math.floor(n)}</span></dd>`;
+      const store = Industry.storeOf(b);
+      const stock = (p: Product, n: number) => `<dt>${PRODUCTS[p].name}</dt><dd>${stockBar(n, store, PRODUCTS[p].color)}<span class="num">${Math.floor(n)}</span></dd>`;
       const ins = (Object.keys(D.inputs) as Product[]).map((p) => stock(p, P.stock[p] ?? 0)).join("");
       const outs = (Object.keys(D.outputs) as Product[]).map((p) => stock(p, P.out[p] ?? 0)).join("");
       const L = P.last;
@@ -1168,6 +1172,7 @@ export class Hud {
         <p class="status ${statusCls}">${status}</p>
         ${ins ? `<h3 class="sub-h">In the yard</h3><dl class="facts">${ins}</dl>` : ""}
         ${outs ? `<h3 class="sub-h">Ready to ship</h3><dl class="facts">${outs}</dl>` : ""}
+        ${siteLevel(b)}
         <dl class="facts">
           ${plantRows}${powerRow}
           ${D.trucks ? `<dt>Trucks out</dt><dd>${busy} of ${g.industry.trucksOf(b)}</dd>` : ""}
@@ -1458,7 +1463,26 @@ function rbIcon(size: RoundaboutSize): string {
 function stockBar(n: number, max: number, color?: number): string {
   const k = Math.max(0, Math.min(max, Math.floor(n)));
   const st = color === undefined ? "" : ` style="--pc:${hex(color)}"`;
-  return `<span class="pips" role="img" aria-label="${k} of ${max}"${st}>${Array.from({ length: max }, (_, i) => `<i class="${i < k ? "on" : ""}"></i>`).join("")}</span>`;
+  // (a big store shows as 12 pips, each a share of it)
+  const pips = Math.min(max, 12), on = Math.round((k / Math.max(1, max)) * pips);
+  return `<span class="pips" role="img" aria-label="${k} of ${max}"${st}>${Array.from({ length: pips }, (_, i) => `<i class="${i < on ? "on" : ""}"></i>`).join("")}</span>`;
+}
+
+/** A company site's level, how far it is to the next, and what holds it back. */
+function siteLevel(b: Building): string {
+  const P = b.plant;
+  if (!P || !b.placed || b.built < 1) return "";
+  const L = P.level ?? 1;
+  const mult = `×${LEVEL_MULT[L - 1]} output, jobs and trucks`;
+  if (L >= SITE_LEVELS) return `<h3 class="sub-h">Site level ${L} of ${SITE_LEVELS}</h3><p class="small muted">Fully grown: ${mult}.</p>`;
+  const k = Math.max(0, Math.min(1, (P.grow ?? 0) / GROW_NEED));
+  // (the reason it stalls is often the status line above already: no need to say it twice)
+  const why = !P.why ? "Growing: it works near capacity, ships its output and gets its inputs."
+    : P.why === b.problem ? "Not growing till that is fixed."
+    : `<span class="bad">Held back: ${P.why}.</span>`;
+  return `<h3 class="sub-h">Site level ${L} of ${SITE_LEVELS}</h3>
+    <dl class="facts"><dt>To level ${L + 1}</dt><dd><span class="bar site-grow"><i style="width:${Math.max(2, k * 100)}%"></i></span><span class="num">${Math.round(k * 100)}%</span></dd></dl>
+    <p class="small muted">${why} Now ${mult}; level ${L + 1} gives ×${LEVEL_MULT[L]}.</p>`;
 }
 
 const km = (m: number) => `${(m / 1000).toFixed(1)} km`;

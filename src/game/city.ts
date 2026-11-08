@@ -1,7 +1,7 @@
 import {
   BUILDING_TYPES, BULLDOZE_REFUND, START_TILES, TILE, ROAD_TYPES, SIGNAL_COST, SIM, isHighway, roadWidth, type RoadTypeId,
 } from "../config";
-import { add, dist, rectCorners, scale, sub, type V2 } from "../core/math";
+import { add, dist, rectCorners, rectDistance, scale, sub, type V2 } from "../core/math";
 import { mulberry32 } from "../core/noise";
 import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/network";
 import {
@@ -20,7 +20,7 @@ import { BLOCK, gridPt } from "./towns";
 import { F } from "../world/gen";
 import { Transit } from "./transit";
 import { Utilities } from "./utilities";
-import type { Placement } from "./buildings";
+import type { PlaceOpts, Placement } from "./buildings";
 import { CELL, DEPTH, ZoneMap, type Block, type Cell, type ZoneGroup, type ZoneId } from "./zones";
 
 interface UndoEntry {
@@ -119,7 +119,8 @@ export class Game {
     this.money = START_MONEY;
     const t = this.terrain;
     // (towns grow on any land: only the company's own buildings need owned tiles)
-    this.zones = new ZoneMap(this.net, { isWater: (p) => t.isWater(p), isMountain: (p) => t.isMountain(p), owned: () => true });
+    // (and never inside the fence of one of the company's sites)
+    this.zones = new ZoneMap(this.net, { isWater: (p) => t.isWater(p), isMountain: (p) => t.isMountain(p), owned: () => true, taken: (p) => this.inSite(p) });
     this.people = new Society(this);
     this.transit = new Transit(this);
     this.utilities = new Utilities(this);
@@ -144,6 +145,7 @@ export class Game {
       power: (b) => this.utilities.supplyOf(b),
       wanted: (b) => this.utilities.wanted(b),
       made: (p, n) => this.progress.onMade(p, n),
+      grew: (b, level) => { this.toast(`${BUILDING_TYPES[b.kind].name} grew to level ${level}: more output, jobs and trucks`); this.emit({ t: "buildings" }); },
     });
     this.world = {
       isWater: (p) => t.isWater(p),
@@ -391,7 +393,7 @@ export class Game {
   }
 
   private afterRoads(cs: ChangeSet) {
-    this.buildings.reattach();
+    for (const b of this.buildings.reattach()) this.toast(`${BUILDING_TYPES[b.kind].name} connected: its trucks can start`);
     this.transit.afterRoads();
     this.traffic.onNetworkChange(cs);
     this.zones.onNetworkChange(cs);
@@ -743,9 +745,9 @@ export class Game {
   // ---------------------------------------------------------------- buildings
 
   /** Where a placed building would go near p, and what it would cost and replace. */
-  placedPlan(kind: PlacedKind, p: V2): (Placement & { cost: number; deposit?: { name: string; share: number } }) | null {
+  placedPlan(kind: PlacedKind, p: V2, opts?: PlaceOpts): (Placement & { cost: number; deposit?: { name: string; share: number } }) | null {
     const world = { ...this.world, unlocked: (q: V2) => this.unlocked(q) };
-    const pl = this.buildings.placement(kind, p, world, (o) => !!o.zone);
+    const pl = this.buildings.placement(kind, p, world, (o) => !!o.zone, opts);
     if (!pl) return null;
     const D = PLACED[kind];
     const cost = D.cost;
@@ -783,8 +785,8 @@ export class Game {
   }
 
   /** Place a building (a power plant...). Zoned buildings in the way are cleared. */
-  place(kind: PlacedKind, p: V2): Building | null {
-    const pl = this.placedPlan(kind, p);
+  place(kind: PlacedKind, p: V2, opts?: PlaceOpts): Building | null {
+    const pl = this.placedPlan(kind, p, opts);
     if (!pl || !pl.ok) return null;
     const removed: Building[] = [];
     for (const id of pl.clears ?? []) {
@@ -819,6 +821,12 @@ export class Game {
     this.buildings.reattach();
     this.shopCache = null;
     this.candVersion = -1;
+  }
+
+  /** Is p inside the fence of one of the company's sites? */
+  inSite(p: V2): boolean {
+    for (const b of this.buildings.list) if (b.placed && rectDistance(p, b.c, b.hw, b.hd, b.rot) < 0.5) return true;
+    return false;
   }
 
   /** Zone cells under a building's lot. */
@@ -1280,7 +1288,8 @@ export class Game {
         for (const o of shops) if (dist(o.c, b.c) < 320) near++;
         lv += Math.min(12, near * 3);
         for (const o of ind) {
-          const r = BUILDING_TYPES[o.kind].pollution * 2, d = dist(o.c, b.c);
+          // (from the fence of a site, not its middle)
+          const r = BUILDING_TYPES[o.kind].pollution * 1.6, d = rectDistance(b.c, o.c, o.hw, o.hd, o.rot);
           if (d < r) lv -= 22 * (1 - d / r);
         }
       } else if (grp === "com") lv += Math.min(10, b.visits / Math.max(1, b.cap * 4));
@@ -1349,6 +1358,12 @@ export class Game {
     g.buildings.byId.clear();
     for (const d of data.buildings) {
       const b = d as Building;
+      // (saves from before sites grew: every plant starts at level 1)
+      if (b.plant) {
+        b.plant.level ??= 1;
+        b.plant.grow ??= 0;
+        b.plant.upAt ??= -1e9;
+      }
       g.buildings.insert({ ...b, access: null });
       for (const c of g.lotCells(b)) c.lot = b.id;
     }

@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { BUILDING_TYPES, type BuildingKind } from "../config";
+import type { BuildingKind } from "../config";
+import { SITE_MODELS } from "../game/sites";
 
 /** A Blender model flattened into one vertex-coloured geometry (one draw call per instanced kind). */
 export interface MergedModel {
@@ -20,10 +21,13 @@ export const BUILDING_MODELS: BuildingKind[] = [
   "ironmine", "coalmine", "quarry", "smelter", "cementworks",
 ];
 /**
- * Stand-ins for kinds whose own model isn't built yet: the generic mine and works, fitted to the kind's lot. A kind
- * here loads its own GLB when there is one.
+ * What industry sites are built from besides the kinds' own models: the shared modules (halls, silos, heaps, the
+ * truck yard...) and the plants of the later tiers, ready for their chains.
  */
-const FALLBACK: Partial<Record<BuildingKind, string>> = { ironmine: "mine", coalmine: "mine", quarry: "mine", smelter: "works", cementworks: "works" };
+export const SITE_PIECES: string[] = [
+  ...SITE_MODELS, "oilwell", "sandpit", "refinery", "glassworks", "furniture", "constructionplant", "coppermine",
+  "coppersmelter", "electronics", "machineworks",
+];
 export const VEHICLE_MODELS = ["car", "van", "truck", "tipper", "tanker", "flatbed", "bus"] as const;
 /** Street furniture, drawn on its own (not a lot). */
 export const PROP_MODELS = ["busstop"] as const;
@@ -33,51 +37,39 @@ export interface ModelSet {
   buildings: Map<BuildingKind, MergedModel>;
   vehicles: Map<VehicleKind, VehicleModel>;
   props: Map<string, MergedModel>;
+  /** Site modules and later-tier plants, by name (see SITE_PIECES). */
+  sites: Map<string, MergedModel>;
 }
 
 const base = import.meta.env.BASE_URL + "models/";
 
 export async function loadModels(onProgress?: (k: number) => void): Promise<ModelSet> {
   const loader = new GLTFLoader();
-  const all = [...BUILDING_MODELS, ...VEHICLE_MODELS, ...PROP_MODELS];
+  const all = [...BUILDING_MODELS, ...VEHICLE_MODELS, ...PROP_MODELS, ...SITE_PIECES];
   let done = 0;
   const load = (n: string) => loader.loadAsync(base + n + ".glb").then((g) => g.scene);
   const scenes = await Promise.all(
-    all.map((n) => {
-      const fb = FALLBACK[n as BuildingKind];
-      // (a missing file comes back as the app's HTML page, which the loader refuses)
-      const sc = fb ? load(n).catch(() => load(fb).then((s) => fitLot(s, n as BuildingKind))) : load(n);
-      return sc.then((s) => {
+    all.map((n) =>
+      load(n).then((s) => {
         done++;
         onProgress?.(done / all.length);
         return s;
-      });
-    }),
+      }),
+    ),
   );
   const buildings = new Map<BuildingKind, MergedModel>();
   const vehicles = new Map<VehicleKind, VehicleModel>();
   const props = new Map<string, MergedModel>();
+  const sites = new Map<string, MergedModel>();
   all.forEach((n, i) => {
     const sc = scenes[i];
     sc.updateMatrixWorld(true);
     if ((VEHICLE_MODELS as readonly string[]).includes(n)) vehicles.set(n as VehicleKind, splitVehicle(sc));
     else if ((PROP_MODELS as readonly string[]).includes(n)) props.set(n, mergeModel(sc));
+    else if (SITE_PIECES.includes(n)) sites.set(n, mergeModel(sc));
     else buildings.set(n as BuildingKind, mergeModel(sc));
   });
-  return { buildings, vehicles, props };
-}
-
-/** Scale a stand-in model to fill its kind's lot (footprint w x d, keeping its proportions). */
-function fitLot(sc: THREE.Object3D, kind: BuildingKind): THREE.Object3D {
-  sc.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(sc);
-  const size = box.getSize(new THREE.Vector3());
-  const T = BUILDING_TYPES[kind];
-  const k = Math.min(T.w / Math.max(1e-3, size.x), T.d / Math.max(1e-3, size.z)) * 0.92;
-  const root = new THREE.Group();
-  root.scale.setScalar(k);
-  root.add(sc);
-  return root;
+  return { buildings, vehicles, props, sites };
 }
 
 function prepGeometry(m: THREE.Mesh, color: THREE.Color | null): THREE.BufferGeometry {
@@ -123,7 +115,6 @@ function mergeModel(sc: THREE.Object3D): MergedModel {
       } else geos.push(prepGeometry(m, meshColor(m)));
     } else if (/^park_?\d+/i.test(o.name)) {
       // empty: its -z (Blender +Y) is where the car's nose points; car models face +z
-      // (without scale: a stand-in model fitted to its lot keeps full-size cars in its bays)
       const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
       o.matrixWorld.decompose(pos, q, sc);
       bays.push(new THREE.Matrix4().compose(pos, q, new THREE.Vector3(1, 1, 1)).multiply(flip));

@@ -13,7 +13,7 @@ import { PLANTS, type PlantKind } from "../src/game/industry";
 import { MILESTONES, OPEN_AT_ONCE, tilePrice } from "../src/game/progression";
 import { F } from "../src/world/gen";
 import { BUILDING_TYPES } from "../src/config";
-import { dist, v2, type V2 } from "../src/core/math";
+import { add, dist, norm, scale, sub, v2, type V2 } from "../src/core/math";
 import { layRoad } from "./helpers";
 import type { Building } from "../src/game/buildings";
 
@@ -80,7 +80,7 @@ function play() {
     if (price + PLANTS[kind].cost > g.money - RESERVE) return false;
     // (a lot only partly on a deposit isn't worth the land)
     const D = PLANTS[kind].deposit;
-    if (D && g.industry.depositShare(D.field, p, 0, T.w / 2, T.d / 2) < 0.7) return false;
+    if (D && g.industry.depositShare(D.field, p, 0, T.w / 2, T.d / 2) < 0.5) return false;
     for (const key of need) {
       const [i, j] = key.split(",").map(Number);
       if (!g.unlockTile(i, j)) return false;
@@ -108,8 +108,6 @@ function play() {
     }
     return best;
   };
-  /** Past the deposit by `over` m, on the line from a. */
-  const beyond = (a: V2, d: V2, over = 90) => { const L = dist(a, d); return v2(d.x + (d.x - a.x) / L * over, d.y + (d.y - a.y) / L * over); };
   const has = (k: PlantKind) => g.buildings.list.some((b) => b.kind === k);
   const count = (k: PlantKind) => g.buildings.list.filter((b) => b.kind === k).length;
 
@@ -133,25 +131,58 @@ function play() {
   const km1 = (l: V2[]) => (l.length ? `${(dist(l[0], A.c) / 1000).toFixed(1)} km` : "none");
   say(`deposits from ${A.name}: soil ${(dist(soil, A.c) / 1000).toFixed(1)} km, forest ${(dist(wood, A.c) / 1000).toFixed(1)} km, iron ore ${km1(tier2.ore)}, coal ${km1(tier2.coal)}, limestone ${km1(tier2.lime)}`);
   const blocked = new Set<string>();
+  /** Where a new road to q starts: the nearest of the company's road ends and the towns' street ends. */
+  const startFor = (q: V2): V2 =>
+    [edge(A, q), ...(B ? [edge(B, q)] : []), ...Object.values(roads).flat()].sort((x, y) => dist(x, q) - dist(y, q))[0];
   /**
-   * A road out to a deposit: from the nearest of the company's road ends or town edges, to the nearest spot on it
-   * that a street can reach (round rivers, or to another patch of it).
+   * A site on a deposit, the way a player places one: the plot near `near` with the most of the field under it,
+   * standing free with its gate toward the nearest road end, then a street from there to the gate. (With no street
+   * through, the site is taken back and the next plot tried.) "money": not for now.
    */
-  const reach = (key: "ore" | "coal" | "lime", name: string): boolean => {
-    if (roads[key]) return true;
-    if (blocked.has(key) || g.money < RESERVE + 15000) return false;
+  const site = (kind: PlantKind, field: number, near: V2, key?: string, R = 700): Building | null | "money" => {
+    if (PLANTS[kind].cost > g.money - RESERVE) return "money";
+    const T = BUILDING_TYPES[kind];
+    const plots: { q: V2; s: number }[] = [];
+    for (let x = -R; x <= R; x += 50) for (let y = -R; y <= R; y += 50) {
+      const q = v2(near.x + x, near.y + y);
+      if (Math.hypot(x, y) > R || !g.world.inBounds(q) || !g.terrain.has(field, q)) continue;
+      const sh = g.industry.depositShare(field, q, 0, T.w / 2, T.d / 2);
+      if (sh >= 0.5) plots.push({ q, s: sh - 0.3 * dist(q, near) / R });
+    }
+    plots.sort((x, y) => y.s - x.s);
+    let tries = 0;
+    for (const { q } of plots) {
+      if (tries >= 10) break;
+      const a = startFor(q);
+      const opts = { down: norm(sub(a, q)) };
+      let pl = g.placedPlan(kind, q, opts);
+      if (pl && !pl.ok && pl.reason?.startsWith("Not your land") && buyLand(kind, q)) pl = g.placedPlan(kind, q, opts);
+      if (!pl?.ok) continue;
+      tries++;
+      const b = g.place(kind, q, opts)!;
+      const done = () => {
+        say(`place ${kind}${b.plant!.yld < 1 ? ` (${Math.round(b.plant!.yld * 100)}% on its deposit)` : ""}, ${(dist(b.c, A.c) / 1000).toFixed(1)} km from ${A.name} · $${Math.round(g.money).toLocaleString("en-US")} left`);
+        return b;
+      };
+      if (b.access) return done();
+      // a street to 4 m past the kerb in front of its gate
+      const e = add(b.front, scale(norm(sub(b.front, b.c)), 4));
+      const r = road(`to the ${T.name.toLowerCase()}`, a, e);
+      if (r !== true) { g.undo(); if (r === "money") return "money"; continue; }
+      if (key) { roads[key] = [a, e]; paths[key] = lastLegs; }
+      return done();
+    }
+    return null;
+  };
+  /** A tier 2 mine on the nearest patch of its deposit a street reaches. */
+  const mine = (key: "ore" | "coal" | "lime", kind: PlantKind, field: number, name: string) => {
+    if (has(kind) || blocked.has(key) || g.money < RESERVE + PLANTS[kind].cost + 8000) return;
     for (const d of tier2[key]) {
-      const starts = [edge(A, d), ...(B ? [edge(B, d)] : []), ...Object.values(roads).map((r) => r[1])].sort((x, y) => dist(x, d) - dist(y, d)).slice(0, 3);
-      for (const a of starts) {
-        const e = beyond(a, d);
-        const r = road(`to the ${name}`, a, e);
-        if (r === "money") return false;
-        if (r === true) { roads[key] = [a, e]; paths[key] = lastLegs; return true; }
-      }
+      const r = site(kind, field, d, key, 500);
+      if (r) return;
     }
     say(`no way through to the ${name}`);
     blocked.add(key);
-    return false;
   };
 
   const roads: Record<string, [V2, V2]> = {};
@@ -163,19 +194,17 @@ function play() {
     const u = g.progress.unlocked.buildings;
     // tier 1: food first (the hamlet's only need), a second town to sell to, then timber as the hamlet nears
     // Village size (the goals and tips lead a player the same way)
-    if (!roads.farm) { const a = edge(A, soil); if (road("to the farmland", a, beyond(a, soil)) === true) roads.farm = [a, beyond(a, soil)]; }
-    if (roads.farm && count("farm") < 1) place("farm", ...roads.farm, 0.9, 0.5);
+    if (count("farm") < 1) site("farm", F.fert, soil, "farm");
     if (roads.farm && has("farm") && !has("foodplant")) place("foodplant", ...roads.farm, 0.1, 0.5);
     const timber = Math.max(...g.towns.list.map((t) => t.pop)) >= 200;
-    if (has("foodplant") && timber && !roads.wood) { const a = edge(A, wood); if (road("to the forest", a, beyond(a, wood)) === true) roads.wood = [a, beyond(a, wood)]; }
-    if (roads.wood && !has("loggingcamp")) place("loggingcamp", ...roads.wood, 0.92, 0.5);
+    if (has("foodplant") && timber && !has("loggingcamp")) site("loggingcamp", F.forest, wood, "wood");
     if (has("loggingcamp") && !has("sawmill")) place("sawmill", ...roads.wood, 0.15, 0.6);
     // a second farm with the second town, and more (one every two days) while the towns go short of food
-    if (B && count("farm") < 2) place("farm", ...roads.farm!, 0.9, 0.4);
+    if (B && count("farm") < 2) site("farm", F.fert, soil);
     const hungry = g.towns.list.some((t) => t.pop > 150 && (t.supply.food ?? 0) < 0.7);
     if (hungry && count("farm") >= 2 && count("farm") < 2 * count("foodplant") && g.time - lastFarm > 2 * DAY && g.money > PLANTS.farm.cost + RESERVE) {
       lastFarm = g.time;
-      place("farm", ...roads.farm!, 0.95, 0.15);
+      site("farm", F.fert, soil, undefined, 1200);
     }
     // a second town, down the road, once there is money for it
     if (has("foodplant") && !B && g.money > TOWN_COST + RESERVE + 7000 && g.townSlots > 1) {
@@ -205,14 +234,11 @@ function play() {
       }
       return null;
     };
-    if (u.has("ironmine") && has("sawmill")) reach("ore", "iron ore");
-    if (roads.ore && !has("ironmine")) place("ironmine", ...roads.ore, 0.99, 0.8);
-    if (u.has("coalmine") && has("ironmine")) reach("coal", "coal");
-    if (roads.coal && !has("coalmine")) place("coalmine", ...roads.coal, 0.99, 0.8);
+    if (u.has("ironmine") && has("sawmill")) mine("ore", "ironmine", F.ore, "iron ore");
+    if (u.has("coalmine") && has("ironmine")) mine("coal", "coalmine", F.coal, "coal");
     if (u.has("coalplant") && has("coalmine") && !has("coalplant")) hub("coalplant");
     if (u.has("smelter") && has("coalmine") && !has("smelter")) hub("smelter");
-    if (u.has("quarry") && has("smelter")) reach("lime", "limestone");
-    if (roads.lime && !has("quarry")) place("quarry", ...roads.lime, 0.99, 0.8);
+    if (u.has("quarry") && has("smelter")) mine("lime", "quarry", F.lime, "limestone");
     if (u.has("cementworks") && has("quarry") && !has("cementworks")) hub("cementworks");
   };
 

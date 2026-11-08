@@ -8,6 +8,10 @@ import {
   type CurveMode, type Plan, type RoundaboutSize, type Snap, type SnapOpts,
 } from "./roads/planner";
 import { Buildings3D } from "./render/buildings3d";
+import { GATE_GAP, siteFrame, siteToWorld } from "./game/sites";
+
+/** How far outside a waiting site's gate the road tool snaps a road's end (m): clear of the fence, well in reach. */
+const GATE_SNAP = 7;
 import { ZONES } from "./game/zones";
 import { MIN_DEPOSIT, PLANTS, PRODUCTS, UNPOWERED, isPlantKind, type Product } from "./game/industry";
 import { TOWN_COST, TOWN_SPACING } from "./game/settlements";
@@ -51,6 +55,8 @@ export interface ToolState {
   bdzLevel: number | null; // bulldozer elevation filter (null = all)
   reverse: boolean; // upgrade tool flips one-ways instead
   placed: PlacedKind; // building being placed
+  /** turn (radians) given to the building being placed with , and . (0: it faces the nearest road) */
+  placeTurn: number;
   transitMode: TransitMode;
 }
 
@@ -74,7 +80,7 @@ export class App {
   st: ToolState = {
     tool: "inspect", roadType: "street", mode: "straight", level: 0, rbSize: 1, parallel: false, parOffset: null,
     snapOff: { geometry: false, guides: false, netSide: false }, snapLength: true, angleLock: true, bdzLevel: null, reverse: false,
-    placed: "farm", transitMode: "stop",
+    placed: "farm", placeTurn: 0, transitMode: "stop",
   };
   /** stops clicked so far for the bus line being drawn */
   lineDraft: number[] = [];
@@ -184,7 +190,7 @@ export class App {
     this.labels.set([]);
     this.labelKey = "";
     this.vehicles = new Vehicles3D(this.models);
-    this.buildings3d = new Buildings3D(this.models);
+    this.buildings3d = new Buildings3D(this.models, () => this.game.time);
     this.vehicles.lotOf = (id) => { const b = g.buildings.byId.get(id); return b ? this.buildings3d.lotWay(b) : null; };
     this.transit3d = new Transit3D(this.models.props.get("busstop"));
     this.worldRoot.add(this.terrain3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group);
@@ -455,9 +461,24 @@ export class App {
     else if (k === "c") this.hud?.toggleWin("city");
     else if (k === "x") this.hud?.toggleWin("transport");
     else if (k === "[" || k === "]") this.nudgeParallel(k === "]" ? 1 : -1);
+    else if ((k === "," || k === ".") && this.st.tool === "place") this.turnPlaced(k === "." ? 1 : -1);
     else if (k === "`" || e.code === "Backquote") this.toggleUi();
     else if (k === "F5") { e.preventDefault(); this.quickSave(); }
     else if (k === "F9") { e.preventDefault(); this.quickLoad(); }
+  }
+
+  /** Turn the building being placed by 15 degrees (, anticlockwise, . clockwise on screen). */
+  turnPlaced(dir: 1 | -1) {
+    const step = Math.PI / 12;
+    let t = Math.round((this.st.placeTurn + dir * step) / step) * step;
+    if (Math.abs(Math.abs(t) - 2 * Math.PI) < 1e-6) t = 0;
+    this.st.placeTurn = t;
+    this.dirtyPreview = true;
+  }
+
+  /** How the building being placed is turned, and where the bottom of the screen points (a free site faces it). */
+  private placeOpts() {
+    return { turn: this.st.placeTurn, down: { x: -Math.sin(this.view.rot), y: Math.cos(this.view.rot) } };
   }
 
   /** Parallel road spacing for the current type. */
@@ -529,7 +550,19 @@ export class App {
       angleStep: this.st.angleLock !== this.keys.has("Shift"),
       off: this.st.snapOff,
       lengthStep: this.st.snapLength ? 8 : 0,
+      gates: this.waitingGates(),
     };
+  }
+
+  /** Just outside the gates of the company's sites that have no road yet (a road ending there joins them). */
+  private waitingGates(): V2[] {
+    const out: V2[] = [];
+    for (const b of this.game.buildings.list) {
+      if (!b.placed || b.access) continue;
+      const f = siteFrame(b.c, b.rot, b.side, b.hd);
+      out.push({ x: f.gate.x - f.into.x * GATE_SNAP, y: f.gate.y - f.into.y * GATE_SNAP });
+    }
+    return out;
   }
 
   /** A free point (bend handle, grid side) with guides and angle snapping but never stuck onto a road. */
@@ -651,10 +684,10 @@ export class App {
     if (t === "transit") { this.transitClick(); return; }
     if (t === "place") {
       const k = this.st.placed;
-      const pl = g.placedPlan(k, c);
-      if (!pl) { this.reject("Place it beside a street"); return; }
+      const pl = g.placedPlan(k, c, this.placeOpts());
+      if (!pl) { this.reject("Can't build here"); return; }
       if (!pl.ok) { this.reject(pl.reason ?? "Can't build here"); return; }
-      const b = g.place(k, c);
+      const b = g.place(k, c, this.placeOpts());
       if (!b) { this.reject("Can't build here"); return; }
       this.hud?.sound("build");
       this.hud?.toast(`${BUILDING_TYPES[k].name} built for ${formatMoney(pl.cost)}`);
@@ -1104,20 +1137,23 @@ export class App {
       this.transitPreview(pv, chips);
     } else if (t === "place") {
       const k = this.st.placed;
-      const pl = g.placedPlan(k, c);
+      const pl = g.placedPlan(k, c, this.placeOpts());
       const T = BUILDING_TYPES[k];
       chips.push({ text: T.name, kind: "info" });
       if (!pl) {
-        chips.push({ text: "Place it beside a street", kind: "info" });
+        chips.push({ text: "Can't build here", kind: "error" });
       } else {
         const corners = rectCorners(pl.c, T.w / 2, T.d / 2, pl.rot);
-        const gh = this.buildings3d.ghost(k, pl.c, pl.rot, pl.side);
-        if (gh) pv.model(gh.geo, gh.m, pl.ok);
-        pv.footprint(corners, pl.ok ? 0x34c25a : 0xe5484d, !!gh);
+        const gh = this.buildings3d.ghost(k, pl.c, pl.rot, pl.side, g.buildings.nextId);
+        for (const p of gh) pv.model(p.geo, p.m, pl.ok);
+        pv.footprint(corners, pl.ok ? 0x34c25a : 0xe5484d, gh.length > 0);
+        this.siteOutline(pv, pl.c, pl.rot, pl.side, T.w / 2, T.d / 2, pl.ok);
         for (const id of pl.clears ?? []) {
           const o = g.buildings.byId.get(id);
-          if (o) pv.footprint(rectCorners(o.c, o.hw, o.hd, o.rot), 0xf2a33a, !!gh);
+          if (o) pv.footprint(rectCorners(o.c, o.hw, o.hd, o.rot), 0xf2a33a, gh.length > 0);
         }
+        if (pl.free) chips.push({ text: "No road yet: draw one to its gate", kind: "info" });
+        else if (pl.faces) chips.push({ text: `Faces a ${pl.faces.toLowerCase()}`, kind: "info" });
         // (the deposit share; a lot refused for too little of it gives the share in its reason instead)
         this.powerPreview(pv, chips, k, pl.c, pl.access?.seg);
         if (pl.deposit && pl.deposit.share >= MIN_DEPOSIT) chips.push({ text: `${pl.deposit.name[0].toUpperCase()}${pl.deposit.name.slice(1)} ${Math.round(pl.deposit.share * 100)}%`, kind: "info" });
@@ -1136,6 +1172,19 @@ export class App {
       if (b) chips.push({ text: b.zone ? `${ZONES[b.zone].short} · ${b.town !== undefined ? g.towns.byId.get(b.town)?.name ?? "" : "level " + b.level}` : BUILDING_TYPES[b.kind].name, kind: "info" });
     }
     this.hud?.chips(chips.length ? this.cursorPx : null, chips);
+  }
+
+  /** A site's fence (open at the gate) and an arrow out of its gate, for the placement preview. */
+  private siteOutline(pv: Preview3D, c: V2, rot: number, side: 1 | -1, hw: number, hd: number, ok: boolean) {
+    const f = siteFrame(c, rot, side, hd);
+    const W = (x: number, y: number) => siteToWorld(f, x, y);
+    const g = GATE_GAP / 2, d = hd * 2;
+    const line = ok ? 0xf4f4ee : 0xffb4b0;
+    pv.path([W(-g, 0), W(-hw, 0), W(-hw, d), W(hw, d), W(hw, 0), W(g, 0)], line, 1.4);
+    // the arrow: out through the gate, the way its road has to come
+    const tip = W(0, -26), base = W(0, 10);
+    pv.path([base, tip], 0xffd34a, 3.2);
+    pv.path([W(-7, -17), tip, W(7, -17)], 0xffd34a, 3.2);
   }
 
   frame = () => {
