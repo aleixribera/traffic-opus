@@ -111,6 +111,9 @@ export class TownSystem {
   private zonedAt = -1;
   /** each town's size when it was last zoned (zoning changes with size) */
   private zonedSize = new Map<number, number>();
+  /** the towns as zone() last saw them, and a number for each new state (see Cell.want) */
+  private wantKey = "";
+  private wantEpoch = 0;
 
   constructor(private g: Game) {}
 
@@ -365,13 +368,21 @@ export class TownSystem {
     const z = this.g.zones;
     const resized = this.list.some((t) => this.zonedSize.get(t.id) !== t.size);
     if (this.zonedAt === z.version && !resized) return;
+    // (what a cell's town wants for it is kept on the cell until a town's reach, size, hall or square changes)
+    const key = this.list.map((t) => `${t.id}:${t.reach}:${t.size}:${t.hall ? 1 : 0}:${t.sq}`).join();
+    if (key !== this.wantKey) { this.wantKey = key; this.wantEpoch++; }
+    const ep = this.wantEpoch;
     const paint = new Map<ZoneId, Cell[]>();
     z.eachCell((c) => {
       if (!c.ok || c.lot) return;
-      const t = this.townAt(c.c);
-      if (!t) return;
-      const want = this.zoneFor(t, c, t.size);
-      if (want === c.zone) return;
+      let want = c.want;
+      if (c.ze !== ep) {
+        const t = this.townAt(c.c);
+        want = t ? this.zoneFor(t, c, t.size) : undefined; // (undefined: no town's land)
+        c.want = want;
+        c.ze = ep;
+      }
+      if (want === undefined || want === c.zone) return;
       // (built-up land is rebuilt a lot at a time, by redevelopment; empty cells follow the town as it grows)
       let L = paint.get(want ?? ("" as ZoneId));
       if (!L) paint.set(want ?? ("" as ZoneId), (L = []));

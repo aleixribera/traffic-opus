@@ -53,6 +53,10 @@ export interface Cell {
   fe?: number;
   /** cached: clear of every road and junction, until a road edit near it */
   road?: boolean;
+  /** cached by the towns' zoning: the zone its town wants it to have (undefined: no town's), while the towns stand as
+   * they did in epoch `ze` */
+  want?: ZoneId | null;
+  ze?: number;
 }
 
 export interface Block {

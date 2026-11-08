@@ -1,7 +1,7 @@
 import {
   BUILDING_TYPES, BULLDOZE_REFUND, START_TILES, TILE, ROAD_TYPES, SIGNAL_COST, SIM, isHighway, roadWidth, type RoadTypeId,
 } from "../config";
-import { add, dist, rectCorners, rectDistance, scale, sub, type V2 } from "../core/math";
+import { add, dist, dist2, rectCorners, rectDistance, scale, sub, type V2 } from "../core/math";
 import { mulberry32 } from "../core/noise";
 import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/network";
 import {
@@ -92,6 +92,7 @@ export class Game {
   private redoStack: UndoEntry[] = [];
   private listeners: ((e: GameEvent) => void)[] = [];
   private tickT = 0;
+  private lvPart = 0; // which eighth of the buildings the next tick values (see landValue)
   private hourT = 0;
   /** the day number the shops and towns last closed their books on */
   private dayN = -1;
@@ -412,9 +413,39 @@ export class Game {
     for (const b of this.buildings.reattach()) this.toast(`${BUILDING_TYPES[b.kind].name} connected: its trucks can start`);
     this.transit.afterRoads();
     this.traffic.onNetworkChange(cs);
-    this.zones.onNetworkChange(cs);
+    this.rezone(cs);
     this.emit({ t: "roads", cs });
     this.emit({ t: "zones" });
+  }
+
+  /** The zone map after a road edit, and the lots of the buildings whose street was laid out again. */
+  private rezone(cs: ChangeSet) {
+    this.zones.onNetworkChange(cs);
+    this.refreshLots();
+  }
+
+  /**
+   * A block is laid out afresh when its street changes shape (a junction splits it, a bend moves), and its columns
+   * shift: each building's lot is read again off the cells it stands on (redevelopment works along a block by column).
+   */
+  private refreshLots() {
+    for (const b of this.buildings.list) {
+      const L = b.lot;
+      if (!L) continue;
+      const blk = this.zones.blocks.get(L.block);
+      if (blk && L.col0 + L.w <= blk.cols && blk.cells[L.col0 * DEPTH].lot === b.id && blk.cells[(L.col0 + L.w - 1) * DEPTH].lot === b.id) continue;
+      // its front cells, on the block most of them are on
+      const span = new Map<Block, [number, number, number]>();
+      for (const c of this.lotCells(b)) {
+        if (c.lot !== b.id || c.row !== 0) continue;
+        const s = span.get(c.block);
+        if (s) { s[0] = Math.min(s[0], c.col); s[1] = Math.max(s[1], c.col + 1); s[2]++; } else span.set(c.block, [c.col, c.col + 1, 1]);
+      }
+      let best: Block | null = null, bs: [number, number, number] = [0, 0, 0];
+      for (const [k, s] of span) if (s[2] > bs[2]) { best = k; bs = s; }
+      // (none left: its land was cut from under it; it stands, but no longer counts as on a block)
+      b.lot = best ? { block: best.key, col0: bs[0], w: bs[1] - bs[0], d: L.d } : undefined;
+    }
   }
 
   private pushUndo(e: UndoEntry) {
@@ -523,7 +554,7 @@ export class Game {
           const cs = this.net.rebuild();
           this.midRebuilds.push(cs);
           this.traffic.onNetworkChange(cs);
-          this.zones.onNetworkChange(cs);
+          this.rezone(cs);
           this.emit({ t: "roads", cs });
         }
         // a slip lane redrawn longer: the old one goes first
@@ -536,7 +567,7 @@ export class Game {
             this.midRebuilds.push(cs);
             this.traffic.onNetworkChange(cs);
             // (the zone map too: each rebuild hands over only what changed since the last)
-            this.zones.onNetworkChange(cs);
+            this.rezone(cs);
             this.emit({ t: "roads", cs });
           }
         }
@@ -566,7 +597,7 @@ export class Game {
           const cs = this.net.rebuild();
           this.midRebuilds.push(cs);
           this.traffic.onNetworkChange(cs);
-          this.zones.onNetworkChange(cs);
+          this.rezone(cs);
           this.emit({ t: "roads", cs });
         }
       }
@@ -1304,6 +1335,8 @@ export class Game {
     this.utilities.tick(span);
     this.transit.tick();
     for (const b of [...this.buildings.list]) this.stepBuilding(b, span);
+    // land value: an eighth of the buildings a tick, so each is valued once an hour without a big town's whole lot at once
+    this.landValue((this.lvPart = (this.lvPart + 1) % 8));
     this.checkMilestones();
     if (changed) this.emit({ t: "buildings" });
   }
@@ -1356,7 +1389,8 @@ export class Game {
         b.upT = 0;
         const t = ZONE_LOTS[b.zone].find((x) => x.model === b.kind) ?? ZONE_LOTS[b.zone][0];
         const d = b.lot?.d ?? t.d;
-        b.cap = capacity(b.zone, b.lot?.w ?? t.w, Math.min(d, t.d) + Math.max(0, d - t.d) * 0.5, b.level, b.tall);
+        // (its own width: the columns of its lot shift when its street is laid out again)
+        b.cap = capacity(b.zone, Math.round((b.hw * 2) / CELL), Math.min(d, t.d) + Math.max(0, d - t.d) * 0.5, b.level, b.tall);
         this.emit({ t: "buildings" });
       }
     } else b.upT = Math.max(0, b.upT - span);
@@ -1420,16 +1454,26 @@ export class Game {
     this.history.push({ money: this.money, pop: st.population, jobs });
     this.towns.hourly();
     if (this.history.length > 72) this.history.shift();
-    this.landValue();
     for (const [id, t] of this.noRouteAt) if (this.time - t > HOUR * 3) this.noRouteAt.delete(id);
     this.emit({ t: "money" });
   }
 
-  /** Land value from road access and nearby shops, minus the company's dirty plants nearby. */
-  private landValue() {
-    const list = this.buildings.list.filter((b) => b.zone && !b.abandoned);
-    const ind = this.buildings.list.filter((b) => b.plant && !b.plant.site && BUILDING_TYPES[b.kind].pollution > 0);
-    const shops = list.filter((b) => b.zone && ZONE_GROUP[b.zone] === "com");
+  /** Land value from road access and nearby shops, minus the company's dirty plants nearby (the buildings whose id is `part` mod 8). */
+  private landValue(part: number) {
+    const all = this.buildings.list.filter((b) => b.zone && !b.abandoned);
+    const list = all.filter((b) => b.id % 8 === part);
+    // dirty plants, with how far from their middle they can reach (a home farther off is untouched: no need to measure)
+    const ind = this.buildings.list.filter((b) => b.plant && !b.plant.site && BUILDING_TYPES[b.kind].pollution > 0).map((o) => {
+      const r = BUILDING_TYPES[o.kind].pollution * 1.6, R = r + Math.hypot(o.hw, o.hd);
+      return { o, r, R2: R * R };
+    });
+    // shops in 320 m squares (a home looks only in the nine round it)
+    const R = 320, cellOf = (x: number, y: number) => (Math.floor(x / R) + 4096) * 8192 + Math.floor(y / R) + 4096;
+    const shops = new Map<number, Building[]>();
+    for (const b of all) if (ZONE_GROUP[b.zone!] === "com") {
+      const k = cellOf(b.c.x, b.c.y), L = shops.get(k);
+      if (L) L.push(b); else shops.set(k, [b]);
+    }
     const pop = this.people.stats.population;
     for (const b of list) {
       let lv = 18 + Math.min(12, pop / 600);
@@ -1439,12 +1483,17 @@ export class Game {
       }
       const grp = ZONE_GROUP[b.zone!];
       if (grp === "res") {
+        // (four shops near is as good as it gets)
         let near = 0;
-        for (const o of shops) if (dist(o.c, b.c) < 320) near++;
+        const k0 = cellOf(b.c.x, b.c.y);
+        for (let i = -1; i <= 1 && near < 4; i++) for (let j = -1; j <= 1 && near < 4; j++) {
+          for (const o of shops.get(k0 + i * 8192 + j) ?? []) if (dist(o.c, b.c) < R && ++near >= 4) break;
+        }
         lv += Math.min(12, near * 3);
-        for (const o of ind) {
+        for (const { o, r, R2 } of ind) {
+          if (dist2(b.c, o.c) >= R2) continue;
           // (from the fence of a site, not its middle)
-          const r = BUILDING_TYPES[o.kind].pollution * 1.6, d = rectDistance(b.c, o.c, o.hw, o.hd, o.rot);
+          const d = rectDistance(b.c, o.c, o.hw, o.hd, o.rot);
           if (d < r) lv -= 22 * (1 - d / r);
         }
       } else if (grp === "com") lv += Math.min(10, b.visits / Math.max(1, b.cap * 4));
@@ -1525,6 +1574,7 @@ export class Game {
     }
     g.buildings.nextId = data.nextBuilding;
     g.buildings.reattach();
+    g.refreshLots();
     // (saves from before shops kept daily books: a day's custom from how busy they were)
     for (const b of g.shops) if (b.custDay === undefined) b.custDay = Math.round(b.visits * 4);
     g.people.load(data.people);

@@ -6,6 +6,7 @@ import { ringsNear } from "../roads/planner";
 import { dkey } from "../sim/router";
 import type { Traffic } from "../sim/traffic";
 import { PAL } from "./palette";
+import { MeshBatch } from "./batch";
 
 const LIFT = 0.06;
 const DECK = 0.9;
@@ -143,14 +144,55 @@ vec3 flowTint(float r) {
 interface SegMeshes {
   surface: THREE.Mesh;
   extra: THREE.Object3D[];
-  flow: THREE.BufferAttribute;
+}
+
+/**
+ * Trees as seen from above: flat round crowns, a darker rim and a lit side, each throwing a soft shadow; one instanced
+ * quad (twice the crown across) per tree, scaled to its crown. Street trees, and the trees on town squares.
+ */
+export function makeTreeMesh(n: number): THREE.InstancedMesh {
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, depthWrite: false });
+  const uni = { uTree: { value: new THREE.Color(PAL.tree) }, uTreeLight: { value: new THREE.Color(PAL.treeLight) } };
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, uni);
+    sh.vertexShader = sh.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec2 vTq;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvTq = position.xz * 2.0;");
+    sh.fragmentShader = sh.fragmentShader
+      .replace("#include <common>", "#include <common>\nuniform vec3 uTree; uniform vec3 uTreeLight;\nvarying vec2 vTq;")
+      .replace(
+        "#include <color_fragment>",
+        `#include <color_fragment>
+{
+  // a round crown lit from the upper left, and its soft shadow thrown down-right on the ground
+  float d = length(vTq);
+  float aa = fwidth(d) + 1e-4;
+  float crown = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, d);
+  float shadow = (1.0 - smoothstep(0.7, 1.15, length(vTq - vec2(0.48, 0.7)))) * 0.45;
+  if (crown <= 0.0 && shadow <= 0.01) discard;
+  float lit = 1.0 - smoothstep(0.0, 1.3, length(vTq + vec2(0.35, 0.35)));
+  vec3 c = mix(uTree * 0.8, uTreeLight, lit);
+  c *= mix(1.0, 0.82, smoothstep(0.78, 0.98, d));
+  diffuseColor.rgb *= c * crown;
+  diffuseColor.a = max(crown, shadow);
+}`,
+      );
+  };
+  // twice the crown's size, so the shadow beside it fits on the same quad
+  const m = new THREE.InstancedMesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2), mat, Math.max(1, n));
+  m.count = 0;
+  m.frustumCulled = false; // spread over the whole map; bounds would go stale
+  m.receiveShadow = true;
+  return m;
 }
 
 export class Roads3D {
   readonly group = new THREE.Group();
   private segs = new Map<number, SegMeshes>();
   private nodes = new Map<number, THREE.Object3D[]>();
-  private bendFlow = new Map<number, { flow: THREE.BufferAttribute; k1: number; k2: number }>(); // bend node -> overlay tint source
+  private bendFlow = new Map<number, { surface: THREE.Mesh; k1: number; k2: number }>(); // bend node -> overlay tint source
+  /** every road and junction mesh, drawn merged by material a square of map at a time */
+  private batch = new MeshBatch();
   readonly surface = makeRoadMaterial();
   private ringSurface = makeRoadMaterial({ arrows: false }); // roundabout arcs and bends: direction is obvious, chevrons only clip at the joins
   private plain = makeRoadMaterial({ markings: false });
@@ -201,44 +243,12 @@ export class Roads3D {
     this.lights.count = 0;
     this.lights.renderOrder = 3;
     this.lights.frustumCulled = false; // instances move around the whole map; bounds would go stale
-    this.trees = this.makeTrees(0);
-    this.group.add(this.lights, this.islands, this.trees);
+    this.trees = makeTreeMesh(0);
+    this.group.add(this.lights, this.islands, this.trees, this.batch.group);
   }
 
-  private makeTrees(n: number): THREE.InstancedMesh {
-    const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, depthWrite: false });
-    const uni = { uTree: { value: new THREE.Color(PAL.tree) }, uTreeLight: { value: new THREE.Color(PAL.treeLight) } };
-    mat.onBeforeCompile = (sh) => {
-      Object.assign(sh.uniforms, uni);
-      sh.vertexShader = sh.vertexShader
-        .replace("#include <common>", "#include <common>\nvarying vec2 vTq;")
-        .replace("#include <begin_vertex>", "#include <begin_vertex>\nvTq = position.xz * 2.0;");
-      sh.fragmentShader = sh.fragmentShader
-        .replace("#include <common>", "#include <common>\nuniform vec3 uTree; uniform vec3 uTreeLight;\nvarying vec2 vTq;")
-        .replace(
-          "#include <color_fragment>",
-          `#include <color_fragment>
-{
-  // a round crown lit from the upper left, and its soft shadow thrown down-right on the ground
-  float d = length(vTq);
-  float aa = fwidth(d) + 1e-4;
-  float crown = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, d);
-  float shadow = (1.0 - smoothstep(0.7, 1.15, length(vTq - vec2(0.48, 0.7)))) * 0.45;
-  if (crown <= 0.0 && shadow <= 0.01) discard;
-  float lit = 1.0 - smoothstep(0.0, 1.3, length(vTq + vec2(0.35, 0.35)));
-  vec3 c = mix(uTree * 0.8, uTreeLight, lit);
-  c *= mix(1.0, 0.82, smoothstep(0.78, 0.98, d));
-  diffuseColor.rgb *= c * crown;
-  diffuseColor.a = max(crown, shadow);
-}`,
-        );
-    };
-    // twice the crown's size, so the shadow beside it fits on the same quad
-    const m = new THREE.InstancedMesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2), mat, Math.max(1, n));
-    m.count = 0;
-    m.frustumCulled = false; // spread over the whole map; bounds would go stale
-    m.receiveShadow = true;
-    return m;
+  private show(os: THREE.Object3D[]) {
+    for (const o of os) this.batch.add(o as THREE.Mesh);
   }
 
   /** A street tree stands only where its crown keeps off every other road (a road drawn alongside, a crossing street). */
@@ -262,7 +272,7 @@ export class Roads3D {
       this.trees.geometry.dispose();
       (this.trees.material as THREE.Material).dispose();
       this.trees.dispose();
-      this.trees = this.makeTrees(Math.ceil(n * 1.5) + 64);
+      this.trees = makeTreeMesh(Math.ceil(n * 1.5) + 64);
       this.group.add(this.trees);
     }
     let i = 0;
@@ -290,6 +300,7 @@ export class Roads3D {
     this.collectLights();
     this.collectTrees();
     this.buildIslands();
+    this.batch.flush();
   }
 
   apply(cs: ChangeSet) {
@@ -300,14 +311,15 @@ export class Roads3D {
     this.collectLights();
     this.collectTrees();
     this.buildIslands();
+    this.batch.flush();
   }
 
   private dropSeg(id: number) {
     const m = this.segs.get(id);
     if (!m) return;
-    this.group.remove(m.surface);
+    this.batch.remove(m.surface);
     m.surface.geometry.dispose();
-    for (const o of m.extra) { this.group.remove(o); if ((o as THREE.Mesh).geometry && (o as THREE.Mesh).geometry !== this.pillarGeo) (o as THREE.Mesh).geometry.dispose(); }
+    for (const o of m.extra) { this.batch.remove(o as THREE.Mesh); if ((o as THREE.Mesh).geometry && (o as THREE.Mesh).geometry !== this.pillarGeo) (o as THREE.Mesh).geometry.dispose(); }
     this.segs.delete(id);
     this.treeSpots.delete(id);
   }
@@ -316,7 +328,7 @@ export class Roads3D {
     const os = this.nodes.get(id);
     if (!os) return;
     for (const o of os) {
-      this.group.remove(o);
+      this.batch.remove(o as THREE.Mesh);
       const geo = (o as THREE.Mesh).geometry;
       if (geo !== this.stopGeo && geo !== this.stopRimGeo) geo?.dispose(); // (the stop signs share theirs)
     }
@@ -367,7 +379,6 @@ export class Roads3D {
       medEnd = ss.map((sc) => Math.min(na ? sc - s0 : 1e4, nb ? s1 - sc : 1e4));
     }
     const geo = ribbon(pts, hs, ss, halfW, LIFT, [T.fwd, T.bwd], edges, T.median ?? 0, medEnd, ss.map((sc) => Math.min(sc - s0, s1 - sc)), pock);
-    const flow = geo.getAttribute("aFlow") as THREE.BufferAttribute;
     const hw = isHighway(T);
     const surface = new THREE.Mesh(geo, s.ring ? this.ringSurface.mat : hw ? this.hwSurface.mat : this.surface.mat);
     surface.receiveShadow = true;
@@ -434,8 +445,8 @@ export class Roads3D {
         extra.push(pm);
       }
     }
-    this.group.add(surface, ...extra);
-    this.segs.set(id, { surface, extra, flow });
+    this.show([surface, ...extra]);
+    this.segs.set(id, { surface, extra });
   }
 
   private buildNode(id: number) {
@@ -468,13 +479,13 @@ export class Roads3D {
       // the curve runs from the arm whose lanes come in: tint each half like that arm's two directions
       const X = ng.arms.find((a) => { const g = this.net.segGeom.get(a.seg); return g?.lanes.some((l) => l.to === id); }) ?? ng.arms[0];
       const inDir = X.end === "b" ? 1 : -1;
-      this.bendFlow.set(id, { flow: geo.getAttribute("aFlow") as THREE.BufferAttribute, k1: dkey(X.seg, inDir), k2: dkey(X.seg, -inDir as 1 | -1) });
+      this.bendFlow.set(id, { surface, k1: dkey(X.seg, inDir), k2: dkey(X.seg, -inDir as 1 | -1) });
       if (Math.max(...hs) > 0.3) {
         const dm = new THREE.Mesh(deckSides(pts, hs, halfW, LIFT), this.deckMat);
         dm.castShadow = true;
         out.push(dm);
       }
-      this.group.add(...out);
+      this.show(out);
       this.nodes.set(id, out);
       return;
     }
@@ -510,7 +521,7 @@ export class Roads3D {
     const arrows = this.turnArrows(id);
     if (arrows) out.push(arrows);
     out.push(...this.stopMarks(id));
-    this.group.add(...out);
+    this.show(out);
     this.nodes.set(id, out);
   }
 
@@ -767,24 +778,23 @@ export class Roads3D {
     li.instanceMatrix.needsUpdate = true;
     if (li.instanceColor) li.instanceColor.needsUpdate = true;
     if (flowOverlay) {
-      for (const [id, m] of this.segs) {
-        const f1 = traffic.flow.get(dkey(id, 1))?.ratio ?? 1;
-        const f2 = traffic.flow.get(dkey(id, -1))?.ratio ?? 1;
-        const a = m.flow.array as Float32Array;
-        let changed = false;
-        for (let i = 0; i < a.length; i += 2) {
-          if (a[i] !== f1 || a[i + 1] !== f2) { a[i] = f1; a[i + 1] = f2; changed = true; }
-        }
-        if (changed) m.flow.needsUpdate = true;
-      }
-      for (const b of this.bendFlow.values()) {
-        const f1 = traffic.flow.get(b.k1)?.ratio ?? 1, f2 = traffic.flow.get(b.k2)?.ratio ?? 1;
-        const a = b.flow.array as Float32Array;
-        if (a[0] === f1 && a[1] === f2) continue;
-        for (let i = 0; i < a.length; i += 2) { a[i] = f1; a[i + 1] = f2; }
-        b.flow.needsUpdate = true;
-      }
+      for (const [id, m] of this.segs) this.tintFlow(m.surface, traffic.flow.get(dkey(id, 1))?.ratio ?? 1, traffic.flow.get(dkey(id, -1))?.ratio ?? 1);
+      for (const b of this.bendFlow.values()) this.tintFlow(b.surface, traffic.flow.get(b.k1)?.ratio ?? 1, traffic.flow.get(b.k2)?.ratio ?? 1);
     }
+  }
+
+  /** A road surface's flow tint (each direction's flow ratio), on its own vertices and where they are drawn merged. */
+  private tintFlow(surface: THREE.Mesh, f1: number, f2: number) {
+    const own = surface.geometry.getAttribute("aFlow") as THREE.BufferAttribute;
+    const a = own.array as Float32Array;
+    if (a[0] === f1 && a[1] === f2) return;
+    for (let i = 0; i < a.length; i += 2) { a[i] = f1; a[i + 1] = f2; }
+    const at = MeshBatch.of(surface);
+    if (!at) return;
+    const mf = at.mesh.geometry.getAttribute("aFlow") as THREE.BufferAttribute;
+    const b = mf.array as Float32Array;
+    for (let i = at.start * 2, e = (at.start + at.count) * 2; i < e; i += 2) { b[i] = f1; b[i + 1] = f2; }
+    mf.needsUpdate = true;
   }
 }
 

@@ -110,7 +110,13 @@ export interface PendingSpawn {
   look?: number;
   /** body colour (a bus wears its line's) */
   color?: number;
+  /** the route it found, kept while it waits for a gap (network version, and when: see REPLAN) */
+  plan?: { best: SpawnRoute; ver: number; t: number };
 }
+
+type SpawnRoute = { keys: number[]; time: number; freeFlow: number; dir: 1 | -1 };
+/** Seconds a car waiting to pull out keeps the route it found before looking again (traffic speeds change). */
+const REPLAN = 3;
 
 /** Seconds a car takes to come out of its lot to the kerb before it joins the road (drawn by the renderer). */
 export const EMERGE = 2.6;
@@ -202,16 +208,21 @@ export class Traffic {
     // A median can't be crossed: there you can only pull out to the right (and arrive from the right).
     const divided = (seg: number) => (ROAD_TYPES[net.segs.get(seg)!.type].median ?? 0) > 0;
     const to: Access = { ...p.to, side: p.toSide };
-    let best: { keys: number[]; time: number; freeFlow: number; dir: 1 | -1 } | null = null;
-    for (const d of [1, -1] as const) {
-      const crossing = (d === 1 ? 1 : -1) !== p.fromSide;
-      if (crossing && divided(p.from.seg) && !p.through) continue;
-      const r = this.router.route(p.from, to, d);
-      if (!r) continue;
-      const t = r.time + (crossing ? 6 : 0);
-      if (!best || t < best.time) best = { ...r, time: t, dir: d };
+    // (a car waiting for a gap asks again only every few seconds, or when the roads change: two searches every step
+    // for each waiting car cost a big town milliseconds a frame)
+    let best: SpawnRoute | null = p.plan && p.plan.ver === net.version && this.time - p.plan.t < REPLAN ? p.plan.best : null;
+    if (!best) {
+      for (const d of [1, -1] as const) {
+        const crossing = (d === 1 ? 1 : -1) !== p.fromSide;
+        if (crossing && divided(p.from.seg) && !p.through) continue;
+        const r = this.router.route(p.from, to, d);
+        if (!r) continue;
+        const t = r.time + (crossing ? 6 : 0);
+        if (!best || t < best.time) best = { ...r, time: t, dir: d };
+      }
+      if (!best) return "fail";
+      p.plan = { best, ver: net.version, t: this.time };
     }
-    if (!best) return "fail";
     const k = best.keys[0];
     const lanes = this.lanesOf(k);
     const crossing = (best.dir === 1 ? 1 : -1) !== p.fromSide;
