@@ -8,6 +8,7 @@ import type { RoadTypeId } from "../config";
 import { PLANTS, type Product } from "./industry";
 import type { PlacedKind } from "./placed";
 import { needsOf, sizeOf } from "./towns";
+import type { TruckClass } from "./trucks";
 
 export type Feature = "roundabout" | "signals" | "grid" | "parallel" | "transit";
 
@@ -23,6 +24,8 @@ export interface Unlocks {
   bays?: number;
   /** a load more on every truck */
   load?: number;
+  /** truck classes the buildings may run (see trucks.ts) */
+  trucks?: TruckClass[];
   /** money paid on reaching it */
   grant?: number;
 }
@@ -74,6 +77,7 @@ export const fullySupplied = (t: ProgressView["towns"][number], only?: Product[]
 
 const n = (o: Partial<Record<Product, number>>, p: Product) => o[p] ?? 0;
 const biggest = (v: ProgressView) => v.towns.reduce((a, t) => Math.max(a, t.pop), 0);
+const allSold = (v: ProgressView) => Object.values(v.sold).reduce((a: number, k) => a + (k ?? 0), 0);
 
 export const MILESTONES: Milestone[] = [
   {
@@ -231,6 +235,35 @@ export const MILESTONES: Milestone[] = [
   },
 ];
 
+/**
+ * Logistics (docs/design.md, "Freight"): bigger truck classes, warehouses and fuel depots. Each goes in the ladder
+ * just after the milestone named: heavy trucks once the company runs a few chains, warehouses with tier 2,
+ * depots with the refinery, road trains on the way to a Town, when the roads start to fill.
+ */
+const LOGISTICS: (Milestone & { after: string })[] = [
+  {
+    after: "powered3", id: "heavy", name: "Heavy haulage", goal: "Deliver 150 loads to your towns in all",
+    measure: (v) => [allSold(v), 150],
+    unlocks: { trucks: ["heavy"] },
+  },
+  {
+    after: "cement", id: "warehouse", name: "Stockpiles", goal: "Make 30 loads of coal",
+    measure: (v) => [n(v.made, "coal"), 30],
+    unlocks: { buildings: ["warehouse"] },
+  },
+  {
+    after: "fuel1", id: "depot", name: "Own pumps", goal: "Refine 10 loads of fuel",
+    measure: (v) => [n(v.made, "fuel"), 10],
+    unlocks: { buildings: ["fueldepot"] },
+  },
+  {
+    after: "town", id: "roadtrain", name: "Road trains", goal: "Deliver 800 loads to your towns in all",
+    measure: (v) => [allSold(v), 800],
+    unlocks: { trucks: ["roadtrain"] },
+  },
+];
+for (const { after, ...m } of LOGISTICS) MILESTONES.splice(MILESTONES.findIndex((x) => x.id === after) + 1, 0, m);
+
 export const milestoneById = new Map(MILESTONES.map((m) => [m.id, m]));
 
 /** The milestone that unlocks something, if one does. */
@@ -245,13 +278,14 @@ export interface Unlocked {
   towns: number;
   bays: number;
   load: number;
+  trucks: Set<TruckClass>;
 }
 
 export function unlocksOf(done: Iterable<string>): Unlocked {
   const u: Unlocked = {
     roads: new Set(BASE.roads), features: new Set(BASE.features),
     buildings: new Set((Object.keys(PLANTS) as PlacedKind[]).filter((k) => PLANTS[k].tier === 1)),
-    tiles: BASE.tiles, towns: BASE.towns, bays: BASE.bays, load: BASE.load,
+    tiles: BASE.tiles, towns: BASE.towns, bays: BASE.bays, load: BASE.load, trucks: new Set<TruckClass>(["light"]),
   };
   for (const id of done) {
     const m = milestoneById.get(id)?.unlocks;
@@ -259,6 +293,7 @@ export function unlocksOf(done: Iterable<string>): Unlocked {
     for (const r of m.roads ?? []) u.roads.add(r);
     for (const f of m.features ?? []) u.features.add(f);
     for (const b of m.buildings ?? []) u.buildings.add(b);
+    for (const t of m.trucks ?? []) u.trucks.add(t);
     u.tiles += m.tiles ?? 0;
     u.towns += m.towns ?? 0;
     u.bays += m.bays ?? 0;

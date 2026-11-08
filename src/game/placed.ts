@@ -40,6 +40,8 @@ export const PLACED: Record<PlacedKind, PlacedDef> = {
   glassworks: plant("glassworks"),
   furniture: plant("furniture"),
   constructionplant: plant("constructionplant"),
+  warehouse: plant("warehouse"),
+  fueldepot: plant("fueldepot"),
 };
 
 export const isPlacedKind = (k: BuildingKind | string): k is PlacedKind => k in PLACED;
@@ -48,5 +50,6 @@ export const isPlacedKind = (k: BuildingKind | string): k is PlacedKind => k in 
 export const PLACED_TABS: { id: string; label: string; kinds: PlacedKind[]; blurb: string }[] = [
   { id: "extraction", label: "Extraction", kinds: ["farm", "loggingcamp", "ironmine", "coalmine", "quarry", "oilwell", "sandpit"], blurb: "Extractors stand on a deposit and send what they win to your plants." },
   { id: "processing", label: "Processing", kinds: ["foodplant", "sawmill", "smelter", "cementworks", "refinery", "glassworks", "furniture", "constructionplant"], blurb: "Plants turn one product into another and sell finished goods to the towns." },
+  { id: "logistics", label: "Logistics", kinds: ["warehouse", "fueldepot"], blurb: "Warehouses hold what nobody can take yet; fuel depots fill passing trucks at cost." },
   { id: "power", label: "Power", kinds: ["coalplant"], blurb: "Power plants burn coal and power the buildings that need it on their roads within reach." },
 ];

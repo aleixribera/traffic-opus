@@ -16,6 +16,7 @@ import { Progress, tilePrice, type Feature, type Milestone, type ProgressView } 
 import { DAY, HOUR, Society } from "./society";
 import { PLACED, SHORE_REACH, type PlacedKind } from "./placed";
 import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, isPlantKind, type Product } from "./industry";
+import { TRUCK_CLASS_ORDER, type TruckClass } from "./trucks";
 import { PARTS_FOR, TownSystem } from "./settlements";
 import { BLOCK, demandPerDay, gridPt, isHall, needsOf } from "./towns";
 import { F } from "../world/gen";
@@ -152,6 +153,7 @@ export class Game {
       spend: (v, what) => { this.money -= v; this.budgetNow.expense[what] += v; },
       bays: () => this.progress.unlocked.bays,
       load: () => this.progress.unlocked.load,
+      truckClass: () => this.bestTruck(),
       power: (b) => this.utilities.supplyOf(b),
       wanted: (b) => this.utilities.wanted(b),
       made: (p, n) => this.progress.onMade(p, n),
@@ -230,6 +232,46 @@ export class Game {
   *trips(): Iterable<Trip> {
     for (const v of this.traffic.vehicles) yield v.trip;
     for (const p of this.traffic.pending) yield p.trip;
+  }
+
+  /** Truck classes the company may run now. */
+  truckUnlocked(c: TruckClass): boolean { return this.progress.unlocked.trucks.has(c); }
+
+  /** The class every fleet runs: the best one unlocked (trucks already out finish their run as they are). */
+  bestTruck(): TruckClass {
+    let best: TruckClass = "light";
+    for (const c of TRUCK_CLASS_ORDER) if (this.truckUnlocked(c)) best = c;
+    return best;
+  }
+
+  /**
+   * A warehouse's settings for one product: whether it takes it at all, and whether it is a feeder for it (sent
+   * there before the towns and plants farther away). Null when set, else why not.
+   */
+  setWarehouse(id: number, p: Product, o: { take?: boolean; feed?: boolean }): string | null {
+    const b = this.buildings.byId.get(id);
+    if (!b?.plant || Industry.logisticsOf(b) !== "warehouse") return "Not a warehouse";
+    if (!(p in PRODUCTS)) return "No such product";
+    const P = b.plant;
+    if (o.take !== undefined) {
+      const all = Object.keys(PRODUCTS) as Product[];
+      const takes = new Set(P.takes ?? all);
+      if (o.take) takes.add(p); else takes.delete(p);
+      if (takes.size === all.length) delete P.takes; else P.takes = all.filter((k) => takes.has(k));
+      // (a feeder for a product it no longer takes is no feeder)
+      if (!o.take && P.feeds) { P.feeds = P.feeds.filter((k) => k !== p); if (!P.feeds.length) delete P.feeds; }
+    }
+    if (o.feed !== undefined) {
+      const feeds = new Set(P.feeds ?? []);
+      if (o.feed) feeds.add(p); else feeds.delete(p);
+      if (feeds.size) P.feeds = (Object.keys(PRODUCTS) as Product[]).filter((k) => feeds.has(k)); else delete P.feeds;
+      // (feeding it means taking it)
+      if (o.feed && P.takes && !P.takes.includes(p)) {
+        const all = Object.keys(PRODUCTS) as Product[];
+        if (P.takes.length + 1 >= all.length) delete P.takes; else P.takes = all.filter((k) => k === p || P.takes!.includes(k));
+      }
+    }
+    return null;
   }
 
   /** Pay for something that isn't part of the hourly books (a building, a new town). */

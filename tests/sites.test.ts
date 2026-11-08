@@ -16,7 +16,8 @@ const boxes = (L: SiteLayout) => L.slots.map((s) => ({ s, ...slotHalf(s) }));
 
 describe("site layout", () => {
   it("is the same for the same plot and seed, and fits every kind's plot", () => {
-    for (const kind of PLANT_KINDS) {
+    // (a warehouse and a fuel depot are single buildings, not growing complexes)
+    for (const kind of PLANT_KINDS.filter((k) => !PLANTS[k].logistics)) {
       const T = BUILDING_TYPES[kind];
       for (const seed of [1, 2, 17, 404]) {
         const L = siteLayout(kind, T.w, T.d, seed);

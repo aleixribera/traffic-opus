@@ -236,6 +236,20 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .bar.lv em { position: absolute; top: -2px; width: 2px; height: 10px; background: var(--ink); }
 .spark { width: 100%; height: 44px; display: block; margin-top: 6px; }
 .sub-h { font-size: 12px; font-weight: 600; margin: 12px 0 2px; }
+.wh-opts input:focus-visible { outline: 2px solid var(--sel-line); outline-offset: 1px; }
+/* a warehouse's products: take / feeder checkboxes in two narrow columns */
+.wh-opts { width: 100%; border-collapse: collapse; margin: 4px 0 2px; }
+.wh-opts th, .wh-opts td { padding: 2px 0; font-weight: 400; }
+.wh-opts thead th { color: var(--ink-3); font-size: 11px; text-align: center; width: 52px; }
+.wh-opts thead th:first-child { width: auto; }
+.wh-opts tbody th { text-align: left; color: var(--ink-2); display: flex; align-items: center; gap: 5px; }
+.wh-opts tbody tr + tr { border-top: 1px solid var(--line); }
+.wh-opts td { text-align: center; padding: 0; }
+.wh-hit { display: flex; justify-content: center; align-items: center; height: 22px; cursor: pointer; }
+.wh-hit:hover input:not(:focus-visible) { outline: 1px solid var(--line-2); outline-offset: 1px; }
+.wh-opts input { margin: 0; width: 14px; height: 14px; accent-color: var(--accent); cursor: pointer; }
+.sub-h .num { font-weight: 400; margin-left: 4px; font-variant-numeric: tabular-nums; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 /* bus lines: colour bar, name and numbers, buses - n +, delete */
 .bus-lines { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; }
 .bl { display: grid; grid-template-columns: 6px 1fr auto auto; gap: 8px; align-items: center; padding: 5px 4px 5px 0; border-top: 1px solid var(--line); }

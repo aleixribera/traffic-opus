@@ -95,6 +95,8 @@ export interface Conflict {
   sSelf: number;
   sOther: number;
   merge: boolean;
+  /** A near miss that only matters when both vehicles are long (curved paths a lane apart: both bodies swing out). */
+  wide?: boolean;
   /** Merges: where each path comes within a car's width of the other (from there on they're one lane). */
   jSelf?: number;
   jOther?: number;
@@ -112,6 +114,9 @@ export interface Connector extends Edge {
   holders: unknown[]; // vehicles that reserved this connector (owned by the sim)
   /** at a split: true = never yields (the carriageway's own traffic at a weave); false = yields even going straight on */
   free?: boolean;
+  /** Paths that never cross but pass closer than a truck's width allows (opposing left turns): only long vehicles
+   * (heavy trucks, road trains), whose bodies swing wide of the path, treat them as conflicts. */
+  near?: Conflict[];
 }
 
 export interface Arm {
@@ -237,6 +242,10 @@ export interface SplitRoles {
 
 /** How far a shifted centreline takes to ease back onto its own line. */
 const SHIFT_LEN = 90;
+/** Connector paths closer than this (but not crossing) are a near miss: too close for two truck bodies. */
+const NEAR = 3.5;
+/** ...and curved ones closer than this, for two long bodies at once (each swings out through the curve). */
+const NEAR_WIDE = 4.3;
 
 export interface NodeGeom {
   kind: JunctionKind;
@@ -1432,6 +1441,19 @@ export class RoadNetwork {
         if (hit) {
           a.conflicts.push({ c: b, sSelf: hit.sa, sOther: hit.sb, merge: false });
           b.conflicts.push({ c: a, sSelf: hit.sb, sOther: hit.sa, merge: false });
+        } else if (a.armIn !== b.armIn) {
+          // a near miss: where they come closest, if that's closer than two truck bodies can pass
+          const curved = a.turn !== "S" || b.turn !== "S";
+          let best = curved ? NEAR_WIDE : NEAR, sa = -1, sb = -1;
+          for (let k = 0; k < a.pl.pts.length; k++) {
+            const q = polyClosest(b.pl, a.pl.pts[k]);
+            if (q.d < best) { best = q.d; sa = a.pl.cum[k]; sb = q.s; }
+          }
+          if (sa >= 0) {
+            const wide = best >= NEAR;
+            (a.near ??= []).push({ c: b, sSelf: sa, sOther: sb, merge: false, wide });
+            (b.near ??= []).push({ c: a, sSelf: sb, sOther: sa, merge: false, wide });
+          }
         }
       }
     }

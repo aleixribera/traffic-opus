@@ -1,10 +1,12 @@
 import * as THREE from "three";
 import { SIM } from "../config";
-import { carColor, EMERGE, fromLot, type PendingSpawn, type Traffic, type Trip, type Vehicle } from "../sim/traffic";
+import { carColor, EMERGE, fromLot, LONG, type PendingSpawn, type Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import type { V2 } from "../core/math";
 import type { LotWay } from "./buildings3d";
 import { VEHICLE_MODELS, type ModelSet, type VehicleKind } from "./models";
 import { CARGO_COLOR } from "./palette";
+import { TRUCK_CLASSES } from "../game/trucks";
+import type { Unit } from "../sim/traffic";
 
 interface Batch {
   kind: VehicleKind;
@@ -17,7 +19,9 @@ const LIFT = 0.07;
 /** One piece of a car's way into or out of a lot: a cubic, driven forwards or backed along. */
 interface Leg { a: V2; b: V2; c: V2; d: V2; len: number; back: boolean }
 /** A car drawn driving into its lot (after it left the road) or out of it (before it joins the road). */
-interface Ghost { kind: VehicleKind; color: number; load: number | null; legs: Leg[]; total: number; t0: number; dur: number; out: boolean }
+interface Ghost { kind: VehicleKind; color: number; load: number | null; legs: Leg[]; total: number; t0: number; dur: number; out: boolean; pieces?: Piece[] }
+/** One drawn piece of a vehicle: its model, and (a road train's trailers) how far its middle is behind the front piece's. */
+interface Piece { kind: VehicleKind; back: number }
 
 /** The truck body that carries each product: loose bulk in tippers, liquids in tankers, long loads on flatbeds. */
 const TRUCK_BODY: Record<string, VehicleKind> = {
@@ -26,10 +30,24 @@ const TRUCK_BODY: Record<string, VehicleKind> = {
   logs: "flatbed", planks: "flatbed", steel: "flatbed", parts: "flatbed", machinery: "flatbed",
   // (glass, plastics and household goods ride in box trucks: the default)
 };
-const truckBody = (t: Trip): VehicleKind => TRUCK_BODY[t.haul?.product ?? t.cargo ?? ""] ?? "truck";
+type Body = "truck" | "tipper" | "tanker" | "flatbed";
+const truckBody = (t: Trip): Body => (TRUCK_BODY[t.haul?.product ?? t.cargo ?? ""] ?? "truck") as Body;
+/**
+ * The models a truck is drawn with, front first: its class's (a light truck's, a heavy rigid's, or a road train's
+ * tractor and two trailers) with the body for what it carries.
+ */
+function truckPieces(t: Trip): Piece[] {
+  const b = truckBody(t);
+  if (t.haul?.cls === "heavy") return [{ kind: `heavy_${b}`, back: 0 }];
+  if (t.haul?.cls === "roadtrain") {
+    const U = TRUCK_CLASSES.roadtrain.units!, mid = (u: Unit) => u.at + u.len / 2;
+    return [{ kind: "rt_tractor", back: 0 }, { kind: `rt_${b}_a`, back: mid(U[1]) - mid(U[0]) }, { kind: `rt_${b}_b`, back: mid(U[2]) - mid(U[0]) }];
+  }
+  return [{ kind: b, back: 0 }];
+}
 const EMPTY_BOX = 0xf2f2ee;
 /** What a truck's load part shows: the cargo's colour, or null for nothing on an open body (tipper, flatbed) running empty. */
-function loadOf(kind: VehicleKind, t: Trip): number | null {
+function loadOf(kind: Body, t: Trip): number | null {
   if (t.cargo) return CARGO_COLOR[t.cargo] ?? EMPTY_BOX;
   if (kind === "tanker") return CARGO_COLOR[t.haul?.product ?? ""] ?? EMPTY_BOX; // the tank stays its product's colour
   return kind === "tipper" || kind === "flatbed" ? null : EMPTY_BOX;
@@ -107,9 +125,10 @@ export class Vehicles3D {
     return b;
   }
 
+  /** The model a vehicle is drawn with (a road train: its tractor's; its trailers are drawn too, see update). */
   static kindOf(v: Vehicle): VehicleKind {
     if (v.trip.bus) return "bus";
-    if (v.truck) return truckBody(v.trip);
+    if (v.truck) return truckPieces(v.trip)[0].kind;
     return v.look % 6 === 0 ? "van" : "car";
   }
 
@@ -135,13 +154,15 @@ export class Vehicles3D {
       if (!w) continue;
       const P = { x: v.x, y: v.y }, d0 = { x: Math.cos(v.ang), y: Math.sin(v.ang) };
       const legs = [leg(P, d0, w.kerb, w.into)];
-      if (w.bays.length) {
+      // (a heavy rigid or a road train doesn't fit a car bay: it drives straight up the drive to the yard)
+      if (w.bays.length && v.len < LONG) {
         const bay = w.bays[v.id % w.bays.length];
         legs.push(leg(w.kerb, w.into, bay.p, bay.dir));
       } else if (dst(w.kerb, w.drive) > 2) legs.push(leg(w.kerb, w.into, add(w.drive, w.into, -1), w.into));
       const total = legs.reduce((n, l) => n + l.len, 0);
       const kind = Vehicles3D.kindOf(v);
-      this.arriving.push({ kind, color: v.color, load: loadOf(kind, v.trip), legs, total, t0: now, dur: Math.min(4, Math.max(1.1, total / 4.5)), out: false });
+      const pieces = v.truck ? truckPieces(v.trip) : undefined;
+      this.arriving.push({ kind, color: v.color, load: v.truck ? loadOf(truckBody(v.trip), v.trip) : EMPTY_BOX, legs, total, t0: now, dur: Math.min(4, Math.max(1.1, total / 4.5)), out: false, pieces });
     }
     for (const v of traffic.vehicles) if (!this.seen.has(v.id)) this.seen.set(v.id, v);
     if (this.arriving.length > 400) this.arriving.splice(0, this.arriving.length - 400);
@@ -152,13 +173,15 @@ export class Vehicles3D {
     const want = new Set<PendingSpawn>();
     for (const p of traffic.pending) {
       if (!fromLot(p) || !this.lotOf) continue;
+      // (a long truck waiting behind another at its lot's gate stays out of sight till its turn)
+      if ((p.len ?? 0) >= LONG && p.go === undefined) continue;
       want.add(p);
       if (this.leaving.has(p)) continue;
       const w = this.lotOf(p.trip.from);
       if (!w) continue;
       const out = { x: -w.into.x, y: -w.into.y };
       const legs: Leg[] = [];
-      if (w.bays.length) {
+      if (w.bays.length && (p.len ?? 0) < LONG) {
         const bay = w.bays[(p.look ?? 0) % w.bays.length];
         const R = add(bay.p, bay.dir, -5.5);
         const ex = { x: w.kerb.x - R.x, y: w.kerb.y - R.y }, el = Math.hypot(ex.x, ex.y) || 1;
@@ -172,8 +195,9 @@ export class Vehicles3D {
       }
       const total = legs.reduce((n, l) => n + l.len, 0);
       const look = p.look ?? 0;
-      const kind: VehicleKind = p.truck ? truckBody(p.trip) : look % 6 === 0 ? "van" : "car";
-      this.leaving.set(p, { kind, color: p.truck ? 0xf5f5f0 : carColor(look), load: loadOf(kind, p.trip), legs, total, t0: p.t0 ?? traffic.time, dur: Math.min(EMERGE - 0.15, Math.max(1, total / 3.5)), out: true });
+      const pieces = p.truck ? truckPieces(p.trip) : undefined;
+      const kind: VehicleKind = pieces ? pieces[0].kind : look % 6 === 0 ? "van" : "car";
+      this.leaving.set(p, { kind, color: p.truck ? 0xf5f5f0 : carColor(look), load: p.truck ? loadOf(truckBody(p.trip), p.trip) : EMPTY_BOX, legs, total, t0: p.go ?? p.t0 ?? traffic.time, dur: Math.min(EMERGE - 0.15, Math.max(1, total / 3.5)), out: true, pieces });
     }
     for (const p of this.leaving.keys()) if (!want.has(p)) this.leaving.delete(p);
   }
@@ -204,16 +228,29 @@ export class Vehicles3D {
     const now = traffic.time + (alpha - 1) * SIM.dt;
     this.noteArrivals(traffic, now);
     this.noteDepartures(traffic);
-    const lists = {} as Record<VehicleKind, Vehicle[]>;
+    const lists = {} as Record<VehicleKind, { v: Vehicle; unit: number; load: number | null }[]>;
     const ghosts = {} as Record<VehicleKind, { g: Ghost; x: number; y: number; ang: number; s: number }[]>;
     for (const k of VEHICLE_MODELS) { lists[k] = []; ghosts[k] = []; }
-    for (const v of traffic.vehicles) lists[Vehicles3D.kindOf(v)].push(v);
+    for (const v of traffic.vehicles) {
+      if (!v.truck) { lists[Vehicles3D.kindOf(v)].push({ v, unit: -1, load: EMPTY_BOX }); continue; }
+      const P = truckPieces(v.trip), load = loadOf(truckBody(v.trip), v.trip);
+      // (a road train's pieces, or a heavy rigid on its axles, each have their own pose on the path; until the sim has
+      // placed them, one rigid piece)
+      if (v.uPose && v.puPose && P.length === v.uPose.length / 4) P.forEach((p, i) => lists[p.kind].push({ v, unit: i, load }));
+      else lists[P[0].kind].push({ v, unit: -1, load });
+    }
+    const addGhost = (g: Ghost, q: { x: number; y: number; ang: number; s: number }) => {
+      if (!g.pieces || g.pieces.length < 2) { ghosts[g.kind].push({ g, ...q }); return; }
+      // a road train in a lot: drawn straight, the trailers behind the tractor
+      const cx = Math.cos(q.ang), sy = Math.sin(q.ang);
+      for (const p of g.pieces) ghosts[p.kind].push({ g, ...q, x: q.x - cx * p.back * q.s, y: q.y - sy * p.back * q.s });
+    };
     this.arriving = this.arriving.filter((g) => {
       const q = this.ghostPose(g, now);
-      if (q) ghosts[g.kind].push({ g, ...q });
+      if (q) addGhost(g, q);
       return !!q;
     });
-    for (const g of this.leaving.values()) { const q = this.ghostPose(g, now); if (q) ghosts[g.kind].push({ g, ...q }); }
+    for (const g of this.leaving.values()) { const q = this.ghostPose(g, now); if (q) addGhost(g, q); }
     for (const kind of VEHICLE_MODELS) {
       const vs = lists[kind], gs = ghosts[kind];
       const b = this.ensure(kind, vs.length + gs.length);
@@ -229,17 +266,29 @@ export class Vehicles3D {
         }
       }
       for (let i = 0; i < vs.length; i++) {
-        const v = vs[i];
-        const x = v.px + (v.x - v.px) * alpha;
-        const y = v.py + (v.y - v.py) * alpha;
-        const h = v.ph + (v.h - v.ph) * alpha;
-        let da = v.ang - v.pang;
-        if (da > Math.PI) da -= Math.PI * 2;
-        if (da < -Math.PI) da += Math.PI * 2;
-        const ang = v.pang + da * alpha;
+        const { v, unit, load } = vs[i];
+        let x: number, y: number, h: number, ang: number;
+        if (unit >= 0) {
+          // one piece of an articulated vehicle, between its last pose and this one
+          const o = unit * 4, P = v.puPose!, Q = v.uPose!;
+          x = P[o] + (Q[o] - P[o]) * alpha;
+          y = P[o + 1] + (Q[o + 1] - P[o + 1]) * alpha;
+          h = P[o + 2] + (Q[o + 2] - P[o + 2]) * alpha;
+          let da = Q[o + 3] - P[o + 3];
+          if (da > Math.PI) da -= Math.PI * 2;
+          if (da < -Math.PI) da += Math.PI * 2;
+          ang = P[o + 3] + da * alpha;
+        } else {
+          x = v.px + (v.x - v.px) * alpha;
+          y = v.py + (v.y - v.py) * alpha;
+          h = v.ph + (v.h - v.ph) * alpha;
+          let da = v.ang - v.pang;
+          if (da > Math.PI) da -= Math.PI * 2;
+          if (da < -Math.PI) da += Math.PI * 2;
+          ang = v.pang + da * alpha;
+        }
         const f = v.fade < 1 ? 0.55 + 0.45 * v.fade : 1;
         this.pose(this.m, x, y, h, ang, f);
-        const load = v.truck ? loadOf(kind, v.trip) : EMPTY_BOX;
         for (const { mesh, tint } of b.meshes) {
           mesh.setMatrixAt(i, tint === "cargo" && load === null ? this.none : this.m);
           if (tint === "body") mesh.setColorAt(i, this.c.setHex(v.color));

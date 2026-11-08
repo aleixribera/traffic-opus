@@ -14,6 +14,8 @@ describe("fleets sized by site level", () => {
     for (const k of PLANT_KINDS) {
       const d = PLANTS[k];
       if (d.trucks <= 0) { expect(Industry.fleetAt(k, 1)).toBe(0); continue; }
+      // (a warehouse runs a fixed fleet: it is one building and doesn't grow)
+      if (d.logistics) { expect(Industry.fleetAt(k, 1)).toBe(d.trucks); continue; }
       let last = 0;
       for (let L = 1; L <= SITE_LEVELS; L++) {
         const n = Industry.fleetAt(k, L);

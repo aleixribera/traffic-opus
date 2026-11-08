@@ -10,6 +10,7 @@ import { BUILDING_TYPES, ROAD_TYPES, type BuildingKind } from "../config";
 import type { PendingSpawn, Trip, Vehicle } from "../sim/traffic";
 import { F } from "../world/gen";
 import { GROW_DECAY, GROW_NEED, SITE_LEVELS, levelMult } from "./sites";
+import { classOf, type TruckClass } from "./trucks";
 
 export type Product =
   | "crops" | "logs" | "food" | "planks" | "ore" | "coal" | "lime" | "steel" | "cement"
@@ -48,7 +49,9 @@ export const PRODUCTS: Record<Product, ProductDef> = {
 export type PlantKind =
   | "farm" | "loggingcamp" | "foodplant" | "sawmill"
   | "ironmine" | "coalmine" | "quarry" | "smelter" | "cementworks" | "coalplant"
-  | "oilwell" | "sandpit" | "refinery" | "glassworks" | "furniture" | "constructionplant";
+  | "oilwell" | "sandpit" | "refinery" | "glassworks" | "furniture" | "constructionplant"
+  // logistics: buildings that store and pass on what the plants make (see "Logistics" below)
+  | "warehouse" | "fueldepot";
 
 export interface PlantDef {
   kind: PlantKind;
@@ -73,6 +76,8 @@ export interface PlantDef {
   reach?: number;
   /** what its construction site waits for, trucked in (tier 2 on); tier 1 costs money only */
   site?: Partial<Record<Product, number>>;
+  /** a logistics building: a warehouse (stores any product and re-ships it) or a fuel depot (fills passing trucks) */
+  logistics?: "warehouse" | "depot";
   blurb: string;
 }
 
@@ -160,6 +165,18 @@ export const PLANTS: Record<PlantKind, PlantDef> = {
     cycle: HOUR, cost: 52000, upkeep: 55, trucks: 3, store: 8, power: 14, site: { planks: 10, cement: 10 },
     blurb: "Casts steel and cement into construction parts: towns put up their blocks and towers from them.",
   },
+  // logistics (docs/design.md "Freight"): a warehouse buffers any product and its own trucks carry it on; a fuel
+  // depot takes fuel from the refineries and fills the company's trucks that pass it at cost
+  warehouse: {
+    kind: "warehouse", tier: 2, inputs: {}, outputs: {}, logistics: "warehouse",
+    cycle: HOUR, cost: 18000, upkeep: 18, trucks: 12, store: 60, site: { planks: 6 },
+    blurb: "Stores any product your buildings send it and re-ships it with its own trucks: it takes the overflow, or splits a long haul into two legs as a feeder.",
+  },
+  fueldepot: {
+    kind: "fueldepot", tier: 3, inputs: { fuel: 1 }, outputs: {}, logistics: "depot",
+    cycle: HOUR, cost: 14000, upkeep: 10, trucks: 0, store: 8, site: { planks: 4, cement: 2 },
+    blurb: "Takes fuel from your refineries. Your trucks whose run passes within 1.5 km fill up here at cost instead of paying the market price.",
+  },
 };
 
 export const PLANT_KINDS = Object.keys(PLANTS) as PlantKind[];
@@ -168,7 +185,7 @@ export const isPlantKind = (k: BuildingKind | string): k is PlantKind => k in PL
 export const WAGE = 1;
 /** Least share of an extractor's lot that must sit on its deposit. */
 export const MIN_DEPOSIT = 0.35;
-/** Fuel and wear per km a truck drives (both ways), charged when it sets off. */
+/** Fuel and wear per km a light truck drives (both ways), charged when it sets off. */
 export const FUEL_PER_KM = 4;
 /**
  * The haul a site's fleet is sized for (m, one way): at every level it has the trucks to carry its whole output,
@@ -179,6 +196,12 @@ export const FUEL_PER_KM = 4;
 export const FLEET_HAUL = 3000;
 /** Round trip (s) behind FLEET_HAUL: there and back at a truck's street pace, plus loading, junctions and yards. */
 const FLEET_TRIP = (2 * FLEET_HAUL) / (ROAD_TYPES.street.speed * 0.85) + 45;
+/** What a km of fuel costs a truck that fills up at one of the company's depots (at cost, not the market price). */
+export const FUEL_AT_COST = 1;
+/** How far off a truck's run (the straight line from its yard to its customer) a depot may be and still fill it (m). */
+export const DEPOT_REACH = 1500;
+/** Light-truck km one load of fuel lasts, from a depot. */
+export const DEPOT_KM = 400;
 /** Pace of a building that needs power and has none (it scales up to 1 with the share of power it gets). */
 export const UNPOWERED = 0.4;
 /** Time to put a building up once its site has every material (and a tier 1 building, from the start). */
@@ -212,9 +235,15 @@ export interface PlantState {
   upAt: number;
   /** what keeps it from growing now (null: it is growing, or at the top level) */
   why?: string | null;
+  /** a warehouse: the products it takes (all when not set), and those it is a feeder for (sent to it first) */
+  takes?: Product[];
+  feeds?: Product[];
+  /** a fuel depot: trucks it filled and what that saved against the market price, all time */
+  served?: number;
+  saved?: number;
 }
 
-export interface PlantBooks { made: number; sent: number; earned: number; spent: number }
+export interface PlantBooks { made: number; sent: number; earned: number; spent: number; /** a depot: trucks filled, money saved */ served?: number; saved?: number }
 const books = (): PlantBooks => ({ made: 0, sent: 0, earned: 0, spent: 0 });
 
 /** What a truck of the company's is doing (on Trip.haul). */
@@ -225,6 +254,8 @@ export interface HaulRun {
   n: number;
   /** the building it delivers to (out) or came from (back) */
   dest: number;
+  /** the class of truck making the run (light when not set) */
+  cls?: TruckClass;
   /** the leg ended (arrived or failed): traffic can report a trip twice */
   done?: boolean;
 }
@@ -256,6 +287,8 @@ export interface IndustryHost {
   bays?(): number;
   /** loads one truck carries */
   load?(): number;
+  /** the best class of truck unlocked (every fleet runs it) */
+  truckClass?(): TruckClass;
   /** share of the power a building needs that it gets (0..1) */
   power?(b: Building): number;
   /** a power plant has buildings within reach that want its power (it only burns coal then) */
@@ -325,6 +358,31 @@ export class Industry {
     return Math.round(jobs * levelMult(level));
   }
 
+  /**
+   * The class of truck the company's fleets run: the best one unlocked, for every building at once (no picking per
+   * building). A trip keeps the class it set off with, so trucks out on the road finish their run as they are.
+   */
+  fleetClass(): TruckClass {
+    return this.h.truckClass?.() ?? "light";
+  }
+
+  /** Loads one of a building's trucks carries: its class's payload times the company's load per truck. */
+  capOf(_b?: Building): number {
+    return classOf(this.fleetClass()).payload * Math.max(1, this.h.load?.() ?? 1);
+  }
+
+  /** A logistics building's kind, if it is one. */
+  static logisticsOf(b: Building): PlantDef["logistics"] {
+    return PLANTS[b.kind as PlantKind]?.logistics;
+  }
+
+  /** Loads a warehouse holds now, all products together. */
+  static stored(b: Building): number {
+    let n = 0;
+    for (const k of Object.values(b.plant?.stock ?? {})) n += k ?? 0;
+    return n;
+  }
+
   /** Is it up and working (not a site, not being built)? */
   static running(b: Building): boolean {
     return !!b.plant && !b.plant.site && b.built >= 1;
@@ -384,7 +442,7 @@ export class Industry {
   tick(span: number) {
     const { busy, coming } = this.census();
     for (const b of this.plants()) {
-      this.produce(b, span);
+      this.produce(b, span, busy.get(b.id) ?? 0);
       this.dispatch(b, busy, coming);
     }
   }
@@ -393,7 +451,7 @@ export class Industry {
    * Work through the current batch: staff, deposit, power and inputs on hand set the pace; a full store stops it.
    * A power plant's batch is the coal it burns, and it burns only while something within reach wants power.
    */
-  produce(b: Building, span: number) {
+  produce(b: Building, span: number, out = 0) {
     const P = b.plant!, d = PLANTS[b.kind as PlantKind];
     if (P.site) {
       const left = entries(P.site.need).map(([p, n]) => [p, n - (P.site!.got[p] ?? 0)] as [Product, number]).filter(([, n]) => n > 0);
@@ -401,6 +459,7 @@ export class Industry {
       return;
     }
     if (b.built < 1) { b.problem = null; return; }
+    if (d.logistics) { this.logistic(b, out); return; }
     const staff = b.cap ? Math.min(1, this.h.workersAt(b.id) / b.cap) : 1;
     const pw = d.power ? (this.h.power?.(b) ?? 1) : 1;
     const idle = !!d.makes && !(this.h.wanted?.(b) ?? true);
@@ -471,6 +530,22 @@ export class Industry {
     this.h.grew?.(b, P.level);
   }
 
+  /** A warehouse or a fuel depot: what holds it up (it makes nothing and never grows); `out`: its trucks on the road. */
+  private logistic(b: Building, out: number) {
+    const P = b.plant!;
+    P.why = null;
+    P.grow = 0;
+    if (!b.access) { b.problem = b.placed ? "No road to the gate" : "No road access"; return; }
+    if (PLANTS[b.kind as PlantKind].logistics === "depot") {
+      b.problem = (P.stock.fuel ?? 0) < 0.05 ? "Out of fuel: waiting for a refinery's tankers" : null;
+      return;
+    }
+    // (full with its trucks all out: it needs more of them; full with them parked: nothing wants what it holds)
+    b.problem = Industry.stored(b) < Industry.storeOf(b) - 0.5 ? null
+      : out >= this.trucksOf(b) ? "Full: its trucks can't ship the stock as fast as it comes in"
+      : "Full: nothing needs more of what it holds right now";
+  }
+
   /** Does any building of the company's take this product in (as an input or as a building material)? */
   private used(p: Product): boolean {
     return Industry.usedBy(p);
@@ -501,6 +576,9 @@ export class Industry {
     const seg = from.access?.seg;
     if (seg === undefined) return out;
     const on = (id: number) => coming.get(id)?.get(product) ?? 0;
+    // (a warehouse's own trucks never take a load to another warehouse: stock moves on to where it is used or sold)
+    const fromStore = Industry.logisticsOf(from) === "warehouse";
+    const feeders: Customer[] = [];
     const km = (o: Building) => Math.hypot(o.c.x - from.c.x, o.c.y - from.c.y) / 1000;
     const price = PRODUCTS[product].price;
     for (const o of this.h.buildings.list) {
@@ -517,6 +595,20 @@ export class Industry {
       if (o.plant.site) {
         const room = Industry.siteLeft(o, product) - on(o.id);
         if (room >= 1) out.push({ b: o, value: 20000 + room * 100 - km(o) * FUEL_PER_KM * 2, room });
+        continue;
+      }
+      // a warehouse takes what nobody else wants now (after the plants and towns), unless it is a feeder for the
+      // product: then it comes first, ahead of the plants it will pass it on to
+      if (PLANTS[o.kind as PlantKind].logistics === "warehouse") {
+        if (fromStore || o.built < 1) continue;
+        if (o.plant.takes && !o.plant.takes.includes(product)) continue;
+        let onAll = 0;
+        for (const k of coming.get(o.id)?.values() ?? []) onAll += k;
+        const room = Math.floor(Industry.storeOf(o) - Industry.stored(o) - onAll);
+        if (room < 1) continue;
+        if (o.plant.feeds?.includes(product)) feeders.push({ b: o, value: 15000 - km(o) * FUEL_PER_KM * 2, room });
+        // (overflow: below every plant and town, however far, so it only gets what nobody else can take now)
+        else out.push({ b: o, value: -1e6 - km(o) * FUEL_PER_KM * 2, room });
         continue;
       }
       // own plants short of it: they keep the chain running (worth more than any sale)
@@ -549,6 +641,13 @@ export class Industry {
       }
     }
     out.sort((a, b) => b.value - a.value);
+    // a feeder only takes from buildings it is nearer to than where the load would go otherwise (a mine beside its
+    // smelter doesn't send its ore round by a feeder kilometres away)
+    if (feeders.length) {
+      const best = out.find((c) => Industry.logisticsOf(c.b) !== "warehouse");
+      const near = feeders.filter((f) => !best || km(f.b) < km(best.b));
+      if (near.length) out.unshift(...near.sort((a, b) => b.value - a.value));
+    }
     return out;
   }
 
@@ -557,20 +656,29 @@ export class Industry {
     const P = b.plant!;
     if (!b.access || P.site) return;
     let free = this.trucksOf(b) - (busy.get(b.id) ?? 0);
-    const load = Math.max(1, this.h.load?.() ?? 1);
-    const outs = entries(PLANTS[b.kind as PlantKind].outputs);
+    if (free <= 0) return;
+    const load = this.capOf(b);
+    // a warehouse ships what it has in store; a plant what it made
+    const store = Industry.logisticsOf(b) === "warehouse";
+    if (store && b.built < 1) return;
+    const src = store ? P.stock : P.out;
+    const outs: [Product, number][] = store ? entries(P.stock).filter(([, n]) => n >= 1).sort((x, y) => y[1] - x[1]) : entries(PLANTS[b.kind as PlantKind].outputs);
+    // a heavy truck or a road train waits for a fuller load while the yard has room for it to (half a truck, or
+    // half the yard), so it doesn't set off with one load on board
+    const yard = Industry.storeOf(b);
     for (const [p] of outs) {
       // (a side product nothing uses yet stays in the yard without a word: the panel says it is flared)
-      if (outs.length > 1 && !Industry.useful(p)) continue;
-      while (free > 0 && (P.out[p] ?? 0) >= 1) {
+      if (!store && outs.length > 1 && !Industry.useful(p)) continue;
+      while (free > 0 && (src[p] ?? 0) >= 1) {
         const c = this.customers(b, p, coming)[0];
         if (!c) {
-          if ((P.out[p] ?? 0) >= 2 && b.access && !b.problem?.startsWith("Full of")) b.problem = this.noBuyer(b, p);
+          if (!store && (src[p] ?? 0) >= 2 && b.access && !b.problem?.startsWith("Full of")) b.problem = this.noBuyer(b, p);
           break;
         }
-        const n = Math.max(1, Math.min(load, Math.floor(P.out[p]!), c.room));
+        const n = Math.max(1, Math.min(load, Math.floor(src[p]!), c.room));
+        if (this.fleetClass() !== "light" && n < Math.min(Math.ceil(load / 2), c.room, Math.floor(yard / 2))) break;
         this.send(b, c.b, p, n);
-        P.out[p]! -= n;
+        src[p]! -= n;
         free--;
         busy.set(b.id, (busy.get(b.id) ?? 0) + 1);
         let m = coming.get(c.b.id);
@@ -608,15 +716,56 @@ export class Industry {
   }
 
   private send(from: Building, to: Building, product: Product, n: number) {
-    const km = Math.hypot(to.c.x - from.c.x, to.c.y - from.c.y) / 1000;
-    const fuel = km * 2 * FUEL_PER_KM;
+    const cls = this.fleetClass();
+    const fuel = this.fuelFor(from, to, classOf(cls).fuel);
     this.h.spend(fuel, "fuel");
     from.plant!.now.spent += fuel;
     from.plant!.now.sent += n;
     this.h.request({
-      from: from.access!, fromSide: from.side, to: to.access!, toSide: to.side, truck: true, tries: 0, wait: 0,
-      trip: { kind: "cargo", from: from.id, to: to.id, resident: -1, cargo: product, startT: this.h.time, freeFlow: 0, haul: { plant: from.id, leg: "out", product, n, dest: to.id } },
+      from: from.access!, fromSide: from.side, to: to.access!, toSide: to.side, truck: true, tries: 0, wait: 0, ...Industry.body(cls),
+      trip: { kind: "cargo", from: from.id, to: to.id, resident: -1, cargo: product, startT: this.h.time, freeFlow: 0, haul: { plant: from.id, leg: "out", product, n, dest: to.id, ...(cls !== "light" ? { cls } : {}) } },
     });
+  }
+
+  /** How a class of truck drives (length, pace, the pieces it is drawn in), for the traffic sim. */
+  static body(cls: TruckClass | undefined): Pick<PendingSpawn, "len" | "vf" | "af" | "units"> {
+    if (!cls || cls === "light") return {};
+    const C = classOf(cls);
+    return { len: C.len, vf: C.speed, af: C.accel, ...(C.units ? { units: C.units } : {}) };
+  }
+
+  /**
+   * The fuel for a round trip from `from` to `to`, paid as the truck sets off: at the market price, or at cost when
+   * a stocked depot of the company's is on the way (within DEPOT_REACH of the straight run, on the same roads).
+   */
+  private fuelFor(from: Building, to: Building, mult: number): number {
+    const km = Math.hypot(to.c.x - from.c.x, to.c.y - from.c.y) / 1000;
+    const market = km * 2 * FUEL_PER_KM * mult;
+    const need = (km * 2 * mult) / DEPOT_KM;
+    const d = need > 0 ? this.depotFor(from, to, need) : null;
+    if (!d) return market;
+    const paid = km * 2 * FUEL_AT_COST * mult;
+    const P = d.plant!;
+    P.stock.fuel = Math.max(0, (P.stock.fuel ?? 0) - need);
+    P.served = (P.served ?? 0) + 1;
+    P.saved = (P.saved ?? 0) + market - paid;
+    P.now.served = (P.now.served ?? 0) + 1;
+    P.now.saved = (P.now.saved ?? 0) + market - paid;
+    return paid;
+  }
+
+  /** The stocked depot nearest a truck's run from `from` to `to` that can fill it (`need` loads of fuel), if any. */
+  depotFor(from: Building, to: Building, need: number): Building | null {
+    const seg = from.access?.seg;
+    if (seg === undefined) return null;
+    let best: Building | null = null, bd = DEPOT_REACH;
+    for (const o of this.h.buildings.list) {
+      if (!o.plant || PLANTS[o.kind as PlantKind]?.logistics !== "depot" || !Industry.running(o) || !o.access) continue;
+      if ((o.plant.stock.fuel ?? 0) < need || !this.h.connected(seg, o.access.seg)) continue;
+      const d = segDist(o.c, from.c, to.c);
+      if (d <= bd) { bd = d; best = o; }
+    }
+    return best;
   }
 
   /** A company truck arrived: unload and head home, or it is home. */
@@ -629,11 +778,14 @@ export class Industry {
     const home = this.h.buildings.byId.get(r.plant);
     if (to) this.deliver(to, r.product, r.n, home);
     // (the buyer was pulled down while the truck was on its way: the load goes back to the yard, to be sold elsewhere)
-    else if (home?.plant) home.plant.out[r.product] = (home.plant.out[r.product] ?? 0) + r.n;
+    else if (home?.plant) {
+      const back = Industry.logisticsOf(home) === "warehouse" ? home.plant.stock : home.plant.out;
+      back[r.product] = (back[r.product] ?? 0) + r.n;
+    }
     if (to?.access && home?.access) {
       this.h.request({
-        from: to.access, fromSide: to.side, to: home.access, toSide: home.side, truck: true, tries: 0, wait: 0,
-        trip: { kind: "empty", from: to.id, to: home.id, resident: -1, startT: this.h.time, freeFlow: 0, haul: { plant: home.id, leg: "back", product: r.product, n: 0, dest: to.id } },
+        from: to.access, fromSide: to.side, to: home.access, toSide: home.side, truck: true, tries: 0, wait: 0, ...Industry.body(r.cls),
+        trip: { kind: "empty", from: to.id, to: home.id, resident: -1, startT: this.h.time, freeFlow: 0, haul: { plant: home.id, leg: "back", product: r.product, n: 0, dest: to.id, ...(r.cls ? { cls: r.cls } : {}) } },
       });
     }
   }
@@ -698,4 +850,11 @@ export class Industry {
 
 function entries(o: Partial<Record<Product, number>>): [Product, number][] {
   return Object.entries(o) as [Product, number][];
+}
+
+/** Distance from p to the segment a-b. */
+function segDist(p: V2, a: V2, b: V2): number {
+  const dx = b.x - a.x, dy = b.y - a.y, L = dx * dx + dy * dy;
+  const t = L > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / L)) : 0;
+  return Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
 }
