@@ -345,8 +345,9 @@ for (const { after, ...m } of LOGISTICS) MILESTONES.splice(MILESTONES.findIndex(
  * Deeper chains (docs/design.md "Supplies", "Perishables", "Motor Works"), each just after the milestone named: the
  * dairy and creamery once the villages build in concrete; the chemical works when the quarries are busy (its
  * fertilizer and explosives are what sites need past level 2, required only from then on); and tier 5 as a block
- * after tier 4: the rubber plant once the refinery makes plastics in volume, the Motor Works for a big City kept in
- * electronics and machinery, and its last steps for cars on the roads.
+ * after tier 4 and its landmarks (the convoys and landmarks open first): the rubber plant once the refinery makes
+ * plastics in volume, the Motor Works for a big City kept in electronics and machinery, and its last steps for cars
+ * on the roads.
  */
 const CHAINS: (Milestone & { after: string })[] = [
   {
@@ -370,7 +371,7 @@ const CHAINS: (Milestone & { after: string })[] = [
     unlocks: { bays: 1, grant: 30000 },
   },
   {
-    after: "machinery40", id: "rubber", name: "Synthetic rubber", goal: "Make 60 loads of plastics",
+    after: "worldsfair", id: "rubber", name: "Synthetic rubber", goal: "Make 60 loads of plastics",
     measure: (v) => [n(v.made, "plastics"), 60],
     unlocks: { buildings: ["rubberplant"] },
   },

@@ -69,6 +69,8 @@ describe("Milestones", () => {
     // the tier 4 milestones stand together, as one block
     const block = ["parts50", "copperore1", "goods60", "copper1", "city", "electronics1", "machinery1", "citySupplied", "electronics40", "machinery40"].map(at);
     expect(block).toEqual(block.map((_, i) => block[0] + i));
+    // then the convoys and landmarks, straight after tier 4, and only then tier 5 (the Motor Works)
+    expect([at("machinery40"), at("bigiron"), at("skyline"), at("worldsfair"), at("rubber")]).toEqual([0, 1, 2, 3, 4].map((i) => at("machinery40") + i));
   });
 
   it("tier 4 milestones measure copper, electronics and machinery, and a City supplied in everything", () => {
