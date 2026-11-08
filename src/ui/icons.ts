@@ -211,6 +211,10 @@ export const ICON = {
   /** the camera follows it: a sight (control glyph, takes the button's colour) */
   follow: svg(18, 18, `<circle cx="9" cy="9" r="5.2" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="9" cy="9" r="1.7" fill="currentColor"/><path d="M9 1 V4.2 M9 13.8 V17 M1 9 H4.2 M13.8 9 H17" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>`),
   close: svg(14, 14, `<path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>`),
+  // open ground in the inspector: water (three swells), hills (two peaks), stuck traffic (the map's amber diamond)
+  water: svg(28, 28, `<path d="M2 9.5 q3 -3 6 0 t6 0 t6 0 t6 0 M2 15.5 q3 -3 6 0 t6 0 t6 0 t6 0 M2 21.5 q3 -3 6 0 t6 0 t6 0 t6 0" fill="none" stroke="${C.glass}" stroke-width="2.2" stroke-linecap="round"/>`),
+  hills: svg(28, 28, `<path d="M1.5 24 L10 9 L15 16.5 L19 11 L26.5 24 Z" fill="${C.olive}"/><path d="M10 9 L7.4 13.6 L10 12.4 L12.2 13.7 Z M19 11 L17.3 13.6 L19 12.8 L20.7 13.8 Z" fill="${C.cream}"/>`),
+  stuck: svg(28, 28, `<path d="M14 2.5 L25.5 14 L14 25.5 L2.5 14 Z" fill="${C.ochre}" stroke="${C.navy}" stroke-width="1.4" stroke-linejoin="round"/><rect x="12.6" y="7.6" width="2.8" height="8.6" fill="${C.navy}"/><rect x="12.6" y="18" width="2.8" height="2.8" fill="${C.navy}"/>`),
 };
 
 /** Small pictograms of what towns buy (town panel, Towns list, map labels), 16 px. */

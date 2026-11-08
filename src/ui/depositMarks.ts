@@ -42,7 +42,7 @@ export class DepositMarks {
   private atKey = "";
   private walls: DOMRect[] = [];
 
-  constructor(private gen: () => WorldGen, private fly: (c: V2) => void) {
+  constructor(private gen: () => WorldGen, private fly: (c: V2, field?: number) => void) {
     this.el.className = "deposit-marks";
     document.body.prepend(this.el);
   }
@@ -85,10 +85,10 @@ export class DepositMarks {
           tag.className = `dm-tag${this.focus ? " on" : ""}`;
           tag.innerHTML = `<i aria-hidden="true">${productIcon(k.icon)}</i><span></span>`;
           tag.querySelector("span")!.textContent = k.name;
-          tag.title = `${k.name} deposit: fly there`;
+          tag.title = `${k.name} deposit: look at it`;
           tag.setAttribute("aria-label", tag.title);
           const at = { x: d.x, y: d.y };
-          tag.onclick = () => this.fly(at);
+          tag.onclick = () => this.fly(at, k.field);
           this.el.append(tag);
           this.marks.set(key, { key, k, c: at, tag });
         }

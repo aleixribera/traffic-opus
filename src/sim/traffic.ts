@@ -1994,6 +1994,12 @@ export class Traffic {
     v.route = [k, ...best];
   }
 
+  /** The lights at a node now (inspector): the phase that is on, its stage (0 green, 1 yellow, 2 all red) and for how long; null unsignalled or not yet run. */
+  signalNow(node: number): { i: number; st: 0 | 1 | 2; t: number } | null {
+    const c = this.sigCtl.get(node);
+    return c ? { i: c.i, st: c.st, t: c.t } : null;
+  }
+
   /** The cars that have stood still at least `min` seconds (ui/stuckAlerts.ts): where each is, and for how long. */
   stuckCars(min: number): { p: V2; t: number }[] {
     const out: { p: V2; t: number }[] = [];

@@ -820,5 +820,25 @@ button.fchip:hover { background: var(--plate-3); border-color: var(--pin); }
 
 .ip-sig { margin-top: 4px; }
 .ip-flowbtn { margin-top: 2px; min-height: 32px; }
+
+/* what the map draws for the selection, keyed by each flow row's square: cream for people and where things come
+   from, ochre for work and where things go, brick for trouble */
+.ip-flow dt.fl-coming-from::before, .ip-flow dt.fl-out-now::before { background: var(--cream); border-color: var(--cream); }
+.ip-flow dt.fl-work-at::before, .ip-flow dt.fl-staff-from::before, .ip-flow dt.fl-worked-by::before { background: var(--ochre); border-color: var(--ochre); }
+.ip-flow dt.fl-held-at::before { background: var(--bad); border-color: var(--bad); }
+.ip-flow dt.fl-cargo::before, .ip-flow dt.fl-extractor::before, .ip-flow dt.fl-shelves::before { background: none; }
+.ip-note { margin: 10px 0 0; line-height: 1.45; }
+.ip-place { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; margin-top: 2px; }
+.ip-place svg { width: 18px; height: 18px; flex: none; }
+.ip-place:focus-visible { outline: 2px solid var(--ochre); outline-offset: 1px; }
+/* the junction's approaches: a square in the colour its road shows on the map (green now, red now, a long wait) */
+.ip-waits { margin-top: 4px; }
+.ip-waits dt { display: flex; align-items: center; gap: 7px; }
+.ip-waits dt > i { width: 7px; height: 7px; flex: none; border: 1px solid var(--cream-3); }
+.ip-waits dt > i.aw-go { background: var(--good); border-color: var(--good); }
+.ip-waits dt > i.aw-stop { background: var(--brick); border-color: var(--bad); }
+.ip-waits dt > i.aw-bad { background: var(--bad); border-color: var(--bad); }
+.ip-waits dd { flex-wrap: wrap; }
+.phase.live .ph-name::after { content: "green now"; display: block; margin-top: 2px; font: 600 var(--t-xs)/1.2 var(--f-text); color: var(--good); }
 /* a long panel (Details open) stops above the stuck-traffic chip while it shows, instead of running under it */
 body:has(> .sa-chip:not([hidden])) .panel { max-height: calc(100vh - var(--bar-h) - 82px); }

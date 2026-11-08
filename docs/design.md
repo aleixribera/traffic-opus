@@ -621,6 +621,20 @@ in the same realistic register, with deposit regions readable on the ground. Cle
 milestones at the top, build categories at the bottom: roads, extraction, plants, logistics, towns), inspector
 panels, no generic AI look.
 
+- **Everything is clickable (owner, 2026-11-08: "Almost everything in the game should be clickable, and open its
+  info/overlay/visualization etc. For example for a truck we can show its info (what it is carrying, how many...)
+  as well as its exact path. For ores open the overlay and ...").** Every click opens the inspector and draws what
+  it is about on the map, cleared with the selection (Esc, a click on empty ground). A truck: its loads, their
+  worth and arrival, the exact route left as running dashes to a square at its end and the way it came faded; a
+  car or bus: its errand and route. A deposit, fertile soil or forest: the Resources view focused on that kind, the
+  yield an extractor would get there, its size, the sites working it, and "Place a … here". A road: everyone's
+  whole routes through it (CS's route view). A junction: each approach's queue and longest wait, the lights' green
+  and red on its roads. A site: product-coloured flow lines with arrowheads to its suppliers and buyers, and its
+  reach ring (power, depot). A town: supply lines from the sites that feed it. A home: lines to where its people
+  work and are out now; a shop or workplace: its staff's homes and its customers. A stuck-traffic diamond: the
+  vehicles standing there and the junctions holding them. Water and hills say one line; plain land clears. Details
+  in docs/ui-style.md "Inspector".
+
 ### Look: Industry Booming America (owner, 2026-11-08)
 
 The game's setting is 1920s-40s American industry: steel, oil, highways, Deco.

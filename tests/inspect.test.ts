@@ -6,15 +6,17 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { Game } from "../src/game/city";
 import { HOUR } from "../src/game/society";
 import { BLOCK, gridPt } from "../src/game/towns";
-import { Industry } from "../src/game/industry";
+import { Industry, PRODUCTS } from "../src/game/industry";
 import { F } from "../src/world/gen";
 import { seasonMult } from "../src/game/calendar";
 import type { V2 } from "../src/core/math";
 import type { Building } from "../src/game/buildings";
 import {
-  TradeLedger, congestion, fmtNum, fmtRate, junctionModel, metresLeft, modelOf, rateLately, roadModel, siteModel, splitProblem,
-  townModel, trucksOut, vehicleModel, vehiclesOnSeg,
+  GROUND_HILLS, GROUND_WATER, STUCK_NEAR, TradeLedger, WORK_LINE, approaches, congestion, extractorFor, fmtNum, fmtRate, groundAt,
+  groundModel, homeModel, junctionModel, metresLeft, modelOf, patchAt, rateLately, roadModel, routeLine, routesThrough, siteModel,
+  splitProblem, stuckAt, stuckModel, townModel, trucksOut, vehicleModel, vehiclesOnSeg, waitTone, type Sel,
 } from "../src/ui/inspect";
+import { dkDir, dkSeg } from "../src/sim/router";
 import { junctionAt, pickAt, pickRadius, poseOf, vehicleAt } from "../src/ui/pick";
 import { placeAlong, road } from "./helpers";
 
@@ -119,18 +121,132 @@ describe("The inspector's panels", () => {
     P.why = why;
   });
 
-  it("a truck: speed, distance and arrival; from its farm to its plant, its route lit", () => {
+  it("a loaded truck: its loads, what they're worth, and arrival; cargo, from its farm to its plant, its route lit", () => {
     const v = truckOf(farm)!;
+    const h = v.trip.haul!;
     const m = vehicleModel(g, v);
     expect(m.title).toMatch(/truck/i);
     expect(m.sub).toMatch(/of crops$/);
-    expect(m.keys.map((k) => k.label)).toEqual([`speed, limit ${Math.round(v.edge.speed * 3.6)}`, "to go", "arrives about"]);
-    expect(m.keys[0].value).toBe(String(Math.round(v.v * 3.6)));
+    // crops feed your own food plant: nobody pays for them, so no cargo value
+    expect(m.keys.map((k) => k.label)).toEqual(["crops", "for your own plant", expect.stringMatching(/^arrives · [\d.]+ k?m to go$/)]);
+    expect(m.keys[0].value).toBe(String(h.n));
     expect(metresLeft(g, v)).toBeGreaterThan(0);
     expect(m.keys[2].value).toMatch(/^\d\d:\d0$/);
-    expect(m.flow[0].chips[0].ref).toEqual({ k: "building", id: farm.id });
-    expect(m.flow[1].chips[0].ref).toEqual({ k: "building", id: v.trip.haul!.dest });
-    expect(m.related).toMatchObject({ route: v.id, from: [farm.id], to: [v.trip.haul!.dest] });
+    expect(m.flow.map((r) => r.label)).toEqual(["Cargo", "From", "To"]);
+    expect(m.flow[0].chips[0]).toMatchObject({ product: "crops", note: `${h.n} load${h.n === 1 ? "" : "s"}` });
+    expect(m.flow[1].chips[0].ref).toEqual({ k: "building", id: farm.id });
+    expect(m.flow[2].chips[0].ref).toEqual({ k: "building", id: h.dest });
+    expect(m.status.tag).toBe("Outbound");
+    expect(m.related).toMatchObject({ route: v.id, from: [farm.id], to: [h.dest] });
+  });
+
+  it("a vehicle's route line is its planned route: the pieces behind, where it is, then every piece ahead", () => {
+    const v = truckOf(farm)!;
+    const piece = (k: number) => {
+      const P = g.net.segGeom.get(dkSeg(k))!.center.pts;
+      return (dkDir(k) === 1 ? P : [...P].reverse()).flatMap((p) => [p.x, p.y]);
+    };
+    const { pts, cut } = routeLine(g, v);
+    // the point at `cut` is the vehicle itself
+    const q = poseOf(v, 1);
+    expect(pts[cut * 2]).toBeCloseTo(q.x, 6);
+    expect(pts[cut * 2 + 1]).toBeCloseTo(q.y, 6);
+    // it ends with exactly the route's pieces still ahead, in order
+    const ahead = v.route.slice(v.ri + 1).flatMap(piece);
+    expect(pts.slice(pts.length - ahead.length)).toEqual(ahead);
+    // and starts with the pieces it drove (as given: the trail the map keeps)
+    const behind = v.route.slice(0, Math.max(0, v.ri));
+    if (behind.length) expect(pts.slice(0, piece(behind[0]).length)).toEqual(piece(behind[0]));
+  });
+
+  it("a road lists the trips through it (the vehicles on it now), and the map draws their whole routes", () => {
+    let seg = -1;
+    for (const s of g.net.segs.keys()) if (vehiclesOnSeg(g, s).all.length > (seg < 0 ? 0 : vehiclesOnSeg(g, seg).all.length)) seg = s;
+    expect(seg).toBeGreaterThanOrEqual(0);
+    const on = vehiclesOnSeg(g, seg).all;
+    const trips = routesThrough(g, seg);
+    expect(trips.map((t) => t.id).sort()).toEqual(on.map((v) => v.id).sort());
+    for (const t of trips) {
+      const v = on.find((o) => o.id === t.id)!;
+      expect(t.freight).toBe(!!v.trip.haul);
+      if (!v.trip.haul) expect([t.from, t.to]).toEqual([v.trip.from, v.trip.to]);
+    }
+    expect(roadModel(g, seg)!.related.routes!.sort()).toEqual(on.map((v) => v.id).sort());
+  });
+
+  it("a site draws its trade as flow lines in its products' colours; a home draws lines to where its people work", () => {
+    const m = siteModel(g, farm, led);
+    const f = m.related.flows!.find((l) => l.b.x === foodplant.c.x && l.b.y === foodplant.c.y)!;
+    expect(f).toBeDefined();
+    expect(f).toMatchObject({ a: farm.c, color: PRODUCTS.crops.color, kind: "goods" });
+    expect(f.n).toBeGreaterThan(0);
+    // a home with working residents: a line from it to each workplace, as many people as the row says
+    const home = g.buildings.list.find((b) => b.zone && homeModel(g, b).flow.some((r) => r.label === "Work at"))!;
+    expect(home).toBeDefined();
+    const hm = homeModel(g, home);
+    const row = hm.flow.find((r) => r.label === "Work at")!;
+    for (const c of row.chips) {
+      const w = g.buildings.byId.get(c.ref!.id)!;
+      const line = hm.related.flows!.find((l) => l.b === w.c);
+      expect(line).toMatchObject({ a: home.c, kind: "people", color: WORK_LINE });
+      const n = [...g.people.citizens.values()].filter((p) => p.home === home.id && p.job === w.id).length;
+      expect(line!.n).toBe(n);
+    }
+  });
+
+  it("open ground picks what is there: water, a deposit, soil or forest, or nothing on plain land", () => {
+    // the farm's own soil (somewhere on its lot): fertile, worked by the farm, with its extractor offered
+    const onSoil = Array.from({ length: 81 }, (_, i) => ({ x: farm.c.x + ((i % 9) - 4) * farm.hw / 4, y: farm.c.y + (Math.floor(i / 9) - 4) * farm.hd / 4 })).find((p) => groundAt(g, p)?.id === F.fert)!;
+    expect(onSoil).toBeDefined();
+    const soil = groundAt(g, onSoil);
+    expect(soil?.id).toBe(F.fert);
+    {
+      const m = groundModel(g, soil as Extract<Sel, { k: "ground" }>);
+      expect(m.title).toBe("Fertile soil");
+      // its patch: the soil joined to the click, flooded from there (at least the 40 m cell clicked)
+      const patch = patchAt(g, F.fert, onSoil);
+      expect(patch.ha).toBeGreaterThan(1);
+      expect(Math.hypot(patch.c.x - onSoil.x, patch.c.y - onSoil.y)).toBeLessThan(1300);
+      expect(m.keys[1].value).toMatch(/^[1-9][\d,]*\+?$/);      expect(m.related.to).toContain(farm.id);
+      expect(m.flow.find((r) => r.label === "Worked by")!.chips.some((c) => c.ref?.id === farm.id)).toBe(true);
+      expect(modelOf(g, soil!, led, compass)?.title).toBe("Fertile soil");
+    }
+    expect(extractorFor(g, F.fert)).toBe("farm");
+    // scan the map round the town for one point of each
+    const t = g.towns.list[0];
+    const seen = new Map<number | null, V2>();
+    for (let i = -40; i <= 40 && seen.size < 6; i++) for (let j = -40; j <= 40; j++) {
+      const p = { x: t.c.x + i * 120, y: t.c.y + j * 120 };
+      const s = groundAt(g, p);
+      if (!seen.has(s?.id ?? null)) seen.set(s?.id ?? null, p);
+    }
+    for (const [id, p] of seen) {
+      if (id === null) {
+        expect(g.terrain.isWater(p) || g.terrain.isMountain(p) || g.terrain.has(F.fert, p) || g.terrain.has(F.forest, p)).toBe(false);
+        continue;
+      }
+      if (id === GROUND_WATER) expect(g.terrain.isWater(p)).toBe(true);
+      else if (id === GROUND_HILLS) expect(g.terrain.isMountain(p)).toBe(true);
+      else expect(g.terrain.has(id, p)).toBe(true);
+      // every kind opens a panel
+      expect(modelOf(g, { k: "ground", id, x: p.x, y: p.y }, led, compass)?.title).toBeTruthy();
+    }
+    expect(seen.has(null)).toBe(true);
+    // a road or building still wins over the ground under it
+    expect(pickAt(g, farm.c, 0.3, false)).toEqual({ k: "building", id: farm.id });
+  });
+
+  it("a stuck diamond opens the vehicles standing there and the roads they hold up", () => {
+    const v = truckOf(farm) ?? g.traffic.vehicles[0];
+    const was = v.stuck;
+    v.stuck = 200;
+    try {
+      const m = stuckModel(g, { k: "stuck", id: 1, x: v.x + 20, y: v.y });
+      expect(m.related.vehicles[0]).toBe(v.id);
+      expect(m.related.rings![0]).toMatchObject({ r: STUCK_NEAR, tone: "spot" });
+      expect(m.flow.find((r) => r.label === "Vehicles")!.chips.some((c) => c.ref?.k === "vehicle" && c.ref.id === v.id)).toBe(true);
+      expect(stuckAt(g, { x: v.x + STUCK_NEAR * 2, y: v.y }).some((o) => o.id === v.id)).toBe(false);
+    } finally { v.stuck = was; }
   });
 
   it("a road: vehicles on it now, speed against the limit, how full; a junction: queues and the worst approach", () => {
@@ -145,7 +261,13 @@ describe("The inspector's panels", () => {
     expect(congestion(0.1, 12).tone).toBe("bad");
     const node = [...g.net.nodeGeom.entries()].find(([, ng]) => ng.kind === "junction" && ng.arms.length >= 3)![0];
     const j = junctionModel(g, node, compass)!;
-    expect(j.keys.map((k) => k.label)).toEqual(["vehicles queued", "worst approach", "crossing now"]);
+    expect(j.keys.map((k) => k.label)).toEqual(["vehicles queued", "longest wait", "crossing now"]);
+    // each approach: its vehicles, queued and the longest wait among them
+    const ap = approaches(g, node);
+    expect(ap.length).toBe(g.net.nodeGeom.get(node)!.arms.length);
+    for (const a of ap) expect(a.queue).toBeLessThanOrEqual(a.cars);
+    expect(waitTone(70)).toBe("bad");
+    expect(waitTone(5)).toBe("good");
     expect(j.related.segs.length).toBe(g.net.nodeGeom.get(node)!.arms.length);
     // modelOf dispatches by what is selected
     expect(modelOf(g, { k: "node", id: node }, led, compass)?.title).toBe(j.title);

@@ -16,7 +16,7 @@ import type { SignalPlan } from "../roads/network";
 import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId } from "../app";
 import { ROUNDABOUTS, type RoundaboutSize } from "../roads/planner";
 import { ICON, buildingIcon, placedIcon, productIcon, roadIcon } from "./icons";
-import { TradeLedger, approaches, modelOf, sameSel, type FlowChip, type PanelModel, type Sel } from "./inspect";
+import { TradeLedger, approaches, extractorFor, modelOf, sameSel, waitTone, type FlowChip, type PanelModel, type Sel } from "./inspect";
 import type { Lane } from "../roads/network";
 import { CHANGELOG } from "../changelog";
 import { PLACED, PLACED_TABS, type PlacedKind } from "../game/placed";
@@ -1285,8 +1285,11 @@ export class Hud {
     for (const c of this.panel.querySelectorAll<HTMLButtonElement>(".fchip[data-k]")) c.onclick = () => {
       this.sfx.play("click");
       const s = { k: c.dataset.k, id: +c.dataset.id! } as Sel;
-      this.openSel(s);
-      const at = s.k === "town" ? this.app.game.towns.byId.get(s.id)?.c : s.k === "building" ? this.app.game.buildings.byId.get(s.id)?.c : undefined;
+      if (s.k === "node") this.openSignal(s.id);
+      else this.openSel(s);
+      const g = this.app.game;
+      const at = s.k === "town" ? g.towns.byId.get(s.id)?.c : s.k === "building" ? g.buildings.byId.get(s.id)?.c
+        : s.k === "node" ? g.net.nodes.get(s.id)?.p : s.k === "vehicle" ? g.traffic.vehicles.find((v) => v.id === s.id) : undefined;
       if (at && !this.app.onScreen(at)) this.app.glideTo(at, this.app.view.halfH, 1);
     };
     return true;
@@ -1340,7 +1343,29 @@ export class Hud {
     else if (s.k === "vehicle") this.fillVehicle(m);
     else if (s.k === "seg") this.fillRoad(m);
     else if (s.k === "node") this.fillSignal(m);
+    else if (s.k === "ground") this.fillGround(s, m);
+    else if (s.k === "stuck") this.fillStuck(m);
     else this.fillStop(m);
+  }
+
+  /** Open ground: what it is, who works it, and a shortcut to place its extractor right there. */
+  private fillGround(s: Extract<Sel, { k: "ground" }>, m: PanelModel) {
+    const g = this.app.game;
+    const k = s.id >= 0 ? extractorFor(g, s.id) : null;
+    const note = s.id >= 0 ? `<p class="small muted ip-note">The Resources view is on while this is selected: ${escapeHtml(m.title.replace(/ deposit$/, "").toLowerCase())} shows strong, the rest faint.</p>` : "";
+    const body = k ? `<button type="button" class="btn ip-place"><span aria-hidden="true">${placedIcon(k)}</span>Place a ${escapeHtml(BUILDING_TYPES[k].name.toLowerCase())} here</button>${note}` : note;
+    if (!this.setPanel(this.anatomy(m, { kind: "ground", body }))) return;
+    const b = this.panel.querySelector<HTMLButtonElement>(".ip-place");
+    if (b && k) b.onclick = () => {
+      this.sfx.play("click");
+      this.cat = "industry";
+      this.app.setTool({ tool: "place", placed: k });
+    };
+  }
+
+  /** A stuck-traffic diamond: the vehicles standing there and the junctions holding them (all chips select). */
+  private fillStuck(m: PanelModel) {
+    this.setPanel(this.anatomy(m, { kind: "stuck", body: `<p class="small muted ip-note">Ringed on the map: the vehicles standing still, and the roads they are on.</p>` }));
   }
 
   /**
@@ -1354,7 +1379,7 @@ export class Hud {
     const chip = (c: FlowChip) => {
       // (a product with no picture of its own would show the plain diamond the status line uses: left out)
       const pIcon = c.product && productIcon(c.product) !== NO_PRODUCT_ICON ? productIcon(c.product) : "";
-      const icon = c.town ? ICON.town : c.kind ? (isPlantKind(c.kind) ? placedIcon(c.kind) : buildingIcon(c.kind as BuildingKind, "")) : pIcon;
+      const icon = c.town ? ICON.town : c.kind ? iconFor(c.kind) : pIcon;
       // (a place shows its cargo as a small product mark beside its own icon)
       const prod = pIcon && (c.kind || c.town) ? `<span class="fc-p">${pIcon}</span>` : "";
       const body = `${icon}${prod}<span class="fc-t">${escapeHtml(c.text)}</span>${c.note ? `<em class="${c.tone ?? ""}">${escapeHtml(c.note)}</em>` : ""}`;
@@ -1411,8 +1436,9 @@ export class Hud {
     const tr = v.trip, h = tr.haul;
     const rows: [string, string][] = [];
     if (h && !h.big) rows.push(["Truck", `${TRUCK_CLASSES[h.cls ?? "light"].name} · ${Math.round(v.len)} m`]);
-    if (h && h.leg === "out" && !h.big) rows.push(["Load", `${plural(h.n, "load")} of ${PRODUCTS[h.product].name.toLowerCase()}`]);
     if (h && h.leg === "back") rows.push(["Load", "Empty, on its way back"]);
+    // (a loaded truck's key numbers are its cargo: its speed goes here)
+    if (h && h.leg === "out" && !h.big) rows.push(["Speed", `${Math.round(v.v * 3.6)} km/h <span class="muted">· limit ${Math.round(v.edge.speed * 3.6)}</span>`]);
     if (tr.bus) rows.push(["Aboard", plural(tr.bus.pax.length, "rider")]);
     const elapsed = Math.max(0, g.time - tr.startT);
     rows.push(["On the road", `${Math.round((elapsed / HOUR) * 60)} min`]);
@@ -1420,9 +1446,10 @@ export class Hud {
     if (v.block && v.v < 0.5) rows.push(["Waiting for", escapeHtml(v.block)]);
     const on = v.edge.kind === "lane" ? g.net.segs.get((v.edge as Lane).seg) : undefined;
     if (on) rows.push(["On", `${ROAD_TYPES[on.type].name} · ${Math.round(ROAD_TYPES[on.type].speed * 3.6)} km/h`]);
-    const details = `<dl class="facts">${rows.map(([k, x]) => `<dt>${k}</dt><dd>${x}</dd>`).join("")}</dl><p class="small muted">The dashed line on the map is the way it will take; its start and end are outlined.</p>`;
+    const details = `<dl class="facts">${rows.map(([k, x]) => `<dt>${k}</dt><dd>${x}</dd>`).join("")}</dl>`;
+    const body = `<p class="small muted ip-note">On the map: dashes run the way it will take, to the square at its end; the faded line is the way it came.</p>`;
     const following = this.app.following === v.id;
-    const html = this.anatomy(m, { kind: "vehicle", details, actions: this.actionBtn("follow", ICON.follow, "Follow with the camera", following) });
+    const html = this.anatomy(m, { kind: "vehicle", details, body, actions: this.actionBtn("follow", ICON.follow, "Follow with the camera", following) });
     if (!this.setPanel(html)) return;
     const f = this.panel.querySelector<HTMLButtonElement>(".ip-act.follow");
     if (f) f.onclick = () => { this.sfx.play("click"); this.app.followVehicle(this.app.following === v.id ? null : v.id); this.lastPanel = ""; this.fillSel(); };
@@ -1446,7 +1473,9 @@ export class Hud {
         ${dirRow(id * 2, `Toward ${compass(d)}`)}${dirRow(id * 2 + 1, `Toward ${compass({ x: -d.x, y: -d.y })}`)}
         ${s.town !== undefined ? `<dt>Laid by</dt><dd>${escapeHtml(g.towns.byId.get(s.town)?.name ?? "a town")} <span class="muted">· no upkeep</span></dd>` : ""}
       </dl>`;
-    const body = `<button class="btn quiet ip-flowbtn" aria-pressed="${flowOn}">${ICON.layers}${flowOn ? "Hide the traffic flow view" : "Show traffic flow on every road"}</button>`;
+    const n = m.related.routes?.length ?? 0;
+    const routes = n ? `<p class="small muted ip-note">On the map: the whole routes of the ${plural(n, "vehicle")} on it now, thicker where more share a road; ochre is your freight, cream everyone else.</p>` : "";
+    const body = `${routes}<button class="btn quiet ip-flowbtn" aria-pressed="${flowOn}">${ICON.layers}${flowOn ? "Hide the traffic flow view" : "Show traffic flow on every road"}</button>`;
     const html = this.anatomy(m, { kind: "road", details, body });
     if (!this.setPanel(html)) return;
     const fb = this.panel.querySelector<HTMLButtonElement>(".ip-flowbtn");
@@ -1706,6 +1735,8 @@ export class Hud {
     const node = g.net.nodes.get(this.panelNode)!;
     const ng = g.net.nodeGeom.get(this.panelNode)!;
     const plan = node.signal;
+    // (the phase that is green now gets a green edge in the list, as its roads do on the map)
+    const live = plan ? g.traffic.signalNow(this.panelNode) : null;
     const arms = ng.arms;
     const ph = plan ? plan.phases[Math.min(this.panelPhase, plan.phases.length - 1)] : null;
     const spokes = arms.map((a) => {
@@ -1728,16 +1759,25 @@ export class Hud {
         <div class="phase stops"><span class="ph-name">Stop signs</span><span class="ph-arms">${stopArms.map((a) => `<button class="arm stop-arm ${stops.includes(a.seg) ? "on stop" : ""}" data-seg="${a.seg}" aria-pressed="${stops.includes(a.seg)}" title="Stop sign on this approach">${compass(a.dir)}</button>`).join("")}</span></div>
         <button class="btn primary add-sig" ${sigOn ? "" : "disabled"}>${sigOn ? `Add traffic lights · ${formatMoney(SIGNAL_COST)}` : `Traffic lights unlock with ${unlockedBy((u) => u.features?.includes("signals"))!.name}`}</button>`;
     } else {
-      body = `<p class="small muted">The lights follow the traffic: a green ends early when its road is empty and runs up to twice its time while cars keep coming. Cars may turn right on red after stopping.</p>` + plan.phases.map((p, i) => `<div class="phase ${i === this.panelPhase ? "on" : ""}" data-i="${i}">
+      body = `<p class="small muted">The lights follow the traffic: a green ends early when its road is empty and runs up to twice its time while cars keep coming. Cars may turn right on red after stopping.</p>` + plan.phases.map((p, i) => `<div class="phase ${i === this.panelPhase ? "on" : ""}${live?.st === 0 && live.i === i ? " live" : ""}" data-i="${i}"${live?.st === 0 && live.i === i ? ` title="Green now"` : ""}>
           <span class="ph-name">${i + 1}. ${p.left ? "Left turns" : "All turns"}<button class="ph-left ${p.left ? "on" : ""}" data-i="${i}" aria-pressed="${!!p.left}" title="Only left turns (and U-turns) go in this phase">Left only</button></span>
           <span class="ph-arms">${arms.map((a) => `<button class="arm ${p.arms.includes(a.seg) ? "on" : ""}" data-i="${i}" data-seg="${a.seg}" title="Toggle this approach">${compass(a.dir)}</button>`).join("")}</span>
           <span class="ph-dur"><button class="dur" data-i="${i}" data-d="-2" aria-label="Shorter">−</button><b title="Usual green time">${p.dur}s</b><button class="dur" data-i="${i}" data-d="2" aria-label="Longer">+</button></span>
           ${plan.phases.length > 1 ? `<button class="ph-del" data-i="${i}" aria-label="Remove phase">${ICON.close}</button>` : ""}
         </div>`).join("") + `<div class="row"><button class="btn add-ph">+ Add phase</button><button class="btn quiet danger rm-sig">Remove lights</button></div>`;
     }
+    // each approach: what is on it, what is queued and how long the first in the queue has stood (the map shows the
+    // lights' greens and reds on the same roads)
     const ap = approaches(g, this.panelNode);
-    const details = `<dl class="facts">${ap.map((a) => `<dt>From the ${compass(a.dir)}</dt><dd>${plural(a.cars, "vehicle")}${a.queue ? ` · <span class="${a.queue >= 6 ? "bad" : ""}">${a.queue} queued</span>` : ""}</dd>`).join("")}</dl>`;
-    if (!this.setPanel(this.anatomy(m, { kind: "junction", details, body: `<div class="ip-sig">${diagram}${body}</div>` }))) return;
+    const tones = m.related.segTone ?? {};
+    const mark = (seg: number) => { const t = tones[seg]; return t ? `<i class="aw-${t}" aria-hidden="true"></i>` : `<i aria-hidden="true"></i>`; };
+    const said = (seg: number) => (tones[seg] === "go" ? "green now" : tones[seg] === "stop" ? "red now" : "");
+    const waits = ap.length ? `<h3 class="sub-h">Approaches</h3><dl class="facts ip-waits">${ap.map((a) => {
+      const w = a.queue ? ` · <span class="${waitTone(a.wait)}">waiting ${a.wait < 90 ? `${Math.round(a.wait)} s` : `${Math.round(a.wait / 60)} min`}</span>` : "";
+      const st = said(a.seg);
+      return `<dt>${mark(a.seg)}From the ${compass(a.dir)}${st ? ` <span class="muted">· ${st}</span>` : ""}</dt><dd>${plural(a.cars, "vehicle")}${a.queue ? ` · ${a.queue} queued` : ""}${w}</dd>`;
+    }).join("")}</dl>` : "";
+    if (!this.setPanel(this.anatomy(m, { kind: "junction", body: `${waits}<div class="ip-sig">${diagram}${body}</div>` }))) return;
     const q = <T extends Element>(s: string) => [...this.panel.querySelectorAll<T & HTMLElement>(s)];
     const redraw = () => { this.lastPanel = ""; this.fillSel(); };
     const set = (p: SignalPlan | null) => { if (!g.setSignal(this.panelNode, p)) this.toast("Not enough money", true); redraw(); };
@@ -2157,6 +2197,10 @@ const NO_PRODUCT_ICON = productIcon("");
 
 function iconFor(k: string): string {
   if (k === "town") return ICON.town;
+  if (k.startsWith("product:")) return productIcon(k.slice(8));
+  if (k === "water") return ICON.water;
+  if (k === "hills") return ICON.hills;
+  if (k === "stuck") return ICON.stuck;
   if (k === "truck" || k === "convoy") return ICON.truck;
   if (k === "car") return ICON.sedan;
   if (k === "bus") return ICON.busCat;

@@ -46,7 +46,7 @@ export class StuckAlerts {
   /** the alert the chip flew to last (the next click goes on to the next one) */
   private turn = 0;
 
-  constructor(private fly: (c: V2) => void) {
+  constructor(private fly: (c: V2, id?: number) => void) {
     this.el.className = "stuck-alerts";
     document.body.prepend(this.el);
     this.chip.type = "button";
@@ -59,7 +59,7 @@ export class StuckAlerts {
       const i = list.findIndex((a) => a.id === this.turn);
       const a = list[(i + 1) % list.length];
       this.turn = a.id;
-      this.fly(a.c);
+      this.fly(a.c, a.id);
     };
     document.body.append(this.chip);
   }
@@ -81,10 +81,10 @@ export class StuckAlerts {
       pin.type = "button";
       pin.className = "sa-pin";
       pin.innerHTML = `<i class="sa-sign" aria-hidden="true"></i>`;
-      pin.title = "Traffic stuck here: look closer";
+      pin.title = "Traffic stuck here: see what is held up";
       pin.setAttribute("aria-label", pin.title);
       const a: Alert = { id: this.nextId++, c: s.c, worst: s.worst, cars: s.cars, since: now - s.worst, seen: now, pin };
-      pin.onclick = () => this.fly(a.c);
+      pin.onclick = () => this.fly(a.c, a.id);
       this.el.append(pin);
       this.alerts.push(a);
     }
@@ -103,10 +103,10 @@ export class StuckAlerts {
     const txt = `${n === 1 ? "1 place" : `${n} places`} · ${mins} min`;
     const sp = this.chip.querySelector(".sa-n")!;
     if (sp.textContent !== txt) sp.textContent = txt;
-    const tip = `Traffic has stood still for ${mins} min${n > 1 ? ` in ${n} places` : ""}. Fly there`;
+    const tip = `Traffic has stood still for ${mins} min${n > 1 ? ` in ${n} places` : ""}. Fly there and see what is held up`;
     if (this.chip.title !== tip) { this.chip.title = tip; this.chip.setAttribute("aria-label", tip); }
     for (const a of this.alerts) {
-      const t = `Traffic stuck here (${a.cars === 1 ? "a car" : `${a.cars} cars`}, ${Math.max(1, Math.round((now - a.since) / 60))} min): look closer`;
+      const t = `Traffic stuck here (${a.cars === 1 ? "a car" : `${a.cars} cars`}, ${Math.max(1, Math.round((now - a.since) / 60))} min): see what is held up`;
       if (a.pin.title !== t) { a.pin.title = t; a.pin.setAttribute("aria-label", t); }
     }
   }
