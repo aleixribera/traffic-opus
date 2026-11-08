@@ -31,7 +31,7 @@ export const SITE_PIECES: string[] = [
 ];
 export const VEHICLE_MODELS = ["car", "van", "truck", "tipper", "tanker", "flatbed", "bus"] as const;
 /** Street furniture, drawn on its own (not a lot). */
-export const PROP_MODELS = ["busstop"] as const;
+export const PROP_MODELS = ["busstop", "fence"] as const;
 export type VehicleKind = (typeof VEHICLE_MODELS)[number];
 
 export interface ModelSet {

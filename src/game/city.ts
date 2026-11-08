@@ -853,6 +853,7 @@ export class Game {
     }
     const b = this.buildings.add(kind, pl, this.time);
     b.placed = true;
+    this.buildings.version++;
     if (isPlantKind(kind)) this.industry.init(b, kind, pl.deposit ? Math.min(1, pl.deposit.share / 0.8) : 1);
     for (const c of this.lotCells(b)) c.lot = b.id;
     this.candVersion = -1;
@@ -883,7 +884,7 @@ export class Game {
 
   /** Is p inside the fence of one of the company's sites? */
   inSite(p: V2): boolean {
-    for (const b of this.buildings.list) if (b.placed && rectDistance(p, b.c, b.hw, b.hd, b.rot) < 0.5) return true;
+    for (const b of this.buildings.sites) if (rectDistance(p, b.c, b.hw, b.hd, b.rot) < 0.5) return true;
     return false;
   }
 
@@ -1510,6 +1511,7 @@ export class Game {
     g.zones.paintAt(data.zones.map(([x, y, z]) => ({ p: { x: x as number, y: y as number }, zone: z as ZoneId })));
     g.buildings.list = [];
     g.buildings.byId.clear();
+    g.buildings.version++;
     for (const d of data.buildings) {
       const b = d as Building;
       // (saves from before sites grew: every plant starts at level 1)

@@ -50,11 +50,9 @@ const SQUARE_PAVING = 0xc2bcaa;
 /** Paving round a town hall (m), wider as the town grows: hamlet green, village square, civic plaza. */
 const PLAZA: Partial<Record<BuildingKind, number>> = { hamlethall: 4, villagehall: 7, townhall: 10, cityhall: 13 };
 
-// industry sites: a galvanised fence on posts, worn concrete service roads, faint pads where the next buildings go
+// industry sites: a galvanised fence (the Blender "fence" model, its chain-link a see-through panel), worn concrete service roads, faint pads where the next buildings go
 const FENCE_H = 2.1;
 const POST_EVERY = 9;
-const FENCE_POST = 0x5f625f;
-const FENCE_RAIL = 0x7d807c;
 const FENCE_MESH = 0x5d605d;
 const SERVICE_ROAD = 0x85847c;
 const PAD = 0xd9d2b8;
@@ -112,11 +110,8 @@ export class Buildings3D {
   private mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   private driveMat = new THREE.MeshLambertMaterial({ color: PAL.driveway });
   private roadMat = new THREE.MeshLambertMaterial({ color: SERVICE_ROAD });
-  private railMat = new THREE.MeshLambertMaterial({ color: FENCE_RAIL });
   private meshMat = new THREE.MeshLambertMaterial({ color: FENCE_MESH, transparent: true, opacity: 0.42, side: THREE.DoubleSide, depthWrite: false });
   private padMat = new THREE.MeshLambertMaterial({ color: PAD, transparent: true, opacity: 0.22, depthWrite: false });
-  private postGeo = new THREE.BoxGeometry(0.4, FENCE_H + 0.1, 0.4).translate(0, FENCE_H / 2, 0);
-  private postMat = new THREE.MeshLambertMaterial({ color: FENCE_POST });
   private order = new Map<string, Piece[]>();
   private layouts = new Map<number, { key: string; L: SiteLayout }>();
   private tmp = new THREE.Matrix4();
@@ -328,14 +323,16 @@ export class Buildings3D {
   private rebuildSites(list: Building[]) {
     for (const o of this.siteParts) {
       this.group.remove(o);
-      if (o instanceof THREE.Mesh && o.geometry !== this.postGeo) o.geometry.dispose();
-      if (o instanceof THREE.InstancedMesh) o.dispose();
+      if (o instanceof THREE.InstancedMesh) { o.dispose(); continue; }
+      if (o instanceof THREE.Mesh) o.geometry.dispose();
     }
     this.siteParts = [];
     const sites = list.filter((b) => b.placed && b.plant);
     if (!sites.length) return;
-    const rails = new Quads(), mesh = new Quads(), roads = new Quads(), pads = new Quads();
-    const posts: V2[] = [];
+    const mesh = new Quads(), roads = new Quads(), pads = new Quads();
+    // the fence's posts, rails and kerb: the Blender "fence" model, one 9 m bay at a time
+    const bays: THREE.Matrix4[] = [];
+    const yaw = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
     for (const b of sites) {
       const f = siteFrame(b.c, b.rot, b.side, b.hd);
       const L = this.layoutOf(b);
@@ -348,10 +345,13 @@ export class Buildings3D {
       ];
       for (const [x0, y0, x1, y1] of runs) {
         const a = W(x0, y0), e = W(x1, y1);
-        rails.strip(a, e, 0.42, FENCE_H);
-        mesh.wall(a, e, 0.15, FENCE_H);
-        const len = Math.hypot(x1 - x0, y1 - y0), n = Math.max(1, Math.round(len / POST_EVERY));
-        for (let k = 0; k < n; k++) posts.push(W(x0 + ((x1 - x0) * k) / n, y0 + ((y1 - y0) * k) / n));
+        mesh.wall(a, e, 0.28, FENCE_H - 0.1);
+        const len = Math.hypot(e.x - a.x, e.y - a.y), n = Math.max(1, Math.round(len / POST_EVERY));
+        yaw.setFromAxisAngle(up, -Math.atan2(e.y - a.y, e.x - a.x));
+        for (let k = 0; k < n; k++) {
+          const m = { x: a.x + ((e.x - a.x) * (k + 0.5)) / n, y: a.y + ((e.y - a.y) * (k + 0.5)) / n };
+          bays.push(new THREE.Matrix4().compose(new THREE.Vector3(m.x, 0, m.y), yaw, new THREE.Vector3(len / n / POST_EVERY, 1, 1)));
+        }
       }
       // service roads: built as far as the buildings they serve; the rest is still a faint pad
       const built = L.slots.filter((s) => s.level <= level);
@@ -382,7 +382,6 @@ export class Buildings3D {
       }
     }
     const parts = [
-      rails.mesh(this.railMat, 4),
       mesh.mesh(this.meshMat, 7),
       roads.mesh(this.roadMat, 3),
       pads.mesh(this.padMat, 2),
@@ -393,12 +392,15 @@ export class Buildings3D {
       this.siteParts.push(m);
       this.group.add(m);
     }
-    const pm = new THREE.InstancedMesh(this.postGeo, this.postMat, posts.length);
-    pm.castShadow = true;
-    posts.forEach((p, i) => pm.setMatrixAt(i, this.tmp.makeTranslation(p.x, 0, p.y)));
-    pm.computeBoundingSphere();
-    this.siteParts.push(pm);
-    this.group.add(pm);
+    const fence = this.models.props.get("fence");
+    if (fence && bays.length) {
+      const fm = new THREE.InstancedMesh(fence.geo, this.mat, bays.length);
+      fm.castShadow = true;
+      bays.forEach((m, i) => fm.setMatrixAt(i, m));
+      fm.computeBoundingSphere();
+      this.siteParts.push(fm);
+      this.group.add(fm);
+    }
   }
 
   /** How far a site's slot has gone up. */
@@ -406,9 +408,13 @@ export class Buildings3D {
     return this.rise({ b, model: s.model, slot: s });
   }
 
-  /** Raise buildings under construction (cheap; call a few times a second). */
-  updateConstruction() {
-    if (!this.building.length) return;
+  /**
+   * Raise buildings under construction (cheap; call a few times a second). True when a site's new building has just
+   * finished rising: its pad and parked cars need a rebuild.
+   */
+  updateConstruction(): boolean {
+    if (!this.building.length) return false;
+    let done = false;
     const touched = new Set<THREE.InstancedMesh>();
     const still: { p: Piece; i: number }[] = [];
     for (const it of this.building) {
@@ -422,9 +428,11 @@ export class Buildings3D {
       touched.add(mesh);
       // (zoned buildings stay on the list till the next rebuild: they finish with a change of colour)
       if (it.p.b.built < 1 || this.rise(it.p) < 1 || !it.p.slot) still.push(it);
+      else done = true;
     }
     this.building = still;
     for (const m of touched) m.instanceMatrix.needsUpdate = true;
+    return done;
   }
 
   /** How cars get into and out of this building's lot (a site's: through the gate to its truck yard). */

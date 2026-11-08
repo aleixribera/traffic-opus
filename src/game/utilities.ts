@@ -7,6 +7,7 @@ import { dist, rectDistance } from "../core/math";
 import type { Building } from "./buildings";
 import type { Game } from "./city";
 import { Industry, PLANTS, type PlantKind } from "./industry";
+import { levelMult } from "./sites";
 
 export type UtilityId = "power";
 export const UNIT: Record<UtilityId, string> = { power: "MW" };
@@ -33,20 +34,20 @@ export class Utilities {
 
   constructor(private g: Game) {}
 
-  /** What a power plant makes now: its rating, scaled by its staff, while it has coal to burn. */
+  /** What a power plant makes now: its rating (grown with its level), scaled by its staff, while it has coal to burn. */
   outputOf(b: Building): number {
     const d = defOf(b);
     if (!d?.makes || !Industry.running(b) || !b.access) return 0;
     if ((b.plant!.stock.coal ?? 0) < 1) return 0;
     const staff = b.cap ? this.g.people.workersAt(b.id) / b.cap : 1;
     if (staff <= 0) return 0;
-    return d.makes * Math.max(0.25, Math.min(1, staff * 1.25));
+    return d.makes * levelMult(b.plant!.level ?? 1) * Math.max(0.25, Math.min(1, staff * 1.25));
   }
 
-  /** Power a building draws at full work (0: it needs none). Building sites draw nothing. */
+  /** Power a building draws at full work, grown with its level (0: it needs none). Building sites draw nothing. */
   demandOf(b: Building): number {
     const d = defOf(b);
-    return d?.power && Industry.running(b) && b.access ? d.power : 0;
+    return d?.power && Industry.running(b) && b.access ? d.power * levelMult(b.plant!.level ?? 1) : 0;
   }
 
   /** Is building b within reach of power plant p, on the same roads? */

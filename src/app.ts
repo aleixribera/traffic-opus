@@ -560,8 +560,8 @@ export class App {
   /** Just outside the gates of the company's sites that have no road yet (a road ending there joins them). */
   private waitingGates(): V2[] {
     const out: V2[] = [];
-    for (const b of this.game.buildings.list) {
-      if (!b.placed || b.access) continue;
+    for (const b of this.game.buildings.sites) {
+      if (b.access) continue;
       const f = siteFrame(b.c, b.rot, b.side, b.hd);
       out.push({ x: f.gate.x - f.into.x * GATE_SNAP, y: f.gate.y - f.into.y * GATE_SNAP });
     }
@@ -1233,7 +1233,7 @@ export class App {
     if (this.hudT > 0.25) {
       this.hudT = 0;
       this.hud?.tick();
-      this.buildings3d.updateConstruction();
+      if (this.buildings3d.updateConstruction()) { this.buildings3d.rebuild(this.game.buildings.list); this.applyTint(); }
       if ((this.overlay !== "none" && this.overlay !== "flow") || this.st.tool === "place") this.applyTint();
     }
     this.saveT += dt;

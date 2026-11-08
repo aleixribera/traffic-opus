@@ -107,6 +107,8 @@ def palette():
         "water": "#6fbbe3", "stone": "#d6d8d4", "pav_roof": "#d8654f",
         # bus stop: dark frame, pale glass, a white roof and the blue stop sign
         "bs_frame": "#3c4148", "bs_glass": "#cfe6f2", "bs_roof": "#3f5470", "bs_sign": "#2f6fd0",
+        # industry site fence: galvanised posts and rails on a concrete kerb
+        "fn_post": "#5f625f", "fn_rail": "#7d807c", "fn_kerb": "#b9b6ad",
         # utilities: wind (white tower, grey nacelle), coal (warm grey brick, red-white chimney, pale cooling
         # tower), solar (deep blue panels on grass), water (white + blue), sewage (sand concrete, olive roof)
         "tb_white": "#f2f3f1", "tb_grey": "#bfc4ca", "gravel": "#d3cbb9", "concrete": "#c8c6c0",
@@ -1217,6 +1219,22 @@ def b_busstop(M, P):
     cyl(M, -2.05, -0.7, 0.06, PAD_H, 2.9, P["bs_frame"], n=6)
     box(M, -2.11, -1.99, -0.98, -0.42, 2.4, 2.95, P["bs_sign"])
     box(M, -2.125, -1.975, -0.9, -0.5, 2.62, 2.78, P["line"])
+    return L
+
+
+def b_fence(M, P):
+    """One 9 m bay of an industry site's galvanised fence, along X, centred: a post at its -X end (bays laid end
+    to end give a post every 9 m), a top and a bottom rail and a low concrete kerb. The chain-link between the
+    rails is drawn by the game as a see-through panel."""
+    L = Lot(9.0, 0.28)
+    L.bays = []
+    box(M, -4.5, 4.5, -0.14, 0.14, 0, 0.18, P["fn_kerb"])
+    box(M, -4.5, -4.3, -0.1, 0.1, 0, 2.2, P["fn_post"])
+    cyl(M, -4.4, 0, 0.1, 2.18, 2.26, P["fn_post"], n=6)
+    box(M, -4.3, 4.5, -0.04, 0.04, 2.0, 2.08, P["fn_rail"])
+    box(M, -4.3, 4.5, -0.04, 0.04, 0.22, 0.28, P["fn_rail"])
+    # a slim stay halfway along keeps the mesh taut
+    box(M, -0.04, 0.04, -0.05, 0.05, 0.18, 2.0, P["fn_rail"])
     return L
 
 
@@ -3015,6 +3033,7 @@ BUILDINGS = {
     "park": (b_park, 24, 24, 0),
     "parklarge": (b_parklarge, 48, 48, 0),
     "busstop": (b_busstop, 4.4, 1.8, 0),
+    "fence": (b_fence, 9.0, 0.28, 0),
     # utilities
     "windturbine": (b_windturbine, 16, 16, 0),
     "coalplant": (b_coalplant, 64, 52, 6),

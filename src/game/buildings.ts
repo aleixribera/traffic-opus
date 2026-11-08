@@ -103,8 +103,18 @@ export class Buildings {
   list: Building[] = [];
   byId = new Map<number, Building>();
   nextId = 1;
+  /** bumped whenever a building comes or goes */
+  version = 0;
+  private sitesAt = -1;
+  private sitesCache: Building[] = [];
 
   constructor(private net: RoadNetwork) {}
+
+  /** The placed buildings (company sites, power plants...): few, so loops over them stay cheap. */
+  get sites(): Building[] {
+    if (this.sitesAt !== this.version) { this.sitesCache = this.list.filter((b) => b.placed); this.sitesAt = this.version; }
+    return this.sitesCache;
+  }
 
   footprint(b: { c: V2; hw: number; hd: number; rot: number }, pad = 0): V2[] {
     return rectCorners(b.c, b.hw + pad, b.hd + pad, b.rot);
@@ -119,22 +129,27 @@ export class Buildings {
     const T = BUILDING_TYPES[kind];
     const turned = Math.abs(wrapAngle(opts.turn ?? 0)) > 1e-3;
     const snap = turned ? null : this.snapPose(kind, p);
+    let snapped: Placement | null = null;
     if (snap) {
       const pl = this.check(T, snap.c, snap.rot, snap.side, snap.front, world, soft);
-      if (!pl.ok) return pl;
       // driveway must leave the road clear of junction mouths
       const s = this.net.segs.get(snap.seg)!, g = this.net.segGeom.get(snap.seg)!;
       const sC = g.center.length * arcFrac(s.c, snap.t, g.center.pts);
-      if (sC < g.trimA + 4 || sC > g.center.length - g.trimB - 4) return { ...pl, ok: false, reason: "Too close to a junction" };
-      pl.access = { seg: snap.seg, s: sC, p: snap.front };
-      pl.faces = ROAD_TYPES[s.type].name;
-      return pl;
+      if (!pl.ok) snapped = pl;
+      else if (sC < g.trimA + 4 || sC > g.center.length - g.trimB - 4) snapped = { ...pl, ok: false, reason: "Too close to a junction" };
+      else {
+        pl.access = { seg: snap.seg, s: sC, p: snap.front };
+        pl.faces = ROAD_TYPES[s.type].name;
+        return pl;
+      }
+      // a site that can't face the road there may still stand free where the cursor is
+      if (T.zone !== "placed") return snapped;
     }
     if (T.zone !== "placed") return null;
     const pose = this.freePose(kind, p, opts);
     const pl = this.check(T, p, pose.rot, 1, pose.front, world, soft);
     pl.free = true;
-    if (!pl.ok) return pl;
+    if (!pl.ok) return snapped ?? pl;
     // a road already runs past where its gate would be: it is connected straight away
     const ga = this.gateAccess(p, pose.rot, 1, T.d / 2);
     if (ga) Object.assign(pl, { access: ga.access, front: ga.front, side: ga.side, rot: ga.rot, free: false, faces: ga.type });
@@ -295,8 +310,9 @@ export class Buildings {
     let sC = g.center.length * arcFrac(s.c, best.t, g.center.pts);
     // (kept off the junction mouths, where a car can't stop)
     const lo = g.trimA + 2, hi = g.center.length - g.trimB - 2;
-    if (hi > lo) sC = Math.max(lo, Math.min(hi, sC));
-    const rs = sideOf(s.c, best.t, c);
+    if (hi <= lo) return null; // (a road all junction mouth: no room for a driveway)
+    sC = Math.max(lo, Math.min(hi, sC));
+    const rs = sideOf(s.c, best.t, c, side);
     // (rot, side) and (rot + PI, -side) are the same plot: keep its gate where it is
     return { access: { seg: best.seg, s: sC, p: front }, front, side: rs, rot: rs === side ? rot : wrapAngle(rot + Math.PI), type: ROAD_TYPES[s.type].name };
   }
@@ -313,6 +329,7 @@ export class Buildings {
   insert(b: Building): Building {
     this.list.push(b);
     this.byId.set(b.id, b);
+    this.version++;
     if (b.id >= this.nextId) this.nextId = b.id + 1;
     return b;
   }
@@ -322,6 +339,7 @@ export class Buildings {
     if (!b) return;
     this.byId.delete(id);
     this.list.splice(this.list.indexOf(b), 1);
+    this.version++;
   }
 
   /** Buildings whose footprint is within `hw` of any point. */
@@ -367,7 +385,7 @@ export class Buildings {
         const r = cubicClosest(s.c, b.front);
         if (r.d < g.width / 2 + 1.5) {
           a.s = g.center.length * arcFrac(s.c, r.t, g.center.pts);
-          const side = sideOf(s.c, r.t, b.c);
+          const side = sideOf(s.c, r.t, b.c, b.placed ? b.side : undefined);
           // (a site keeps its gate where it is whichever way the road now runs)
           if (b.placed && side !== b.side) b.rot = wrapAngle(b.rot + Math.PI);
           b.side = side;
@@ -431,7 +449,9 @@ export class Buildings {
       const c = m.c1;
       const corners = rectCorners(c, b.hw, b.hd, b.rot);
       const samples = [...corners, c, ...corners.map((k) => scale(add(k, c), 0.5))];
-      let ok = samples.every((k) => world.inBounds(k) && world.unlocked(k) && !world.isWater(k) && !world.isMountain(k));
+      // (a site only needs the land under its centre, docs/design.md "Industry sites")
+      let ok = samples.every((k) => world.inBounds(k) && (b.placed || world.unlocked(k)) && !world.isWater(k) && !world.isMountain(k)) && world.unlocked(c);
+      const gate = b.placed ? siteFrame(c, b.rot, b.side, b.hd).gate : null;
       if (ok) ok = !this.list.some((o) => o.id !== b.id && (!moving.has(o.id) || target.has(o.id)) &&
         obbOverlap(c, b.hw + 0.3, b.hd + 0.3, b.rot, target.get(o.id) ?? o.c, o.hw, o.hd, o.rot));
       if (ok) {
@@ -441,7 +461,10 @@ export class Buildings {
           const w2 = id === segId ? halfW : gg.width / 2;
           for (let i = 0; i < gg.center.pts.length; i++) {
             if (gg.hs[i] > 6) continue;
-            if (rectDistance(gg.center.pts[i], c, b.hw, b.hd, b.rot) < w2 + 0.4) { ok = false; break roads; }
+            const d = rectDistance(gg.center.pts[i], c, b.hw, b.hd, b.rot);
+            // (a road may come right up to a site's gate)
+            if (gate && d > 0.8 && dist(gg.center.pts[i], gate) < GATE_REACH + 4 + w2) continue;
+            if (d < w2 + 0.4) { ok = false; break roads; }
           }
         }
       }
@@ -461,10 +484,16 @@ export class Buildings {
   }
 }
 
-function sideOf(c: import("../core/math").Cubic, t: number, p: V2): 1 | -1 {
+/**
+ * Which side of the road p is on. A road that ends square-on at a site's gate has the plot straight ahead, on
+ * neither side: then it keeps `keep`, so the site's driveway doesn't flip kerbs from one rebuild to the next.
+ */
+function sideOf(c: import("../core/math").Cubic, t: number, p: V2, keep?: 1 | -1): 1 | -1 {
   const tan = norm(cubicTangent(c, t));
   const q = cubicClosest(c, p).p;
-  return dot(sub(p, q), right(tan)) >= 0 ? 1 : -1;
+  const rel = sub(p, q), across = dot(rel, right(tan));
+  if (keep !== undefined && Math.abs(across) < 0.25 * Math.hypot(rel.x, rel.y)) return keep;
+  return across >= 0 ? 1 : -1;
 }
 
 /** Fraction of arc length at cubic parameter t, using the sampled centreline. */
