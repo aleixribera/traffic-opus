@@ -184,6 +184,7 @@ export class App {
     this.game = g;
     this.view.rot = 0;
     this.hud?.compassAngle(0);
+    this.hud?.clearBanners();
     for (const c of [...this.worldRoot.children]) this.worldRoot.remove(c);
     const small = Math.min(window.innerWidth, window.innerHeight) < 700;
     this.terrain3d = new Terrain3D(g.terrain, small);
