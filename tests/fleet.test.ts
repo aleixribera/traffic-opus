@@ -32,7 +32,6 @@ describe("fleets sized by site level", () => {
   it(`carries a farm's whole output ${FLEET_HAUL / 1000} km down a street, at level 1 and at level 4`, () => {
     for (const level of [1, SITE_LEVELS]) {
       const g = new Game(7);
-      for (let i = -9; i <= 9; i++) for (let j = -9; j <= 9; j++) g.tiles.add(`${i},${j}`);
       // a straight street FLEET_HAUL long with a farm on fertile soil at one end and a food plant at the other
       let farm: Building | null = null, fp: Building | null = null;
       for (let k = 0; k < 24 && !farm; k++) {

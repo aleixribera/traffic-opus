@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BUILDING_TYPES, LEVEL_H, TILE, MAX_LEVEL, ROAD_TYPES, SIM, roadWidth, type RoadTypeId } from "./config";
+import { BUILDING_TYPES, LEVEL_H, MAX_LEVEL, ROAD_TYPES, SIM, roadWidth, type RoadTypeId } from "./config";
 import { dist, dot, formatMoney, norm, rectCorners, right, sub, v2, wrapAngle, type V2 } from "./core/math";
 import type { Building } from "./game/buildings";
 import { Game } from "./game/city";
@@ -34,7 +34,7 @@ import { Saves } from "./game/saves";
 import { PLACED, type PlacedKind } from "./game/placed";
 import type { Hud, Chip } from "./ui/hud";
 
-export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "town" | "unlock" | "place" | "transit";
+export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "town" | "place" | "transit";
 /** The bus tool: put stops on the kerb, or click stops in order to make a line. */
 export type TransitMode = "stop" | "line";
 /** Road tool modes, as in CS2: the four drawing modes, a 3-click grid, and Replace (change type / reverse). */
@@ -201,12 +201,10 @@ export class App {
     this.worldRoot.add(this.terrain3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group);
     this.roads.rebuildAll();
     this.buildings3d.rebuild(g.buildings.list);
-    this.terrain3d.setTiles(g.tiles);
     this.groundOverlay();
     g.on((e) => {
       if (e.t === "roads") { this.roads.apply(e.cs); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
       else if (e.t === "buildings") { this.buildings3d.rebuild(g.buildings.list); this.applyTint(); this.dirtyPreview = true; }
-      else if (e.t === "tiles") this.terrain3d.setTiles(g.tiles);
       else if (e.t === "zones") this.dirtyPreview = true;
       else if (e.t === "milestone") { if (this.mode === "play") this.hud?.milestone(e.m); }
       else if (e.t === "toast") { if (this.mode !== "menu") this.hud?.toast(e.msg); }
@@ -471,7 +469,6 @@ export class App {
     }
     else if (k === "b") this.setTool({ tool: "bulldoze" });
     else if (k === "l") this.setTool({ tool: this.st.tool === "lane" ? "inspect" : "lane" });
-    else if (k === "m") this.setTool({ tool: this.st.tool === "unlock" ? "inspect" : "unlock" });
     else if (k === "p") this.hud?.toggleWin("progression");
     else if (k === "z") this.hud?.toggleWin("economy");
     else if (k === "c") this.hud?.toggleWin("city");
@@ -829,18 +826,6 @@ export class App {
       this.hud?.openSignal(n);
       return;
     }
-    if (t === "unlock") {
-      const [i, j] = g.tileOf(c);
-      if (g.tiles.has(`${i},${j}`)) return;
-      const why = g.tileBlock(i, j);
-      if (why) { this.reject(why); return; }
-      const price = g.nextTilePrice;
-      g.unlockTile(i, j);
-      this.hud?.sound("place");
-      this.hud?.toast(`Bought land for ${formatMoney(price)}`);
-      if (g.tileSlotsLeft <= 0) this.setTool({ tool: "inspect" });
-      else this.hud?.refresh();
-    }
   }
 
   private finishRect() {
@@ -1145,15 +1130,6 @@ export class App {
         const node = g.net.nodes.get(n)!;
         pv.marker(node.p, node.h);
         chips.push({ text: node.signal ? "Edit traffic lights" : "Junction: lanes & lights", kind: "info" });
-      }
-    } else if (t === "unlock") {
-      const [i, j] = g.tileOf(c);
-      if (!g.tiles.has(`${i},${j}`)) {
-        const T = TILE, a = (i - 0.5) * T, b = (j - 0.5) * T;
-        const why = g.tileBlock(i, j);
-        pv.footprint([v2(a, b), v2(a + T, b), v2(a + T, b + T), v2(a, b + T)], why ? 0x888888 : 0x58c8e6);
-        chips.push(why ? { text: why, kind: "error" } : { text: "Buy this tile", kind: "info" });
-        chips.push({ text: formatMoney(g.nextTilePrice), kind: g.nextTilePrice > g.money ? "error" : "cost" });
       }
     } else if (t === "transit") {
       this.transitPreview(pv, chips);

@@ -6,14 +6,14 @@ import { Game } from "../src/game/city";
 const view = (o: Partial<ProgressView> = {}): ProgressView => ({ towns: [], made: {}, sold: {}, bestDay: {}, bestEarned: 0, powered: 0, ...o });
 
 describe("Milestones", () => {
-  it("are a ladder of tiers 1 to 4: unique, each with a goal and something concrete to unlock", () => {
+  it("are a ladder of tiers 1 to 4: unique, each with a goal and something concrete to unlock or a grant", () => {
     expect(MILESTONES.length).toBeGreaterThanOrEqual(38);
     expect(MILESTONES.length).toBeLessThanOrEqual(50);
     expect(new Set(MILESTONES.map((m) => m.id)).size).toBe(MILESTONES.length);
     for (const m of MILESTONES) {
       expect(m.goal.length).toBeGreaterThan(5);
       const u = m.unlocks;
-      const n = (u.roads?.length ?? 0) + (u.features?.length ?? 0) + (u.buildings?.length ?? 0) + (u.tiles ?? 0) + (u.towns ?? 0) + (u.bays ?? 0) + (u.load ?? 0) + (u.trucks?.length ?? 0);
+      const n = (u.roads?.length ?? 0) + (u.features?.length ?? 0) + (u.buildings?.length ?? 0) + (u.towns ?? 0) + (u.bays ?? 0) + (u.load ?? 0) + (u.trucks?.length ?? 0) + (u.grant ? 1 : 0);
       expect(n, m.id).toBeGreaterThan(0);
     }
   });
@@ -29,7 +29,6 @@ describe("Milestones", () => {
     }
     const all = unlocksOf(MILESTONES.map((m) => m.id));
     expect(all.buildings.size).toBe(Object.keys(PLANTS).length);
-    expect(all.tiles).toBeGreaterThan(BASE.tiles);
     expect(all.bays).toBeGreaterThan(0);
     expect(all.load).toBe(4);
   });

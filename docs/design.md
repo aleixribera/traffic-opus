@@ -25,8 +25,9 @@ Our own names, look and art throughout.
 
 ## The map
 
-- An endless procedural world in 640 m tiles. Roads can go anywhere. Buildings need land the company owns:
-  tiles are bought next to land you own or along your roads, and company levels raise how many you may own.
+- An endless procedural world with no land to buy (owner decision, 2026-11-08): the company builds anywhere its
+  roads reach, and a site can go down anywhere before them. Nothing on the map is locked or for sale; what opens
+  it up is the milestones unlocking each tier's plants, and that tier's deposits lying kilometres further out.
 - **Deposits** sit in distinct regions that never run out, spread by tier:
 
   | Tier | Deposit | Where | Distance from start |
@@ -78,8 +79,8 @@ Our own names, look and art throughout.
   heaps tinted to the material, offices, workshops, truck yards; fields for farms, log yards for camps).
 - **Trucks** stop at the truck yard by the gate; internal movement isn't simulated.
 - **Towns** never grow into a site's fence.
-- **Land:** a site needs only the tile under its centre (a 290 m plot spans several 640 m tiles; owning every one
-  made land, not traffic, the wall by day 8).
+- **No land to own:** a site stands wherever its plot fits (owning map tiles once made land, not traffic, the
+  wall by day 8, and then got in the player's way; it was dropped on 2026-11-08).
 
 ## Freight (routes itself)
 
@@ -221,7 +222,7 @@ A town should visibly turn from a hamlet into a city over a playthrough: bigger,
 
 - Income: payment for every load delivered to a town. Plant-to-plant transfers earn nothing; they keep the
   chain running.
-- Costs: roads (build and upkeep), buildings and upgrades, wages, trucks, fuel, land. Loans exist; going
+- Costs: roads (build and upkeep), buildings and upgrades, wages, trucks, fuel. Loans exist; going
   bankrupt ends the game.
 - **Money is not the challenge.** Every sensible build pays for itself within a game day or two; the first
   chain is in profit as soon as its first trucks deliver. Demand outruns supply at every size (a town always
@@ -242,7 +243,7 @@ Unlocks come from **milestones**, concrete achievements, never from cumulative X
 
 There are about 40 milestones in a rough ladder, with a few open at once so there is always a choice of what to
 chase next. Each unlocks something concrete: a chain, a building size, a truck class, a road type or junction
-tool, town slots, land, warehouses, fuel depots. The last ones unlock **company projects**: huge buildings that
+tool, town slots, warehouses, fuel depots, a grant. The last ones unlock **company projects**: huge buildings that
 take hundreds of mixed loads, as long-term goals and goods sinks.
 
 **Order of the long game:** the first half is a pure road-and-truck game. Tiers 1-3 chains, truck classes, every
@@ -257,6 +258,9 @@ demand has outgrown even road trains on a good highway network), and barges afte
   plant, first deliveries, second town, sawmill.
 - The bottleneck moves on its own: more towns mean more commuters on the roads trucks use, and longer chains
   mean longer trips, so road work keeps being needed.
+- **The map paces itself by tier, not by land.** There is no land cap and nothing to buy before building: each
+  tier's plants unlock with milestones, and its deposits lie kilometres further out than the last, so the
+  company's reach grows with the roads it can afford to run out to them.
 - **Demand rises exponentially.** From the mid game it should be obvious that each town size multiplies its
   needs (per-resident use rises with size, and towns grow faster when supplied). In the long road phase that
   means bigger trucks, more of them, highways and interchanges; only once volumes outgrow even that do rail
@@ -304,7 +308,7 @@ height levels shown while drawing, and the instant upgrade preview.
 **Simulation:** Space pauses; 1/2/3 set normal, fast and very fast speed.
 
 **Panels:**
-- M: map tiles. P: progression; Z: economy; C: city info; V: statistics; X: transportation, as those panels
+- P: progression; Z: economy; C: city info; V: statistics; X: transportation, as those panels
   arrive.
 - F5/F9: quicksave and quickload.
 - ` (backtick): hide the UI.

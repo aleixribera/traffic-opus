@@ -10,14 +10,13 @@ import {
 import { glueGap, glueRun, pocketTaper, type Pocket, type RoadNetwork, type RSeg } from "./network";
 
 // ---------------------------------------------------------------------------------------------
-// World queries the planner needs (terrain, buildings, locked tiles)
+// World queries the planner needs (terrain, buildings)
 // ---------------------------------------------------------------------------------------------
 
 export interface BuildWorld {
   isWater(p: V2): boolean;
   isMountain(p: V2): boolean;
   inBounds(p: V2): boolean;
-  unlocked(p: V2): boolean;
   /** Buildings whose footprint comes within `hw` of any of the points. */
   buildingsHit(pts: V2[], hw: number): number[];
   money(): number;
@@ -1328,17 +1327,15 @@ export function validateStrokes(
     // curvature
     const r = minRadius(pts, 4);
     if (r < T.minRadius * 0.98) errors.push({ msg: `Curve too tight for ${T.name} (needs ${T.minRadius} m radius)`, p: mid });
-    // terrain + tiles
-    let water = false, mountain = false, locked = false, out = false;
+    // terrain
+    let water = false, mountain = false, out = false;
     for (let i = 0; i < pts.length; i++) {
       const p = pts[i];
       if (!world.inBounds(p)) out = true;
-      else if (!world.unlocked(p)) locked = true;
       if (world.isMountain(p)) mountain = true;
       if (hs[i] < LEVEL_H * 0.5 && world.isWater(p)) water = true;
     }
     if (out) errors.push({ msg: "Outside the map", p: mid });
-    if (locked) errors.push({ msg: "Area not unlocked yet", p: mid });
     if (mountain) errors.push({ msg: "Mountain in the way", p: mid });
     if (water) errors.push({ msg: "Needs a bridge here: raise it with Page Up", p: mid });
     // buildings

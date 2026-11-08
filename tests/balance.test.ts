@@ -14,12 +14,12 @@ import { DAY, HOUR } from "../src/game/society";
 import { BLOCK, TOWN_SIZES, gridPt, needsOf, sizeOf } from "../src/game/towns";
 import { TOWN_COST, TOWN_SPACING, type Town } from "../src/game/settlements";
 import { PLANTS, PRODUCTS, type PlantKind, type Product } from "../src/game/industry";
-import { MILESTONES, OPEN_AT_ONCE, tilePrice } from "../src/game/progression";
+import { MILESTONES, OPEN_AT_ONCE } from "../src/game/progression";
 import { F } from "../src/world/gen";
 import { BUILDING_TYPES } from "../src/config";
 import { add, dist, norm, scale, sub, v2, type V2 } from "../src/core/math";
 import { layRoad, roadErrors } from "./helpers";
-import type { Building, PlaceOpts } from "../src/game/buildings";
+import type { Building } from "../src/game/buildings";
 
 /** (the test runs in Node; the project has no Node types) */
 declare const process: { env: Record<string, string | undefined>; stderr: { write(s: string): void } };
@@ -89,8 +89,7 @@ function play() {
       const q = v2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
       for (const side of [1, -1]) for (const o of [35, 50]) {
         const p = v2(q.x + side * n.x * o, q.y + side * n.y * o);
-        let pl = g.placedPlan(kind, p);
-        if (pl && !pl.ok && pl.reason?.startsWith("Not your land") && buyLand(kind, p) === true) pl = g.placedPlan(kind, p);
+        const pl = g.placedPlan(kind, p);
         if (pl?.ok) {
           const x = g.place(kind, p)!;
           say(`place ${kind}${x.plant!.yld < 1 ? ` (${Math.round(x.plant!.yld * 100)}% on its deposit)` : ""}, ${(dist(p, A.c) / 1000).toFixed(1)} km from ${A.name} · $${Math.round(g.money).toLocaleString("en-US")} left`);
@@ -99,25 +98,6 @@ function play() {
       }
     }
     return null;
-  };
-  /**
-   * Buy the tile under the middle of a site at p (all a site needs), only when it would then stand there, on its
-   * deposit (a player sees that while placing), with money to spare. "money": not for now.
-   */
-  const buyLand = (kind: PlantKind, p: V2, opts?: PlaceOpts): boolean | "money" => {
-    const pl = g.placedPlan(kind, p, opts);
-    if (!pl) return false;
-    const [i, j] = g.tileOf(pl.c), key = `${i},${j}`;
-    // (more of a chain it already has doesn't take the last tile slot: the next chain's deposit may need it)
-    if (g.tiles.has(key) || g.tileSlotsLeft < (growing ? 2 : 1) || g.tileBlock(i, j)?.startsWith("Must border")) return false;
-    const price = tilePrice(g.tiles.size);
-    if (price + PLANTS[kind].cost > g.money - RESERVE) { poor(); return "money"; }
-    g.tiles.add(key);
-    const fits = !!g.placedPlan(kind, p, opts)?.ok;
-    g.tiles.delete(key);
-    if (!fits || !g.unlockTile(i, j)) return false;
-    say(`bought 1 tile of land for $${price.toLocaleString("en-US")}`);
-    return true;
   };
   /** The nearest spot to p (from `from` m out) whose 75 m square is mostly on a deposit field. */
   const deposit = (field: number, p: V2, from: number, to: number): V2 | null => {
@@ -163,11 +143,9 @@ function play() {
     ...(T4 ? { copper: spots(F.copper, 9000, 21000) } : {}),
   };
   const km1 = (l: V2[]) => (l.length ? `${(dist(l[0], A.c) / 1000).toFixed(1)} km` : "none");
-  say(`deposits from ${A.name}: soil ${(dist(soil, A.c) / 1000).toFixed(1)} km, forest ${(dist(wood, A.c) / 1000).toFixed(1)} km, iron ore ${km1(tier2.ore)}, coal ${km1(tier2.coal)}, limestone ${km1(tier2.lime)}, oil ${km1(tier2.oil)}, sand ${km1(tier2.sand)}${T4 ? `, copper ${km1(tier2.copper)}` : ""}`);
-  /** When a deposit had no way through (a player tries again later, once there is land or money for it). */
+  say(`deposits from ${A.name}: soil ${(dist(soil, A.c) / 1000).toFixed(1)} km, forest ${(dist(wood, A.c) / 1000).toFixed(1)} km, iron ore ${km1(tier2.ore)}, coal ${km1(tier2.coal)}, limestone ${km1(tier2.lime)}, oil ${km1(tier2.oil)}, sand ${km1(tier2.sand)}`);
+  /** When a deposit had no way through (a player tries again later, once there is money for it). */
   const blocked = new Map<string, number>();
-  /** Set while the company adds to chains it already has (see buyLand). */
-  let growing = false;
   /** Where a new road to q starts: the nearest of the company's road ends and the towns' street ends. */
   const startFor = (q: V2): V2 =>
     [edge(A, q), ...(B ? [edge(B, q)] : []), ...extra.map((t) => edge(t, q)), ...Object.values(roads).flat()].sort((x, y) => dist(x, q) - dist(y, q))[0];
@@ -194,13 +172,7 @@ function play() {
       if (tries >= 10) break;
       const a = startFor(q);
       const opts = { down: norm(sub(a, q)) };
-      let pl = g.placedPlan(kind, q, opts);
-      if (pl && !pl.ok && pl.reason?.startsWith("Not your land")) {
-        const got = buyLand(kind, q, opts);
-        // (land it can't pay for yet: it waits rather than settle for a worse plot)
-        if (got === "money") return "money";
-        if (got) pl = g.placedPlan(kind, q, opts);
-      }
+      const pl = g.placedPlan(kind, q, opts);
       if (!pl?.ok) { siteWhy.set(pl?.reason ?? "no plan", (siteWhy.get(pl?.reason ?? "no plan") ?? 0) + 1); continue; }
       tries++;
       const b = g.place(kind, q, opts)!;
@@ -224,7 +196,7 @@ function play() {
     if (has(kind) || g.time - (blocked.get(key) ?? -1e9) < DAY) return;
     if (g.money < RESERVE + PLANTS[kind].cost + 8000) { poor(); return; }
     for (const d of tier2[key]) {
-      // (land out there can only be bought once one of the company's roads is in it: a road into the deposit first)
+      // (a road into the deposit first: the site faces it)
       if (!roads[key] || dist(roads[key][1], d) > 600) {
         const a = startFor(d);
         const r = road(`to the ${name}`, a, d);
@@ -384,7 +356,6 @@ function play() {
     another(k);
   };
   const scaleUp = () => {
-    growing = true;
     // (a full yard is not the company's to fix with trucks: a site's fleet comes with its level)
     trucks = g.buildings.list.filter((b) => b.plant && b.problem?.startsWith("Full of") && b.problem.includes("trucks")).length;
     // short of power: another power plant at the hub
@@ -396,7 +367,6 @@ function play() {
     for (const t of g.towns.list) if (t.pop > 100) for (const p of needsOf(t.pop)) if ((t.supply[p] ?? 1) < 0.8) grow(p);
     if (g.buildings.list.some((b) => b.plant?.site && g.time - b.born > DAY)) { grow("planks"); grow("cement"); if (T4) grow("parts"); }
     if (g.buildings.list.filter((b) => b.site).length > 4) grow("parts");
-    growing = false;
   };
   let trucks = 0;
   const extra: Town[] = [];

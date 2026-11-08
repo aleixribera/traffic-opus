@@ -15,6 +15,14 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.58", date: "2026-11-08", title: "Build anywhere: no more land",
+    notes: [
+      "There is no land to buy: the company builds anywhere its roads reach, and the deposits kilometres apart are what open the map up.",
+      "Goals that used to give land now give a town slot, a truck bay or a grant instead.",
+      "Old saves still load; the land they owned is simply forgotten.",
+    ],
+  },
+  {
     v: "v0.0.57", date: "2026-11-08", title: "Fleets mix truck sizes by level",
     notes: [
       "A site's level sets its fleet's mix: level 1 runs light trucks only, each level swaps some for heavies and road trains, and level 4 runs mostly road trains.",

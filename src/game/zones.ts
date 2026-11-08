@@ -76,7 +76,6 @@ export interface Block {
 export interface ZoneWorld {
   isWater(p: V2): boolean;
   isMountain(p: V2): boolean;
-  owned(p: V2): boolean;
   /** land a cell may never be zoned on (inside an industry site's fence) */
   taken?(p: V2): boolean;
   /** changes whenever `taken` (or ownership) may answer differently: cached land checks are dropped */
@@ -468,13 +467,13 @@ export class ZoneMap {
     return false;
   }
 
-  /** Open land under the whole cell: no water, mountain, unowned land or site. */
+  /** Open land under the whole cell: no water, mountain or site. */
   private landFree(c: Cell): boolean {
     const w = this.world;
     const u = fromAngle(c.rot), v = right(u);
     const h = CELL / 2 - 0.6;
     const probes = [c.c, add(c.c, add(scale(u, h), scale(v, h))), add(c.c, add(scale(u, -h), scale(v, h))), add(c.c, add(scale(u, h), scale(v, -h))), add(c.c, add(scale(u, -h), scale(v, -h)))];
-    for (const p of probes) if (w.isWater(p) || w.isMountain(p) || !w.owned(p) || w.taken?.(p)) return false;
+    for (const p of probes) if (w.isWater(p) || w.isMountain(p) || w.taken?.(p)) return false;
     return true;
   }
 

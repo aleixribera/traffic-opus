@@ -117,7 +117,6 @@ describe("Company power", () => {
     pp.plant!.stock = { coal: 6 };
     // a long street west, joined to the town: a second power plant out there with no coal, and a smelter beside it
     const far = v2(-200 - PLANTS.coalplant.reach! - 1200, 0);
-    for (let i = -9; i <= 9; i++) for (let j = -9; j <= 9; j++) g.tiles.add(`${i},${j}`);
     const r = layRoad(g, v2(-200, 0), far);
     if (typeof r === "string") throw new Error(`no road west: ${r}`);
     const [la, lb] = r.legs[r.legs.length - 1];

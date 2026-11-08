@@ -8,7 +8,7 @@ import {
 import { cubicAt, cubicTangent, dist, dot, norm, tangentArc, v2, type V2 } from "../src/core/math";
 
 const world = (over: Partial<BuildWorld> = {}): BuildWorld => ({
-  isWater: () => false, isMountain: () => false, inBounds: () => true, unlocked: () => true, buildingsHit: () => [], money: () => 1e9,
+  isWater: () => false, isMountain: () => false, inBounds: () => true, buildingsHit: () => [], money: () => 1e9,
   ...over,
 });
 const free = (p: V2, h = 0): Snap => ({ p, h, guides: [] });

@@ -13,7 +13,7 @@ import { TRUCK_CLASSES, type TruckClass } from "../src/game/trucks";
 
 const DT = 1 / 30;
 const trip = (): Trip => ({ kind: "shop", from: 0, to: 0, resident: -1, startT: 0, freeFlow: 0 });
-const world: BuildWorld = { isWater: () => false, isMountain: () => false, inBounds: () => true, unlocked: () => true, buildingsHit: () => [], money: () => 1e9 };
+const world: BuildWorld = { isWater: () => false, isMountain: () => false, inBounds: () => true, buildingsHit: () => [], money: () => 1e9 };
 
 function road(net: RoadNetwork, a: number, b: number) {
   return net.addSeg(a, b, "street", straightCubic(net.nodes.get(a)!.p, net.nodes.get(b)!.p));

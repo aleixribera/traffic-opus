@@ -6,7 +6,7 @@ import type { RoadTypeId } from "../src/config";
 import type { Access } from "../src/sim/router";
 import { chainPoints, commitStrokes, planRoad, slipLaneEnd, snap, type BuildWorld } from "../src/roads/planner";
 
-const world: BuildWorld = { isWater: () => false, isMountain: () => false, inBounds: () => true, unlocked: () => true, buildingsHit: () => [], money: () => 1e9 };
+const world: BuildWorld = { isWater: () => false, isMountain: () => false, inBounds: () => true, buildingsHit: () => [], money: () => 1e9 };
 const on = (net: RoadNetwork, p: V2) => snap(net, p, { mpp: 0.2, level: 0, type: "one1" });
 
 const E = v2(1, 0);

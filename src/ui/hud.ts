@@ -103,7 +103,7 @@ const hex = (c: number) => "#" + c.toString(16).padStart(6, "0");
 const FEATURE_NAME = { roundabout: "Roundabouts", signals: "Traffic lights", grid: "Grid tool", parallel: "Parallel roads", transit: "Buses" } as const;
 const plural = (n: number, one: string, many = one + "s") => `${n} ${n === 1 ? one : many}`;
 
-/** What a milestone unlocks, item by item: "Iron Mine", "+4 map tiles", "$15,000 grant". */
+/** What a milestone unlocks, item by item: "Iron Mine", "+1 town to run", "$15,000 grant". */
 function unlockList(u: Unlocks): string[] {
   return [
     ...(u.buildings ?? []).map((k) => BUILDING_TYPES[k].name),
@@ -113,7 +113,6 @@ function unlockList(u: Unlocks): string[] {
     ...(u.towns ? [`+${plural(u.towns, "town")} to run`] : []),
     ...(u.bays ? ["+1 truck at every building"] : []),
     ...(u.load ? ["+1 load on every truck"] : []),
-    ...(u.tiles ? [`+${plural(u.tiles, "map tile")}`] : []),
     ...(u.grant ? [`${formatMoney(u.grant)} grant`] : []),
   ];
 }
@@ -137,7 +136,6 @@ const KEYS: [string, string][] = [
   ["Shift", "15° angle steps"],
   ["B", "Bulldozer"],
   ["L", "Add lane (Shift or right click removes)"],
-  ["M", "Map tiles"],
   ["P / Z / C / X", "Progression / Economy / Towns / Transport"],
   ["Space, 1 2 3", "Pause, game speed"],
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
@@ -158,7 +156,7 @@ export class Hud {
   private assets = h("section", "card assets");
   private toolOpts = h("section", "card toolopts");
   // corners
-  private tlBtns = new Map<WinId | "menu" | "tiles", HTMLButtonElement>();
+  private tlBtns = new Map<WinId | "menu", HTMLButtonElement>();
   private win = h("section", "card win");
   private tut = h("section", "card goals");
   private panel = h("aside", "card panel");
@@ -198,7 +196,7 @@ export class Hud {
     // ---- top left: the menu and the city's info buttons
     const tl = h("div", "corner tl");
     const row = h("div", "tl-row");
-    const tlb = (k: WinId | "menu" | "tiles", icon: string, title: string, fn: () => void) => {
+    const tlb = (k: WinId | "menu", icon: string, title: string, fn: () => void) => {
       const b = h("button", "tlb", icon);
       b.title = title;
       b.setAttribute("aria-label", title);
@@ -213,7 +211,6 @@ export class Hud {
     tlb("economy", ICON.coins, "Economy (Z)", () => this.toggleWin("economy"));
     tlb("city", ICON.chart, "Towns (C)", () => this.toggleWin("city"));
     tlb("transport", ICON.car, "Transportation overview (X)", () => this.toggleWin("transport"));
-    tlb("tiles", ICON.tiles, "Map tiles (M)", () => app.setTool({ tool: app.st.tool === "unlock" ? "inspect" : "unlock" }));
     this.compass.innerHTML = ICON.north;
     this.compass.title = "North up (the map is turned: Q / E or middle-drag)";
     this.compass.setAttribute("aria-label", "Turn the map north up");
@@ -465,7 +462,7 @@ export class Hud {
       b.setAttribute(k === "bulldoze" ? "aria-pressed" : "aria-expanded", String(on));
     }
     for (const [k, b] of this.tlBtns) {
-      const on = k === "tiles" ? st.tool === "unlock" : k === "info" ? this.winKind === "info" || app.overlay !== "none" : this.winKind === k;
+      const on = k === "info" ? this.winKind === "info" || app.overlay !== "none" : this.winKind === k;
       b.classList.toggle("on", on);
     }
     this.undoBtn.disabled = !g.canUndo();
@@ -585,11 +582,6 @@ export class Hud {
       items.push(h("p", "to-text", "Click a junction to add traffic lights or edit their phases."));
     } else if (st.tool === "lane") {
       items.push(h("p", "to-text", "Click a road where the turn lane should start, back from the junction. Middle half: left turns, kerb half: right turns. On a motorway, click before an exit or after an entry. Shift or right click removes."));
-    } else if (st.tool === "unlock") {
-      const left = g.tileSlotsLeft;
-      items.push(h("p", "to-text", left > 0
-        ? `Next tile ${formatMoney(g.nextTilePrice)} · ${left} more allowed. Click a darkened tile next to your land.`
-        : "Reach the next milestone to buy more land."));
     }
     if (!items.length) { el.hidden = true; return; }
     el.hidden = false;
