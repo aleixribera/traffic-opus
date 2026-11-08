@@ -89,6 +89,7 @@ export interface PlantDef {
 }
 
 const HOUR = 40;
+const DAY_S = 24 * HOUR;
 
 export const PLANTS: Record<PlantKind, PlantDef> = {
   farm: {
@@ -269,9 +270,20 @@ export interface PlantState {
   /** a fuel depot: trucks it filled and what that saved against the market price, all time */
   served?: number;
   saved?: number;
+  /** loads of each product it made in each of the last HIST_HOURS game hours, oldest first */
+  hist?: Partial<Record<Product, number>>[];
 }
 
-export interface PlantBooks { made: number; sent: number; earned: number; spent: number; /** a depot: trucks filled, money saved */ served?: number; saved?: number }
+/** Hours of output a plant remembers (its panel's "a day" figures and chart). */
+export const HIST_HOURS = 24;
+
+export interface PlantBooks {
+  made: number; sent: number; earned: number; spent: number;
+  /** loads made of each product */
+  by?: Partial<Record<Product, number>>;
+  /** a depot: trucks filled, money saved */
+  served?: number; saved?: number;
+}
 const books = (): PlantBooks => ({ made: 0, sent: 0, earned: 0, spent: 0 });
 
 /** What a truck of the company's is doing (on Trip.haul). */
@@ -374,6 +386,20 @@ export class Industry {
     for (const n of Object.values(d.outputs)) per += n ?? 0;
     const perSec = (per * levelMult(level) * yld) / d.cycle;
     return Math.max(d.trucks, Math.ceil(perSec * FLEET_TRIP));
+  }
+
+  /** Loads of a product a plant makes in a game day at its level, fully staffed and powered, never held up. */
+  static perDay(b: Building, p: Product): number {
+    const d = PLANTS[b.kind as PlantKind], n = d?.outputs[p] ?? 0;
+    if (!n || !b.plant) return 0;
+    return (n * levelMult(b.plant.level) * b.plant.yld * DAY_S) / d.cycle;
+  }
+
+  /** Loads of a product it made over the hours it remembers (up to a day), and how many hours that is. */
+  static madeLately(b: Building, p: Product): { made: number; hours: number; byHour: number[] } {
+    const h = b.plant?.hist ?? [];
+    const byHour = h.map((x) => x[p] ?? 0);
+    return { made: byHour.reduce((a, v) => a + v, 0), hours: h.length, byHour };
   }
 
   /** Loads each of a plant's stores holds (the yard grows with the site). */
@@ -507,6 +533,7 @@ export class Industry {
           const k = Math.min(n, Math.max(0, store - (P.out[p] ?? 0)));
           if (k <= 0) continue;
           P.out[p] = (P.out[p] ?? 0) + k; P.now.made += k; this.h.made?.(p, k);
+          const by = (P.now.by ??= {}); by[p] = (by[p] ?? 0) + k;
         }
         if (short() || full()) { P.prog = 0; break; }
       }
@@ -892,6 +919,9 @@ export class Industry {
         this.h.spend(up, "upkeep");
         P.now.spent += wages + up;
       }
+      const h = (P.hist ??= []);
+      h.push(P.now.by ?? {});
+      if (h.length > HIST_HOURS) h.splice(0, h.length - HIST_HOURS);
       P.last = P.now;
       P.now = books();
     }

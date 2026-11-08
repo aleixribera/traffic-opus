@@ -4,7 +4,7 @@ import type { Building } from "../game/buildings";
 import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
 import { MILESTONES, unlockedBy, type Milestone, type Unlocks } from "../game/progression";
 import { ZONES } from "../game/zones";
-import { BUILD_TIME, DEPOT_REACH, FLEET_HAUL, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, UNPOWERED, isPlantKind, powerPace, type Product } from "../game/industry";
+import { BUILD_TIME, DEPOT_REACH, FLEET_HAUL, HIST_HOURS, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, UNPOWERED, isPlantKind, powerPace, type PlantKind, type Product } from "../game/industry";
 import { TRUCK_CLASSES, TRUCK_CLASS_ORDER } from "../game/trucks";
 import { GROW_NEED, LEVEL_MULT, SITE_LEVELS } from "../game/sites";
 import { MARKET, TOWN_COST, TOWN_SPACING, type Town } from "../game/settlements";
@@ -959,9 +959,22 @@ export class Hud {
       const L = b.plant!.last, net = L.earned - L.spent;
       return `<dt>${BUILDING_TYPES[b.kind].name}</dt><dd class="${net >= 0 ? "good" : "bad"}">${signed(net)}</dd>`;
     }).join("");
+    // what the company made over the last day, per product, against what its plants can make
+    const made = new Map<Product, { made: number; can: number; byHour: number[] }>();
+    for (const b of g.industry.plants()) {
+      if (b.built < 1 || b.plant!.site) continue;
+      for (const p of Object.keys(PLANTS[b.kind as PlantKind].outputs) as Product[]) {
+        const m = Industry.madeLately(b, p), e = made.get(p) ?? { made: 0, can: 0, byHour: Array(HIST_HOURS).fill(0) };
+        e.made += m.made; e.can += Industry.perDay(b, p);
+        m.byHour.forEach((v, i) => { e.byHour[HIST_HOURS - m.byHour.length + i] += v; });
+        made.set(p, e);
+      }
+    }
+    const prodRows = [...made].map(([p, e]) => `<li><span class="pd-name">${productIcon(p)}${PRODUCTS[p].name}</span>${hourTicks(e.byHour, PRODUCTS[p].color)}<span class="num"><b>${fmtNum(Math.round(e.made))}</b><span class="muted"> / ${fmtNum(Math.round(e.can))}</span></span></li>`).join("");
     const html = `<p class="win-sub">Average hour, last ${n} hour${n === 1 ? "" : "s"}</p>
       <dl class="facts money-rows">${rows.filter(([, v, always]) => always || Math.abs(v) >= 0.5).map(([k, v]) => `<dt>${k}</dt><dd class="${v > 0 ? "good" : v < 0 ? "bad" : ""}">${signed(v)}</dd>`).join("")}
       <dt class="tot">Balance</dt><dd class="tot ${total >= 0 ? "good" : "bad"}">${signed(total)}</dd></dl>
+      ${prodRows ? `<h3 class="sub-h">Made, last 24 hours <span class="muted">· made / can make</span></h3><ul class="pd-list">${prodRows}</ul>` : ""}
       ${plants ? `<h3 class="sub-h">Your plants, last hour</h3><dl class="facts">${plants}</dl>` : ""}
       ${sparkline(g.history.map((x) => x.money), "Money")}`;
     this.setWin("Economy", html);
@@ -1305,6 +1318,7 @@ export class Hud {
       const html = `<header><span class="svc-tag">${placedIcon(b.kind)}</span>${T.name}</header>
         <p class="muted small">${chainText(b.kind)}</p>
         <p class="status ${statusCls}">${status}</p>
+        ${b.built >= 1 ? outputDay(b) : ""}
         ${ins ? `<h3 class="sub-h">In the yard</h3><dl class="facts">${ins}</dl>` : ""}
         ${outs ? `<h3 class="sub-h">Ready to ship</h3><dl class="facts">${outs}</dl>` : ""}
         ${flare ? `<p class="small muted">Its yard is full of ${PRODUCTS[flare].name.toLowerCase()}: ${g.industry.wants(flare) ? `your ${Industry.takers(flare)} can't take more for now` : Industry.usedBy(flare) ? `nothing of yours uses it until you build a ${Industry.takers(flare)}` : `nothing of yours uses it until tier ${Industry.laterTier(flare)}`}, so it burns off the rest and keeps making ${(Object.keys(D.outputs) as Product[]).filter((p) => p !== flare).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ")}.</p>` : ""}
@@ -1655,6 +1669,54 @@ function townChart(t: Town, next: (typeof TOWN_SIZES)[number] | undefined): stri
     <polyline class="tc-line" points="${pts}"/>
     <circle class="tc-dot" cx="${x(vs.length - 1)}" cy="${y(t.pop)}" r="2.5"/>
     <text class="tc-t" x="0" y="${H - 2}">${span} ago</text><text class="tc-t" x="${W}" y="${H - 2}" text-anchor="end">now</text>
+  </svg>`;
+}
+
+/**
+ * What a plant makes a day: per product, the loads made over the last day and what it can make at its level, fully
+ * staffed and powered; under it, its main product hour by hour against that pace.
+ */
+function outputDay(b: Building): string {
+  const D = PLANTS[b.kind as PlantKind];
+  const ps = (Object.keys(D.outputs) as Product[]);
+  if (!ps.length) return "";
+  const rows = ps.map((p) => {
+    const m = Industry.madeLately(b, p), can = Industry.perDay(b, p);
+    const made = m.hours ? fmtNum(Math.round(m.made)) : "–";
+    const share = m.hours >= HIST_HOURS && can > 0 ? m.made / can : null;
+    const cls = share === null ? "" : share >= 0.8 ? "good" : share < 0.4 ? "bad" : "";
+    return `<dt>${PRODUCTS[p].name}</dt><dd><b class="num pd-made ${cls}">${made}</b><span class="muted"> of ${fmtNum(Math.round(can))} it can make</span></dd>`;
+  }).join("");
+  const m = Industry.madeLately(b, ps[0]);
+  const hrs = m.hours;
+  const head = hrs >= HIST_HOURS ? "A day, last 24 hours" : hrs ? `A day · first ${plural(hrs, "hour")} so far` : "A day";
+  return `<h3 class="sub-h">${head}</h3><dl class="facts">${rows}</dl>${hourBars(m.byHour, Industry.perDay(b, ps[0]) / 24, PRODUCTS[ps[0]])}`;
+}
+
+/** A tiny row of 24 hourly bars (the Economy window's production list). */
+function hourTicks(vs: number[], color: number): string {
+  const hi = Math.max(1, ...vs), W = 72, H = 16, bw = W / vs.length;
+  const bars = vs.map((v, i) => v > 0 ? `<rect x="${(i * bw).toFixed(1)}" y="${(H - (v / hi) * H).toFixed(1)}" width="${(bw - 0.6).toFixed(1)}" height="${((v / hi) * H).toFixed(1)}"/>` : "").join("");
+  return `<svg class="pd-ticks" style="--pc:${hex(color)}" viewBox="0 0 ${W} ${H}" aria-hidden="true">${bars}</svg>`;
+}
+
+/** Bars of loads made each hour (oldest left), with the full pace as a dashed line. */
+function hourBars(vs: number[], pace: number, P: { name: string; color: number }): string {
+  if (vs.length < 2) return "";
+  const W = 248, H = 60, top = 18, bot = 46, n = HIST_HOURS;
+  const hi = niceCeil(Math.max(1, pace * 1.15, ...vs));
+  const y = (v: number) => bot - (v / hi) * (bot - top);
+  const bw = W / n;
+  const x0 = (n - vs.length) * bw;
+  const bars = vs.map((v, i) => v > 0 ? `<rect x="${(x0 + i * bw + 1).toFixed(1)}" y="${y(v).toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${(bot - y(v)).toFixed(1)}"/>` : "").join("");
+  const pl = y(pace);
+  const total = vs.reduce((a, v) => a + v, 0);
+  return `<svg class="tn-chart hb-chart" style="--pc:${hex(P.color)}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${P.name} made each hour over the last ${vs.length} hours: ${fmtNum(Math.round(total))} loads, against a full pace of ${pace.toFixed(1)} an hour">
+    <line class="tc-base" x1="0" x2="${W}" y1="${bot}" y2="${bot}"/>
+    ${bars}
+    <line class="tc-goal" x1="0" x2="${W}" y1="${pl.toFixed(1)}" y2="${pl.toFixed(1)}"/>
+    <text class="tc-t" x="${W}" y="9" text-anchor="end">dashed: full pace, ${pace < 10 ? pace.toFixed(1) : Math.round(pace)} an hour</text>
+    <text class="tc-t" x="0" y="${H - 2}">${n} hours ago</text><text class="tc-t" x="${W}" y="${H - 2}" text-anchor="end">now</text>
   </svg>`;
 }
 

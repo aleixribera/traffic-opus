@@ -5,7 +5,8 @@ import { describe, expect, it } from "vitest";
 import { Game, START_MONEY } from "../src/game/city";
 import { DAY, HOUR } from "../src/game/society";
 import { BLOCK, gridPt } from "../src/game/towns";
-import { Industry, MIN_DEPOSIT, PLANTS } from "../src/game/industry";
+import { HIST_HOURS, Industry, MIN_DEPOSIT, PLANTS } from "../src/game/industry";
+import { levelMult } from "../src/game/sites";
 import { F } from "../src/world/gen";
 import type { V2 } from "../src/core/math";
 import type { Building } from "../src/game/buildings";
@@ -113,6 +114,28 @@ describe("The company economy", () => {
     expect(t.supply.food ?? 0).toBe(0);
     const shops = g.buildings.list.filter((b) => b.town === t.id && b.zone === "comLow" && b.built >= 1 && !b.abandoned);
     expect(shops.some((b) => b.problem === "Out of food")).toBe(true);
+  }, 300000);
+
+  it("a plant remembers a day of output hour by hour, its figures add up, and a save keeps them", () => {
+    const g = new Game(7);
+    const { farm } = chain(g);
+    // what it can make a day: its kind's batch, its level and its deposit, fully staffed
+    const P = farm.plant!;
+    const can = (PLANTS.farm.outputs.crops! * levelMult(P.level) * P.yld * DAY) / PLANTS.farm.cycle;
+    expect(Industry.perDay(farm, "crops")).toBeCloseTo(can, 6);
+    expect(Industry.perDay(farm, "food")).toBe(0);
+    let made = 0, last = P.now;
+    run(g, 30, () => { if (P.now !== last) { made += last.by?.crops ?? 0; last = P.now; } });
+    const m = Industry.madeLately(farm, "crops");
+    expect(m.hours).toBe(HIST_HOURS);
+    expect(m.byHour).toHaveLength(HIST_HOURS);
+    // (the last 24 of the 30 hours it counted)
+    expect(m.made).toBeGreaterThan(0);
+    expect(m.made).toBeLessThanOrEqual(made);
+    expect(m.made).toBeLessThanOrEqual(can * 1.05);
+    expect(m.byHour.reduce((a, v) => a + v, 0)).toBe(m.made);
+    const h = Game.load(JSON.parse(JSON.stringify(g.serialize())));
+    expect(Industry.madeLately(h.buildings.byId.get(farm.id)! as Building, "crops")).toEqual(m);
   }, 300000);
 
   it("a save round-trips the plants (stores, yard, trucks out on the road) and the towns' books", () => {
