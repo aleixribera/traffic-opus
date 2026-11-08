@@ -11,6 +11,18 @@ describe("town sizes and needs", () => {
     expect(needsOf(400)).toEqual(["food", "planks"]);
   });
 
+  it("a Town adds household goods and fuel, a few dozen loads a day each to start; a City adds nothing more until tier 4", () => {
+    expect(needsOf(1499)).toEqual(["food", "planks", "cement"]);
+    expect(needsOf(1500)).toEqual(["food", "planks", "cement", "goods", "fuel"]);
+    for (const p of ["goods", "fuel"] as const) {
+      expect(demandPerDay(p, 1500)).toBeGreaterThan(40);
+      expect(demandPerDay(p, 1500)).toBeLessThan(100);
+      // lighter per resident than the staples
+      expect(demandPerDay(p, 1500)).toBeLessThan(demandPerDay("planks", 1500));
+    }
+    expect(needsOf(7000)).toEqual(needsOf(1500));
+  });
+
   it("demand per resident climbs with each size, so the total climbs faster than the population", () => {
     const perHead = (pop: number) => demandPerDay("food", pop) / pop;
     expect(perHead(500)).toBeGreaterThan(perHead(250));

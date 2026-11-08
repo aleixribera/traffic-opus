@@ -49,6 +49,13 @@ const PLAN: Record<PlantKind, { core: string; mods: string[] }> = {
   smelter: { core: "smelter", mods: ["site_hall_l", "site_heap_ore", "site_heap_coal", "smelter", "site_tanks", "site_office", "site_hall_m"] },
   cementworks: { core: "cementworks", mods: ["site_silos", "site_heap_lime", "site_silos", "cementworks", "site_heap_coal", "site_hall_m", "site_office"] },
   coalplant: { core: "coalplant", mods: ["site_heap_coal", "site_heap_coal", "site_tanks", "site_workshop", "site_heap_coal", "site_hall_m", "site_office"] },
+  // tier 3: a field of pumpjacks and tanks; sand heaps by the pit; a tank farm round the refinery
+  oilwell: { core: "oilwell", mods: ["oilwell", "site_tanks", "oilwell", "oilwell", "site_workshop", "oilwell", "site_tanks", "site_office"] },
+  sandpit: { core: "sandpit", mods: ["site_heap_sand", "site_heap_sand", "sandpit", "site_workshop", "site_heap_sand", "site_office"] },
+  refinery: { core: "refinery", mods: ["site_tanks", "site_tanks", "refinery", "site_tanks", "site_hall_m", "site_tanks", "site_office", "site_silos"] },
+  glassworks: { core: "glassworks", mods: ["site_heap_sand", "site_hall_l", "site_heap_coal", "glassworks", "site_hall_m", "site_silos", "site_office"] },
+  furniture: { core: "furniture", mods: ["site_logyard", "site_hall_l", "furniture", "site_hall_m", "site_workshop", "site_hall_l", "site_office"] },
+  constructionplant: { core: "constructionplant", mods: ["site_hall_l", "site_silos", "constructionplant", "site_hall_l", "site_workshop", "site_office", "site_hall_m"] },
 };
 
 /** The model a kind's site is centred on (its core, by the gate). */

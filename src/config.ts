@@ -82,12 +82,13 @@ export const SIGNAL_COST = 300;
 
 export type BuildingKind =
   | "house" | "terrace" | "apartments" | "modernflats" | "aptower"
-  | "highstreet" | "shop" | "store" | "office" | "mall" | "tower" | "glasstower"
+  | "highstreet" | "shop" | "store" | "office" | "mall" | "tower" | "glasstower" | "fuelstation"
   // each town's hall at its centre, rebuilt bigger at each size (see game/settlements.ts)
   | "hamlethall" | "villagehall" | "townhall" | "cityhall"
   // placed by the player (see game/placed.ts): the company's extractors and plants, and power
   | "farm" | "loggingcamp" | "foodplant" | "sawmill"
-  | "ironmine" | "coalmine" | "quarry" | "smelter" | "cementworks" | "coalplant";
+  | "ironmine" | "coalmine" | "quarry" | "smelter" | "cementworks" | "coalplant"
+  | "oilwell" | "sandpit" | "refinery" | "glassworks" | "furniture" | "constructionplant";
 export type Zone = "res" | "com" | "placed";
 
 export interface BuildingType {
@@ -101,6 +102,8 @@ export interface BuildingType {
   jobs: number;
   /** keeps food on its shelves, restocked by the company's food trucks (a shop) */
   shelves?: boolean;
+  /** a filling station: sells the town its fuel (and takes no other deliveries) */
+  fuel?: boolean;
   pollution: number; // radius in metres, 0 = clean
   parking: number; // visible parking bays in front
   blurb: string;
@@ -118,6 +121,7 @@ export const BUILDING_TYPES: Record<BuildingKind, BuildingType> = {
   office: { kind: "office", name: "Offices", zone: "com", w: 20, d: 22, residents: 0, jobs: 8, shelves: true, pollution: 0, parking: 5, blurb: "Offices with a shop on the ground floor." },
   mall: { kind: "mall", name: "Large Commercial", zone: "com", w: 48, d: 40, residents: 0, jobs: 14, shelves: true, pollution: 0, parking: 14, blurb: "Shopping centre. Expect heavy traffic at the entrance." },
   tower: { kind: "tower", name: "Office Tower", zone: "com", w: 30, d: 30, residents: 0, jobs: 20, shelves: true, pollution: 0, parking: 9, blurb: "An office tower with shops at its foot." },
+  fuelstation: { kind: "fuelstation", name: "Filling Station", zone: "com", w: 24, d: 24, residents: 0, jobs: 3, fuel: true, pollution: 0, parking: 2, blurb: "Sells the town its fuel: the company's tankers fill its tanks. A town of 1,500 opens one; a big town two." },
   glasstower: { kind: "glasstower", name: "Glass Tower", zone: "com", w: 30, d: 30, residents: 0, jobs: 30, shelves: true, pollution: 0, parking: 6, blurb: "A glass office tower: the city's skyline." },
   hamlethall: { kind: "hamlethall", name: "Hamlet Hall", zone: "placed", w: 20, d: 18, residents: 0, jobs: 0, pollution: 0, parking: 2, blurb: "The hamlet's hall on its green, with a bell cupola." },
   villagehall: { kind: "villagehall", name: "Village Hall", zone: "placed", w: 28, d: 24, residents: 0, jobs: 0, pollution: 0, parking: 3, blurb: "The village's arcaded market hall on its square." },
@@ -132,7 +136,13 @@ export const BUILDING_TYPES: Record<BuildingKind, BuildingType> = {
   quarry: { kind: "quarry", name: "Quarry", zone: "placed", w: 260, d: 240, residents: 0, jobs: 10, pollution: 80, parking: 2, blurb: "Quarries limestone. Its trucks take it to your cement works." },
   smelter: { kind: "smelter", name: "Smelter", zone: "placed", w: 220, d: 210, residents: 0, jobs: 16, pollution: 150, parking: 4, blurb: "Smelts iron ore with coal into steel." },
   cementworks: { kind: "cementworks", name: "Cement Works", zone: "placed", w: 210, d: 200, residents: 0, jobs: 14, pollution: 130, parking: 4, blurb: "Burns limestone with coal into cement for the villages." },
-  coalplant: { kind: "coalplant", name: "Power Plant", zone: "placed", w: 220, d: 200, residents: 0, jobs: 12, pollution: 140, parking: 5, blurb: "Burns coal for power: your tier 2 buildings on its roads within 4 km work at full pace. Its smoke drags land value down for a few hundred metres." },
+  oilwell: { kind: "oilwell", name: "Oil Well", zone: "placed", w: 240, d: 220, residents: 0, jobs: 8, pollution: 60, parking: 2, blurb: "Pumps crude oil. Its tankers take it to your refineries." },
+  sandpit: { kind: "sandpit", name: "Sand Pit", zone: "placed", w: 260, d: 240, residents: 0, jobs: 8, pollution: 40, parking: 2, blurb: "Digs sand by the water. Its tippers take it to your glassworks." },
+  refinery: { kind: "refinery", name: "Refinery", zone: "placed", w: 290, d: 260, residents: 0, jobs: 18, pollution: 160, parking: 5, blurb: "Splits crude oil into fuel and plastics." },
+  glassworks: { kind: "glassworks", name: "Glassworks", zone: "placed", w: 210, d: 190, residents: 0, jobs: 14, pollution: 110, parking: 4, blurb: "Melts sand with coal into glass." },
+  furniture: { kind: "furniture", name: "Furniture Factory", zone: "placed", w: 200, d: 180, residents: 0, jobs: 14, pollution: 30, parking: 4, blurb: "Builds household goods from planks and glass." },
+  constructionplant: { kind: "constructionplant", name: "Construction Plant", zone: "placed", w: 220, d: 200, residents: 0, jobs: 16, pollution: 90, parking: 4, blurb: "Casts steel and cement into construction parts." },
+  coalplant: { kind: "coalplant", name: "Power Plant", zone: "placed", w: 220, d: 200, residents: 0, jobs: 12, pollution: 140, parking: 5, blurb: "Burns coal for power: the buildings that need it on its roads within 4 km work at full pace. Its smoke drags land value down for a few hundred metres." },
 };
 
 export const ZONE_LABEL: Record<Zone, string> = { res: "Residential", com: "Commercial", placed: "Company building" };

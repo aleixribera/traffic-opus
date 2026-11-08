@@ -4,7 +4,7 @@
 // that moves once a day with how well the company supplied its needs. Homes and shops belong to the town whose
 // streets they front (Building.town).
 
-import { ROAD_TYPES, SIDEWALK, roadWidth } from "../config";
+import { BUILDING_TYPES, ROAD_TYPES, SIDEWALK, roadWidth, type BuildingKind } from "../config";
 import { angleOf, cubicTangent, dist, dot, norm, right, sub, type V2 } from "../core/math";
 import { cubicClosest, planRoad, snap, type Plan, type Snap } from "../roads/planner";
 import { cityName } from "../world/gen";
@@ -36,6 +36,16 @@ const HH_PER_SHOP = 25;
 const CORRIDOR = 10;
 /** How far the town square keeps from the grid lines round it (m): half a street, its pavement and a margin. */
 const SQUARE_INSET = roadWidth(ROAD_TYPES.street) / 2 + SIDEWALK.small + 1.5;
+/** A town opens its first filling station at Town size and its second at this many people. */
+export const STATION2_POP = 4000;
+/**
+ * Loads of construction parts a town building site waits for before it goes up (docs/design.md, "Towns grow into
+ * cities"): the 1960s blocks, stores and offices of a Town and everything bigger after them are put up from parts,
+ * once the company can make them. Houses, terraces and high-street shops still go up on their own.
+ */
+export const PARTS_FOR: Partial<Record<BuildingKind, number>> = {
+  apartments: 1, store: 1, office: 1, modernflats: 2, mall: 3, tower: 3, aptower: 3, glasstower: 4,
+};
 /** History kept per town: hourly people (ten days) and daily supply and deliveries (sixty days). */
 export const HIST_HOURS = 240, HIST_DAYS = 60;
 
@@ -441,15 +451,55 @@ export class TownSystem {
     return t.households > 0 ? 1 + Math.floor(t.households / HH_PER_SHOP) : 0;
   }
 
+  /** Filling stations a town keeps: none before Town size, one from it, two from STATION2_POP people. */
+  stationsWanted(t: Town): number {
+    return t.size < 2 ? 0 : t.pop >= STATION2_POP ? 2 : 1;
+  }
+
+  /**
+   * A town that wants a filling station and has no free commercial land rebuilds one of its outer shops as one (the
+   * shop furthest from the centre with a front wide enough): a station sits on the way out of the centre.
+   */
+  private stationOnShop(t: Town) {
+    // (one of the town's rebuilds: at its pace)
+    const mine = this.buildingsOf(t);
+    if (!this.mayRebuild(t, mine)) return;
+    let best: Building | null = null, bd = -1;
+    for (const b of mine) {
+      if (!b.zone || ZONE_GROUP[b.zone] !== "com" || BUILDING_TYPES[b.kind].fuel || !b.lot || b.lot.w < 3 || b.built < 1 || b.abandoned) continue;
+      const d = dist(b.c, t.c);
+      if (d > bd) { bd = d; best = b; }
+    }
+    if (!best?.lot || !best.zone) return;
+    const { block, col0, w } = best.lot;
+    t.redevAt = this.g.time;
+    t.redevToday++;
+    this.g.rebuildLots(t.id, [best.id], best.zone, block, col0, col0 + w, "fuelstation");
+  }
+
   /** The denser zone an old building's land now has, or null when it is as dense as its ring wants. */
   redevZone(t: Town, b: Building): ZoneId | null {
-    if (!b.zone) return null;
+    // (a filling station stays where it is: the town would only have to open another)
+    if (!b.zone || BUILDING_TYPES[b.kind].fuel) return null;
     const want = this.planZone(t, b.c, b.rot);
     if (want === b.zone) return null;
     const g0 = ZONE_GROUP[b.zone], g1 = ZONE_GROUP[want];
     if (g0 === g1) return ZONE_RANK[want] > ZONE_RANK[b.zone] ? want : null;
     // homes in a ring that is now shops make way only while the town wants more shops
     return g0 === "res" && t.shops < this.shopsWanted(t) ? want : null;
+  }
+
+  /** May the town start another rebuild now: within its pace for the day, and not too many sites at once? */
+  private mayRebuild(t: Town, mine: Building[]): boolean {
+    if (!t.built.size || t.trend < 0 || t.size < 1) return false;
+    const perDay = redevPerDay(t.size, mine.length);
+    if (t.redevToday >= perDay || this.g.time - t.redevAt < DAY / perDay / 2) return false;
+    let homes = 0, sites = 0;
+    for (const b of mine) {
+      if (ZONE_GROUP[b.zone!] === "res") homes++;
+      if (b.redev && b.built < 1) sites++;
+    }
+    return sites < Math.max(1, Math.floor(homes * REDEV_SHARE));
   }
 
   /**
@@ -459,15 +509,7 @@ export class TownSystem {
    * width. Only a town that lays its own streets redevelops, and only while it isn't shrinking.
    */
   private redevelop(t: Town, mine: Building[]) {
-    if (!t.built.size || t.trend < 0 || t.size < 1) return;
-    const perDay = redevPerDay(t.size, mine.length);
-    if (t.redevToday >= perDay || this.g.time - t.redevAt < DAY / perDay / 2) return;
-    let homes = 0, sites = 0;
-    for (const b of mine) {
-      if (ZONE_GROUP[b.zone!] === "res") homes++;
-      if (b.redev && b.built < 1) sites++;
-    }
-    if (sites >= Math.max(1, Math.floor(homes * REDEV_SHARE))) return;
+    if (!this.mayRebuild(t, mine)) return;
     const cands: { b: Building; z: ZoneId; d: number }[] = [];
     for (const b of mine) {
       if (b.built < 1 || b.abandoned || !b.lot) continue;
@@ -570,8 +612,10 @@ export class TownSystem {
       }
       // homes, a few at a time
       for (let n = Math.min(3, Math.ceil(short / 2)); n > 0; n--) if (!this.g.growIn(t.id, "res")) break;
-      // about one shop for every HH_PER_SHOP households
+      // about one shop for every HH_PER_SHOP households, and its filling stations from Town size
       if (t.shops < this.shopsWanted(t)) this.g.growIn(t.id, "com");
+      const stations = this.buildingsOf(t).filter((b) => BUILDING_TYPES[b.kind].fuel).length;
+      if (stations < this.stationsWanted(t) && !this.g.growIn(t.id, "com", "fuelstation")) this.stationOnShop(t);
       // old buildings in the denser rings make way for new ones
       this.redevelop(t, this.buildingsOf(t));
       // households move in while it is below its target, and out while it is above

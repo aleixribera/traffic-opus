@@ -128,6 +128,16 @@ itself across modes; you build tracks, docks and the transfer points, never line
   Supply is the share of each need delivered over the last day. Good supply speeds growth, bigger and denser
   buildings, and more workers; shortfalls stall growth and finally shrink the town.
 - Deliveries go to the town's shops, filling stations and building sites, so trucks drive into town streets.
+- **Filling stations and construction parts (tier 3, 2026-11-08).** A Town keeps filling stations on its
+  commercial land: one from Town size, two from 4,000 people. A station grows like a shop, or, when the
+  commercial land is full, is rebuilt from the town's outermost shop as one of its redevelopments. Fuel goes to
+  the stations; a town with none standing yet takes its fuel at its shops. Household goods go to the shops.
+  Construction parts are not a need on the list. Once the company can make them (the construction plant is
+  unlocked), every block a town puts up from its 1960s era on is a building site that waits for its parts, the
+  way a plant's site waits for planks and cement. That covers new growth and redevelopment alike: apartment
+  blocks, stores and offices take 1 load, modern flats 2, malls and towers 3, glass towers 4. The town pays for
+  them on delivery. Houses, terraces and high-street shops need none. This gives steel its buyer from Town
+  size; tier 4 plant sites will take parts too.
 - No city services, taxes, policies or zoning.
 
 ### Towns grow into cities (owner, 2026-11-08)

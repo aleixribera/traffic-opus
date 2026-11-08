@@ -6,8 +6,9 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { Game } from "../src/game/city";
 import { obbOverlap } from "../src/game/buildings";
 import { ZONE_GROUP, ZONE_LOTS } from "../src/game/growables";
-import { HIST_DAYS, HIST_HOURS, type Town } from "../src/game/settlements";
-import { DAY } from "../src/game/society";
+import { HIST_DAYS, HIST_HOURS, PARTS_FOR, STATION2_POP, type Town } from "../src/game/settlements";
+import { DAY, HOUR } from "../src/game/society";
+import type { Building } from "../src/game/buildings";
 import { BLOCK, HALLS, REDEV_SHARE, RINGS, isHall, redevPerDay, ringZone, sizeOf } from "../src/game/towns";
 import { ZONE_RANK, type ZoneId } from "../src/game/zones";
 import { dist } from "../src/core/math";
@@ -172,6 +173,51 @@ describe("a town growing into a town", () => {
 
   it("keeps its homes, households and shops consistent through the rebuilding", () => {
     consistent(g, t);
+  });
+
+  it("as a Town it keeps a filling station on its commercial land, which no redevelopment takes", () => {
+    const st = g.buildings.list.filter((b) => b.town === t.id && b.kind === "fuelstation");
+    expect(st.length).toBeGreaterThanOrEqual(1);
+    expect(st.length).toBeLessThanOrEqual(g.towns.stationsWanted(t));
+    for (const b of st) {
+      expect(ZONE_GROUP[b.zone!]).toBe("com");
+      expect(g.towns.redevZone(t, b)).toBeNull();
+    }
+    expect(g.towns.stationsWanted({ ...t, size: 1, pop: 900 } as Town)).toBe(0);
+    expect(g.towns.stationsWanted({ ...t, size: 2, pop: STATION2_POP } as Town)).toBe(2);
+  });
+
+  it("once the company can make construction parts, a redeveloped block waits for them, and goes up once they are in", () => {
+    // (before the construction plant is unlocked a town builds without them)
+    expect(g.placedUnlocked("constructionplant")).toBe(false);
+    expect(g.buildings.list.some((b) => b.site)).toBe(false);
+    g.progress.done.push("cement30");
+    expect(g.placedUnlocked("constructionplant")).toBe(true);
+    // an old store in the centre is rebuilt as a new one
+    const old = g.buildings.list.find((o) => o.town === t.id && o.kind === "store" && o.lot && o.built >= 1)!;
+    expect(old).toBeDefined();
+    const b = g.rebuildLots(t.id, [old.id], old.zone!, old.lot!.block, old.lot!.col0, old.lot!.col0 + old.lot!.w, "store");
+    expect(b).not.toBeNull();
+    expect(b!.redev).toBe(true);
+    expect(b!.site).toEqual({ need: { parts: PARTS_FOR.store }, got: {} });
+    // a house is still put up the old way
+    let h: Building | null = null;
+    for (let i = 0; i < 40 && !h; i++) h = g.growIn(t.id, "res", "house");
+    if (h) expect(h.site).toBeUndefined();
+    const tick = (n: number) => { for (let i = 0; i < n; i++) (g as unknown as { tick(s: number): void }).tick(HOUR / 8); };
+    tick(16);
+    expect(b!.built).toBe(0);
+    expect(b!.problem).toBe(`Building site: waiting for ${PARTS_FOR.store === 1 ? "1 load" : `${PARTS_FOR.store} loads`} of construction parts`);
+    // the parts arrive: the site is done waiting, and the block goes up like any other
+    g.industry.deliver(b!, "parts", PARTS_FOR.store!);
+    expect(b!.site).toBeUndefined();
+    tick(8);
+    expect(b!.built).toBeGreaterThan(0);
+    expect(b!.problem ?? "").not.toMatch(/^Building site/);
+    // the big blocks of a city want more of them than a town's
+    expect(PARTS_FOR.tower!).toBeGreaterThan(PARTS_FOR.apartments!);
+    expect(PARTS_FOR.house).toBeUndefined();
+    expect(PARTS_FOR.terrace).toBeUndefined();
   });
 
   it("remembers its past: hourly people, capped, and a record of each day", () => {
