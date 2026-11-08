@@ -223,6 +223,11 @@ export const ICON = {
   water: svg(28, 28, `<path d="M2 9.5 q3 -3 6 0 t6 0 t6 0 t6 0 M2 15.5 q3 -3 6 0 t6 0 t6 0 t6 0 M2 21.5 q3 -3 6 0 t6 0 t6 0 t6 0" fill="none" stroke="${C.glass}" stroke-width="2.2" stroke-linecap="round"/>`),
   hills: svg(28, 28, `<path d="M1.5 24 L10 9 L15 16.5 L19 11 L26.5 24 Z" fill="${C.olive}"/><path d="M10 9 L7.4 13.6 L10 12.4 L12.2 13.7 Z M19 11 L17.3 13.6 L19 12.8 L20.7 13.8 Z" fill="${C.cream}"/>`),
   stuck: svg(28, 28, `<path d="M14 2.5 L25.5 14 L14 25.5 L2.5 14 Z" fill="${C.ochre}" stroke="${C.navy}" stroke-width="1.4" stroke-linejoin="round"/><rect x="12.6" y="7.6" width="2.8" height="8.6" fill="${C.navy}"/><rect x="12.6" y="18" width="2.8" height="2.8" fill="${C.navy}"/>`),
+  // the camera menu: a newsreel camera (two reels on a box, the lens hood forward), and viewfinder corners round a
+  // truck (follow) or round a heading (riding along)
+  camera: svg(18, 18, `<circle cx="4.6" cy="4.3" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="4.3" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="1.5" y="8" width="10.5" height="7.5" rx="0.8" fill="currentColor"/><path d="M12 10.4 L16.6 8.2 V15.3 L12 13.1 Z" fill="currentColor"/>`),
+  camFollow: svg(18, 18, `<path d="M2 6 V2 H6 M12 2 H16 V6 M16 12 V16 H12 M6 16 H2 V12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"/><rect x="5" y="6.6" width="5.6" height="4.8" fill="currentColor"/><path d="M10.6 8 H12.3 L13.4 9.6 V11.4 H10.6 Z" fill="currentColor"/>`),
+  camRide: svg(18, 18, `<path d="M2 6 V2 H6 M12 2 H16 V6 M16 12 V16 H12 M6 16 H2 V12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"/><path d="M9 4.6 L13 12.4 L9 10.6 L5 12.4 Z" fill="currentColor"/>`),
 };
 
 /** Small pictograms of what towns buy (town panel, Towns list, map labels), 16 px. */

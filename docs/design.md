@@ -751,8 +751,19 @@ height levels shown while drawing, and the instant upgrade preview.
 - Q/E rotate; middle-mouse drag rotates.
 - R/F and the mouse wheel zoom.
 - Right-drag pans the map (left-drag too while nothing is being drawn).
-- The view is 2D top-down, so there's no tilt (T/G). A north arrow appears while the map is turned; clicking it
-  turns the map back north-up.
+- The view is 2D top-down, so there's no tilt; CS2's tilt keys T/G drive the camera modes instead. A north arrow
+  appears while the map is turned; clicking it turns the map back north-up.
+- Camera modes (the camera button in the top-left bar, or keys):
+  - Follow (G, or a convoy's tag) rides with the truck nearest the middle of the screen, with a damped camera and a
+    slight look-ahead. A "Following" chip names its cargo and destination. When it arrives the camera holds, then picks
+    up the same truck's next run, or lets go. Zooming still works; panning, a click on the map or Esc lets go.
+  - Tour (T) is a Cities: Skylines-style automatic camera. Slow 8–14 s pans and zooms over the busiest junctions, towns,
+    works, bridges, convoys and recent events, weighted by live activity, never the same place twice in a row, fading
+    through black between shots.
+  - Vehicle cam (Shift+T) rides with one interesting vehicle after another (convoys, road trains, heavy trucks) for
+    10–15 s each, sometimes turned to its heading.
+  - Both cinematic modes hide the whole interface (an "Esc to exit" hint shows for 2 s), keep the game running, and
+    any key or click gives back the interface and the view as it was.
 - Touch: one-finger drag pans, two-finger pinch zooms and twists to rotate.
 
 **Tools:**
