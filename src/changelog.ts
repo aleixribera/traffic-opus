@@ -15,6 +15,12 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.64", date: "2026-11-08", title: "Heavy trucks get moving",
+    notes: [
+      "Heavy trucks pull out of a site's parking bays like light ones instead of queuing at the gate one at a time; only road trains still wait their turn.",
+    ],
+  },
+  {
     v: "v0.0.63", date: "2026-11-08", title: "Fine turning",
     notes: [
       "Hold Shift while placing a building to turn it 1° at a time: one degree per wheel notch, or per press of the comma and period keys.",
