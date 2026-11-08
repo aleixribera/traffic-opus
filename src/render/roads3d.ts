@@ -35,7 +35,8 @@ export interface BridgeParts {
   props: Map<string, MergedModel>;
   isWater?: (p: V2) => boolean;
   /** Where driveways meet the kerb (homes, shops, halls): no street tree stands in front of one. */
-  drives?: () => V2[];
+  /** driveways, each from where it leaves the road to its lot */
+  drives?: () => [V2, V2][];
   /** Company sites' gates (and the way into each site): a street that ends just outside one runs into its yard. */
   gates?: () => { gate: V2; into: V2; front?: V2 }[];
 }
@@ -480,7 +481,7 @@ export class Roads3D {
 
   /** A street tree stands only where its crown keeps off every other road (a road drawn alongside, a crossing street). */
   private treeClear(own: number, t: { x: number; y: number; r: number }, drives: Map<number, V2[]>): boolean {
-    // (a driveway 3.4 m wide comes out to the kerb here)
+    // (a driveway 3.4 m wide: its points are 2 m apart along it)
     const cx = Math.floor(t.x / DRIVE_CELL), cy = Math.floor(t.y / DRIVE_CELL);
     for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
       for (const d of drives.get((cx + i) * 73856 + (cy + j)) ?? []) if (Math.hypot(d.x - t.x, d.y - t.y) < t.r + 2.6) return false;
@@ -508,10 +509,16 @@ export class Roads3D {
       this.group.add(this.trees);
     }
     const drives = new Map<number, V2[]>();
-    for (const d of this.parts?.drives?.() ?? []) {
-      const k = Math.floor(d.x / DRIVE_CELL) * 73856 + Math.floor(d.y / DRIVE_CELL);
-      const L = drives.get(k);
-      if (L) L.push(d); else drives.set(k, [d]);
+    // (each driveway as points 2 m apart over its first 40 m: a tree's crown clear of every one is clear of the drive)
+    for (const [a, b] of this.parts?.drives?.() ?? []) {
+      const L = Math.hypot(b.x - a.x, b.y - a.y), n = Math.ceil(Math.min(L, 40) / 2);
+      for (let k = 0; k <= n; k++) {
+        const f = L > 0 ? (Math.min(L, 40) * k) / n / L : 0;
+        const d = { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+        const key = Math.floor(d.x / DRIVE_CELL) * 73856 + Math.floor(d.y / DRIVE_CELL);
+        const list = drives.get(key);
+        if (list) list.push(d); else drives.set(key, [d]);
+      }
     }
     let i = 0;
     for (const [sid, spots] of this.treeSpots) {

@@ -114,7 +114,8 @@ describe("front strips", () => {
         if (d >= 4) deep++;
       }
     }
-    expect(cols).toBeGreaterThan(200);
+    // (towns are sparser since they govern themselves: fewer streets, so fewer columns, but each as deep)
+    expect(cols).toBeGreaterThan(100);
     // (with six rows behind the strip the older side of each block took six and left the younger three: about half)
     expect(deep / cols).toBeGreaterThan(0.85);
   }, 120_000);

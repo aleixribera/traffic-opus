@@ -95,7 +95,7 @@ describe("The company economy", () => {
     expect(t.yesterday.food ?? 0).toBeGreaterThan(2);
     expect(t.supply.food ?? 0).toBeGreaterThan(0.5);
     expect(t.households).toBeGreaterThan(households0 + 10);
-    expect(t.pop).toBeGreaterThan(pop0 * 1.5);
+    expect(t.pop).toBeGreaterThan(pop0 + 25); // (from a 30-household hamlet: owner, 2026-11-08)
     // money only comes in from deliveries: sales cover the running costs once the chain is going
     expect(sales).toBeGreaterThan(0);
     expect(g.money).toBeGreaterThan(money0 - 8000);
@@ -125,7 +125,10 @@ describe("The company economy", () => {
     expect(Industry.perDay(farm, "crops")).toBeCloseTo(can, 6);
     expect(Industry.perDay(farm, "food")).toBe(0);
     let made = 0, last = P.now;
-    run(g, 30, () => { if (P.now !== last) { made += last.by?.crops ?? 0; last = P.now; } });
+    const tally = () => { if (P.now !== last) { made += last.by?.crops ?? 0; last = P.now; } };
+    run(g, 30, tally);
+    // (an hour that closed in the very last step)
+    tally();
     const m = Industry.madeLately(farm, "crops");
     expect(m.hours).toBe(HIST_HOURS);
     expect(m.byHour).toHaveLength(HIST_HOURS);

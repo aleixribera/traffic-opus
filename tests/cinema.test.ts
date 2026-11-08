@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  FADE, FollowCam, FollowSession, RIDE_LEN, SHOT_LEN, ShotHistory, Spring2, cutShort, evalShot, fadeAt, gatherSpots, nearestRide,
+  FADE, FollowCam, FollowSession, RIDE_LEN, followOn, SHOT_LEN, ShotHistory, Spring2, cutShort, evalShot, fadeAt, gatherSpots, nearestRide,
   pickRide, pickSpot, planRide, planShot, samePlace, successorOf,
   type CamVehicle, type Pose, type RideCandidate, type SpotInputs,
 } from "../src/render/cinema";
@@ -21,6 +21,20 @@ function rng(seed: number) {
 }
 
 const empty = (): SpotInputs => ({ vehicles: [], junctions: [], towns: [], sites: [], convoys: [], bridges: [], events: [] });
+
+describe("what lets a followed vehicle go", () => {
+  it("only taking the camera: a pan, the chip's Stop or a build tool's click; Esc, the wheel and clicks keep it", () => {
+    expect(followOn("pan")).toBe("end");
+    expect(followOn("stop")).toBe("end");
+    expect(followOn("build")).toBe("end");
+    expect(followOn("esc")).toBe("keep");
+    expect(followOn("zoom")).toBe("keep");
+    expect(followOn("select", null)).toBe("keep");
+    expect(followOn("select", "other")).toBe("keep");
+    // a click on another vehicle rides with that one
+    expect(followOn("select", "vehicle")).toBe("switch");
+  });
+});
 
 describe("follow damping", () => {
   it("closes on a still target without overshoot or blow-up at any time step", () => {

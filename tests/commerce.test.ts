@@ -72,7 +72,7 @@ describe("a City's commerce", () => {
     const mine = g.buildings.list.filter((b) => b.town === t.id && b.zone && !b.abandoned);
     const shops = mine.filter((b) => ZONE_GROUP[b.zone!] === "com");
     expect(t.shops).toBe(shops.length);
-    expect(t.shops).toBeGreaterThan(105); // the centre ring alone holds ~25 (about 120 before the front strips, 117 with them)
+    expect(t.shops).toBeGreaterThan(95); // the centre ring alone holds ~25 (about 120 before the front strips, ~104 with them and sparser towns)
     expect(t.shops).toBeGreaterThanOrEqual(0.6 * g.towns.shopsWanted(t));
     expect(t.shops).toBeLessThanOrEqual(g.towns.shopsWanted(t) + 5);
     const jobs = shops.reduce((n, b) => n + b.cap, 0);

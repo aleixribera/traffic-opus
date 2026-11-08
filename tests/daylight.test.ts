@@ -5,7 +5,7 @@ import {
 } from "../src/render/daylight";
 import { DayCycle, mixLight, timeAtYday } from "../src/render/daycycle";
 import { DAY, HOUR, START_HOUR } from "../src/game/society";
-import { YEAR_DAYS } from "../src/game/calendar";
+import { START_YDAY, YEAR_DAYS } from "../src/game/calendar";
 
 const lum = (c: readonly number[]) => c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
 const total = (L: Light) => lum(L.amb) + lum(L.sun);
@@ -24,10 +24,10 @@ function lookJump(a: SeasonLook, b: SeasonLook): number {
 }
 
 describe("the clock", () => {
-  it("starts the game at 6 am on spring's first day", () => {
+  it("starts the game at 6 am in late spring (day START_YDAY + 1)", () => {
     const c = clockOf(0);
     expect(c.hour).toBeCloseTo(START_HOUR, 6);
-    expect(c.yday).toBeCloseTo(START_HOUR / 24, 6);
+    expect(c.yday).toBeCloseTo(START_YDAY + START_HOUR / 24, 6);
   });
   it("runs an hour every HOUR and a day every DAY", () => {
     expect(clockOf(3 * HOUR).hour).toBeCloseTo(START_HOUR + 3, 6);

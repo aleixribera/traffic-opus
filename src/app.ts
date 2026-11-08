@@ -54,6 +54,7 @@ import { Saves } from "./game/saves";
 import { PLACED, type PlacedKind } from "./game/placed";
 import type { Hud, Chip } from "./ui/hud";
 import { CameraDirector } from "./ui/camera";
+import { followOn } from "./render/cinema";
 
 export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "place" | "transit";
 /** The bus tool: put stops on the kerb, or click stops in order to make a line. */
@@ -422,7 +423,9 @@ export class App {
     sh.uClear.value = this.clearing.tex; sh.uClearO.value = this.clearing.origin; sh.uClearS.value = this.clearing.size;
     this.roads = new Roads3D(g.net, {
       props: this.models.props, isWater: (p) => g.terrain.isWater(p),
-      drives: () => g.buildings.list.filter((b) => b.access && !b.plant).map((b) => b.front),
+      // each driveway as a line from where it leaves the road to the lot (a home's middle, a site's gate): no street
+      // tree or lamp stands on it, however wide the road it comes off (a boulevard's verge is far from its centreline)
+      drives: () => g.buildings.list.filter((b) => b.access).map((b): [V2, V2] => [b.front, b.plant && b.placed ? siteFrame(b.c, b.rot, b.side, b.hd).gate : b.c]),
       gates: () => g.buildings.list.filter((b) => b.placed && b.plant).map((b) => ({ ...siteFrame(b.c, b.rot, b.side, b.hd), front: b.front })),
     });
     this.roadsFar = new RoadsFar(g.net);
@@ -745,8 +748,8 @@ export class App {
       return;
     }
     if (pi.button === 0) {
-      // (a click elsewhere on the map lets a followed vehicle go)
-      this.camera.stopFollow();
+      // (a click with a build tool lets a followed vehicle go; in inspect, onClick keeps it or switches to a vehicle)
+      if (followOn(this.st.tool === "inspect" ? "select" : "build") === "end") this.camera.stopFollow();
       this.onClick(e.shiftKey);
     }
   }
@@ -775,8 +778,8 @@ export class App {
       return;
     }
     // Esc steps back like CS2: popups, dialogs, panels, the tool, the asset menu, then the pause menu
-    // (a dialog or panel goes first, then a followed vehicle, then the pause menu)
-    if (k === "Escape") { if (!this.hud?.back()) { if (this.camera.following !== null) this.camera.stopFollow(); else this.hud?.openPause(); } }
+    // (a followed vehicle stays followed: Esc clears the screen, only taking the camera lets it go, cinema.followOn)
+    if (k === "Escape") { if (!this.hud?.back()) this.hud?.openPause(); }
     else if (k === " ") { e.preventDefault(); if (!e.repeat) this.togglePause(); }
     else if (k === "1") this.setSpeed(1);
     else if (k === "2") this.setSpeed(2);
@@ -1071,6 +1074,8 @@ export class App {
       if (!s) { this.hud?.closePanels(); return; }
       if (s.k === "node") this.hud?.openSignal(s.id);
       else this.hud?.openSel(s);
+      // (following one vehicle, a click on another rides with that one instead)
+      if (this.camera.following !== null && this.camera.following !== s.id && followOn("select", s.k === "vehicle" ? "vehicle" : "other") === "switch") this.camera.followVehicle(s.id);
       this.dirtyPreview = true;
       return;
     }
@@ -1630,6 +1635,8 @@ export class App {
       // (a preview that can't be drawn must never stop the game)
       try { this.refreshPreview(); } catch (e) { this.dirtyPreview = false; console.error(e); }
     }
+    // (the clock counts every game minute; the rest of the bar every quarter second)
+    this.hud?.clock();
     this.hudT += dt;
     if (this.hudT > 0.25) {
       this.hudT = 0;

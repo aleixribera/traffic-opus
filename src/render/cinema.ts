@@ -489,3 +489,18 @@ export function easeAngle(a: number, b: number, k: number): number {
   const d = Math.atan2(Math.sin(b - a), Math.cos(b - a));
   return a + d * k;
 }
+
+/** What the player did while the camera follows a vehicle. */
+export type FollowInput = "pan" | "zoom" | "esc" | "select" | "build" | "stop";
+
+/**
+ * What a follow does on the player's input (owner, 2026-11-08: Esc clears the HUD and keeps following; only taking the
+ * camera lets go): "end" on a pan, drag or key scroll, the chip's Stop, or a click with a build tool (the map can't
+ * slide under a road being drawn); "switch" to a vehicle clicked on; "keep" on the wheel, Esc, a click on empty
+ * ground or on anything else (its panel opens and the ride goes on).
+ */
+export function followOn(input: FollowInput, picked: "vehicle" | "other" | null = null): "keep" | "end" | "switch" {
+  if (input === "pan" || input === "stop" || input === "build") return "end";
+  if (input === "select" && picked === "vehicle") return "switch";
+  return "keep";
+}

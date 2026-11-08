@@ -53,8 +53,8 @@ describe("Roads with a median", () => {
     expect(route.keys[route.keys.length - 1]).toBe(dkey(e, -1));
   });
 
-  it("drives cars between buildings on both sides without crossing the median", () => {
-    const { net, w, e } = divided();
+  it.each(["avenueM", "boulevard"] as const)("drives cars between buildings on both sides of a %s without turning across it", (type) => {
+    const { net, w, e } = divided(type);
     let arrived = 0, failed = 0;
     const tr = new Traffic(net, { arrive: () => { arrived++; }, fail: () => { failed++; } });
     const trip = (): Trip => ({ kind: "shop", from: 0, to: 0, resident: -1, startT: 0, freeFlow: 0 });

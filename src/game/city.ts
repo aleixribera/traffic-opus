@@ -1,6 +1,6 @@
 import { loadCompany, makeCompany, type Company } from "./company";
 import {
-  BUILDING_TYPES, BULLDOZE_REFUND, DEMOLISH_PER_LEVEL, ROAD_TYPES, SIGNAL_COST, SIM, isHighway, roadWidth, type RoadTypeId,
+  BUILDING_TYPES, BULLDOZE_REFUND, DEMOLISH_PER_LEVEL, ROAD_TYPES, SIGNAL_COST, SIM, isHighway, roadWidth, takesGate, type RoadTypeId,
 } from "../config";
 import { add, dist, dist2, rectCorners, rectDistance, scale, sub, type V2 } from "../core/math";
 import { mulberry32 } from "../core/noise";
@@ -72,6 +72,8 @@ export interface Budget {
 export const SAVE_V = 5;
 
 /** Money a new company starts with: the first chain and plenty of road, room to try things (owner, 2026-11-08: $250k). */
+/** Households the company's first hamlet has when the game starts (about 2.5 people each). */
+export const START_HOUSEHOLDS = 30;
 export const START_MONEY = 250000;
 /** A new site's street starts this far out of its gate (where a road drawn to the gate ends too)... */
 export const GATE_LINK_OUT = 7;
@@ -271,13 +273,15 @@ export class Game {
     const town = this.towns.found(site, { ang });
     if (typeof town === "string") return;
     this.cityName = town.name;
-    town.target = 12; // (enough hands to crew a first farm and food plant between them)
+    // (owner, 2026-11-08: "a bit bigger, to have more employees for the early factories": about 60-80 people, hands
+    // for a first farm, sawmill and food plant, still a Hamlet well short of the 150 goal)
+    town.target = START_HOUSEHOLDS;
     // the road out of town, from the end of its main street
     const a = gridPt(town.c, ang, 1, 0), b = gridPt(town.c, ang, 1 + 320 / BLOCK, 0);
     const plan = planRoad(this.net, this.world, { start: { p: a, h: 0, guides: [], node: this.nodeAt(a) }, end: { p: b, h: 0, guides: [] }, mode: "straight", type: "street" });
     if (!plan.errors.length) this.buildFree(plan);
     // it has stood a while: its first homes and its shop are up and lived in
-    for (let k = 0; k < 10; k++) {
+    for (let k = 0; k < 60 && (k < 10 || town.households < town.target); k++) {
       this.towns.tick();
       for (const b of this.buildings.list) b.built = 1;
     }
@@ -1049,7 +1053,7 @@ export class Game {
     const cands: { p: V2; d: number }[] = [];
     for (const id of net.segsNear(S.x - R, S.y - R, S.x + R, S.y + R)) {
       const s = net.segs.get(id)!;
-      if (!ROAD_TYPES[s.type].allowsAccess) continue;
+      if (!takesGate(ROAD_TYPES[s.type])) continue; // (a boulevard too: the street meets it at a junction)
       const r = cubicClosest(s.c, ahead);
       if (net.heightOnSeg(id, r.t) > 0.5) continue;
       const d = dist(r.p, S);

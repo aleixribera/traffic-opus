@@ -297,7 +297,8 @@ sinks the milestones promise.
 
 A game year is 64 game days, **16 per season** (owner, 2026-11-08: "For the seasons, let's have 16 days for each
 season"), long enough to settle into a season and enjoy its scenery: at 1x a season is about four hours of play
-and the year about seventeen. Day 1 at dawn is the start of spring, so the first harvest comes in on day 33.
+and the year about seventeen. A new game starts at dawn in late spring ("Spring · Day 11", calendar.START_YDAY), so summer is six days off and
+the first harvest comes in on the game's day 23.
 
 - **Towns eat the same all year.** The farms swing instead:
   - crops: spring 0.85, summer 1.05, an autumn surge of 1.6, winter 0.5;
@@ -799,7 +800,8 @@ height levels shown while drawing, and the instant upgrade preview.
 - Camera modes (the camera button in the top-left bar, or keys):
   - Follow (G, or a convoy's tag) rides with the truck nearest the middle of the screen, with a damped camera and a
     slight look-ahead. A "Following" chip names its cargo and destination. When it arrives the camera holds, then picks
-    up the same truck's next run, or lets go. Zooming still works; panning, a click on the map or Esc lets go.
+    up the same truck's next run, or lets go. Zooming, Esc (which clears panels) and clicks on the map keep it (a click
+    on another vehicle rides with that one instead); only panning, a build tool's click or the chip's Stop let go.
   - Tour (T) is a Cities: Skylines-style automatic camera. Slow 8–14 s pans and zooms over the busiest junctions, towns,
     works, bridges, convoys and recent events, weighted by live activity, never the same place twice in a row, fading
     through black between shots.

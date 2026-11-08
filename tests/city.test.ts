@@ -158,8 +158,9 @@ describe("Towns", () => {
     // and the town spread the other way: far more of its homes lie west of the centre than east
     const east = homes.filter((b) => b.c.x > SITE.x + 60).length, west = homes.filter((b) => b.c.x < SITE.x - 60).length;
     expect(west).toBeGreaterThan(east * 2);
-    // the land it gave up is left open, not zoned for homes
-    for (const c of okCells(g)) if (c.zone && ZONE_GROUP[c.zone] === "res") expect(g.towns.nuisanceAt(c.c)).toBeLessThanOrEqual(NUISANCE_HOMES + 1e-9);
+    // the open land it gave up is left open, not zoned for homes (a home that stood there first keeps its lot: its
+    // own cells may reach a little past the line its centre is inside of)
+    for (const c of okCells(g)) if (c.zone && !c.lot && ZONE_GROUP[c.zone] === "res") expect(g.towns.nuisanceAt(c.c)).toBeLessThanOrEqual(NUISANCE_HOMES + 1e-9);
   }, 120000);
 
   it("a town is never set down too close to another or on water, costs nothing, and knows when it starts cut off", () => {

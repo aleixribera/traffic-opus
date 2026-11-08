@@ -83,7 +83,8 @@ export interface PanelModel {
   status: { text: string; tone: Tone; fix?: string; tag?: string };
   keys: KeyNum[];
   flow: FlowRow[];
-  level?: { label: string; pct: number; line: string; tone?: Tone };
+  /** the level bar: from this level toward `to` (none: the top level) */
+  level?: { from: string; to?: string; pct: number; line: string; tone?: Tone };
   /** what the map lights up */
   related: Related;
 }
@@ -370,15 +371,15 @@ export function siteModel(g: Game, b: Building, led?: TradeLedger): PanelModel {
   let level: PanelModel["level"];
   // (warehouses and depots don't grow: no level bar, as no badge)
   if (b.placed && b.built >= 1 && !P.site && !D.mega && !D.logistics) {
-    if (L >= SITE_LEVELS) level = { label: "Top level", pct: 1, line: `fully grown · ×${LEVEL_MULT[L - 1]} output` };
+    if (L >= SITE_LEVELS) level = { from: `Level ${L}`, pct: 1, line: `fully grown · ×${LEVEL_MULT[L - 1]} output` };
     else {
       const k = Math.max(0, Math.min(1, (P.grow ?? 0) / growNeed(L)));
       // (a kind of site cleared only so far waits for a goal: that is the plan, not trouble)
       const goal = P.why?.match(/^Level \d+ opens with the goal "(.+)"$/)?.[1];
       const held = !goal && P.why && P.why !== b.problem;
       level = goal
-        ? { label: `Lv ${L + 1}`, pct: 0, line: `opens with the goal “${goal}”` }
-        : { label: `Lv ${L + 1}`, pct: k, line: held ? `held back: ${P.why}` : `${Math.round(k * 100)}% · then ×${LEVEL_MULT[L]} output`, tone: held ? "bad" : "" };
+        ? { from: `Level ${L}`, to: `Level ${L + 1}`, pct: 0, line: `opens with the goal “${goal}”` }
+        : { from: `Level ${L}`, to: `Level ${L + 1}`, pct: k, line: held ? `held back: ${P.why}` : `${Math.round(k * 100)}% · then ×${LEVEL_MULT[L]} output`, tone: held ? "bad" : "" };
     }
   }
   siteViz(g, b, flow, rel);
@@ -500,7 +501,7 @@ export function townModel(g: Game, t: Town, led?: TradeLedger): PanelModel {
   // (its needs are the panel's own "What it needs" rows, so the strip only shows where they come from)
   const flow: FlowRow[] = [];
   if (from.length) flow.push({ label: "From", chips: from.slice(0, 5) });
-  const level = next ? { label: next.name, pct: Math.min(1, t.pop / next.pop), line: `${Math.min(99, Math.floor((t.pop / next.pop) * 100))}% · at ${fmtNum(next.pop)} people` } : undefined;
+  const level = next ? { from: TOWN_SIZES[si].name, to: next.name, pct: Math.min(1, t.pop / next.pop), line: `${Math.min(99, Math.floor((t.pop / next.pop) * 100))}% · at ${fmtNum(next.pop)} people` } : undefined;
   return { title: t.name, sub: TOWN_SIZES[si].name, icon: "town", status: townStatus(t), keys, flow, level, related: rel };
 }
 
@@ -648,7 +649,8 @@ function eta(g: Game, v: Vehicle, left: number): string {
   const vEst = Math.max(4, (n ? lim / n : v.edge.speed) * 0.8);
   const secs = left / vEst + (v.stuck > 5 ? v.stuck : 0);
   const at = (g.hour + secs / HOUR) % 24;
-  return `${String(Math.floor(at)).padStart(2, "0")}:${String(Math.floor((at % 1) * 6) * 10).padStart(2, "0")}`;
+  const m = Math.floor(at * 60);
+  return `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
 
 export function vehicleModel(g: Game, v: Vehicle): PanelModel {

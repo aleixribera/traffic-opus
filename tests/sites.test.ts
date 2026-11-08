@@ -290,6 +290,20 @@ describe("free placement and the gate", () => {
     for (const st of back.link?.strokes ?? []) for (const q of chainPoints(st.chain, 2)) expect(rectDistance(q, p, T.w / 2, T.d / 2, rot)).toBeGreaterThan(5);
   });
 
+  it("a gate opens onto a boulevard (right-in, right-out), though no house may face one", () => {
+    const g = openGame();
+    const b = g.place("foodplant", openSpot(g, "foodplant"), { down: { x: 0, y: 1 } })!;
+    expect(b.access).toBeNull();
+    const f = siteFrame(b.c, b.rot, b.side, b.hd);
+    const out = scale(f.into, -1);
+    const across = (o: number, k: number) => add(add(f.gate, scale(out, o)), scale(f.along, k));
+    road(g, across(GATE_REACH, -200), across(GATE_REACH, 200), "boulevard");
+    expect(b.access).not.toBeNull();
+    expect(g.net.segs.get(b.access!.seg)!.type).toBe("boulevard");
+    run(g, 0.2);
+    expect(b.problem).not.toBe("No road to the gate");
+  });
+
   it("a road that only ends at the gate joins it too, and its trucks set off", () => {
     const g = openGame();
     const b = g.place("farm", openSpot(g, "farm"), { down: { x: 0, y: 1 } })!;

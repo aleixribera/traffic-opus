@@ -81,7 +81,9 @@ describe("The inspector's panels", () => {
     expect(m.badge).toBe(`Lv ${farm.plant!.level}/${4}`);
     // the season: one small tag in the status line ("Autumn harvest ×1.6"), nothing more
     expect(m.status.tag).toMatch(/^(Spring|Summer|Autumn|Winter) (sowing|growing|harvest|fallow) ×\d\.\d$/);
-    expect(m.level?.label).toBe(`Lv ${farm.plant!.level + 1}`);
+    // (named at both ends: this level and the next)
+    expect(m.level?.from).toBe(`Level ${farm.plant!.level}`);
+    expect(m.level?.to).toBe(`Level ${farm.plant!.level + 1}`);
   });
 
   it("a product the towns pay for shows profit; the food plant's farm shows as its source", () => {
@@ -132,7 +134,7 @@ describe("The inspector's panels", () => {
     expect(m.keys.map((k) => k.label)).toEqual(["crops", "for your own plant", expect.stringMatching(/^arrives · [\d.]+ k?m to go$/)]);
     expect(m.keys[0].value).toBe(String(h.n));
     expect(metresLeft(g, v)).toBeGreaterThan(0);
-    expect(m.keys[2].value).toMatch(/^\d\d:\d0$/);
+    expect(m.keys[2].value).toMatch(/^\d\d:\d\d$/); // (to the minute, as the clock counts)
     expect(m.flow.map((r) => r.label)).toEqual(["Cargo", "From", "To"]);
     expect(m.flow[0].chips[0]).toMatchObject({ product: "crops", note: `${h.n} load${h.n === 1 ? "" : "s"}` });
     expect(m.flow[1].chips[0].ref).toEqual({ k: "building", id: farm.id });

@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { Industry, PLANTS, type IndustryHost, type PlantKind } from "../src/game/industry";
 import { Parks, LINK_CAP, LINK_REACH, LINK_UPKEEP, fenceGap } from "../src/game/parks";
-import { SEASONAL, SEASON_DAYS, YEAR, YEAR_DAYS, fieldLook, seasonAvg, seasonDay, seasonMult, seasonOf, yearOf } from "../src/game/calendar";
+import { SEASONAL, SEASON_DAYS, START_YDAY, YEAR, YEAR_DAYS, fieldLook, seasonAvg, seasonDay, seasonMult, seasonOf, yearOf } from "../src/game/calendar";
 import { seasonLine } from "../src/ui/specials";
 import { LOADS_PER_PIECE, MAX_TURBINES, PIECE_YARD, TURBINE_BOOST } from "../src/game/convoys";
 import { MEGAS, megaBlock, megaProgress, townBoost } from "../src/game/megaprojects";
@@ -128,10 +128,11 @@ describe("Seasons", () => {
     expect(SEASON_DAYS).toBe(16);
     expect(YEAR_DAYS).toBe(64);
     expect(YEAR).toBe(64 * DAY);
-    // the clock starts at dawn on day 1 (START_HOUR): calendar day n (1-based) runs from `at(n, 0)` to `at(n + 1, 0)`
-    const at = (day: number, hour = 12) => (day - 1) * DAY + (hour - 6) * HOUR;
+    // the clock starts at dawn (START_HOUR) on day START_YDAY + 1 of the year, late spring: calendar day n (1-based)
+    // runs from `at(n, 0)` to `at(n + 1, 0)`
+    const at = (day: number, hour = 12) => (day - 1 - START_YDAY) * DAY + (hour - 6) * HOUR;
     expect(seasonOf(0)).toBe("spring");
-    expect(seasonDay(0)).toBe(1);
+    expect(seasonDay(0)).toBe(11);
     expect(yearOf(0)).toBe(1);
     // every calendar day of the year: the season and its day, 1..16, in order
     const seasons = ["spring", "summer", "autumn", "winter"] as const;
@@ -160,7 +161,7 @@ describe("Seasons", () => {
   });
 
   it("the harvest rush comes once a year, over most of autumn, peaking mid-autumn", () => {
-    const at = (day: number, hour = 12) => (day - 1) * DAY + (hour - 6) * HOUR;
+    const at = (day: number, hour = 12) => (day - 1 - START_YDAY) * DAY + (hour - 6) * HOUR;
     // above 1.3x is the rush: find each stretch of it over two years, hour by hour
     const runs: { from: number; to: number }[] = [];
     let open: { from: number; to: number } | null = null;
@@ -239,20 +240,20 @@ describe("Seasons", () => {
   it("a save from the four-day year loads and carries on in the season its clock falls in now", () => {
     const g = new Game(7);
     g.start();
-    // day 23 at noon: under the four-day year the third autumn; now the seventh day of summer
+    // day 23 at noon: under the four-day year the third autumn; now (from late spring) the first day of autumn
     g.time = 22 * DAY + 6 * HOUR;
     const json = JSON.parse(JSON.stringify(g.serialize()));
     const h = Game.load(json);
     expect(h.time).toBe(g.time);
     expect(h.day).toBe(23);
-    expect(seasonOf(h.time)).toBe("summer");
-    expect(seasonDay(h.time)).toBe(7);
-    expect(seasonLine(h.time)).toContain("Summer · Day 7");
-    expect(fieldLook(h.time)).toBe("green");
+    expect(seasonOf(h.time)).toBe("autumn");
+    expect(seasonDay(h.time)).toBe(1);
+    expect(seasonLine(h.time)).toContain("Autumn · Day 1");
+    expect(fieldLook(h.time)).toBe("ripe");
     // and it plays on into the next day without trouble
     run(h, 13);
     expect(h.day).toBe(24);
-    expect(seasonDay(h.time)).toBe(8);
+    expect(seasonDay(h.time)).toBe(2);
   }, 60000);
 });
 

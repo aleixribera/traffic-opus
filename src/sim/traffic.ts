@@ -1,4 +1,4 @@
-import { LANE_W, ROAD_TYPES, SIM } from "../config";
+import { LANE_W, ROAD_TYPES, SIM, rightOnly } from "../config";
 import { clamp, dist, dot, norm, polyAt, polyClosest, polyDirSmooth, right, sub, type V2 } from "../core/math";
 import type { ChangeSet, Connector, Edge, Lane, RoadNetwork, SignalPhase, SignalPlan } from "../roads/network";
 import { Router, dkey, dkDir, dkSeg, type Access } from "./router";
@@ -304,7 +304,7 @@ export class Traffic {
     if (!net.segs.has(p.from.seg) || !net.segs.has(p.to.seg)) return "fail";
     // pick a start direction: prefer the kerb side (no crossing), but take the faster route if much better.
     // A median can't be crossed: there you can only pull out to the right (and arrive from the right).
-    const divided = (seg: number) => (ROAD_TYPES[net.segs.get(seg)!.type].median ?? 0) > 0;
+    const divided = (seg: number) => rightOnly(ROAD_TYPES[net.segs.get(seg)!.type]);
     const to: Access = { ...p.to, side: p.toSide };
     // (a car waiting for a gap asks again only every few seconds, or when the roads change: two searches every step
     // for each waiting car cost a big town milliseconds a frame)
