@@ -49,7 +49,23 @@ export function layRoad(g: Game, a: V2, b: V2, budget = Infinity): { legs: [V2, 
   const along = (d: number) => v2(a.x + (b.x - a.x) * (d / L), a.y + (b.y - a.y) * (d / L));
   let w0 = -1, w1 = -1;
   for (let d = 0; d <= L; d += 10) if (g.world.isWater(along(d))) { if (w0 < 0) w0 = d; w1 = d; }
-  if (w0 > 80 && w1 < L - 80) routes.push([{ p: a, lv: 0 }, { p: along(w0 - 70), lv: 1 }, { p: along(w1 + 70), lv: 1 }, { p: b, lv: 0 }]);
+  // (on the ground up to a short ramp before the water and from one after it, as a player raises a road: a deck
+  // ramped from the far start would hold kilometres of road off the ground, with nothing able to face it)
+  if (w0 > 150 && w1 < L - 150) {
+    routes.push([{ p: a, lv: 0 }, { p: along(w0 - 140), lv: 0 }, { p: along(w0 - 70), lv: 1 }, { p: along(w1 + 70), lv: 1 }, { p: along(w1 + 140), lv: 0 }, { p: b, lv: 0 }]);
+  } else if (w0 > 80 && w1 < L - 80) routes.push([{ p: a, lv: 0 }, { p: along(w0 - 70), lv: 1 }, { p: along(w1 + 70), lv: 1 }, { p: b, lv: 0 }]);
+  // last, the bent routes again with a bridge on whichever leg crosses water (round a site and over the river)
+  for (const r of routes.slice(1, 7)) {
+    const out: { p: V2; lv: number }[] = [r[0]];
+    for (const q of r.slice(1)) {
+      const p = out[out.length - 1].p, l = dist(p, q.p), at2 = (d: number) => v2(p.x + (q.p.x - p.x) * (d / l), p.y + (q.p.y - p.y) * (d / l));
+      let u0 = -1, u1 = -1;
+      for (let d = 0; d <= l; d += 10) if (g.world.isWater(at2(d))) { if (u0 < 0) u0 = d; u1 = d; }
+      if (u0 > 150 && u1 < l - 150) out.push({ p: at2(u0 - 140), lv: 0 }, { p: at2(u0 - 70), lv: 1 }, { p: at2(u1 + 70), lv: 1 }, { p: at2(u1 + 140), lv: 0 });
+      out.push(q);
+    }
+    if (out.length > r.length) routes.push(out);
+  }
   let dear = false;
   roadErrors.length = 0;
   for (const r of routes) {
@@ -66,7 +82,7 @@ export function layRoad(g: Game, a: V2, b: V2, budget = Infinity): { legs: [V2, 
       built++;
     }
     if (built < legs.length) { for (let k = 0; k < built; k++) g.undo(); continue; }
-    return { legs: legs.map(([p, q]) => [p.p, q.p]), cost, bridge: r.length === 4 ? w1 - w0 + 140 : 0 };
+    return { legs: legs.map(([p, q]) => [p.p, q.p]), cost, bridge: r.some((q) => q.lv > 0) ? Math.max(140, w1 - w0 + 140) : 0 };
   }
   return dear ? "money" : "blocked";
 }
