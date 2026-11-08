@@ -3,7 +3,7 @@
 // water/mountain edge drawn on screen is the edge the rules use.
 
 import type { V2 } from "../core/math";
-import { F, MOUNTAIN_STEPS, NF, WorldGen, riverWater } from "./gen";
+import { F, MOUNTAIN_STEPS, NF, WorldGen, riverWater, riverWidth, RIVER_K, RIVER_S } from "./gen";
 
 export { F, MOUNTAIN_STEPS, NF, riverWater, waterOf } from "./gen";
 
@@ -13,6 +13,8 @@ export const CHUNK_M = RES * CH;
 const MAX_CHUNKS = 2600;
 
 const key = (ci: number, cj: number) => (ci + 32768) * 65536 + (cj + 32768);
+/** hint bits: no water, no mountain (bit 4: worked out) */
+const DRY = 1, LOW = 2;
 
 /** Cubic B-spline weights for fraction t. */
 export function bspline(t: number, w: Float64Array | number[]) {
@@ -26,6 +28,8 @@ export function bspline(t: number, w: Float64Array | number[]) {
 export class Terrain {
   readonly gen: WorldGen;
   private chunks = new Map<number, Uint8Array>();
+  /** per chunk node: what the fields round it rule out (see hint) */
+  private hints = new Map<number, Uint8Array>();
   private wx = new Float64Array(4);
   private wy = new Float64Array(4);
   private buf = new Float32Array(NF);
@@ -48,7 +52,11 @@ export class Terrain {
         for (let f = 0; f < NF; f++) c[b + f] = Math.round(o[f] * 255);
       }
     }
-    if (this.chunks.size >= MAX_CHUNKS) this.chunks.delete(this.chunks.keys().next().value!);
+    if (this.chunks.size >= MAX_CHUNKS) {
+      const old = this.chunks.keys().next().value!;
+      this.chunks.delete(old);
+      this.hints.delete(old);
+    }
     this.chunks.set(k, c);
     return c;
   }
@@ -96,7 +104,45 @@ export class Terrain {
   }
 
   isWater(p: V2): boolean {
+    if (this.hint(p.x, p.y) & DRY) return false;
     return this.water(p) >= 0.5;
+  }
+
+  /**
+   * What the field nodes round p rule out, without sampling: DRY (no water anywhere in the 16 m square p is in) and
+   * LOW (no mountain). A B-spline sample is a weighted average of its 4x4 nodes with weights that sum to one, so it
+   * never exceeds their largest value: when even that is below the threshold, every point of the square is too.
+   * Exact, and most of the map is open land, so the rules (zoning tests thousands of points a road edit) skip the
+   * spline there.
+   */
+  private hint(x: number, y: number): number {
+    const i = Math.floor(x / RES), j = Math.floor(y / RES);
+    const ci = Math.floor(i / CH), cj = Math.floor(j / CH);
+    const k = key(ci, cj);
+    let h = this.hints.get(k);
+    if (!h) this.hints.set(k, (h = new Uint8Array(CH * CH)));
+    const idx = (j - cj * CH) * CH + (i - ci * CH);
+    let v = h[idx];
+    if (!v) {
+      let mtn = 0, lake = 0, flow = 0, rlo = 255, rhi = 0;
+      for (let b = -1; b <= 2; b++) for (let a = -1; a <= 2; a++) {
+        mtn = Math.max(mtn, this.node(F.mtn, i + a, j + b));
+        lake = Math.max(lake, this.node(F.lake, i + a, j + b));
+        flow = Math.max(flow, this.node(F.flow, i + a, j + b));
+        const r = this.node(F.river, i + a, j + b);
+        rlo = Math.min(rlo, r); rhi = Math.max(rhi, r);
+      }
+      // the river is widest where the flow is greatest and nearest its middle (0.5) where the encoding comes closest
+      const lo = rlo / 255, hi = rhi / 255;
+      const off = lo > 0.5 ? lo - 0.5 : hi < 0.5 ? 0.5 - hi : 0;
+      const river = 0.5 + (RIVER_S * riverWidth(flow / 255) - off / 4) * RIVER_K;
+      const eps = 1e-6;
+      v = 4;
+      if (lake / 255 < 0.5 - eps && river < 0.5 - eps) v |= DRY;
+      if (mtn / 255 < MOUNTAIN_STEPS[0] - eps) v |= LOW;
+      h[idx] = v;
+    }
+    return v;
   }
 
   mountainLevel(p: V2): number {
@@ -107,6 +153,7 @@ export class Terrain {
   }
 
   isMountain(p: V2): boolean {
+    if (this.hint(p.x, p.y) & LOW) return false;
     return this.sample(F.mtn, p.x, p.y) >= MOUNTAIN_STEPS[0];
   }
 

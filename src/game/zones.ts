@@ -48,6 +48,11 @@ export interface Cell {
   block: Block;
   col: number;
   row: number; // 0 = next to the road
+  /** cached (see ZoneMap.freeOf): the land under it is open (no water, mountain or site), in land epoch `fe` */
+  land?: boolean;
+  fe?: number;
+  /** cached: clear of every road and junction, until a road edit near it */
+  road?: boolean;
 }
 
 export interface Block {
@@ -59,6 +64,8 @@ export interface Block {
   /** Arc length (on the seg's centreline) of the middle of each column. */
   colS: number[];
   cells: Cell[]; // col * DEPTH + row
+  /** the seg geometry it was laid out on: while the seg keeps it, the block's cells stay where they are */
+  geom?: unknown;
 }
 
 /** What the zone map needs from the world. */
@@ -68,7 +75,13 @@ export interface ZoneWorld {
   owned(p: V2): boolean;
   /** land a cell may never be zoned on (inside an industry site's fence) */
   taken?(p: V2): boolean;
+  /** changes whenever `taken` (or ownership) may answer differently: cached land checks are dropped */
+  landKey?(): string;
 }
+
+type Box = { x0: number; y0: number; x1: number; y1: number };
+/** How far a road edit can change whether a cell is free (m beyond the road's own box: pockets, junction mouths). */
+const REACH = CELL + 8;
 
 const BUCKET = 16;
 const bkey = (x: number, y: number) => ((Math.floor(x / BUCKET) + 32768) * 65536) + (Math.floor(y / BUCKET) + 32768);
@@ -81,8 +94,18 @@ export class ZoneMap {
   /** Seg id -> age (creation order); a split piece keeps its parent's age. */
   private ages = new Map<number, number>();
   private nextAge = 1;
+  /**
+   * Road edits only re-test the cells they can affect (a big town lays a street every few seconds, and re-testing
+   * every cell round it took ~70 ms). Off (`exact`): every cell of every block rebuilt is tested afresh, as a check.
+   */
+  private changed: Box[] | null = null;
+  private epoch = 0;
+  private landKey = "";
+  /** what each seg and junction covered when last seen (removed ones are gone from the network by the time we hear) */
+  private segBox = new Map<number, Box>();
+  private nodeBox = new Map<number, Box>();
 
-  constructor(private net: RoadNetwork, private world: ZoneWorld) {}
+  constructor(private net: RoadNetwork, private world: ZoneWorld, private exact = false) {}
 
   cell(b: Block, col: number, row: number): Cell | undefined {
     return b.cells[col * DEPTH + row];
@@ -112,7 +135,10 @@ export class ZoneMap {
     for (let i = x0; i <= x1; i++) for (let j = y0; j <= y1; j++) {
       const L = this.grid.get((i + 32768) * 65536 + (j + 32768));
       if (!L) continue;
-      for (const c of L) if (Math.abs(c.c.x - p.x) <= r && Math.abs(c.c.y - p.y) <= r && dist(c.c, p) <= r) out.push(c);
+      for (const c of L) {
+        const dx = c.c.x - p.x, dy = c.c.y - p.y;
+        if (dx * dx + dy * dy <= r * r) out.push(c);
+      }
     }
     return out;
   }
@@ -131,6 +157,16 @@ export class ZoneMap {
 
   *allCells(): Iterable<Cell> {
     for (const b of this.blocks.values()) for (const c of b.cells) yield c;
+  }
+
+  /** Every cell next to its road (row 0), without a generator: the towns go over these several times a second. */
+  eachFront(fn: (c: Cell) => void) {
+    for (const b of this.blocks.values()) for (let i = 0; i < b.cells.length; i += DEPTH) fn(b.cells[i]);
+  }
+
+  /** Every cell, without a generator. */
+  eachCell(fn: (c: Cell) => void) {
+    for (const b of this.blocks.values()) for (const c of b.cells) fn(c);
   }
 
   /** Cells reached from `start` through neighbours with the same zone (paint-bucket fill), up to `max`. */
@@ -181,6 +217,13 @@ export class ZoneMap {
     const old = [...this.allCells()];
     this.blocks.clear();
     this.grid.clear();
+    this.epoch++;
+    this.changed = null;
+    this.landKey = this.world.landKey?.() ?? "";
+    this.segBox.clear();
+    this.nodeBox.clear();
+    for (const [id, g] of this.net.segGeom) this.segBox.set(id, g.bbox);
+    for (const id of this.net.nodeGeom.keys()) this.noteNode(id);
     // segs without an age yet get one in id order (creation order), before sorting
     const ids = [...this.net.segs.keys()].sort((a, b) => a - b);
     for (const id of ids) this.ageOf(id);
@@ -198,7 +241,7 @@ export class ZoneMap {
     }
     // region the edit touched: every dirty or removed seg, padded by two block depths
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    const grow = (bb: { x0: number; y0: number; x1: number; y1: number }) => {
+    const grow = (bb: Box) => {
       x0 = Math.min(x0, bb.x0); y0 = Math.min(y0, bb.y0); x1 = Math.max(x1, bb.x1); y1 = Math.max(y1, bb.y1);
     };
     for (const id of cs.dirtySegs) { const g = this.net.segGeom.get(id); if (g) grow(g.bbox); }
@@ -207,12 +250,39 @@ export class ZoneMap {
       if (b) for (const c of b.cells) grow({ x0: c.c.x, y0: c.c.y, x1: c.c.x, y1: c.c.y });
     }
     for (const n of cs.dirtyNodes) { const nd = this.net.nodes.get(n); if (nd) grow({ x0: nd.p.x, y0: nd.p.y, x1: nd.p.x, y1: nd.p.y }); }
+    // what changed on the ground, before and after: only cells near it can have changed whether they are free
+    const changed: Box[] = [];
+    const pad = (b: Box | undefined, r: number) => { if (b) changed.push({ x0: b.x0 - r, y0: b.y0 - r, x1: b.x1 + r, y1: b.y1 + r }); };
+    for (const id of new Set([...cs.dirtySegs, ...cs.removedSegs])) {
+      pad(this.segBox.get(id), REACH);
+      const g = this.net.segGeom.get(id);
+      if (g) { pad(g.bbox, REACH); this.segBox.set(id, g.bbox); } else this.segBox.delete(id);
+    }
+    for (const id of new Set([...cs.dirtyNodes, ...cs.removedNodes])) {
+      pad(this.nodeBox.get(id), CELL);
+      if (this.net.nodeGeom.has(id)) { this.noteNode(id); pad(this.nodeBox.get(id), CELL); } else this.nodeBox.delete(id);
+    }
+    const key = this.world.landKey?.() ?? "";
+    if (key !== this.landKey) { this.landKey = key; this.epoch++; }
+    // (a removed road with no blocks of its own, a long bridge or highway, frees the land along all of it)
+    for (const b of changed) grow(b);
     if (x0 === Infinity) return;
-    const pad = 2 * (DEPTH * CELL + 30);
-    const affected = new Set<number>(this.net.segsNear(x0 - pad, y0 - pad, x1 + pad, y1 + pad));
+    this.changed = this.exact ? null : changed;
+    // the segs whose blocks to lay again: exact, every one within two block depths; else the ones whose cells reach
+    // something that changed (the rest keep their cells: a fresh block still cuts or is cut by them, and the ones a
+    // dropped block was cutting are re-opened below)
+    const affected = new Set<number>();
+    if (this.exact) {
+      const padR = 2 * (DEPTH * CELL + 30);
+      for (const id of this.net.segsNear(x0 - padR, y0 - padR, x1 + padR, y1 + padR)) affected.add(id);
+    } else {
+      const r = DEPTH * CELL + 12;
+      for (const b of changed) for (const id of this.net.segsNear(b.x0 - r, b.y0 - r, b.x1 + r, b.y1 + r)) affected.add(id);
+    }
     for (const id of cs.dirtySegs) if (this.net.segs.has(id)) affected.add(id);
-    // drop the old blocks of affected and removed segs
+    // drop the old blocks of affected and removed segs (the ones on a seg that kept its shape are laid again as they are)
     const old: Cell[] = [];
+    const kept = new Map<string, Block>();
     const drop = (id: number) => {
       for (const side of [1, -1]) {
         const key = `${id}:${side}`;
@@ -220,6 +290,7 @@ export class ZoneMap {
         if (!b) continue;
         for (const c of b.cells) { old.push(c); this.unindex(c); }
         this.blocks.delete(key);
+        if (!this.exact && !cs.dirtySegs.has(id) && b.geom !== undefined && b.geom === this.net.segGeom.get(id)) kept.set(key, b);
       }
     };
     for (const id of affected) drop(id);
@@ -233,10 +304,34 @@ export class ZoneMap {
     for (const id of ids) this.ageOf(id); // new segs get ages in creation order
     ids.sort((a, b) => this.ageOf(a) - this.ageOf(b));
     const fresh: Cell[] = [];
-    for (const id of ids) for (const b of this.addBlocks(id)) fresh.push(...b.cells);
-    this.inherit(old, fresh);
+    const again: Cell[] = [];
+    for (const id of ids) {
+      const k1 = kept.get(`${id}:1`), k2 = kept.get(`${id}:-1`);
+      if (k1 || k2) {
+        for (const b of [k1, k2]) if (b) { this.relay(b); again.push(...b.cells); }
+      } else for (const b of this.addBlocks(id)) fresh.push(...b.cells);
+    }
+    // (cells laid again keep their zone and lot, as fresh ones inherit them)
+    this.inherit(old.filter((c) => !kept.has(c.block.key)).concat(again), fresh);
+    for (const c of again) if (!c.ok) c.zone = null;
     for (const id of cs.removedSegs) if (!this.net.segs.has(id)) this.ages.delete(id);
+    this.changed = null;
     this.version++;
+  }
+
+  private noteNode(id: number) {
+    const n = this.net.nodes.get(id), ng = this.net.nodeGeom.get(id);
+    if (!n || !ng) return;
+    const r = ng.kind === "end" ? 0 : ng.radius;
+    this.nodeBox.set(id, { x0: n.p.x - r, y0: n.p.y - r, x1: n.p.x + r, y1: n.p.y + r });
+  }
+
+  /** A block on a seg that kept its shape, laid again: every cell open, then revalidated like a new one. */
+  private relay(b: Block) {
+    for (const c of b.cells) c.ok = true;
+    this.blocks.set(b.key, b);
+    for (const c of b.cells) this.index(c);
+    this.revalidate(b);
   }
 
   /** Seg ages, for saves: they decide which block owns overlapping cells. */
@@ -284,7 +379,7 @@ export class ZoneMap {
     const out: Block[] = [];
     const age = this.ageOf(id);
     for (const side of [1, -1] as const) {
-      const b: Block = { key: `${id}:${side}`, seg: id, side, age, cols, colS: [], cells: [] };
+      const b: Block = { key: `${id}:${side}`, seg: id, side, age, cols, colS: [], cells: [], geom: g };
       for (let k = 0; k < cols; k++) {
         const sm = off + (k + 0.5) * CELL;
         b.colS.push(sm);
@@ -311,7 +406,7 @@ export class ZoneMap {
       let blocked = false;
       for (let r = 0; r < DEPTH; r++) {
         const c = b.cells[k * DEPTH + r];
-        if (!blocked && !this.cellFree(c)) blocked = true;
+        if (!blocked && !this.freeOf(c)) blocked = true;
         c.ok = !blocked;
       }
     }
@@ -354,16 +449,40 @@ export class ZoneMap {
     for (let r = c.row; r < DEPTH; r++) b.cells[c.col * DEPTH + r].ok = false;
   }
 
-  private cellFree(c: Cell): boolean {
+  /** cellFree, cached on the cell while nothing near it has changed (the land, a road, a junction). */
+  private freeOf(c: Cell): boolean {
+    if (c.fe !== this.epoch || c.land === undefined) { c.fe = this.epoch; c.land = this.landFree(c); c.road = undefined; }
+    if (!c.land) return false;
+    if (c.road === undefined || this.nearChange(c.c)) c.road = this.roadFree(c);
+    return c.road;
+  }
+
+  private nearChange(p: V2): boolean {
+    const ch = this.changed;
+    if (!ch) return true;
+    for (const b of ch) if (p.x >= b.x0 && p.x <= b.x1 && p.y >= b.y0 && p.y <= b.y1) return true;
+    return false;
+  }
+
+  /** Open land under the whole cell: no water, mountain, unowned land or site. */
+  private landFree(c: Cell): boolean {
     const w = this.world;
     const u = fromAngle(c.rot), v = right(u);
     const h = CELL / 2 - 0.6;
     const probes = [c.c, add(c.c, add(scale(u, h), scale(v, h))), add(c.c, add(scale(u, -h), scale(v, h))), add(c.c, add(scale(u, h), scale(v, -h))), add(c.c, add(scale(u, -h), scale(v, -h)))];
     for (const p of probes) if (w.isWater(p) || w.isMountain(p) || !w.owned(p) || w.taken?.(p)) return false;
+    return true;
+  }
+
+  private roadFree(c: Cell): boolean {
     // clear of every road surface at ground level (its own road included, for the inside of tight bends)
     const r = CELL;
     for (const id of this.net.segsNear(c.c.x - r - 20, c.c.y - r - 20, c.c.x + r + 20, c.c.y + r + 20)) {
       const g = this.net.segGeom.get(id)!;
+      // (its box already reaches past its kerbs; turn pockets widen it a lane or two further)
+      const m = g.ends.a.pocket || g.ends.b.pocket ? CELL + 2 * LANE_W : CELL / 2;
+      const bb = g.bbox;
+      if (c.c.x < bb.x0 - m || c.c.x > bb.x1 + m || c.c.y < bb.y0 - m || c.c.y > bb.y1 + m) continue;
       const lim = g.width / 2 + CELL / 2 - 0.4;
       const pts = g.center.pts;
       for (let i = 0; i < pts.length - 1; i++) {

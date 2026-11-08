@@ -252,7 +252,8 @@ export class TownSystem {
     const plan = this.planEdge(t, e);
     if (plan.errors.length || !this.g.buildFree(plan, t.id)) { t.failed.add(k); return false; }
     t.built.add(k);
-    this.updateReach(t);
+    // (the land reaches past its furthest grid node)
+    t.reach = Math.max(t.reach, (Math.max(Math.hypot(e[0], e[1]), Math.hypot(e[2], e[3])) + 0.6) * BLOCK);
     return true;
   }
 
@@ -365,17 +366,17 @@ export class TownSystem {
     const resized = this.list.some((t) => this.zonedSize.get(t.id) !== t.size);
     if (this.zonedAt === z.version && !resized) return;
     const paint = new Map<ZoneId, Cell[]>();
-    for (const c of z.allCells()) {
-      if (!c.ok || c.lot) continue;
+    z.eachCell((c) => {
+      if (!c.ok || c.lot) return;
       const t = this.townAt(c.c);
-      if (!t) continue;
+      if (!t) return;
       const want = this.zoneFor(t, c, t.size);
-      if (want === c.zone) continue;
+      if (want === c.zone) return;
       // (built-up land is rebuilt a lot at a time, by redevelopment; empty cells follow the town as it grows)
       let L = paint.get(want ?? ("" as ZoneId));
       if (!L) paint.set(want ?? ("" as ZoneId), (L = []));
       L.push(c);
-    }
+    });
     for (const [zone, cells] of paint) this.g.zoneCells(cells, (zone || null) as ZoneId | null);
     this.zonedAt = z.version;
     for (const t of this.list) this.zonedSize.set(t.id, t.size);

@@ -123,7 +123,7 @@ export class Game {
     const t = this.terrain;
     // (towns grow on any land: only the company's own buildings need owned tiles)
     // (and never inside the fence of one of the company's sites)
-    this.zones = new ZoneMap(this.net, { isWater: (p) => t.isWater(p), isMountain: (p) => t.isMountain(p), owned: () => true, taken: (p) => this.inSite(p) });
+    this.zones = new ZoneMap(this.net, { isWater: (p) => t.isWater(p), isMountain: (p) => t.isMountain(p), owned: () => true, taken: (p) => this.inSite(p), landKey: () => this.buildings.sites.map((b) => b.id).join() });
     this.people = new Society(this);
     this.transit = new Transit(this);
     this.utilities = new Utilities(this);
@@ -928,15 +928,15 @@ export class Game {
     if (this.candVersion !== this.zones.version) {
       this.candCache.clear();
       this.freeCache.clear();
-      for (const c of this.zones.allCells()) {
-        if (c.row !== 0 || !c.ok || !c.zone || c.lot) continue;
+      this.zones.eachFront((c) => {
+        if (!c.ok || !c.zone || c.lot) return;
         const t = this.cellTown(c);
-        if (t === null) continue;
+        if (t === null) return;
         const k = `${t}:${ZONE_GROUP[c.zone]}`;
         let L = this.candCache.get(k);
         if (!L) this.candCache.set(k, (L = []));
         L.push(c);
-      }
+      });
       this.candVersion = this.zones.version;
     }
     return this.candCache.get(key) ?? [];
