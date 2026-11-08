@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { BUILDING_TYPES, LEVEL_H, MAX_LEVEL, ROAD_TYPES, SIM, roadWidth, type RoadTypeId } from "./config";
-import { cubicTangent, dist, dot, formatMoney, norm, rectCorners, right, sub, v2, wrapAngle, type V2 } from "./core/math";
+import { cubicAt, cubicTangent, dist, dot, formatMoney, norm, rectCorners, right, sub, v2, wrapAngle, type V2 } from "./core/math";
 import type { Building } from "./game/buildings";
 import { Game } from "./game/city";
 import {
@@ -8,7 +8,7 @@ import {
   type CurveMode, type Plan, type RoundaboutSize, type Snap, type SnapOpts,
 } from "./roads/planner";
 import { toolSnap, type ToolSnap } from "./roads/snapping";
-import { armsAt, slipTangents, strokeProfile } from "./roads/planner";
+import { armsAt, slipTangents } from "./roads/planner";
 import { Buildings3D } from "./render/buildings3d";
 import { Parks3D } from "./render/parks3d";
 import { Fireworks } from "./render/fx3d";
@@ -227,7 +227,7 @@ export class App {
     for (const c of [...this.worldRoot.children]) this.worldRoot.remove(c);
     const small = Math.min(window.innerWidth, window.innerHeight) < 700;
     this.terrain3d = new Terrain3D(g.terrain, small);
-    this.roads = new Roads3D(g.net);
+    this.roads = new Roads3D(g.net, { props: this.models.props, isWater: (p) => g.terrain.isWater(p) });
     this.roadsFar = new RoadsFar(g.net);
     this.labels.set([]);
     this.labelKey = "";
@@ -1034,11 +1034,17 @@ export class App {
 
   /** The steepest grade along a plan's lead road (%). */
   private maxGrade(plan: Plan): number {
+    // (each piece's average climb: the rule the planner holds roads to, not the steepest point of the eased profile)
     const st = plan.strokes[0];
     if (!st) return 0;
-    const { pts, hs } = strokeProfile(this.game.net, st, 4);
+    const hs = st.hj ?? [st.h0, st.h1];
+    const pieces = st.hj ? st.chain.map((c) => [c]) : [st.chain];
     let g = 0;
-    for (let i = 1; i < pts.length; i++) g = Math.max(g, Math.abs(hs[i] - hs[i - 1]) / (dist(pts[i], pts[i - 1]) || 1));
+    pieces.forEach((cs, i) => {
+      let L = 0;
+      for (const c of cs) for (let k = 1, q = cubicAt(c, 0); k <= 16; k++) { const r = cubicAt(c, k / 16); L += dist(q, r); q = r; }
+      if (hs[i + 1] !== undefined) g = Math.max(g, Math.abs(hs[i + 1] - hs[i]) / (L || 1));
+    });
     return g * 100;
   }
 

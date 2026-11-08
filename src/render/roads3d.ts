@@ -7,9 +7,21 @@ import { dkey } from "../sim/router";
 import type { Traffic } from "../sim/traffic";
 import { PAL } from "./palette";
 import { MeshBatch } from "./batch";
+import type { MergedModel } from "./models";
 
 const LIFT = 0.06;
 const DECK = 0.9;
+/** Where a point at height h casts its shadow, per metre of height (the sun in View: up-left, so down-right). */
+const SUN_OFF = { x: 0.42, y: 0.62 };
+/** The bridge pieces (tools/blender/build_models.py) are built for a 10 m deck; piers and abutments reach the
+ * underside of a 6 m deck (5.1 m). */
+const PIECE_W = 10, PIECE_H = 5.1;
+
+/** What the road renderer needs from outside for bridges: the Blender bridge pieces, and where the water is. */
+export interface BridgeParts {
+  props: Map<string, MergedModel>;
+  isWater?: (p: V2) => boolean;
+}
 
 /** Shared road surface material: Lambert (so it takes shadows) with markings drawn in the fragment shader. */
 export function makeRoadMaterial(opts: { color?: number; opacity?: number; markings?: boolean; arrows?: boolean; highway?: boolean } = {}) {
@@ -232,8 +244,11 @@ export class Roads3D {
   }
   // the deck body casts the bridge's shadow from both faces (three's default only draws back faces into the shadow map)
   private deckMat = new THREE.MeshLambertMaterial({ color: PAL.deckSide, shadowSide: THREE.DoubleSide });
-  private pillarMat = new THREE.MeshLambertMaterial({ color: PAL.pillar });
-  private pillarGeo = new THREE.CylinderGeometry(0.9, 1.1, 1, 10).translate(0, 0.5, 0);
+  // bridges: cream concrete parapets along a raised road's edges, the Blender piers, abutments, pylons and truss
+  // panels, and a soft drop shadow on the ground or water down-right of the deck
+  private parapetMat = new THREE.MeshLambertMaterial({ color: PAL.parapet });
+  private pieceMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  private dropMat = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, transparent: true, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
   // signal heads drawn as coloured dots at the stop line
   private lights: THREE.InstancedMesh;
   private lightRefs: { node: number; arm: number; turns: string[]; x: number; y: number; h: number }[] = [];
@@ -248,7 +263,7 @@ export class Roads3D {
   private islands = new THREE.Group();
   private islandMat = new THREE.MeshLambertMaterial({ color: PAL.grass });
 
-  constructor(private net: RoadNetwork) {
+  constructor(private net: RoadNetwork, private parts?: BridgeParts) {
     this.lights = new THREE.InstancedMesh(new THREE.CircleGeometry(0.85, 16).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffffff }), 256);
     this.lights.count = 0;
     this.lights.renderOrder = 3;
@@ -329,7 +344,7 @@ export class Roads3D {
     if (!m) return;
     this.batch.remove(m.surface);
     m.surface.geometry.dispose();
-    for (const o of m.extra) { this.batch.remove(o as THREE.Mesh); if ((o as THREE.Mesh).geometry && (o as THREE.Mesh).geometry !== this.pillarGeo) (o as THREE.Mesh).geometry.dispose(); }
+    for (const o of m.extra) { this.batch.remove(o as THREE.Mesh); if ((o as THREE.Mesh).geometry && !o.userData.shared) (o as THREE.Mesh).geometry.dispose(); }
     this.segs.delete(id);
     this.treeSpots.delete(id);
   }
@@ -437,26 +452,105 @@ export class Roads3D {
       const dm = new THREE.Mesh(deck, this.deckMat);
       dm.castShadow = true;
       extra.push(dm);
-      // pillars where the deck is high enough to need them
-      const total = ss[ss.length - 1] - ss[0];
-      const n = Math.max(1, Math.round(total / 30));
-      for (let k = 0; k <= n; k++) {
-        const target = ss[0] + (total * (k + 0.5)) / (n + 1);
-        let i = 0;
-        while (i < ss.length - 2 && ss[i + 1] < target) i++;
-        const h = hs[i];
-        if (h < 2.5) continue;
-        const p = pts[i];
-        const pm = new THREE.Mesh(this.pillarGeo, this.pillarMat);
-        pm.position.set(p.x, 0, p.y);
-        pm.scale.set(Math.min(1.6, halfW / 3), h - DECK + 0.05, Math.min(1.6, halfW / 3));
-        pm.castShadow = true;
-        pm.receiveShadow = true;
-        extra.push(pm);
-      }
+      // parapets along both edges wherever it's up off the ground
+      const pg = parapetGeo(pts, hs, (i, side) => (edges ? (side > 0 ? edges.r[i] : edges.l[i]) : halfW * side));
+      if (pg) { const pm = new THREE.Mesh(pg, this.parapetMat); pm.castShadow = true; pm.receiveShadow = true; extra.push(pm); }
+      // its shadow on the ground or the water, down-right of the deck (the shadow map alone is a thin sliver)
+      const sg = dropShadowGeo(pts, hs, halfW);
+      if (sg) { const sm = new THREE.Mesh(sg, this.dropMat); sm.renderOrder = 1; extra.push(sm); }
+      extra.push(...this.bridgePieces(id, pts, hs, ss, halfW));
     }
     this.show([surface, ...extra]);
     this.segs.set(id, { surface, extra });
+  }
+
+  /** A Blender bridge piece placed at p (height y), turned to run along dir, scaled to the deck. */
+  private piece(name: string, p: V2, y: number, dir: V2, sx: number, sy: number, sz: number): THREE.Mesh | null {
+    const m = this.parts?.props.get(name);
+    if (!m) return null;
+    const o = new THREE.Mesh(m.geo, this.pieceMat);
+    o.position.set(p.x, y, p.y);
+    // (the pieces run along Blender Y, which is three's -z: turn three's +z onto dir)
+    o.rotation.y = Math.atan2(dir.x, dir.y);
+    o.scale.set(sx, sy, sz);
+    o.castShadow = true;
+    o.receiveShadow = true;
+    o.userData.shared = true;
+    return o;
+  }
+
+  /** Is another road (not this one, and lower) under the point, so a pier can't stand there? */
+  private roadUnder(id: number, p: V2, reach: number): boolean {
+    for (const sid of this.net.segsNear(p.x - reach - 20, p.y - reach - 20, p.x + reach + 20, p.y + reach + 20)) {
+      if (sid === id) continue;
+      const s = this.net.segs.get(sid), g = this.net.segGeom.get(sid);
+      if (!s || !g) continue;
+      const c = polyClosest(g.center, p);
+      if (c.d < roadWidth(ROAD_TYPES[s.type]) / 2 + reach) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The bridge under (and over) a raised road: concrete piers where it's high enough, clear of the roads below
+   * (a short span over a road needs none); on a long deck over water, a steel through truss on piers further
+   * apart; and where a deck meets a ramp down, an abutment with a Deco pylon either side.
+   */
+  private bridgePieces(id: number, pts: V2[], hs: number[], ss: number[], halfW: number): THREE.Mesh[] {
+    const out: THREE.Mesh[] = [];
+    if (!this.parts) return out;
+    const s0 = ss[0], total = ss[ss.length - 1] - s0;
+    if (total < 1) return out;
+    const at = (s: number) => {
+      let i = 0;
+      while (i < ss.length - 2 && ss[i + 1] < s) i++;
+      const t = clamp((s - ss[i]) / (ss[i + 1] - ss[i] || 1), 0, 1);
+      const a = pts[i], b = pts[i + 1];
+      return { p: { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }, h: hs[i] + (hs[i + 1] - hs[i]) * t, dir: norm(sub(b, a)) };
+    };
+    const minH = Math.min(...hs), maxH = Math.max(...hs);
+    const deck = minH > 2.5 && maxH - minH < 0.6;
+    const sx = (halfW * 2) / PIECE_W;
+    const wet = this.parts.isWater ? pts.filter((p) => this.parts!.isWater!(p)).length / pts.length : 0;
+    const trussed = deck && total >= 50 && wet >= 0.5;
+    if (trussed) {
+      const n = Math.max(1, Math.round(total / 10)), len = total / n;
+      for (let k = 0; k < n; k++) {
+        const c = at(s0 + (k + 0.5) * len);
+        const o = this.piece("bridge_truss", c.p, c.h + LIFT, c.dir, sx, 1, len / 10);
+        if (o) out.push(o);
+      }
+    }
+    // piers: every ~24 m (under a truss, at every fourth panel joint), none in a road below or on the ramps' low ends
+    const every = trussed ? 40 : 24;
+    const n = Math.max(1, Math.round(total / every));
+    for (let k = 0; k < n; k++) {
+      const c = at(s0 + (total * (k + 0.5)) / n);
+      if (c.h < 2.5 || this.roadUnder(id, c.p, 6)) continue;
+      const o = this.piece("bridge_pier", c.p, 0, c.dir, sx, Math.max(0.2, (c.h + LIFT - DECK) / PIECE_H), 1);
+      if (o) out.push(o);
+    }
+    // the deck's ends: where it meets a road going down (a ramp), an abutment and two pylons
+    if (deck) {
+      const s = this.net.segs.get(id)!;
+      for (const [node, i, sgn] of [[s.a, 0, -1], [s.b, pts.length - 1, 1]] as const) {
+        const nh = this.net.nodes.get(node)?.h ?? hs[i];
+        const down = this.net.segsAt(node).some((o) => o.id !== id && Math.min(...(this.net.segGeom.get(o.id)?.hs ?? [nh])) < nh - 1.5);
+        if (!down) continue;
+        const d = i === 0 ? norm(sub(pts[1], pts[0])) : norm(sub(pts[i], pts[i - 1]));
+        const outDir = { x: d.x * sgn, y: d.y * sgn };
+        const e = pts[i];
+        const ab = this.piece("bridge_abutment", add(e, scale(outDir, 4)), 0, outDir, sx, Math.max(0.2, (hs[i] + LIFT - DECK) / PIECE_H), 1);
+        if (ab) out.push(ab);
+        const r = right(d);
+        for (const side of [-1, 1]) {
+          const q = add(add(e, scale(r, side * (halfW + 0.85))), scale(outDir, 0.9));
+          const py = this.piece("bridge_pylon", q, hs[i] + LIFT, d, 1, 1, 1);
+          if (py) out.push(py);
+        }
+      }
+    }
+    return out;
   }
 
   private buildNode(id: number) {
@@ -922,6 +1016,72 @@ function deckSides(pts: V2[], hs: number[], halfW: number, lift: number, edges?:
   g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
   g.setIndex(idx);
   g.computeVertexNormals();
+  return g;
+}
+
+/** Cream concrete parapets along both edges of a raised road (where it's more than ~1 m up): a 0.35 m wall, 0.95 m
+ * tall, its outer face flush with the deck's edge. null if no part of it is raised. */
+function parapetGeo(pts: V2[], hs: number[], edge: (i: number, side: number) => number): THREE.BufferGeometry | null {
+  const pos: number[] = [];
+  const idx: number[] = [];
+  const n = pts.length;
+  const up = (i: number) => hs[i] > 1;
+  if (!hs.some((h) => h > 1)) return null;
+  const T = 0.35, H = 0.95;
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < n - 1; i++) {
+      if (!up(i) || !up(i + 1)) continue;
+      // three faces (inner, top, outer) as separate quads so they shade flat
+      const q = (j: number) => {
+        const r = lateralAt(pts, j), u = edge(j, side), y = hs[j] + LIFT;
+        const at = (w: number, z: number) => [pts[j].x + r.x * w, z, pts[j].y + r.y * w];
+        return { ib: at(u - side * T, y), it: at(u - side * T, y + H), ot: at(u, y + H), ob: at(u, y - 0.15) };
+      };
+      const a = q(i), b = q(i + 1);
+      for (const [p0, p1, p2, p3] of [[a.ib, a.it, b.it, b.ib], [a.it, a.ot, b.ot, b.it], [a.ot, a.ob, b.ob, b.ot]]) {
+        const k = pos.length / 3;
+        pos.push(...p0, ...p1, ...p2, ...p3);
+        idx.push(k, k + 1, k + 2, k, k + 2, k + 3, k, k + 2, k + 1, k, k + 3, k + 2); // both windings
+      }
+    }
+  }
+  if (!pos.length) return null;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/** A raised road's soft shadow on the ground under it, thrown down-right by its height: dark navy, densest under
+ * the deck's middle, fading out over the last 2.6 m either side and on the low ends of its ramps. */
+function dropShadowGeo(pts: V2[], hs: number[], halfW: number): THREE.BufferGeometry | null {
+  if (!hs.some((h) => h > 1)) return null;
+  const pos: number[] = [];
+  const col: number[] = [];
+  const idx: number[] = [];
+  const F = 2.6, c = new THREE.Color(0x0d1626);
+  const n = pts.length;
+  for (let i = 0; i < n; i++) {
+    const r = lateralAt(pts, i), h = Math.max(0, hs[i]);
+    const a = 0.5 * smoothstep(clamp((h - 0.6) / 2.4, 0, 1));
+    const cx = pts[i].x + SUN_OFF.x * h, cz = pts[i].y + SUN_OFF.y * h;
+    for (const [w, k] of [[-halfW - F, 0], [-halfW + 0.5, 1], [halfW - 0.5, 1], [halfW + F, 0]] as const) {
+      pos.push(cx + r.x * w, 0.035, cz + r.y * w);
+      col.push(c.r, c.g, c.b, a * k);
+    }
+  }
+  for (let i = 0; i < n - 1; i++) {
+    for (let j = 0; j < 3; j++) {
+      const a = i * 4 + j, b = a + 1, d = a + 4, e = a + 5;
+      idx.push(a, d, b, b, d, e);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("color", new THREE.Float32BufferAttribute(col, 4));
+  g.setIndex(idx);
+  g.computeBoundingSphere();
   return g;
 }
 

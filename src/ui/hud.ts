@@ -578,9 +578,9 @@ export class Hud {
         items.push(elevation());
         const snap = h("div", "snaps");
         const opts: { k: "geometry" | "guides" | "netSide" | "length" | "angle"; label: string; on: boolean }[] = [
-          { k: "geometry", label: "Roads and junctions", on: !st.snapOff.geometry },
-          { k: "guides", label: "Guidelines, right angles", on: !st.snapOff.guides },
-          { k: "netSide", label: "Alongside roads", on: !st.snapOff.netSide },
+          { k: "geometry", label: "Roads", on: !st.snapOff.geometry },
+          { k: "guides", label: "Guidelines", on: !st.snapOff.guides },
+          { k: "netSide", label: "Parallels", on: !st.snapOff.netSide },
           { k: "length", label: "8 m lengths", on: st.snapLength },
           { k: "angle", label: "15° angles", on: st.angleLock },
         ];

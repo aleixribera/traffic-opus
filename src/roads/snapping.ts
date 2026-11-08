@@ -99,7 +99,7 @@ export function toolSnap(net: RoadNetwork, raw: V2, o: ToolSnapOpts): ToolSnap {
         const f = o.from.p;
         const foot = add(caught.p, scale(t, dot(sub(f, caught.p), t)));
         const dir = norm(sub(caught.p, f));
-        if (dist(foot, caught.p) < Math.max(rr * 2, 4) && Math.abs(dot(dir, t)) < Math.sin((7 * Math.PI) / 180)) {
+        if (dist(foot, caught.p) < Math.max(rr * 4, 6) && Math.abs(dot(dir, t)) < Math.sin((7 * Math.PI) / 180)) {
           const r = cubicClosest(s.c, foot);
           if (r.d < 0.5 && r.t > 0.01 && r.t < 0.99) {
             caught = ontoJunction(net, { p: r.p, h: net.heightOnSeg(s.id, r.t), seg: s.id, t: r.t, guides: [] });

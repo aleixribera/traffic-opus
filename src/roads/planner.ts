@@ -328,7 +328,7 @@ export interface PlanError {
 export interface BridgeSpan {
   /** where the deck starts and ends (over the obstacle), and the ramps' feet */
   a: V2; b: V2; footA: V2; footB: V2;
-  /** deck height (m) and length of the whole lift, ramps included */
+  /** deck height (m) and the deck's length (the ramps not counted); cost covers the ramps too */
   h: number; length: number;
   /** what the bridge and its ramps cost, all told */
   cost: number;
@@ -1190,7 +1190,7 @@ function autoBridge(net: RoadNetwork, world: BuildWorld, st: Stroke, ignore: { s
     for (let i = 0; i < outPts.length; i++) if (outPl.cum[i] >= sp.f0 - 1 && outPl.cum[i] <= sp.f1 + 1) idx.push(i);
     return {
       a: polyAt(outPl, sp.s0), b: polyAt(outPl, sp.s1), footA: polyAt(outPl, sp.f0), footB: polyAt(outPl, sp.f1),
-      h: sp.h, length: sp.f1 - sp.f0, cost: costOfPoints(idx.map((i) => outPts[i]), idx.map((i) => outH[i]), st.type, world),
+      h: sp.h, length: sp.s1 - sp.s0, cost: costOfPoints(idx.map((i) => outPts[i]), idx.map((i) => outH[i]), st.type, world),
       over: sp.water && sp.road ? "both" : sp.water ? "water" : "road",
     };
   });
