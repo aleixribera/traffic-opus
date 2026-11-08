@@ -8,6 +8,8 @@ import { GATE_GAP, GROW_ANIM, siteDir, siteFrame, siteLayout, siteToWorld, slotH
 import type { MergedModel, ModelSet } from "./models";
 import { isHall } from "../game/towns";
 import { CAR_COLORS, PAL } from "./palette";
+import { HALL_TIER, squarePlan, type SquarePlan } from "./civic";
+import { makeTreeMesh } from "./roads3d";
 
 /** Model matrix for a lot: model +z (its front) faces the road, origin at the footprint centre. */
 export function lotMatrix(out: THREE.Matrix4, c: V2, rot: number, side: 1 | -1, y = 0) {
@@ -44,11 +46,48 @@ const VARY = [0xffffff, 0xffffff, 0xf2ebe4, 0xe2dcd8, 0xfbf3e6, 0xdcdcdc, 0xf5f0
 /** Ground of a grown lot: lawn for homes, paving for business. */
 const YARD: Record<string, number> = { res: 0x99994f, com: 0xb3ae9b, ind: 0xaaa490, off: 0xb3ae9b };
 const ABANDONED = 0x77736b;
-/** A town hall's square: a lawn, and paving round the hall. */
+/** A town hall's square (src/render/civic.ts): lawn, stone paving laid in slabs with a darker border, a path of setts. */
 const SQUARE_LAWN = 0x8f9a4c;
-const SQUARE_PAVING = 0xc2bcaa;
-/** Paving round a town hall (m), wider as the town grows: hamlet green, village square, civic plaza. */
-const PLAZA: Partial<Record<BuildingKind, number>> = { hamlethall: 4, villagehall: 7, townhall: 10, cityhall: 13 };
+const SQUARE_PAVING = 0xc9c2ae;
+const SQUARE_PATH = 0xd4ccb7;
+/** Paving pattern per piece: slab size (m, 0 for none), border band (m). */
+const PAVE_FIELD = [2, 1.4], PAVE_RECT = [1.4, 0.8], PAVE_PATH = [0.7, 0.4], PAVE_NONE = [0, 0];
+
+/** Paving seen from above: slabs in running bond with faint joints and a little tone each, a darker kerb band round. */
+function pavingMaterial(): THREE.MeshLambertMaterial {
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  mat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace("#include <common>", "#include <common>\nattribute vec2 aPat;\nvarying vec2 vLoc; varying vec2 vHalf; varying vec2 vPat;")
+      .replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>
+  // the piece's own metres (its instance scales the unit quad)
+  vec2 sz = vec2(length(instanceMatrix[0].xyz), length(instanceMatrix[2].xyz));
+  vLoc = position.xz * sz; vHalf = sz * 0.5; vPat = aPat;`,
+      );
+    sh.fragmentShader = sh.fragmentShader
+      .replace("#include <common>", "#include <common>\nvarying vec2 vLoc; varying vec2 vHalf; varying vec2 vPat;")
+      .replace(
+        "#include <color_fragment>",
+        `#include <color_fragment>
+  if (vPat.x > 0.0) {
+    vec2 fw = fwidth(vLoc) + 1e-5;
+    vec2 q = vLoc / vPat.x;
+    q.x += 0.5 * mod(floor(q.y + 0.5), 2.0);
+    vec2 g = abs(fract(q + 0.5) - 0.5) * vPat.x; // metres to the nearest joint
+    float near = 1.0 - smoothstep(vPat.x * 0.08, vPat.x * 0.25, max(fw.x, fw.y)); // joints fade out from afar
+    float joint = max(1.0 - smoothstep(0.05, 0.05 + fw.x, g.x), 1.0 - smoothstep(0.05, 0.05 + fw.y, g.y)) * near;
+    float tone = fract(sin(dot(floor(q + 0.5), vec2(12.9898, 78.233))) * 43758.5453);
+    diffuseColor.rgb *= (1.0 - 0.12 * joint) * (1.0 + (tone - 0.5) * 0.06 * near);
+    float edge = min(vHalf.x - abs(vLoc.x), vHalf.y - abs(vLoc.y));
+    float band = 1.0 - smoothstep(vPat.y - fw.x, vPat.y + fw.x, edge);
+    diffuseColor.rgb *= 1.0 - 0.2 * band;
+  }`,
+      );
+  };
+  return mat;
+}
 
 // industry sites: a galvanised fence (the Blender "fence" model, its chain-link a see-through panel), worn concrete service roads, faint pads where the next buildings go
 const FENCE_H = 2.1;
@@ -104,6 +143,11 @@ export class Buildings3D {
   private meshes = new Map<string, THREE.InstancedMesh>();
   private parked: THREE.InstancedMesh[] = [];
   private yards: THREE.InstancedMesh | null = null;
+  private yardMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  /** Town hall squares: their paving, and their trees. */
+  private paving: THREE.InstancedMesh | null = null;
+  private paveMat = pavingMaterial();
+  private squareTrees: THREE.InstancedMesh | null = null;
   private yardGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
   private drives: THREE.Mesh | null = null;
   private siteParts: THREE.Object3D[] = [];
@@ -117,6 +161,7 @@ export class Buildings3D {
   private tmp = new THREE.Matrix4();
   private tmp2 = new THREE.Matrix4();
   private col = new THREE.Color();
+  private v3 = new THREE.Vector3();
   private tintFn: ((b: Building) => number | null) | null = null;
   /** Pieces still going up: zoned buildings under construction, and a site's newest buildings after it grows. */
   private building: { p: Piece; i: number }[] = [];
@@ -136,6 +181,16 @@ export class Buildings3D {
     const L = siteLayout(b.kind as PlantKind, b.hw * 2, b.hd * 2, b.id);
     this.layouts.set(b.id, { key, L });
     return L;
+  }
+
+  /** A town hall's square: its lawns, paving, path and trees, for the hall standing on it. */
+  squareOf(b: Building): SquarePlan {
+    const bb = this.models.buildings.get(b.kind)?.geo.boundingBox;
+    const fp = bb ? { x0: bb.min.x, x1: bb.max.x, z0: bb.min.z, z1: bb.max.z } : { x0: -10, x1: 10, z0: -9, z1: 9 };
+    // the path runs from the door (the model's front, +z) to the kerb in front of the square
+    const inv = lotMatrix(this.tmp, b.c, b.rot, b.side, 0).invert();
+    const k = this.v3.set(b.front.x, 0, b.front.y).applyMatrix4(inv);
+    return squarePlan(HALL_TIER[b.kind] ?? 0, b.hw, fp, { x: 0, z: fp.z1 }, { x: k.x, z: k.z }, b.id);
   }
 
   /** Models and matrices for a building that isn't placed yet (the placement ghost): a site shows its first level. */
@@ -223,39 +278,84 @@ export class Buildings3D {
     for (const m of this.parked) { this.group.remove(m); m.dispose(); }
     this.parked = [];
     if (this.yards) { this.group.remove(this.yards); this.yards.dispose(); this.yards = null; }
+    if (this.paving) { this.group.remove(this.paving); this.paving.geometry.dispose(); this.paving.dispose(); this.paving = null; }
+    if (this.squareTrees) {
+      this.group.remove(this.squareTrees);
+      this.squareTrees.geometry.dispose();
+      (this.squareTrees.material as THREE.Material).dispose();
+      this.squareTrees.dispose();
+      this.squareTrees = null;
+    }
     const live = new Set(list.map((b) => b.id));
     for (const id of this.layouts.keys()) if (!live.has(id)) this.layouts.delete(id);
     const lots = list.filter((b) => b.zone);
-    const halls = list.filter((b) => isHall(b.kind));
-    if (lots.length || halls.length) {
-      const ym = new THREE.InstancedMesh(this.yardGeo, new THREE.MeshLambertMaterial({ color: 0xffffff }), lots.length + halls.length * 2);
+    const squares = list.filter((b) => isHall(b.kind)).map((b) => ({ b, plan: this.squareOf(b) }));
+    // lawns (and the lots' yards) in one instanced mesh, paving in another, the squares' trees in a third
+    let nLawn = lots.length, nPave = 0, nTree = 0;
+    for (const { plan } of squares) {
+      for (const r of [{ kind: plan.base }, ...plan.rects]) if (r.kind === "lawn") nLawn++; else nPave++;
+      nTree += plan.trees.length;
+    }
+    const sc = new THREE.Matrix4(), rt = new THREE.Matrix4();
+    if (nLawn) {
+      const ym = new THREE.InstancedMesh(this.yardGeo, this.yardMat, nLawn);
       ym.receiveShadow = true;
       ym.renderOrder = 1;
-      const sc = new THREE.Matrix4();
       lots.forEach((b, i) => {
         lotMatrix(this.tmp, b.c, b.rot, b.side, 0.04);
         // the lot is hw along the road and hd deep; in lot space x runs along the road
         ym.setMatrixAt(i, this.tmp.multiply(sc.makeScale(b.hw * 2 - 0.8, 1, b.hd * 2 - 0.8)));
         ym.setColorAt(i, this.col.setHex(b.built < 1 ? SITE : YARD[ZONE_GROUP[b.zone!]]));
       });
-      // a hall's square: lawn to the pavements, paving round the hall (bare earth while it is being built)
-      halls.forEach((b, k) => {
-        const i = lots.length + k * 2;
-        lotMatrix(this.tmp, b.c, b.rot, b.side, 0.04);
-        ym.setMatrixAt(i, this.tmp.multiply(sc.makeScale(b.hw * 2 - 0.8, 1, b.hd * 2 - 0.8)));
-        ym.setColorAt(i, this.col.setHex(SQUARE_LAWN));
-        const bb = this.models.buildings.get(b.kind)?.geo.boundingBox;
-        const pad = PLAZA[b.kind] ?? 6;
-        const w = Math.min(b.hw * 2 - 2, (bb ? bb.max.x - bb.min.x : 20) + pad * 2);
-        const d = Math.min(b.hd * 2 - 2, (bb ? bb.max.z - bb.min.z : 20) + pad * 2);
-        lotMatrix(this.tmp, b.c, b.rot, b.side, 0.06);
-        ym.setMatrixAt(i + 1, this.tmp.multiply(sc.makeScale(w, 1, d)));
-        ym.setColorAt(i + 1, this.col.setHex(b.built < 1 ? SITE : SQUARE_PAVING));
-      });
-      ym.computeBoundingSphere();
       this.yards = ym;
       this.group.add(ym);
     }
+    if (nPave) {
+      const pm = new THREE.InstancedMesh(this.yardGeo.clone(), this.paveMat, nPave);
+      pm.geometry.setAttribute("aPat", new THREE.InstancedBufferAttribute(new Float32Array(nPave * 2), 2));
+      pm.receiveShadow = true;
+      pm.renderOrder = 1;
+      this.paving = pm;
+      this.group.add(pm);
+    }
+    if (nTree) {
+      this.squareTrees = makeTreeMesh(nTree);
+      this.group.add(this.squareTrees);
+    }
+    // a hall's square: lawn and paving to the pavements, its path to the hall's door, its trees (bare earth, and no
+    // trees yet, while the hall is being built)
+    let iy = lots.length, ip = 0, it = 0;
+    const pat = this.paving?.geometry.getAttribute("aPat") as THREE.InstancedBufferAttribute | undefined;
+    for (const { b, plan } of squares) {
+      const site = b.built < 1;
+      const H = b.hw - 0.4;
+      const pieces = [{ x: 0, z: 0, w: H * 2, d: H * 2, rot: 0, kind: plan.base, y: 0.04 }, ...plan.rects.map((r) => ({ ...r, y: r.kind === "path" ? 0.07 : 0.06 }))];
+      pieces.forEach((r, k) => {
+        lotMatrix(this.tmp, b.c, b.rot, b.side, r.y);
+        this.tmp.multiply(rt.makeRotationY(r.rot).setPosition(r.x, 0, r.z)).multiply(sc.makeScale(r.w, 1, r.d));
+        if (r.kind === "lawn") {
+          this.yards!.setMatrixAt(iy, this.tmp);
+          this.yards!.setColorAt(iy++, this.col.setHex(site ? SITE : SQUARE_LAWN));
+          return;
+        }
+        const bare = site && r.kind !== "path";
+        this.paving!.setMatrixAt(ip, this.tmp);
+        this.paving!.setColorAt(ip, this.col.setHex(bare ? SITE : r.kind === "path" ? SQUARE_PATH : SQUARE_PAVING));
+        const p = bare ? PAVE_NONE : r.kind === "path" ? PAVE_PATH : k === 0 ? PAVE_FIELD : PAVE_RECT;
+        pat!.setXY(ip++, p[0], p[1]);
+      });
+      if (site) continue;
+      lotMatrix(this.tmp, b.c, b.rot, b.side, 0);
+      for (const t of plan.trees) {
+        const w = this.v3.set(t.x, 0, t.z).applyMatrix4(this.tmp);
+        // (a hair apart in height so crowns that touch never flicker)
+        this.squareTrees!.setMatrixAt(it, sc.makeScale(t.r * 2, 1, t.r * 2).setPosition(w.x, 0.12 + (it % 8) * 0.0005, w.z));
+        it++;
+      }
+    }
+    if (this.squareTrees) { this.squareTrees.count = it; this.squareTrees.instanceMatrix.needsUpdate = true; }
+    this.yards?.computeBoundingSphere();
+    this.paving?.computeBoundingSphere();
     this.order.clear();
     this.building = [];
     for (const b of list) {
@@ -495,6 +595,7 @@ export class Buildings3D {
         q.strip(b.front, gate, 7, 0.08);
         continue;
       }
+      if (isHall(b.kind)) continue; // a hall's path is its square's (rebuild)
       const u = fromAngle(b.rot);
       const away = right(u); // * side points away from the road
       // placed buildings: from the kerb to the lot edge; zoned lots start at the kerb, so to the model's front; a
