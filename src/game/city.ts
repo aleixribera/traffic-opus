@@ -1,3 +1,4 @@
+import { loadCompany, makeCompany, type Company } from "./company";
 import {
   BUILDING_TYPES, BULLDOZE_REFUND, START_TILES, TILE, ROAD_TYPES, SIGNAL_COST, SIM, isHighway, roadWidth, type RoadTypeId,
 } from "../config";
@@ -79,6 +80,8 @@ export class Game {
   /** milestones reached and the tallies they are measured on */
   progress = new Progress();
   cityName = "Larkfield";
+  /** The company: its name and herald (generated from the seed; the player may rename it). */
+  company: Company;
   /** Per game hour: last complete hour, and the one being counted. */
   budget: Budget = emptyBudget();
   private budgetNow: Budget = emptyBudget();
@@ -112,6 +115,7 @@ export class Game {
   constructor(seed = 7) {
     this.seed = seed;
     this.rng = mulberry32(seed * 31 + 5);
+    this.company = makeCompany(seed);
     this.terrain = new Terrain(seed);
     this.buildings = new Buildings(this.net);
     this.traffic = new Traffic(this.net, {
@@ -1536,6 +1540,7 @@ export class Game {
       time: this.time,
       playtime: this.playtime,
       cityName: this.cityName,
+      company: this.company as Company | undefined,
     };
   }
 
@@ -1556,6 +1561,8 @@ export class Game {
     g.traffic.time = data.time;
     g.playtime = data.playtime;
     g.cityName = data.cityName ?? g.cityName;
+    // (saves from before companies had names get one from their seed)
+    g.company = loadCompany(data.company, data.seed);
     const cs = g.net.rebuildAll();
     g.traffic.onNetworkChange(cs);
     // (saves from before lights took in roads added to their junction)

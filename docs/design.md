@@ -298,3 +298,26 @@ beds. A muted, satellite-like but clean palette, in our own models and colours. 
 in the same realistic register, with deposit regions readable on the ground. Clear company HUD (money and
 milestones at the top, build categories at the bottom: roads, extraction, plants, logistics, towns), inspector
 panels, no generic AI look.
+
+### Look: Industry Booming America (owner, 2026-11-08)
+
+The game's setting is 1920s-40s American industry: steel, oil, highways, Deco.
+
+- **Town names** are original American place names from curated parts (src/game/names.ts): "<Surname>
+  Falls/Junction/Springs/Crossing/Landing...", "<Stem>ville/-burg/-ton/-field/-wood/-brook", "<Tree> Creek",
+  "<Red/Iron/Lone...> Bluff/Butte/Prairie", "New/Fort/Port <Surname>". Never a famous city whole (a reject list
+  catches the few the parts can make), at most 16 characters, unique in a world, deterministic per seed (a name
+  takes two draws from the game's generator, as before). Saved towns keep their names.
+- **US road markings.** 1+1 streets: a dashed yellow centre line. Wider two-way roads: double solid yellow.
+  Divided roads: a solid yellow line down each side of the median, closing to a double yellow past its nose at a
+  junction. Lane lines between same-direction lanes: white, 3 m dashes with 9 m gaps. One-way town streets: all
+  white. Highways and ramps (US freeway): solid yellow along the left (median) edge, solid white along the right.
+  Stop bars white (0.6 m at a stop sign); crosswalks at lit junctions in town are white continental bars, three to
+  a lane. Town roads have kerbs, so no white edge lines.
+- **The company** has a period name ("Carver & Sons Haulage", "Great Western Freight Co.", "Halston Iron & Rail")
+  and a **herald**: a Deco badge (shield, roundel, winged roundel or lozenge) with its monogram, in a colour pair
+  from the period palette (navy, ochre, brick red, cream, forest green). Both come from the seed at a new game; a
+  new game opens on the company dialog to rename it or draw another name or badge, and the HUD's company button
+  (top left, by the menu) and the pause menu's Company item reopen it. Name and herald show in the HUD, on the
+  pause menu, in the saves list and on milestone banners, and are saved (older saves get one from their seed).
+  Not on the trucks: the camera looks straight down, so cab doors never show, and a roof badge is a few pixels.

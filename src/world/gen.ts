@@ -248,10 +248,3 @@ export class WorldGen {
 function clamp01(x: number) {
   return x < 0 ? 0 : x > 1 ? 1 : x;
 }
-
-const SYL_A = ["Al", "Bran", "Cal", "Dor", "El", "Fen", "Gar", "Hal", "Ist", "Kel", "Lor", "Mar", "Nor", "Os", "Pell", "Quen", "Ros", "Sel", "Tor", "Val", "Wen", "Yar"];
-const SYL_B = ["ford", "mere", "wick", "haven", "stead", "brook", "field", "port", "ridge", "ton", "vale", "bury", "moor", "gate", "holm"];
-
-export function cityName(rnd: () => number): string {
-  return SYL_A[Math.floor(rnd() * SYL_A.length)] + SYL_B[Math.floor(rnd() * SYL_B.length)];
-}

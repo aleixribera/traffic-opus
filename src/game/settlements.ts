@@ -7,7 +7,7 @@
 import { BUILDING_TYPES, ROAD_TYPES, SIDEWALK, roadWidth, type BuildingKind } from "../config";
 import { angleOf, cubicTangent, dist, dot, norm, right, sub, type V2 } from "../core/math";
 import { cubicClosest, planRoad, snap, type Plan, type Snap } from "../roads/planner";
-import { cityName } from "../world/gen";
+import { townName } from "./names";
 import type { Building } from "./buildings";
 import type { Game } from "./city";
 import { ZONE_GROUP, ZONE_LOTS } from "./growables";
@@ -221,13 +221,9 @@ export class TownSystem {
     return t;
   }
 
+  /** A new town's name: an American place name, never one already on the map. */
   private newName(): string {
-    const rnd = this.g.rng;
-    for (let k = 0; k < 20; k++) {
-      const n = cityName(rnd);
-      if (!this.list.some((t) => t.name === n)) return n;
-    }
-    return cityName(rnd) + " " + (this.list.length + 1);
+    return townName(this.g.rng, new Set(this.list.map((t) => t.name)));
   }
 
   /** The grid's turn: along the nearest road (so the town meets it square), else a random one. */

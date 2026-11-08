@@ -18,6 +18,9 @@ import { PLACED, PLACED_TABS, type PlacedKind } from "../game/placed";
 import { SAVE_V } from "../game/city";
 import { BUS_UPKEEP, STOP_COST } from "../game/transit";
 import { Sfx } from "./sfx";
+import { heraldSvg } from "./herald";
+import { cleanName, COMPANY_NAME_MAX, randomHerald } from "../game/company";
+import { companyName } from "../game/names";
 
 export interface Chip {
   text: string;
@@ -164,6 +167,9 @@ export class Hud {
   private modal = h("div", "modal");
   private rectEl = h("div", "selrect");
   private banner = h("section", "card banner");
+  /** the company's name and herald, top left by the menu (click: rename it) */
+  private companyEl = h("button", "company");
+  private companyKey = "";
   private compass = h("button", "btn icon-btn compass");
   private compassRot = NaN;
   private undoBtn = h("button", "cat hist");
@@ -204,6 +210,9 @@ export class Hud {
       row.appendChild(b);
     };
     tlb("menu", ICON.menu, "Pause menu (Esc)", () => this.openPause());
+    this.companyEl.title = "Your company: rename it, change its badge";
+    this.companyEl.onclick = () => { this.sfx.play("click"); this.openCompany(); };
+    row.appendChild(this.companyEl);
     row.appendChild(h("span", "tl-sep"));
     tlb("info", ICON.layers, "Info views", () => this.toggleWin("info"));
     tlb("progression", ICON.flag, "Progression (P)", () => this.toggleWin("progression"));
@@ -465,6 +474,7 @@ export class Hud {
       const on = k === "tiles" ? st.tool === "unlock" : k === "info" ? this.winKind === "info" || app.overlay !== "none" : this.winKind === k;
       b.classList.toggle("on", on);
     }
+    this.syncCompany();
     this.undoBtn.disabled = !g.canUndo();
     this.redoBtn.disabled = !g.canRedo();
     const sb = this.speed.children;
@@ -783,8 +793,9 @@ export class Hud {
     if ("town" in X && !t) { this.nextBanner(); return; }
     if ("m" in X) {
       const M = X.m;
-      this.banner.innerHTML = `<header>${M.name}</header>
-        <p class="sub">Milestone reached · ${M.goal}</p>
+      const co = g.company;
+      this.banner.innerHTML = `<header class="banner-co">${heraldSvg(co.herald, co.name, 26)}<span>${M.name}</span></header>
+        <p class="sub">${escapeHtml(co.name)} · milestone reached · ${M.goal}</p>
         <p class="gifts">Unlocked: ${unlockList(M.unlocks).join(" · ")}</p>
         <div class="banner-btns"><button class="btn primary" data-k="ok">Continue</button></div>`;
     } else {
@@ -827,6 +838,60 @@ export class Hud {
   newCity() {
     this.tutHidden = false;
     this.refresh();
+    this.openCompany("new");
+  }
+
+  /** The company's name and herald by the menu, redrawn when either changes. */
+  private syncCompany() {
+    const co = this.app.game.company;
+    const key = co.name + "|" + co.herald.shape + co.herald.field + co.herald.ink;
+    if (key === this.companyKey) return;
+    this.companyKey = key;
+    this.companyEl.innerHTML = `${heraldSvg(co.herald, co.name, 28)}<span class="company-name">${escapeHtml(co.name)}</span>`;
+    this.companyEl.setAttribute("aria-label", `${co.name}: rename the company or change its badge`);
+  }
+
+  /**
+   * The company: its name (edit it, or draw another) and its herald (draw another). A new game opens on it, to
+   * name the company before the first road.
+   */
+  openCompany(from: "hud" | "pause" | "new" = "hud") {
+    const fresh = from === "new";
+    const app = this.app, g = app.game;
+    if (this.modal.hidden && !g.paused) { app.togglePause(); this.resumeOnClose = true; }
+    let herald = { ...g.company.herald };
+    const dlg = this.showModal(`<header>${fresh ? "Your company" : "Company"}</header>
+      <form class="co-form">
+        <div class="co-badge"></div>
+        <label class="co-field"><span>Name</span><input name="n" maxlength="${COMPANY_NAME_MAX}" autocomplete="off" spellcheck="false" value="${escapeHtml(g.company.name)}"></label>
+        <div class="co-btns">
+          <button class="btn" type="button" data-k="name">Another name</button>
+          <button class="btn" type="button" data-k="badge">Another badge</button>
+          <button class="btn primary" type="submit">${fresh ? "Start" : "Done"}</button>
+        </div>
+      </form>`, "Company");
+    dlg.classList.add("co-dlg");
+    if (from === "pause") this.backButton(dlg);
+    const input = dlg.querySelector("input") as HTMLInputElement;
+    const badge = dlg.querySelector(".co-badge") as HTMLElement;
+    const draw = () => { badge.innerHTML = heraldSvg(herald, input.value || g.company.name, 72, "Company badge"); };
+    draw();
+    input.oninput = draw;
+    (dlg.querySelector('[data-k="name"]') as HTMLButtonElement).onclick = () => { input.value = companyName(Math.random); draw(); };
+    (dlg.querySelector('[data-k="badge"]') as HTMLButtonElement).onclick = () => {
+      let n = randomHerald(Math.random);
+      for (let k = 0; k < 8 && n.shape === herald.shape && n.field === herald.field; k++) n = randomHerald(Math.random);
+      herald = n;
+      draw();
+    };
+    (dlg.querySelector("form") as HTMLFormElement).onsubmit = (e) => {
+      e.preventDefault();
+      g.company = { name: cleanName(input.value) || g.company.name, herald };
+      this.syncCompany();
+      if (from === "pause") this.openPause();
+      else this.closeModal();
+    };
+    requestAnimationFrame(() => { input.focus(); input.select(); });
   }
 
   back(): boolean {
@@ -1462,9 +1527,11 @@ export class Hud {
   openPause() {
     const app = this.app;
     if (!app.game.paused) { app.togglePause(); this.resumeOnClose = true; }
-    const dlg = this.showModal(`<header class="pm-head">${escapeHtml(app.game.cityName)}<span class="muted">Paused</span></header>
+    const co = app.game.company;
+    const dlg = this.showModal(`<header class="pm-head pm-co">${heraldSvg(co.herald, co.name, 36)}<span class="pm-co-t">${escapeHtml(co.name)}<span class="muted">Paused · ${escapeHtml(app.game.cityName)}</span></span></header>
       <div class="pm-list">
         <button class="pm resume">Resume</button>
+        <button class="pm co">Company</button>
         <button class="pm save">Save game</button>
         <button class="pm load">Load game</button>
         <button class="pm keys">Controls</button>
@@ -1477,6 +1544,7 @@ export class Hud {
     on(".save", () => this.openSaves(true));
     on(".load", () => this.openSaves(false));
     on(".keys", () => this.openKeys());
+    on(".pm.co", () => this.openCompany("pause"));
     on(".home", () => {
       if (app.mode === "play") app.saves.autosave(app.game);
       this.resumeOnClose = false;
@@ -1493,6 +1561,7 @@ export class Hud {
       this.closeModal();
       this.tutHidden = false;
       this.toast(app.saves.latest() ? "New company. Your last one is in the autosaves." : "New company");
+      this.openCompany("new");
     });
     requestAnimationFrame(() => (dlg.querySelector(".resume") as HTMLButtonElement).focus());
   }
@@ -1519,7 +1588,7 @@ export class Hud {
         const old = (m.v ?? 1) !== SAVE_V;
         return `<li data-id="${m.id}">
           ${m.thumb ? `<img src="${m.thumb}" alt="" width="96" height="60">` : `<span class="thumb-empty"></span>`}
-          <span class="save-meta"><b>${escapeHtml(m.name)}</b><span>${old ? "Older version: can't be loaded" : `${plural(m.level, "milestone")} · ${fmtNum(m.residents)} people · ${fmtTime(m.playtime)} played`}</span></span>
+          <span class="save-meta"><b>${escapeHtml(m.name)}</b>${m.company ? `<span class="save-co">${heraldSvg(m.company.herald, m.company.name, 16)}${escapeHtml(m.company.name)}</span>` : ""}<span>${old ? "Older version: can't be loaded" : `${plural(m.level, "milestone")} · ${fmtNum(m.residents)} people · ${fmtTime(m.playtime)} played`}</span></span>
           ${saving ? "" : `<button class="btn load" ${old ? "disabled" : ""}>Load</button>`}${m.auto ? "" : `<button class="btn icon-btn del" aria-label="Delete save" title="Delete save">${ICON.bulldoze}</button>`}
         </li>`;
       }).join("") || `<li class="muted">No saves yet. The game autosaves every minute.</li>`}</ul>`, saving ? "Save game" : "Load game");
