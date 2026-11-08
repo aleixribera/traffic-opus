@@ -656,6 +656,7 @@ export class Game {
     // (the homes and shops it clears are paid for: the ones the preview showed, before anything is built)
     const owed = this.demolishCost(this.lotsUnder(plan));
     if (plan.cost + owed > this.money + 0.5) return false;
+    const was = new Set(this.buildings.sites.filter((b) => b.access).map((b) => b.id));
     const ops = this.applyRoads(() => {
       if (plan.kind === "roundabout") commitRoundabout(this.net, plan);
       else {
@@ -685,12 +686,41 @@ export class Game {
       }
     });
     const gone = this.clearRoadsOverLots(ops);
+    const moved = this.setBackJoined(was);
     const paid = plan.cost + owed;
     this.money -= paid;
-    this.pushUndo({ label: plan.kind, ops, money: paid, added: [], removed: gone });
+    this.pushUndo({ label: plan.kind, ops, money: paid, added: [], removed: gone, moved: moved.length ? moved : undefined });
     this.emit({ t: "money" });
-    if (gone.length) this.emit({ t: "buildings" });
+    if (gone.length || moved.length) this.emit({ t: "buildings" });
     return true;
+  }
+
+  /**
+   * Sites a new road just reached (not in `was`) that it runs past inside their front strip: each steps back behind
+   * the strip (Buildings.siteSetback) where the land behind it is free, so the road can be widened later without
+   * touching them. A site with no room stays where it is (an upgrade later names it).
+   */
+  private setBackJoined(was: Set<number>): BuildingMove[] {
+    const out: BuildingMove[] = [];
+    for (const b of this.buildings.sites) {
+      if (!b.access || was.has(b.id) || this.buildings.stripShort(b) < 0.05) continue;
+      const g = this.net.segGeom.get(b.access.seg)!;
+      const r = this.buildings.pushBack(b.access.seg, g.width / 2, [b.id], this.world);
+      if (!r.moves.length) continue;
+      this.moveBuildings(r.moves, true);
+      out.push(...r.moves);
+    }
+    if (out.length) this.buildings.reattach();
+    return out;
+  }
+
+  /** Move buildings to one end of their moves (`to`: the new spots), and the zone cells they cover with them. */
+  private moveBuildings(moves: BuildingMove[], to: boolean) {
+    const bs = moves.map((m) => this.buildings.byId.get(m.id)).filter((b): b is Building => !!b);
+    for (const b of bs) for (const c of this.lotCells(b)) if (c.lot === b.id) c.lot = 0;
+    this.buildings.applyMoves(moves, to);
+    for (const b of bs) for (const c of this.lotCells(b)) c.lot ||= b.id;
+    this.candVersion = -1;
   }
 
   /**
@@ -772,16 +802,21 @@ export class Game {
     return refund;
   }
 
-  /** Cost and problems of changing a road's type. Placed buildings a wider road would cover are pushed back. */
+  /**
+   * Cost and problems of changing a road's type. A company site stands behind its road's front strip, so a wider road
+   * misses it; one that doesn't (an old save's, or one hemmed in) and that a wider road would cover is pushed back to
+   * behind the strip, and when it can't move the problem names it.
+   */
   upgradePlan(segId: number, to: RoadTypeId): { cost: number; errors: PlanError[]; moves: BuildingMove[] } {
     const u = upgradeCost(this.net, this.world, segId, to);
-    const T = ROAD_TYPES[to];
     const hit = u.errors.find((e) => e.buildings?.length);
-    if (!hit || !T.allowsAccess) return { ...u, moves: [] };
-    const r = this.buildings.pushBack(segId, roadWidth(T) / 2, hit.buildings!, this.world);
+    if (!hit) return { ...u, moves: [] };
+    const r = this.buildings.pushBack(segId, roadWidth(ROAD_TYPES[to]) / 2, hit.buildings!, this.world);
     if (!r.stuck.length) return { cost: u.cost, errors: u.errors.filter((e) => e !== hit), moves: r.moves };
     const n = r.stuck.length;
-    const errors = u.errors.map((e) => (e === hit ? { ...e, msg: n === 1 ? "Building in the way" : `${n} buildings in the way`, buildings: r.stuck } : e));
+    const one = this.buildings.byId.get(r.stuck[0]);
+    const msg = n === 1 ? `${one ? BUILDING_TYPES[one.kind].name : "Building"} in the way` : `${n} buildings in the way`;
+    const errors = u.errors.map((e) => (e === hit ? { ...e, msg, buildings: r.stuck } : e));
     return { cost: u.cost, errors, moves: [] };
   }
 
@@ -790,7 +825,7 @@ export class Game {
     if (!s || s.type === to) return false;
     const u = this.upgradePlan(segId, to);
     if (u.errors.length) return false;
-    this.buildings.applyMoves(u.moves, true);
+    this.moveBuildings(u.moves, true);
     const ops = this.applyRoads(() => this.net.setType(segId, to));
     const gone = this.clearRoadsOverLots(ops);
     this.money -= u.cost;
@@ -884,7 +919,7 @@ export class Game {
   undo() {
     const e = this.undoStack.pop();
     if (!e) return;
-    if (e.moved) this.buildings.applyMoves(e.moved, false);
+    if (e.moved) this.moveBuildings(e.moved, false);
     if (e.ops.length) {
       this.net.undo(e.ops);
       this.afterRoads(this.net.rebuild());
@@ -901,7 +936,7 @@ export class Game {
   redo() {
     const e = this.redoStack.pop();
     if (!e) return;
-    if (e.moved) this.buildings.applyMoves(e.moved, true);
+    if (e.moved) this.moveBuildings(e.moved, true);
     if (e.ops.length) {
       this.net.redo(e.ops);
       this.afterRoads(this.net.rebuild());

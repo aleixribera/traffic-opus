@@ -391,6 +391,18 @@ itself across modes; you build tracks, docks and the transfer points, never line
   sides take the deeper lots; a City keeps about the shops and jobs it had before the strips. Saves from before
   this move their homes and shops back behind the strip on load (as deep as their block has room for, refitted),
   and their town squares shrink to the new inset.
+- **Company sites keep the strip too (owner, 2026-11-08: "the same empty space proof relative to roads as normal
+  buildings have in towns, letting me upgrade").** A site put down beside a road stands with its fence behind the
+  same strip (`siteSetback`: `ZONE_SETBACK`, or the gate drive off the kerb of anything wider), its gate drive
+  crossing it to the kerb. Widening that road, up to a divided avenue or a boulevard's carriageway, needs no move:
+  the road takes the strip and the drive shortens to the new kerb (and stretches back on a downgrade). A site put
+  down before its road steps back behind the strip when the player draws a road past its gate inside it (where the
+  land behind is free; one undo takes the road and the step together), and a site turned by the player with its
+  gate on a road close by stands back the same way. A road that ends at the gate (the street laid to a free site)
+  needs no strip: it widens sideways. Old saves' sites still hug their roads; an upgrade pushes such a site back to
+  behind the strip when there is room, and when there isn't, the upgrade is refused with the site named ("Food
+  Plant in the way"). A boulevard takes no driveways, so a site whose only road becomes one loses its gate road,
+  as a home loses its driveway.
 - **Filling stations and construction parts (tier 3, 2026-11-08).** A Town keeps filling stations on its
   commercial land: one from Town size, two from 4,000 people. A station grows like a shop, or, when the
   commercial land is full, is rebuilt from the town's outermost shop as one of its redevelopments. Fuel goes to
