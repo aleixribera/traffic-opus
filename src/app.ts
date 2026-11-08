@@ -8,7 +8,7 @@ import {
   type CurveMode, type Plan, type RoundaboutSize, type Snap, type SnapOpts,
 } from "./roads/planner";
 import { toolSnap, type ToolSnap } from "./roads/snapping";
-import { armsAt, strokeProfile } from "./roads/planner";
+import { armsAt, slipTangents, strokeProfile } from "./roads/planner";
 import { Buildings3D } from "./render/buildings3d";
 import { Parks3D } from "./render/parks3d";
 import { Fireworks } from "./render/fx3d";
@@ -981,7 +981,8 @@ export class App {
     const mode: CurveMode = this.st.mode === "straight" ? "straight" : "curve";
     const plan = planRoad(g.net, g.world, {
       start, end, mode, type: this.st.roadType, bridges: true,
-      startTangent: mode === "curve" ? this.curveStart() : this.startTangent,
+      // (off a one-way carriageway in line with it, a one-way road is a slip road: the planner shapes that)
+      startTangent: mode === "curve" ? (!this.startTangent && slipTangents(g.net, start, end, this.st.roadType).ta ? undefined : this.curveStart()) : this.startTangent,
       parallel: this.st.parallel ? { offset: this.parallelOffset(), from: this.parFrom } : undefined,
     });
     (plan as Plan & { snapEnd?: ToolSnap }).snapEnd = end;
