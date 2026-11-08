@@ -1,12 +1,14 @@
 import * as THREE from "three";
 import { BUILDING_TYPES, LEVEL_H, MAX_LEVEL, ROAD_TYPES, SIM, roadWidth, type RoadTypeId } from "./config";
-import { dist, dot, formatMoney, norm, rectCorners, right, sub, v2, wrapAngle, type V2 } from "./core/math";
+import { cubicTangent, dist, dot, formatMoney, norm, rectCorners, right, sub, v2, wrapAngle, type V2 } from "./core/math";
 import type { Building } from "./game/buildings";
 import { Game } from "./game/city";
 import {
-  parallelSpacing, planAddLane, planGrid, planRoad, planRoundabout, removalRefund, segAt, snap,
+  parallelSpacing, planAddLane, planRoad, planRoundabout, removalRefund, segAt, snap,
   type CurveMode, type Plan, type RoundaboutSize, type Snap, type SnapOpts,
 } from "./roads/planner";
+import { toolSnap, type ToolSnap } from "./roads/snapping";
+import { armsAt, strokeProfile } from "./roads/planner";
 import { Buildings3D } from "./render/buildings3d";
 import { Parks3D } from "./render/parks3d";
 import { Fireworks } from "./render/fx3d";
@@ -43,9 +45,9 @@ import type { Hud, Chip } from "./ui/hud";
 export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "town" | "place" | "transit";
 /** The bus tool: put stops on the kerb, or click stops in order to make a line. */
 export type TransitMode = "stop" | "line";
-/** Road tool modes, as in CS2: the four drawing modes, a 3-click grid, and Replace (change type / reverse). */
-export type RoadMode = CurveMode | "grid" | "replace";
-export const ROAD_MODES: RoadMode[] = ["straight", "curve", "complex", "continuous", "grid", "replace"];
+/** Road tool modes, as in Transport Fever 2: the two drawing modes (curve, straight) and Upgrade (change type / reverse). */
+export type RoadMode = CurveMode | "replace";
+export const ROAD_MODES: RoadMode[] = ["curve", "straight", "replace"];
 export type OverlayId = "none" | "flow" | "resources" | "landvalue" | "level" | "problems" | "power";
 
 export interface ToolState {
@@ -60,7 +62,7 @@ export interface ToolState {
   /** Snapping menu: which kinds are switched off, and 8 m length steps. */
   snapOff: { geometry: boolean; guides: boolean; netSide: boolean };
   snapLength: boolean;
-  /** Straight pieces turn in 15° steps (off the world grid or the road they start from); Shift frees them. */
+  /** Straight pieces turn in 15° steps (off the world grid or the road they start from); Shift flips it while drawing. */
   angleLock: boolean;
   bdzLevel: number | null; // bulldozer elevation filter (null = all)
   reverse: boolean; // upgrade tool flips one-ways instead
@@ -99,8 +101,8 @@ export class App {
   saves = new Saves();
   hud!: Hud;
   st: ToolState = {
-    tool: "inspect", roadType: "street", mode: "straight", level: 0, rbSize: 1, parallel: false, parOffset: null,
-    snapOff: { geometry: false, guides: false, netSide: false }, snapLength: true, angleLock: true, bdzLevel: null, reverse: false,
+    tool: "inspect", roadType: "street", mode: "curve", level: 0, rbSize: 1, parallel: false, parOffset: null,
+    snapOff: { geometry: false, guides: false, netSide: false }, snapLength: true, angleLock: false, bdzLevel: null, reverse: false,
     placed: "farm", placeTurn: 0, transitMode: "stop",
   };
   /** stops clicked so far for the bus line being drawn */
@@ -121,8 +123,12 @@ export class App {
   // road tool state
   private anchor: Snap | null = null;
   private startTangent: V2 | undefined;
-  private ctrl: V2 | null = null;
-  private ctrl2: V2 | null = null;
+  /** A curve begun on open ground (or mid-road): the way the cursor first moved off the start. */
+  private freeDir: V2 | undefined;
+  /** Last frame's snap (the snapping keeps its target until the cursor moves clearly away). */
+  private lastSnap: ToolSnap | null = null;
+  /** A road through homes waits for a second click on the same plan: what it would demolish. */
+  private confirmKey: string | null = null;
   /** Where the parallel road's last piece ended (to carry on from it). */
   private parFrom: Snap | undefined;
   private plan: Plan | null = null;
@@ -333,8 +339,9 @@ export class App {
   cancelStroke() {
     this.anchor = null;
     this.startTangent = undefined;
-    this.ctrl = null;
-    this.ctrl2 = null;
+    this.freeDir = undefined;
+    this.lastSnap = null;
+    this.confirmKey = null;
     this.parFrom = undefined;
     this.plan = null;
     this.dragRect = null;
@@ -501,6 +508,7 @@ export class App {
     // the title menu: only Esc, to close a dialog opened from it
     if (this.mode === "menu") { if (down && k === "Escape") this.hud?.back(); return; }
     if (k === "Shift") this.dirtyPreview = true; // the lane tool previews removal while it is held
+    if (k === "Alt") { e.preventDefault(); this.dirtyPreview = true; } // held: no snapping (and no browser menu bar)
     if (down) this.keys.add(k); else { this.keys.delete(k); return; }
     // AltGr arrives as Ctrl+Alt: leave it to the plain keys ([ and ] need it on many layouts)
     if ((e.ctrlKey || e.metaKey) && !e.altKey) {
@@ -638,19 +646,41 @@ export class App {
     return out;
   }
 
-  /** A free point (bend handle, grid side) with guides and angle snapping but never stuck onto a road. */
-  private snapFree(from: Snap | null): Snap {
-    const o = this.snapOpts(from ?? undefined);
-    return snap(this.game.net, this.cursor, { ...o, off: { ...this.st.snapOff, geometry: true }, lengthStep: 0 });
+  /** The road tool's snap at the cursor (guides, hysteresis; Alt held: none). */
+  private roadSnap(from?: Snap): ToolSnap {
+    return toolSnap(this.game.net, this.cursor, {
+      ...this.snapOpts(from), prev: this.lastSnap, free: this.keys.has("Alt"), curve: !!from && this.st.mode === "curve",
+    });
   }
 
-  /** How many clicks the current road mode still needs before it builds. */
-  private roadStep(): "start" | "ctrl" | "ctrl2" | "end" {
-    if (!this.anchor) return "start";
-    const m = this.st.mode;
-    if ((m === "curve" || m === "complex" || m === "grid") && !this.ctrl) return "ctrl";
-    if (m === "complex" && !this.ctrl2) return "ctrl2";
-    return "end";
+  /**
+   * The direction a curve leaves its start in: along the road it carries on (a dead end, or the piece before), else the
+   * way the cursor first moved off the start (square to the road it starts on when nearly so, or in 15° steps with
+   * angle steps on). Bringing the cursor back to the start lets it be aimed again.
+   */
+  private curveStart(): V2 | undefined {
+    const a = this.anchor;
+    if (!a) return undefined;
+    const fixed = this.startTangent ?? a.tangent;
+    if (fixed) return fixed;
+    const d = sub(this.cursor, a.p), L = Math.hypot(d.x, d.y);
+    const unlock = Math.max(4, 14 * this.view.mpp);
+    if (L < unlock) { this.freeDir = undefined; return undefined; }
+    if (!this.freeDir) {
+      let dir = norm(d);
+      // off a road mid-way: square to it when nearly so
+      const s = a.seg !== undefined ? this.game.net.segs.get(a.seg) : undefined;
+      if (s) {
+        const tr = right(norm(sub(s.c.p3, s.c.p0)));
+        for (const n of [tr, { x: -tr.x, y: -tr.y }]) if (dot(n, dir) > Math.cos((14 * Math.PI) / 180)) dir = n;
+      }
+      if (this.st.angleLock !== this.keys.has("Shift")) {
+        const step = Math.PI / 12, ang = Math.round(Math.atan2(dir.y, dir.x) / step) * step;
+        dir = { x: Math.cos(ang), y: Math.sin(ang) };
+      }
+      this.freeDir = dir;
+    }
+    return this.freeDir;
   }
 
   // ---------------------------------------------------------------- clicks
@@ -660,9 +690,7 @@ export class App {
   stepBack(): boolean {
     this.dirtyPreview = true;
     if (this.dragRect) { this.dragRect = null; this.hud?.rect(null); }
-    else if (this.ctrl2) this.ctrl2 = null;
-    else if (this.ctrl) this.ctrl = null;
-    else if (this.anchor) { this.anchor = null; this.startTangent = undefined; this.parFrom = undefined; }
+    else if (this.anchor) { this.anchor = null; this.startTangent = undefined; this.freeDir = undefined; this.parFrom = undefined; this.confirmKey = null; }
     else if (this.lineDraft.length) this.lineDraft.pop();
     else return false;
     return true;
@@ -807,47 +835,43 @@ export class App {
       return;
     }
     if (t === "road") {
-      const step = this.roadStep();
-      if (step === "start") {
-        this.anchor = snap(g.net, c, this.snapOpts());
+      if (!this.anchor) {
+        this.anchor = this.roadSnap();
+        this.lastSnap = null;
         this.startTangent = undefined;
+        this.freeDir = undefined;
         this.parFrom = undefined;
+        this.confirmKey = null;
         this.dirtyPreview = true;
-        return;
-      }
-      if (step === "ctrl") {
-        const s = this.snapFree(this.anchor);
-        if (dist(s.p, this.anchor!.p) < (this.st.mode === "grid" ? 30 : 4)) { this.reject(this.st.mode === "grid" ? "Make the grid wider" : "Click further away"); return; }
-        this.ctrl = s.p;
-        this.dirtyPreview = true;
-        return;
-      }
-      if (step === "ctrl2") {
-        this.ctrl2 = this.snapFree(this.anchor).p;
-        this.dirtyPreview = true;
-        return;
-      }
-      if (this.st.mode === "grid") {
-        const plan = this.computeGrid();
-        if (!plan) return;
-        if (plan.errors.length) { this.reject(plan.errors[0].msg); return; }
-        if (g.build(plan)) { this.hud?.sound("build"); this.cancelStroke(); }
         return;
       }
       const plan = this.computeRoadPlan();
       if (!plan) return;
       if (plan.errors.length) { this.reject(plan.errors[0].msg); return; }
+      // through homes: say what goes and what it costs, and build on a second click
+      const lots = g.lotsUnder(plan);
+      if (lots.length) {
+        const key = this.planKey(plan, lots);
+        if (this.confirmKey !== key) {
+          this.confirmKey = key;
+          this.hud?.sound("error");
+          this.dirtyPreview = true;
+          return;
+        }
+      }
+      this.confirmKey = null;
       const lead = plan.strokes[0] ?? plan.ghosts![0];
       const endP = plan.continueAt?.p ?? (lead.chain.length ? lead.chain[lead.chain.length - 1].p3 : c);
       const endH = plan.continueAt?.h ?? lead.h1;
       if (g.build(plan)) {
         this.hud?.sound("build");
+        if (plan.bridges?.length) this.hud?.toast(plan.bridges.length === 1 ? `Bridge built: ${Math.round(plan.bridges[0].length)} m with its ramps` : `${plan.bridges.length} bridges built`);
         // keep drawing from where this road ended
         const s = snap(g.net, endP, { ...this.snapOpts(), mpp: 0.05, off: undefined, lengthStep: 0 });
         this.anchor = s.node !== undefined || (plan.continueAt && s.seg !== undefined) ? s : { p: endP, h: endH, guides: [] };
         this.startTangent = plan.endTangent;
-        this.ctrl = null;
-        this.ctrl2 = null;
+        this.freeDir = undefined;
+        this.lastSnap = null;
         const pe = plan.parallelEnds?.b;
         if (pe) {
           const ps = snap(g.net, pe, { ...this.snapOpts(), mpp: 0.05, off: undefined, lengthStep: 0 });
@@ -947,20 +971,28 @@ export class App {
   private computeRoadPlan(): Plan | null {
     if (!this.anchor) return null;
     const g = this.game;
-    const end = snap(g.net, this.cursor, this.snapOpts(this.anchor));
+    const end = this.roadSnap(this.anchor);
+    this.lastSnap = end;
     // started inside a roundabout: join the rim on the side the road actually leaves from
     const start = this.anchor.ringRaw
       ? snap(g.net, this.anchor.ringRaw, { ...this.snapOpts(), angleStep: false, lengthStep: 0, from: { p: end.p } })
       : this.anchor;
     if (end.node !== undefined && end.node === start.node) return null;
-    const mode = this.st.mode === "grid" || this.st.mode === "replace" ? "straight" : this.st.mode;
+    const mode: CurveMode = this.st.mode === "straight" ? "straight" : "curve";
     const plan = planRoad(g.net, g.world, {
-      start, end, mode, type: this.st.roadType,
-      startTangent: this.startTangent, ctrl: this.ctrl ?? undefined, ctrl2: this.ctrl2 ?? undefined,
+      start, end, mode, type: this.st.roadType, bridges: true,
+      startTangent: mode === "curve" ? this.curveStart() : this.startTangent,
       parallel: this.st.parallel ? { offset: this.parallelOffset(), from: this.parFrom } : undefined,
     });
-    (plan as Plan & { snapEnd?: Snap }).snapEnd = end;
+    (plan as Plan & { snapEnd?: ToolSnap }).snapEnd = end;
     return plan;
+  }
+
+  /** What a plan through homes would demolish, as a key: a second click on the same plan confirms it. */
+  private planKey(plan: Plan, lots: Building[]): string {
+    const lead = plan.strokes[0];
+    const e = lead?.chain.length ? lead.chain[lead.chain.length - 1].p3 : { x: 0, y: 0 };
+    return lots.map((b) => b.id).sort((x, y) => x - y).join(",") + `@${Math.round(e.x / 3)},${Math.round(e.y / 3)}`;
   }
 
   private computeRoundabout(): Plan | null {
@@ -969,18 +1001,6 @@ export class App {
     const c = s.node !== undefined ? s.p : this.cursor;
     const h = s.node !== undefined ? g.net.nodes.get(s.node)!.h : this.st.level * LEVEL_H;
     return planRoundabout(g.net, g.world, c, this.st.rbSize, Math.round(h / LEVEL_H));
-  }
-
-  /** CS2 grid: first corner, a click along one side (sets the direction and width), then the depth. */
-  private computeGrid(): Plan | null {
-    if (!this.anchor || !this.ctrl) return null;
-    const g = this.game;
-    const a = this.anchor.p, b = this.ctrl;
-    if (dist(a, b) < 20) return null;
-    const ux = norm(sub(b, a)), uy = right(ux);
-    const depth = dot(sub(this.snapFree(this.anchor).p, b), uy);
-    const far = v2(b.x + uy.x * depth, b.y + uy.y * depth);
-    return planGrid(g.net, g.world, a, far, ux, this.st.roadType, this.st.level);
   }
 
   // ---------------------------------------------------------------- per frame
@@ -1009,6 +1029,31 @@ export class App {
       const inReach = plants.some((p) => dist(p.c, c) <= PLANTS.coalplant.reach! && linked(p));
       chips.push({ text: inReach ? `Needs ${D.power} MW: a power plant is in reach` : `Needs ${D.power} MW: no power plant in reach, works at ${Math.round(UNPOWERED * 100)}%`, kind: inReach ? "info" : "error" });
     }
+  }
+
+  /** The steepest grade along a plan's lead road (%). */
+  private maxGrade(plan: Plan): number {
+    const st = plan.strokes[0];
+    if (!st) return 0;
+    const { pts, hs } = strokeProfile(this.game.net, st, 4);
+    let g = 0;
+    for (let i = 1; i < pts.length; i++) g = Math.max(g, Math.abs(hs[i] - hs[i - 1]) / (dist(pts[i], pts[i - 1]) || 1));
+    return g * 100;
+  }
+
+  /** Right-angle marks where the planned road leaves or meets another road square. */
+  private squareMarks(plan: Plan, end: Snap) {
+    const g = this.game, st = plan.strokes[0];
+    const size = Math.max(2.2, this.view.mpp * 9);
+    const mark = (sn: Snap, out: V2) => {
+      for (const d of armsAt(g.net, sn)) {
+        if (Math.abs(dot(d, out)) < Math.sin((0.6 * Math.PI) / 180)) { this.preview.rightAngle(sn.p, out, d, sn.h, size); return true; }
+      }
+      return false;
+    };
+    const t0 = norm(cubicTangent(st.chain[0], 0)), t1 = norm(cubicTangent(st.chain[st.chain.length - 1], 1));
+    if (this.anchor) mark(this.anchor, t0);
+    mark(end, { x: -t1.x, y: -t1.y });
   }
 
   private refreshPreview() {
@@ -1050,68 +1095,66 @@ export class App {
         }
       }
     } else if (t === "road") {
-      const step = this.roadStep();
-      const mode = this.st.mode;
-      if (step === "start") {
-        const s = snap(g.net, c, this.snapOpts());
+      const T = ROAD_TYPES[this.st.roadType];
+      if (!this.anchor) {
+        // the start: what it joins, and the same guides as the end (to begin square to a road, or level with one)
+        const s = this.roadSnap();
+        this.lastSnap = s;
         pv.marker(s.p, s.h);
-        pv.guides(s.guides);
-        chips.push({ text: mode === "grid" ? `${ROAD_TYPES[this.st.roadType].name} grid: click a corner` : `${ROAD_TYPES[this.st.roadType].name}`, kind: "info" });
-        if (this.st.level > 0) chips.push({ text: `Elevation ${this.st.level}`, kind: "info" });
-      } else if (mode === "grid") {
-        pv.marker(this.anchor!.p, this.anchor!.h);
-        if (step === "ctrl") {
-          const s = this.snapFree(this.anchor);
-          pv.guides(s.guides);
-          pv.plan(planRoad(g.net, g.world, { start: this.anchor!, end: { ...s, h: this.anchor!.h }, mode: "straight", type: this.st.roadType }), this.st.level);
-          chips.push({ text: "Click to set the grid's width", kind: "info" }, { text: `${Math.round(dist(s.p, this.anchor!.p))} m`, kind: "info" });
-        } else {
-          const plan = this.computeGrid();
-          if (plan) {
-            pv.plan(plan, this.st.level);
-            if (plan.errors.length) chips.push({ text: plan.errors[0].msg, kind: "error" });
-            chips.push({ text: formatMoney(plan.cost), kind: plan.cost > g.money ? "error" : "cost" });
-            this.lotWarning(plan, chips);
-          }
-        }
-      } else if (step === "ctrl" || step === "ctrl2") {
-        // placing a bend handle: show the handle lines and the road so far
-        const s = this.snapFree(this.anchor);
-        pv.marker(this.anchor!.p, this.anchor!.h);
-        pv.guides(s.guides);
-        const a = this.anchor!.p;
-        const lines = step === "ctrl" ? [{ a, b: s.p }] : [{ a, b: this.ctrl! }, { a: this.ctrl!, b: s.p }];
-        pv.guides(lines);
-        if (step === "ctrl2") pv.marker(this.ctrl!, this.anchor!.h);
-        chips.push({ text: step === "ctrl" ? "Click to set the bend" : "Click to set the second handle", kind: "info" });
+        pv.refs(s.refs);
+        pv.target(g.net, s);
+        chips.push({ text: `${T.name}: ${this.st.mode === "straight" ? "straight" : "curve"}`, kind: "info" });
+        const joins = s.node !== undefined ? (g.net.segsAt(s.node).length === 1 ? "Carries on the road" : "From the junction") : s.seg !== undefined ? `From the ${ROAD_TYPES[g.net.segs.get(s.seg)!.type].name.toLowerCase()}` : s.label;
+        if (joins) chips.push({ text: joins, kind: "info" });
+        if (this.st.level > 0) chips.push({ text: `Elevation ${this.st.level * LEVEL_H} m`, kind: "info" });
+        if (this.keys.has("Alt")) chips.push({ text: "No snapping (Alt)", kind: "info" });
       } else {
         const plan = this.computeRoadPlan();
         this.plan = plan;
         if (plan) {
-          const end = (plan as Plan & { snapEnd?: Snap }).snapEnd!;
-          pv.plan(plan, this.st.level);
-          pv.guides(end.guides);
+          const end = (plan as Plan & { snapEnd?: ToolSnap }).snapEnd!;
+          pv.plan(plan, this.st.level, g.net);
+          pv.refs(end.refs);
           pv.marker(this.anchor!.p, this.anchor!.h);
           pv.marker(end.p, end.h);
-          if (this.ctrl) pv.guides(this.ctrl2 ? [{ a: this.anchor!.p, b: this.ctrl }, { a: this.ctrl2, b: end.p }] : [{ a: this.anchor!.p, b: this.ctrl }, { a: this.ctrl, b: end.p }]);
+          if (!plan.errors.length) pv.target(g.net, end);
+          for (const sp of plan.bridges ?? []) pv.bridge(sp, roadWidth(T));
+          const lots = plan.errors.length ? [] : g.lotsUnder(plan);
           if (plan.errors.length) {
-            chips.push({ text: plan.errors[0].msg, kind: "error" });
-            for (const e of plan.errors) for (const id of e.buildings ?? []) {
+            const e = plan.errors[0];
+            chips.push({ text: e.msg, kind: "error" });
+            // say it at the spot too
+            pv.dot(e.p, 0xef8a6c, Math.max(2.5, this.view.mpp * 7));
+            for (const er of plan.errors) for (const id of er.buildings ?? []) {
               const b = g.buildings.byId.get(id);
               if (b) pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
             }
           }
-          chips.push({ text: formatMoney(plan.cost), kind: plan.cost > g.money ? "error" : "cost" });
-          this.lotWarning(plan, chips);
+          const comp = g.demolishCost(lots);
+          const total = plan.cost + comp;
           const lead = plan.strokes[0] ?? plan.ghosts?.[0];
           const L = lead?.chain.length ? plan.length / Math.max(1, plan.strokes.length) : 0;
           if (lead) chips.push({ text: L < 950 ? `${Math.round(L)} m` : `${(L / 1000).toFixed(2)} km`, kind: "info" });
-          const dh = lead ? lead.h1 - lead.h0 : 0;
-          if (Math.abs(dh) > 0.1 && L > 1) chips.push({ text: `${dh > 0 ? "↗" : "↘"} ${(Math.abs(dh) / L * 100).toFixed(1)}%`, kind: "info" });
-          if (plan.angleDeg !== undefined && L > 3) chips.push({ text: `${plan.angleDeg.toFixed(1)}°`, kind: "info", icon: "angle" });
+          chips.push({ text: formatMoney(total), kind: total > g.money ? "error" : "cost" });
+          // the steepest it climbs (a bridge's ramps, or the whole road between levels)
+          const grade = lead ? this.maxGrade(plan) : 0;
+          if (grade > 0.5) chips.push({ text: `↗ ${grade.toFixed(1)}%`, kind: "info" });
+          for (const sp of plan.bridges ?? []) chips.push({ text: `Bridge ${Math.round(sp.length)} m over ${sp.over === "water" ? "water" : sp.over === "road" ? "the road" : "water and road"} · ${formatMoney(sp.cost)}`, kind: "info", icon: "bridge" });
+          if (plan.joins) chips.push({ text: plan.endAngleDeg !== undefined && plan.joins.startsWith("Joins the") && !plan.joins.includes("junction") ? `${plan.joins} at ${Math.round(plan.endAngleDeg)}°` : plan.joins, kind: "info" });
+          else if (end.label) chips.push({ text: end.label, kind: "info" });
+          if (plan.angleDeg !== undefined && L > 3 && !plan.joins) chips.push({ text: `${plan.angleDeg.toFixed(1)}°`, kind: "info", icon: "angle" });
+          // right angles: where it leaves the road it starts on and where it meets the one it ends on
+          if (lead?.chain.length && !plan.errors.length) this.squareMarks(plan, end);
           if (this.st.parallel) chips.push({ text: `Parallel ${Math.round(this.parallelOffset())} m`, kind: "info" });
-          if (end.label) chips.push({ text: end.label, kind: "info" });
           if (plan.note) chips.push({ text: plan.note, kind: "info" });
+          if (plan.fixed?.length) chips.push({ text: plan.fixed[0], kind: "info" });
+          if (lots.length) {
+            for (const b of lots) pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
+            const key = this.planKey(plan, lots);
+            const what = `${lots.length} home${lots.length === 1 ? "" : "s"}`;
+            chips.push({ text: this.confirmKey === key ? `Click again to demolish ${what} (${formatMoney(comp)})` : `Demolishes ${what}: ${formatMoney(comp)} compensation`, kind: "error" });
+          }
+          if (this.keys.has("Alt")) chips.push({ text: "No snapping (Alt)", kind: "info" });
         }
       }
     } else if (t === "roundabout") {

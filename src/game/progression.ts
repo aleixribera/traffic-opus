@@ -13,7 +13,7 @@ import type { PlacedKind } from "./placed";
 import { needsOf, sizeOf } from "./towns";
 import type { TruckClass } from "./trucks";
 
-export type Feature = "roundabout" | "signals" | "grid" | "parallel" | "transit";
+export type Feature = "roundabout" | "signals" | "parallel" | "transit";
 
 export interface Unlocks {
   roads?: RoadTypeId[];
@@ -64,7 +64,7 @@ export interface Milestone {
 export const BASE: Required<Pick<Unlocks, "roads" | "features" | "towns">> & { bays: number; load: number } = {
   // (the one- and two-lane highways too: hauls between deposits kilometres apart want them from the start)
   roads: ["street", "one1", "hw1", "hw2"],
-  features: ["grid", "parallel"],
+  features: ["parallel"],
   towns: 2,
   bays: 0,
   load: 1,

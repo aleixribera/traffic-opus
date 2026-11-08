@@ -76,6 +76,8 @@ export const ELEVATED_COST_MULT = [1, 2.2, 2.8, 3.4];
 export const WATER_BRIDGE_MULT = 1.6;
 export const BULLDOZE_REFUND = 0.75;
 export const ROUNDABOUT_COST = 900;
+/** Compensation for each home or shop a new road demolishes, per level of the building (TF2 charges for clearing land). */
+export const DEMOLISH_PER_LEVEL = 150;
 export const SIGNAL_COST = 300;
 
 // ---------- Buildings ----------

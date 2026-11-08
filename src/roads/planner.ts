@@ -1,5 +1,5 @@
 import {
-  LANE_W, CLEARANCE, ELEVATED_COST_MULT, LEVEL_H, MAX_GRADE, MIN_ARM_ANGLE, MIN_SEG_LEN, NODE_SNAP_PX, ROAD_SNAP_PX,
+  LANE_W, CLEARANCE, ELEVATED_COST_MULT, LEVEL_H, MAX_GRADE, MAX_LEVEL, MIN_ARM_ANGLE, MIN_SEG_LEN, NODE_SNAP_PX, ROAD_SNAP_PX,
   ROAD_TYPES, ROUNDABOUT_COST, WATER_BRIDGE_MULT, BULLDOZE_REFUND, roadWidth, isHighway, type RoadTypeId,
 } from "../config";
 import {
@@ -20,6 +20,19 @@ export interface BuildWorld {
   /** Buildings whose footprint comes within `hw` of any of the points. */
   buildingsHit(pts: V2[], hw: number): number[];
   money(): number;
+  /** Where a building is (to point at one in the way). */
+  buildingAt?(id: number): V2 | undefined;
+}
+
+/** The point of a polyline where it bends tightest. */
+function tightest(pts: V2[]): V2 {
+  let best = pts[Math.floor(pts.length / 2)], bk = -1;
+  for (let i = 4; i < pts.length - 4; i++) {
+    const a = norm(sub(pts[i], pts[i - 4])), b = norm(sub(pts[i + 4], pts[i]));
+    const k = Math.abs(cross(a, b)) / (dist(pts[i - 4], pts[i + 4]) || 1);
+    if (k > bk) { bk = k; best = pts[i]; }
+  }
+  return best;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -299,16 +312,27 @@ function parallelSnap(net: RoadNetwork, p: V2, o: SnapOpts): { p: V2; guides: Gu
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Road drawing modes (as in CS2): straight (2 clicks), simple curve (start, bend point, end), complex curve
- * (start, two handles, end) and continuous (each piece carries on smoothly from the last, and meets a road it
- * ends on at a right angle).
+ * Road drawing modes, as in Transport Fever 2: straight (click the start, click the end) and curve, a freeform arc that
+ * leaves its start tangentially (along the road it starts from, the piece before it, or the way the cursor first moved)
+ * and bends to wherever the end is clicked. Both chain on from the end until the chain is ended.
  */
-export type CurveMode = "straight" | "curve" | "complex" | "continuous";
+export type CurveMode = "straight" | "curve";
 
 export interface PlanError {
   msg: string;
   p: V2;
   buildings?: number[];
+}
+
+/** A bridge the planner raised a road onto on its own (over water, or over a road it can't meet at grade). */
+export interface BridgeSpan {
+  /** where the deck starts and ends (over the obstacle), and the ramps' feet */
+  a: V2; b: V2; footA: V2; footB: V2;
+  /** deck height (m) and length of the whole lift, ramps included */
+  h: number; length: number;
+  /** what the bridge and its ramps cost, all told */
+  cost: number;
+  over: "water" | "road" | "both";
 }
 
 export interface Stroke {
@@ -348,6 +372,14 @@ export interface Plan {
   note?: string;
   /** Where the next stroke carries on from, when that isn't the end of the first stroke (a lane drawn along a carriageway). */
   continueAt?: { p: V2; h: number };
+  /** Bridges the road was raised onto on its own (PlanInput.bridges). */
+  bridges?: BridgeSpan[];
+  /** What the end joins ("Joins the junction", "Joins Avenue at 90°"), for the cursor readout. */
+  joins?: string;
+  /** Angle the end meets the road it joins at (degrees, 0-90), when it ends on one. */
+  endAngleDeg?: number;
+  /** The start or end was moved by an automatic fix (onto a road it stopped just short of). */
+  fixed?: string[];
 }
 
 export function chainPoints(chain: Cubic[], step = 2): V2[] {
@@ -360,16 +392,13 @@ export function chainPoints(chain: Cubic[], step = 2): V2[] {
   return pts;
 }
 
-/** Turn the user's input into a stroke (see CurveMode). */
-export function makeChain(mode: CurveMode, a: V2, b: V2, ta?: V2, tb?: V2, ctrl?: V2, ctrl2?: V2): Cubic[] {
+/**
+ * Turn the user's input into a stroke (see CurveMode). A curve with a direction to meet at its end (tb) is one smooth
+ * S-bend; without, it's the circular arc leaving `a` along `ta` through `b`; with no start direction, a straight.
+ */
+export function makeChain(mode: CurveMode, a: V2, b: V2, ta?: V2, tb?: V2): Cubic[] {
   if (dist(a, b) < 0.5) return [];
   if (mode === "straight") return [straightCubic(a, b)];
-  if (mode === "complex" && ctrl && ctrl2) return [{ p0: a, p1: ctrl, p2: ctrl2, p3: b }];
-  if (mode === "curve" || mode === "complex") {
-    if (ctrl) return [quadCubic(a, ctrl, b)];
-    return [straightCubic(a, b)];
-  }
-  // continuous: an S-curve when the end has a direction to meet, else an arc on from the start direction
   if (tb) {
     const t0 = ta ?? norm(sub(b, a));
     const d = dist(a, b);
@@ -481,6 +510,16 @@ function strokeHeights(net: RoadNetwork, st: Stroke, pts: V2[], cum: number[]): 
   return hs;
 }
 
+/** A stroke's points (every `step` m, as it will look) and its height at each. */
+export function strokeProfile(net: RoadNetwork, st: Stroke, step = 2): { pts: V2[]; hs: number[] } {
+  const pts = chainPoints(st.show ?? st.chain, step);
+  if (st.show) {
+    const pl = makePolyline(pts);
+    return { pts, hs: pl.cum.map((c) => heightAt(st, c / (pl.length || 1))) };
+  }
+  return { pts, hs: strokeHeights(net, st, pts, makePolyline(pts).cum) };
+}
+
 function costOfPoints(pts: V2[], hs: number[], type: RoadTypeId, world: BuildWorld): number {
   const T = ROAD_TYPES[type];
   let c = 0;
@@ -513,7 +552,7 @@ interface Crossing {
 /** All centreline crossings of a stroke with existing roads at a similar height. */
 function findCrossings(net: RoadNetwork, pts: V2[], cum: number[], hsPlan: number[], ignore: { segs: Set<number>; nodes: Set<number> }, skip?: (seg: number, p: V2) => boolean) {
   const out: Crossing[] = [];
-  const bad: { p: V2; msg: string }[] = [];
+  const bad: { p: V2; msg: string; seg: number; sPlan: number; hSeg: number; angle: number }[] = [];
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const p of pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
   for (const id of net.segsNear(x0 - 30, y0 - 30, x1 + 30, y1 + 30)) {
@@ -544,12 +583,12 @@ function findCrossings(net: RoadNetwork, pts: V2[], cum: number[], hsPlan: numbe
         if (ignore.segs.has(id) && (sPlan < 3 || sPlan > cum[cum.length - 1] - 3)) continue;
         const nearNode = [s.a, s.b].find((n) => dist(net.nodes.get(n)!.p, p) < 3 && ignore.nodes.has(n));
         if (nearNode !== undefined) continue;
-        if (dh > 0.6) {
-          bad.push({ p, msg: `Not enough clearance (${dh.toFixed(1)} m, needs ${CLEARANCE} m)` });
-          continue;
-        }
         const da = norm(sub(pts[i + 1], pts[i])), db = norm(sub(cp[j + 1], cp[j]));
         const angle = Math.acos(clamp(Math.abs(dot(da, db)), 0, 1));
+        if (dh > 0.6) {
+          bad.push({ p, msg: `Not enough clearance (${dh.toFixed(1)} m, needs ${CLEARANCE} m): raise or lower the road with Page Up / Down`, seg: id, sPlan, hSeg: hS, angle });
+          continue;
+        }
         out.push({ seg: id, sPlan, p, angle, hSeg: hS });
       }
     }
@@ -567,8 +606,13 @@ export interface PlanInput {
   mode: CurveMode;
   type: RoadTypeId;
   startTangent?: V2;
-  ctrl?: V2;
-  ctrl2?: V2;
+  /** A curve always meets the road it ends on square (or runs on from a dead end), not only when aimed near that. */
+  squareEnd?: boolean;
+  /**
+   * The player's road tool: raise the road onto bridges on its own over water and over roads it can't meet at grade,
+   * and pull a free end that stops just short of (or past) a road onto it. Off for towns and scripted builds.
+   */
+  bridges?: boolean;
   /**
    * Also build a parallel road `offset` metres to the left (one-ways run the other way, so a one-way pair is a dual
    * carriageway). `from` is where the previous parallel piece ended, to carry on from it.
@@ -983,10 +1027,242 @@ function planSlipExtend(net: RoadNetwork, world: BuildWorld, start: Snap, end: S
 }
 
 /** Build and validate a single road stroke. */
+// ---------------------------------------------------------------------------------------------
+// Automatic bridges (the player's road tool, like Transport Fever 2)
+// ---------------------------------------------------------------------------------------------
+
+/** Room either side of what a bridge clears before its ramp may start coming down (m). */
+const BRIDGE_PAD = 4;
+/** Two bridges whose ramps would come closer than this become one deck (m). */
+const BRIDGE_JOIN = 24;
+
+/** Can a road of type `type` cross `seg` at grade, as a junction? Motorways meet nothing at grade. */
+function meetsAtGrade(net: RoadNetwork, seg: number, type: RoadTypeId): boolean {
+  const s = net.segs.get(seg);
+  if (!s) return true;
+  const motorway = (t: RoadTypeId) => isHighway(ROAD_TYPES[t]) && t !== "hw1";
+  return !motorway(s.type) && !motorway(type) && !(isHighway(ROAD_TYPES[s.type]) && !s.ring && !isHighway(ROAD_TYPES[type]));
+}
+
+/** Deck height that clears a road at height hRoad (whole levels, as Page Up builds them). */
+const deckOver = (hRoad: number) => Math.ceil((hRoad + CLEARANCE - 0.05) / LEVEL_H) * LEVEL_H;
+
+/** The chain cut at the given arc lengths (each strictly inside one of its pieces), and the arc length of every joint. */
+function cutAt(chain: Cubic[], cuts: number[]): { chain: Cubic[]; joints: number[] } {
+  const out: Cubic[] = [];
+  const joints: number[] = [0];
+  let acc = 0;
+  for (const c of chain) {
+    const l = makePolyline(sampleCubic(c, 1)).length;
+    const inside = cuts.filter((s) => s > acc + 0.5 && s < acc + l - 0.5).sort((x, y) => x - y);
+    let t0 = 0;
+    for (const s of inside) {
+      const t = tAtLength(c, s - acc);
+      out.push(subCubic(c, t0, t));
+      joints.push(s);
+      t0 = t;
+    }
+    out.push(subCubic(c, t0, 1));
+    acc += l;
+    joints.push(acc);
+  }
+  return { chain: out, joints };
+}
+
+/**
+ * Raise a stroke onto bridges wherever it needs one: over water, and over roads it crosses at the same level that it
+ * can't meet as a junction there (a motorway, a crossing too shallow, too close to a junction or to the next crossing,
+ * or a road part-way up a ramp). Each bridge's deck clears the obstacle with room to spare; its ramps climb at the
+ * steepest grade a ramp may take. Bridges whose ramps would meet become one. Returns the stroke with joint heights
+ * (hj) and the spans, or errors saying why a bridge can't fit and what to do.
+ */
+function autoBridge(net: RoadNetwork, world: BuildWorld, st: Stroke, ignore: { segs: Set<number>; nodes: Set<number> }): { st: Stroke; spans: BridgeSpan[]; errors: PlanError[] } {
+  const none = { st, spans: [], errors: [] };
+  if (st.hj || st.beside || st.closed || st.ring || !st.chain.length) return none;
+  const T = ROAD_TYPES[st.type];
+  const hw = roadWidth(T) / 2;
+  const pts = chainPoints(st.chain, 2);
+  const pl = makePolyline(pts);
+  const L = pl.length, cum = pl.cum;
+  if (L < MIN_SEG_LEN) return none;
+  const base = strokeHeights(net, st, pts, cum);
+  const baseAt = (s: number) => st.h0 + (st.h1 - st.h0) * smoothstep(clamp(s / L, 0, 1));
+  type Ob = { s0: number; s1: number; h: number; water: boolean; road: boolean };
+  const obs: Ob[] = [];
+  // water, under the whole width of the road
+  let run: number | null = null;
+  for (let i = 0; i <= pts.length; i++) {
+    let wet = false;
+    if (i < pts.length && base[i] < LEVEL_H * 0.5) {
+      const n = right(polyDir(pl, cum[i]));
+      wet = world.isWater(pts[i]) || world.isWater(add(pts[i], scale(n, hw))) || world.isWater(add(pts[i], scale(n, -hw)));
+    }
+    if (wet && run === null) run = i;
+    if (!wet && run !== null) {
+      obs.push({ s0: cum[run] - BRIDGE_PAD, s1: cum[i - 1] + BRIDGE_PAD, h: LEVEL_H, water: true, road: false });
+      run = null;
+    }
+  }
+  // roads it can't meet at grade
+  const cx = findCrossings(net, pts, cum, base, ignore);
+  const all = [...cx.crossings.map((c) => ({ ...c, grade: true })), ...cx.bad.map((b) => ({ ...b, grade: false }))].sort((a, b) => a.sPlan - b.sPlan);
+  for (const [k, c] of all.entries()) {
+    let lift = !c.grade || !meetsAtGrade(net, c.seg, st.type) || c.angle < MIN_ARM_ANGLE;
+    if (!lift) {
+      const near = (o?: { sPlan: number }) => !!o && Math.abs(o.sPlan - c.sPlan) < 14;
+      if (near(all[k - 1]) || near(all[k + 1])) lift = true;
+      const s = net.segs.get(c.seg)!;
+      for (const n of [s.a, s.b]) {
+        if (isRingFiller(net, n)) continue;
+        const d = dist(net.nodes.get(n)!.p, c.p);
+        if (d >= 3 && d < 12) lift = true;
+      }
+    }
+    if (!lift) continue;
+    const sg = net.segGeom.get(c.seg);
+    // the length of this road that passes over the other: its width seen at the crossing angle
+    const half = (sg ? sg.width / 2 : 6) / Math.max(0.3, Math.sin(c.angle)) + hw / Math.max(0.3, Math.tan(Math.max(c.angle, 0.1)));
+    obs.push({ s0: c.sPlan - half - BRIDGE_PAD, s1: c.sPlan + half + BRIDGE_PAD, h: deckOver(c.hSeg), water: false, road: true });
+  }
+  if (!obs.length) return none;
+  obs.sort((a, b) => a.s0 - b.s0);
+  // the ramps' feet: from the ground either side up to the deck at the steepest grade allowed
+  type Span = Ob & { f0: number; f1: number };
+  const feet = (o: Ob): Span => {
+    const up = Math.max(0, o.h - baseAt(o.s0)), dn = Math.max(0, o.h - baseAt(o.s1));
+    return { ...o, f0: o.s0 - up / MAX_GRADE, f1: o.s1 + dn / MAX_GRADE };
+  };
+  const join = (a: Span, b: Span): Span => feet({ s0: Math.min(a.s0, b.s0), s1: Math.max(a.s1, b.s1), h: Math.max(a.h, b.h), water: a.water || b.water, road: a.road || b.road });
+  let spans: Span[] = obs.map(feet);
+  // bridges whose ramps would meet become one deck (merging can push a ramp into the next one: until none overlap)
+  for (let changed = true; changed;) {
+    changed = false;
+    const next: Span[] = [];
+    for (const sp of spans) {
+      const last = next[next.length - 1];
+      if (last && sp.f0 < last.f1 + BRIDGE_JOIN) { next[next.length - 1] = join(last, sp); changed = true; }
+      else next.push(sp);
+    }
+    spans = next;
+  }
+  const errors: PlanError[] = [];
+  const maxH = MAX_LEVEL * LEVEL_H;
+  for (const sp of spans) {
+    const what = sp.water && !sp.road ? "the water" : sp.road && !sp.water ? "the road" : "the crossing";
+    if (sp.h > maxH + 0.1) { errors.push({ msg: `Too high to bridge here: cross ${what} somewhere lower`, p: polyAt(pl, clamp((sp.s0 + sp.s1) / 2, 0, L)) }); continue; }
+    if (sp.s0 + BRIDGE_PAD < 0.5 && baseAt(0) < sp.h - 0.3) errors.push({ msg: `Can't start on ${what}: start the road on dry, open ground`, p: pts[0] });
+    else if (sp.s1 - BRIDGE_PAD > L - 0.5 && baseAt(L) < sp.h - 0.3) errors.push({ msg: `Can't end on ${what}: carry the road on past it`, p: pts[pts.length - 1] });
+    else if (sp.f0 < -0.5) errors.push({ msg: `No room for the bridge's ramp over ${what}: start ${Math.ceil(-sp.f0)} m further back`, p: pts[0] });
+    else if (sp.f1 > L + 0.5) errors.push({ msg: `No room for the bridge's ramp over ${what}: carry on ${Math.ceil(sp.f1 - L)} m further`, p: pts[pts.length - 1] });
+    sp.f0 = Math.max(0, sp.f0);
+    sp.f1 = Math.min(L, sp.f1);
+    sp.s0 = Math.max(sp.f0, sp.s0);
+    sp.s1 = Math.min(sp.f1, sp.s1);
+  }
+  if (errors.length) return { st, spans: [], errors };
+  // joint heights: the ground profile away from bridges, straight ramps up to each deck
+  const prof = (s: number): number => {
+    for (const sp of spans) {
+      if (s < sp.f0 - 1e-6 || s > sp.f1 + 1e-6) continue;
+      if (s <= sp.s0) return sp.s0 - sp.f0 < 1e-6 ? sp.h : baseAt(sp.f0) + (sp.h - baseAt(sp.f0)) * ((s - sp.f0) / (sp.s0 - sp.f0));
+      if (s >= sp.s1) return sp.f1 - sp.s1 < 1e-6 ? sp.h : sp.h + (baseAt(sp.f1) - sp.h) * ((s - sp.s1) / (sp.f1 - sp.s1));
+      return sp.h;
+    }
+    return baseAt(s);
+  };
+  // cut at the ramps' feet and the decks' ends; a cut within 3 m of an existing joint moves onto it
+  const pieceEnds: number[] = [];
+  { let acc = 0; for (const c of st.chain) { acc += makePolyline(sampleCubic(c, 1)).length; pieceEnds.push(acc); } }
+  const cuts: number[] = [];
+  for (const sp of spans) for (const s of [sp.f0, sp.s0, sp.s1, sp.f1]) {
+    if (s < 3 || s > L - 3) continue;
+    if (pieceEnds.some((e) => Math.abs(e - s) < 3)) continue;
+    if (cuts.some((c) => Math.abs(c - s) < 3)) continue;
+    cuts.push(s);
+  }
+  const { chain, joints } = cutAt(st.chain, cuts);
+  const hj = joints.map((s, i) => (i === 0 ? st.h0 : i === joints.length - 1 ? st.h1 : prof(s)));
+  const out: Stroke = { ...st, chain, hj };
+  const outPts = chainPoints(chain, 2), outPl = makePolyline(outPts);
+  const outH = strokeHeights(net, out, outPts, outPl.cum);
+  const res: BridgeSpan[] = spans.map((sp) => {
+    const idx: number[] = [];
+    for (let i = 0; i < outPts.length; i++) if (outPl.cum[i] >= sp.f0 - 1 && outPl.cum[i] <= sp.f1 + 1) idx.push(i);
+    return {
+      a: polyAt(outPl, sp.s0), b: polyAt(outPl, sp.s1), footA: polyAt(outPl, sp.f0), footB: polyAt(outPl, sp.f1),
+      h: sp.h, length: sp.f1 - sp.f0, cost: costOfPoints(idx.map((i) => outPts[i]), idx.map((i) => outH[i]), st.type, world),
+      over: sp.water && sp.road ? "both" : sp.water ? "water" : "road",
+    };
+  });
+  return { st: out, spans: res, errors: [] };
+}
+
+/**
+ * Plan a road from the player's input. With `bridges` (the player's road tool) it also fixes the obvious on its own:
+ * an end on a road just short of a junction moves onto the junction, and a free end that crosses a road and stops
+ * just past it ends on that road instead; and it raises the road onto bridges where it needs them (autoBridge).
+ */
 export function planRoad(net: RoadNetwork, world: BuildWorld, inp: PlanInput): Plan {
+  if (!inp.bridges) return planRoadOnce(net, world, inp);
+  const fixed: string[] = [];
+  const start = ontoJunction(net, inp.start), end = ontoJunction(net, inp.end);
+  if (start !== inp.start || end !== inp.end) fixed.push("Moved onto the junction");
+  let plan = planRoadOnce(net, world, { ...inp, start, end });
+  // a free end that stops just past (or before) a road it crosses: end on that road instead
+  const lead = plan.strokes[0];
+  if (lead && !inp.parallel && plan.crossings.length) {
+    const ends: ["start" | "end", Snap][] = [["end", end], ["start", start]];
+    for (const [which, sn] of ends) {
+      if (sn.node !== undefined || sn.seg !== undefined || sn.ringRaw) continue;
+      const near = plan.crossings.filter((c) => dist(c, sn.p) < 10).sort((a, b) => dist(a, sn.p) - dist(b, sn.p))[0];
+      if (!near) continue;
+      const on = roadAt(net, near, sn.h);
+      if (!on) continue;
+      const alt = planRoadOnce(net, world, { ...inp, start: which === "start" ? on : start, end: which === "end" ? on : end });
+      if (alt.errors.length <= plan.errors.length && alt.strokes.length) {
+        plan = alt;
+        fixed.push(which === "end" ? "Ends on the road it crossed" : "Starts on the road it crossed");
+        break;
+      }
+    }
+  }
+  if (fixed.length) plan.fixed = fixed;
+  return plan;
+}
+
+/** A snap on a road just short of a junction (closer than a junction may be to another): onto the junction. */
+export function ontoJunction(net: RoadNetwork, sn: Snap): Snap {
+  if (sn.seg === undefined || sn.node !== undefined || sn.ringRaw) return sn;
+  const s = net.segs.get(sn.seg);
+  if (!s || s.ring || slipLaneEnd(net, s.id)) return sn;
+  let best: { id: number; d: number } | null = null;
+  for (const n of [s.a, s.b]) {
+    const nd = net.nodes.get(n)!;
+    const d = dist(nd.p, sn.p);
+    if (d < 12 && Math.abs(nd.h - sn.h) < 0.6 && net.segsAt(n).length < 6 && !isRingFiller(net, n) && (!best || d < best.d)) best = { id: n, d };
+  }
+  if (!best) return sn;
+  const nd = net.nodes.get(best.id)!;
+  return { p: { ...nd.p }, h: nd.h, node: best.id, tangent: deadEndTangent(net, best.id), guides: sn.guides, label: sn.label };
+}
+
+/** The road whose centreline passes through p at about height h, as a snap on it. */
+function roadAt(net: RoadNetwork, p: V2, h: number): Snap | null {
+  let best: Snap | null = null, bd = 1.5;
+  for (const id of net.segsNear(p.x - 4, p.y - 4, p.x + 4, p.y + 4)) {
+    const s = net.segs.get(id)!;
+    if (slipLaneEnd(net, id)) continue;
+    const r = cubicClosest(s.c, p);
+    const hh = net.heightOnSeg(id, r.t);
+    if (r.d < bd && Math.abs(hh - h) < 0.6) { bd = r.d; best = { p: r.p, h: hh, seg: id, t: r.t, guides: [] }; }
+  }
+  return best ? ontoJunction(net, best) : null;
+}
+
+function planRoadOnce(net: RoadNetwork, world: BuildWorld, inp: PlanInput): Plan {
   const { type } = inp;
   let { start, end } = inp;
-  if (!inp.parallel && !inp.ctrl && inp.mode === "straight") {
+  if (!inp.parallel && inp.mode === "straight") {
     const x = planSlipExtend(net, world, start, end, type);
     if (x) return x;
     // straight along a carriageway: that would be a road on top of it. The carriageway stays as it is; a slip lane is
@@ -1003,38 +1279,46 @@ export function planRoad(net: RoadNetwork, world: BuildWorld, inp: PlanInput): P
       return { strokes: [], cost: 0, length: 0, errors: [{ msg: "Can't join a slip lane: join its ramp past the gore", p: sn.p }], crossings: [], kind: "road" };
     }
   }
-  let slip: { ta?: V2; tb?: V2 } = inp.ctrl ? {} : slipTangents(net, start, end, type);
+  let slip: { ta?: V2; tb?: V2 } = slipTangents(net, start, end, type);
   // a ramp that would have to swing right round to get there is no ramp: drawn that steeply, it's a junction
   const rch = rampChain(net, start, end, slip, type);
   if (!slip.ta !== !slip.tb && !rch.length) slip = {}; // (a link with both ends on carriageways is shaped by makeChain)
   const ta = inp.startTangent ?? slip.ta ?? start.tangent;
   let tb: V2 | undefined = slip.tb;
-  // a curve leaving (or joining) a one-way carriageway nearly in line: put its handle on the carriageway's line
-  let ctrl = inp.ctrl;
-  if (ctrl && inp.mode === "curve" && ROAD_TYPES[type].bwd === 0) {
-    const sa = oneWayDirAt(net, start), sb = oneWayDirAt(net, end);
-    if (sa && dot(sa, norm(sub(ctrl, start.p))) > SLIP_TOWN) ctrl = add(start.p, scale(sa, Math.max(4, dot(sub(ctrl, start.p), sa))));
-    else if (sb && dot(sb, norm(sub(end.p, ctrl))) > SLIP_TOWN) ctrl = sub(end.p, scale(sb, Math.max(4, dot(sub(end.p, ctrl), sb))));
-  }
-  if (inp.mode === "continuous" && !slip.tb) {
+  if (inp.mode === "curve" && !slip.tb) {
+    // the end meets the road it lands on square, or runs straight on from a dead end, when the arc arrives near that
+    // (always, with squareEnd)
+    let want: V2 | undefined;
     if (end.node !== undefined) {
       const t = deadEndTangent(net, end.node);
-      if (t) tb = scale(t, -1);
+      if (t) want = scale(t, -1);
     } else if (end.seg !== undefined) {
       const s = net.segs.get(end.seg)!;
       const st = cubicTangent(s.c, end.t!);
-      const n = right(st);
+      const n = right(norm(st));
       const side = dot(sub(start.p, end.p), n) > 0 ? 1 : -1;
-      tb = scale(n, -side);
+      want = scale(n, -side);
+    }
+    if (want) {
+      if (inp.squareEnd) tb = want;
+      else {
+        const arc = makeChain("curve", start.p, end.p, ta);
+        const arrive = arc.length ? norm(cubicTangent(arc[arc.length - 1], 1)) : norm(sub(end.p, start.p));
+        if (dot(arrive, want) > Math.cos((22 * Math.PI) / 180)) {
+          // only when the S-bend it makes stays as roomy as the road allows
+          const sb = makeChain("curve", start.p, end.p, ta, want);
+          if (sb.length && minRadius(sampleCubic(sb[0], 1.5), 4) >= ROAD_TYPES[type].minRadius) tb = want;
+        }
+      }
     }
   }
   // a slip road is a smooth curve off (or onto) the carriageway even in straight mode
-  const mode = (slip.ta || slip.tb) && inp.mode === "straight" ? "continuous" : inp.mode;
+  const mode: CurveMode = (slip.ta || slip.tb) && inp.mode === "straight" ? "curve" : inp.mode;
   // a slip road with one end on the carriageway: off along it, one even turn, then straight on to the other end
   let chain: Cubic[] = [];
-  const asRamp = mode === "continuous" && ((slip.ta && ta === slip.ta && !tb) || (slip.tb && tb === slip.tb && !ta));
+  const asRamp = mode === "curve" && ((slip.ta && ta === slip.ta && !tb) || (slip.tb && tb === slip.tb && !ta));
   if (asRamp) chain = rch;
-  if (!chain.length) chain = makeChain(mode, start.p, end.p, ta, tb, ctrl, inp.ctrl2);
+  if (!chain.length) chain = makeChain(mode, start.p, end.p, ta, tb);
   // a highway ramp off (or onto) a highway carriageway comes with its slip lane, on whichever side it is: the ramp leaves
   // from the end of a deceleration lane running beside the carriageway, or arrives at the start of an acceleration lane.
   // The carriageway itself stays as it is.
@@ -1051,7 +1335,7 @@ export function planRoad(net: RoadNetwork, world: BuildWorld, inp: PlanInput): P
       if (pc) {
         const gore: Snap = { p: pc.gore.p, h: pc.gore.h, guides: [] };
         const [s2, e2] = exit ? [gore, end] : [start, gore];
-        const ramp = asRamp ? rampChain(net, s2, e2, exit ? { ta: t } : { tb: t }, type) : makeChain(mode, s2.p, e2.p, exit ? t : ta, exit ? tb : t, ctrl, inp.ctrl2);
+        const ramp = asRamp ? rampChain(net, s2, e2, exit ? { ta: t } : { tb: t }, type) : makeChain(mode, s2.p, e2.p, exit ? t : ta, exit ? tb : t);
         if (ramp.length) {
           piece = pc;
           chain = exit ? [pc.cubic, ...ramp] : [...ramp, pc.cubic];
@@ -1094,8 +1378,24 @@ export function planRoad(net: RoadNetwork, world: BuildWorld, inp: PlanInput): P
     if (piece) for (const id of piece.beside) segs.add(id);
     slips.push({ p: sn.p, segs, r: piece ? piece.length + 30 : 160 });
   }
+  // the player's tool: up onto a bridge over water, and over roads it can't meet at grade
+  const spans: BridgeSpan[] = [];
+  if (inp.bridges && !piece) {
+    const ignore = { segs: new Set<number>(), nodes: new Set<number>() };
+    for (const a of anchors) {
+      if (a.seg !== undefined) ignore.segs.add(a.seg);
+      if (a.node !== undefined) { ignore.nodes.add(a.node); for (const sg of net.segsAt(a.node)) ignore.segs.add(sg.id); }
+    }
+    for (const [i, st] of strokes.entries()) {
+      const r = autoBridge(net, world, st, ignore);
+      strokes[i] = r.st;
+      if (i === 0) spans.push(...r.spans);
+      extra.unshift(...r.errors);
+    }
+  }
   const plan = validateStrokes(net, world, strokes, "road", anchors, undefined, par ? strokes.map((_, i) => anchors.slice(i * 2, i * 2 + 2)) : undefined, skip, slips);
-  plan.errors.push(...extra);
+  plan.errors.unshift(...extra);
+  if (spans.length) plan.bridges = spans;
   if (asRamp && !piece && !plan.errors.length) {
     const sn = slip.ta ? start : end;
     if (builtMinRadius(net, chain, sn, !!slip.ta, type) < ROAD_TYPES[type].minRadius * 0.98) plan.errors.push({ msg: "Too tight where it merges: draw the slip road longer", p: sn.p });
@@ -1109,8 +1409,30 @@ export function planRoad(net: RoadNetwork, world: BuildWorld, inp: PlanInput): P
     const t0 = norm(cubicTangent(chain[0], 0));
     const ref = ta ?? { x: 1, y: 0 };
     plan.angleDeg = Math.abs((signedAngle(ref, ta ? plan.endTangent : t0) * 180) / Math.PI);
+    // what the end joins, and at what angle
+    const arms = armsAt(net, end);
+    if (arms.length) {
+      const into = plan.endTangent;
+      plan.endAngleDeg = Math.min(...arms.map((d) => (Math.acos(clamp(Math.abs(dot(d, into)), 0, 1)) * 180) / Math.PI));
+      const on = end.seg !== undefined ? net.segs.get(end.seg) : undefined;
+      plan.joins = end.node !== undefined
+        ? net.segsAt(end.node).length === 1 ? "Carries on the road" : "Joins the junction"
+        : on?.ring ? "Joins the roundabout" : on ? `Joins the ${ROAD_TYPES[on.type].name.toLowerCase()}` : undefined;
+    }
   }
   return plan;
+}
+
+/** Directions of the roads at a snap (both ways along a road; each road out of a junction). */
+export function armsAt(net: RoadNetwork, sn: Snap): V2[] {
+  if (sn.node !== undefined) return net.segsAt(sn.node).map((s) => (s.a === sn.node ? norm(cubicTangent(s.c, 0)) : scale(norm(cubicTangent(s.c, 1)), -1)));
+  if (sn.seg !== undefined) {
+    const s = net.segs.get(sn.seg);
+    if (!s) return [];
+    const t = norm(cubicTangent(s.c, sn.t ?? cubicClosest(s.c, sn.p).t));
+    return [t, scale(t, -1)];
+  }
+  return [];
 }
 
 /** The two roads of a parallel pair must not overlap (a tight curve or a narrow spacing would). */
@@ -1309,7 +1631,7 @@ export function validateStrokes(
   }
   for (const [si, st] of strokes.entries()) {
     const own = perStroke ? perStroke[si] ?? [] : strokes.length === 1 ? anchors : [];
-    if (!st.chain.length) { errors.push({ msg: "Too short", p: anchors[0]?.p ?? { x: 0, y: 0 } }); continue; }
+    if (!st.chain.length) { errors.push({ msg: "Too short: drag further from the start", p: anchors[0]?.p ?? { x: 0, y: 0 } }); continue; }
     const T = ROAD_TYPES[st.type];
     const w = roadWidth(T);
     const pts = chainPoints(st.chain, 2);
@@ -1318,15 +1640,20 @@ export function validateStrokes(
     total += L;
     const hs = strokeHeights(net, st, pts, pl.cum);
     const mid = pts[Math.floor(pts.length / 2)];
-    if (L < MIN_SEG_LEN) { errors.push({ msg: "Too short", p: mid }); continue; }
-    // ramp grade
+    if (L < MIN_SEG_LEN) { errors.push({ msg: `Too short: roads are at least ${MIN_SEG_LEN} m`, p: mid }); continue; }
+    // ramp grade (piece by piece where it has joint heights: a bridge's ramps)
     const dh = Math.abs(st.h1 - st.h0);
-    if (dh > 0.1 && dh / L > MAX_GRADE) {
-      errors.push({ msg: `Ramp too short: needs ${Math.ceil(dh / MAX_GRADE)} m`, p: mid });
+    if (st.hj && st.hj.length === st.chain.length + 1) {
+      for (const [i, c] of st.chain.entries()) {
+        const d = Math.abs(st.hj[i + 1] - st.hj[i]), l = makePolyline(sampleCubic(c, 2)).length;
+        if (d > 0.1 && d / l > MAX_GRADE * 1.02) { errors.push({ msg: `Ramp too short: needs ${Math.ceil(d / MAX_GRADE)} m to climb ${Math.round(d)} m, draw it longer`, p: cubicAt(c, 0.5) }); break; }
+      }
+    } else if (dh > 0.1 && dh / L > MAX_GRADE) {
+      errors.push({ msg: `Ramp too short: needs ${Math.ceil(dh / MAX_GRADE)} m to climb ${Math.round(dh)} m, draw it longer`, p: mid });
     }
-    // curvature
+    // curvature: show where it's too tight
     const r = minRadius(pts, 4);
-    if (r < T.minRadius * 0.98) errors.push({ msg: `Curve too tight for ${T.name} (needs ${T.minRadius} m radius)`, p: mid });
+    if (r < T.minRadius * 0.98) errors.push({ msg: `Curve too tight for ${T.name} (needs ${T.minRadius} m radius): swing wider`, p: tightest(pts) });
     // terrain
     let water = false, mountain = false, out = false;
     for (let i = 0; i < pts.length; i++) {
@@ -1335,8 +1662,8 @@ export function validateStrokes(
       if (world.isMountain(p)) mountain = true;
       if (hs[i] < LEVEL_H * 0.5 && world.isWater(p)) water = true;
     }
-    if (out) errors.push({ msg: "Outside the map", p: mid });
-    if (mountain) errors.push({ msg: "Mountain in the way", p: mid });
+    if (out) errors.push({ msg: "Outside the map: keep inside its edge", p: mid });
+    if (mountain) errors.push({ msg: "Mountain in the way: go round it", p: mid });
     if (water) errors.push({ msg: "Needs a bridge here: raise it with Page Up", p: mid });
     // buildings
     // roundabout islands can't be driven through (a bridge high enough over it is fine)
@@ -1346,37 +1673,37 @@ export function validateStrokes(
       for (const R of rings) for (let i = 0; i < pts.length && !inIsland; i++) {
         if (Math.abs(hs[i] - R.h) < CLEARANCE && dist(pts[i], R.c) < R.r - 3.2) inIsland = pts[i];
       }
-      if (inIsland) errors.push({ msg: "Can't cross a roundabout's centre", p: inIsland });
+      if (inIsland) errors.push({ msg: "Can't cross a roundabout's centre: end on its ring instead", p: inIsland });
     }
     // (a slip lane is checked where it will be built, beside the carriageway, not along the line it is drawn on)
     const vis = st.show ? chainPoints(st.show, 2) : pts;
     const visPl = st.show ? makePolyline(vis) : pl;
     const visH = st.show ? strokeHeights(net, st, vis, visPl.cum) : hs;
     const hit = world.buildingsHit(vis, w / 2 - 0.2);
-    if (hit.length) errors.push({ msg: hit.length === 1 ? "Building in the way" : `${hit.length} buildings in the way`, p: mid, buildings: hit });
+    if (hit.length) errors.push({ msg: hit.length === 1 ? "Building in the way" : `${hit.length} buildings in the way`, p: world.buildingAt?.(hit[0]) ?? mid, buildings: hit });
     // crossings -> junctions
     const cx = findCrossings(net, pts, pl.cum, hs, ignore, skip);
     for (const b of cx.bad) errors.push({ msg: b.msg, p: b.p });
     let prevS = -Infinity;
     for (const c of cx.crossings) {
       crossings.push(c.p);
-      if (c.angle < MIN_ARM_ANGLE) errors.push({ msg: `Crossing too shallow (${Math.round((c.angle * 180) / Math.PI)}°)`, p: c.p });
-      if (c.sPlan - prevS < 14) errors.push({ msg: "Junctions too close together", p: c.p });
+      if (c.angle < MIN_ARM_ANGLE) errors.push({ msg: `Crossing too shallow (${Math.round((c.angle * 180) / Math.PI)}°): cross at a wider angle`, p: c.p });
+      if (c.sPlan - prevS < 14) errors.push({ msg: "Junctions too close together: cross further apart, or bridge over with Page Up", p: c.p });
       prevS = c.sPlan;
       const s = net.segs.get(c.seg)!;
       for (const n of [s.a, s.b]) {
         if (isRingFiller(net, n)) continue; // moved to the new junction when built
         const d = dist(net.nodes.get(n)!.p, c.p);
-        if (d >= 3 && d < 12) errors.push({ msg: "Too close to a junction", p: c.p });
+        if (d >= 3 && d < 12) errors.push({ msg: "Too close to a junction: cross at the junction itself, or 12 m from it", p: c.p });
       }
     }
     if (cx.crossings.length && L - cx.crossings[cx.crossings.length - 1].sPlan < 10 && own[1] && own[1].node === undefined && own[1].seg === undefined) {
-      errors.push({ msg: "Too close to a junction", p: pts[pts.length - 1] });
+      errors.push({ msg: "Too close to a junction: end on the road, or carry on past it", p: pts[pts.length - 1] });
     }
     // overlaps: running along an existing road at the same level
     const glued = (id: number, p: V2) => slips.some((sl) => sl.segs.has(id) && dist(sl.p, p) < sl.r);
     const ov = overlapCheck(net, vis, visH, w, cx.crossings.map((c) => c.p), anchors.map((a) => a.p), ignore, (id, p) => !!skip?.(id, p) || glued(id, p));
-    if (ov) errors.push({ msg: "Overlaps an existing road", p: ov });
+    if (ov) errors.push({ msg: "Overlaps an existing road: move it clear, or end on that road", p: ov });
     // arm angles at anchors
     for (const [ai, a] of own.entries()) {
       const dirOut = ai === 0 ? norm(cubicTangent(st.chain[0], 0)) : scale(norm(cubicTangent(st.chain[st.chain.length - 1], 1)), -1);
@@ -1401,11 +1728,11 @@ export function validateStrokes(
         const ang = Math.acos(clamp(dot(d, dirOut), -1, 1));
         if (oneWayAll && ang < 0.02) continue; // exactly in line: a slip road glued alongside, not a sharp junction
         if (ang < minA) {
-          errors.push({ msg: `Angle too sharp (${Math.round((ang * 180) / Math.PI)}°, min ${Math.round((minA * 180) / Math.PI)}°)`, p: a.p });
+          errors.push({ msg: `Angle too sharp (${Math.round((ang * 180) / Math.PI)}°, min ${Math.round((minA * 180) / Math.PI)}°): meet the road more squarely`, p: a.p });
           break;
         }
       }
-      if (a.node !== undefined && net.segsAt(a.node).length >= 6) errors.push({ msg: "Too many roads at this junction", p: a.p });
+      if (a.node !== undefined && net.segsAt(a.node).length >= 6) errors.push({ msg: "Too many roads at this junction: join the road further along", p: a.p });
     }
     cost += costOfPoints(pts, hs, st.type, world);
   }
@@ -1897,7 +2224,7 @@ export function upgradeCost(net: RoadNetwork, world: BuildWorld, segId: number, 
   const w = roadWidth(T);
   if (w > g.width + 0.1) {
     const hit = world.buildingsHit(pts, w / 2 - 0.2);
-    if (hit.length) errors.push({ msg: hit.length === 1 ? "Building in the way" : `${hit.length} buildings in the way`, p: mid, buildings: hit });
+    if (hit.length) errors.push({ msg: hit.length === 1 ? "Building in the way" : `${hit.length} buildings in the way`, p: world.buildingAt?.(hit[0]) ?? mid, buildings: hit });
   }
   if (cost > world.money() + 0.5) errors.push({ msg: "Not enough money", p: mid });
   return { cost, errors };

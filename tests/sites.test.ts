@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { BUILDING_TYPES } from "../src/config";
-import { add, rectDistance, scale, v2, type V2 } from "../src/core/math";
+import { add, norm, rectDistance, scale, sub, v2, type V2 } from "../src/core/math";
 import { Game } from "../src/game/city";
 import { Industry, PLANTS, PLANT_KINDS, type IndustryHost, type PlantKind } from "../src/game/industry";
 import type { Building } from "../src/game/buildings";
@@ -252,7 +252,7 @@ describe("free placement and the gate", () => {
     expect(lone.link).toBeUndefined();
     // a curving road passing ~140 m in front of the gate, slanted to it
     const at = (o: number, k: number) => add(add(f.gate, scale(out, o)), scale(f.along, k));
-    const curve = planRoad(g.net, g.world, { start: { p: at(110, -260), h: 0, guides: [] }, end: { p: at(200, 260), h: 0, guides: [] }, ctrl: at(120, 40), mode: "curve", type: "street" });
+    const curve = planRoad(g.net, g.world, { start: { p: at(110, -260), h: 0, guides: [] }, end: { p: at(200, 260), h: 0, guides: [] }, startTangent: norm(sub(at(120, 40), at(110, -260))), mode: "curve", type: "street" });
     expect(curve.errors).toEqual([]);
     expect(g.build(curve)).toBe(true);
     const segs = g.net.segs.size, money = g.money;
