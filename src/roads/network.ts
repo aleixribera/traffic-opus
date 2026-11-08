@@ -78,6 +78,8 @@ export interface Lane extends Edge {
   dir: 1 | -1; // 1 = a->b
   idx: number; // 0 = kerb-side (rightmost) lane; a turn pocket's is -1 (right of the kerb lane) or count (left of the inner one)
   count: number; // lanes in this direction (turn pockets not counted)
+  /** on a dirt road: heavy trucks take it slower still */
+  rough?: boolean;
   /** a turn pocket's lane: only so long, before the junction */
   pocket?: "r" | "l";
   /** the stretch of the road's centreline (arc length from a) it runs beside */
@@ -1138,6 +1140,7 @@ export class RoadNetwork {
       return {
         kind: "lane", uid: edgeUid++, key: `${s.id}:${dir}:${idx}`, seg: s.id, dir, idx, count, c0: s0, c1: s1,
         ...(pocket ? { pocket } : {}),
+        ...(T.unpaved ? { rough: true } : {}),
         from: dir === 1 ? s.a : s.b, to: dir === 1 ? s.b : s.a,
         // round a roundabout nobody drives at the road's limit: cap by the ring's curvature, like a connector
         offset: typeof off === "number" ? off : off(dir === 1 ? s1 : s0), pl, hs, speed: s.ring ? Math.min(T.speed, Math.sqrt(SIM.turnLat * Math.max(2, ringR(pl)))) : T.speed, occ: [], outs: [], ins: [],

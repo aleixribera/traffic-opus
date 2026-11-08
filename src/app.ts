@@ -116,7 +116,7 @@ export class App {
   saves = new Saves();
   hud!: Hud;
   st: ToolState = {
-    tool: "inspect", roadType: "street", mode: "curve", level: 0, rbSize: 1, parallel: false, parOffset: null,
+    tool: "inspect", roadType: "dirt", mode: "curve", level: 0, rbSize: 1, parallel: false, parOffset: null,
     snapOff: { geometry: false, guides: false, netSide: false }, snapLength: true, angleLock: false, bdzLevel: null, reverse: false,
     placed: "farm", placeTurn: 0, transitMode: "stop",
   };
@@ -386,6 +386,8 @@ export class App {
     if (this.st.tool === "transit" && !this.game.featureUnlocked("transit")) this.st.tool = "inspect";
     // locked road types can't be picked (keyboard, saved state)
     if (!this.game.roadsUnlocked.has(this.st.roadType)) this.st.roadType = "street";
+    // (a dirt road is drawn on the ground only)
+    if (this.st.tool === "road" && ROAD_TYPES[this.st.roadType].unpaved) this.st.level = 0;
     if ((this.st.tool === "roundabout" && !this.game.featureUnlocked("roundabout"))) this.st.tool = "inspect";
     if (this.st.tool === "place" && !this.game.placedUnlocked(this.st.placed)) this.st.tool = "inspect";
     if (this.buildings3d) this.applyTint();
@@ -398,6 +400,7 @@ export class App {
   }
 
   setLevel(l: number) {
+    if (l > 0 && this.st.tool === "road" && this.st.mode !== "replace" && ROAD_TYPES[this.st.roadType].unpaved) { this.reject("Dirt roads stay on the ground: a bridge on one is built paved, on its own"); return; }
     this.setTool({ level: Math.max(0, Math.min(MAX_LEVEL, l)) });
   }
 
@@ -1160,6 +1163,8 @@ export class App {
   /** Right-angle marks where the planned road leaves or meets another road square. */
   private squareMarks(plan: Plan, end: Snap) {
     const g = this.game, st = plan.strokes[0];
+    // (paving a dirt road builds no new road: nothing to square up)
+    if (!st?.chain.length) return;
     const size = Math.max(3, this.view.mpp * 16);
     const mark = (sn: Snap, out: V2) => {
       for (const d of armsAt(g.net, sn)) {

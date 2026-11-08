@@ -6,7 +6,7 @@ import { add, dist, dist2, rectCorners, rectDistance, scale, sub, type V2 } from
 import { mulberry32 } from "../core/noise";
 import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/network";
 import {
-  applyTrim, chainPoints, cubicClosest, planRoad, snap, strokeProfile, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type LanePlan, type Plan, type PlanError,
+  applyPave, applyTrim, chainPoints, cubicClosest, planRoad, snap, strokeProfile, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type LanePlan, type Plan, type PlanError,
 } from "../roads/planner";
 import { Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import { SITE_LEVELS, siteFrame } from "./sites";
@@ -659,6 +659,8 @@ export class Game {
     const was = new Set(this.buildings.sites.filter((b) => b.access).map((b) => b.id));
     const ops = this.applyRoads(() => {
       if (plan.kind === "roundabout") commitRoundabout(this.net, plan);
+      // drawn over a dirt road: paved in place (the upgrade path, a stretch at a time)
+      else if (plan.pave) applyPave(this.net, plan.pave);
       else {
         // a parallel pair turning a corner: cut the old twin back first
         if (plan.trim) {
@@ -689,7 +691,7 @@ export class Game {
     const moved = this.setBackJoined(was);
     const paid = plan.cost + owed;
     this.money -= paid;
-    this.pushUndo({ label: plan.kind, ops, money: paid, added: [], removed: gone, moved: moved.length ? moved : undefined });
+    this.pushUndo({ label: plan.pave ? "upgrade" : plan.kind, ops, money: paid, added: [], removed: gone, moved: moved.length ? moved : undefined });
     this.emit({ t: "money" });
     if (gone.length || moved.length) this.emit({ t: "buildings" });
     return true;
@@ -731,6 +733,8 @@ export class Game {
   buildFree(plan: Plan, town?: number): boolean {
     if (plan.errors.length) return false;
     const ops = this.applyRoads(() => {
+      // (a town street laid along a dirt road paves it in place; the road stays whoever's it was)
+      if (plan.pave) applyPave(this.net, plan.pave);
       for (const st of plan.strokes) {
         const laid = commitStrokes(this.net, [st]);
         // the streets it laid are the town's (the pieces of a road it split keep whose road it was)

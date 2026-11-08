@@ -60,7 +60,7 @@ const CATS: Record<CatId, { label: string; tabs: Tab[] }> = {
   roads: {
     label: "Roads",
     tabs: [
-      { id: "small", label: "Small roads", assets: [{ kind: "road", id: "one1" }, { kind: "road", id: "street" }, { kind: "road", id: "streetM" }] },
+      { id: "small", label: "Small roads", assets: [{ kind: "road", id: "dirt" }, { kind: "road", id: "one1" }, { kind: "road", id: "street" }, { kind: "road", id: "streetM" }] },
       { id: "medium", label: "Medium roads", assets: [{ kind: "road", id: "one2" }, { kind: "road", id: "avenue" }, { kind: "road", id: "avenueM" }] },
       { id: "large", label: "Large roads", assets: [{ kind: "road", id: "boulevard" }, { kind: "road", id: "boulevardM" }] },
       { id: "highways", label: "Highways", assets: [{ kind: "road", id: "hw1" }, { kind: "road", id: "hw2" }, { kind: "road", id: "one3" }, { kind: "road", id: "one4" }] },
@@ -211,7 +211,7 @@ export class Hud {
   private catBtns = new Map<string, HTMLButtonElement>();
   private cat: CatId | null = null;
   private tab: Record<CatId, string> = { roads: "small", industry: "extraction", transport: "bus" };
-  private lastRoad: RoadTypeId = "street";
+  private lastRoad: RoadTypeId = "dirt";
   private winKind: WinId | null = null;
   /** the one thing selected on the map (its panel is open top right) */
   private sel: Sel | null = null;
@@ -553,8 +553,10 @@ export class Hud {
       w.append(a, v, b);
       return w;
     };
+    // (a dirt road stays on the ground: its bridges are built paved, on their own)
+    const ground = st.tool === "road" && !!ROAD_TYPES[st.roadType].unpaved;
     const elevation = () => sec("Elevation", stepper(st.level === 0 ? "Ground" : `${st.level * LEVEL_H} m`, "lvl lvl" + st.level,
-      () => app.setLevel(st.level - 1), () => app.setLevel(st.level + 1), ["Lower (Page Down)", "Raise (Page Up)"], [st.level <= 0, st.level >= MAX_LEVEL]));
+      () => app.setLevel(st.level - 1), () => app.setLevel(st.level + 1), ["Lower (Page Down)", ground ? "Dirt roads stay on the ground: bridges on them are built paved" : "Raise (Page Up)"], [st.level <= 0, st.level >= MAX_LEVEL || (ground && st.level === 0)]));
     const items: HTMLElement[] = [];
     if (st.tool === "road") {
       const T = ROAD_TYPES[st.roadType];

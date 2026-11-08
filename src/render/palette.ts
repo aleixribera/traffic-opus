@@ -49,6 +49,11 @@ export const PAL = {
   // a bridge's parapets: the cream of the Deco courses on its piers and pylons
   parapet: 0xe6dcc3,
   driveway: 0x77787a,
+  // dirt roads: packed tan earth, paler gravel on the crown, darker wheel ruts, fading out into the grass
+  dirt: 0xb09467,
+  dirtLight: 0xc5ac80,
+  dirtRut: 0x80664a,
+  dirtEdge: 0xa59865,
   bg: 0x9d955a,
 };
 

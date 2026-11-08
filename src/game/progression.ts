@@ -64,7 +64,8 @@ export interface Milestone {
 /** What a company has before any milestone. */
 export const BASE: Required<Pick<Unlocks, "roads" | "features">> = {
   // (the one- and two-lane highways too: hauls between deposits kilometres apart want them from the start)
-  roads: ["street", "one1", "hw1", "hw2"],
+  // (the dirt road too: cheap enough that the first chains' roads, kilometres out, are affordable)
+  roads: ["dirt", "street", "one1", "hw1", "hw2"],
   features: ["parallel"],
 };
 

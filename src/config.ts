@@ -11,7 +11,7 @@ export const MIN_ARM_ANGLE = (24 * Math.PI) / 180;
 export const NODE_SNAP_PX = 18;
 export const ROAD_SNAP_PX = 14;
 
-export type RoadTypeId = "street" | "avenue" | "boulevard" | "streetM" | "avenueM" | "boulevardM" | "one1" | "one2" | "hw1" | "hw2" | "one3" | "one4";
+export type RoadTypeId = "dirt" | "street" | "avenue" | "boulevard" | "streetM" | "avenueM" | "boulevardM" | "one1" | "one2" | "hw1" | "hw2" | "one3" | "one4";
 
 export interface RoadType {
   id: RoadTypeId;
@@ -27,11 +27,18 @@ export interface RoadType {
   hint: string;
   /** Width of a planted median between the two directions (m). Nobody crosses it: driveways are right-in, right-out. */
   median?: number;
+  /**
+   * Packed earth, not asphalt (the dirt road): no markings, kerbs or pavement, only on the ground (a bridge on it is
+   * built as a paved street deck), and heavy trucks take it slower still.
+   */
+  unpaved?: boolean;
 }
 
 const kmh = (k: number) => k / 3.6;
 
 export const ROAD_TYPES: Record<RoadTypeId, RoadType> = {
+  // (as wide as a street, so paving it is a change of surface that moves no lot; rank 0: it gives way to every paved road)
+  dirt: { id: "dirt", name: "Dirt road", short: "1+1", fwd: 1, bwd: 1, speed: kmh(32), costPerM: 1.5, minRadius: 9, allowsAccess: true, rank: 0, unpaved: true, hint: "Cheap and slow: packed earth at a quarter of a street's price. Houses can face it. Pave it later by drawing a Street over it. It stays on the ground: a bridge on it is built as a paved street." },
   street: { id: "street", name: "Street", short: "1+1", fwd: 1, bwd: 1, speed: kmh(50), costPerM: 6, minRadius: 9, allowsAccess: true, rank: 1, hint: "Two-way, one lane each way. Houses and shops can face it." },
   avenue: { id: "avenue", name: "Avenue", short: "2+2", fwd: 2, bwd: 2, speed: kmh(60), costPerM: 13, minRadius: 14, allowsAccess: true, rank: 2, hint: "Two-way, two lanes each way. Buildings can still face it." },
   boulevard: { id: "boulevard", name: "Boulevard", short: "3+3", fwd: 3, bwd: 3, speed: kmh(70), costPerM: 21, minRadius: 20, allowsAccess: false, rank: 3, hint: "Two-way, three lanes each way. Too busy for driveways." },
@@ -46,10 +53,15 @@ export const ROAD_TYPES: Record<RoadTypeId, RoadType> = {
   one4: { id: "one4", name: "Highway 4", short: "4", fwd: 4, bwd: 0, speed: kmh(120), costPerM: 21, minRadius: 40, allowsAccess: false, rank: 4, hint: "Four-lane carriageway for the heaviest flows." },
 };
 
-export const ROAD_ORDER: RoadTypeId[] = ["one1", "street", "streetM", "one2", "avenue", "avenueM", "hw1", "hw2", "one3", "boulevard", "boulevardM", "one4"];
+export const ROAD_ORDER: RoadTypeId[] = ["dirt", "one1", "street", "streetM", "one2", "avenue", "avenueM", "hw1", "hw2", "one3", "boulevard", "boulevardM", "one4"];
 
 /** Motorway carriageways and ramps: one-way and closed to driveways. Drawn in darker asphalt with solid edge lines. */
 export const isHighway = (t: RoadType): boolean => t.bwd === 0 && !t.allowsAccess;
+
+/** A dirt road: packed earth, no markings, kerbs or pavement, only on the ground. */
+export const isUnpaved = (t: RoadType): boolean => !!t.unpaved;
+/** What a dirt road becomes where it has to leave the ground (a bridge and its ramps): a plain paved street. */
+export const PAVED_DECK: RoadTypeId = "street";
 
 /** The road families of the build menu; each has its own look. */
 export type RoadGroup = "small" | "medium" | "large" | "highway";
