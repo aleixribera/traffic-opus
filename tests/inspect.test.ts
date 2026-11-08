@@ -91,15 +91,16 @@ describe("The inspector's panels", () => {
     expect(m.related.from).toContain(farm.id);
   });
 
-  it("a town: people, how well supplied, and what it lacks most", () => {
+  it("a town: people, how many of its needs are met, and how it grows in words", () => {
     const t = g.towns.list[0];
     const m = townModel(g, t, led);
-    expect(m.keys).toHaveLength(3);
+    expect(m.keys).toHaveLength(2);
     expect(m.keys[0].value).toBe(fmtNum(t.pop));
     expect(m.keys[0].label).toMatch(/^people/);
-    expect(m.keys[1].label).toMatch(/supplied$/);
-    expect(m.keys[1].value).toMatch(/^(\d+%|–)$/);
-    expect(m.keys[2].label).toMatch(/most missing|needs all met/);
+    // (each need is read out in the panel's "What it needs" rows: tests/needs.test.ts)
+    expect(m.keys[1].label).toBe("needs met");
+    expect(m.keys[1].value).toMatch(/^\d+$/);
+    expect(m.status.text).not.toMatch(/\d/);
     expect(m.related.self).toContain(t.hall);
   });
 

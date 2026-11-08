@@ -17,6 +17,7 @@ import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId } from
 import { ROUNDABOUTS, type RoundaboutSize } from "../roads/planner";
 import { ICON, buildingIcon, placedIcon, productIcon, roadIcon } from "./icons";
 import { TradeLedger, approaches, modelOf, sameSel, type FlowChip, type PanelModel, type Sel } from "./inspect";
+import { comingNeeds, growthOf, townNeeds, type NeedView } from "./needs";
 import type { Lane } from "../roads/network";
 import { CHANGELOG } from "../changelog";
 import { PLACED, PLACED_TABS, type PlacedKind } from "../game/placed";
@@ -1144,12 +1145,10 @@ export class Hud {
     const s = g.people.stats;
     const rows = g.towns.list.map((t) => {
       const tr = trendOf(t);
-      // its worst-supplied need
-      let worst: Product | null = null;
-      for (const p of needsOf(t.pop)) if (t.supply[p] !== undefined && (worst === null || t.supply[p]! < t.supply[worst]!)) worst = p;
-      const ws = worst ? t.supply[worst]! : 1;
+      // its worst-supplied need, in the panel's words ("Food · Running low")
+      const worst = townNeeds(t).reduce<NeedView | null>((w, v) => (!w || v.got / v.want < w.got / w.want ? v : w), null);
       const need = worst && t.pop >= 60
-        ? `<span class="tw-need ${ws >= 0.8 ? "" : ws >= 0.5 ? "mid" : "low"}">${productIcon(worst)}${PRODUCTS[worst].name} ${Math.round(ws * 100)}%</span>`
+        ? `<span class="tw-need ${worst.state === "low" ? "mid" : worst.state === "none" ? "low" : ""}">${productIcon(worst.p)}${PRODUCTS[worst.p].name} · ${worst.word}</span>`
         : "";
       return `<li><button class="tw-row" data-id="${t.id}"><span class="tw-name"><b>${escapeHtml(t.name)}</b><span class="small muted">${g.towns.sizeName(t)} · ${fmtNum(t.pop)} people</span></span>${miniSpark(t.hist.pop.slice(-72))}<span class="tw-right"><span class="tw-trend ${tr.cls}">${tr.short}</span>${need}</span></button></li>`;
     }).join("");
@@ -1348,7 +1347,7 @@ export class Hud {
    * a status line with its mark, three key numbers, the flow in and out as chips, the level bar, then whatever else
    * there is to read tucked under Details (open or shut per kind, remembered).
    */
-  private anatomy(m: PanelModel, o: { actions?: string; body?: string; details?: string; kind: string }): string {
+  private anatomy(m: PanelModel, o: { actions?: string; lead?: string; body?: string; details?: string; kind: string }): string {
     const st = m.status;
     const keys = m.keys.length ? `<div class="ip-keys" style="--n:${m.keys.length}">${m.keys.map((k) => `<div class="ip-key"${k.title ? ` title="${escapeHtml(k.title)}"` : ""}><b class="${k.tone ?? ""}">${escapeHtml(k.value)}${k.unit ? `<small>${escapeHtml(k.unit)}</small>` : ""}</b><span>${escapeHtml(k.label)}</span></div>`).join("")}</div>` : "";
     const chip = (c: FlowChip) => {
@@ -1369,7 +1368,7 @@ export class Hud {
     return `<header class="ip-head"><span class="svc-tag${/^(junction|roundabout|road:)/.test(m.icon) ? " lit" : ""}">${iconFor(m.icon)}</span><span class="ip-t"><span class="ip-tn">${escapeHtml(m.title)}</span>${m.sub ? `<small class="ip-ts">${escapeHtml(m.sub)}</small>` : ""}</span>${m.badge ? `<span class="lv-badge" title="Site level">${m.badge}</span>` : ""}${o.actions ?? ""}</header>
       <p class="ip-st ${st.tone}"><i aria-hidden="true"></i><span class="ip-st-t">${escapeHtml(st.text)}</span>${st.tag ? `<span class="ip-tag">${escapeHtml(st.tag)}</span>` : ""}</p>
       ${st.fix ? `<p class="ip-fix">${escapeHtml(st.fix)}</p>` : ""}
-      ${keys}${flow}${lv}${o.body ?? ""}${details}`;
+      ${o.lead ?? ""}${keys}${flow}${lv}${o.body ?? ""}${details}`;
   }
 
   /** The small icon buttons in a panel's header: demolish (two clicks), follow. */
@@ -1456,24 +1455,31 @@ export class Hud {
   private fillTown(m: PanelModel) {
     const g = this.app.game, t = g.towns.byId.get(this.sel!.id)!;
     const si = sizeOf(t.pop), next = TOWN_SIZES[si + 1];
-    // its needs: what it takes to grow (the mark), what its shops buy at most (the whole bar), what came yesterday
+    // its needs, readable by a child (docs/design.md, 2026-11-08): per product its picture, one word for how it is
+    // doing, a row of crates (loads a day coming against loads a day wanted) and what to do. The figures sit in each
+    // row's tooltip and under Details.
     const mine = g.towns.buildingsOf(t);
     const stations = mine.filter((b) => BUILDING_TYPES[b.kind].fuel).length;
     const offices = mine.some((b) => Industry.isOffice(b) && b.built >= 1 && !b.abandoned);
-    const needs = needsOf(t.pop).map((p) => {
-      const buyer = p === "fuel" && stations ? "Filling stations buy" : p === "machinery" && offices ? "Offices buy" : "Shops buy";
-      const share = t.supply[p];
-      const want = demandPerDay(p, t.pop), market = want * MARKET;
-      const got = t.yesterday[p] ?? 0, today = t.today[p] ?? 0;
-      const pct = share === undefined ? null : Math.round(share * 100);
-      const col = share === undefined ? "" : share >= 0.8 ? "ok" : share >= 0.5 ? "mid" : "low";
-      const fill = Math.min(100, (got / market) * 100);
-      return `<li class="tn-need">
-          <span class="tn-need-top">${productIcon(p)}<b>${PRODUCTS[p].name}</b><span class="num ${col}">${pct === null ? "New need" : `${pct}% of needs`}</span></span>
-          <span class="bar need ${col} tn-bar" role="img" aria-label="${fmtLoads(got)} loads yesterday, ${fmtLoads(want)} needed to grow, ${buyer.toLowerCase()} up to ${fmtLoads(market)}"><i style="width:${Math.max(1.5, fill)}%"></i><em style="left:${100 / MARKET}%"></em></span>
-          <span class="tn-need-sub small muted"><span>Yesterday ${fmtLoads(got)} of ${fmtLoads(want)} needed</span><span>${buyer} up to ${fmtLoads(market)} · ${fmtLoads(today)} so far today</span></span>
+    const buyer = (p: Product) => (p === "fuel" && stations ? "Filling stations buy" : p === "machinery" && offices ? "Offices buy" : "Shops buy");
+    const views = townNeeds(t);
+    const rows = views.map((v) => {
+      const tip = `${fmtLoads(v.got)} loads a day coming, of the ${fmtLoads(v.want)} it needs to grow. ${buyer(v.p)} up to ${fmtLoads(v.want * MARKET)} a day; ${fmtLoads(t.today[v.p] ?? 0)} so far today.`;
+      const crates = Array.from({ length: v.crates.n }, (_, i) => `<i class="cr${i < v.crates.full ? " on" : ""}"></i>`).join("");
+      const each = v.crates.per > 1 ? `<span class="nd-each">1 crate = ${fmtNum(v.crates.per)} loads</span>` : "";
+      return `<li class="nd ${v.state}" title="${escapeHtml(tip)}">
+          <span class="nd-ic" aria-hidden="true">${productIcon(v.p)}</span>
+          <span class="nd-top"><b>${PRODUCTS[v.p].name}</b><span class="nd-st">${v.word}</span></span>
+          <span class="nd-crates" role="img" aria-label="${v.crates.full} of ${v.crates.n} crates filled">${crates}${each}</span>
+          <span class="nd-say">${escapeHtml(v.say)}</span>
         </li>`;
     }).join("");
+    const cn = comingNeeds(t.pop);
+    const soon = cn
+      ? `<p class="nd-soon">${cn.products.map((p) => `<span class="nd-ic" aria-hidden="true">${productIcon(p)}</span>`).join("")}<span><b>Soon: ${cn.products.map((p) => PRODUCTS[p].name).join(" and ")}</b> <span class="muted">when it reaches ${fmtNum(cn.pop)} people</span></span></p>`
+      : "";
+    const lead = `<h3 class="sub-h nd-h">What it needs</h3><ul class="nds">${rows}</ul>${soon}`;
+    const figures = views.map((v) => `<dt title="${buyer(v.p)} up to ${fmtLoads(v.want * MARKET)} a day; ${fmtLoads(t.today[v.p] ?? 0)} so far today">${PRODUCTS[v.p].name}</dt><dd>${fmtLoads(v.got)} <span class="muted">of ${fmtLoads(v.want)}</span></dd>`).join("");
     // what it is short of, and what that costs it
     const shortOf = needsOf(t.pop).filter((p) => (t.supply[p] ?? 1) < 0.8);
     let cost = "";
@@ -1499,26 +1505,23 @@ export class Hud {
     }
     const hall = g.buildings.byId.get(t.hall);
     const hallLine = hall ? `${BUILDING_TYPES[hall.kind].name}${hall.built < 1 ? ` <span class="muted">· building, ${Math.round(hall.built * 100)}%</span>` : ""}` : "None yet";
-    const adds = next ? next.adds.filter((p) => needFrom(p) === next.pop).map((p) => PRODUCTS[p].name.toLowerCase()) : [];
-    // a need that comes before the next size (cement in a grown village)
-    const nn = nextNeed(t.pop);
-    const soon = nn && (!next || nn.pop < next.pop) ? nextLine(t.pop, next) : adds.length ? `<p class="small muted">As a ${next!.name.toLowerCase()} it needs ${adds.join(" and ")} as well.</p>` : "";
     const details = `${townChart(t, next)}
       <dl class="facts">
         <dt>Households</dt><dd>${fmtNum(t.households)} <span class="muted">of ${fmtNum(t.homes)} homes</span></dd>
+        <dt>Growth</dt><dd class="${t.trend >= 0.5 ? "good" : t.trend <= -0.5 ? "bad" : ""}">${Math.abs(t.trend) < 0.5 ? "none" : `${t.trend > 0 ? "+" : "−"}${plural(Math.abs(Math.round(t.trend)), "household")} a day`}</dd>
         <dt>Shops and offices</dt><dd>${t.shops} <span class="muted">· ${fmtNum(jobs)} jobs</span></dd>
         <dt>Hall</dt><dd>${hallLine}</dd>
         ${rebuilding ? `<dt>Rebuilding</dt><dd>${plural(rebuilding, "site")}</dd>` : ""}
         ${stations ? `<dt>Filling stations</dt><dd>${stations}</dd>` : ""}
         ${waiting ? `<dt>Waiting for parts</dt><dd class="${waiting > 3 ? "bad" : ""}">${plural(waiting, "block")}, ${plural(partsLeft, "load")}</dd>` : ""}
       </dl>
-      <h3 class="sub-h">Needs, loads a day</h3>
-      <ul class="tn-needs">${needs}</ul>
+      <h3 class="sub-h">Needs in figures <span class="muted">loads a day</span></h3>
+      <dl class="facts">${figures}</dl>
+      <p class="small muted">Its shops buy up to ${MARKET}× what it needs to grow, so extra loads still sell.</p>
       ${cost}
-      ${soon}
       <h3 class="sub-h">Delivered yesterday</h3>
       ${deliveries}`;
-    this.setPanel(this.anatomy(m, { kind: "town", details }));
+    this.setPanel(this.anatomy(m, { kind: "town", lead, details }));
   }
 
   private fillBuilding(b: Building, m: PanelModel) {
@@ -2080,23 +2083,10 @@ function siteText(o: Partial<Record<Product, number>>): string {
   return (Object.entries(o) as [Product, number][]).map(([p, n]) => `${plural(n, "load")} of ${PRODUCTS[p].name.toLowerCase()}`).join(" and ");
 }
 
-/** A town's next step up: the next need it adds (cement in a grown village), or its next size. */
-function nextLine(pop: number, next: (typeof TOWN_SIZES)[number] | undefined): string {
-  const n = nextNeed(pop);
-  const from = (q: number) => TOWN_SIZES.flatMap((s) => s.adds).filter((p) => needFrom(p) === q).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ");
-  if (n && (!next || n.pop < next.pop)) return `<p class="small muted">At ${fmtNum(n.pop)} people it needs ${from(n.pop)} as well.</p>`;
-  if (!next) return "";
-  const adds = from(next.pop);
-  return `<p class="small muted">${next.name} at ${fmtNum(next.pop)} people${adds ? `: needs ${adds} as well` : ""}.</p>`;
-}
-
-/** Which way a town is heading, short (the Towns list) and long (its panel). */
-function trendOf(t: Town): { short: string; long: string; cls: string } {
-  if (t.pop < 60) return { short: "Settling", long: "Settling in: its first homes go up on their own", cls: "" };
-  const short = needsOf(t.pop).filter((p) => (t.supply[p] ?? 1) < 0.5).map((p) => PRODUCTS[p].name.toLowerCase());
-  if (t.trend >= 0.5) return { short: `+${Math.round(t.trend)}/day`, long: `Growing: about ${Math.round(t.trend)} more households a day`, cls: "good" };
-  if (t.trend <= -0.5) return { short: `${Math.round(t.trend)}/day`, long: `Shrinking: short of ${short.join(" and ") || "supplies"}`, cls: "bad" };
-  return { short: "Steady", long: short.length ? `Not growing: short of ${short.join(" and ")}` : "Holding steady", cls: short.length ? "bad" : "" };
+/** Which way a town is heading, in a word (the Towns list): no numbers, as in its panel (needs.ts growthOf). */
+function trendOf(t: Town): { short: string; cls: string } {
+  const gr = growthOf(t);
+  return { short: gr.word, cls: gr.tone };
 }
 
 function clonePlan(p: SignalPlan): SignalPlan {

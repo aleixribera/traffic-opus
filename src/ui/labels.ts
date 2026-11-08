@@ -11,11 +11,14 @@ export interface MapLabel {
   onClick?: () => void;
   /** what the button says to a screen reader */
   title?: string;
-  /** a slim bar under the name: how well the place is supplied (0..1), coloured by how it is doing */
-  bar?: { share: number; cls: "ok" | "mid" | "low" };
-  /** small pictograms of what it is short of (svg markup), shown only while zoomed in closer than iconsMaxHalfH */
-  icons?: string[];
-  iconsMaxHalfH?: number;
+  /**
+   * small pictograms under the name (svg markup), each on a ringed disc whose class tints it ("plenty", "enough",
+   * "low", "none", "noroad"); zoomed out past compactHalfH they shrink and the fine ones ("plenty", "enough") drop out
+   */
+  icons?: { svg: string; cls: string }[];
+  /** a few words beside the pictograms ("No road yet") */
+  note?: string;
+  compactHalfH?: number;
 }
 
 /** Place names drawn over the map: station nameplates, so a name reads the same over grass, asphalt or roofs. */
@@ -39,22 +42,18 @@ export class MapLabels {
       const e = document.createElement(l.onClick ? "button" : "div");
       e.className = "map-label" + (l.onClick ? " click" : "");
       if (l.onClick) { e.onclick = l.onClick; e.title = l.title ?? l.name; e.setAttribute("aria-label", l.title ?? l.name); }
-      // (a nameplate: the name, its size on a tab hung under it, the supply gauge under that)
+      // (a nameplate: the name, its size on a tab hung under it, its needs under that)
       e.innerHTML = `<span class="ml-plate"><b></b>${l.sub ? "<span></span>" : ""}</span>`;
       const plate = e.firstElementChild as HTMLElement;
       plate.querySelector("b")!.textContent = l.name;
       if (l.sub) plate.querySelector("span")!.textContent = l.sub;
-      if (l.bar) {
-        const bar = document.createElement("i");
-        bar.className = `ml-bar ${l.bar.cls}`;
-        bar.innerHTML = `<i style="width:${Math.max(4, Math.min(100, l.bar.share * 100)).toFixed(0)}%"></i>`;
-        plate.appendChild(bar);
-      }
       let icons: HTMLElement | null = null;
       if (l.icons?.length) {
-        icons = document.createElement("i");
+        icons = document.createElement("span");
         icons.className = "ml-icons";
-        icons.innerHTML = l.icons.map((x) => `<i>${x}</i>`).join("");
+        icons.setAttribute("aria-hidden", "true");
+        icons.innerHTML = l.icons.map((x) => `<i class="${x.cls}">${x.svg}</i>`).join("") + (l.note ? "<em></em>" : "");
+        if (l.note) icons.querySelector("em")!.textContent = l.note;
         e.appendChild(icons);
       }
       this.el.appendChild(e);
@@ -67,7 +66,7 @@ export class MapLabels {
       const s = view.toScreen(l.p);
       const on = view.halfH >= (l.minHalfH ?? 0) && s.x > -100 && s.y > -40 && s.x < view.w + 100 && s.y < view.h + 40;
       el.style.display = on ? "" : "none";
-      if (on && icons) icons.style.display = view.halfH <= (l.iconsMaxHalfH ?? Infinity) ? "" : "none";
+      if (on && icons) icons.classList.toggle("far", view.halfH > (l.compactHalfH ?? Infinity));
       if (on) el.style.transform = `translate(${s.x.toFixed(1)}px, ${s.y.toFixed(1)}px) translate(-50%, -50%)`;
     }
   }

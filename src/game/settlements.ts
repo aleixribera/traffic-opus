@@ -62,7 +62,7 @@ export function compassWords(a: V2, b: V2): string {
 /** Households a new town starts out wanting. */
 const START_HOUSEHOLDS = 24;
 /** Hours of its own deliveries a town needs before its supply rolls on them, and the hours that stand for a full day. */
-const ROLL_MIN = 4, ROLL_FULL = 8;
+export const ROLL_MIN = 4, ROLL_FULL = 8;
 /** How many times its needs a town's shops will buy in a day. */
 export const MARKET = 3;
 /** Households per shop the town keeps open. */

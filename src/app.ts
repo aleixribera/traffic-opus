@@ -23,7 +23,7 @@ const PLACE_TURN_PER_PX = (10 * Math.PI) / 180 / 100;
 const FINE_TURN = Math.PI / 180;
 import { ZONES } from "./game/zones";
 import { MIN_DEPOSIT, PLANTS, PRODUCTS, UNPOWERED, isPlantKind, type Product } from "./game/industry";
-import { needsOf } from "./game/towns";
+import { labelNeeds, type LabelNeeds } from "./ui/needs";
 import { productIcon } from "./ui/icons";
 import { TownPings } from "./ui/townPings";
 import { STUCK_KEEP, StuckAlerts } from "./ui/stuckAlerts";
@@ -1513,29 +1513,37 @@ export class App {
     requestAnimationFrame(this.frame);
   };
 
-  /** The towns' names on the map, with their size, how well supplied they are and what they are short of; click one to open its panel. */
+  /**
+   * The towns' names on the map, with their size and, under them, the needs that want seeing to: each need's picture
+   * on a disc tinted by how it is doing (fine, running low, none), nothing at all while every need is met, and a town
+   * no road reaches yet says so. Click one to open its panel.
+   */
   private townLabels() {
     const g = this.game;
     const hide = this.uiHidden || this.mode === "menu";
-    const info = g.towns.list.map((t) => {
-      const needs = needsOf(t.pop).filter((p) => t.supply[p] !== undefined);
-      const worst = needs.length ? Math.min(...needs.map((p) => t.supply[p]!)) : 1;
-      const short = t.pop >= 60 ? needs.filter((p) => t.supply[p]! < 0.8) : [];
-      return { t, worst, short, settled: t.pop >= 60 && needs.length > 0 };
-    });
-    const key = hide ? "" : info.map(({ t, worst, short }) => `${t.id}:${t.name}:${g.towns.sizeName(t)}:${t.pop}:${Math.round(worst * 20)}:${short.join(",")}`).join("|");
+    const info = g.towns.list.map((t) => ({ t, ln: labelNeeds(t) }));
+    const sig = (ln: LabelNeeds) => (ln.kind === "calm" ? "" : ln.kind === "noroad" ? `x${ln.needs.join(",")}` : ln.needs.map((n) => `${n.p}.${n.state}`).join(","));
+    const key = hide ? "" : info.map(({ t, ln }) => `${t.id}:${t.name}:${g.towns.sizeName(t)}:${t.pop}:${sig(ln)}`).join("|");
     if (key === this.labelKey) return;
     this.labelKey = key;
-    this.labels.set(hide ? [] : info.map(({ t, worst, short, settled }) => {
+    this.labels.set(hide ? [] : info.map(({ t, ln }) => {
       const size = g.towns.sizeName(t);
       const pop = t.pop.toLocaleString("en-US");
-      const shortText = short.length ? `, short of ${short.map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ")}` : "";
+      const words = (ps: Product[]) => ps.map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ");
+      let say = "";
+      if (ln.kind === "noroad") say = ", no road reaches it yet";
+      else if (ln.kind === "needs") {
+        const none = ln.needs.filter((n) => n.state === "none").map((n) => n.p), low = ln.needs.filter((n) => n.state === "low").map((n) => n.p);
+        say = `${none.length ? `, no ${words(none)} coming` : ""}${low.length ? `, running low on ${words(low)}` : ""}`;
+      }
       return {
         p: t.c, name: t.name, sub: `${size} · ${pop}`, minHalfH: 160,
-        title: `${t.name}, ${size} of ${pop} people${shortText}. Open the town`,
-        bar: settled ? { share: worst, cls: worst >= 0.8 ? "ok" : worst >= 0.5 ? "mid" : "low" } : undefined,
-        icons: short.map((p) => productIcon(p)),
-        iconsMaxHalfH: 9000,
+        title: `${t.name}, ${size} of ${pop} people${say}. Open the town`,
+        icons: ln.kind === "calm" ? undefined
+          : ln.kind === "noroad" ? ln.needs.map((p) => ({ svg: productIcon(p), cls: "noroad" }))
+          : ln.needs.map((n) => ({ svg: productIcon(n.p), cls: n.state })),
+        note: ln.kind === "noroad" ? "No road yet" : undefined,
+        compactHalfH: 9000,
         onClick: () => { this.setTool({ tool: "inspect" }); this.hud?.openTown(t.id); },
       };
     }));

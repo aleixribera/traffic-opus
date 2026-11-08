@@ -13,9 +13,10 @@ import { ZONE_GROUP } from "../game/growables";
 import { Industry, PLANTS, PRODUCTS, isPlantKind, type Product } from "../game/industry";
 import { LEVEL_MULT, SITE_LEVELS, growNeed } from "../game/sites";
 import { HOUR } from "../game/society";
-import { TOWN_SIZES, demandPerDay, needsOf, sizeOf } from "../game/towns";
+import { TOWN_SIZES, sizeOf } from "../game/towns";
 import { TRUCK_CLASSES } from "../game/trucks";
 import { served, type Town } from "../game/settlements";
+import { growthOf, townNeeds } from "./needs";
 import type { Lane } from "../roads/network";
 import { dkSeg } from "../sim/router";
 import type { Vehicle } from "../sim/traffic";
@@ -380,28 +381,21 @@ export function townStatus(t: Town): { text: string; tone: Tone; fix?: string } 
   // (a town that sprang up stands cut off till the company's trucks first reach it)
   if (t.spawned && !served(t)) return { text: "No road yet", tone: "", fix: "Lay a road out to it and send it food: a new market, and a longer drive for your trucks" };
   if (t.pop < 60) return { text: "Settling in", tone: "", fix: "Its first homes go up on their own" };
-  const short = needsOf(t.pop).filter((p) => (t.supply[p] ?? 1) < 0.5).map(lower);
-  if (t.trend >= 0.5) return { text: `Growing, +${Math.round(t.trend)} households a day`, tone: "good" };
-  if (t.trend <= -0.5) return { text: "Shrinking", tone: "bad", fix: `Short of ${short.join(" and ") || "supplies"}: bring more by road` };
-  return short.length ? { text: "Not growing", tone: "bad", fix: `Short of ${short.join(" and ")}: bring more by road` } : { text: "Holding steady", tone: "" };
+  // (in words, no numbers: the figure is under Details; what to bring is in the "What it needs" rows)
+  const gr = growthOf(t);
+  return { text: gr.why ? `${gr.word}, ${gr.why}` : gr.word, tone: gr.tone };
 }
 
 export function townModel(g: Game, t: Town, led?: TradeLedger): PanelModel {
   const si = sizeOf(t.pop), next = TOWN_SIZES[si + 1];
-  const needs = needsOf(t.pop);
-  const known = needs.filter((p) => t.supply[p] !== undefined);
-  const avg = known.length ? known.reduce((a, p) => a + t.supply[p]!, 0) / known.length : null;
-  const worst = known.length ? known.reduce((a, p) => (t.supply[p]! < t.supply[a]! ? p : a), known[0]) : null;
+  // (each need read out once, in the panel's "What it needs" rows: the keys only count them, no percentages; how fast
+  // it grows is the status line's word, its figure under Details)
+  const views = townNeeds(t);
+  const met = views.filter((v) => v.state === "plenty" || v.state === "enough").length;
   const keys: KeyNum[] = [
-    { value: fmtNum(t.pop), label: t.pop >= 60 && Math.abs(t.trend) >= 0.5 ? `people · ${t.trend > 0 ? "+" : "−"}${Math.abs(Math.round(t.trend))} homes/day` : "people", title: `${fmtNum(t.households)} households` },
-    avg === null
-      ? { value: "–", label: "supplied", title: "No full day of deliveries yet" }
-      : { value: `${Math.round(avg * 100)}%`, label: "needs supplied", tone: toneOf(avg), title: "The average share of its needs delivered yesterday" },
+    { value: fmtNum(t.pop), label: "people", title: `${fmtNum(t.households)} households` },
+    { value: String(met), unit: `/${views.length}`, label: "needs met", tone: met === views.length ? "good" : "bad", title: "Needs with enough coming for the town to grow" },
   ];
-  if (worst && t.supply[worst]! < 0.8) {
-    const more = Math.max(1, demandPerDay(worst, t.pop) - (t.yesterday[worst] ?? 0));
-    keys.push({ value: PRODUCTS[worst].name, label: `most missing · ${fmtRate(more)} more/day`, tone: "bad", title: `${Math.round(t.supply[worst]! * 100)}% of its ${lower(worst)} came yesterday` });
-  } else keys.push({ value: worst ? "None" : "–", label: worst ? "needs all met" : "most missing", tone: worst ? "good" : "" });
   const rel = emptyRel();
   if (t.hall) rel.self.push(t.hall);
   // its suppliers: the company's sites whose trucks came to its shops lately
@@ -417,9 +411,8 @@ export function townModel(g: Game, t: Town, led?: TradeLedger): PanelModel {
   }
   rel.from = [...sup.keys()];
   for (const v of g.traffic.vehicles) if (v.trip.haul && v.trip.haul.leg === "out" && !v.trip.haul.done && mine.has(v.trip.haul.dest)) rel.vehicles.push(v.id);
-  const flow: FlowRow[] = [
-    { label: "Needs", chips: needs.map((p) => ({ product: p, text: PRODUCTS[p].name, note: t.supply[p] === undefined ? "new" : `${Math.round(t.supply[p]! * 100)}%`, tone: t.supply[p] === undefined ? "" : toneOf(t.supply[p]!) })) },
-  ];
+  // (its needs are the panel's own "What it needs" rows, so the strip only shows where they come from)
+  const flow: FlowRow[] = [];
   if (from.length) flow.push({ label: "From", chips: from.slice(0, 5) });
   const level = next ? { label: next.name, pct: Math.min(1, t.pop / next.pop), line: `${Math.min(99, Math.floor((t.pop / next.pop) * 100))}% · at ${fmtNum(next.pop)} people` } : undefined;
   return { title: t.name, sub: TOWN_SIZES[si].name, icon: "town", status: townStatus(t), keys, flow, level, related: rel };
@@ -455,7 +448,7 @@ export function homeModel(g: Game, b: Building): PanelModel {
   rel.self.push(b.id);
   if (town?.hall) rel.from.push(town.hall);
   const flow: FlowRow[] = town ? [{ label: "Town", chips: [{ town: true, text: town.name, note: TOWN_SIZES[sizeOf(town.pop)].name.toLowerCase(), ref: { k: "town", id: town.id } }] }] : [];
-  if (town && grp === "res") flow.push({ label: "Needs", chips: needsOf(town.pop).map((p) => ({ product: p, text: PRODUCTS[p].name, note: town.supply[p] === undefined ? "new" : `${Math.round(town.supply[p]! * 100)}%`, tone: town.supply[p] === undefined ? "" : toneOf(town.supply[p]!) })) });
+  if (town && grp === "res") flow.push({ label: "Needs", chips: townNeeds(town).map((v) => ({ product: v.p, text: PRODUCTS[v.p].name, note: v.word.toLowerCase(), tone: v.state === "plenty" || v.state === "enough" ? "good" : "bad" })) });
   const name = T.fuel || !b.zone ? T.name : grp === "res" ? "Home" : grp === "com" ? "Shop" : T.name;
   return { title: name, sub: town?.name, icon: b.kind, badge: b.zone ? `Lv ${b.level}/5` : undefined, status, keys, flow, related: rel };
 }

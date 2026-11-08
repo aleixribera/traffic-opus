@@ -427,7 +427,24 @@ A town should visibly turn from a hamlet into a city over a playthrough: bigger,
   the label shows the new size.
 - **Towns are inspectable.** Click a town (label or hall) for its panel: population over time, supply per need
   with a bar each, growth toward the next size, deliveries per product, homes, jobs, and what it is short of.
-  The map shows each town's label with a supply bar and an icon for any need in shortage.
+  The map shows each town's label with an icon for any need in shortage.
+- **Needs a child can read (owner, 2026-11-08: "I don't understand this part. Can you make it easier to see, like
+  for children almost, and also add icons to the town").** Each need in the town panel is its picture, its name, one
+  word ("Plenty", "Enough", "Running low", "None!") and a row of crates: the loads a day coming, filled, against the
+  loads a day it wants (at most ten crates; past ten loads each crate stands for a round number of them, said under
+  the row). Under that, one sentence of what to do ("Bring 4 more loads of food a day", "Food is fine"). The words
+  follow the sim: "Enough" from 80% of a day's need (where growthPerDay grows a town at full pace), "Plenty" from
+  all of it, "None!" while not one crate's worth is coming. The need still to come shows greyed: "Soon: Planks, when
+  it reaches 100 people". The figures (loads a day, what the shops buy at most, today's tally) sit in the row's
+  tooltip and under Details. On the map, a town's nameplate shows its needs only while one wants seeing to: each
+  picture on a disc ringed green, ochre or brick (with a "!" for none), the fine ones smaller; zoomed far out only the
+  needs in trouble stay. A town no road reaches yet shows its needs greyed with "No road yet". The supply bar is gone.
+- **Growth in words, no numbers (owner, 2026-11-08: "remove the numbers and just tell the player 'growing' and
+  'growing a lot'").** A town's panel, the Towns list and its status say "Shrinking", "Not growing", "Growing
+  slowly", "Growing" or "Growing fast", with the reason when it is held back ("Not growing, needs food"). The word is
+  its pace against its own best (every need met in full), so it means the same in a hamlet and a city: all needs
+  "Enough" reads "Growing", all "Plenty" "Growing fast" (95% of its best and up; 50% for "Growing"), one running low
+  holds it to a trickle, "Growing slowly". The figure in households a day stays under Details only.
 
 ## Company
 
