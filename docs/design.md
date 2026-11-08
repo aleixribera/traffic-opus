@@ -18,6 +18,10 @@ Our own names, look and art throughout.
    power, a buyer, or a jammed road.
 4. **A long game with no waiting.** Many unlocks across many company levels, several things worth doing at any
    moment, and no idle stretches spent waiting for money.
+5. **Hard because of traffic, never because of money** (owner, 2026-11-08). Money comes easily from playing and
+   snowballs: the late game has far more than it can spend. The difficulty is throughput. Towns always want
+   more than the roads can carry, so the limit on income is how many loads get through, and the game is a
+   constant cycle of finding the jam and fixing it.
 
 ## The map
 
@@ -158,6 +162,12 @@ A town should visibly turn from a hamlet into a city over a playthrough: bigger,
   chain running.
 - Costs: roads (build and upkeep), buildings and upgrades, wages, trucks, fuel, land. Loans exist; going
   bankrupt ends the game.
+- **Money is not the challenge.** Every sensible build pays for itself within a game day or two; the first
+  chain is in profit as soon as its first trucks deliver. Demand outruns supply at every size (a town always
+  wants more than one chain makes), so more plants and trucks always earn more, until the roads jam. Costs
+  grow far slower than income: by the mid game money stops limiting anything except the very biggest
+  projects. What earns less is a jammed road: a truck stuck in traffic delivers nothing, so the money tells
+  you where the traffic is bad.
 - The company panel is a balance sheet: income and costs per building and per product, profit per plant, fleet
   use, and town supply.
 
