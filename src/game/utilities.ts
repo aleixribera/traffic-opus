@@ -6,6 +6,7 @@
 import { dist, dist2, rectDistance } from "../core/math";
 import type { Building } from "./buildings";
 import type { Game } from "./city";
+import { TURBINE_BOOST } from "./convoys";
 import { Industry, PLANTS, type PlantKind } from "./industry";
 import { levelMult } from "./sites";
 
@@ -38,10 +39,12 @@ export class Utilities {
   outputOf(b: Building): number {
     const d = defOf(b);
     if (!d?.makes || !Industry.running(b) || !b.access) return 0;
-    if ((b.plant!.stock.coal ?? 0) < 1) return 0;
+    // (a landmark's dam burns nothing; turbines brought by convoy add to a plant's output for good: convoys.ts)
+    if (!d.mega && (b.plant!.stock.coal ?? 0) < 1) return 0;
     const staff = b.cap ? this.g.people.workersAt(b.id) / b.cap : 1;
     if (staff <= 0) return 0;
-    return d.makes * levelMult(b.plant!.level ?? 1) * Math.max(0.25, Math.min(1, staff * 1.25));
+    const turbines = 1 + (b.plant!.turbines ?? 0) * TURBINE_BOOST;
+    return d.makes * levelMult(b.plant!.level ?? 1) * turbines * Math.max(0.25, Math.min(1, staff * 1.25));
   }
 
   /** Power a building draws at full work, grown with its level (0: it needs none). Building sites draw nothing. */

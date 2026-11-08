@@ -43,6 +43,9 @@ export interface ProgressView {
   bestEarned: number;
   /** buildings that need power and get all of it */
   powered: number;
+  /** oversized pieces delivered by convoy, all time, and landmarks finished (convoys.ts, megaprojects.ts) */
+  pieces?: number;
+  landmarks?: number;
 }
 
 export interface Milestone {
@@ -313,6 +316,30 @@ const LOGISTICS: (Milestone & { after: string })[] = [
     unlocks: { trucks: ["roadtrain"] },
   },
 ];
+/**
+ * Landmarks (docs/design.md, "Landmarks" and "Freight: oversized loads"): one block at the top of the ladder, after
+ * tier 4 and the City: the dam once the machine works ships its first oversized piece, the tower once convoys are a
+ * habit, the world's fair once a first landmark stands.
+ */
+const LANDMARKS: (Milestone & { after: string })[] = [
+  {
+    after: "machinery40", id: "bigiron", name: "Oversized load", goal: "Ship your first oversized piece by convoy",
+    measure: (v) => [v.pieces ?? 0, 1],
+    unlocks: { buildings: ["hydrodam"], grant: 50000 },
+  },
+  {
+    after: "bigiron", id: "skyline", name: "Skyline", goal: "Ship 3 oversized pieces by convoy",
+    measure: (v) => [v.pieces ?? 0, 3],
+    unlocks: { buildings: ["skylinetower"], grant: 80000 },
+  },
+  {
+    after: "skyline", id: "worldsfair", name: "World's fair", goal: "Finish a landmark",
+    measure: (v) => [v.landmarks ?? 0, 1],
+    unlocks: { buildings: ["exposition"], towns: 1, grant: 150000 },
+  },
+];
+for (const { after, ...m } of LANDMARKS) MILESTONES.splice(MILESTONES.findIndex((x) => x.id === after) + 1, 0, m);
+
 for (const { after, ...m } of LOGISTICS) MILESTONES.splice(MILESTONES.findIndex((x) => x.id === after) + 1, 0, m);
 
 export const milestoneById = new Map(MILESTONES.map((m) => [m.id, m]));
@@ -361,6 +388,8 @@ export interface ProgressJSON {
   bestDay: Partial<Record<Product, number>>;
   earnedToday: number;
   bestEarned: number;
+  /** oversized pieces delivered (saves from before convoys have none) */
+  pieces?: number;
 }
 
 /** The company's record: milestones reached, in order, and the tallies they are measured on. */
@@ -373,6 +402,8 @@ export class Progress {
   bestDay: Partial<Record<Product, number>> = {};
   earnedToday = 0;
   bestEarned = 0;
+  /** oversized pieces delivered by convoy, all time */
+  pieces = 0;
   private cache: { n: number; u: Unlocked } | null = null;
 
   isDone(id: string): boolean {
@@ -398,6 +429,10 @@ export class Progress {
     this.today[p] = (this.today[p] ?? 0) + k;
   }
 
+  onPiece() {
+    this.pieces++;
+  }
+
   onEarned(v: number) {
     this.earnedToday += v;
   }
@@ -406,7 +441,7 @@ export class Progress {
   view(towns: ProgressView["towns"], powered: number): ProgressView {
     const bestDay: Partial<Record<Product, number>> = { ...this.bestDay };
     for (const [p, k] of Object.entries(this.today) as [Product, number][]) bestDay[p] = Math.max(bestDay[p] ?? 0, k);
-    return { towns, made: this.made, sold: this.sold, bestDay, bestEarned: Math.max(this.bestEarned, this.earnedToday), powered };
+    return { towns, made: this.made, sold: this.sold, bestDay, bestEarned: Math.max(this.bestEarned, this.earnedToday), powered, pieces: this.pieces };
   }
 
   /** Reach every open milestone whose goal is met (and any it opens that are met too). Returns those reached. */
@@ -435,7 +470,7 @@ export class Progress {
   }
 
   toJSON(): ProgressJSON {
-    return { done: [...this.done], made: { ...this.made }, sold: { ...this.sold }, today: { ...this.today }, bestDay: { ...this.bestDay }, earnedToday: this.earnedToday, bestEarned: this.bestEarned };
+    return { done: [...this.done], made: { ...this.made }, sold: { ...this.sold }, today: { ...this.today }, bestDay: { ...this.bestDay }, earnedToday: this.earnedToday, bestEarned: this.bestEarned, pieces: this.pieces };
   }
 
   load(d: ProgressJSON) {
@@ -446,6 +481,7 @@ export class Progress {
     this.bestDay = { ...d.bestDay };
     this.earnedToday = d.earnedToday;
     this.bestEarned = d.bestEarned;
+    this.pieces = d.pieces ?? 0;
     this.cache = null;
   }
 }

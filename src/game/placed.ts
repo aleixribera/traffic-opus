@@ -46,6 +46,10 @@ export const PLACED: Record<PlacedKind, PlacedDef> = {
   machineworks: plant("machineworks"),
   warehouse: plant("warehouse"),
   fueldepot: plant("fueldepot"),
+  // the landmarks: one of each, the dam on a river (megaprojects.ts has where the others may stand)
+  hydrodam: { ...plant("hydrodam"), unique: true, shore: true },
+  skylinetower: { ...plant("skylinetower"), unique: true },
+  exposition: { ...plant("exposition"), unique: true },
 };
 
 export const isPlacedKind = (k: BuildingKind | string): k is PlacedKind => k in PLACED;
@@ -56,4 +60,5 @@ export const PLACED_TABS: { id: string; label: string; kinds: PlacedKind[]; blur
   { id: "processing", label: "Processing", kinds: ["foodplant", "sawmill", "smelter", "cementworks", "refinery", "glassworks", "furniture", "constructionplant", "coppersmelter", "electronics", "machineworks"], blurb: "Plants turn one product into another and sell finished goods to the towns." },
   { id: "logistics", label: "Logistics", kinds: ["warehouse", "fueldepot"], blurb: "Warehouses hold what nobody can take yet; fuel depots fill passing trucks at cost." },
   { id: "power", label: "Power", kinds: ["coalplant"], blurb: "Power plants burn coal and power the buildings that need it on their roads within reach." },
+  { id: "landmarks", label: "Landmarks", kinds: ["hydrodam", "skylinetower", "exposition"], blurb: "One-off megaprojects: a building site that takes huge loads of materials and oversized pieces over days, and pays off for good." },
 ];

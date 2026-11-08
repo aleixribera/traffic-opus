@@ -11,6 +11,8 @@ import type { PendingSpawn, Trip, Vehicle } from "../sim/traffic";
 import { F } from "../world/gen";
 import { GROW_DECAY, GROW_NEED, SITE_LEVELS, levelMult } from "./sites";
 import { classOf, type TruckClass } from "./trucks";
+import type { BigKind, BigState } from "./convoys";
+import { MEGA_PLANTS, megaValue, type LandmarkState, type MegaKind } from "./megaprojects";
 
 export type Product =
   | "crops" | "logs" | "food" | "planks" | "ore" | "coal" | "lime" | "steel" | "cement"
@@ -58,7 +60,9 @@ export type PlantKind =
   | "oilwell" | "sandpit" | "refinery" | "glassworks" | "furniture" | "constructionplant"
   | "coppermine" | "coppersmelter" | "electronics" | "machineworks"
   // logistics: buildings that store and pass on what the plants make (see "Logistics" below)
-  | "warehouse" | "fueldepot";
+  | "warehouse" | "fueldepot"
+  // landmarks: one-off megaprojects (megaprojects.ts)
+  | MegaKind;
 
 export interface PlantDef {
   kind: PlantKind;
@@ -85,6 +89,9 @@ export interface PlantDef {
   site?: Partial<Record<Product, number>>;
   /** a logistics building: a warehouse (stores any product and re-ships it) or a fuel depot (fills passing trucks) */
   logistics?: "warehouse" | "depot";
+  /** a landmark (megaprojects.ts): a one-off project whose site also waits for oversized pieces by convoy */
+  mega?: boolean;
+  pieces?: { kind: BigKind; n: number };
   blurb: string;
 }
 
@@ -205,6 +212,8 @@ export const PLANTS: Record<PlantKind, PlantDef> = {
     cycle: HOUR, cost: 14000, upkeep: 10, trucks: 0, store: 8, site: { planks: 4, cement: 2 },
     blurb: "Takes fuel from your refineries. Your trucks whose run passes within 1.5 km fill up here at cost instead of paying the market price.",
   },
+  // landmarks (docs/design.md "Landmarks"): defined with the rest of the megaprojects
+  ...MEGA_PLANTS,
 };
 
 export const PLANT_KINDS = Object.keys(PLANTS) as PlantKind[];
@@ -269,6 +278,12 @@ export interface PlantState {
   /** a fuel depot: trucks it filled and what that saved against the market price, all time */
   served?: number;
   saved?: number;
+  /** a machine works: the oversized piece it is building besides its machinery, and those waiting (convoys.ts) */
+  big?: BigState;
+  /** a power plant: turbines delivered by convoy, each adding to its output for good */
+  turbines?: number;
+  /** a landmark: pieces delivered, when it was finished, the town it serves (megaprojects.ts) */
+  landmark?: LandmarkState;
 }
 
 export interface PlantBooks { made: number; sent: number; earned: number; spent: number; /** a depot: trucks filled, money saved */ served?: number; saved?: number }
@@ -284,6 +299,8 @@ export interface HaulRun {
   dest: number;
   /** the class of truck making the run (light when not set) */
   cls?: TruckClass;
+  /** an escorted convoy carrying an oversized piece (convoys.ts): not one of the building's trucks */
+  big?: BigKind;
   /** the leg ended (arrived or failed): traffic can report a trip twice */
   done?: boolean;
 }
@@ -325,6 +342,10 @@ export interface IndustryHost {
   made?(p: Product, n: number): void;
   /** a site grew a level */
   grew?(b: Building, level: number): void;
+  /** a building made loads of a product (a machine works builds its oversized pieces alongside) */
+  madeAt?(b: Building, p: Product, n: number): void;
+  /** a kind's pace now against its year-round average (the harvest seasons: calendar.ts) */
+  season?(kind: PlantKind): number;
 }
 
 export interface Customer { b: Building; value: number; /** loads it can take */ room: number }
@@ -354,6 +375,7 @@ export class Industry {
     const d = PLANTS[kind];
     b.plant = { stock: {}, out: {}, prog: 0, yld, now: books(), last: books(), level: 1, grow: 0, upAt: -1e9 };
     if (d.site) b.plant.site = { need: { ...d.site }, got: {} };
+    if (d.mega) b.plant.landmark = { pieces: 0 };
   }
 
   /** Trucks a plant runs: its site level's fleet (Industry.fleetAt) and the bays milestones added (a power plant has none). */
@@ -457,7 +479,8 @@ export class Industry {
     const busy = new Map<number, number>(), coming = new Map<number, Map<Product, number>>();
     for (const t of this.h.trips()) {
       const r = t.haul;
-      if (!r || r.done) continue;
+      // (a convoy with an oversized piece is not one of its works' trucks: convoys.ts keeps its own count)
+      if (!r || r.done || r.big) continue;
       busy.set(r.plant, (busy.get(r.plant) ?? 0) + 1);
       if (r.leg !== "out") continue;
       let m = coming.get(r.dest);
@@ -490,6 +513,8 @@ export class Industry {
     }
     if (b.built < 1) { b.problem = null; return; }
     if (d.logistics) { this.logistic(b, out); return; }
+    // (a finished landmark makes nothing and never grows: megaprojects.ts says what it does)
+    if (d.mega) { b.problem = !b.access ? "No road to the gate" : null; P.why = null; P.grow = 0; return; }
     const staff = b.cap ? Math.min(1, this.h.workersAt(b.id) / b.cap) : 1;
     const pw = d.power ? (this.h.power?.(b) ?? 1) : 1;
     const idle = !!d.makes && !(this.h.wanted?.(b) ?? true);
@@ -499,14 +524,14 @@ export class Industry {
     const full = () => Industry.fullOf(b, store);
     const working = !!b.access && staff > 0 && !idle && !short() && !full();
     if (working) {
-      P.prog += (span * staff * P.yld * powerPace(pw) * levelMult(P.level)) / d.cycle;
+      P.prog += (span * staff * P.yld * powerPace(pw) * levelMult(P.level) * (this.h.season?.(b.kind as PlantKind) ?? 1)) / d.cycle;
       while (P.prog >= 1) {
         P.prog -= 1;
         for (const [p, n] of entries(d.inputs)) P.stock[p] = (P.stock[p] ?? 0) - n;
         for (const [p, n] of entries(d.outputs)) {
           const k = Math.min(n, Math.max(0, store - (P.out[p] ?? 0)));
           if (k <= 0) continue;
-          P.out[p] = (P.out[p] ?? 0) + k; P.now.made += k; this.h.made?.(p, k);
+          P.out[p] = (P.out[p] ?? 0) + k; P.now.made += k; this.h.made?.(p, k); this.h.madeAt?.(b, p, k);
         }
         if (short() || full()) { P.prog = 0; break; }
       }
@@ -634,10 +659,11 @@ export class Industry {
         continue;
       }
       if (!o.plant || o.id === from.id || !o.access || !this.h.connected(seg, o.access.seg)) continue;
-      // building sites waiting for it come first: a plant that isn't built makes nothing
+      // building sites waiting for it come first: a plant that isn't built makes nothing (a landmark's site comes
+      // after the chains and the towns' growth: it takes what is left over, see megaValue)
       if (o.plant.site) {
         const room = Industry.siteLeft(o, product) - on(o.id);
-        if (room >= 1) out.push({ b: o, value: 20000 + room * 100 - km(o) * FUEL_PER_KM * 2, room });
+        if (room >= 1) out.push({ b: o, value: PLANTS[o.kind as PlantKind].mega ? megaValue(price, km(o)) : 20000 + room * 100 - km(o) * FUEL_PER_KM * 2, room });
         continue;
       }
       // a warehouse takes what nobody else wants now (after the plants and towns), unless it is a feeder for the
@@ -860,7 +886,7 @@ export class Industry {
         // (dispatch never sends more than is left; should two trucks still race, the spare load is left on the ground)
         const take = Math.min(n, Math.max(0, Industry.siteLeft(to, product)));
         s.got[product] = (s.got[product] ?? 0) + take;
-        if (entries(s.need).every(([p, k]) => (s.got[p] ?? 0) >= k)) { delete to.plant.site; to.built = 0; }
+        Industry.finishSite(to);
         return;
       }
       to.plant.stock[product] = (to.plant.stock[product] ?? 0) + n;
@@ -880,6 +906,21 @@ export class Industry {
     if (t !== null) this.h.sold(t, product, n);
     this.h.earn(pay);
     if (from?.plant) from.plant.now.earned += pay;
+  }
+
+  /**
+   * A plant's building site with every material in (and, a landmark's, every oversized piece) starts going up.
+   * True when it did.
+   */
+  static finishSite(b: Building): boolean {
+    const P = b.plant, s = P?.site;
+    if (!P || !s) return false;
+    if (!entries(s.need).every(([p, k]) => (s.got[p] ?? 0) >= k)) return false;
+    const pieces = PLANTS[b.kind as PlantKind]?.pieces?.n ?? 0;
+    if ((P.landmark?.pieces ?? 0) < pieces) return false;
+    delete P.site;
+    b.built = 0;
+    return true;
   }
 
   /** Wages and upkeep, and the hour's books (a building site costs nothing to keep). */
