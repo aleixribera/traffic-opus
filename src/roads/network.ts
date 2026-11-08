@@ -12,7 +12,8 @@ import {
 
 export interface SignalPhase {
   arms: number[]; // seg ids whose approach is green in this phase
-  dur: number; // green seconds
+  /** older saves: the phase's green time. Unused: the lights are on a fixed clock (traffic.ts GREEN) */
+  dur?: number;
   /** a protected left-turn phase: only left turns (and U-turns) from these arms go */
   left?: boolean;
 }
@@ -1125,7 +1126,7 @@ export class RoadNetwork {
         ...(pocket ? { pocket } : {}),
         from: dir === 1 ? s.a : s.b, to: dir === 1 ? s.b : s.a,
         // round a roundabout nobody drives at the road's limit: cap by the ring's curvature, like a connector
-        offset: typeof off === "number" ? off : off(dir === 1 ? s1 : s0), pl, hs, speed: s.ring ? Math.min(T.speed, Math.sqrt(SIM.turnLat * Math.max(2, ringR(pl)))) : T.speed, occ: [], outs: [], ins: [],
+        offset: typeof off === "number" ? off : off(dir === 1 ? s1 : s0), pl, hs, speed: s.ring ? Math.min(T.speed, Math.sqrt(SIM.ringLat * Math.max(2, ringR(pl)))) : T.speed, occ: [], outs: [], ins: [],
       };
     };
     const med = (T.median ?? 0) / 2; // a median pushes both directions out from the centre line

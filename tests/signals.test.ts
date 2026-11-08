@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { RoadNetwork, type Connector, type SignalPhase } from "../src/roads/network";
-import { Traffic, type Trip } from "../src/sim/traffic";
+import { ALL_RED, AMBER, GREEN, LEFT_GREEN, Traffic, type Trip } from "../src/sim/traffic";
 import { straightCubic, v2, polyAt, type V2 } from "../src/core/math";
 import type { RoadTypeId } from "../src/config";
 import type { Access } from "../src/sim/router";
@@ -19,13 +19,13 @@ function access(net: RoadNetwork, seg: number, frac: number, side: 1 | -1): { a:
   return { a: { seg, s, p: { x: p.x + r.x * side * (g.width / 2), y: p.y + r.y * side * (g.width / 2) } }, side };
 }
 
-/** An avenue crossing with lights: east-west in one phase, north-south in the other. */
-function crossing() {
+/** A crossing with lights (avenues, unless `type` says): east-west in one phase, north-south in the other. */
+function crossing(type: RoadTypeId = "avenue") {
   const net = new RoadNetwork();
   net.begin();
   const c = net.addNode(v2(300, 300), 0);
-  const [e, w, n, s] = [v2(700, 300), v2(-100, 300), v2(300, -100), v2(300, 700)].map((p) => road(net, net.addNode(p, 0), c));
-  net.setSignal(c, { phases: [{ arms: [e, w], dur: 14 }, { arms: [n, s], dur: 14 }] });
+  const [e, w, n, s] = [v2(700, 300), v2(-100, 300), v2(300, -100), v2(300, 700)].map((p) => road(net, net.addNode(p, 0), c, type));
+  net.setSignal(c, { phases: [{ arms: [e, w] }, { arms: [n, s] }] });
   net.commit();
   net.rebuild();
   return { net, c, e, w, n, s };
@@ -35,10 +35,10 @@ const trip = (): Trip => ({ kind: "shop", from: 0, to: 0, resident: -1, startT: 
 
 /**
  * Sends cars along `flows` ([from arm, to arm, seconds between cars]) for `T` seconds, and reports how many
- * arrived and the longest any one car stood still, per flow.
+ * arrived (in all, and per flow) and the longest any one car stood still, per flow.
  */
-function drive(flows: [number, number, number][], T: number, phases?: SignalPhase[]) {
-  const k = crossing();
+function drive(flows: [number, number, number][], T: number, phases?: SignalPhase[], type?: RoadTypeId) {
+  const k = crossing(type);
   if (phases) {
     k.net.begin();
     k.net.setSignal(k.c, { phases });
@@ -46,7 +46,8 @@ function drive(flows: [number, number, number][], T: number, phases?: SignalPhas
     k.net.rebuild();
   }
   let arrived = 0, closest = Infinity;
-  const tr = new Traffic(k.net, { arrive: () => { arrived++; }, fail: () => {} });
+  const per = flows.map(() => 0);
+  const tr = new Traffic(k.net, { arrive: (v) => { arrived++; per[(v.trip as { flow?: number }).flow!]++; }, fail: () => {} });
   const longest = flows.map(() => 0);
   const next = flows.map(() => 0);
   const dt = 1 / 30;
@@ -70,26 +71,50 @@ function drive(flows: [number, number, number][], T: number, phases?: SignalPhas
       closest = Math.min(closest, Math.hypot(inBox[a].x - inBox[b].x, inBox[a].y - inBox[b].y));
     }
   }
-  return { arrived, longest, closest };
+  return { arrived, per, longest, closest };
 }
 
-describe("Traffic lights adapt to the traffic (CS2)", () => {
-  it("a car alone at the lights barely waits: with nobody on the cross street, the light changes for it", () => {
+describe("Traffic lights on a fixed clock", () => {
+  it("give every phase the same long green, then amber and all red, whatever the traffic does", () => {
+    // (owner, 2026-11-08: "keep lights dumb, they don't read traffic ... 24 seconds for each is enough")
     const k = crossing();
-    const r = drive([[k.e, k.w, 25]], 200);
-    expect(r.arrived).toBeGreaterThanOrEqual(6);
-    // fixed 14 s phases would leave some of them standing for most of a red (up to ~19 s)
-    expect(r.longest[0]).toBeLessThan(8);
+    k.net.begin();
+    k.net.setSignal(k.c, { phases: [{ arms: [k.e, k.w], left: true }, { arms: [k.e, k.w], dur: 6 }, { arms: [k.n, k.s], dur: 60 }] });
+    k.net.commit();
+    k.net.rebuild();
+    const tr = new Traffic(k.net, { arrive: () => {}, fail: () => {} });
+    // a busy east-west road and an empty cross street: neither stretches nor cuts a green
+    let next = 0;
+    const seen: [string, string, string][] = [];
+    for (let t = 0; t < 200; t += 1 / 30) {
+      if (t >= next) { next += 2; tr.request({ from: access(k.net, k.e, 0.15, 1).a, fromSide: 1, to: access(k.net, k.w, 0.6, -1).a, toSide: -1, trip: trip(), truck: false, tries: 0, wait: 0 }); }
+      tr.step(1 / 30);
+      const st: [string, string, string] = [tr.signalState(k.c, k.e, "L"), tr.signalState(k.c, k.e, "S"), tr.signalState(k.c, k.n, "S")];
+      if (!seen.length || seen[seen.length - 1].join() !== st.join()) seen.push(st);
+      (seen[seen.length - 1] as unknown as { t?: number }).t ??= t;
+    }
+    const times = seen.map((x) => (x as unknown as { t: number }).t);
+    const lasts = times.slice(1).map((t, i) => [seen[i].join(), t - times[i]] as const).slice(1);
+    const green = (key: string) => lasts.filter(([k]) => k === key).map(([, d]) => d);
+    // the road's green, the cross street's green and the left arrow: each its fixed time, every round
+    for (const d of green("green,green,red")) expect(d).toBeCloseTo(GREEN, 0);
+    for (const d of green("red,red,green")) expect(d).toBeCloseTo(GREEN, 0);
+    for (const d of green("green,red,red")) expect(d).toBeCloseTo(LEFT_GREEN, 0);
+    expect(green("red,red,green").length).toBeGreaterThanOrEqual(2);
+    // and between greens, amber then all red
+    expect(seen.some((x) => x.join() === "red,red,yellow")).toBe(true);
+    for (const d of green("red,red,red")) expect(d).toBeCloseTo(ALL_RED, 0);
+    void AMBER;
   });
 
-  it("a busy road keeps its green while the cross street is quiet, and the cross street still gets its turn", () => {
+  it("a busy road's queue goes through on one green, and the cross street gets its turn every round", () => {
     const k = crossing();
     const r = drive([[k.e, k.w, 2.2], [k.w, k.e, 2.6], [k.n, k.s, 30]], 240);
-    // the side street's cars aren't starved...
-    expect(r.longest[2]).toBeLessThan(40);
-    // ...and the main road loses little time to it
-    expect(Math.max(r.longest[0], r.longest[1])).toBeLessThan(14);
-    expect(r.arrived).toBeGreaterThan(160);
+    // (at worst a red and the amber either side of it: nobody waits through a second one)
+    const red = GREEN + 2 * (AMBER + ALL_RED);
+    expect(r.longest[2]).toBeLessThan(red + 4);
+    expect(Math.max(r.longest[0], r.longest[1])).toBeLessThan(red + 4);
+    expect(r.arrived).toBeGreaterThan(150);
   });
 
   it("turns right on red when nothing is coming, after a stop", () => {
@@ -106,6 +131,17 @@ describe("Traffic lights adapt to the traffic (CS2)", () => {
     const r = drive([[k.s, k.n, 2.5], [k.n, k.s, 3], [k.e, k.n, 6]], 240);
     expect(r.closest).toBeGreaterThan(2.2);
     expect(r.arrived).toBeGreaterThan(120);
+  });
+
+  it("a left turn facing a steady stream on a one-lane street goes at the change of the lights", () => {
+    // (a town's main crossing, 2026-11-08: a left turn stood at the line round after round, the queue behind it
+    // backed up through the roundabout before)
+    const k = crossing("street");
+    const r = drive([[k.e, k.w, 3], [k.w, k.n, 15], [k.n, k.s, 20]], 300, undefined, "street");
+    console.log("left turns facing a stream: through", r.per[1], "longest wait", r.longest[1].toFixed(1));
+    expect(r.per[1]).toBeGreaterThanOrEqual(8); // (5 before, the worst of them standing 76 s)
+    expect(r.longest[1]).toBeLessThan(2 * (GREEN + AMBER + ALL_RED) + 3);
+    expect(r.closest).toBeGreaterThan(2.2);
   });
 
   it("editing the plan doesn't snap a changing light back to green; changing what goes does it via all red", () => {
@@ -134,27 +170,19 @@ describe("Traffic lights adapt to the traffic (CS2)", () => {
     // eastbound (from the west arm) turning left goes north
     const l = k.net.nodeGeom.get(k.c)!.conns.find((c) => c.armIn === k.w && c.turn === "L")!;
     expect(l.to.seg).toBe(k.n);
-    const flows: [number, number, number][] = [[k.e, k.w, 1.6], [k.w, k.e, 1.8], [k.w, k.n, 7], [k.n, k.s, 9]];
+    const flows: [number, number, number][] = [[k.e, k.w, 2.2], [k.w, k.e, 2.6], [k.w, k.n, 6], [k.n, k.s, 9]];
     const plain = drive(flows, 300);
-    const withLeft = drive(flows, 300, [{ arms: [k.e, k.w], dur: 6, left: true }, { arms: [k.e, k.w], dur: 14 }, { arms: [k.n, k.s], dur: 14 }]);
-    console.log("left turn: longest wait", plain.longest[2].toFixed(1), "->", withLeft.longest[2].toFixed(1), "arrived", plain.arrived, "->", withLeft.arrived);
+    // (the arrow after the road's green, as the junction's own plan has it: by then the cars going straight on
+    // ahead of a left turn in its lane have gone, and it waits at the line for the arrow)
+    const withLeft = drive(flows, 300, [{ arms: [k.e, k.w] }, { arms: [k.e, k.w], left: true }, { arms: [k.n, k.s] }]);
+    console.log("left turn: through", plain.per[2], "->", withLeft.per[2], "longest wait", plain.longest[2].toFixed(1), "->", withLeft.longest[2].toFixed(1), "arrived", plain.arrived, "->", withLeft.arrived);
     expect(withLeft.longest[2]).toBeLessThan(plain.longest[2] * 0.7);
+    expect(withLeft.per[2]).toBeGreaterThan(plain.per[2]);
     expect(withLeft.arrived).toBeGreaterThanOrEqual(plain.arrived * 0.95);
     expect(withLeft.closest).toBeGreaterThan(2.2);
   });
 
-  it("after a left-turn phase with nobody else about, the light rests on the road's green, not on red for it", () => {
-    const k = crossing();
-    const plan: SignalPhase[] = [{ arms: [k.e, k.w], dur: 6, left: true }, { arms: [k.e, k.w], dur: 14 }, { arms: [k.n, k.s], dur: 14 }];
-    // a lone left turn now and then, and between them a lone car going straight on along the same road
-    const r = drive([[k.w, k.n, 30], [k.w, k.e, 30]], 200, plan);
-    expect(r.arrived).toBeGreaterThanOrEqual(10);
-    expect(r.longest[1]).toBeLessThan(2);
-    // a left turn, alone, calls its phase and goes
-    expect(r.longest[0]).toBeLessThan(8);
-  });
-
-  it("never turns green for a phase that lets nobody go, or for a road nobody is on", () => {
+  it("never turns green for a phase that lets nobody go", () => {
     const k = crossing();
     k.net.begin();
     k.net.setSignal(k.c, { phases: [{ arms: [k.e, k.w], dur: 14 }, { arms: [], dur: 10 }, { arms: [k.n, k.s], dur: 14 }] });
@@ -163,10 +191,10 @@ describe("Traffic lights adapt to the traffic (CS2)", () => {
     const tr = new Traffic(k.net, { arrive: () => {}, fail: () => {} });
     tr.signalState(k.c, k.e);
     const ctl = (tr as unknown as { sigCtl: Map<number, { i: number; st: number; t: number }> }).sigCtl.get(k.c)!;
-    // east-west ends with nobody waiting anywhere: it comes back to east-west, not the empty phase
+    // east-west ends: on to north-south, past the empty phase
     ctl.st = 2; ctl.t = 0;
     for (let t = 0; t < 2; t += 1 / 30) tr.step(1 / 30);
-    expect(ctl.i).toBe(0);
+    expect(ctl.i).toBe(2);
     expect(ctl.st).toBe(0);
   });
 });
@@ -189,14 +217,14 @@ describe("lights in a town", () => {
     const arms = [...g.net.segs.values()].filter((s) => s.a === c.id || s.b === c.id);
     expect(arms.length).toBe(4);
     const ew = arms.filter((s) => { const o = g.net.nodes.get(s.a === c.id ? s.b : s.a)!; return Math.abs(o.p.x - c.p.x) > Math.abs(o.p.y - c.p.y); }).map((s) => s.id);
-    g.setSignal(c.id, { phases: [{ arms: ew, dur: 15 }, { arms: arms.map((s) => s.id).filter((i) => !ew.includes(i)), dur: 15 }] });
+    g.setSignal(c.id, { phases: [{ arms: ew }, { arms: arms.map((s) => s.id).filter((i) => !ew.includes(i)) }] });
     let worst = 0;
     for (let i = 0; i < 40 * HOUR * 30; i++) {
       g.step(1 / 30);
       stock();
       if (i % 30 === 0) for (const v of g.traffic.vehicles) if (v.v < 0.5) worst = Math.max(worst, v.wait);
     }
-    // (a red, then a full green for the other road, at most: no one waits through cycle after cycle)
-    expect(worst).toBeLessThan(45);
+    // (a round of the lights, at most: no one waits through round after round)
+    expect(worst).toBeLessThan(2 * (GREEN + AMBER + ALL_RED) + 3);
   }, 120000);
 });
