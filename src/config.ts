@@ -196,7 +196,7 @@ export const ZONE_LABEL: Record<Zone, string> = { res: "Residential", com: "Comm
 
 export const SIM = {
   dt: 1 / 30,
-  idm: { a: 2.0, b: 2.6, s0: 2.2, T: 1.1 },
+  idm: { a: 2.6, b: 2.6, s0: 2.2, T: 1.0 },
   carLen: 4.4,
   truckLen: 8.5,
   busLen: 12,
@@ -204,7 +204,11 @@ export const SIM = {
   junctionCheckTime: 4.5,
   yieldGap: 3.2,
   /** Sideways acceleration drivers take bends and turns at (m/s²): turn speed = sqrt(turnLat * radius). */
-  turnLat: 3.2,
+  turnLat: 3.6,
+  /** The same round a roundabout's ring, held the whole way round, so a touch gentler (a 2-lane ring stays under ~30 km/h). */
+  ringLat: 3.2,
+  /** The steady braking (m/s²) a car slows on towards a junction or bend's speed. */
+  approachDecel: 2.0,
   dwellMin: 25,
   dwellMax: 55,
   tripInterval: [70, 130] as [number, number],

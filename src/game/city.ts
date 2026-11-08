@@ -504,7 +504,7 @@ export class Game {
       const across = ng.arms.find((b) => b.seg !== a.seg && b.dir.x * a.dir.x + b.dir.y * a.dir.y < -0.8 && plan.phases.some((p) => !p.left && p.arms.includes(b.seg)));
       const ph = across && plan.phases.find((p) => !p.left && p.arms.includes(across.seg));
       if (ph) ph.arms.push(a.seg);
-      else plan.phases.push({ arms: [a.seg], dur: 12 });
+      else plan.phases.push({ arms: [a.seg] });
     }
     return plan;
   }
@@ -889,13 +889,14 @@ export class Game {
       }
       if (best) { used.add(best.seg); group.push(best.seg); }
       // two big roads facing each other: their left turns cut across the oncoming traffic, so (as CS2 does on
-      // avenues) they get a short phase of their own first; it is skipped when nobody is waiting to turn left
+      // avenues) they get a short arrow of their own. After the road's green, not before: by then whatever went
+      // straight on ahead of a left turn in its lane has gone, and the turn waits at the line for its arrow
       const big = group.length === 2 && group.every((x) => {
         const T = ROAD_TYPES[this.net.segs.get(x)!.type];
         return T.rank >= 2 && !isHighway(T);
       });
-      if (big && g.conns.some((c) => group.includes(c.armIn) && c.turn === "L")) phases.push({ arms: [...group], dur: 6, left: true });
-      phases.push({ arms: group, dur: 12 });
+      phases.push({ arms: group });
+      if (big && g.conns.some((c) => group.includes(c.armIn) && c.turn === "L")) phases.push({ arms: [...group], left: true });
     }
     return { phases };
   }

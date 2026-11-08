@@ -13,6 +13,7 @@ import { PAL } from "../render/palette";
 import { F } from "../world/gen";
 import { DEPOSIT_KINDS } from "./depositMarks";
 import type { SignalPlan } from "../roads/network";
+import { GREEN, LEFT_GREEN, greenFor } from "../sim/traffic";
 import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId } from "../app";
 import { ROUNDABOUTS, type RoundaboutSize } from "../roads/planner";
 import { ICON, buildingIcon, placedIcon, productIcon, roadIcon } from "./icons";
@@ -1733,10 +1734,10 @@ export class Hud {
         <div class="phase stops"><span class="ph-name">Stop signs</span><span class="ph-arms">${stopArms.map((a) => `<button class="arm stop-arm ${stops.includes(a.seg) ? "on stop" : ""}" data-seg="${a.seg}" aria-pressed="${stops.includes(a.seg)}" title="Stop sign on this approach">${compass(a.dir)}</button>`).join("")}</span></div>
         <button class="btn primary add-sig" ${sigOn ? "" : "disabled"}>${sigOn ? `Add traffic lights · ${formatMoney(SIGNAL_COST)}` : `Traffic lights unlock with ${unlockedBy((u) => u.features?.includes("signals"))!.name}`}</button>`;
     } else {
-      body = `<p class="small muted">The lights follow the traffic: a green ends early when its road is empty and runs up to twice its time while cars keep coming. Cars may turn right on red after stopping.</p>` + plan.phases.map((p, i) => `<div class="phase ${i === this.panelPhase ? "on" : ""}" data-i="${i}">
+      body = `<p class="muted small">The lights run on a fixed clock: ${GREEN} s of green for each phase (${LEFT_GREEN} s for a left-turn arrow), then amber and a moment of all red. Cars may turn right on red after stopping.</p>` + plan.phases.map((p, i) => `<div class="phase ${i === this.panelPhase ? "on" : ""}" data-i="${i}">
           <span class="ph-name">${i + 1}. ${p.left ? "Left turns" : "All turns"}<button class="ph-left ${p.left ? "on" : ""}" data-i="${i}" aria-pressed="${!!p.left}" title="Only left turns (and U-turns) go in this phase">Left only</button></span>
           <span class="ph-arms">${arms.map((a) => `<button class="arm ${p.arms.includes(a.seg) ? "on" : ""}" data-i="${i}" data-seg="${a.seg}" title="Toggle this approach">${compass(a.dir)}</button>`).join("")}</span>
-          <span class="ph-dur"><button class="dur" data-i="${i}" data-d="-2" aria-label="Shorter">−</button><b title="Usual green time">${p.dur}s</b><button class="dur" data-i="${i}" data-d="2" aria-label="Longer">+</button></span>
+          <span class="ph-dur"><b title="Green time">${greenFor(p)} s</b></span>
           ${plan.phases.length > 1 ? `<button class="ph-del" data-i="${i}" aria-label="Remove phase">${ICON.close}</button>` : ""}
         </div>`).join("") + `<div class="row"><button class="btn add-ph">+ Add phase</button><button class="btn quiet danger rm-sig">Remove lights</button></div>`;
     }
@@ -1754,20 +1755,13 @@ export class Hud {
       this.sfx.play("build");
       redraw();
     }));
-    q(".add-ph").forEach((b) => (b.onclick = () => { const p = clonePlan(plan!); p.phases.push({ arms: [], dur: 10 }); this.panelPhase = p.phases.length - 1; set(p); }));
+    q(".add-ph").forEach((b) => (b.onclick = () => { const p = clonePlan(plan!); p.phases.push({ arms: [] }); this.panelPhase = p.phases.length - 1; set(p); }));
     q(".phase").forEach((el) => (el.onclick = (e) => { if ((e.target as HTMLElement).closest("button")) return; this.panelPhase = +el.dataset.i!; redraw(); }));
     q(".arm:not(.stop-arm)").forEach((b) => (b.onclick = () => {
       const p = clonePlan(plan!);
       const i = +b.dataset.i!, seg = +b.dataset.seg!;
       const a = p.phases[i].arms;
       p.phases[i].arms = a.includes(seg) ? a.filter((x) => x !== seg) : [...a, seg];
-      this.panelPhase = i;
-      set(p);
-    }));
-    q(".dur").forEach((b) => (b.onclick = () => {
-      const p = clonePlan(plan!);
-      const i = +b.dataset.i!;
-      p.phases[i].dur = Math.max(4, Math.min(60, p.phases[i].dur + +b.dataset.d!));
       this.panelPhase = i;
       set(p);
     }));

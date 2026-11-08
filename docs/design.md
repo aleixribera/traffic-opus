@@ -185,7 +185,9 @@ Our own names, look and art throughout.
   - Trucks queued in a yard behind the first wait their turn; only the first's wait for a gap counts toward
     "blocked driveway" (90 s).
 - **Giving up.** A driver gives up ("gave up in traffic": the load goes back to its yard) only after standing
-  150 s without getting 8 m further on, the last resort against a broken layout. A queue that crawls on gets there.
+  240 s without getting 8 m further on, the last resort against a broken layout (see the jam breaker under Roads),
+  and only the one at the front of the frozen queue: it shrinks away where it stands, and the rest move up
+  (2026-11-08; it was 150 s, and every car in the queue went at once). A queue that crawls on gets there.
 - **Jammed hauls in the panels.** A full site whose trucks are held up says so: "the road at its gate is jammed"
   (the first truck out of its yard has waited 20 s+ for a gap) or "its trucks are stuck in traffic on the haul"
   (standing 30 s+), and a plant waiting for an input says when the loads on their way are stuck in traffic. So
@@ -539,7 +541,8 @@ demand has outgrown even road trains on a good highway network), and barges afte
   paved street at a street's price, and the chip says so.
 - Ideas taken from popular mods:
   - **Lane connector**, **priority signs** (stop/yield/priority road), **turn restrictions** and a
-    **traffic light editor** with timed and actuated phases (from the Traffic mod).
+    **traffic light editor** for which roads go in which phase and left-turn arrows (from the Traffic mod; the
+    lights themselves keep a fixed clock, see "Dumb lights" below).
   - **Move nodes and curves** of built roads (from Move It).
   - **Parallel and offset drawing**, snapping guides and angle/length readouts (from the line tools).
   - **Area bulldoze** and per-element bulldoze (from Better Bulldozer).
@@ -547,12 +550,51 @@ demand has outgrown even road trains on a good highway network), and barges afte
 - Traffic info views: flow per road, congestion hotspots, routes through a selected road or building, and a
   journey breakdown per resident.
 - **Lights never lock up (2026-11-08).** A car waiting to turn into a driveway across a standing queue (the queue
-  for a red, above all) drives on after 8 s and comes back round, taking the way on that gets it back soonest. A car
-  at the line whose way out is full back to the junction doesn't call a green: the roads that can go get it.
+  for a red, above all) drives on after 8 s and comes back round, taking the way on that gets it back soonest.
 - **Really stuck traffic shows (2026-11-08: "a tiny but persistent alert").** Where cars have stood still for a
   minute and a half, a small amber warning diamond stands on the map, and one chip above the clock says how many
   places and for how long ("Traffic stuck · 2 places · 3 min"). Click the chip to fly to each in turn. An alert
   stays until its cars have moved on for a few seconds, so a shuffling queue doesn't make it flicker.
+- **Roundabouts flow (2026-11-08: "fix traffic into roundabouts").** Traffic going round has the right of way and
+  never stops for a car waiting to come on. An entry looks back round the ring as far as a driver would (on a small
+  ring that is several short pieces) and comes on only into a real gap; a car about to turn off before it is no
+  reason to wait. Entries hold back once the ring is about 60% full, the density it flows best at, so it never
+  fills into a circle of cars each waiting for the next. The car that has waited longest at an entry (a heavy
+  truck, say) gets the next gap. A small ring at 500 cars an hour per arm moves ~280 where it locked at ~180.
+- **Dumb lights (2026-11-08: "keep lights dumb, they don't read traffic ... 24 seconds for each is enough").**
+  Lights keep a fixed clock: every phase gets 24 s of green (a left-turn arrow 8 s), then 3 s of amber and 1.5 s
+  of all red, round and round whatever the traffic does; only a phase that lets nobody go is passed over. They
+  used to follow the traffic, ending a green early or stretching it, and three greens in four ended on a queue
+  still moving: the start-stop that jammed crossings. Now a queue goes in one steady green. Left-turn arrows come
+  after the road's green, when the cars going straight on ahead of a turner in its lane have gone, so the turners
+  stand at the line ready (that halves their worst wait; an arrow before the green barely helped). The junction
+  panel shows the times; they aren't per-junction settings, and the times old saves stored are not used. A left
+  turn that gets no gap in the oncoming stream all green goes at the change of the lights, in the amber and the
+  moment of all red, as drivers do (a "sneaker"): before, on a one-lane street it stood round after round with the
+  queue behind it backed up through the next junction. At a four-way at 900 cars an hour per arm: 294 through in
+  10 min where it was 254, and the longest wait 39 s where it was 106 s.
+- **Cars drive briskly through junctions (2026-11-08: "cars feel painfully slow, especially in intersections").**
+  Measured against real driving, they were timid: pulling away at 1.8 m/s² (0 to 29 km/h in 5.6 s), a queue
+  crossing the line every 3.0 s, turns at 15-18 km/h, braking for a junction from 40 m out. Now they pull away at
+  2.6 m/s² (2.2 over the first 2 s, 4.7 s to 29 km/h), keep a 1.0 s gap rather than 1.1, take turns a notch faster
+  (sqrt(3.6 r) for the corner's radius r: lefts ~20 km/h, rights ~17) and brake later and firmer (2.0 m/s² into
+  the bend's speed). A queue now crosses every 2.5-2.7 s and each car starts ~1 s after the one ahead. Faster still
+  (3 m/s², 0.9 s) made grants at a busy four-way flip, so this is where smooth stays smooth. Gaps accepted at a
+  give-way stay 3.2 s, already at the short end of what real drivers take. The ring of a roundabout keeps the
+  gentler sqrt(3.2 r) (a 2-lane ring under ~30 km/h): held all the way round, the faster ring let long loads
+  and road trains get drawn through each other.
+- **Trucks pull out like drivers (2026-11-08: "a truck getting blocked because another one just got out of a
+  building").** A truck pulls out of a lot across a lane only when the lane it joins has room for its whole length
+  and nobody on the near lane is about to reach the strip it sweeps through as it turns. Queues leave its mouth
+  clear for a body length, and the lanes it crosses stay held until its tail is straight in its lane, not just its
+  front. Two trucks never pull out across each other at once. At lights, a long truck that has waited for oncoming
+  traffic it can't squeeze past gets its turn: the oncoming cars hold back for it.
+- **The jam breaker (2026-11-08: "let infinite traffic jams get a bit fixed into non infinite ones").** The last
+  resort for a spot that locks solid anyway: once cars at a junction have stood 2 minutes without moving at all,
+  the one that has waited longest goes in regardless of give-way or room on its exit (never at a red, never
+  through a car in its way), and for a minute after that the next ones there go after 15 s. If it is still frozen
+  at 4 minutes, the car at the front fades off the road and its trip fails. In a grown 5,000-person town it fires a
+  handful of times in hours of play.
 
 ## Controls and road building (owner, 2026-11-07: "exactly like Cities: Skylines 2")
 

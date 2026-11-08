@@ -34,8 +34,8 @@ describe("Traffic lights where bigger roads meet (CS2)", () => {
     lay(g, v2(120, -120), v2(120, 120), "avenue");
     const x = nodeNear(g, v2(120, 0));
     expect(g.net.nodeGeom.get(x.id)!.arms.length).toBe(4);
-    // each avenue: a left-turn phase, then the rest of its traffic
-    expect(x.signal?.phases.map((p) => !!p.left)).toEqual([true, false, true, false]);
+    // each avenue: its traffic, then a left-turn arrow
+    expect(x.signal?.phases.map((p) => !!p.left)).toEqual([false, true, false, true]);
     g.undo();
     expect([...g.net.nodes.values()].some((n) => n.signal)).toBe(false);
   });
