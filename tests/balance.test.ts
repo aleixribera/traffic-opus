@@ -232,10 +232,11 @@ function play() {
       opts.push({ r, t, d: mines.reduce((s, m) => s + dist(m, q), 0) });
     }
     opts.sort((x, y) => x.d - y.d);
-    // (the best few spots, apart: a big site beside the road may not fit by a river)
+    // (the best few spots, apart: a big site beside the road may not fit by a river, or plants of the chains
+    // already there fill the best ones; then further along the mine roads)
     const tried: V2[] = [];
     for (const o of opts) {
-      if (tried.length >= 6) break;
+      if (tried.length >= 14) break;
       const q = v2(o.r[0].x + (o.r[1].x - o.r[0].x) * o.t, o.r[0].y + (o.r[1].y - o.r[0].y) * o.t);
       if (tried.some((p) => dist(p, q) < 300)) continue;
       tried.push(q);
