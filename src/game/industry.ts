@@ -9,7 +9,7 @@ import type { Building, Buildings } from "./buildings";
 import { BUILDING_TYPES, ROAD_TYPES, type BuildingKind } from "../config";
 import type { PendingSpawn, Trip, Vehicle } from "../sim/traffic";
 import { F } from "../world/gen";
-import { GROW_DECAY, GROW_NEED, SITE_LEVELS, levelMult } from "./sites";
+import { GROW_DECAY, SITE_LEVELS, growNeed, levelMult } from "./sites";
 import { TRUCK_CLASS_ORDER, classOf, fleetMix, type FleetMix, type TruckClass } from "./trucks";
 import type { BigKind, BigState } from "./convoys";
 import { MEGA_PLANTS, megaValue, type LandmarkState, type MegaKind } from "./megaprojects";
@@ -838,7 +838,7 @@ export class Industry {
       : null;
     P.why = why;
     P.grow = why ? Math.max(0, P.grow - span * GROW_DECAY) : P.grow + span;
-    if (P.grow >= GROW_NEED) this.levelUp(b);
+    if (P.grow >= growNeed(P.level)) this.levelUp(b);
   }
 
   /** Grow a site one level: more output, jobs and trucks, and its next buildings go up. */

@@ -7,7 +7,9 @@ describe("town sizes and needs", () => {
     expect(TOWN_SIZES[sizeOf(299)].name).toBe("Hamlet");
     expect(TOWN_SIZES[sizeOf(300)].name).toBe("Village");
     expect(TOWN_SIZES[sizeOf(7000)].name).toBe("City");
-    expect(needsOf(100)).toEqual(["food"]);
+    expect(needsOf(99)).toEqual(["food"]);
+    // (a hamlet starts building in timber at 100 people, before it is a village)
+    expect(needsOf(100)).toEqual(["food", "planks"]);
     expect(needsOf(400)).toEqual(["food", "planks"]);
   });
 
@@ -49,7 +51,7 @@ describe("town sizes and needs", () => {
     const s = supplyShare({ food: demandPerDay("food", pop) / 2, planks: 999 }, pop);
     expect(s.food).toBeCloseTo(0.5, 6);
     expect(s.planks).toBe(1);
-    expect(supplyShare({}, 100)).toEqual({ food: 0 });
+    expect(supplyShare({}, 99)).toEqual({ food: 0 });
   });
 
   it("a supplied town grows, an unsupplied one shrinks, and a new one fills its first streets regardless", () => {
@@ -57,8 +59,13 @@ describe("town sizes and needs", () => {
     expect(growthPerDay({ food: 1 }, 500)).toBeGreaterThan(growthPerDay({ food: 0.6 }, 500));
     expect(growthPerDay({ food: 0.3 }, 500)).toBe(0);
     expect(growthPerDay({ food: 0 }, 500)).toBeLessThan(0);
+    // a hamlet nobody serves yet (one that has just sprung up) holds on instead of dwindling
+    expect(growthPerDay({ food: 0 }, 70)).toBe(0);
     // the worst-supplied need decides
     expect(growthPerDay({ food: 1, planks: 0 }, 500)).toBeLessThan(0);
+    // a hamlet's planks (a need opened ahead of its size) hold it back but never shrink it; its food still does
+    expect(growthPerDay({ food: 1, planks: 0 }, 120)).toBe(0);
+    expect(growthPerDay({ food: 0, planks: 1 }, 120)).toBeLessThan(0);
   });
 
   it("the street radius grows with population, within a cap", () => {

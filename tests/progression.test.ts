@@ -102,12 +102,11 @@ describe("Milestones", () => {
   it("a few are open at once, in ladder order; reaching one opens the next", () => {
     const p = new Progress();
     expect(p.open().map((m) => m.id)).toEqual(MILESTONES.slice(0, OPEN_AT_ONCE).map((m) => m.id));
-    // the third open one is met: it is reached, and the fourth opens
-    const third = MILESTONES[2];
-    expect(third.id).toBe("village");
+    // the second and third open ones are met (a village of 310 is past 150 as well): both are reached, the next two open
+    expect(MILESTONES[2].id).toBe("village");
     const got = p.check(view({ towns: [{ pop: 310, supply: {} }] }));
-    expect(got.map((m) => m.id)).toEqual(["village"]);
-    expect(p.open().map((m) => m.id)).toEqual([MILESTONES[0].id, MILESTONES[1].id, MILESTONES[3].id]);
+    expect(got.map((m) => m.id)).toEqual(["hamlet150", "village"]);
+    expect(p.open().map((m) => m.id)).toEqual([MILESTONES[0].id, MILESTONES[3].id, MILESTONES[4].id]);
     // a goal further up the ladder doesn't count until it is open
     expect(p.check(view({ made: { steel: 5 } }))).toEqual([]);
   });
@@ -115,7 +114,7 @@ describe("Milestones", () => {
   it("reaching one can open another that is met already: they come in order", () => {
     const p = new Progress();
     const v = view({ sold: { food: 10 }, towns: [{ pop: 320, supply: {} }, { pop: 10, supply: {} }], made: { planks: 12 } });
-    expect(p.check(v).map((m) => m.id)).toEqual(["food10", "town2", "village", "planks10"]);
+    expect(p.check(v).map((m) => m.id)).toEqual(["food10", "hamlet150", "village", "planks10"]);
   });
 
   it("a village big enough to want cement can still meet the milestone that unlocks cement", () => {
@@ -157,21 +156,28 @@ describe("Milestones", () => {
     expect(h.progress.done).toEqual(["food10"]);
   });
 
-  it("the company may run as many towns as its milestones allow", () => {
-    const g = new Game(7);
-    g.start();
-    expect(g.townSlots).toBe(BASE.towns);
-    g.money = 1e7;
-    // fill the slots, then the next town is refused with the reason
-    const spots = [];
-    for (let r = 1500; r < 6000 && spots.length < 3; r += 150) for (let k = 0; k < 16 && spots.length < 3; k++) {
-      const a = (k / 16) * Math.PI * 2;
-      const q = { x: Math.cos(a) * r, y: Math.sin(a) * r };
-      if (!g.towns.foundBlock(q)) { const t = g.towns.found(q); if (typeof t !== "string") spots.push(t); }
-    }
-    expect(g.towns.list.length).toBe(BASE.towns);
-    expect(spots.length).toBe(BASE.towns - 1);
-    const q = { x: -4000, y: 2500 };
-    expect(g.towns.foundBlock(q)).toMatch(/^You can run 2 towns for now/);
+  it("old saves: the town-slot milestones load as the growth milestones that replaced them, and spawned towns are kept", () => {
+    const p = new Progress();
+    p.onSold("food", 10);
+    p.check(p.view([], 0));
+    p.spawned.hamlet150 = [2];
+    const old = { ...JSON.parse(JSON.stringify(p.toJSON())), done: ["food10", "town2", "towns3", "hamlet150"] };
+    const q = new Progress();
+    q.load(old);
+    expect(q.done).toEqual(["food10", "hamlet150", "villages2"]);
+    expect(q.spawned).toEqual({ hamlet150: [2] });
+    // a save from before towns sprang up has no record of them
+    const r = new Progress();
+    const { spawned: _s, ...older } = old;
+    r.load(older);
+    expect(r.spawned).toEqual({});
+  });
+
+  it("no milestone asks the company to run a number of towns: new ones come from the towns there are growing", () => {
+    expect(BASE).not.toHaveProperty("towns");
+    const spawners = MILESTONES.filter((m) => m.unlocks.towns);
+    expect(spawners.length).toBeGreaterThanOrEqual(4);
+    expect(spawners[0].id).toBe("hamlet150");
+    for (const m of MILESTONES) expect(m.goal, m.id).not.toMatch(/^Run \w+ towns/);
   });
 });

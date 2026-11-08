@@ -1,5 +1,5 @@
 // The game to Town size, played headless: a scripted company on seed 7 plays from the start the way a player would
-// (a food chain, timber, a second town, then tier 2's mines, power plant, smelter, quarry and cement works, then tier
+// (a food chain, timber, a road to each town that springs up, then tier 2's mines, power plant, smelter, quarry and cement works, then tier
 // 3's oil, sand, glass, household goods and construction parts) and spends only what it has. Like a player watching
 // the Towns window, it adds a plant to a chain a town goes short of, and a truck to a plant whose yard is full. It
 // checks the milestones come in the ladder's order, that the company stays solvent all the way and that money is
@@ -13,7 +13,7 @@ import { Game, START_MONEY } from "../src/game/city";
 import type { Trip } from "../src/sim/traffic";
 import { DAY, HOUR } from "../src/game/society";
 import { BLOCK, TOWN_SIZES, gridPt, needsOf, sizeOf } from "../src/game/towns";
-import { TOWN_COST, TOWN_SPACING, type Town } from "../src/game/settlements";
+import { type Town } from "../src/game/settlements";
 import { PLANTS, PRODUCTS, type PlantKind, type Product } from "../src/game/industry";
 import { MILESTONES, OPEN_AT_ONCE } from "../src/game/progression";
 import { F } from "../src/world/gen";
@@ -45,8 +45,12 @@ const MAX_DAYS = Number(process.env.BALANCE_DAYS ?? (T5 ? 170 : T4 ? 120 : 70));
 const T3 = !!process.env.BALANCE_T3 || T4;
 /** BALANCE_LIVE=1 prints the timeline as it happens too (a long run shows where it is). */
 const LIVE = !!process.env.BALANCE_LIVE;
-/** The pace the game is held to: first steel and first cement, first fuel and goods, and a Town, by these days. */
-const STEEL_BY = 18, CEMENT_BY = 22, FUEL_BY = 40, GOODS_BY = 45, TOWN_BY = 60;
+/**
+ * The pace the game is held to: a Village, first steel and first cement, first fuel and goods, and a Town, by these
+ * days (a day is 16 minutes at 1x; docs/design.md "Pacing" wants a Village in 20-30 minutes, steel and cement in
+ * about an hour and a half: these leave the scripted company some slack).
+ */
+const VILLAGE_BY = 3, STEEL_BY = 8, CEMENT_BY = 10, FUEL_BY = 40, GOODS_BY = 45, TOWN_BY = 60;
 /** What the company keeps in hand for wages and fuel: it doesn't build with its last dollars. */
 const RESERVE = 8000;
 /** What makes each product: the plant a chain short of it gets another of. */
@@ -70,8 +74,15 @@ function play() {
   let poorHours = 0, poorAt = -1;
   const poor = () => { if (g.progress.unlocked.buildings.has("oilwell") && poorAt !== Math.floor(g.time / HOUR)) { poorAt = Math.floor(g.time / HOUR); poorHours++; } };
   const reached: { id: string; t: number }[] = [];
+  /** the towns that sprang up (a milestone's reward): when, how far from the nearest town, and joined yet */
+  const spawned: { t: Town; at: number; dist: number; joined: number }[] = [];
   g.on((e) => {
     if (e.t === "milestone") { reached.push({ id: e.m.id, t: g.time }); say(`MILESTONE ${e.m.name} (${e.m.id}) · $${Math.round(g.money).toLocaleString("en-US")}`); }
+    if (e.t === "townSpawned") {
+      const t = g.towns.byId.get(e.town)!;
+      spawned.push({ t, at: g.time, dist: e.dist, joined: -1 });
+      say(`NEW TOWN ${t.name}: ${(e.dist / 1000).toFixed(1)} km ${e.dir} of ${e.from === null ? "nowhere" : g.towns.byId.get(e.from)!.name}, ${(dist(t.c, A.c) / 1000).toFixed(1)} km from ${A.name}`);
+    }
   });
 
   // ---------------------------------------------------------------- building, as a player would, with the money there is
@@ -157,7 +168,7 @@ function play() {
   const blocked = new Map<string, number>();
   /** Where a new road to q starts: the nearest of the company's road ends and the towns' street ends. */
   const startFor = (q: V2): V2 =>
-    [edge(A, q), ...(B ? [edge(B, q)] : []), ...extra.map((t) => edge(t, q)), ...Object.values(roads).flat()].sort((x, y) => dist(x, q) - dist(y, q))[0];
+    [edge(A, q), ...joined().map((t) => edge(t, q)), ...Object.values(roads).flat()].sort((x, y) => dist(x, q) - dist(y, q))[0];
   /**
    * A site on a deposit, the way a player places one: the plot near `near` with the most of the field under it,
    * standing free with its gate toward the nearest road end, then a street from there to the gate. (With no street
@@ -220,7 +231,7 @@ function play() {
       const r = site(kind, field, d, key, 500);
       if (r) return;
     }
-    say(`no way through to the ${name}`);
+    say(`no way through to the ${name}: ${roadErrors[0] ?? [...siteWhy].map(([w, n]) => `${w}${n > 1 ? ` x${n}` : ""}`).join(", ")}`);
     blocked.set(key, g.time);
   };
 
@@ -259,46 +270,38 @@ function play() {
   };
   const roads: Record<string, [V2, V2]> = {};
   const paths: Record<string, [V2, V2][]> = {};
+  /** the first town to spring up, once the company's road reaches it (its road is where more food plants go) */
   let B: Town | null = null;
+  const joined = () => spawned.filter((s) => s.joined >= 0).map((s) => s.t);
   let lastFarm = 0, lastCamp = 0;
   let low = g.money;
   const plan = () => {
     const u = g.progress.unlocked.buildings;
-    // tier 1: food first (the hamlet's only need), a second town to sell to, then timber as the hamlet nears
-    // Village size (the goals and tips lead a player the same way)
+    // tier 1: food first (the hamlet's only need), timber as the hamlet nears 100 people (when it starts wanting
+    // planks), and a road to each town that springs up (the goals and tips lead a player the same way)
     if (count("farm") < 1) site("farm", F.fert, soil, "farm");
     if (roads.farm && has("farm") && !has("foodplant")) place("foodplant", ...roads.farm, 0.1, 0.5);
-    const timber = Math.max(...g.towns.list.map((t) => t.pop)) >= 200;
+    joinTowns();
+    const timber = Math.max(...g.towns.list.map((t) => t.pop)) >= 80;
     if (has("foodplant") && timber && !has("loggingcamp")) site("loggingcamp", F.forest, wood, "wood");
     if (has("loggingcamp") && !has("sawmill")) place("sawmill", ...roads.wood, 0.15, 0.6);
-    // a second farm with the second town, and more (one every two days) while the towns go short of food
-    if (B && count("farm") < 2) site("farm", F.fert, soil);
+    // a second farm as the hamlet grows or a second town joins, and more while the towns go short of food
+    if ((B || A.pop >= 60) && has("foodplant") && count("farm") < 2) site("farm", F.fert, soil);
     // (as a player watching the Towns window would: a town short of food gets another farm, and a food plant
-    // for every two farms)
+    // for every two farms; past the first few, scaleUp grows the chains where their plants' panels say they're short)
     const hungry = g.towns.list.some((t) => t.pop > 40 && (t.supply.food ?? 1) < 0.8);
-    if (hungry && count("farm") >= 2 && g.time - lastFarm > DAY) {
+    if (hungry && count("farm") >= 2 && count("farm") < 4 && g.time - lastFarm > HOUR * 8) {
       if (count("farm") < 2 * count("foodplant")) {
         if (g.money > PLANTS.farm.cost + RESERVE) { lastFarm = g.time; site("farm", F.fert, soil, undefined, 1200); }
       } else if (g.money > PLANTS.foodplant.cost + RESERVE) { lastFarm = g.time; place("foodplant", ...(roads.towns ?? roads.farm!), 0.3, 0.7); }
     }
     // the same for timber once the towns want planks: another camp, and a sawmill for every two camps
     const noPlanks = g.towns.list.some((t) => t.supply.planks !== undefined && t.supply.planks < 0.8);
-    if (noPlanks && roads.wood && has("sawmill") && g.time - lastCamp > DAY) {
+    if (noPlanks && roads.wood && has("sawmill") && count("loggingcamp") < 4 && g.time - lastCamp > HOUR * 8) {
       if (count("loggingcamp") < 2 * count("sawmill")) {
         if (g.money > PLANTS.loggingcamp.cost + RESERVE) { lastCamp = g.time; site("loggingcamp", F.forest, wood, undefined, 1200); }
       } else if (g.money > PLANTS.sawmill.cost + RESERVE) { lastCamp = g.time; place("sawmill", ...roads.wood, 0.2, 0.4); }
     }
-    // a second town, down the road, once there is money for it
-    if (has("foodplant") && !B && g.money > TOWN_COST + RESERVE + 7000 && g.townSlots > 1) {
-      for (let r = TOWN_SPACING + 100; r < 2600 && !B; r += 100) for (let k = 0; k < 24 && !B; k++) {
-        const an = A.ang + Math.PI + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 12);
-        const q = v2(A.c.x + Math.cos(an) * r, A.c.y + Math.sin(an) * r);
-        if (g.towns.foundBlock(q) || g.terrain.has(F.fert, q) || g.terrain.has(F.forest, q)) continue;
-        const t = g.towns.found(q);
-        if (typeof t !== "string") { B = t; say(`found ${t.name}, ${(dist(A.c, t.c) / 1000).toFixed(1)} km away`); }
-      }
-    }
-    if (B && !roads.towns) { const a = edge(A, B.c), b = edge(B, A.c); if (road("between the towns", a, b) === true) roads.towns = [a, b]; }
     if (roads.towns && has("sawmill") && count("foodplant") < 2) place("foodplant", ...roads.towns, 0.3, 0.7);
     // tier 2: the mines first (they wait as building sites for planks), then the power plant and the smelter
     if (u.has("ironmine") && has("sawmill")) mine("ore", "ironmine", F.ore, "iron ore");
@@ -318,8 +321,6 @@ function play() {
     if (u.has("glassworks") && has("sandpit") && !has("glassworks")) hub("glassworks");
     if (u.has("furniture") && has("glassworks") && !has("furniture")) place("furniture", ...roads.wood!, 0.1, 0.7);
     if (u.has("constructionplant") && !has("constructionplant")) hub("constructionplant");
-    // more towns as the milestones allow, a few kilometres out and joined by road
-    if (g.towns.list.length < Math.min(3, g.townSlots) && g.money > TOWN_COST + RESERVE + 20000) foundTown();
     if (!T4) return;
     // tier 4: copper far out in the ranges; the copper smelter, electronics plant and machine works at the hub, by the
     // coal, the refinery's plastics and the smelter's steel
@@ -338,23 +339,43 @@ function play() {
     if (u.has("motorworks") && has("rubberplant") && !has("motorworks")) hub("motorworks");
   };
 
-  /** A town founded 2-4 km from the first, away from the deposits, joined to the nearest road end. */
-  const foundTown = () => {
-    for (let r = 2200; r < 4200; r += 150) for (let k = 0; k < 24; k++) {
-      const an = A.ang + Math.PI / 2 + (k / 24) * Math.PI * 2;
-      const q = v2(A.c.x + Math.cos(an) * r, A.c.y + Math.sin(an) * r);
-      if (g.towns.foundBlock(q) || g.terrain.has(F.fert, q) || g.terrain.has(F.forest, q)) continue;
-      const t = g.towns.found(q);
-      if (typeof t === "string") continue;
-      say(`found ${t.name}, ${(dist(A.c, t.c) / 1000).toFixed(1)} km away`);
-      extra.push(t);
-      // (the nearest road end first; a river or a site in the way: the next nearest)
-      const ends = [edge(A, t.c), ...(B ? [edge(B, t.c)] : []), ...extra.filter((e) => e !== t).map((e) => edge(e, t.c)), ...Object.values(roads).flat()].sort((x, y) => dist(x, t.c) - dist(y, t.c));
-      const got: string[] = [];
-      for (const a of ends.slice(0, 6)) { const r = road(`to ${t.name}`, a, edge(t, a)); if (r === true) return; got.push(r); }
-      say(`no road to ${t.name}: ${got.join(", ")} (last: ${roadErrors.join(" / ")})`);
-      return;
+  /**
+   * A road to each town that has sprung up and has none yet, as a player would join it: from the nearest of the
+   * company's road ends and the joined towns' street ends (a river or a site in the way: the next nearest). Too dear for
+   * now: again in a few hours.
+   */
+  let lastJoin = -1e9;
+  const joinTowns = () => {
+    const s = spawned.find((x) => x.joined < 0);
+    if (!s || g.time - lastJoin < HOUR * 3) return;
+    lastJoin = g.time;
+    const t = s.t;
+    // (from the network's loose ends nearest the town, the dead ends of a town's streets and the company's roads
+    // first, spread out so a river or a built-up block in one direction doesn't stop every try; to the new town's
+    // own street end facing it)
+    const deg = new Map<number, number>(), mine = new Set<number>();
+    for (const x of g.net.segs.values()) {
+      for (const n of [x.a, x.b]) deg.set(n, (deg.get(n) ?? 0) + 1);
+      if (x.town === t.id) { mine.add(x.a); mine.add(x.b); }
     }
+    const loose = [...g.net.nodes.values()].filter((n) => !mine.has(n.id) && n.h === 0)
+      .sort((x, y) => (deg.get(x.id) === 1 ? 0 : 400) + dist(x.p, t.c) - (deg.get(y.id) === 1 ? 0 : 400) - dist(y.p, t.c));
+    const ends: V2[] = [];
+    for (const n of loose) if (ends.length < 10 && ends.every((e) => dist(e, n.p) > 150)) ends.push(n.p);
+    const own = [...g.net.nodes.values()].filter((n) => mine.has(n.id));
+    const got: string[] = [];
+    for (const a of ends) {
+      const b = own.length ? own.reduce((u, v) => ((deg.get(u.id) === 1 ? 0 : 60) + dist(u.p, a) <= (deg.get(v.id) === 1 ? 0 : 60) + dist(v.p, a) ? u : v)).p : edge(t, a);
+      const r = road(`to ${t.name}`, a, b);
+      if (r === true) {
+        s.joined = g.time;
+        if (!B) { B = t; roads.towns = [a, b]; }
+        return;
+      }
+      got.push(r);
+      if (r === "money") return;
+    }
+    say(`no road to ${t.name}: ${got.join(", ")} (last: ${roadErrors.join(" / ")})`);
   };
 
   // ---------------------------------------------------------------- keeping up with the towns
@@ -384,6 +405,12 @@ function play() {
     for (const q of Object.keys(PLANTS[k].inputs) as Product[]) {
       if (all.filter((b) => b.problem === `Waiting for ${PRODUCTS[q].name.toLowerCase()}`).length * 2 >= all.length) return grow(q, depth + 1);
     }
+    // (half its yards full already: the hauls are what's short, not the plants, as the plants' panels say)
+    if (all.filter((b) => b.problem?.startsWith("Full of") || b.problem?.includes("have all they can store")).length * 2 >= all.length) return;
+    // (a plant needs its makers first: no more food plants than farms, nor sawmills than logging camps)
+    const src: Partial<Record<PlantKind, [PlantKind, Product]>> = { foodplant: ["farm", "crops"], sawmill: ["loggingcamp", "logs"] };
+    const s = src[k];
+    if (s && all.length >= count(s[0])) return grow(s[1], depth + 1);
     if (g.time - (lastAdd[k] ?? -1e9) < HOUR * 4) return;
     lastAdd[k] = g.time;
     another(k);
@@ -395,21 +422,20 @@ function play() {
     const dark = g.buildings.list.some((b) => b.plant && /power: working/.test(b.problem ?? ""));
     const plants = g.buildings.list.filter((b) => b.kind === "coalplant");
     if (dark && plants.some((b) => b.problem === "Waiting for coal")) grow("coal");
-    else if (dark && g.time - lastPower > HOUR * 8 && !plants.some((b) => b.plant!.site || b.built < 1)) { lastPower = g.time; hub("coalplant"); }
+    else if (dark && has("coalmine") && g.time - lastPower > HOUR * 8 && !plants.some((b) => b.plant!.site || b.built < 1)) { lastPower = g.time; hub("coalplant"); }
     // a town short of something it needs, plant sites short of materials for a day, blocks waiting for parts
     for (const t of g.towns.list) if (t.pop > 100) for (const p of needsOf(t.pop)) if ((t.supply[p] ?? 1) < 0.8) grow(p);
     if (g.buildings.list.some((b) => b.plant?.site && g.time - b.born > DAY)) { grow("planks"); grow("cement"); if (T4) grow("parts"); }
     if (g.buildings.list.filter((b) => b.site).length > 4) grow("parts");
   };
   let trucks = 0;
-  const extra: Town[] = [];
   // trucks that gave up on a trip today, by why
   const gaveUp = new Map<string, number>();
   const ev = (g.traffic as unknown as { ev: { fail(t: Trip, r: string, now: number): void } }).ev, fail0 = ev.fail;
   ev.fail = (t, r, now) => { if (t.haul) gaveUp.set(r, (gaveUp.get(r) ?? 0) + 1); fail0(t, r, now); };
 
   // ---------------------------------------------------------------- the clock
-  let steel = -1, cement = -1, fuel = -1, goods = -1, parts = -1, town = -1, copper = -1, electronics = -1, machinery = -1, milk = -1, supplies = -1, car = -1;
+  let first = -1, steel = -1, cement = -1, fuel = -1, goods = -1, parts = -1, town = -1, copper = -1, electronics = -1, machinery = -1, milk = -1, supplies = -1, car = -1;
   const started = Date.now();
   for (let h = 0; h < MAX_DAYS * 24; h++) {
     plan();
@@ -418,6 +444,7 @@ function play() {
       if (g.money < low) low = g.money;
     }
     const made = g.progress.made;
+    if (first < 0 && (g.progress.sold.food ?? 0) >= 1) { first = g.time; say("FIRST DELIVERY"); }
     if (steel < 0 && (made.steel ?? 0) >= 1) { steel = g.time; say("FIRST STEEL"); }
     if (cement < 0 && (made.cement ?? 0) >= 1) { cement = g.time; say("FIRST CEMENT"); }
     if (fuel < 0 && (made.fuel ?? 0) >= 1) { fuel = g.time; say("FIRST FUEL"); }
@@ -450,10 +477,10 @@ function play() {
       put(`             trucks: ${tv.length} on the road (${still} stood still, ${jammed} stuck 30 s+), ${tp.length} waiting to set off (avg ${gate.toFixed(0)} s)${[...gaveUp].map(([k, n]) => ` · ${k} ${n}`).join("")}`);
       gaveUp.clear();
     }
-    if (T5 ? car >= 0 : T4 ? electronics >= 0 && machinery >= 0 : T3 ? g.progress.isDone("townSupplied") : cement >= 0) break;
+    if (T5 ? car >= 0 : T4 ? electronics >= 0 && machinery >= 0 : T3 ? g.progress.isDone("townSupplied") : cement >= 0 && steel >= 0) break;
   }
   const supplied = reached.find((r) => r.id === "townSupplied")?.t ?? -1;
-  return { g, lines, reached, low, steel, cement, fuel, goods, parts, town, supplied, poorHours, copper, electronics, machinery, milk, supplies, car };
+  return { g, lines, reached, spawned, first, low, steel, cement, fuel, goods, parts, town, supplied, poorHours, copper, electronics, machinery, milk, supplies, car };
 }
 
 describe("Balance: the game to Town size", () => {
@@ -473,9 +500,16 @@ describe("Balance: the game to Town size", () => {
     const { g, lines, reached, low, steel, cement } = r;
     const ids = reached.map((x) => x.id);
     const day = (t: number) => (t < 0 ? "never" : (t / DAY).toFixed(2));
+    /** real minutes at 1x (a day is 16 of them) */
+    const min = (t: number) => (t < 0 ? "never" : `${Math.round((t / DAY) * 16)} min`);
+    const at1 = (id: string) => reached.find((x) => x.id === id)?.t ?? -1;
+    /** when a line of the log was said (its "day  x.xx" stamp) */
+    const said = (re: RegExp) => { const l = lines.find((x) => re.test(x)); return l ? Number(l.slice(4, 9)) * DAY : -1; };
     console.log(["", "Balance timeline (seed 7):", ...lines,
       `milestones: ${reached.map((x) => `${x.id}@${(x.t / DAY).toFixed(2)}`).join(" ")}`,
       `first steel day ${day(steel)}, first cement day ${day(cement)}, first fuel day ${day(r.fuel)}, first goods day ${day(r.goods)}, first parts day ${day(r.parts)}, a Town day ${day(r.town)}, a Town supplied day ${day(r.supplied)}${T4 ? `, first copper day ${day(r.copper)}, first electronics day ${day(r.electronics)}, first machinery day ${day(r.machinery)}` : ""}${T5 ? `, first milk sold day ${day(r.milk)}, first supplies day ${day(r.supplies)}, first car day ${day(r.car)}` : ""}`,
+      `at 1x: first delivery ${min(r.first)}, sawmill placed ${min(said(/place sawmill/))}, planks10 ${min(at1("planks10"))}, Village ${min(at1("village"))}, first steel ${min(steel)}, first cement ${min(cement)}`,
+      `new towns: ${r.spawned.map((s) => `${s.t.name} at ${min(s.at)} (day ${day(s.at)}), ${(s.dist / 1000).toFixed(1)} km from the nearest town, joined ${s.joined < 0 ? "never" : min(s.joined)}`).join("; ") || "none"}`,
       `lowest balance $${Math.round(low).toLocaleString("en-US")}; hours a build waited for money in tier 3: ${r.poorHours}; ${((Date.now() - t0) / 1000).toFixed(0)} s`].join("\n"));
     // solvent all the way
     expect(low).toBeGreaterThanOrEqual(0);
@@ -483,11 +517,15 @@ describe("Balance: the game to Town size", () => {
     // first steel and first cement made, at a pace that keeps the early game moving (a day is 4 minutes at 4x)
     expect(steel).toBeGreaterThan(0);
     expect(cement).toBeGreaterThan(0);
+    expect((reached.find((x) => x.id === "village")?.t ?? Infinity) / DAY).toBeLessThan(VILLAGE_BY);
     expect(steel / DAY).toBeLessThan(STEEL_BY);
     expect(cement / DAY).toBeLessThan(CEMENT_BY);
     // the milestones in the ladder's order where one gates the next
     const at = (id: string) => ids.indexOf(id);
-    for (const id of ["food10", "town2", "planks10", "village", "supplied", "steel", "cement"]) expect(at(id), id).toBeGreaterThanOrEqual(0);
+    for (const id of ["food10", "hamlet150", "planks10", "village", "supplied", "steel", "cement"]) expect(at(id), id).toBeGreaterThanOrEqual(0);
+    // the first new town springs up from the hamlet growing, and the company's road reaches it
+    expect(r.spawned.length).toBeGreaterThanOrEqual(1);
+    expect(r.spawned[0].joined).toBeGreaterThan(0);
     expect(at("food10")).toBeLessThan(at("village"));
     expect(at("village")).toBeLessThan(at("steel"));
     expect(at("supplied")).toBeLessThan(at("cement"));

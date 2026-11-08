@@ -664,3 +664,36 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .convoy-tag:focus-visible { outline: 2px solid #ffd26a; outline-offset: 2px; }
 @keyframes ctlamp { 50% { background: #5a3d10; box-shadow: none; } }
 @media (prefers-reduced-motion: reduce) { .convoy-tag .ct-lamp { animation: none; } }
+
+/* a town that has just sprung up: ochre rings pulse out from its hall till the first delivery, and a pointer at the
+   screen's edge shows the way while it is off screen (click it to fly there) */
+.town-pings { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
+.tp-ring { position: absolute; left: 0; top: 0; width: 150px; height: 150px; padding: 0; border: 0; background: none; pointer-events: none; will-change: transform; }
+.tp-ring .tp-dot { position: absolute; inset: 0; margin: auto; width: 46px; height: 46px; border-radius: 50%;
+  border: 2px solid var(--ochre); box-shadow: 0 0 0 3px rgba(7, 13, 23, 0.45), inset 0 0 0 3px rgba(7, 13, 23, 0.35), 0 0 0 5px var(--pin); }
+.tp-ring .tp-pulse { position: absolute; inset: 0; margin: auto; width: 46px; height: 46px; border-radius: 50%; border: 2px solid var(--ochre-hi); opacity: 0;
+  animation: tp-pulse 2.4s cubic-bezier(.2, .6, .35, 1) infinite; }
+.tp-ring .tp-pulse + .tp-pulse { animation-delay: 1.2s; }
+@keyframes tp-pulse { 0% { opacity: .95; transform: scale(1); } 100% { opacity: 0; transform: scale(3.2); } }
+.tp-ring .tp-tag { position: absolute; left: 50%; top: calc(50% + 30px); transform: translateX(-50%); pointer-events: auto; cursor: pointer; white-space: nowrap;
+  padding: 2px 8px; background: var(--ochre); color: var(--ink); font: 700 var(--t-xs)/1.3 var(--f-text); letter-spacing: 0.14em; text-transform: uppercase;
+  border-radius: 2px; box-shadow: 0 0 0 1px var(--edge), 0 2px 5px rgba(0, 0, 0, 0.35); }
+.tp-ring:hover .tp-tag, .tp-ring:focus-visible .tp-tag { background: var(--ochre-hi); }
+.tp-ring:focus-visible { outline: none; }
+.tp-ring:focus-visible .tp-dot { outline: 2px solid var(--ochre-hi); outline-offset: 4px; }
+.tp-edge { position: absolute; left: 0; top: 0; pointer-events: auto; display: grid; grid-template-columns: auto auto auto; grid-template-rows: auto auto; column-gap: 8px;
+  align-items: center; padding: 5px 10px 5px 6px; text-align: left; white-space: nowrap; will-change: transform; cursor: pointer;
+  background: var(--plate); color: var(--cream); border: 1px solid var(--ochre); border-radius: 3px; font-family: var(--f-text); line-height: 1.2;
+  box-shadow: 0 0 0 2px var(--plate), 0 0 0 3px var(--pin), 0 3px 10px rgba(0, 0, 0, 0.4); }
+.tp-edge .tp-arrow { grid-row: 1 / 3; width: 26px; height: 26px; border-radius: 50%; background: var(--plate-2); box-shadow: inset 0 0 0 1px var(--ochre); position: relative; }
+.tp-edge .tp-arrow::after { content: ""; position: absolute; left: 9px; top: 7px; border: 6px solid transparent; border-left: 11px solid var(--ochre-hi); border-right: 0; }
+.tp-edge .tp-k { grid-column: 2; grid-row: 1; font-size: var(--t-xs); font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ochre-hi); }
+.tp-edge b { grid-column: 2 / 4; grid-row: 2; font: 700 15px/1.1 var(--f-display); letter-spacing: 0.04em; text-transform: uppercase; }
+.tp-edge .tp-km { grid-column: 3; grid-row: 1; justify-self: end; font-size: var(--t-xs); color: var(--cream-2); font-variant-numeric: tabular-nums; }
+.tp-edge:hover { border-color: var(--ochre-hi); background: var(--plate-2); }
+.tp-edge:focus-visible { outline: 2px solid var(--ochre-hi); outline-offset: 3px; }
+/* the new town's banner: a compass rose beside the name, its needle the way the town lies on screen */
+.banner.nt .nt-head { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 4px; }
+.banner.nt .nt-head header { margin-bottom: 0; }
+.banner.nt .nt-rose { flex: none; }
+@media (prefers-reduced-motion: reduce) { .tp-ring .tp-pulse { animation: none; opacity: .55; transform: scale(1.7); } .tp-ring .tp-pulse + .tp-pulse { transform: scale(2.4); opacity: .3; } }

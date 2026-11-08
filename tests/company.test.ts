@@ -49,7 +49,7 @@ describe("town names", () => {
       g.start();
       const c = g.towns.list[0].c;
       for (const [dx, dy] of [[-2600, 0], [2600, -1500], [0, 2800], [-2400, -2600], [2800, 1800]]) {
-        for (let k = 0; k < 6; k++) if (typeof g.towns.found({ x: c.x + dx + k * 220, y: c.y + dy + k * 150 }, { free: true }) !== "string") break;
+        for (let k = 0; k < 6; k++) if (typeof g.towns.found({ x: c.x + dx + k * 220, y: c.y + dy + k * 150 }) !== "string") break;
       }
       return g.towns.list.map((t) => t.name);
     };

@@ -132,7 +132,8 @@ describe("The company economy", () => {
     // (the last 24 of the 30 hours it counted)
     expect(m.made).toBeGreaterThan(0);
     expect(m.made).toBeLessThanOrEqual(made);
-    expect(m.made).toBeLessThanOrEqual(can * 1.05);
+    // (its first level comes inside a day of work, so it may have grown one by now: no more than its level allows)
+    expect(m.made).toBeLessThanOrEqual(((can * levelMult(P.level)) / levelMult(1)) * 1.05);
     expect(m.byHour.reduce((a, v) => a + v, 0)).toBe(m.made);
     const h = Game.load(JSON.parse(JSON.stringify(g.serialize())));
     expect(Industry.madeLately(h.buildings.byId.get(farm.id)! as Building, "crops")).toEqual(m);

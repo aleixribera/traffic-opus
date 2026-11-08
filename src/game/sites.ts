@@ -256,6 +256,10 @@ export function siteDir(f: SiteFrame, x: number, y: number): V2 {
 
 /** Working time (s) near capacity a site needs to grow one level ("most of ~3 in-game days"). */
 export const GROW_NEED = 960 * 2.4;
+/** ...except its first step, to level 2, which comes in under a day: the early game's sites pick up quickly. */
+export const GROW_NEED_FIRST = 960 * 0.8;
+/** Working time a site at this level needs to grow to the next. */
+export const growNeed = (level: number): number => (level <= 1 ? GROW_NEED_FIRST : GROW_NEED);
 /** Idle time counts against it at this share (a site that stops for a while loses some of its progress). */
 export const GROW_DECAY = 0.5;
 /** How long the new buildings take to go up after a site grows (s): the construction animation. */

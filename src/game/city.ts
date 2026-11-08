@@ -18,7 +18,7 @@ import { DAY, HOUR, Society } from "./society";
 import { PLACED, SHORE_REACH, type PlacedKind } from "./placed";
 import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, isPlantKind, type Delivery, type Product } from "./industry";
 import { TRUCK_CLASS_ORDER, type TruckClass } from "./trucks";
-import { PARTS_FOR, TownSystem } from "./settlements";
+import { PARTS_FOR, TownSystem, type Spawned } from "./settlements";
 import { BLOCK, CARS_PER_LOAD, demandPerDay, gridPt, isHall, needsOf } from "./towns";
 import { F } from "../world/gen";
 import { Transit } from "./transit";
@@ -45,7 +45,9 @@ export type GameEvent =
   | { t: "roads"; cs: ChangeSet }
   | { t: "buildings" }
   | { t: "zones" }
-  | { t: "milestone"; m: Milestone }
+  | { t: "milestone"; m: Milestone; towns?: number[] }
+  /** a fresh town sprang up (a milestone's reward): where, against the nearest town before it */
+  | { t: "townSpawned"; town: number; from: number | null; dist: number; dir: string }
   | { t: "money" }
   | { t: "toast"; msg: string }
   /** a town has grown into a new size */
@@ -231,7 +233,7 @@ export class Game {
   start() {
     const t = this.terrain;
     const fert = (p: V2) => t.has(F.fert, p);
-    const clear = (p: V2) => this.towns.foundBlock(p, true) === null;
+    const clear = (p: V2) => this.towns.foundBlock(p) === null;
     // the nearest open spot to the origin with fertile soil 300 m - 1 km away (and none under the town itself)
     let site: V2 | null = null, fallback: V2 | null = null, toward = { x: 1, y: 0 };
     for (let r = 0; r <= 1400 && !site; r += 80) {
@@ -260,7 +262,7 @@ export class Game {
     }
     site ??= { x: 0, y: 0 };
     const ang = Math.atan2(toward.y, toward.x);
-    const town = this.towns.found(site, { free: true, ang });
+    const town = this.towns.found(site, { ang });
     if (typeof town === "string") return;
     this.cityName = town.name;
     town.target = 12; // (enough hands to crew a first farm and food plant between them)
@@ -347,8 +349,6 @@ export class Game {
   get roadsUnlocked(): Set<RoadTypeId> { return this.progress.unlocked.roads; }
   featureUnlocked(f: Feature): boolean { return this.progress.unlocked.features.has(f); }
   placedUnlocked(k: PlacedKind): boolean { return this.progress.unlocked.buildings.has(k); }
-  /** Towns the company may run. */
-  get townSlots(): number { return this.progress.unlocked.towns; }
   /** Every milestone reached (for tools and tests that need everything unlocked; no grants). */
   unlockAll() { this.progress.completeAll(); }
 
@@ -359,11 +359,26 @@ export class Game {
     return v;
   }
 
-  /** Reach any open milestone whose goal is met: pay its grant and say so. */
+  /**
+   * Reach any open milestone whose goal is met: pay its grant, have the fresh towns it brings spring up, and say
+   * so (the milestone first, then each new town's arrival).
+   */
   checkMilestones() {
     for (const m of this.progress.check(this.progressView())) {
       this.money += m.unlocks.grant ?? 0;
-      this.emit({ t: "milestone", m });
+      const towns: Spawned[] = [];
+      for (let k = 0; k < (m.unlocks.towns ?? 0); k++) {
+        const s = this.towns.spawn();
+        if (s) towns.push(s);
+      }
+      if (towns.length) this.progress.spawned[m.id] = towns.map((s) => s.town.id);
+      this.emit({ t: "milestone", m, ...(towns.length ? { towns: towns.map((s) => s.town.id) } : {}) });
+      for (const s of towns) {
+        this.emit({ t: "townSpawned", town: s.town.id, from: s.from?.id ?? null, dist: s.dist, dir: s.dir });
+        const where = s.from ? `${(s.dist / 1000).toFixed(1)} km ${s.dir} of ${s.from.name}` : "on the map";
+        this.toast(`A new town: ${s.town.name} has sprung up ${where}. Join it to your roads and keep it fed.`);
+      }
+      if (towns.length) { this.emit({ t: "zones" }); this.emit({ t: "buildings" }); }
       this.emit({ t: "money" });
     }
   }
@@ -1212,7 +1227,8 @@ export class Game {
         // every need met: deliveries come in through the day, and the town wants to grow
         for (const p of needsOf(t.pop)) t.today[p] = Math.max(t.today[p] ?? 0, demandPerDay(p, t.pop) * ((k % 192) + 1) / 192);
         this.towns.tick();
-        if (k % 8 === 7) this.towns.hourly();
+        // (and an hour's worth of each need came in this hour, for the supply that rolls hour by hour)
+        if (k % 8 === 7) { t.hourNow = Object.fromEntries(needsOf(t.pop).map((p) => [p, demandPerDay(p, t.pop) / 24])); this.towns.hourly(); }
         const day = Math.floor(this.time / DAY);
         if (day !== this.dayN) { this.towns.daily(); this.dayN = day; }
       }
