@@ -312,7 +312,7 @@ export class App {
     window.addEventListener("pointerup", (e) => this.onUp(e));
     window.addEventListener("pointercancel", (e) => { this.pointers.delete(e.pointerId); this.pinch = null; });
     el.addEventListener("pointerleave", () => { this.hasCursor = false; this.dirtyPreview = true; this.hud?.chips(null); });
-    el.addEventListener("wheel", (e) => {
+    const wheel = (e: WheelEvent) => {
       e.preventDefault();
       if (this.mode === "menu") return;
       const r = el.getBoundingClientRect();
@@ -320,7 +320,10 @@ export class App {
       this.view.zoomAt(e.clientX - r.left, e.clientY - r.top, k);
       this.clampView();
       this.dirtyPreview = true;
-    }, { passive: false });
+    };
+    el.addEventListener("wheel", wheel, { passive: false });
+    // (the place names sit over the map: the wheel over one zooms the map, as anywhere else)
+    this.labels.el.addEventListener("wheel", wheel, { passive: false });
     window.addEventListener("keydown", (e) => this.onKey(e, true));
     window.addEventListener("keyup", (e) => this.onKey(e, false));
     window.addEventListener("resize", () => this.view.resize());
