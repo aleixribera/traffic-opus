@@ -97,7 +97,8 @@ function play() {
     const pl = g.placedPlan(kind, p, opts);
     if (!pl) return false;
     const [i, j] = g.tileOf(pl.c), key = `${i},${j}`;
-    if (g.tiles.has(key) || g.tileSlotsLeft < 1 || g.tileBlock(i, j)?.startsWith("Must border")) return false;
+    // (more of a chain it already has doesn't take the last tile slot: the next chain's deposit may need it)
+    if (g.tiles.has(key) || g.tileSlotsLeft < (growing ? 2 : 1) || g.tileBlock(i, j)?.startsWith("Must border")) return false;
     const price = tilePrice(g.tiles.size);
     if (price + PLANTS[kind].cost > g.money - RESERVE) { poor(); return "money"; }
     g.tiles.add(key);
@@ -149,7 +150,10 @@ function play() {
   const tier2: Record<string, V2[]> = { ore: spots(F.ore), coal: spots(F.coal), lime: spots(F.lime), oil: spots(F.oil, 5500, 16000), sand: spots(F.sand, 5500, 16000, 15) };
   const km1 = (l: V2[]) => (l.length ? `${(dist(l[0], A.c) / 1000).toFixed(1)} km` : "none");
   say(`deposits from ${A.name}: soil ${(dist(soil, A.c) / 1000).toFixed(1)} km, forest ${(dist(wood, A.c) / 1000).toFixed(1)} km, iron ore ${km1(tier2.ore)}, coal ${km1(tier2.coal)}, limestone ${km1(tier2.lime)}, oil ${km1(tier2.oil)}, sand ${km1(tier2.sand)}`);
-  const blocked = new Set<string>();
+  /** When a deposit had no way through (a player tries again later, once there is land or money for it). */
+  const blocked = new Map<string, number>();
+  /** Set while the company adds to chains it already has (see buyLand). */
+  let growing = false;
   /** Where a new road to q starts: the nearest of the company's road ends and the towns' street ends. */
   const startFor = (q: V2): V2 =>
     [edge(A, q), ...(B ? [edge(B, q)] : []), ...extra.map((t) => edge(t, q)), ...Object.values(roads).flat()].sort((x, y) => dist(x, q) - dist(y, q))[0];
@@ -200,7 +204,7 @@ function play() {
   };
   /** A tier 2 mine on the nearest patch of its deposit a street reaches. */
   const mine = (key: "ore" | "coal" | "lime" | "oil" | "sand", kind: PlantKind, field: number, name: string) => {
-    if (has(kind) || blocked.has(key)) return;
+    if (has(kind) || g.time - (blocked.get(key) ?? -1e9) < DAY) return;
     if (g.money < RESERVE + PLANTS[kind].cost + 8000) { poor(); return; }
     for (const d of tier2[key]) {
       // (land out there can only be bought once one of the company's roads is in it: a road into the deposit first)
@@ -216,7 +220,7 @@ function play() {
       if (r) return;
     }
     say(`no way through to the ${name}`);
-    blocked.add(key);
+    blocked.set(key, g.time);
   };
 
   // (the hub: halfway along the road from the ore to the coal, so both hauls are short)
@@ -334,7 +338,7 @@ function play() {
     if (f !== undefined) return site(k, f, near, undefined, 1500);
     if (HUB.includes(k)) return hub(k);
     const r = k === "foodplant" ? roads.towns ?? roads.farm : roads.wood;
-    return r ? place(k, ...r, 0.1, 0.9) : null;
+    return (r ? place(k, ...r, 0.1, 0.9) : null) ?? hub(k);
   };
   /** A chain short of p: another plant at its weakest link (the input most of its plants wait for). */
   const grow = (p: Product, depth = 0): void => {
@@ -350,6 +354,7 @@ function play() {
     another(k);
   };
   const scaleUp = () => {
+    growing = true;
     // a full yard: another truck (they are cheap)
     for (const b of g.buildings.list) {
       if (!b.plant || !b.problem?.startsWith("Full of") || !b.problem.includes("not enough trucks")) continue;
@@ -359,11 +364,14 @@ function play() {
     }
     // short of power: another power plant at the hub
     const dark = g.buildings.list.some((b) => b.plant && /power: working/.test(b.problem ?? ""));
-    if (dark && g.time - lastPower > HOUR * 8 && !g.buildings.list.some((b) => b.kind === "coalplant" && (b.plant!.site || b.built < 1))) { lastPower = g.time; hub("coalplant"); }
+    const plants = g.buildings.list.filter((b) => b.kind === "coalplant");
+    if (dark && plants.some((b) => b.problem === "Waiting for coal")) grow("coal");
+    else if (dark && g.time - lastPower > HOUR * 8 && !plants.some((b) => b.plant!.site || b.built < 1)) { lastPower = g.time; hub("coalplant"); }
     // a town short of something it needs, plant sites short of materials for a day, blocks waiting for parts
     for (const t of g.towns.list) if (t.pop > 100) for (const p of needsOf(t.pop)) if ((t.supply[p] ?? 1) < 0.8) grow(p);
     if (g.buildings.list.some((b) => b.plant?.site && g.time - b.born > DAY)) { grow("planks"); grow("cement"); }
     if (g.buildings.list.filter((b) => b.site).length > 4) grow("parts");
+    growing = false;
   };
   let trucks = 0;
   const extra: Town[] = [];
