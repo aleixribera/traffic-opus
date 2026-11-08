@@ -463,9 +463,13 @@ projects**: huge buildings that take hundreds of mixed loads, as long-term goals
 "Some goals and objectives are just weird, let's trim them down a lot." The ladder went from 54 milestones to
 20. A goal stays when it is a real step in the company's story: a town reaching a size, a chain's first load,
 a town kept supplied, a landmark. Cut: one-day volume goals ("Deliver 30 loads of planks in one day"), lifetime
-tallies ("Deliver 300 loads to your towns in all"), trade-value days, and goals that were an odd proxy for the
+tallies ("Deliver 300 loads to your towns in all"), trade-value days, a supply goal met the moment it opened
+("Village supplied": a well-fed hamlet that grows to 300 already is), and goals that were an odd proxy for the
 thing they unlocked ("Quarry 120 loads of limestone" for the chemical works, "Make 30 loads of coal" for
-warehouses).
+warehouses). One tally stays, renamed from Heavy haulage to Steady trade (150 loads delivered; its heavy trucks
+come with Village): it lands about half a day after Village, and its grant pays for the power plant and smelter
+Village opened (tests/balance.test.ts: with that money moved to First steel, the scripted company had made no
+steel by day 11).
 
 Nothing was lost: every building, road type, junction tool, truck class and level the cut goals unlocked comes
 with the kept step nearest where it used to, and so do their grants (still $1,505,000 in all) and their new
@@ -477,9 +481,9 @@ the kept one (progression.ts `RETIRED`, `Progress.legacy`).
 |---|---|---|
 | First customers | | |
 | Growing hamlet | | |
-| Village | smelter, heavy trucks, +$10k | Market day (part), Heavy haulage (part) |
+| Village | smelter, heavy trucks, +$40k | Market day (part), Village supplied (part), Heavy haulage (part) |
 | Sawn timber | Food plants to level 3 | Market day (part) |
-| Village supplied | +$30k | Heavy haulage (part) |
+| Steady trade (was Heavy haulage) | quarry, cement works | Village supplied (part) |
 | First steel | Power plants to level 3 | Lights on |
 | First cement | warehouses, Cement works and Smelters to level 3 | Stockpiles, Concrete |
 | Two villages | dairy farm, creamery, divided boulevard, $10k | Milk round, Fresh milk, Two towns supplied |
@@ -536,7 +540,7 @@ and turning it back on brings every dismissed tip back. Both are kept per browse
   in 20 to 30 minutes; first steel and first cement inside about an hour and a half. The flow: road to the farm,
   food plant, first deliveries, the hamlet asks for planks at 100 people, sawmill, the first new town springs up
   at 150, a road to it, Village. A site's first level comes in under a day of work; the later ones take longer.
-  The milestones around Village pay grants (Village $50k, Village supplied $60k, First steel $20k) so the steel
+  The milestones around Village pay grants (Village $80k, Steady trade $30k, First steel $20k) so the steel
   chain is in reach as soon as it opens: traffic, not money, is what holds the player up.
   The late game is unchanged.
 - The bottleneck moves on its own: more towns mean more commuters on the roads trucks use, and longer chains

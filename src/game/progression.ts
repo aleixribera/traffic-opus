@@ -81,13 +81,14 @@ export const fullySupplied = (t: ProgressView["towns"][number], only?: Product[]
 
 const n = (o: Partial<Record<Product, number>>, p: Product) => o[p] ?? 0;
 const biggest = (v: ProgressView) => v.towns.reduce((a, t) => Math.max(a, t.pop), 0);
+const allSold = (v: ProgressView) => Object.values(v.sold).reduce((a: number, k) => a + (k ?? 0), 0);
 /** Towns of at least this size (TOWN_SIZES index). */
 const ofSize = (v: ProgressView, size: number) => v.towns.filter((t) => sizeOf(t.pop) >= size).length;
 
 /**
  * The ladder (docs/design.md "Milestones", trimmed 2026-11-08 from 54 to 20: "some goals and objectives are just
  * weird, let's trim them down a lot"). Each one is a real step: a town size, a chain's first load, a town kept
- * supplied, a landmark. What the micro-goals cut then unlocked (Market day, Lights on, Heavy haulage, Concrete,
+ * supplied, a landmark. What the micro-goals cut then unlocked (Market day, Lights on, Village supplied, Concrete,
  * Building boom...) comes with the step nearest where it used to (see RETIRED), and their grants with it.
  */
 export const MILESTONES: Milestone[] = [
@@ -107,7 +108,7 @@ export const MILESTONES: Milestone[] = [
     // (tier 2 opens whole: the iron mine, coal mine, power plant and smelter of the steel chain)
     id: "village", name: "Village", goal: "Grow a town to Village size: 300 people",
     measure: (v) => [biggest(v), 300],
-    unlocks: { buildings: ["ironmine", "coalmine", "coalplant", "smelter"], trucks: ["heavy"], grant: 50000 },
+    unlocks: { buildings: ["ironmine", "coalmine", "coalplant", "smelter"], trucks: ["heavy"], grant: 80000 },
   },
   {
     id: "planks10", name: "Sawn timber", goal: "Saw 10 loads of planks",
@@ -116,10 +117,13 @@ export const MILESTONES: Milestone[] = [
   },
   // ---------------------------------------------------------------- tier 2: steel and cement
   {
-    // (food and planks only: a village of 600 also wants cement, and this is the milestone that unlocks it)
-    id: "supplied", name: "Village supplied", goal: "Keep a village in all the food and planks it needs for a day",
-    measure: (v) => [v.towns.some((t) => sizeOf(t.pop) >= 1 && fullySupplied(t, ["food", "planks"])) ? 1 : 0, 1],
-    unlocks: { buildings: ["quarry", "cementworks"], grant: 60000 },
+    // (a volume of trade rather than "Village supplied", cut: that one was met the moment a well-fed hamlet grew to a
+    // village, a step nobody took. This one comes a good half day after the Village, and its grant with it, which
+    // pays for the coal mine and power plant the Village opened. The id is the old "Heavy haulage", which counted
+    // the same; its heavy trucks now come with the Village)
+    id: "heavy", name: "Steady trade", goal: "Deliver 150 loads to your towns in all",
+    measure: (v) => [allSold(v), 150],
+    unlocks: { buildings: ["quarry", "cementworks"], grant: 30000 },
   },
   {
     id: "steel", name: "First steel", goal: "Make your first load of steel",
@@ -226,7 +230,7 @@ export const RENAMED: Record<string, string> = { town2: "hamlet150", towns3: "vi
  * still there to reach, with its grant and its towns.
  */
 export const RETIRED: Record<string, string> = {
-  food20: "village", powered3: "steel", heavy: "village", dairy: "villages2", milk1: "villages2", warehouse: "cement",
+  food20: "village", powered3: "steel", supplied: "heavy", dairy: "villages2", milk1: "villages2", warehouse: "cement",
   cement20: "cement", supplied2: "villages2", trade20k: "townSupplied", planks30: "pop1000", depot: "fuel1",
   food60: "town", cement30: "goods1", chemworks: "town", supplies20: "townSupplied", roadtrain: "town",
   parts1: "townSupplied", villages3: "townSupplied", fuel30: "fuel1", goods30: "townSupplied", parts20: "goods1",

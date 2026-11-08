@@ -145,12 +145,11 @@ describe("Milestones", () => {
     expect(p.check(v).map((m) => m.id)).toEqual(["food10", "hamlet150", "village", "planks10"]);
   });
 
-  it("a village big enough to want cement can still meet the milestone that unlocks cement", () => {
-    const sup = MILESTONES.find((m) => m.id === "supplied")!;
-    expect(sup.unlocks.buildings).toContain("cementworks");
-    const v = (cement: number) => view({ towns: [{ pop: 700, supply: { food: 0.9, planks: 0.85, cement } }] });
-    expect(sup.measure(v(0))).toEqual([1, 1]);
-    expect(sup.measure(view({ towns: [{ pop: 700, supply: { food: 0.9, planks: 0.2 } }] }))).toEqual([0, 1]);
+  it("the milestone that unlocks cement counts loads delivered, so a village that wants cement can still meet it", () => {
+    const heavy = MILESTONES.find((m) => m.id === "heavy")!;
+    expect(heavy.unlocks.buildings).toContain("cementworks");
+    expect(heavy.measure(view({ sold: { food: 90, planks: 60 }, towns: [{ pop: 700, supply: { food: 0.9, planks: 0.85 } }] }))).toEqual([150, 150]);
+    expect(heavy.measure(view({ sold: { food: 90 } }))).toEqual([90, 150]);
     // the later milestone that asks for every need does want the cement
     const sup2 = MILESTONES.find((m) => m.id === "townSupplied")!;
     expect(sup2.measure(view({ towns: [{ pop: 1700, supply: { food: 1, planks: 1, goods: 1, fuel: 1 } }] }))[0]).toBe(0);
@@ -223,7 +222,7 @@ describe("Milestones", () => {
     const old = { ...JSON.parse(JSON.stringify(p.toJSON())), done: ["food10", "hamlet150", "village", "planks10", "food20", "supplied", "steel", "powered3", "heavy", "cement", "dairy", "milk1", "towns5"] };
     const q = new Progress();
     q.load(old);
-    expect(q.done).toEqual(["food10", "hamlet150", "village", "planks10", "supplied", "steel", "cement"]);
+    expect(q.done).toEqual(["food10", "hamlet150", "village", "planks10", "steel", "heavy", "cement"]);
     // the dairy and creamery came with "Milk round" and "Fresh milk": they stay, and "Two villages" is still to reach
     expect(q.unlocked.buildings.has("dairyfarm")).toBe(true);
     expect(q.unlocked.buildings.has("creamery")).toBe(true);

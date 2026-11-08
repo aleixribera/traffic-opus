@@ -559,13 +559,13 @@ describe("Balance: the game to Town size", () => {
     expect(cement / DAY).toBeLessThan(CEMENT_BY);
     // the milestones in the ladder's order where one gates the next
     const at = (id: string) => ids.indexOf(id);
-    for (const id of ["food10", "hamlet150", "planks10", "village", "supplied", "steel", "cement"]) expect(at(id), id).toBeGreaterThanOrEqual(0);
+    for (const id of ["food10", "hamlet150", "planks10", "village", "heavy", "steel", "cement"]) expect(at(id), id).toBeGreaterThanOrEqual(0);
     // the first new town springs up from the hamlet growing, and the company's road reaches it
     expect(r.spawned.length).toBeGreaterThanOrEqual(1);
     expect(r.spawned[0].joined).toBeGreaterThan(0);
     expect(at("food10")).toBeLessThan(at("village"));
     expect(at("village")).toBeLessThan(at("steel"));
-    expect(at("supplied")).toBeLessThan(at("cement"));
+    expect(at("heavy")).toBeLessThan(at("cement"));
     expect(at("steel")).toBeLessThan(at("cement"));
     // never more than OPEN_AT_ONCE ahead of the first one not reached
     for (const [i, id] of ids.entries()) expect(MILESTONES.findIndex((m) => m.id === id)).toBeLessThan(i + OPEN_AT_ONCE + 1);
