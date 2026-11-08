@@ -1355,6 +1355,7 @@ function planRoadOnce(net: RoadNetwork, world: BuildWorld, inp: PlanInput): Plan
   let par: { a: V2; b: V2 } | undefined;
   let trim: ParallelTrim | undefined;
   const extra: PlanError[] = [];
+  let noBridge = false;
   if (inp.parallel && chain.length) {
     const ps = parallelStroke(net, stroke, inp.parallel.offset, start, end, inp.parallel.from);
     for (const pc of ps.pieces) {
@@ -1393,10 +1394,13 @@ function planRoadOnce(net: RoadNetwork, world: BuildWorld, inp: PlanInput): Plan
       strokes[i] = r.st;
       if (i === 0) spans.push(...r.spans);
       extra.unshift(...r.errors);
+      if (r.errors.length) noBridge = true;
     }
   }
   const plan = validateStrokes(net, world, strokes, "road", anchors, undefined, par ? strokes.map((_, i) => anchors.slice(i * 2, i * 2 + 2)) : undefined, skip, slips);
   plan.errors.unshift(...extra);
+  // (a bridge that can't fit has said why and what to do: not also "raise it with Page Up")
+  if (noBridge) plan.errors = plan.errors.filter((e) => !e.msg.startsWith("Needs a bridge here"));
   if (spans.length) plan.bridges = spans;
   if (asRamp && !piece && !plan.errors.length) {
     const sn = slip.ta ? start : end;
