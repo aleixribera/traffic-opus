@@ -379,25 +379,23 @@ describe("Fuel depots", () => {
 });
 
 describe("Logistics milestones", () => {
-  it("heavy trucks and warehouses in tier 2, depots with the refinery, road trains on the way to a Town", () => {
+  it("heavy trucks and warehouses in tier 2, depots with the first fuel, road trains with the Town", () => {
     const at = (id: string) => MILESTONES.findIndex((m) => m.id === id);
     const truckBy = (c: string) => unlockedBy((u) => u.trucks?.includes(c as never))!.id;
     const bldBy = (k: PlantKind) => unlockedBy((u) => u.buildings?.includes(k))!.id;
     expect(unlocksOf([]).trucks).toEqual(new Set(["light"]));
-    expect(at(truckBy("heavy"))).toBeGreaterThan(at("village"));
+    expect(at(truckBy("heavy"))).toBeGreaterThanOrEqual(at("village"));
     expect(at(truckBy("heavy"))).toBeLessThan(at("pop1000"));
     expect(at(bldBy("warehouse"))).toBeLessThan(at("pop1000"));
-    expect(at(bldBy("fueldepot"))).toBeGreaterThan(at("fuel1"));
-    expect(at(truckBy("roadtrain"))).toBeGreaterThan(at("town"));
+    expect(bldBy("fueldepot")).toBe("fuel1");
+    expect(truckBy("roadtrain")).toBe("town");
     expect(at(truckBy("roadtrain"))).toBeLessThan(at("city"));
     expect(unlocksOf(MILESTONES.map((m) => m.id)).trucks.size).toBe(3);
     // the build menu has them under Logistics
     expect(PLACED_TABS.find((t) => t.id === "logistics")!.kinds).toEqual(["warehouse", "fueldepot"]);
-    // measures
-    const m = (id: string) => MILESTONES.find((x) => x.id === id)!;
-    const view = { towns: [], made: { coal: 12 }, sold: { food: 90, planks: 30 }, bestDay: {}, bestEarned: 0, powered: 0 };
-    expect(m(truckBy("heavy")).measure(view)).toEqual([120, 150]);
-    expect(m(bldBy("warehouse")).measure(view)).toEqual([12, 30]);
+    // (they come with steps of their own chains: heavy trucks with the mines at Village, warehouses with the first cement)
+    expect(truckBy("heavy")).toBe("village");
+    expect(bldBy("warehouse")).toBe("cement");
   });
 });
 

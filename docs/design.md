@@ -202,9 +202,8 @@ Our own names, look and art throughout.
   then a warehouse with room as overflow, never another warehouse. The exception is a warehouse set as a
   **feeder** for the product: it comes first when it is nearer than where the load would otherwise go. In
   the panel the player picks the products it takes (all by default) and the ones it feeds, and sees the stock.
-- **Unlocks:** heavy trucks with "Heavy haulage" (after "Lights on"), warehouses with
-  "Stockpiles" (tier 2), depots with "Own pumps" (the first refined fuel), road trains with "Road trains"
-  (on the way to a Town).
+- **Unlocks:** heavy trucks with "Village" (with the mines), warehouses with "First cement", depots with "First fuel",
+  road trains with "Town".
 
 ## Freight: oversized loads (owner, 2026-11-08: "make it look cool and feel special")
 
@@ -243,8 +242,7 @@ manages or approves it; their part is the road it takes.
   - the convoy on the road and its destination;
   - pieces delivered.
 - **Milestones.**
-  - "Oversized load" (the first piece shipped) unlocks the Hydro Dam.
-  - "Skyline" (three pieces) unlocks the Skyline Tower.
+  - "Oversized load" (the first piece shipped) unlocks the Hydro Dam and the Skyline Tower.
 
 ## Industrial parks
 
@@ -345,8 +343,11 @@ itself across modes; you build tracks, docks and the transfer points, never line
   meet. Houses and shops build themselves along its streets.
 - **Towns spring up; the player never founds one (owner, 2026-11-08).** The company starts with one hamlet. Fresh
   hamlets (level 0) appear as milestones are reached, and the milestones that bring them are about the towns
-  there are growing: a hamlet of 150 people, two villages, a big village of 1,000, three villages, a market town of
-  4,000, twin Towns, a City supplied, then late volume goals and the World's fair.
+  there are growing: a hamlet of 150 people (1), two villages (1), a big village of 1,000 (1), a Town (2), a
+  Town supplied (1), a market town of 4,000 (2), a City (2), a City supplied (2), the World's fair (1) and the
+  first cars (1): 14 in all. The Towns window (the Towns button in the bar, or C) lists every town with its
+  size, people and worst-supplied need ("No road yet" for one nothing reaches), and above them one line on when
+  the next town springs up: "Next town springs up at Two villages · 1 / 2 · opens after 4 more goals".
   - **Where.** Each one lies further from the start town than the last, roughly exponentially: the first about
     1.9 km out, each next one 1.55x further, capped at 16 km (settlements.ts `spawnDistance`). It is never nearer
     another town than 1.8 km or about half that distance, and stands on open dry land (not in water, not on a
@@ -571,14 +572,83 @@ Unlocks come from **milestones**, concrete achievements, never from cumulative X
 - three towns supplied with every need of their size;
 - a day's delivered value passes a threshold.
 
-There are about 40 milestones in a rough ladder, with a few open at once so there is always a choice of what to
-chase next. Each unlocks something concrete: a chain, the next level for named kinds of site, a truck class, a
-road type or junction tool, a new town springing up, warehouses, fuel depots, a grant. The last ones unlock **company projects**: huge buildings that
-take hundreds of mixed loads, as long-term goals and goods sinks.
+There are 20 milestones in a ladder, three open at once so there is always a choice of what to chase next.
+Each unlocks something concrete: a chain, the next level for named kinds of site, a truck class, a road type or
+junction tool, a new town springing up, warehouses, fuel depots, a grant. The last ones unlock **company
+projects**: huge buildings that take hundreds of mixed loads, as long-term goals and goods sinks.
+
+### Trimmed to real steps (owner, 2026-11-08)
+
+"Some goals and objectives are just weird, let's trim them down a lot." The ladder went from 54 milestones to
+20. A goal stays when it is a real step in the company's story: a town reaching a size, a chain's first load,
+a town kept supplied, a landmark. Cut: one-day volume goals ("Deliver 30 loads of planks in one day"), lifetime
+tallies ("Deliver 300 loads to your towns in all"), trade-value days, a supply goal met the moment it opened
+("Village supplied": a well-fed hamlet that grows to 300 already is), and goals that were an odd proxy for the
+thing they unlocked ("Quarry 120 loads of limestone" for the chemical works, "Make 30 loads of coal" for
+warehouses). One tally stays, renamed from Heavy haulage to Steady trade (150 loads delivered; its heavy trucks
+come with Village): it lands about half a day after Village, and its grant pays for the power plant and smelter
+Village opened (tests/balance.test.ts: with that money moved to First steel, the scripted company had made no
+steel by day 11).
+
+Nothing was lost: every building, road type, junction tool, truck class and level the cut goals unlocked comes
+with the kept step nearest where it used to, and so do their grants (still $1,505,000 in all) and their new
+towns (still 14). A whole tier's plants now open together (tier 2 with Village, tier 3 with Big village, tier 4
+with Market town). A save that reached a cut goal keeps what it unlocked, without being marked as having reached
+the kept one (progression.ts `RETIRED`, `Progress.legacy`).
+
+| Kept (in order) | Now also unlocks (from the cut goals) | Cut goals merged into it |
+|---|---|---|
+| First customers | | |
+| Growing hamlet | | |
+| Village | smelter, heavy trucks, +$40k | Market day (part), Village supplied (part), Heavy haulage (part) |
+| Sawn timber | Food plants to level 3 | Market day (part) |
+| Steady trade (was Heavy haulage) | quarry, cement works | Village supplied (part) |
+| First steel | Power plants to level 3 | Lights on |
+| First cement | warehouses, Cement works and Smelters to level 3 | Stockpiles, Concrete |
+| Two villages | dairy farm, creamery, divided boulevard, $10k | Milk round, Fresh milk, Two towns supplied |
+| Big village | sand pit, glassworks, furniture factory, $30k | Building boom |
+| First fuel | fuel depots, Refineries to level 3 | Own pumps, Fuelling the roads |
+| Home comforts | construction plant, Glassworks and Furniture to level 3 | Concrete age, Rising blocks |
+| Town | road trains, chemical works, 4-lane one-way | Feeding thousands, Chemistry, Road trains |
+| Town supplied | a new town; Construction plants, Chemical works and Creameries to level 3; +$80k | Good trading day, Fed back, Prefab, Three villages, Furnished |
+| Market town | copper mine and smelter, electronics, machine works, one more town, +$190k | Big trading day, Twin towns, Prefab streets, Copper country, Shopping streets (part), Red metal |
+| City | Copper smelters to level 3 | Shopping streets (part) |
+| Heavy industry | $80k | Circuit boards |
+| City supplied | one more town; oil, sand, refinery, glass, furniture, construction, chemical and copper sites to level 4 | Wired city, Tooled up |
+| Oversized load | Skyline Tower, +$80k | Skyline |
+| World's fair | rubber plant, Motor Works, +$150k | Synthetic rubber, Assembly line |
+| Motor age | a new town; Rubber plants and Motor Works to level 4 | Rush hour |
 
 **Order of the long game:** the first half is a pure road-and-truck game. Tiers 1-3 chains, truck classes, every
 road type, highways and interchanges all come before trains. **Freight rail unlocks late** (around tier 4, when
 demand has outgrown even road trains on a good highway network), and barges after it.
+
+## Tips (owner, 2026-11-08)
+
+"Fixing the tutorials that appear, they are annoying, and sometimes wrong for the current state of the map."
+One quiet tip at most sits under the goals, inside the goals card (it never covers them), and only for steps the
+game doesn't show by itself. Each one checks the live map before it shows and goes away once its step is done or
+no longer applies; it names a town only when that town is the one that needs it (src/ui/tips.ts, tests/tips.test.ts).
+
+| Tip | Shows while |
+|---|---|
+| Start a food chain | no farm placed. Worded for the map: place one on soil within reach of a road, or, when no fertile soil lies near any road, lay a road out to some first. Names the biggest reachable town that wants food. |
+| No road reaches your site | a site's roads reach no town and no other site (placed out past where its gate street reaches) |
+| Build a Food plant | a farm and no food plant |
+| Nobody to sell to | a built plant whose roads reach no buyer |
+| Planks | no sawmill, and a town is at 60% of the size that wants planks (names it, "will want" or "wants now") |
+| A new town has no road | a town that sprang up isn't joined by road to anything beyond its own streets |
+| A site waits for something | a building site needs a product none of the company's plants makes |
+| Where a deposit lies | a mined kind is unlocked and none placed: the nearest deposit's distance and direction |
+| Power | a built plant draws power and no power plant is placed |
+| Construction parts | the construction plant is unlocked, none placed, and a town's new blocks wait for parts |
+| Fresh milk | the dairy farm is unlocked and none placed |
+| Supplies | the chemical works is unlocked, none placed, and a farm or mine has reached level 2 |
+
+Cut: the "keep the town fed" filler, and the "build X next" tips for each later plant (the goals card's unlock
+line already says what opened). Each tip has a dismiss button; the pause menu's Tips switch turns them all off,
+and turning it back on brings every dismissed tip back. Both are kept per browser (`flowtown.tips.off`,
+`flowtown.tips.dismissed`). The category button a tip points at gets a still marker, no pulse.
 
 ## Pacing (no waiting)
 
@@ -589,10 +659,8 @@ demand has outgrown even road trains on a good highway network), and barges afte
   in 20 to 30 minutes; first steel and first cement inside about an hour and a half. The flow: road to the farm,
   food plant, first deliveries, the hamlet asks for planks at 100 people, sawmill, the first new town springs up
   at 150, a road to it, Village. A site's first level comes in under a day of work; the later ones take longer.
-  Measured by the balance bot on seed 7: Village at 34 minutes, a minute behind the growth before steady growth on
-  the same bot and layout (33); the start town's first twelve households drew 27 people there against 36 on the
-  denser layout (29 minutes). The milestones around Village pay grants (Market day $10k, Village $40k, Village supplied $30k, Heavy haulage
-  $30k) so the steel chain is in reach as soon as it opens: traffic, not money, is what holds the player up.
+  The milestones around Village pay grants (Village $80k, Steady trade $30k, First steel $20k) so the steel
+  chain is in reach as soon as it opens: traffic, not money, is what holds the player up.
   The late game is unchanged.
 - The bottleneck moves on its own: more towns mean more commuters on the roads trucks use, and longer chains
   mean longer trips, so road work keeps being needed.

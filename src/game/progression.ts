@@ -5,7 +5,7 @@
 // of site, or a grant. There is no land to buy: the company builds anywhere its roads reach, and the deposits of each
 // tier, kilometres apart, are what open the map up. The company starts with tier 1 (farms, logging camps, food plants,
 // sawmills), its first hamlet and the basic roads. The new towns come as the towns there are grow (a hamlet of 150,
-// two villages, three villages, a big village, a Town...), each further out than the last.
+// two villages, a big village, a Town, a Town supplied, a market town, a City...), each further out than the last.
 
 import type { RoadTypeId } from "../config";
 import { PLANTS, type PlantKind, type Product } from "./industry";
@@ -86,7 +86,14 @@ const allSold = (v: ProgressView) => Object.values(v.sold).reduce((a: number, k)
 /** Towns of at least this size (TOWN_SIZES index). */
 const ofSize = (v: ProgressView, size: number) => v.towns.filter((t) => sizeOf(t.pop) >= size).length;
 
+/**
+ * The ladder (docs/design.md "Milestones", trimmed 2026-11-08 from 54 to 20: "some goals and objectives are just
+ * weird, let's trim them down a lot"). Each one is a real step: a town size, a chain's first load, a town kept
+ * supplied, a landmark. What the micro-goals cut then unlocked (Market day, Lights on, Village supplied, Concrete,
+ * Building boom...) comes with the step nearest where it used to (see RETIRED), and their grants with it.
+ */
 export const MILESTONES: Milestone[] = [
+  // ---------------------------------------------------------------- tier 1: food and timber, the first hamlet
   {
     id: "food10", name: "First customers", goal: "Deliver 10 loads of food to your towns",
     measure: (v) => [n(v.sold, "food"), 10],
@@ -99,309 +106,139 @@ export const MILESTONES: Milestone[] = [
     unlocks: { features: ["roundabout"], roads: ["streetM"], towns: 1 },
   },
   {
+    // (tier 2 opens whole: the iron mine, coal mine, power plant and smelter of the steel chain)
     id: "village", name: "Village", goal: "Grow a town to Village size: 300 people",
     measure: (v) => [biggest(v), 300],
-    unlocks: { buildings: ["ironmine", "coalmine", "coalplant"], grant: 40000 },
+    unlocks: { buildings: ["ironmine", "coalmine", "coalplant", "smelter"], trucks: ["heavy"], grant: 80000 },
   },
   {
     id: "planks10", name: "Sawn timber", goal: "Saw 10 loads of planks",
     measure: (v) => [n(v.made, "planks"), 10],
-    unlocks: { levels: { kinds: ["loggingcamp", "sawmill"], to: 3 }, features: ["signals"] },
+    unlocks: { levels: { kinds: ["loggingcamp", "sawmill", "foodplant"], to: 3 }, features: ["signals"] },
   },
+  // ---------------------------------------------------------------- tier 2: steel and cement
   {
-    id: "food20", name: "Market day", goal: "Deliver 20 loads of food in one day",
-    measure: (v) => [n(v.bestDay, "food"), 20],
-    unlocks: { buildings: ["smelter"], levels: { kinds: ["foodplant"], to: 3 }, grant: 10000 },
-  },
-  {
-    // (food and planks only: a village of 600 also wants cement, and this is the milestone that unlocks it)
-    id: "supplied", name: "Village supplied", goal: "Keep a village in all the food and planks it needs for a day",
-    measure: (v) => [v.towns.some((t) => sizeOf(t.pop) >= 1 && fullySupplied(t, ["food", "planks"])) ? 1 : 0, 1],
+    // (a volume of trade rather than "Village supplied", cut: that one was met the moment a well-fed hamlet grew to a
+    // village, a step nobody took. This one comes a good half day after the Village, and its grant with it, which
+    // pays for the coal mine and power plant the Village opened. The id is the old "Heavy haulage", which counted
+    // the same; its heavy trucks now come with the Village)
+    id: "heavy", name: "Steady trade", goal: "Deliver 150 loads to your towns in all",
+    measure: (v) => [allSold(v), 150],
     unlocks: { buildings: ["quarry", "cementworks"], grant: 30000 },
   },
   {
     id: "steel", name: "First steel", goal: "Make your first load of steel",
     measure: (v) => [n(v.made, "steel"), 1],
-    unlocks: { roads: ["one3", "avenueM"], grant: 20000 },
-  },
-  {
-    id: "powered3", name: "Lights on", goal: "Run three buildings at full power",
-    measure: (v) => [v.powered, 3],
-    unlocks: { levels: { kinds: ["coalplant"], to: 3 } },
+    unlocks: { roads: ["one3", "avenueM"], levels: { kinds: ["coalplant"], to: 3 }, grant: 20000 },
   },
   {
     id: "cement", name: "First cement", goal: "Make your first load of cement",
     measure: (v) => [n(v.made, "cement"), 1],
-    unlocks: { features: ["transit"] },
+    unlocks: { features: ["transit"], buildings: ["warehouse"], levels: { kinds: ["cementworks", "smelter"], to: 3 } },
   },
   {
+    // (the villages buy fresh milk: the dairy opens as the second one grows)
     id: "villages2", name: "Two villages", goal: "Grow two towns to Village size: 300 people",
     measure: (v) => [ofSize(v, 1), 2],
-    unlocks: { towns: 1, roads: ["boulevard"] },
+    unlocks: { towns: 1, roads: ["boulevard", "boulevardM"], buildings: ["dairyfarm", "creamery"], grant: 10000 },
   },
+  // ---------------------------------------------------------------- tier 3: fuel, household goods, construction parts
   {
-    id: "cement20", name: "Concrete", goal: "Deliver 20 loads of cement to your towns",
-    measure: (v) => [n(v.sold, "cement"), 20],
-    unlocks: { levels: { kinds: ["cementworks", "smelter"], to: 3 } },
-  },
-  {
-    id: "supplied2", name: "Two towns supplied", goal: "Supply every need of two towns of 100+ people for a day",
-    measure: (v) => [v.towns.filter((t) => t.pop >= 100 && fullySupplied(t)).length, 2],
-    unlocks: { roads: ["boulevardM"] },
-  },
-  {
-    id: "trade20k", name: "Good trading day", goal: "Take $20,000 from deliveries in one day",
-    measure: (v) => [Math.floor(v.bestEarned), 20000], money: true,
-    unlocks: { levels: { kinds: ["creamery"], to: 3 } },
-  },
-  {
+    // (a town wants fuel and goods from 1,500: their chains open while it is still on its way there)
     id: "pop1000", name: "Big village", goal: "Grow a town to 1,000 people",
     measure: (v) => [biggest(v), 1000],
-    // (a town wants fuel from 1,500: oil opens first, while it is still on its way there)
-    unlocks: { buildings: ["oilwell", "refinery"], towns: 1 },
-  },
-  {
-    id: "planks30", name: "Building boom", goal: "Deliver 30 loads of planks in one day",
-    measure: (v) => [n(v.bestDay, "planks"), 30],
-    unlocks: { buildings: ["sandpit", "glassworks", "furniture"], grant: 30000 },
+    unlocks: { buildings: ["oilwell", "refinery", "sandpit", "glassworks", "furniture"], towns: 1, grant: 30000 },
   },
   {
     id: "fuel1", name: "First fuel", goal: "Refine your first load of fuel",
     measure: (v) => [n(v.made, "fuel"), 1],
-    unlocks: { grant: 25000 },
+    unlocks: { buildings: ["fueldepot"], levels: { kinds: ["refinery"], to: 3 }, grant: 25000 },
   },
   {
-    id: "food60", name: "Feeding thousands", goal: "Deliver 60 loads of food in one day",
-    measure: (v) => [n(v.bestDay, "food"), 60],
-    unlocks: { roads: ["one4"] },
-  },
-  {
-    id: "cement30", name: "Concrete age", goal: "Deliver 30 loads of cement in one day",
-    measure: (v) => [n(v.bestDay, "cement"), 30],
-    unlocks: { buildings: ["constructionplant"] },
-  },
-  {
+    // (from here a town's new blocks wait for construction parts)
     id: "goods1", name: "Home comforts", goal: "Make your first load of household goods",
     measure: (v) => [n(v.made, "goods"), 1],
-    unlocks: { grant: 25000 },
+    unlocks: { buildings: ["constructionplant"], levels: { kinds: ["glassworks", "furniture"], to: 3 }, grant: 25000 },
   },
   {
+    // (the chemical works' fertilizer and explosives are what farms and mines need past level 2)
     id: "town", name: "Town", goal: "Grow a town to Town size: 1,500 people",
     measure: (v) => [biggest(v), 1500],
-    unlocks: { towns: 2, grant: 50000 },
-  },
-  {
-    id: "parts1", name: "Prefab", goal: "Deliver your first load of construction parts to a town building site",
-    measure: (v) => [n(v.sold, "parts"), 1],
-    unlocks: { levels: { kinds: ["constructionplant"], to: 3 } },
-  },
-  {
-    id: "villages3", name: "Three villages", goal: "Grow three towns to Village size",
-    measure: (v) => [ofSize(v, 1), 3],
-    unlocks: { towns: 1 },
+    unlocks: { towns: 2, trucks: ["roadtrain"], roads: ["one4"], buildings: ["chemworks"], grant: 50000 },
   },
   {
     id: "townSupplied", name: "Town supplied", goal: "Keep a Town of 1,500+ in everything it needs for a day",
     measure: (v) => [v.towns.some((t) => sizeOf(t.pop) >= 2 && fullySupplied(t)) ? 1 : 0, 1],
-    unlocks: { grant: 60000 },
-  },
-  {
-    id: "fuel30", name: "Fuelling the roads", goal: "Deliver 30 loads of fuel in one day",
-    measure: (v) => [n(v.bestDay, "fuel"), 30],
-    unlocks: { levels: { kinds: ["refinery"], to: 3 } },
-  },
-  {
-    id: "goods30", name: "Furnished", goal: "Deliver 30 loads of household goods in one day",
-    measure: (v) => [n(v.bestDay, "goods"), 30],
-    unlocks: { grant: 50000 },
-  },
-  {
-    id: "parts20", name: "Rising blocks", goal: "Deliver 20 loads of construction parts to building sites",
-    measure: (v) => [n(v.sold, "parts"), 20],
-    unlocks: { levels: { kinds: ["glassworks", "furniture"], to: 3 } },
-  },
-  {
-    id: "trade100k", name: "Big trading day", goal: "Take $100,000 from deliveries in one day",
-    measure: (v) => [Math.floor(v.bestEarned), 100000], money: true,
-    unlocks: { grant: 50000 },
-  },
-  {
-    id: "pop4000", name: "Market town", goal: "Grow a town to 4,000 people",
-    measure: (v) => [biggest(v), 4000],
-    unlocks: { towns: 1, grant: 40000 },
-  },
-  {
-    id: "towns2town", name: "Twin towns", goal: "Grow two towns to Town size",
-    measure: (v) => [ofSize(v, 2), 2],
-    unlocks: { towns: 1, grant: 80000 },
+    unlocks: { towns: 1, levels: { kinds: ["constructionplant", "chemworks", "creamery"], to: 3 }, grant: 140000 },
   },
   // ---------------------------------------------------------------- tier 4: copper, electronics and machinery
-  // (one block: copper opens while the towns are still Towns, so the chains a City needs are running when one gets
-  // there, the way oil opens before a town wants fuel; the last ones reward a City supplied and tier 4 volume)
   {
-    // (the copper deposits lie 10-20 km out in the high ranges)
-    id: "parts50", name: "Prefab streets", goal: "Deliver 50 loads of construction parts to building sites",
-    measure: (v) => [n(v.sold, "parts"), 50],
-    unlocks: { buildings: ["coppermine"] },
-  },
-  {
-    id: "copperore1", name: "Copper country", goal: "Mine your first load of copper ore",
-    measure: (v) => [n(v.made, "copperore"), 1],
-    unlocks: { buildings: ["coppersmelter"], grant: 60000 },
-  },
-  {
-    // (the refinery's plastics finally have a buyer)
-    id: "goods60", name: "Shopping streets", goal: "Deliver 60 loads of household goods in one day",
-    measure: (v) => [n(v.bestDay, "goods"), 60],
-    unlocks: { buildings: ["electronics"], levels: { kinds: ["coppersmelter"], to: 3 } },
-  },
-  {
-    id: "copper1", name: "Red metal", goal: "Smelt your first load of copper",
-    measure: (v) => [n(v.made, "copper"), 1],
-    unlocks: { buildings: ["machineworks"] },
+    // (tier 4 opens whole while the towns are still Towns, so the chains a City needs are running when one gets
+    // there; the copper deposits lie 10-20 km out in the high ranges)
+    id: "pop4000", name: "Market town", goal: "Grow a town to 4,000 people",
+    measure: (v) => [biggest(v), 4000],
+    unlocks: { buildings: ["coppermine", "coppersmelter", "electronics", "machineworks"], towns: 2, grant: 230000 },
   },
   {
     id: "city", name: "City", goal: "Grow a town to City size: 6,000 people",
     measure: (v) => [biggest(v), 6000],
-    unlocks: { towns: 2, grant: 100000 },
-  },
-  {
-    id: "electronics1", name: "Circuit boards", goal: "Make your first load of electronics",
-    measure: (v) => [n(v.made, "electronics"), 1],
-    unlocks: { grant: 80000 },
+    unlocks: { towns: 2, levels: { kinds: ["coppersmelter"], to: 3 }, grant: 100000 },
   },
   {
     id: "machinery1", name: "Heavy industry", goal: "Build your first load of machinery",
     measure: (v) => [n(v.made, "machinery"), 1],
-    unlocks: { levels: { kinds: ["farm", "foodplant", "loggingcamp", "sawmill", "electronics", "machineworks"], to: 4 } },
+    unlocks: { levels: { kinds: ["farm", "foodplant", "loggingcamp", "sawmill", "electronics", "machineworks"], to: 4 }, grant: 80000 },
   },
   {
     id: "citySupplied", name: "City supplied", goal: "Keep a City of 6,000+ in everything it needs for a day",
     measure: (v) => [v.towns.some((t) => sizeOf(t.pop) >= 3 && fullySupplied(t)) ? 1 : 0, 1],
-    unlocks: { towns: 1, levels: { kinds: ["ironmine", "coalmine", "quarry", "smelter", "cementworks", "coalplant", "dairyfarm", "creamery"], to: 4 }, grant: 150000 },
+    unlocks: {
+      towns: 2, grant: 150000,
+      levels: {
+        kinds: ["ironmine", "coalmine", "quarry", "smelter", "cementworks", "coalplant", "dairyfarm", "creamery", "oilwell", "sandpit", "refinery",
+          "glassworks", "furniture", "constructionplant", "chemworks", "coppermine", "coppersmelter"],
+        to: 4,
+      },
+    },
   },
+  // ---------------------------------------------------------------- landmarks (docs/design.md "Landmarks"), then tier 5
   {
-    id: "electronics40", name: "Wired city", goal: "Deliver 40 loads of electronics in one day",
-    measure: (v) => [n(v.bestDay, "electronics"), 40],
-    unlocks: { levels: { kinds: ["oilwell", "sandpit", "refinery", "glassworks", "furniture", "constructionplant", "chemworks"], to: 4 } },
-  },
-  {
-    // (the top of the ladder for now: Metropolis needs and company projects come after)
-    id: "machinery40", name: "Tooled up", goal: "Deliver 40 loads of machinery in one day",
-    measure: (v) => [n(v.bestDay, "machinery"), 40],
-    unlocks: { towns: 1, levels: { kinds: ["coppermine", "coppersmelter", "electronics", "machineworks"], to: 4 } },
-  },
-];
-
-/**
- * Logistics (docs/design.md, "Freight"): bigger truck classes, warehouses and fuel depots. Each goes in the ladder
- * just after the milestone named: heavy trucks once the company runs a few chains, warehouses with tier 2,
- * depots with the refinery, road trains on the way to a Town, when the roads start to fill.
- */
-const LOGISTICS: (Milestone & { after: string })[] = [
-  {
-    after: "powered3", id: "heavy", name: "Heavy haulage", goal: "Deliver 150 loads to your towns in all",
-    measure: (v) => [allSold(v), 150],
-    unlocks: { trucks: ["heavy"], grant: 30000 },
-  },
-  {
-    after: "cement", id: "warehouse", name: "Stockpiles", goal: "Make 30 loads of coal",
-    measure: (v) => [n(v.made, "coal"), 30],
-    unlocks: { buildings: ["warehouse"] },
-  },
-  {
-    after: "fuel1", id: "depot", name: "Own pumps", goal: "Refine 10 loads of fuel",
-    measure: (v) => [n(v.made, "fuel"), 10],
-    unlocks: { buildings: ["fueldepot"] },
-  },
-  {
-    after: "town", id: "roadtrain", name: "Road trains", goal: "Deliver 800 loads to your towns in all",
-    measure: (v) => [allSold(v), 800],
-    unlocks: { trucks: ["roadtrain"] },
-  },
-];
-/**
- * Landmarks (docs/design.md, "Landmarks" and "Freight: oversized loads"): one block at the top of the ladder, after
- * tier 4 and the City: the dam once the machine works ships its first oversized piece, the tower once convoys are a
- * habit, the world's fair once a first landmark stands.
- */
-const LANDMARKS: (Milestone & { after: string })[] = [
-  {
-    after: "machinery40", id: "bigiron", name: "Oversized load", goal: "Ship your first oversized piece by convoy",
+    // (the machine works ships its first oversized piece: the dam and the tower both take them)
+    id: "bigiron", name: "Oversized load", goal: "Ship your first oversized piece by convoy",
     measure: (v) => [v.pieces ?? 0, 1],
-    unlocks: { buildings: ["hydrodam"], grant: 50000 },
+    unlocks: { buildings: ["hydrodam", "skylinetower"], grant: 130000 },
   },
   {
-    after: "bigiron", id: "skyline", name: "Skyline", goal: "Ship 3 oversized pieces by convoy",
-    measure: (v) => [v.pieces ?? 0, 3],
-    unlocks: { buildings: ["skylinetower"], grant: 80000 },
-  },
-  {
-    after: "skyline", id: "worldsfair", name: "World's fair", goal: "Finish a landmark",
+    // (the fair shows off the motor age: the rubber plant and the Motor Works open with it)
+    id: "worldsfair", name: "World's fair", goal: "Finish a landmark",
     measure: (v) => [v.landmarks ?? 0, 1],
-    unlocks: { buildings: ["exposition"], towns: 1, grant: 150000 },
-  },
-];
-for (const { after, ...m } of LANDMARKS) MILESTONES.splice(MILESTONES.findIndex((x) => x.id === after) + 1, 0, m);
-
-for (const { after, ...m } of LOGISTICS) MILESTONES.splice(MILESTONES.findIndex((x) => x.id === after) + 1, 0, m);
-
-/**
- * Deeper chains (docs/design.md "Supplies", "Perishables", "Motor Works"), each just after the milestone named: the
- * dairy and creamery once the villages build in concrete; the chemical works when the quarries are busy (its
- * fertilizer and explosives are what sites need past level 2, required only from then on); and tier 5 as a block
- * after tier 4 and its landmarks (the convoys and landmarks open first): the rubber plant once the refinery makes
- * plastics in volume, the Motor Works for a big City kept in electronics and machinery, and its last steps for cars
- * on the roads.
- */
-const CHAINS: (Milestone & { after: string })[] = [
-  {
-    after: "cement", id: "dairy", name: "Milk round", goal: "Deliver 300 loads to your towns in all",
-    measure: (v) => [allSold(v), 300],
-    unlocks: { buildings: ["dairyfarm"], grant: 10000 },
+    unlocks: { buildings: ["exposition", "rubberplant", "motorworks"], towns: 1, grant: 300000 },
   },
   {
-    after: "dairy", id: "milk1", name: "Fresh milk", goal: "Deliver your first load of milk to a town",
-    measure: (v) => [n(v.sold, "milk"), 1],
-    unlocks: { buildings: ["creamery"] },
-  },
-  {
-    after: "goods1", id: "chemworks", name: "Chemistry", goal: "Quarry 120 loads of limestone",
-    measure: (v) => [n(v.made, "lime"), 120],
-    unlocks: { buildings: ["chemworks"] },
-  },
-  {
-    after: "chemworks", id: "supplies20", name: "Fed back", goal: "Make 20 loads of fertilizer",
-    measure: (v) => [n(v.made, "fertilizer"), 20],
-    unlocks: { levels: { kinds: ["chemworks"], to: 3 }, grant: 30000 },
-  },
-  {
-    after: "worldsfair", id: "rubber", name: "Synthetic rubber", goal: "Make 60 loads of plastics",
-    measure: (v) => [n(v.made, "plastics"), 60],
-    unlocks: { buildings: ["rubberplant"] },
-  },
-  {
-    after: "rubber", id: "motorworks", name: "Assembly line", goal: "Keep a City of 8,000+ in electronics and machinery for a day",
-    measure: (v) => [v.towns.some((t) => t.pop >= 8000 && fullySupplied(t, ["electronics", "machinery"])) ? 1 : 0, 1],
-    unlocks: { buildings: ["motorworks"], grant: 150000 },
-  },
-  {
-    after: "motorworks", id: "cars1", name: "Motor age", goal: "Deliver your first load of cars to a town",
+    // (the top of the ladder for now: every car sold is more traffic)
+    id: "cars1", name: "Motor age", goal: "Deliver your first load of cars to a town",
     measure: (v) => [n(v.sold, "cars"), 1],
-    unlocks: { levels: { kinds: ["rubberplant", "motorworks"], to: 3 }, grant: 100000 },
-  },
-  {
-    // (the top of the ladder for now: every car sold is more traffic, so this one is earned on the roads)
-    after: "cars1", id: "cars30", name: "Rush hour", goal: "Deliver 30 loads of cars in one day",
-    measure: (v) => [n(v.bestDay, "cars"), 30],
-    unlocks: { towns: 1, levels: { kinds: ["rubberplant", "motorworks"], to: 4 } },
+    unlocks: { towns: 1, levels: { kinds: ["rubberplant", "motorworks"], to: 4 }, grant: 100000 },
   },
 ];
-for (const { after, ...m } of CHAINS) MILESTONES.splice(MILESTONES.findIndex((x) => x.id === after) + 1, 0, m);
 
 export const milestoneById = new Map(MILESTONES.map((m) => [m.id, m]));
 /** Milestones renamed since a save was made: the old id stands for the new one (towns used to be founded by slot). */
 export const RENAMED: Record<string, string> = { town2: "hamlet150", towns3: "villages2", towns5: "villages3" };
+/**
+ * Milestones cut from the ladder (2026-11-08), each with the kept one that now carries what it unlocked. A save that
+ * reached one keeps those unlocks (Progress.legacy) without being marked as having reached the kept one: that is
+ * still there to reach, with its grant and its towns.
+ */
+export const RETIRED: Record<string, string> = {
+  food20: "village", powered3: "steel", supplied: "heavy", dairy: "villages2", milk1: "villages2", warehouse: "cement",
+  cement20: "cement", supplied2: "villages2", trade20k: "townSupplied", planks30: "pop1000", depot: "fuel1",
+  food60: "town", cement30: "goods1", chemworks: "town", supplies20: "townSupplied", roadtrain: "town",
+  parts1: "townSupplied", villages3: "townSupplied", fuel30: "fuel1", goods30: "townSupplied", parts20: "goods1",
+  trade100k: "pop4000", towns2town: "pop4000", parts50: "pop4000", copperore1: "pop4000", goods60: "pop4000",
+  copper1: "pop4000", electronics1: "machinery1", electronics40: "citySupplied", machinery40: "citySupplied",
+  skyline: "bigiron", rubber: "worldsfair", motorworks: "worldsfair", cars30: "cars1",
+};
 
 /** The milestone that unlocks something, if one does. */
 export const unlockedBy = (test: (u: Unlocks) => boolean | undefined): Milestone | undefined => MILESTONES.find((m) => test(m.unlocks));
@@ -464,6 +301,8 @@ export interface ProgressJSON {
   pieces?: number;
   /** the towns each milestone brought (saves from before towns sprang up have none) */
   spawned?: Record<string, number[]>;
+  /** kept milestones whose unlocks the save holds from goals since cut (see RETIRED) */
+  legacy?: string[];
 }
 
 /** The company's record: milestones reached, in order, and the tallies they are measured on. */
@@ -480,6 +319,11 @@ export class Progress {
   pieces = 0;
   /** the towns that sprang up for each milestone (town ids) */
   spawned: Record<string, number[]> = {};
+  /**
+   * Kept milestones not reached whose unlocks a save made before the 2026-11-08 trim already had, from a goal since
+   * cut (RETIRED): they count toward what is unlocked, never as reached.
+   */
+  legacy: string[] = [];
   private cache: { n: number; u: Unlocked } | null = null;
 
   isDone(id: string): boolean {
@@ -492,7 +336,7 @@ export class Progress {
   }
 
   get unlocked(): Unlocked {
-    if (this.cache?.n !== this.done.length) this.cache = { n: this.done.length, u: unlocksOf(this.done) };
+    if (this.cache?.n !== this.done.length) this.cache = { n: this.done.length, u: unlocksOf([...this.done, ...this.legacy]) };
     return this.cache.u;
   }
 
@@ -546,11 +390,16 @@ export class Progress {
   }
 
   toJSON(): ProgressJSON {
-    return { done: [...this.done], made: { ...this.made }, sold: { ...this.sold }, today: { ...this.today }, bestDay: { ...this.bestDay }, earnedToday: this.earnedToday, bestEarned: this.bestEarned, pieces: this.pieces, spawned: { ...this.spawned } };
+    return { done: [...this.done], made: { ...this.made }, sold: { ...this.sold }, today: { ...this.today }, bestDay: { ...this.bestDay }, earnedToday: this.earnedToday, bestEarned: this.bestEarned, pieces: this.pieces, spawned: { ...this.spawned }, ...(this.legacy.length ? { legacy: [...this.legacy] } : {}) };
   }
 
   load(d: ProgressJSON) {
-    this.done = [...new Set(d.done.map((id) => RENAMED[id] ?? id))];
+    // (ids from before the trim: a cut goal is dropped, and what it unlocked stays unlocked through the kept one
+    // that carries it now; that one is still there to reach)
+    const ids = d.done.map((id) => RENAMED[id] ?? id);
+    this.done = [...new Set(ids.filter((id) => milestoneById.has(id)))];
+    const carried = [...(d.legacy ?? []), ...ids.map((id) => RETIRED[id]).filter((id): id is string => !!id)];
+    this.legacy = [...new Set(carried)].filter((id) => milestoneById.has(id) && !this.done.includes(id));
     this.made = { ...d.made };
     this.sold = { ...d.sold };
     this.today = { ...d.today };

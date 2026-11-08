@@ -181,6 +181,8 @@ describe("Tier 2 unlocks", () => {
     g.progress.done.push("food10", "hamlet150", "planks10", "village");
     expect(g.placedUnlocked("ironmine")).toBe(true);
     expect(g.placedUnlocked("coalplant")).toBe(true);
-    expect(g.placedUnlocked("smelter")).toBe(false);
+    // (the Village opens the whole steel chain; cement waits for a village kept supplied)
+    expect(g.placedUnlocked("smelter")).toBe(true);
+    expect(g.placedUnlocked("cementworks")).toBe(false);
   });
 });
