@@ -49,16 +49,12 @@ describe("The company economy", () => {
     const { t, farm } = chain(g);
     // the farm the chain put down sits on good soil, and works it at that yield
     expect(farm.plant!.yld).toBeGreaterThan(MIN_DEPOSIT);
-    // somewhere beside the town's streets (no farmland under a town) a farm is refused, and the preview says why
+    // somewhere round the town without enough farmland under the plot a farm is refused, and the preview says why
     let bare: V2 | null = null;
-    for (const s of g.net.segs.values()) {
-      if (s.town !== t.id || bare) continue;
-      const pts = g.net.segGeom.get(s.id)!.center.pts, m = pts[pts.length >> 1];
-      for (const o of [-40, 40]) {
-        const q = { x: m.x + o, y: m.y + o };
-        const pl = g.placedPlan("farm", q);
-        if (pl?.deposit && pl.deposit.share < MIN_DEPOSIT && pl.reason?.startsWith("Needs")) { bare = q; break; }
-      }
+    for (let r = 200; r < 1400 && !bare; r += 100) for (let k = 0; k < 24 && !bare; k++) {
+      const q = { x: t.c.x + Math.cos((k / 24) * 6.283) * r, y: t.c.y + Math.sin((k / 24) * 6.283) * r };
+      const pl = g.placedPlan("farm", q);
+      if (pl?.deposit && pl.deposit.share < MIN_DEPOSIT && pl.reason?.startsWith("Needs")) bare = q;
     }
     expect(bare).not.toBeNull();
     const no = g.placedPlan("farm", bare!)!;

@@ -55,6 +55,8 @@ export interface SnapOpts {
   off?: { geometry?: boolean; guides?: boolean; netSide?: boolean };
   /** Round free lengths to this many metres (CS2's "cell length": 8 m). */
   lengthStep?: number;
+  /** Where a road ending would join a company site waiting for one (just outside its gate); ground level only. */
+  gates?: V2[];
 }
 
 export function cubicClosest(c: Cubic, p: V2): { t: number; d: number; p: V2 } {
@@ -198,7 +200,14 @@ export function snap(net: RoadNetwork, raw: V2, o: SnapOpts): Snap {
       if ((stretchBetween(net, on, here) || stretchBetween(net, here, on)) && alongCarriage(net, on, here)) return here;
     }
   }
-  // 3) free point with angle snapping / alignment guides
+  // 3) the gate of a site waiting for a road
+  if (geo && o.level === 0) {
+    const gr = NODE_SNAP_PX * o.mpp + 8;
+    let best: V2 | null = null;
+    for (const q of o.gates ?? []) if (dist(q, raw) < gr && (!best || dist(q, raw) < dist(best, raw))) best = q;
+    if (best) return { p: { ...best }, h: 0, guides, label: "To the gate" };
+  }
+  // 4) free point with angle snapping / alignment guides
   let p = { ...raw };
   let label: string | undefined;
   if (o.from) {

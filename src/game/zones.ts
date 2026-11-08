@@ -66,6 +66,8 @@ export interface ZoneWorld {
   isWater(p: V2): boolean;
   isMountain(p: V2): boolean;
   owned(p: V2): boolean;
+  /** land a cell may never be zoned on (inside an industry site's fence) */
+  taken?(p: V2): boolean;
 }
 
 const BUCKET = 16;
@@ -357,7 +359,7 @@ export class ZoneMap {
     const u = fromAngle(c.rot), v = right(u);
     const h = CELL / 2 - 0.6;
     const probes = [c.c, add(c.c, add(scale(u, h), scale(v, h))), add(c.c, add(scale(u, -h), scale(v, h))), add(c.c, add(scale(u, h), scale(v, -h))), add(c.c, add(scale(u, -h), scale(v, -h)))];
-    for (const p of probes) if (w.isWater(p) || w.isMountain(p) || !w.owned(p)) return false;
+    for (const p of probes) if (w.isWater(p) || w.isMountain(p) || !w.owned(p) || w.taken?.(p)) return false;
     // clear of every road surface at ground level (its own road included, for the inside of tight bends)
     const r = CELL;
     for (const id of this.net.segsNear(c.c.x - r - 20, c.c.y - r - 20, c.c.x + r + 20, c.c.y + r + 20)) {

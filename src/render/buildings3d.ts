@@ -1,19 +1,25 @@
 import * as THREE from "three";
-import type { BuildingKind } from "../config";
-import { fromAngle, right, type V2 } from "../core/math";
+import { BUILDING_TYPES, type BuildingKind } from "../config";
+import { add, fromAngle, right, scale, type V2 } from "../core/math";
 import type { Building } from "../game/buildings";
 import { ZONE_GROUP } from "../game/growables";
+import type { PlantKind } from "../game/industry";
+import { GATE_GAP, GROW_ANIM, siteDir, siteFrame, siteLayout, siteToWorld, slotHalf, type SiteFrame, type SiteLayout, type SiteSlot } from "../game/sites";
+import type { MergedModel, ModelSet } from "./models";
 import { isHall } from "../game/towns";
-import type { ModelSet } from "./models";
 import { CAR_COLORS, PAL } from "./palette";
 
 /** Model matrix for a lot: model +z (its front) faces the road, origin at the footprint centre. */
 export function lotMatrix(out: THREE.Matrix4, c: V2, rot: number, side: 1 | -1, y = 0) {
   const u = fromAngle(rot);
   const away = right(u);
-  const zx = -away.x * side, zz = -away.y * side;
-  out.makeBasis(new THREE.Vector3(zz, 0, -zx), new THREE.Vector3(0, 1, 0), new THREE.Vector3(zx, 0, zz));
-  out.setPosition(c.x, y, c.y);
+  return faceMatrix(out, c, { x: -away.x * side, y: -away.y * side }, y);
+}
+
+/** Model matrix with the model's front (+z) facing the unit direction f, origin at p. */
+export function faceMatrix(out: THREE.Matrix4, p: V2, f: V2, y = 0) {
+  out.makeBasis(new THREE.Vector3(f.y, 0, -f.x), new THREE.Vector3(0, 1, 0), new THREE.Vector3(f.x, 0, f.y));
+  out.setPosition(p.x, y, p.y);
   return out;
 }
 
@@ -44,46 +50,151 @@ const SQUARE_PAVING = 0xc2bcaa;
 /** Paving round a town hall (m), wider as the town grows: hamlet green, village square, civic plaza. */
 const PLAZA: Partial<Record<BuildingKind, number>> = { hamlethall: 4, villagehall: 7, townhall: 10, cityhall: 13 };
 
+// industry sites: a galvanised fence on posts, worn concrete service roads, faint pads where the next buildings go
+const FENCE_H = 2.1;
+const POST_EVERY = 9;
+const FENCE_POST = 0x5f625f;
+const FENCE_RAIL = 0x7d807c;
+const FENCE_MESH = 0x5d605d;
+const SERVICE_ROAD = 0x85847c;
+const PAD = 0xd9d2b8;
+
+/** One model drawn for a building: a whole zoned building, or one slot of a company site. */
+interface Piece { b: Building; model: string; slot: SiteSlot | null }
+
+/** Flat and upright quads gathered into one geometry (fences, service roads, pads: one draw call for every site). */
+class Quads {
+  pos: number[] = [];
+  nrm: number[] = [];
+  private quad(ps: number[][], n: number[]) {
+    const [a, b, c, d] = ps;
+    for (const p of [a, b, c, a, c, d]) { this.pos.push(...p); this.nrm.push(...n); }
+  }
+  /** A flat strip from a to b, w wide, at height y. */
+  strip(a: V2, b: V2, w: number, y: number) {
+    const L = Math.hypot(b.x - a.x, b.y - a.y);
+    if (L < 1e-3) return;
+    const nx = (-(b.y - a.y) / L) * (w / 2), ny = ((b.x - a.x) / L) * (w / 2);
+    this.flat([{ x: a.x + nx, y: a.y + ny }, { x: b.x + nx, y: b.y + ny }, { x: b.x - nx, y: b.y - ny }, { x: a.x - nx, y: a.y - ny }], y);
+  }
+  /** A flat quad through four corners (either winding; it faces up). */
+  flat(c: V2[], y: number) {
+    const cross = (c[1].x - c[0].x) * (c[2].y - c[0].y) - (c[1].y - c[0].y) * (c[2].x - c[0].x);
+    const q = cross > 0 ? c : [c[0], c[3], c[2], c[1]];
+    // three.js: x right, z toward the viewer; a quad counter-clockwise seen from above has z = map y, so flip
+    this.quad([[q[0].x, y, q[0].y], [q[3].x, y, q[3].y], [q[2].x, y, q[2].y], [q[1].x, y, q[1].y]], [0, 1, 0]);
+  }
+  /** An upright quad from a to b, y0 to y1 (seen from both sides). */
+  wall(a: V2, b: V2, y0: number, y1: number) {
+    const L = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    this.quad([[a.x, y0, a.y], [b.x, y0, b.y], [b.x, y1, b.y], [a.x, y1, a.y]], [-(b.y - a.y) / L, 0, (b.x - a.x) / L]);
+  }
+  mesh(mat: THREE.Material, order: number): THREE.Mesh | null {
+    if (!this.pos.length) return null;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(this.pos, 3));
+    g.setAttribute("normal", new THREE.Float32BufferAttribute(this.nrm, 3));
+    g.computeBoundingSphere();
+    const m = new THREE.Mesh(g, mat);
+    m.renderOrder = order;
+    return m;
+  }
+}
+
 export class Buildings3D {
   readonly group = new THREE.Group();
-  private kinds = new Map<BuildingKind, THREE.InstancedMesh>();
+  private meshes = new Map<string, THREE.InstancedMesh>();
   private parked: THREE.InstancedMesh[] = [];
   private yards: THREE.InstancedMesh | null = null;
   private yardGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
   private drives: THREE.Mesh | null = null;
+  private siteParts: THREE.Object3D[] = [];
   private mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   private driveMat = new THREE.MeshLambertMaterial({ color: PAL.driveway });
-  private order = new Map<BuildingKind, Building[]>();
+  private roadMat = new THREE.MeshLambertMaterial({ color: SERVICE_ROAD });
+  private railMat = new THREE.MeshLambertMaterial({ color: FENCE_RAIL });
+  private meshMat = new THREE.MeshLambertMaterial({ color: FENCE_MESH, transparent: true, opacity: 0.42, side: THREE.DoubleSide, depthWrite: false });
+  private padMat = new THREE.MeshLambertMaterial({ color: PAD, transparent: true, opacity: 0.22, depthWrite: false });
+  private postGeo = new THREE.BoxGeometry(0.4, FENCE_H + 0.1, 0.4).translate(0, FENCE_H / 2, 0);
+  private postMat = new THREE.MeshLambertMaterial({ color: FENCE_POST });
+  private order = new Map<string, Piece[]>();
+  private layouts = new Map<number, { key: string; L: SiteLayout }>();
   private tmp = new THREE.Matrix4();
   private tmp2 = new THREE.Matrix4();
   private col = new THREE.Color();
   private tintFn: ((b: Building) => number | null) | null = null;
-  private building: { b: Building; kind: BuildingKind; i: number }[] = [];
+  /** Pieces still going up: zoned buildings under construction, and a site's newest buildings after it grows. */
+  private building: { p: Piece; i: number }[] = [];
 
-  constructor(private models: ModelSet) {}
+  /** `clock` gives the sim time (a site's new buildings rise for a while after it grows). */
+  constructor(private models: ModelSet, private clock: () => number = () => 0) {}
 
-  /** Model and matrix for a building that isn't placed yet (the placement ghost). */
-  ghost(kind: BuildingKind, c: V2, rot: number, side: 1 | -1): { geo: THREE.BufferGeometry; m: THREE.Matrix4 } | null {
-    const mm = this.models.buildings.get(kind);
-    if (!mm) return null;
-    return { geo: mm.geo, m: lotMatrix(new THREE.Matrix4(), c, rot, side, 0.1) };
+  private geoOf(name: string): MergedModel | undefined {
+    return this.models.buildings.get(name as BuildingKind) ?? this.models.sites.get(name);
+  }
+
+  /** The plan of a company site (cached; it only depends on the kind, the plot and the id). */
+  layoutOf(b: Building): SiteLayout {
+    const key = `${b.kind}:${b.hw}:${b.hd}`;
+    const got = this.layouts.get(b.id);
+    if (got?.key === key) return got.L;
+    const L = siteLayout(b.kind as PlantKind, b.hw * 2, b.hd * 2, b.id);
+    this.layouts.set(b.id, { key, L });
+    return L;
+  }
+
+  /** Models and matrices for a building that isn't placed yet (the placement ghost): a site shows its first level. */
+  ghost(kind: BuildingKind, c: V2, rot: number, side: 1 | -1, seed = 0): { geo: THREE.BufferGeometry; m: THREE.Matrix4 }[] {
+    const T = BUILDING_TYPES[kind];
+    if (T.zone !== "placed") {
+      const mm = this.geoOf(kind);
+      return mm ? [{ geo: mm.geo, m: lotMatrix(new THREE.Matrix4(), c, rot, side, 0.1) }] : [];
+    }
+    const f = siteFrame(c, rot, side, T.d / 2);
+    const L = siteLayout(kind as PlantKind, T.w, T.d, seed);
+    const out: { geo: THREE.BufferGeometry; m: THREE.Matrix4 }[] = [];
+    for (const s of L.slots) {
+      const mm = s.level <= 1 ? this.geoOf(s.model) : undefined;
+      if (mm) out.push({ geo: mm.geo, m: this.slotMatrix(new THREE.Matrix4(), f, s, 1, 0.1) });
+    }
+    return out;
   }
 
   /** Model depth (m) after fitting the lot. */
   private depth(b: Building): number {
-    const mm = this.models.buildings.get(b.kind)!;
+    const mm = this.geoOf(b.kind)!;
     const bb = mm.geo.boundingBox!;
     return (bb.max.z - bb.min.z) * b.fit;
   }
 
   /** Half the depth of a building's model as it stands (unfitted). */
   private halfDepth(b: Building): number {
-    const bb = this.models.buildings.get(b.kind)?.geo.boundingBox;
+    const bb = this.geoOf(b.kind)?.geo.boundingBox;
     return bb ? (bb.max.z - bb.min.z) / 2 : b.hd;
   }
 
-  /** Full matrix of a building's model: fitted to its lot, set back from the road, raised as it is built. */
-  private matrix(out: THREE.Matrix4, b: Building): THREE.Matrix4 {
+  private slotMatrix(out: THREE.Matrix4, f: SiteFrame, s: SiteSlot, rise: number, y = 0): THREE.Matrix4 {
+    faceMatrix(out, siteToWorld(f, s.x, s.y), siteDir(f, s.fx, s.fy), y);
+    if (rise < 1) out.multiply(this.tmp2.makeScale(1, rise, 1));
+    return out;
+  }
+
+  /** How far a piece has gone up (1: standing). */
+  private rise(p: Piece): number {
+    const b = p.b;
+    if (b.built < 1) return 0.08 + 0.92 * b.built;
+    const P = b.plant;
+    if (!p.slot || !P || p.slot.level !== P.level || P.level <= 1) return 1;
+    const t = (this.clock() - P.upAt) / GROW_ANIM;
+    if (t >= 1) return 1;
+    const k = Math.max(0, t);
+    return 0.06 + 0.94 * k * k * (3 - 2 * k);
+  }
+
+  /** Full matrix of a piece: a zoned building fitted to its lot and set back from the road; a site's slot. */
+  private matrix(out: THREE.Matrix4, p: Piece): THREE.Matrix4 {
+    const b = p.b;
+    if (p.slot) return this.slotMatrix(out, siteFrame(b.c, b.rot, b.side, b.hd), p.slot, this.rise(p));
     lotMatrix(out, b.c, b.rot, b.side);
     if (!b.zone) {
       // a town hall rises from its building site like the town's other buildings
@@ -104,12 +215,21 @@ export class Buildings3D {
     return VARY[(Math.imul(b.id, 2654435761) >>> 28) % VARY.length];
   }
 
+  /** The pieces a building is drawn with: one model, or a site's buildings up to its level. */
+  private piecesOf(b: Building): Piece[] {
+    if (!b.placed || !b.plant) return [{ b, model: b.kind, slot: null }];
+    const level = b.plant.level ?? 1;
+    return this.layoutOf(b).slots.filter((s) => s.level <= level).map((s) => ({ b, model: s.model, slot: s }));
+  }
+
   rebuild(list: Building[]) {
-    for (const m of this.kinds.values()) { this.group.remove(m); m.dispose(); }
-    this.kinds.clear();
+    for (const m of this.meshes.values()) { this.group.remove(m); m.dispose(); }
+    this.meshes.clear();
     for (const m of this.parked) { this.group.remove(m); m.dispose(); }
     this.parked = [];
     if (this.yards) { this.group.remove(this.yards); this.yards.dispose(); this.yards = null; }
+    const live = new Set(list.map((b) => b.id));
+    for (const id of this.layouts.keys()) if (!live.has(id)) this.layouts.delete(id);
     const lots = list.filter((b) => b.zone);
     const halls = list.filter((b) => isHall(b.kind));
     if (lots.length || halls.length) {
@@ -144,33 +264,39 @@ export class Buildings3D {
     this.order.clear();
     this.building = [];
     for (const b of list) {
-      let a = this.order.get(b.kind);
-      if (!a) this.order.set(b.kind, (a = []));
-      a.push(b);
+      for (const p of this.piecesOf(b)) {
+        if (!this.geoOf(p.model)) continue;
+        let a = this.order.get(p.model);
+        if (!a) this.order.set(p.model, (a = []));
+        a.push(p);
+      }
     }
-    for (const [kind, bs] of this.order) {
-      const mm = this.models.buildings.get(kind)!;
-      const mesh = new THREE.InstancedMesh(mm.geo, this.mat, bs.length);
+    for (const [model, ps] of this.order) {
+      const mm = this.geoOf(model)!;
+      const mesh = new THREE.InstancedMesh(mm.geo, this.mat, ps.length);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      bs.forEach((b, i) => {
-        mesh.setMatrixAt(i, this.matrix(this.tmp, b));
-        if (b.built < 1) this.building.push({ b, kind, i });
+      ps.forEach((p, i) => {
+        mesh.setMatrixAt(i, this.matrix(this.tmp, p));
+        if (this.rise(p) < 1 || p.b.built < 1) this.building.push({ p, i });
       });
       mesh.computeBoundingSphere();
-      this.kinds.set(kind, mesh);
+      this.meshes.set(model, mesh);
       this.group.add(mesh);
     }
     this.applyColors();
-    // parked cars, a deterministic share of bays filled (cars keep their size whatever the model's scale)
+    // parked cars, a deterministic share of bays filled (cars keep their size whatever the model's scale); a site's
+    // truck yard stays free for its trucks
     const car = this.models.vehicles.get("car")!;
     const filled: { m: THREE.Matrix4; color: number }[] = [];
     const inv = new THREE.Matrix4();
-    for (const [kind, bs] of this.order) {
-      const mm = this.models.buildings.get(kind)!;
-      for (const b of bs) {
-        if (b.built < 1 || b.abandoned) continue;
-        const M = this.matrix(this.tmp, b).clone();
+    for (const [model, ps] of this.order) {
+      const mm = this.geoOf(model)!;
+      if (!mm.bays.length) continue;
+      for (const p of ps) {
+        const b = p.b;
+        if (b.built < 1 || b.abandoned || p.slot?.role === "yard" || this.rise(p) < 1) continue;
+        const M = this.matrix(this.tmp, p).clone();
         const s = b.zone ? b.fit : 1;
         const tall = b.zone ? b.tall : 1;
         inv.makeScale(1 / s, 1 / (s * tall), 1 / s);
@@ -194,34 +320,128 @@ export class Buildings3D {
         this.group.add(im);
       }
     }
+    this.rebuildSites(list);
     this.rebuildDrives(list);
+  }
+
+  /** Fences, service roads and the pads of buildings to come, for every company site at once (a few draw calls). */
+  private rebuildSites(list: Building[]) {
+    for (const o of this.siteParts) {
+      this.group.remove(o);
+      if (o instanceof THREE.Mesh && o.geometry !== this.postGeo) o.geometry.dispose();
+      if (o instanceof THREE.InstancedMesh) o.dispose();
+    }
+    this.siteParts = [];
+    const sites = list.filter((b) => b.placed && b.plant);
+    if (!sites.length) return;
+    const rails = new Quads(), mesh = new Quads(), roads = new Quads(), pads = new Quads();
+    const posts: V2[] = [];
+    for (const b of sites) {
+      const f = siteFrame(b.c, b.rot, b.side, b.hd);
+      const L = this.layoutOf(b);
+      const level = b.plant!.level ?? 1;
+      const W = (x: number, y: number) => siteToWorld(f, x, y);
+      // the fence: round the plot, open at the gate
+      const hw = b.hw, d = b.hd * 2, g = GATE_GAP / 2;
+      const runs: [number, number, number, number][] = [
+        [-g, 0, -hw, 0], [-hw, 0, -hw, d], [-hw, d, hw, d], [hw, d, hw, 0], [hw, 0, g, 0],
+      ];
+      for (const [x0, y0, x1, y1] of runs) {
+        const a = W(x0, y0), e = W(x1, y1);
+        rails.strip(a, e, 0.42, FENCE_H);
+        mesh.wall(a, e, 0.15, FENCE_H);
+        const len = Math.hypot(x1 - x0, y1 - y0), n = Math.max(1, Math.round(len / POST_EVERY));
+        for (let k = 0; k < n; k++) posts.push(W(x0 + ((x1 - x0) * k) / n, y0 + ((y1 - y0) * k) / n));
+      }
+      // service roads: built as far as the buildings they serve; the rest is still a faint pad
+      const built = L.slots.filter((s) => s.level <= level);
+      const served = (r: SiteLayout["roads"][number]) => built.some((s) => {
+        const { hy } = slotHalf(s);
+        return Math.abs(s.y - r.a.y) <= r.w / 2 + 2.5 + hy * 2 && Math.abs(r.a.y - r.b.y) < 0.1;
+      });
+      const branches = L.roads.slice(1);
+      let reach = 0;
+      for (const r of branches) {
+        const on = served(r);
+        (on ? roads : pads).strip(W(r.a.x, r.a.y), W(r.b.x, r.b.y), r.w, on ? 0.07 : 0.05);
+        if (on) reach = Math.max(reach, r.a.y + r.w / 2);
+      }
+      const spine = L.roads[0];
+      if (spine) {
+        // (from the road outside the gate, through the gate, as far as the last road in use)
+        const core = Math.max(...L.slots.filter((s) => s.role).map((s) => s.y + slotHalf(s).hy));
+        const end = Math.min(spine.b.y, Math.max(reach, core));
+        roads.strip(W(0, -0.5), W(0, end), spine.w, 0.07);
+        if (end < spine.b.y) pads.strip(W(0, end), W(0, spine.b.y), spine.w, 0.05);
+      }
+      // the pads of the buildings to come
+      for (const s of L.slots) {
+        if (s.level <= level && this.riseOf(b, s) >= 1) continue;
+        const { hx, hy } = slotHalf(s);
+        pads.flat([W(s.x - hx, s.y - hy), W(s.x + hx, s.y - hy), W(s.x + hx, s.y + hy), W(s.x - hx, s.y + hy)], 0.05);
+      }
+    }
+    const parts = [
+      rails.mesh(this.railMat, 4),
+      mesh.mesh(this.meshMat, 7),
+      roads.mesh(this.roadMat, 3),
+      pads.mesh(this.padMat, 2),
+    ];
+    for (const m of parts) {
+      if (!m) continue;
+      m.receiveShadow = true;
+      this.siteParts.push(m);
+      this.group.add(m);
+    }
+    const pm = new THREE.InstancedMesh(this.postGeo, this.postMat, posts.length);
+    pm.castShadow = true;
+    posts.forEach((p, i) => pm.setMatrixAt(i, this.tmp.makeTranslation(p.x, 0, p.y)));
+    pm.computeBoundingSphere();
+    this.siteParts.push(pm);
+    this.group.add(pm);
+  }
+
+  /** How far a site's slot has gone up. */
+  private riseOf(b: Building, s: SiteSlot): number {
+    return this.rise({ b, model: s.model, slot: s });
   }
 
   /** Raise buildings under construction (cheap; call a few times a second). */
   updateConstruction() {
     if (!this.building.length) return;
     const touched = new Set<THREE.InstancedMesh>();
+    const still: { p: Piece; i: number }[] = [];
     for (const it of this.building) {
-      const mesh = this.kinds.get(it.kind);
+      const mesh = this.meshes.get(it.p.model);
       if (!mesh) continue;
-      mesh.setMatrixAt(it.i, this.matrix(this.tmp, it.b));
+      mesh.setMatrixAt(it.i, this.matrix(this.tmp, it.p));
+      if (it.p.slot) {
+        mesh.setColorAt(it.i, this.colorOf(it.p));
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      }
       touched.add(mesh);
+      // (zoned buildings stay on the list till the next rebuild: they finish with a change of colour)
+      if (it.p.b.built < 1 || this.rise(it.p) < 1 || !it.p.slot) still.push(it);
     }
+    this.building = still;
     for (const m of touched) m.instanceMatrix.needsUpdate = true;
   }
 
-  /** How cars get into and out of this building's lot. */
+  /** How cars get into and out of this building's lot (a site's: through the gate to its truck yard). */
   lotWay(b: Building): LotWay {
+    if (b.placed && b.plant) return this.siteWay(b);
     const u = fromAngle(b.rot);
     const away = right(u);
     const into = { x: away.x * b.side, y: away.y * b.side };
-    const reach = b.zone ? b.hd - setback(Math.max(0, b.hd * 2 - this.depth(b))) + 0.5 : b.hd;
+    // placed buildings: from the kerb to the lot edge; zoned lots start at the kerb, so to the model's front; a
+    // town hall, across its square to its door
+    const reach = b.zone ? b.hd - setback(Math.max(0, b.hd * 2 - this.depth(b))) + 0.5 : isHall(b.kind) ? this.halfDepth(b) : b.hd;
     const drive = { x: b.c.x - into.x * reach, y: b.c.y - into.y * reach };
     const kerb = { ...b.front };
     const bays: LotWay["bays"] = [];
-    const mm = this.models.buildings.get(b.kind);
+    const mm = this.geoOf(b.kind);
     if (mm?.bays.length && b.built >= 1 && !b.abandoned) {
-      const M = this.matrix(new THREE.Matrix4(), b);
+      const M = this.matrix(new THREE.Matrix4(), { b, model: b.kind, slot: null });
       const s = b.zone ? b.fit : 1;
       const inv = new THREE.Matrix4().makeScale(1 / s, 1 / (s * (b.zone ? b.tall : 1)), 1 / s);
       const W = new THREE.Matrix4();
@@ -235,11 +455,38 @@ export class Buildings3D {
     return { kerb, drive, into, h: 0, bays };
   }
 
+  private siteWay(b: Building): LotWay {
+    const f = siteFrame(b.c, b.rot, b.side, b.hd);
+    const bays: LotWay["bays"] = [];
+    const W = new THREE.Matrix4();
+    for (const s of this.layoutOf(b).slots) {
+      if (!s.role) continue;
+      const mm = this.geoOf(s.model);
+      if (!mm?.bays.length) continue;
+      const M = this.slotMatrix(new THREE.Matrix4(), f, s, 1);
+      mm.bays.forEach((bay, k) => {
+        // (the plant's own car park keeps some cars parked; the truck yard is free)
+        if (s.role === "core" && bayTaken(b, k)) return;
+        const e = W.copy(M).multiply(bay).elements;
+        const L = Math.hypot(e[8], e[10]) || 1;
+        bays.push({ p: { x: e[12], y: e[14] }, dir: { x: e[8] / L, y: e[10] / L } });
+      });
+    }
+    return { kerb: { ...b.front }, drive: add(f.gate, scale(f.into, 6)), into: f.into, h: 0, bays };
+  }
+
   rebuildDrives(list: Building[]) {
     if (this.drives) { this.group.remove(this.drives); this.drives.geometry.dispose(); this.drives = null; }
-    const pos: number[] = [];
-    const idx: number[] = [];
+    const q = new Quads();
     for (const b of list) {
+      if (b.placed && b.plant) {
+        // a site: from the road's edge to its gate, as wide as its spine road (none till a road reaches it)
+        if (!b.access) continue;
+        const gate = siteFrame(b.c, b.rot, b.side, b.hd).gate;
+        if (Math.hypot(gate.x - b.front.x, gate.y - b.front.y) < 0.6) continue;
+        q.strip(b.front, gate, 7, 0.08);
+        continue;
+      }
       const u = fromAngle(b.rot);
       const away = right(u); // * side points away from the road
       // placed buildings: from the kerb to the lot edge; zoned lots start at the kerb, so to the model's front; a
@@ -249,38 +496,31 @@ export class Buildings3D {
       const a = b.front;
       if (Math.hypot(ex.x - a.x, ex.y - a.y) < 0.6) continue;
       const w = isHall(b.kind) ? 2.4 : b.zone && b.hw > 14 ? 2.6 : 1.7;
-      const base = pos.length / 3;
-      const y = 0.08;
-      pos.push(a.x - u.x * w, y, a.y - u.y * w, a.x + u.x * w, y, a.y + u.y * w);
-      pos.push(ex.x - u.x * w, y, ex.y - u.y * w, ex.x + u.x * w, y, ex.y + u.y * w);
-      idx.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+      q.strip(a, ex, w * 2, 0.08);
     }
-    if (!pos.length) return;
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-    g.setAttribute("normal", new THREE.Float32BufferAttribute(new Array(pos.length).fill(0).map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
-    g.setIndex(idx);
-    // make sure faces point up
-    const p = g.getAttribute("position");
-    const ix = g.getIndex()!.array as Uint16Array;
-    for (let t = 0; t < ix.length; t += 3) {
-      const ux = p.getX(ix[t + 1]) - p.getX(ix[t]), uz = p.getZ(ix[t + 1]) - p.getZ(ix[t]);
-      const vx = p.getX(ix[t + 2]) - p.getX(ix[t]), vz = p.getZ(ix[t + 2]) - p.getZ(ix[t]);
-      if (uz * vx - ux * vz < 0) { const k = ix[t + 1]; ix[t + 1] = ix[t + 2]; ix[t + 2] = k; }
-    }
-    this.drives = new THREE.Mesh(g, this.driveMat);
-    this.drives.receiveShadow = true;
-    this.drives.renderOrder = 3;
-    this.group.add(this.drives);
+    const m = q.mesh(this.driveMat, 3);
+    if (!m) return;
+    m.receiveShadow = true;
+    this.drives = m;
+    this.group.add(m);
   }
 
+  /** A piece's colour: its building's tint, going from bare earth to its own colours as a site's new building rises. */
+  private colorOf(p: Piece): THREE.Color {
+    const c = this.tintFn?.(p.b) ?? this.baseColor(p.b);
+    const out = c === null ? this.col.set(1, 1, 1) : this.col.setHex(c);
+    if (p.slot && p.b.built >= 1) {
+      const r = this.rise(p);
+      if (r < 1) out.lerp(this.site, 1 - r);
+    }
+    return out;
+  }
+  private site = new THREE.Color(SITE);
+
   private applyColors() {
-    for (const [kind, bs] of this.order) {
-      const mesh = this.kinds.get(kind)!;
-      bs.forEach((b, i) => {
-        const c = this.tintFn?.(b) ?? this.baseColor(b);
-        mesh.setColorAt(i, c === null ? this.col.set(1, 1, 1) : this.col.setHex(c));
-      });
+    for (const [model, ps] of this.order) {
+      const mesh = this.meshes.get(model)!;
+      ps.forEach((p, i) => mesh.setColorAt(i, this.colorOf(p)));
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
   }

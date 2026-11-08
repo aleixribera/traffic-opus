@@ -1,7 +1,7 @@
 import {
   BUILDING_TYPES, BULLDOZE_REFUND, START_TILES, TILE, ROAD_TYPES, SIGNAL_COST, SIM, isHighway, roadWidth, type RoadTypeId,
 } from "../config";
-import { add, dist, rectCorners, scale, sub, type V2 } from "../core/math";
+import { add, dist, rectCorners, rectDistance, scale, sub, type V2 } from "../core/math";
 import { mulberry32 } from "../core/noise";
 import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/network";
 import {
@@ -20,7 +20,7 @@ import { BLOCK, demandPerDay, gridPt, isHall, needsOf } from "./towns";
 import { F } from "../world/gen";
 import { Transit } from "./transit";
 import { Utilities } from "./utilities";
-import type { Placement } from "./buildings";
+import type { PlaceOpts, Placement } from "./buildings";
 import type { BuildingKind } from "../config";
 import { CELL, DEPTH, ZoneMap, type Block, type Cell, type ZoneGroup, type ZoneId } from "./zones";
 
@@ -122,7 +122,8 @@ export class Game {
     this.money = START_MONEY;
     const t = this.terrain;
     // (towns grow on any land: only the company's own buildings need owned tiles)
-    this.zones = new ZoneMap(this.net, { isWater: (p) => t.isWater(p), isMountain: (p) => t.isMountain(p), owned: () => true });
+    // (and never inside the fence of one of the company's sites)
+    this.zones = new ZoneMap(this.net, { isWater: (p) => t.isWater(p), isMountain: (p) => t.isMountain(p), owned: () => true, taken: (p) => this.inSite(p) });
     this.people = new Society(this);
     this.transit = new Transit(this);
     this.utilities = new Utilities(this);
@@ -148,6 +149,7 @@ export class Game {
       power: (b) => this.utilities.supplyOf(b),
       wanted: (b) => this.utilities.wanted(b),
       made: (p, n) => this.progress.onMade(p, n),
+      grew: (b, level) => { this.toast(`${BUILDING_TYPES[b.kind].name} grew to level ${level}: more output, jobs and trucks`); this.emit({ t: "buildings" }); },
     });
     this.world = {
       isWater: (p) => t.isWater(p),
@@ -407,7 +409,7 @@ export class Game {
   }
 
   private afterRoads(cs: ChangeSet) {
-    this.buildings.reattach();
+    for (const b of this.buildings.reattach()) this.toast(`${BUILDING_TYPES[b.kind].name} connected: its trucks can start`);
     this.transit.afterRoads();
     this.traffic.onNetworkChange(cs);
     this.zones.onNetworkChange(cs);
@@ -785,14 +787,15 @@ export class Game {
   // ---------------------------------------------------------------- buildings
 
   /** Where a placed building would go near p, and what it would cost and replace. */
-  placedPlan(kind: PlacedKind, p: V2): (Placement & { cost: number; deposit?: { name: string; share: number } }) | null {
+  placedPlan(kind: PlacedKind, p: V2, opts?: PlaceOpts): (Placement & { cost: number; deposit?: { name: string; share: number } }) | null {
     const world = { ...this.world, unlocked: (q: V2) => this.unlocked(q) };
-    const pl = this.buildings.placement(kind, p, world, (o) => !!o.zone);
+    const pl = this.buildings.placement(kind, p, world, (o) => !!o.zone, opts);
     if (!pl) return null;
     const D = PLACED[kind];
     const cost = D.cost;
     if (pl.ok && !this.placedUnlocked(kind)) return { ...pl, ok: false, reason: "Not unlocked yet", cost };
     if (pl.ok && D.unique && this.buildings.list.some((b) => b.kind === kind)) return { ...pl, ok: false, reason: "Only one per city", cost };
+    if (pl.ok && this.onTownSquare(pl.c, pl.rot, BUILDING_TYPES[kind].w / 2, BUILDING_TYPES[kind].d / 2)) return { ...pl, ok: false, reason: "On a town's square: that's for its hall", cost };
     if (pl.ok && D.shore && !this.nearWater(pl.c, pl.rot, BUILDING_TYPES[kind].w / 2, BUILDING_TYPES[kind].d / 2)) return { ...pl, ok: false, reason: "Has to be on a shore", cost };
     const dep = isPlantKind(kind) ? PLANTS[kind].deposit : undefined;
     let deposit: { name: string; share: number } | undefined;
@@ -803,6 +806,21 @@ export class Game {
     }
     if (pl.ok && this.money < cost) return { ...pl, ok: false, reason: "Not enough money", cost, deposit };
     return { ...pl, cost, deposit };
+  }
+
+  /** Would a lot (centre c, turned rot, half sizes hw x hd) cover any of a town's square (kept for its hall)? */
+  onTownSquare(c: V2, rot: number, hw: number, hd: number): boolean {
+    const near = this.towns.list.filter((t) => dist(t.c, c) < Math.hypot(hw, hd) + BLOCK * 1.5);
+    if (!near.length) return false;
+    const u = { x: Math.cos(rot), y: Math.sin(rot) }, v = { x: -u.y, y: u.x };
+    // every ~10 m over the lot (a square is a whole block, so none slips between)
+    const na = Math.max(1, Math.ceil((2 * hw) / 10)), nb = Math.max(1, Math.ceil((2 * hd) / 10));
+    for (let i = 0; i <= na; i++) for (let j = 0; j <= nb; j++) {
+      const a = -hw + (2 * hw * i) / na, b = -hd + (2 * hd * j) / nb;
+      const p = { x: c.x + u.x * a + v.x * b, y: c.y + u.y * a + v.y * b };
+      if (near.some((t) => this.towns.onSquare(t, p))) return true;
+    }
+    return false;
   }
 
   /** Is there water within SHORE_REACH of a lot (centre c, turned rot, half sizes hw x hd)? */
@@ -825,8 +843,8 @@ export class Game {
   }
 
   /** Place a building (a power plant...). Zoned buildings in the way are cleared. */
-  place(kind: PlacedKind, p: V2): Building | null {
-    const pl = this.placedPlan(kind, p);
+  place(kind: PlacedKind, p: V2, opts?: PlaceOpts): Building | null {
+    const pl = this.placedPlan(kind, p, opts);
     if (!pl || !pl.ok) return null;
     const removed: Building[] = [];
     for (const id of pl.clears ?? []) {
@@ -861,6 +879,12 @@ export class Game {
     this.buildings.reattach();
     this.shopCache = null;
     this.candVersion = -1;
+  }
+
+  /** Is p inside the fence of one of the company's sites? */
+  inSite(p: V2): boolean {
+    for (const b of this.buildings.list) if (b.placed && rectDistance(p, b.c, b.hw, b.hd, b.rot) < 0.5) return true;
+    return false;
   }
 
   /** Zone cells under a building's lot. */
@@ -1418,7 +1442,8 @@ export class Game {
         for (const o of shops) if (dist(o.c, b.c) < 320) near++;
         lv += Math.min(12, near * 3);
         for (const o of ind) {
-          const r = BUILDING_TYPES[o.kind].pollution * 2, d = dist(o.c, b.c);
+          // (from the fence of a site, not its middle)
+          const r = BUILDING_TYPES[o.kind].pollution * 1.6, d = rectDistance(b.c, o.c, o.hw, o.hd, o.rot);
           if (d < r) lv -= 22 * (1 - d / r);
         }
       } else if (grp === "com") lv += Math.min(10, b.visits / Math.max(1, b.cap * 4));
@@ -1487,6 +1512,12 @@ export class Game {
     g.buildings.byId.clear();
     for (const d of data.buildings) {
       const b = d as Building;
+      // (saves from before sites grew: every plant starts at level 1)
+      if (b.plant) {
+        b.plant.level ??= 1;
+        b.plant.grow ??= 0;
+        b.plant.upAt ??= -1e9;
+      }
       g.buildings.insert({ ...b, access: null });
       for (const c of g.lotCells(b)) c.lot = b.id;
     }

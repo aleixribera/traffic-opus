@@ -6,9 +6,10 @@
 
 import type { V2 } from "../core/math";
 import type { Building, Buildings } from "./buildings";
-import type { BuildingKind } from "../config";
+import { BUILDING_TYPES, type BuildingKind } from "../config";
 import type { PendingSpawn, Trip, Vehicle } from "../sim/traffic";
 import { F } from "../world/gen";
+import { GROW_DECAY, GROW_NEED, SITE_LEVELS, levelMult } from "./sites";
 
 export type Product = "crops" | "logs" | "food" | "planks" | "ore" | "coal" | "lime" | "steel" | "cement";
 
@@ -152,6 +153,14 @@ export interface PlantState {
   /** this hour's and the last full hour's books */
   now: PlantBooks;
   last: PlantBooks;
+  /** the site's level (1-4, docs/design.md "Industry sites"): output, jobs and trucks grow with it */
+  level: number;
+  /** working time (s) toward the next level */
+  grow: number;
+  /** sim time it last grew (its new buildings go up for a while after) */
+  upAt: number;
+  /** what keeps it from growing now (null: it is growing, or at the top level) */
+  why?: string | null;
 }
 
 export interface PlantBooks { made: number; sent: number; earned: number; spent: number }
@@ -202,6 +211,8 @@ export interface IndustryHost {
   wanted?(b: Building): boolean;
   /** a plant made loads of a product (the company's tallies) */
   made?(p: Product, n: number): void;
+  /** a site grew a level */
+  grew?(b: Building, level: number): void;
 }
 
 export interface Customer { b: Building; value: number; /** loads it can take */ room: number }
@@ -229,14 +240,27 @@ export class Industry {
   /** Make a freshly placed building one of the company's plants (from tier 2, a site waiting for its materials). */
   init(b: Building, kind: PlantKind, yld = 1) {
     const d = PLANTS[kind];
-    b.plant = { stock: {}, out: {}, prog: 0, yld, trucks: d.trucks, now: books(), last: books() };
+    b.plant = { stock: {}, out: {}, prog: 0, yld, trucks: d.trucks, now: books(), last: books(), level: 1, grow: 0, upAt: -1e9 };
     if (d.site) b.plant.site = { need: { ...d.site }, got: {} };
   }
 
-  /** Trucks a plant runs: its own, plus the bays milestones added (a power plant has none). */
+  /** Trucks a plant runs: its own (more at each site level), the ones bought for it, and the bays milestones added (a power plant has none). */
   trucksOf(b: Building): number {
     const P = b.plant!;
-    return P.trucks > 0 ? P.trucks + (this.h.bays?.() ?? 0) : 0;
+    if (P.trucks <= 0) return 0;
+    // (the site's own trucks grow with its level; bought ones stay as many as were bought)
+    const own = P.trucks - (P.bought ?? 0);
+    return Math.round(own * levelMult(P.level)) + (P.bought ?? 0) + (this.h.bays?.() ?? 0);
+  }
+
+  /** Loads each of a plant's stores holds (the yard grows with the site). */
+  static storeOf(b: Building): number {
+    return Math.round(PLANTS[b.kind as PlantKind].store * levelMult(b.plant?.level ?? 1));
+  }
+
+  /** Jobs at a site of this kind and level. */
+  static jobsAt(jobs: number, level: number): number {
+    return Math.round(jobs * levelMult(level));
   }
 
   /** Can the player buy this plant another truck (null) or why not. */
@@ -297,10 +321,12 @@ export class Industry {
     const staff = b.cap ? Math.min(1, this.h.workersAt(b.id) / b.cap) : 1;
     const pw = d.power ? (this.h.power?.(b) ?? 1) : 1;
     const idle = !!d.makes && !(this.h.wanted?.(b) ?? true);
+    const store = Industry.storeOf(b);
     const short = () => entries(d.inputs).find(([p, n]) => (P.stock[p] ?? 0) < n)?.[0];
-    const full = () => entries(d.outputs).find(([p]) => (P.out[p] ?? 0) >= d.store)?.[0];
-    if (b.access && staff > 0 && !idle && !short() && !full()) {
-      P.prog += (span * staff * P.yld * powerPace(pw)) / d.cycle;
+    const full = () => entries(d.outputs).find(([p]) => (P.out[p] ?? 0) >= store)?.[0];
+    const working = !!b.access && staff > 0 && !idle && !short() && !full();
+    if (working) {
+      P.prog += (span * staff * P.yld * powerPace(pw) * levelMult(P.level)) / d.cycle;
       while (P.prog >= 1) {
         P.prog -= 1;
         for (const [p, n] of entries(d.inputs)) P.stock[p] = (P.stock[p] ?? 0) - n;
@@ -311,7 +337,7 @@ export class Industry {
     // the most pressing thing that holds it up (the trucks may add "nobody buys" when they find no customer)
     const s = short(), f = full();
     const fname = f && PRODUCTS[f].name.toLowerCase();
-    b.problem = !b.access ? "No road access"
+    b.problem = !b.access ? (b.placed ? "No road to the gate" : "No road access")
       : f ? (PRODUCTS[f].price > 0 || this.used(f) ? `Full of ${fname}: not enough trucks, or nobody to sell to` : `Full of ${fname}: nothing uses it until tier 3`)
       : staff <= 0 ? "No workers"
       : s ? `Waiting for ${PRODUCTS[s].name.toLowerCase()}`
@@ -320,6 +346,37 @@ export class Industry {
       : pw <= 0 ? `No power: working at ${Math.round(UNPOWERED * 100)}%`
       : pw < 0.999 ? `Short of power: working at ${Math.round(powerPace(pw) * 100)}%`
       : null;
+    this.growth(b, span, working, staff, pw, store);
+  }
+
+  /**
+   * A site grows a level after working near capacity for most of a few days: fully staffed (near enough), powered,
+   * its inputs coming in and its output shipped. Idle time takes some of the progress back; it never shrinks.
+   */
+  private growth(b: Building, span: number, working: boolean, staff: number, pw: number, store: number) {
+    const P = b.plant!, d = PLANTS[b.kind as PlantKind];
+    if (P.level >= SITE_LEVELS) { P.why = null; P.grow = 0; return; }
+    const piled = entries(d.outputs).some(([p]) => (P.out[p] ?? 0) > store * 0.75);
+    const why = !b.access ? "No road to the gate"
+      : !working ? (b.problem ?? "Not working")
+      : staff < 0.8 ? "Needs more workers"
+      : d.power && pw < 0.9 ? "Short of power"
+      : piled ? "Output piling up: needs more trucks or buyers"
+      : null;
+    P.why = why;
+    P.grow = why ? Math.max(0, P.grow - span * GROW_DECAY) : P.grow + span;
+    if (P.grow >= GROW_NEED) this.levelUp(b);
+  }
+
+  /** Grow a site one level: more output, jobs and trucks, and its next buildings go up. */
+  levelUp(b: Building) {
+    const P = b.plant!;
+    if (P.level >= SITE_LEVELS) return;
+    P.level++;
+    P.grow = 0;
+    P.upAt = this.h.time;
+    b.cap = Industry.jobsAt(BUILDING_TYPES[b.kind].jobs, P.level);
+    this.h.grew?.(b, P.level);
   }
 
   /** Does any building of the company's take this product in (as an input or as a building material)? */
@@ -345,7 +402,7 @@ export class Industry {
       // own plants short of it: they keep the chain running (worth more than any sale)
       const need = PLANTS[o.kind as PlantKind].inputs[product];
       if (!need) continue;
-      const room = PLANTS[o.kind as PlantKind].store - (o.plant.stock[product] ?? 0) - on(o.id);
+      const room = Industry.storeOf(o) - (o.plant.stock[product] ?? 0) - on(o.id);
       if (room < 1) continue;
       out.push({ b: o, value: 10000 + room * 100 - km(o) * FUEL_PER_KM * 2, room });
     }
@@ -385,7 +442,7 @@ export class Industry {
       while (free > 0 && (P.out[p] ?? 0) >= 1) {
         const c = this.customers(b, p, coming)[0];
         if (!c) {
-          if ((P.out[p] ?? 0) >= 2 && b.problem !== "No road access" && !b.problem?.startsWith("Full of")) b.problem = this.noBuyer(b, p);
+          if ((P.out[p] ?? 0) >= 2 && b.access && !b.problem?.startsWith("Full of")) b.problem = this.noBuyer(b, p);
           break;
         }
         const n = Math.max(1, Math.min(load, Math.floor(P.out[p]!), c.room));
@@ -495,7 +552,7 @@ export class Industry {
     for (const b of this.plants()) {
       const P = b.plant!;
       if (!P.site) {
-        const wages = this.h.workersAt(b.id) * WAGE, up = PLANTS[b.kind as PlantKind].upkeep + (P.bought ?? 0) * TRUCK_UPKEEP;
+        const wages = this.h.workersAt(b.id) * WAGE, up = PLANTS[b.kind as PlantKind].upkeep * levelMult(P.level) + (P.bought ?? 0) * TRUCK_UPKEEP;
         this.h.spend(wages, "wages");
         this.h.spend(up, "upkeep");
         P.now.spent += wages + up;
