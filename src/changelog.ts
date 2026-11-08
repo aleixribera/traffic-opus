@@ -15,6 +15,13 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.63", date: "2026-11-08", title: "Fine turning",
+    notes: [
+      "Hold Shift while placing a building to turn it 1° at a time: one degree per wheel notch, or per press of the comma and period keys.",
+      "While placing, a tag next to the cursor shows how far the building is turned.",
+    ],
+  },
+  {
     v: "v0.0.62", date: "2026-11-08", title: "Deeper chains and the Motor Works",
     notes: [
       "A Chemical Works makes fertilizer and explosives: farms need fertilizer and mines need explosives to work at full pace from level 3, and a badge at the gate shows the boost.",

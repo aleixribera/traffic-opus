@@ -17,6 +17,8 @@ import { GATE_GAP, siteFrame, siteToWorld } from "./game/sites";
 const GATE_SNAP = 7;
 /** How far one pixel of scrolling turns the building being placed (a wheel notch of ~100 px: ~10°). */
 const PLACE_TURN_PER_PX = (10 * Math.PI) / 180 / 100;
+/** Shift + the wheel, or Shift + , and ., turns it in fine steps: a wheel notch (or a key press) turns it 1°. */
+const FINE_TURN = Math.PI / 180;
 import { ZONES } from "./game/zones";
 import { MIN_DEPOSIT, PLANTS, PRODUCTS, UNPOWERED, isPlantKind, type Product } from "./game/industry";
 import { TOWN_COST, TOWN_SPACING } from "./game/settlements";
@@ -63,7 +65,7 @@ export interface ToolState {
   bdzLevel: number | null; // bulldozer elevation filter (null = all)
   reverse: boolean; // upgrade tool flips one-ways instead
   placed: PlacedKind; // building being placed
-  /** how the building being placed is turned (radians; 0: its gate toward the bottom of the screen): the scroll wheel turns it freely, , and . in 15° steps */
+  /** how the building being placed is turned (radians; 0: its gate toward the bottom of the screen): the scroll wheel turns it freely, , and . in 15° steps, Shift with either in 1° steps */
   placeTurn: number;
   transitMode: TransitMode;
 }
@@ -86,6 +88,8 @@ export class App {
   fireworks = new Fireworks();
   /** money and moments rising off the map, and the shelf-time rings over refrigerated trucks */
   pops = new Pops();
+  /** Shift + wheel scrolling not yet turned into a whole degree (px) */
+  private fineWheel = 0;
   private iconT = 0;
   private labelKey = "";
   vehicles!: Vehicles3D;
@@ -353,7 +357,20 @@ export class App {
       if (this.mode === "menu") return;
       // a building in hand turns with the wheel (Ctrl + wheel still zooms; so do R and F)
       if (this.st.tool === "place" && !e.ctrlKey) {
-        const px = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+        // (with Shift held the browser may scroll sideways instead: either way it is the wheel turning)
+        const d = e.deltaY || (e.shiftKey ? e.deltaX : 0);
+        if (!d) return;
+        const px = e.deltaMode === 1 ? d * 33 : d;
+        if (e.shiftKey) {
+          // (fine: a degree per wheel notch, ~100 px; a trackpad's many small steps add up to the same)
+          this.fineWheel += Math.sign(px) * Math.min(Math.abs(px), 200);
+          while (Math.abs(this.fineWheel) >= 100) {
+            const dir = this.fineWheel > 0 ? 1 : -1;
+            this.fineWheel -= dir * 100;
+            this.turnPlaced(dir, true);
+          }
+          return;
+        }
         this.st.placeTurn = wrapAngle(this.st.placeTurn + Math.sign(px) * Math.min(Math.abs(px), 200) * PLACE_TURN_PER_PX);
         this.dirtyPreview = true;
         return;
@@ -513,18 +530,18 @@ export class App {
     else if (k === "c") this.hud?.toggleWin("city");
     else if (k === "x") this.hud?.toggleWin("transport");
     else if (k === "[" || k === "]") this.nudgeParallel(k === "]" ? 1 : -1);
-    else if ((k === "," || k === ".") && this.st.tool === "place") this.turnPlaced(k === "." ? 1 : -1);
+    else if ((e.code === "Comma" || e.code === "Period") && this.st.tool === "place") this.turnPlaced(e.code === "Period" ? 1 : -1, e.shiftKey);
     else if (k === "`" || e.code === "Backquote") this.toggleUi();
     else if (k === "F5") { e.preventDefault(); this.quickSave(); }
     else if (k === "F9") { e.preventDefault(); this.quickLoad(); }
   }
 
-  /** Turn the building being placed by 15 degrees (, anticlockwise, . clockwise on screen). */
-  turnPlaced(dir: 1 | -1) {
-    const step = Math.PI / 12;
+  /** Turn the building being placed by 15 degrees (, anticlockwise, . clockwise on screen), or by 1 degree (fine). */
+  turnPlaced(dir: 1 | -1, fine = false) {
+    const step = fine ? FINE_TURN : Math.PI / 12;
     let t = Math.round((this.st.placeTurn + dir * step) / step) * step;
     if (Math.abs(Math.abs(t) - 2 * Math.PI) < 1e-6) t = 0;
-    this.st.placeTurn = t;
+    this.st.placeTurn = wrapAngle(t);
     this.dirtyPreview = true;
   }
 
@@ -1189,6 +1206,9 @@ export class App {
           const o = g.buildings.byId.get(id);
           if (o) pv.footprint(rectCorners(o.c, o.hw, o.hd, o.rot), 0xf2a33a, gh.length > 0);
         }
+        // (how far it is turned from its gate facing the bottom of the screen, once the player has turned it)
+        const deg = Math.round(((this.st.placeTurn * 180) / Math.PI + 360) % 360) % 360;
+        if (deg) chips.push({ text: `Turned ${deg}°`, kind: "info" });
         if (pl.link) {
           pv.plan(pl.link, 0);
           chips.push({ text: `Street to its gate: ${Math.round(pl.link.length)} m`, kind: "info" });

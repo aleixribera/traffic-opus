@@ -149,11 +149,11 @@ const KEYS: [string, string][] = [
   ["Right click", "Undo the last click of a road; again to drop the tool"],
   ["W A S D / drag", "Move the camera"],
   ["Q / E", "Rotate the camera"],
-  ["R / F, wheel", "Zoom in / out (placing a building: the wheel turns it, Ctrl + wheel zooms)"],
+  ["R / F, wheel", "Zoom in / out (placing a building: the wheel turns it, Shift + wheel by 1°, Ctrl + wheel zooms)"],
   ["Tab", "Next road mode"],
   ["Page Up / Down", "Raise or lower the road"],
   ["[ / ]", "Parallel road spacing"],
-  [", / .", "Turn the building you are placing 15°"],
+  [", / .", "Turn the building you are placing 15° (with Shift: 1°)"],
   ["Shift", "15° angle steps"],
   ["B", "Bulldozer"],
   ["L", "Add lane (Shift or right click removes)"],
@@ -595,7 +595,7 @@ export class Hud {
       items.push(h("p", "to-text", `Click open land at least ${km(TOWN_SPACING)} from other towns, with one of your roads near. The town lays its own streets, and grows while you keep its needs supplied.`));
     } else if (st.tool === "place" && isPlantKind(st.placed)) {
       const D = PLANTS[st.placed];
-      items.push(h("p", "to-text", `Scroll to turn it (Ctrl + scroll zooms; , and . turn it 15°). A street is laid from its gate to the nearest road within ${GATE_LINK_REACH} m, round any homes, shown before you click.`));
+      items.push(h("p", "to-text", `Scroll to turn it, or hold Shift to turn it 1° at a time. The comma and period keys turn it 15° (1° with Shift); Ctrl + scroll zooms. A street is laid from its gate to the nearest road within ${GATE_LINK_REACH} m, round any homes, shown before you click.`));
       items.push(h("p", "to-text", D.deposit
         ? `At least ${Math.round(MIN_DEPOSIT * 100)}% of the plot must be ${D.deposit.name}: the ground shows it while you place. More of it, faster work.`
         : `Trucks from your other plants bring it ${productList(D.inputs)}; ${D.makes ? `it powers the buildings on its roads within ${D.reach! / 1000} km that draw power`
