@@ -1,5 +1,6 @@
 import { unzlibSync, zlibSync } from "fflate";
 import { SAVE_V, type Game } from "./city";
+import type { Company } from "./company";
 
 export interface SaveMeta {
   id: string;
@@ -11,6 +12,7 @@ export interface SaveMeta {
   thumb?: string;
   auto?: boolean;
   v?: number; // save format (see SAVE_V; older ones can't be loaded)
+  company?: Company; // whose save it is (saves from before companies had names have none)
 }
 
 const INDEX = "flowtown.saves";
@@ -117,7 +119,7 @@ export class Saves {
   }
 
   private meta(game: Game, name: string, id: string, auto: boolean): SaveMeta {
-    return { id, name, level: game.progress.done.length, playtime: game.playtime, residents: game.people.stats.population, savedAt: Date.now(), auto, v: SAVE_V };
+    return { id, name, level: game.progress.done.length, playtime: game.playtime, residents: game.people.stats.population, savedAt: Date.now(), auto, v: SAVE_V, company: game.company && { name: game.company.name, herald: { ...game.company.herald } } };
   }
 
   private write(id: string, data: string, meta: SaveMeta): boolean {

@@ -15,6 +15,15 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.59", date: "2026-11-08", title: "Industry Booming America",
+    notes: [
+      "Your company has a name and a Deco badge: pick them when you start, change them from the top-left corner or the pause menu.",
+      "Towns get American names, like Fort Pryor or Cedar Creek.",
+      "Roads wear US markings: yellow centre lines, white lane dashes, wide crosswalk bars and a yellow line on the freeway's inside edge.",
+      "Milestone banners and saves carry your company's badge.",
+    ],
+  },
+  {
     v: "v0.0.58", date: "2026-11-08", title: "Build anywhere: no more land",
     notes: [
       "There is no land to buy: the company builds anywhere its roads reach, and the deposits kilometres apart are what open the map up.",
