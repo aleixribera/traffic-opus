@@ -466,25 +466,70 @@ height levels shown while drawing, and the instant upgrade preview.
 - ` (backtick): hide the UI.
 - Ctrl+Z / Ctrl+Y: undo and redo. CS2 has none; this is kept from Trafficity.
 
-**Road tool modes** (a mode bar inside the road panel):
-- Straight: two clicks.
-- Simple Curve: three clicks (start, bend, end).
-- Complex Curve: four clicks (start, two bends, end).
-- Continuous: clicks keep chaining curves.
-- Grid: three clicks (corner, width, length).
-- Replace: hover a road and click to change its type or upgrades; right-click a feature to remove it.
+**Road tool modes** (owner, 2026-11-08: "build roads like Transport Fever 2"; a mode bar inside the road panel;
+Tab / Shift+Tab cycle them):
+- Curve (the default): a freeform arc that leaves its start along the road it carries on (or, from open ground,
+  straight until the first piece sets a heading). Each click lays a piece and the next carries on tangent from
+  it, so a chain of curves never kinks; right click or Esc ends the chain. An arc tighter than the road type's
+  minimum radius is shown red with "Curve too tight ... swing wider", never built tighter silently.
+- Straight: two clicks; chains the same way, each piece starting where the last ended.
+- Upgrade: hover a road and click to change its type or upgrades; right-click a feature to remove it.
+- Kept from before: roundabouts (Intersections tab), Parallel, heights (Page Up/Page Down), undo/redo. Simple,
+  complex and continuous curves and Grid were dropped (2026-11-08): Curve chaining covers them.
 
 **Parallel:** a toggle with a spacing ([ and ] or the − / + buttons; default is the two roads side by side with a
 4 m median) that works with every drawing mode. The twin goes on the left of the drawn direction; one-way twins
 run the other way, so a one-way pair is a dual carriageway in one stroke. Its ends join the road the main stroke
 starts or ends on, and each new piece carries on from the last twin.
 
-**Snapping:**
-- A menu of toggles: existing roads and junctions, guidelines and right angles, alongside other roads, and 8 m
-  length steps (off by default; the others default on). Zone-grid and building-side snapping come with zoning.
-- Shift gives 15° angle steps.
+**Snapping** (src/roads/snapping.ts; free drawing stays, with CS2-style soft guides, owner 2026-11-08):
+- Existing roads and junctions catch the cursor within a radius that scales with the zoom (so it feels the same
+  at every zoom). Within 12 m of a junction an end joins the junction rather than making a second one beside it.
+  Aimed within ~7° of square at a road, an end slides to the exact right angle.
+- Whatever it caught it keeps until the cursor is ~1.7x further away than where it caught (hysteresis), so the
+  target never flickers. The target is highlighted (a ring on a junction, a wash on a road).
+- Guides, dashed in the Deco brass, fading with distance; the one in use is drawn solid and brighter:
+  - straight on from a dead end;
+  - parallels to a nearby straight road: kerb to kerb, 8 m further, one lot deep (48 m) and a town block (96 m)
+    away;
+  - lines square to a road through its junctions, and rays square to it from where the new road starts;
+  - right angles and straight on from the start, and the world's axes;
+  - along the road being drawn, its end stops level with a nearby junction (so blocks line up across a street).
+  Two guides that cross catch their crossing. The start of a road gets the same guides as its end.
+- The snapping menu: Roads (existing roads and junctions), Guidelines, Parallels, 8 m lengths (default off) and
+  15° angles (default off). Shift flips the angle steps while held; Alt ignores every snap and guide.
 
-**Readouts:** next to the cursor while drawing, show length, slope %, angle to the road you connect to, and cost.
+**Readouts** (next to the cursor, in the HUD's Deco chips): length (in 8 m steps when that's on), cost (red when
+it's more than the company has), the steepest average climb of any piece (↗ %), each bridge's deck length, what
+it crosses and cost, what the end joins and at what angle ("Joins the street at 90°"), or, for a road off another,
+its angle to that road ("90.0° to the road"). A cream right-angle mark sits in the corner wherever it meets or
+leaves a road square.
+
+**Errors that don't block:** each is fixed on the spot, confirmed with its cost, or explained where it happens
+with what to do:
+- An end just short of a junction joins the junction ("Moved onto the junction").
+- An end that overshoots a road it crosses by a few metres ends on that road ("Ends on the road it crossed").
+- Water, or a road it can't meet at grade (a highway, a level crossing too shallow, or one at another height):
+  an automatic bridge (below).
+- Homes and shops in the way: outlined red, and the readout shows the compensation ("Demolishes 3 homes: $1,200
+  compensation"); the first click asks ("Click again to demolish 3 homes ($1,200)"), the second builds and pays
+  the owners. Company sites, civic buildings
+  and anything else are never demolished: "Building in the way".
+- Everything else (too tight, too steep, too shallow a crossing, junctions too close, no room for a ramp, out of
+  money) is shown red at the spot with what to do about it.
+
+**Bridges** (owner, 2026-11-08: "built automatically ... more visible when built"):
+- Drawn over water, or over a road it can't meet at grade, a road rises onto a bridge by itself: the deck 6 m up
+  (one level over another road's deck), the ramps either side fitted to the 11% limit. Page Up/Page Down still
+  set heights by hand. The preview marks the deck's ends and the readout shows "Bridge 74 m over water · $2,140".
+  Where it can't fit it says why and what to do ("No room for the bridge's ramp over the water: start 27 m further
+  back", "Can't end on the water: carry the road on past it", "Too high to bridge here: cross somewhere lower").
+- Built, a bridge reads top-down in the 1920s-40s Deco style: cream concrete parapets along both edges, a soft
+  navy shadow thrown down-right by its height (as the sun's), fluted concrete piers with a hammerhead cap every
+  ~24 m (none in a road below), and where the deck meets a ramp an abutment with stepped wing walls and a Deco
+  pylon with a lamp either side. A deck of 50 m or more over water is a red-oxide steel through truss (Warren
+  panels, overhead bracing) on piers 40 m apart. The pieces are Blender models (tools/blender/build_models.py:
+  bridge_pier, bridge_abutment, bridge_pylon, bridge_truss) scaled to the deck.
 
 **Intersections, roundabouts and ramps:**
 - Roads crossing at the same elevation make intersections automatically.
