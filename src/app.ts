@@ -44,6 +44,7 @@ import { View } from "./render/view";
 import { Saves } from "./game/saves";
 import { PLACED, type PlacedKind } from "./game/placed";
 import type { Hud, Chip } from "./ui/hud";
+import { CameraDirector } from "./ui/camera";
 
 export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "place" | "transit";
 /** The bus tool: put stops on the kerb, or click stops in order to make a line. */
@@ -85,13 +86,12 @@ export class App {
   labels = new MapLabels();
   icons = new MapIcons();
   /** tags over the oversized-load convoys (click one to follow it) */
-  convoyTags = new ConvoyTags((id) => { this.followT = id === null ? 0 : 1; });
+  convoyTags = new ConvoyTags((id) => { if (id === null) this.stopFollow(); else this.followVehicle(id); });
   /** markers on towns that have just sprung up (click the edge pointer to fly there) */
   /** the deposits' tags and the "nearest coal" pointers (while an extractor is placed, and in the Resources view) */
   depositMarks = new DepositMarks(() => this.game.terrain.gen, (c) => this.flyTo(c));
   stuckAlerts = new StuckAlerts((c) => this.flyTo(c, 140));
   townPings = new TownPings({ fly: (id) => this.flyToTown(id), open: (id) => { this.setTool({ tool: "inspect" }); this.hud?.openTown(id); } });
-  private followT = 0;
   /** the camera gliding to a place (a finished landmark): from, to, start and length (s) */
   /** a camera glide under way; `lift`: how much further out (m of half height) it pulls at the middle of the way */
   private glide: { from: { x: number; y: number; h: number }; to: { x: number; y: number; h: number }; t: number; dur: number; lift: number } | null = null;
@@ -144,6 +144,8 @@ export class App {
   private plan: Plan | null = null;
   // drag state
   private pointers = new Map<number, PointerInfo>();
+  /** (the rest of a wheel flick that ended a cinematic camera doesn't zoom the view it gave back, until then: ms) */
+  private wheelQuiet = 0;
   /** Bulldozer marquee, in screen pixels (the view may be turned). */
   private dragRect: { a: V2; b: V2 } | null = null;
   private pinch: { d: number; mid: V2; ang: number } | null = null;
@@ -155,8 +157,12 @@ export class App {
   private dirtyPreview = true;
   private shake = 0;
 
+  /** following a vehicle, and the cinematic Tour and Vehicle cam */
+  camera: CameraDirector;
+
   constructor(canvas: HTMLCanvasElement, private models: ModelSet) {
     this.view = new View(canvas);
+    this.camera = new CameraDirector(this);
     this.view.scene.add(this.worldRoot);
     this.view.scene.add(this.preview.group);
   }
@@ -171,7 +177,7 @@ export class App {
     this.mode = m;
     document.body.classList.toggle("in-menu", m === "menu");
     document.body.classList.toggle("exploring", m === "explore");
-    if (m === "menu") { this.cancelStroke(); this.selected = null; this.setTool({ tool: "inspect" }); this.hasCursor = false; this.hud?.chips(null); }
+    if (m === "menu") { this.camera.reset(); this.cancelStroke(); this.selected = null; this.setTool({ tool: "inspect" }); this.hasCursor = false; this.hud?.chips(null); }
     this.saveT = 0;
     for (const f of this.modeListeners) f(m);
     this.hud?.refresh();
@@ -213,7 +219,7 @@ export class App {
    * the way (a jump, with reduced motion asked for).
    */
   glideTo(p: V2, halfH: number, dur = 1.6, lift = 0) {
-    this.convoyTags.follow(null);
+    this.camera.stopFollow();
     if (reducedMotion()) {
       this.glide = null;
       this.view.cx = p.x;
@@ -249,7 +255,7 @@ export class App {
 
   /** The deposit kinds the map marks now: the one the extractor being placed works, or every kind in the Resources view. */
   private markedDeposits(): { kinds: typeof DEPOSIT_KINDS extends Map<number, infer K> ? K[] : never; focus: boolean } {
-    if (this.uiHidden || this.mode === "menu") return { kinds: [], focus: false };
+    if (this.bare) return { kinds: [], focus: false };
     const k = this.st.placed;
     if (this.st.tool === "place" && isPlantKind(k) && PLANTS[k].deposit) return { kinds: [DEPOSIT_KINDS.get(PLANTS[k].deposit!.field)!], focus: true };
     if (this.overlay === "resources") return { kinds: [...DEPOSIT_KINDS.values()], focus: false };
@@ -266,12 +272,80 @@ export class App {
   private celebrate(id: number) {
     const b = this.game.buildings.byId.get(id);
     if (!b || this.mode !== "play") return;
-    this.glideTo(b.c, Math.max(220, Math.hypot(b.hw, b.hd) * 1.6), 2.2);
+    this.camera.note(b.c.x, b.c.y);
+    // (a cinematic camera keeps its shot, and a followed vehicle stays followed; the fireworks still go up)
+    if (this.camera.mode === "free") this.glideTo(b.c, Math.max(220, Math.hypot(b.hw, b.hd) * 1.6), 2.2);
     this.fireworks.launch(b.c, Math.max(70, Math.hypot(b.hw, b.hd) * 0.8), 18, performance.now() / 1000 + 1.4);
+  }
+
+  // ---------------------------------------------------------------- camera modes (ui/camera.ts)
+
+  /** Follow a vehicle with the camera (a convoy's tag, G, the camera menu; for a vehicle inspector's Follow button too). False if it isn't on the road. */
+  followVehicle(id: number): boolean {
+    return this.camera.followVehicle(id);
+  }
+
+  /** Let go of the vehicle the camera follows. */
+  stopFollow() {
+    this.camera.stopFollow();
+  }
+
+  /** The cinematic Tour of the busiest places (T). */
+  startTour() {
+    this.camera.startCinema("tour");
+  }
+
+  /** The cinematic Vehicle cam, riding with one vehicle after another (Shift+T). */
+  startVehicleCam() {
+    this.camera.startCinema("ride");
+  }
+
+  /** Nothing over the map: the interface hidden, the title menu, or a cinematic camera. */
+  get bare(): boolean {
+    return this.uiHidden || this.mode === "menu" || this.camera.cinematic;
+  }
+
+  cancelGlide() {
+    this.glide = null;
+  }
+
+  /** A cinematic camera starts: no tool, no info view, the game running, every bit of interface hidden. */
+  enterCinema() {
+    this.glide = null;
+    this.cancelStroke();
+    // (a drag or click under way doesn't carry on behind the hidden interface; held keys start over)
+    this.pointers.clear();
+    this.pinch = null;
+    this.dragRect = null;
+    this.keys.clear();
+    if (this.st.tool !== "inspect") this.setTool({ tool: "inspect" });
+    if (this.overlay !== "none") this.setOverlay(this.overlay);
+    this.hasCursor = false;
+    this.preview.group.visible = false;
+    this.hud?.chips(null);
+    if (this.game.paused) this.togglePause();
+    document.body.classList.add("cinema");
+    this.labelKey = "";
+    this.iconT = 1;
+  }
+
+  /** It ends: the tool, info view and pause as they were. */
+  leaveCinema(overlay: OverlayId, tool: ToolId, paused: boolean) {
+    document.body.classList.remove("cinema");
+    this.keys.clear();
+    this.preview.group.visible = true;
+    if (overlay !== "none") this.setOverlay(overlay);
+    if (tool !== "inspect") this.setTool({ tool });
+    if (paused && !this.game.paused) this.togglePause();
+    this.labelKey = "";
+    this.iconT = 1;
+    this.dirtyPreview = true;
+    this.hud?.refresh();
   }
 
   /** Point the camera at a place, zoomed out to at least `halfH`. */
   lookAt(p: V2, halfH: number) {
+    this.camera.stopFollow();
     this.view.cx = p.x;
     this.view.cy = p.y;
     this.view.halfH = Math.min(this.view.maxHalfH, Math.max(this.view.halfH, halfH));
@@ -297,7 +371,7 @@ export class App {
     this.vehicles.lotOf = (id) => { const b = g.buildings.byId.get(id); return b ? this.buildings3d.lotWay(b) : null; };
     this.transit3d = new Transit3D(this.models.props.get("busstop"));
     this.parks3d = new Parks3D(this.models);
-    this.convoyTags.follow(null);
+    this.camera?.reset();
     this.glide = null;
     this.worldRoot.add(this.terrain3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.fireworks.group);
     this.roads.rebuildAll();
@@ -307,7 +381,7 @@ export class App {
     this.icons.boostOf = (b) => g.industry.boosts(b);
     g.on((e) => {
       // (a delivery or a by-product leaving only pops over the map: nothing else on screen changes)
-      if (e.t === "delivery") { if (this.mode !== "menu") this.pops.delivery(e.d, this.view); return; }
+      if (e.t === "delivery") { this.camera.note(e.d.to.c.x, e.d.to.c.y); if (this.mode !== "menu") this.pops.delivery(e.d, this.view); return; }
       if (e.t === "shipped") { if (this.mode !== "menu") this.pops.shipped(e.from, e.to, e.p, this.view); return; }
       if (e.t === "roads") { this.roads.apply(e.cs); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
       else if (e.t === "buildings") {
@@ -319,7 +393,11 @@ export class App {
       else if (e.t === "milestone") { if (this.mode === "play") this.hud?.milestone(e.m, e.towns); }
       else if (e.t === "townSpawned") { if (this.mode === "play") this.hud?.townSpawned(e.town, e.from, e.dist, e.dir); }
       else if (e.t === "toast") { if (this.mode !== "menu") this.hud?.toast(e.msg); }
-      else if (e.t === "townSize") { if (this.mode === "play") this.hud?.townGrew(e.town, e.size); }
+      else if (e.t === "townSize") {
+        const t = g.towns.byId.get(e.town);
+        if (t) this.camera.note(t.c.x, t.c.y);
+        if (this.mode === "play") this.hud?.townGrew(e.town, e.size);
+      }
       else if (e.t === "landmark") { if (this.mode === "play") { this.hud?.landmarkDone(e.b); this.celebrate(e.b); } }
       this.hud?.refresh();
     });
@@ -428,6 +506,8 @@ export class App {
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
       if (this.mode === "menu") return;
+      if (this.camera.cinematic) { this.camera.exitCinema(); this.wheelQuiet = performance.now() + 300; return; }
+      if (performance.now() < this.wheelQuiet) return;
       // a building in hand turns with the wheel (Ctrl + wheel still zooms; so do R and F)
       if (this.st.tool === "place" && !e.ctrlKey) {
         // (with Shift held the browser may scroll sideways instead: either way it is the wheel turning)
@@ -470,6 +550,8 @@ export class App {
 
   private onDown(e: PointerEvent) {
     if (this.mode === "menu") return;
+    // a click ends the cinematic camera (and does nothing else)
+    if (this.camera.cinematic) { this.camera.exitCinema(); return; }
     const p = this.local(e);
     try { (e.target as HTMLElement).setPointerCapture?.(e.pointerId); } catch { /* pointer already gone */ }
     this.pointers.set(e.pointerId, { id: e.pointerId, x: p.x, y: p.y, sx: p.x, sy: p.y, button: e.button, moved: false, t: performance.now() });
@@ -514,6 +596,7 @@ export class App {
       const d = Math.hypot(a.x - b.x, a.y - b.y);
       const mid = v2((a.x + b.x) / 2, (a.y + b.y) / 2);
       const ang = Math.atan2(b.y - a.y, b.x - a.x);
+      this.camera.stopFollow();
       this.view.pan(mid.x - this.pinch.mid.x, mid.y - this.pinch.mid.y);
       this.view.zoomAt(mid.x, mid.y, this.pinch.d / Math.max(d, 1));
       // two-finger twist turns the map with the fingers
@@ -535,8 +618,8 @@ export class App {
       }
       const panning = pi.button === 2 || (pi.button === 0 && !this.dragRect && (this.st.tool === "inspect" || e.pointerType === "touch" || this.keys.has(" ")));
       if (panning && pi.moved) {
-        // (taking the camera by hand lets a followed convoy go)
-        if (this.convoyTags.following !== null) this.convoyTags.follow(null);
+        // (taking the camera by hand lets a followed vehicle go)
+        this.camera.stopFollow();
         this.glide = null;
         this.view.pan(dx, dy);
         this.clampView();
@@ -576,7 +659,11 @@ export class App {
       if (!this.stepBack() && this.st.tool !== "inspect") this.setTool({ tool: "inspect" });
       return;
     }
-    if (pi.button === 0) this.onClick(e.shiftKey);
+    if (pi.button === 0) {
+      // (a click elsewhere on the map lets a followed vehicle go)
+      this.camera.stopFollow();
+      this.onClick(e.shiftKey);
+    }
   }
 
   private onKey(e: KeyboardEvent, down: boolean) {
@@ -585,6 +672,13 @@ export class App {
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     // the title menu: only Esc, to close a dialog opened from it
     if (this.mode === "menu") { if (down && k === "Escape") this.hud?.back(); return; }
+    // the cinematic camera: any key leaves it, and does nothing else (a modifier on its own doesn't count)
+    // (a key let go meanwhile is let go: Shift from Shift+T, or a pan key held when it started)
+    if (this.camera.cinematic) {
+      if (!down) this.keys.delete(k);
+      else if (!e.repeat && k !== "Shift" && k !== "Control" && k !== "Alt" && k !== "Meta") { e.preventDefault(); this.camera.exitCinema(); }
+      return;
+    }
     if (k === "Shift") this.dirtyPreview = true; // the lane tool previews removal while it is held
     if (k === "Alt") { e.preventDefault(); this.dirtyPreview = true; } // held: no snapping (and no browser menu bar)
     if (down) this.keys.add(k); else { this.keys.delete(k); return; }
@@ -596,7 +690,8 @@ export class App {
       return;
     }
     // Esc steps back like CS2: popups, dialogs, panels, the tool, the asset menu, then the pause menu
-    if (k === "Escape") { if (!this.hud?.back()) this.hud?.openPause(); }
+    // (a dialog or panel goes first, then a followed vehicle, then the pause menu)
+    if (k === "Escape") { if (!this.hud?.back()) { if (this.camera.following !== null) this.camera.stopFollow(); else this.hud?.openPause(); } }
     else if (k === " ") { e.preventDefault(); if (!e.repeat) this.togglePause(); }
     else if (k === "1") this.setSpeed(1);
     else if (k === "2") this.setSpeed(2);
@@ -615,6 +710,10 @@ export class App {
     else if (k === "z") this.hud?.toggleWin("economy");
     else if (k === "c") this.hud?.toggleWin("city");
     else if (k === "x") this.hud?.toggleWin("transport");
+    // the camera: T a tour, Shift+T the vehicle cam, G follow the truck nearest the middle (CS2's T / G tilt, which a
+    // top-down map doesn't have)
+    else if (k === "t" && !e.repeat) this.camera.startCinema(e.shiftKey ? "ride" : "tour");
+    else if (k === "g" && !e.repeat) this.camera.toggleFollowNearest();
     else if (k === "[" || k === "]") this.nudgeParallel(k === "]" ? 1 : -1);
     else if ((e.code === "Comma" || e.code === "Period") && this.st.tool === "place") this.turnPlaced(e.code === "Period" ? 1 : -1, e.shiftKey);
     else if (k === "`" || e.code === "Backquote") this.toggleUi();
@@ -1373,14 +1472,16 @@ export class App {
     // Q/E turn the view, R/F zoom (CS2)
     const turn = (this.keys.has("e") ? 1 : 0) - (this.keys.has("q") ? 1 : 0);
     const zoom = (this.keys.has("f") ? 1 : 0) - (this.keys.has("r") ? 1 : 0);
-    if ((mx || my) && (this.convoyTags.following !== null || this.glide)) { this.convoyTags.follow(null); this.glide = null; }
+    // (keys held from before a cinematic camera started don't steer it)
+    if (this.camera.cinematic) { mx = 0; my = 0; }
+    if ((mx || my) && (this.camera.following !== null || this.glide)) { this.camera.stopFollow(); this.glide = null; }
     if (mx || my) {
       const c = Math.cos(this.view.rot), s = Math.sin(this.view.rot);
       this.view.cx += (mx * c - my * s) * pan;
       this.view.cy += (mx * s + my * c) * pan;
     }
-    if (turn) this.view.rotateAt(this.view.w / 2, this.view.h / 2, turn * 1.5 * dt);
-    if (zoom) this.view.zoomAt(this.view.w / 2, this.view.h / 2, Math.exp(zoom * 2.2 * dt));
+    if (turn && !this.camera.cinematic) this.view.rotateAt(this.view.w / 2, this.view.h / 2, turn * 1.5 * dt);
+    if (zoom && !this.camera.cinematic) this.view.zoomAt(this.view.w / 2, this.view.h / 2, Math.exp(zoom * 2.2 * dt));
     if (mx || my || turn || zoom) {
       this.clampView();
       if (this.hasCursor) this.updateCursor(this.cursorPx);
@@ -1397,22 +1498,15 @@ export class App {
       this.view.cy = G.from.y + (G.to.y - G.from.y) * e;
       this.view.halfH = G.from.h + (G.to.h - G.from.h) * e + G.lift * Math.sin(Math.PI * e);
       if (k >= 1) this.glide = null;
-    } else if (this.convoyTags.following !== null) {
-      // the camera keeps a followed convoy in the middle, easing after it (and zooms in a little to start with)
-      const v = g.traffic.vehicles.find((x) => x.id === this.convoyTags.following);
-      if (v) {
-        const p = ConvoyTags.centre(v, g.alpha), k = 1 - Math.exp(-dt * 5);
-        this.view.cx += (p.x - this.view.cx) * k;
-        this.view.cy += (p.y - this.view.cy) * k;
-        if (this.followT > 0) { this.view.halfH += (Math.min(this.view.halfH, 120) - this.view.halfH) * k; this.followT = Math.max(0, this.followT - dt); }
-      }
     }
+    // following a vehicle, a cinematic shot, the fade between shots
+    this.camera.update(dt);
     this.transit3d.update(g.transit, g.net, this.st.tool === "transit" || !!this.hud?.linesShown, this.view.mpp, this.view.rot);
     this.flowT += dt;
     const flowOn = this.overlay === "flow";
     this.roads.update(g.traffic, flowOn && this.flowT > 0.5);
     if (this.flowT > 0.5) this.flowT = 0;
-    if (this.dirtyPreview) {
+    if (this.dirtyPreview && !this.camera.cinematic) {
       // (a preview that can't be drawn must never stop the game)
       try { this.refreshPreview(); } catch (e) { this.dirtyPreview = false; console.error(e); }
     }
@@ -1443,16 +1537,16 @@ export class App {
     this.iconT += dt;
     if (this.iconT > 0.4) {
       this.iconT = 0;
-      this.icons.set(this.uiHidden || this.mode === "menu" ? [] : g.buildings.list, this.view);
+      this.icons.set(this.bare ? [] : g.buildings.list, this.view);
       this.townLabels();
-      this.convoyTags.sync(g.traffic.vehicles, g.buildings.byId, this.uiHidden || this.mode === "menu");
-      this.townPings.sync(g.towns.list, g.time, served, this.uiHidden || this.mode === "menu");
-      this.stuckAlerts.sync(g.traffic.stuckCars(STUCK_KEEP), g.time, this.uiHidden || this.mode === "menu");
+      this.convoyTags.sync(g.traffic.vehicles, g.buildings.byId, this.bare);
+      this.townPings.sync(g.towns.list, g.time, served, this.bare);
+      this.stuckAlerts.sync(g.traffic.stuckCars(STUCK_KEEP), g.time, this.bare);
       const dm = this.markedDeposits();
       this.depositMarks.show(dm.kinds, dm.focus);
     }
     else this.icons.update(this.view);
-    this.pops.update(this.view, this.uiHidden || this.mode === "menu" || far ? null : g.traffic, g.alpha);
+    this.pops.update(this.view, this.bare || far ? null : g.traffic, g.alpha);
     this.hud?.compassAngle(this.view.rot);
     this.view.render();
     requestAnimationFrame(this.frame);
@@ -1461,7 +1555,7 @@ export class App {
   /** The towns' names on the map, with their size, how well supplied they are and what they are short of; click one to open its panel. */
   private townLabels() {
     const g = this.game;
-    const hide = this.uiHidden || this.mode === "menu";
+    const hide = this.bare;
     const info = g.towns.list.map((t) => {
       const needs = needsOf(t.pop).filter((p) => t.supply[p] !== undefined);
       const worst = needs.length ? Math.min(...needs.map((p) => t.supply[p]!)) : 1;

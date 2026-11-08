@@ -743,3 +743,43 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .sa-chip:hover { background: var(--plate); }
 .sa-chip:focus-visible { outline: 2px solid var(--ochre); outline-offset: 3px; }
 @media (prefers-reduced-motion: reduce) { .sa-pin .sa-sign { animation: none; } }
+
+/* ------------------------------------------------------------ the camera (camera.ts): follow, Tour, Vehicle cam */
+/* the camera menu (a top-left window): three rows like the info views, each with its key */
+.cam-list { display: flex; flex-direction: column; gap: 2px; }
+.cam-opt { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: start; text-align: left; background: none; border: 1px solid transparent; border-radius: var(--r); padding: 8px; color: var(--cream); }
+.cam-opt:hover:not(.on) { background: var(--plate-2); }
+.cam-opt.on { background: var(--plate-3); border-color: var(--ochre); }
+.cam-ic { color: var(--ochre-hi); padding-top: 1px; }
+.cam-ic svg { width: 20px; height: 20px; display: block; }
+.cam-txt { display: flex; flex-direction: column; gap: 2px; }
+.cam-txt b { font-weight: 600; font-size: var(--t-md); }
+.cam-key { display: flex; gap: 3px; padding-top: 1px; }
+.cam-foot { margin: 10px 2px 0; }
+/* following: a slim plate above the bar, "◆ FOLLOWING Heavy truck · Coal to the Smelter [Stop Esc]" */
+.follow-chip { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; padding: 4px 4px 4px 11px; max-width: min(760px, calc(100vw - 32px)); background: var(--bar); border-left: 4px solid var(--ochre); white-space: nowrap; }
+.follow-chip[hidden] { display: none; }
+.fc-text { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.fc-sub[hidden] { display: none; }
+.fc-lamp { flex: none; width: 8px; height: 8px; background: var(--ochre); transform: rotate(45deg); animation: fc-blink 1.6s ease-in-out infinite; }
+@keyframes fc-blink { 50% { opacity: .35; } }
+.fc-k { font: 600 var(--t-xs)/16px var(--f-text); text-transform: uppercase; letter-spacing: .1em; color: var(--ochre-hi); }
+.fc-what { font-weight: 700; color: var(--cream); }
+.fc-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--cream-2); }
+.fc-sub::before { content: "·"; margin-right: 9px; color: var(--cream-3); }
+.fc-stop { flex: none; margin-left: 6px; display: inline-flex; align-items: center; gap: 7px; padding: 3px 4px 3px 10px; background: var(--plate-2); border: 1px solid var(--rule-2); border-radius: var(--r); font-weight: 600; color: var(--cream); }
+.fc-stop:hover { background: var(--plate-3); border-color: var(--cream-3); }
+.fc-stop kbd { padding: 2px 4px; }
+/* a cinematic camera: nothing over the map but the fade and, for two seconds, the way out */
+body.cinema > :not(#game):not(.cine) { display: none !important; }
+body.cinema #game { cursor: none; }
+.cine { position: fixed; inset: 0; z-index: 20; pointer-events: none; }
+.cine-fade { position: absolute; inset: 0; background: #000; }
+.cine-fade[hidden], .cine-hint[hidden] { display: none; }
+.cine-hint { position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; padding: 5px 12px; background: rgba(7, 13, 23, .55); color: var(--cream-2); font-size: var(--t-xs); }
+.cine-hint b { font: 700 15px/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase; color: var(--ochre-hi); }
+.cine-hint span { display: inline-flex; align-items: center; gap: 6px; }
+.cine-hint kbd { background: transparent; }
+.cine-hint.go { animation: cine-hint 2.6s ease forwards; }
+@keyframes cine-hint { 0% { opacity: 0; } 10%, 77% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .fc-lamp { animation: none; } }

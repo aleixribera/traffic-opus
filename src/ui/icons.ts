@@ -205,6 +205,11 @@ export const ICON = {
   roadCat: svg(28, 28, `<path d="M8 26 L12 2 H16 L20 26 Z" fill="${C.asphalt}"/><path d="M8 26 L12 2 M20 26 L16 2" stroke="${C.cream}" stroke-width="1.8" stroke-linecap="round"/><path d="M14 5 v3.5 M14 12 v4 M14 19.5 v4.5" stroke="${C.ochre}" stroke-width="2" stroke-linecap="round"/>`),
   keys: svg(18, 18, `<rect x="2" y="4.5" width="14" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 7.5 h1 M8.5 7.5 h1 M12 7.5 h1 M5.5 10.8 h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>`),
   close: svg(14, 14, `<path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>`),
+  // the camera menu: a newsreel camera (two reels on a box, the lens hood forward), and viewfinder corners round a
+  // truck (follow) or round a heading (riding along)
+  camera: svg(18, 18, `<circle cx="4.6" cy="4.3" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="4.3" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="1.5" y="8" width="10.5" height="7.5" rx="0.8" fill="currentColor"/><path d="M12 10.4 L16.6 8.2 V15.3 L12 13.1 Z" fill="currentColor"/>`),
+  camFollow: svg(18, 18, `<path d="M2 6 V2 H6 M12 2 H16 V6 M16 12 V16 H12 M6 16 H2 V12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"/><rect x="5" y="6.6" width="5.6" height="4.8" fill="currentColor"/><path d="M10.6 8 H12.3 L13.4 9.6 V11.4 H10.6 Z" fill="currentColor"/>`),
+  camRide: svg(18, 18, `<path d="M2 6 V2 H6 M12 2 H16 V6 M16 12 V16 H12 M6 16 H2 V12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"/><path d="M9 4.6 L13 12.4 L9 10.6 L5 12.4 Z" fill="currentColor"/>`),
 };
 
 /** Small pictograms of what towns buy (town panel, Towns list, map labels), 16 px. */

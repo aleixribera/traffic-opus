@@ -81,7 +81,7 @@ const catOf = (st: { tool: ToolId }): CatId | null => {
   return t === "transit" ? "transport" : null;
 };
 
-type WinId = "info" | "progression" | "economy" | "city" | "transport";
+type WinId = "info" | "progression" | "economy" | "city" | "transport" | "camera";
 
 const h = <K extends keyof HTMLElementTagNameMap>(tag: K, cls = "", html = ""): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag);
@@ -175,6 +175,8 @@ const KEYS: [string, string][] = [
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
   ["F5 / F9", "Quicksave / quickload"],
   ["`", "Hide the interface"],
+  ["G", "Follow the truck nearest the middle of the screen (again, or Esc, lets go)"],
+  ["T / Shift+T", "Tour camera / Vehicle cam (any key or click comes back)"],
 ];
 
 export class Hud {
@@ -195,6 +197,8 @@ export class Hud {
   private tut = h("section", "card goals");
   private panel = h("aside", "card panel");
   private chipBox = h("div", "chips");
+  /** "Following · Heavy truck · Coal to the Smelter · Stop", above the bar while the camera follows a vehicle */
+  private followEl = h("div", "card follow-chip");
   private toastBox = h("div", "toasts");
   private modal = h("div", "modal");
   private rectEl = h("div", "selrect");
@@ -251,6 +255,7 @@ export class Hud {
     tlb("economy", ICON.coins, "Economy (Z)", () => this.toggleWin("economy"));
     tlb("city", ICON.chart, "Towns (C)", () => this.toggleWin("city"));
     tlb("transport", ICON.car, "Transportation overview (X)", () => this.toggleWin("transport"));
+    tlb("camera", ICON.camera, "Camera: follow a truck, Tour, Vehicle cam (G, T, Shift+T)", () => this.toggleWin("camera"));
     this.compass.innerHTML = ICON.north;
     this.compass.title = "North up (the map is turned: Q / E or middle-drag)";
     this.compass.setAttribute("aria-label", "Turn the map north up");
@@ -320,7 +325,8 @@ export class Hud {
     this.bbar.append(city, this.cats, time);
     this.assets.hidden = true;
     this.toolOpts.hidden = true;
-    bottom.append(this.toolOpts, this.assets, this.bbar);
+    this.followEl.hidden = true;
+    bottom.append(this.followEl, this.toolOpts, this.assets, this.bbar);
 
     this.panel.hidden = true;
     this.modal.hidden = true;
@@ -889,7 +895,15 @@ export class Hud {
     this.bannerMore();
     // a milestone waits to be read; a town's news steps aside by itself after a while (and doesn't take the keyboard)
     if ("m" in X || lm || "spawned" in X) requestAnimationFrame(() => ok.focus({ preventScroll: true }));
-    else this.bannerT = window.setTimeout(() => { if (!this.banner.matches(":hover, :focus-within")) this.nextBanner(); }, 12000);
+    else this.bannerAway(12000);
+  }
+
+  /** A town's news steps aside after `ms`, but not while the cinematic camera hides it (it waits to be seen). */
+  private bannerAway(ms: number) {
+    this.bannerT = window.setTimeout(() => {
+      if (this.app.camera.cinematic) this.bannerAway(4000);
+      else if (!this.banner.matches(":hover, :focus-within")) this.nextBanner();
+    }, ms);
   }
 
   /** The banner's button says when more news waits behind this one. */
@@ -1042,6 +1056,49 @@ export class Hud {
     else if (k === "economy") this.fillEconomy();
     else if (k === "city") this.fillCity();
     else if (k === "transport") this.fillTransport();
+    else if (k === "camera") this.fillCamera();
+  }
+
+  /** The camera menu: follow a truck, the Tour and the Vehicle cam. */
+  private fillCamera() {
+    const app = this.app, following = app.camera.following !== null;
+    const opt = (id: string, icon: string, name: string, key: string, blurb: string, on = false) =>
+      `<button class="cam-opt${on ? " on" : ""}" data-cam="${id}" aria-pressed="${on}"><span class="cam-ic">${icon}</span><span class="cam-txt"><b>${name}</b><span class="small muted">${blurb}</span></span><span class="cam-key">${key}</span></button>`;
+    const html = `<div class="cam-list">${
+      opt("follow", ICON.camFollow, following ? "Stop following" : "Follow a truck", "<kbd>G</kbd>", following ? "Let go of the vehicle the camera is riding with." : "The camera rides with the truck nearest the middle of the screen. Zoom as you like; pan, click the map or Esc lets go.", following)
+    }${
+      opt("tour", ICON.camera, "Tour", "<kbd>T</kbd>", "An automatic camera drifts over your busiest junctions, towns, works and bridges, fading from one to the next. The interface hides; the game runs on.")
+    }${
+      opt("ride", ICON.camRide, "Vehicle cam", "<kbd>Shift</kbd><kbd>T</kbd>", "Rides along with one heavy truck, road train or convoy after another, a few seconds each.")
+    }</div><p class="cam-foot small muted">Any key or a click leaves the Tour and the Vehicle cam.</p>`;
+    if (!this.setWin("Camera", html)) return;
+    for (const b of this.win.querySelectorAll<HTMLButtonElement>(".cam-opt")) b.onclick = () => {
+      const k = b.dataset.cam;
+      this.sfx.play("click");
+      this.closeWin();
+      if (k === "follow") app.camera.toggleFollowNearest();
+      else if (k === "tour") app.startTour();
+      else app.startVehicleCam();
+    };
+  }
+
+  /** The follow chip: what the camera rides with (null: hide it). */
+  followChip(info: { what: string; sub: string } | null) {
+    // (built once: only the words change, so the Stop button keeps the keyboard when the truck sets off again, and
+    // only the words are read out)
+    const el = this.followEl;
+    if (!el.firstChild) {
+      el.innerHTML = `<i class="fc-lamp" aria-hidden="true"></i><span class="fc-text" role="status"><span class="fc-k">Following</span><b class="fc-what"></b><span class="fc-sub"></span></span><button class="fc-stop" type="button" aria-label="Stop following (Esc)">Stop<kbd>Esc</kbd></button>`;
+      (el.querySelector(".fc-stop") as HTMLButtonElement).onclick = () => { this.sfx.play("click"); this.app.stopFollow(); };
+    }
+    if (info) {
+      (el.querySelector(".fc-what") as HTMLElement).textContent = info.what;
+      const sub = el.querySelector(".fc-sub") as HTMLElement;
+      sub.textContent = info.sub;
+      sub.hidden = !info.sub;
+    }
+    el.hidden = !info;
+    if (this.winKind === "camera") this.fillCamera();
   }
 
   private fillInfo() {

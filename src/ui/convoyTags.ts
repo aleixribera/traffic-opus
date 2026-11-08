@@ -1,6 +1,6 @@
 // Oversized-load convoys on the map: a tag rides above each one ("OVERSIZE LOAD · Turbine / to the Coal Plant") with
 // a lamp that flashes like its beacons, so one is easy to spot crawling across a busy map. Click a tag to follow the
-// convoy with the camera; pan away (or click it again) to let it go.
+// convoy with the camera (ui/camera.ts); pan away (or click it again) to let it go.
 
 import { BUILDING_TYPES } from "../config";
 import { BIG_NAME, CONVOY_LEN } from "../game/convoys";
@@ -11,7 +11,7 @@ import type { View } from "../render/view";
 export class ConvoyTags {
   readonly el = document.createElement("div");
   private tags = new Map<number, { el: HTMLButtonElement; v: Vehicle }>();
-  /** The convoy the camera follows (a vehicle id), or null. */
+  /** The vehicle the camera follows (its tag is lit), or null. */
   following: number | null = null;
 
   constructor(private onFollow: (id: number | null) => void) {
@@ -37,21 +37,22 @@ export class ConvoyTags {
       el.querySelector("b")!.textContent = BIG_NAME[r.big];
       el.querySelector(".ct-to")!.textContent = `to the ${where}`;
       el.title = `${BIG_NAME[r.big]} on its way to the ${where}. Follow it`;
-      el.onclick = () => this.follow(this.following === v.id ? null : v.id);
+      el.onclick = () => this.onFollow(this.following === v.id ? null : v.id);
+      el.classList.toggle("on", this.following === v.id);
+      el.setAttribute("aria-pressed", String(this.following === v.id));
       this.el.appendChild(el);
       this.tags.set(v.id, { el, v });
     }
     for (const [id, t] of this.tags) if (!live.has(id)) { t.el.remove(); this.tags.delete(id); }
-    if (this.following !== null && !this.tags.has(this.following)) this.follow(null);
   }
 
-  follow(id: number | null) {
+  /** Light the tag of the vehicle the camera follows (null: none). */
+  mark(id: number | null) {
     this.following = id;
     for (const [k, t] of this.tags) {
       t.el.classList.toggle("on", k === id);
       t.el.setAttribute("aria-pressed", String(k === id));
     }
-    this.onFollow(id);
   }
 
   /** Where a convoy is now: the middle of its pieces as drawn, between its last two sim steps. */
