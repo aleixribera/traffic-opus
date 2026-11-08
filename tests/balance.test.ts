@@ -207,20 +207,22 @@ function play() {
   const mine = (key: "ore" | "coal" | "lime" | "oil" | "sand" | "copper", kind: PlantKind, field: number, name: string) => {
     if (has(kind) || g.time - (blocked.get(key) ?? -1e9) < DAY) return;
     if (g.money < RESERVE + PLANTS[kind].cost + 8000) { poor(); return; }
+    const why: string[] = [];
     for (const d of tier2[key]) {
       // (a road into the deposit first: the site faces it)
       if (!roads[key] || dist(roads[key][1], d) > 600) {
         const a = startFor(d);
         const r = road(`to the ${name}`, a, d);
         if (r === "money") return;
-        if (r !== true) continue;
+        if (r !== true) { why.push(`road ${(dist(a, d) / 1000).toFixed(1)} km: ${roadErrors[0] ?? r}`); continue; }
         roads[key] = [a, d];
         paths[key] = lastLegs;
       }
       const r = site(kind, field, d, key, 500);
       if (r) return;
+      why.push(`site: ${[...siteWhy].map(([k, n]) => (n > 1 ? `${k} x${n}` : k)).join(", ")}`);
     }
-    say(`no way through to the ${name}`);
+    say(`no way through to the ${name}${why.length ? ` (${why.join("; ")})` : ""}`);
     blocked.set(key, g.time);
   };
 

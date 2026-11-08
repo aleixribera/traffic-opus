@@ -166,6 +166,7 @@ export class Game {
       sold: (town, p, n) => { this.towns.sold(town, p, n); this.progress.onSold(p, n); },
       request: (sp) => this.traffic.request(sp),
       trips: () => this.trips(),
+      held: () => this.heldTrips(),
       earn: (v) => { this.money += v; this.budgetNow.income.sales += v; this.progress.onEarned(v); },
       spend: (v, what) => { this.money -= v; this.budgetNow.expense[what] += v; },
       bays: () => this.progress.unlocked.bays,
@@ -286,6 +287,19 @@ export class Game {
   *trips(): Iterable<Trip> {
     for (const v of this.traffic.vehicles) yield v.trip;
     for (const p of this.traffic.pending) yield p.trip;
+  }
+
+  /**
+   * The trips held up now: standing in traffic 30 s+ ("road"), or in a yard whose first truck out has waited 20 s+
+   * for a gap in the traffic ("gate": a yard just sending a lot of long trucks one after another isn't one).
+   */
+  private heldTrips(): Map<Trip, "gate" | "road"> {
+    const m = new Map<Trip, "gate" | "road">();
+    for (const v of this.traffic.vehicles) if (v.trip.haul && v.stuck > 30) m.set(v.trip, "road");
+    const blocked = new Set<number>();
+    for (const p of this.traffic.pending) if (p.trip.haul && p.wait > 20) blocked.add(p.trip.from);
+    if (blocked.size) for (const p of this.traffic.pending) if (p.trip.haul && blocked.has(p.trip.from)) m.set(p.trip, "gate");
+    return m;
   }
 
   /** Truck classes the company may run now. */

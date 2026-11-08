@@ -14,6 +14,7 @@ function world() {
   const staff = new Map<number, number>();
   let money = 0;
   const spent: Record<string, number> = {};
+  const held = new Map<Trip, "gate" | "road">();
   const host: IndustryHost & { time: number } = {
     time: 0,
     buildings: { list, byId } as any,
@@ -27,6 +28,7 @@ function world() {
     sold: () => {},
     request: (p) => { pending.push(p); },
     trips: () => pending.map((p) => p.trip),
+    held: () => held,
     earn: (v) => { money += v; },
     spend: (v, what) => { money -= v; spent[what] = (spent[what] ?? 0) + v; },
   };
@@ -47,10 +49,34 @@ function world() {
   const shop = (x: number, comp = 1) => make(x, comp, 3);
   /** a truck reaches the end of its leg */
   const arrive = (p: PendingSpawn) => { pending.splice(pending.indexOf(p), 1); ind.onArrive({ trip: p.trip } as Vehicle); };
-  return { host, ind, plant, shop, pending, staff, arrive, get money() { return money; }, spent };
+  return { host, ind, plant, shop, pending, staff, arrive, held, get money() { return money; }, spent };
 }
 
 describe("Industry", () => {
+  it("a full site whose trucks are held up says the road is jammed (not a long haul or no buyer), and so does its customer", () => {
+    const w = world();
+    const farm = w.plant("farm", 0), fp = w.plant("foodplant", 50);
+    for (let i = 0; i < 60; i++) w.ind.tick(HOUR);
+    const out = w.pending.filter((p) => p.trip.haul?.leg === "out");
+    expect(out.length).toBeGreaterThan(2);
+    // everything moving: the usual lines
+    expect(farm.problem).toMatch(/^Full of crops: its trucks can't keep up/);
+    // most of its trucks still in the yard, the road outside jammed
+    for (const p of out) w.held.set(p.trip, "gate");
+    w.ind.tick(1);
+    expect(farm.problem).toBe("Full of crops: the road at its gate is jammed, its trucks can't get out");
+    expect(fp.problem).toBe("Waiting for crops: the loads on their way are stuck in traffic");
+    // out on the road, standing in traffic
+    for (const p of out) w.held.set(p.trip, "road");
+    w.ind.tick(1);
+    expect(farm.problem).toBe("Full of crops: its trucks are stuck in traffic on the haul (a jammed road)");
+    // moving again
+    w.held.clear();
+    w.ind.tick(1);
+    expect(farm.problem).toMatch(/^Full of crops: its trucks can't keep up/);
+    expect(fp.problem).toBe("Waiting for crops");
+  });
+
   it("an extractor works at the pace its staff and deposit allow, and stops when its yard is full", () => {
     const w = world();
     const farm = w.plant("farm", 0);

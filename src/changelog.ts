@@ -15,6 +15,15 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.65", date: "2026-11-08", title: "Freight jams ease",
+    notes: [
+      "A site's gate now stands well clear of a junction, so trucks turning in no longer stop with their tails across the crossing.",
+      "Drivers in a slow, crawling queue keep going instead of giving up and sending their load back into the same jam.",
+      "Trucks waiting their turn in a yard no longer count as a blocked driveway; only the one at the front does.",
+      "Panels name the road to fix: a full site says when the road at its gate is jammed or its trucks are stuck on the haul, and a plant waiting for an input says when its loads are stuck in traffic.",
+    ],
+  },
+  {
     v: "v0.0.64", date: "2026-11-08", title: "Heavy trucks get moving",
     notes: [
       "Heavy trucks pull out of a site's parking bays like light ones instead of queuing at the gate one at a time; only road trains still wait their turn.",
