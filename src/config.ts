@@ -88,7 +88,9 @@ export type BuildingKind =
   // placed by the player (see game/placed.ts): the company's extractors and plants, and power
   | "farm" | "loggingcamp" | "foodplant" | "sawmill"
   | "ironmine" | "coalmine" | "quarry" | "smelter" | "cementworks" | "coalplant"
-  | "oilwell" | "sandpit" | "refinery" | "glassworks" | "furniture" | "constructionplant";
+  | "oilwell" | "sandpit" | "refinery" | "glassworks" | "furniture" | "constructionplant"
+  // the company's logistics: a store that buffers deliveries, and a depot that fuels trucks at cost
+  | "warehouse" | "fueldepot";
 export type Zone = "res" | "com" | "placed";
 
 export interface BuildingType {
@@ -142,6 +144,8 @@ export const BUILDING_TYPES: Record<BuildingKind, BuildingType> = {
   glassworks: { kind: "glassworks", name: "Glassworks", zone: "placed", w: 210, d: 190, residents: 0, jobs: 14, pollution: 110, parking: 4, blurb: "Melts sand with coal into glass." },
   furniture: { kind: "furniture", name: "Furniture Factory", zone: "placed", w: 200, d: 180, residents: 0, jobs: 14, pollution: 30, parking: 4, blurb: "Builds household goods from planks and glass." },
   constructionplant: { kind: "constructionplant", name: "Construction Plant", zone: "placed", w: 220, d: 200, residents: 0, jobs: 16, pollution: 90, parking: 4, blurb: "Casts steel and cement into construction parts." },
+  warehouse: { kind: "warehouse", name: "Warehouse", zone: "placed", w: 110, d: 84, residents: 0, jobs: 0, pollution: 0, parking: 3, blurb: "Stores products your plants and towns can't take yet, and its own trucks ship them on when there's a buyer." },
+  fueldepot: { kind: "fueldepot", name: "Fuel Depot", zone: "placed", w: 64, d: 52, residents: 0, jobs: 0, pollution: 10, parking: 1, blurb: "Takes fuel from your refineries: trucks on runs that pass near it fill up at cost instead of market price." },
   coalplant: { kind: "coalplant", name: "Power Plant", zone: "placed", w: 220, d: 200, residents: 0, jobs: 12, pollution: 140, parking: 5, blurb: "Burns coal for power: the buildings that need it on its roads within 4 km work at full pace. Its smoke drags land value down for a few hundred metres." },
 };
 

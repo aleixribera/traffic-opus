@@ -4,7 +4,8 @@ import type { Building } from "../game/buildings";
 import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
 import { MILESTONES, unlockedBy, type Milestone, type Unlocks } from "../game/progression";
 import { ZONES } from "../game/zones";
-import { BUILD_TIME, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, TRUCK_COST, TRUCK_UPKEEP, UNPOWERED, isPlantKind, powerPace, type Product } from "../game/industry";
+import { BUILD_TIME, DEPOT_REACH, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, TRUCK_UPKEEP, UNPOWERED, isPlantKind, powerPace, type Product } from "../game/industry";
+import { TRUCK_CLASSES, TRUCK_CLASS_ORDER, classOf, type TruckClass } from "../game/trucks";
 import { GROW_NEED, LEVEL_MULT, SITE_LEVELS } from "../game/sites";
 import { MARKET, TOWN_COST, TOWN_SPACING, type Town } from "../game/settlements";
 import { HALLS, TOWN_SIZES, demandPerDay, growthPerDay, needFrom, needsOf, nextNeed, sizeOf } from "../game/towns";
@@ -105,6 +106,7 @@ const plural = (n: number, one: string, many = one + "s") => `${n} ${n === 1 ? o
 function unlockList(u: Unlocks): string[] {
   return [
     ...(u.buildings ?? []).map((k) => BUILDING_TYPES[k].name),
+    ...(u.trucks ?? []).map((c) => `${TRUCK_CLASSES[c].name}s`),
     ...(u.roads ?? []).map((r) => ROAD_TYPES[r].name),
     ...(u.features ?? []).map((f) => FEATURE_NAME[f]),
     ...(u.towns ? [`+${plural(u.towns, "town")} to run`] : []),
@@ -1275,6 +1277,31 @@ export class Hud {
       const outs = (Object.keys(D.outputs) as Product[]).map((p) => stock(p, P.out[p] ?? 0)).join("");
       const L = P.last;
       const flare = b.built >= 1 ? Industry.flaring(b) : undefined;
+      const logi = D.logistics;
+      // the class of truck it runs: one button per class, the locked ones saying what unlocks them
+      const C = classOf(P.cls), price = Industry.truckPrice(b);
+      const classPick = D.trucks ? `<h3 class="sub-h" id="cls-h-${b.id}">Truck class</h3>
+        <div class="seg cls-pick" role="group" aria-labelledby="cls-h-${b.id}">${TRUCK_CLASS_ORDER.map((c) => {
+          const K = TRUCK_CLASSES[c], on = (P.cls ?? "light") === c, open = g.truckUnlocked(c);
+          const by = open ? "" : unlockedBy((u) => u.trucks?.includes(c))?.name;
+          const tip = open ? `${K.name}: ${K.payload === 1 ? "1 load" : `${K.payload} loads`} a trip at your load per truck, ${K.len} m long, ${formatMoney(K.price)} a truck${K.upkeep ? `, +${formatMoney(K.upkeep)}/h each to run` : ""}` : `${K.name}: unlocks with “${by}”`;
+          return `<button class="seg-btn cls-btn${on ? " on" : ""}" data-cls="${c}" aria-pressed="${on}" ${open ? "" : `aria-disabled="true" data-lock="${escapeHtml(tip)}"`} title="${escapeHtml(tip)}">${K.name}</button>`;
+        }).join("")}</div>
+        <p class="small muted cls-note">${g.industry.capOf(b)} loads a trip · ${C.len} m on the road${C.upkeep ? ` · +${formatMoney(C.upkeep)}/h a truck` : ""}. ${C.blurb}${P.cls ? " Trucks already out finish their run first." : ""}</p>` : "";
+      const truckRow = D.trucks ? `<dt>Trucks out</dt><dd>${busy} of ${g.industry.trucksOf(b)}<button class="btn buy-truck" ${g.industry.canBuyTruck(b, g.money) ? "disabled" : ""} title="${escapeHtml(g.industry.canBuyTruck(b, g.money) ?? `Another ${C.name.toLowerCase()} for this building: ${formatMoney(price)}, then ${formatMoney(TRUCK_UPKEEP + C.upkeep)}/h`)}">+ Truck · ${formatMoney(price)}</button></dd>` : "";
+      if (logi) {
+        const held = Industry.stored(b);
+        const body = logi === "warehouse" ? this.warehouseBody(b, store, held) : this.depotBody(b, store);
+        const html = `<header><span class="svc-tag">${placedIcon(b.kind)}</span>${T.name}</header>
+          <p class="muted small">${chainText(b.kind)}</p>
+          <p class="status ${statusCls}">${status}</p>
+          ${body}
+          ${classPick}
+          <dl class="facts">${truckRow}</dl>
+          <button class="btn quiet danger demolish">Demolish</button>`;
+        if (this.setPanel(html)) this.bindDemolish(b);
+        return;
+      }
       const html = `<header><span class="svc-tag">${placedIcon(b.kind)}</span>${T.name}</header>
         <p class="muted small">${chainText(b.kind)}</p>
         <p class="status ${statusCls}">${status}</p>
@@ -1282,9 +1309,10 @@ export class Hud {
         ${outs ? `<h3 class="sub-h">Ready to ship</h3><dl class="facts">${outs}</dl>` : ""}
         ${flare ? `<p class="small muted">Its yard is full of ${PRODUCTS[flare].name.toLowerCase()}: nothing of yours uses it until tier ${Industry.laterTier(flare)}, so it burns off the rest and keeps making ${(Object.keys(D.outputs) as Product[]).filter((p) => p !== flare).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ")}.</p>` : ""}
         ${siteLevel(b)}
+        ${classPick}
         <dl class="facts">
           ${plantRows}${powerRow}
-          ${D.trucks ? `<dt>Trucks out</dt><dd>${busy} of ${g.industry.trucksOf(b)}<button class="btn buy-truck" ${g.industry.canBuyTruck(b, g.money) ? "disabled" : ""} title="${escapeHtml(g.industry.canBuyTruck(b, g.money) ?? `Another truck for this plant: ${formatMoney(TRUCK_COST)}, then ${formatMoney(TRUCK_UPKEEP)}/h`)}">+ Truck · ${formatMoney(TRUCK_COST)}</button></dd>` : ""}
+          ${truckRow}
           <dt>Staff</dt><dd>${g.people.workersAt(b.id)} / ${b.cap}</dd>
           ${D.deposit ? `<dt>${cap(D.deposit.name)}</dt><dd>${Math.round(P.yld * 100)}% of full yield</dd>` : ""}
         </dl>
@@ -1354,14 +1382,59 @@ export class Hud {
     if (link && town) link.onclick = () => { this.sfx.play("click"); this.showTown(town.id); };
   }
 
+  /** A warehouse's panel: what it holds, and per product whether it takes it and whether it is a feeder for it. */
+  private warehouseBody(b: Building, store: number, held: number): string {
+    const g = this.app.game, P = b.plant!;
+    const stock = (Object.keys(P.stock) as Product[]).filter((p) => (P.stock[p] ?? 0) >= 1);
+    // the products the company can make by now, and anything already in store
+    const made = new Set<Product>(stock);
+    for (const k of g.progress.unlocked.buildings) for (const p of Object.keys(PLANTS[k].outputs) as Product[]) made.add(p);
+    const list = (Object.keys(PRODUCTS) as Product[]).filter((p) => made.has(p));
+    const rows = stock.map((p) => `<dt>${PRODUCTS[p].name}</dt><dd>${stockBar(P.stock[p]!, store, PRODUCTS[p].color)}<span class="num">${Math.floor(P.stock[p]!)}</span></dd>`).join("");
+    const takes = (p: Product) => !P.takes || P.takes.includes(p), feeds = (p: Product) => !!P.feeds?.includes(p);
+    const opts = list.map((p) => `<tr><th scope="row">${productIcon(p)}${PRODUCTS[p].name}</th>
+        <td><label class="wh-hit"><input type="checkbox" class="wh-take" data-p="${p}" aria-label="Take ${escapeHtml(PRODUCTS[p].name.toLowerCase())}" ${takes(p) ? "checked" : ""}></label></td>
+        <td><label class="wh-hit"><input type="checkbox" class="wh-feed" data-p="${p}" aria-label="Feeder for ${escapeHtml(PRODUCTS[p].name.toLowerCase())}" ${feeds(p) ? "checked" : ""}></label></td></tr>`).join("");
+    return `<h3 class="sub-h">In store <span class="muted num">${Math.floor(held)} / ${store}</span></h3>
+      ${rows ? `<dl class="facts">${rows}</dl>` : `<p class="small muted">Empty. Your buildings send it what no plant or town can take yet.</p>`}
+      <h3 class="sub-h">Products</h3>
+      <table class="wh-opts"><thead><tr><th scope="col"><span class="sr">Product</span></th><th scope="col" title="Your trucks may bring it here when nothing else will take it">Take</th><th scope="col" title="Sent here first, before plants and towns farther away: it splits a long haul into two legs">Feeder</th></tr></thead><tbody>${opts}</tbody></table>
+      <p class="small muted">Taken products come here only when no plant or town wants them. A feeder product comes here first when the warehouse is nearer than its buyers, and its own trucks carry it on.</p>`;
+  }
+
+  /** A fuel depot's panel: its fuel, the trucks it filled and what that saved. */
+  private depotBody(b: Building, store: number): string {
+    const P = b.plant!;
+    const fuel = P.stock.fuel ?? 0;
+    return `<dl class="facts">
+        <dt>Fuel</dt><dd>${stockBar(fuel, store, PRODUCTS.fuel.color)}<span class="num">${fuel.toFixed(1)}</span></dd>
+        <dt>Trucks filled</dt><dd>${fmtNum(P.served ?? 0)}</dd>
+        <dt>Saved on fuel</dt><dd class="${(P.saved ?? 0) > 0 ? "good" : ""}">${formatMoney(Math.round(P.saved ?? 0))}</dd>
+        <dt>Last hour</dt><dd>${plural(P.last.served ?? 0, "truck")} · ${formatMoney(Math.round(P.last.saved ?? 0))}</dd>
+      </dl>
+      <p class="small muted">Your trucks whose run passes within ${(DEPOT_REACH / 1000).toFixed(1)} km of it fill up here at cost, not the market price, while it has fuel. Your refineries' tankers keep it stocked.</p>`;
+  }
+
   private bindDemolish(b: Building) {
     const g = this.app.game;
     const btn = this.panel.querySelector(".demolish") as HTMLButtonElement | null;
     if (btn) btn.onclick = () => { g.bulldoze([], [b.id]); this.closeSelection(); this.app.selected = null; this.sfx.play("remove"); };
+    const redraw = () => { this.lastPanel = ""; this.fillBuilding(b); };
     const buy = this.panel.querySelector(".buy-truck") as HTMLButtonElement | null;
     if (buy) buy.onclick = () => {
       const why = g.buyTruck(b.id);
-      if (why) this.toast(why); else { this.sfx.play("place"); this.lastPanel = ""; this.fillBuilding(b); }
+      if (why) this.toast(why); else { this.sfx.play("place"); redraw(); }
+    };
+    for (const el of this.panel.querySelectorAll<HTMLButtonElement>(".cls-btn")) el.onclick = () => {
+      // (a locked class stays focusable and says what unlocks it)
+      if (el.dataset.lock) { this.toast(el.dataset.lock); return; }
+      const why = g.setTruckClass(b.id, el.dataset.cls as TruckClass);
+      if (why) this.toast(why); else { this.sfx.play("click"); redraw(); }
+    };
+    for (const el of this.panel.querySelectorAll<HTMLInputElement>(".wh-take, .wh-feed")) el.onchange = () => {
+      const p = el.dataset.p as Product;
+      const why = g.setWarehouse(b.id, p, el.classList.contains("wh-take") ? { take: el.checked } : { feed: el.checked });
+      if (why) this.toast(why); else { this.sfx.play("click"); redraw(); }
     };
   }
 
@@ -1668,6 +1741,8 @@ function productList(o: Partial<Record<Product, number>>): string {
 /** What a plant takes and makes: "Fertile soil → crops", "Crops → food". */
 function chainText(k: keyof typeof PLANTS): string {
   const D = PLANTS[k];
+  if (D.logistics === "warehouse") return "Any product → stored, shipped on";
+  if (D.logistics === "depot") return "Fuel → your trucks, at cost";
   const to = D.makes ? "power" : productList(D.outputs);
   // (a mine digs what its deposit is: "Coal deposit → coal", not "Coal → coal")
   const from = D.deposit ? `${cap(D.deposit.name)}${D.deposit.name === to ? " deposit" : ""}` : cap(productList(D.inputs));

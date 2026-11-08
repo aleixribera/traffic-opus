@@ -32,6 +32,7 @@ export const SITE_MODEL_SIZE: Record<string, [number, number]> = {
   farm: [40, 40], loggingcamp: [36, 32], foodplant: [32, 30], sawmill: [40, 34], coalplant: [64, 52],
   ironmine: [38, 36], coalmine: [38, 36], quarry: [42, 40], smelter: [52, 44], cementworks: [48, 42],
   oilwell: [30, 30], sandpit: [40, 38], refinery: [60, 50], glassworks: [46, 38], furniture: [40, 34],
+  warehouse: [72, 44], fueldepot: [38, 28],
   constructionplant: [50, 42], coppermine: [44, 40], coppersmelter: [50, 42], electronics: [44, 36], machineworks: [52, 44],
 };
 /** Every model a site can use (the renderer loads them all). */
@@ -56,6 +57,9 @@ const PLAN: Record<PlantKind, { core: string; mods: string[] }> = {
   glassworks: { core: "glassworks", mods: ["site_heap_sand", "site_hall_l", "site_heap_coal", "glassworks", "site_hall_m", "site_silos", "site_office"] },
   furniture: { core: "furniture", mods: ["site_logyard", "site_hall_l", "furniture", "site_hall_m", "site_workshop", "site_hall_l", "site_office"] },
   constructionplant: { core: "constructionplant", mods: ["site_hall_l", "site_silos", "constructionplant", "site_hall_l", "site_workshop", "site_office", "site_hall_m"] },
+  // (small plots: the shed or the depot alone, facing the gate)
+  warehouse: { core: "warehouse", mods: ["site_hall_m", "site_office"] },
+  fueldepot: { core: "fueldepot", mods: ["site_tanks"] },
 };
 
 /** The model a kind's site is centred on (its core, by the gate). */

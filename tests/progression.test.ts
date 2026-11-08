@@ -13,7 +13,7 @@ describe("Milestones", () => {
     for (const m of MILESTONES) {
       expect(m.goal.length).toBeGreaterThan(5);
       const u = m.unlocks;
-      const n = (u.roads?.length ?? 0) + (u.features?.length ?? 0) + (u.buildings?.length ?? 0) + (u.tiles ?? 0) + (u.towns ?? 0) + (u.bays ?? 0) + (u.load ?? 0);
+      const n = (u.roads?.length ?? 0) + (u.features?.length ?? 0) + (u.buildings?.length ?? 0) + (u.tiles ?? 0) + (u.towns ?? 0) + (u.bays ?? 0) + (u.load ?? 0) + (u.trucks?.length ?? 0);
       expect(n, m.id).toBeGreaterThan(0);
     }
   });

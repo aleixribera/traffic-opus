@@ -14,7 +14,8 @@ import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, type LotTemplate }
 import { Progress, tilePrice, type Feature, type Milestone, type ProgressView } from "./progression";
 import { DAY, HOUR, Society } from "./society";
 import { PLACED, SHORE_REACH, type PlacedKind } from "./placed";
-import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, TRUCK_COST, isPlantKind, type Product } from "./industry";
+import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, isPlantKind, type Product } from "./industry";
+import { TRUCK_CLASSES, type TruckClass } from "./trucks";
 import { PARTS_FOR, TownSystem } from "./settlements";
 import { BLOCK, demandPerDay, gridPt, isHall, needsOf } from "./towns";
 import { F } from "../world/gen";
@@ -233,9 +234,59 @@ export class Game {
     if (!b?.plant) return "Not a plant";
     const why = this.industry.canBuyTruck(b, this.money);
     if (why) return why;
+    const price = Industry.truckPrice(b);
     b.plant.trucks++;
     b.plant.bought = (b.plant.bought ?? 0) + 1;
-    this.charge(TRUCK_COST);
+    this.charge(price);
+    return null;
+  }
+
+  /** Truck classes the company may run now. */
+  truckUnlocked(c: TruckClass): boolean { return this.progress.unlocked.trucks.has(c); }
+
+  /**
+   * Run another class of truck at a building (free: the bigger class costs more upkeep per truck instead). Trucks
+   * already out finish their run as they are; every truck it sends from now on is of the new class. Null when
+   * switched, else why not.
+   */
+  setTruckClass(id: number, cls: TruckClass): string | null {
+    const b = this.buildings.byId.get(id);
+    if (!b?.plant) return "Not a plant";
+    if (!(cls in TRUCK_CLASSES)) return "No such truck";
+    if (b.plant.trucks <= 0) return "It runs no trucks";
+    if (!this.truckUnlocked(cls)) return "Not unlocked yet";
+    Industry.setClass(b, cls);
+    this.emit({ t: "money" });
+    return null;
+  }
+
+  /**
+   * A warehouse's settings for one product: whether it takes it at all, and whether it is a feeder for it (sent
+   * there before the towns and plants farther away). Null when set, else why not.
+   */
+  setWarehouse(id: number, p: Product, o: { take?: boolean; feed?: boolean }): string | null {
+    const b = this.buildings.byId.get(id);
+    if (!b?.plant || Industry.logisticsOf(b) !== "warehouse") return "Not a warehouse";
+    if (!(p in PRODUCTS)) return "No such product";
+    const P = b.plant;
+    if (o.take !== undefined) {
+      const all = Object.keys(PRODUCTS) as Product[];
+      const takes = new Set(P.takes ?? all);
+      if (o.take) takes.add(p); else takes.delete(p);
+      if (takes.size === all.length) delete P.takes; else P.takes = all.filter((k) => takes.has(k));
+      // (a feeder for a product it no longer takes is no feeder)
+      if (!o.take && P.feeds) { P.feeds = P.feeds.filter((k) => k !== p); if (!P.feeds.length) delete P.feeds; }
+    }
+    if (o.feed !== undefined) {
+      const feeds = new Set(P.feeds ?? []);
+      if (o.feed) feeds.add(p); else feeds.delete(p);
+      if (feeds.size) P.feeds = (Object.keys(PRODUCTS) as Product[]).filter((k) => feeds.has(k)); else delete P.feeds;
+      // (feeding it means taking it)
+      if (o.feed && P.takes && !P.takes.includes(p)) {
+        const all = Object.keys(PRODUCTS) as Product[];
+        if (P.takes.length + 1 >= all.length) delete P.takes; else P.takes = all.filter((k) => k === p || P.takes!.includes(k));
+      }
+    }
     return null;
   }
 

@@ -101,6 +101,12 @@ export function placedIcon(kind: string): string {
     case "sandpit":
       // a pale sand heap in a pit, a conveyor feeding it
       return svg(28, 28, `<path d="M2 25 H26 L23 19 H5 Z" fill="#b8a77a"/><path d="M4 22 Q11 8 18 22 Z" fill="#e0c78e" stroke="#b39a5c" stroke-width="0.8"/><path d="M15 12 L25 7" stroke="#545a61" stroke-width="1.8" stroke-linecap="round"/><path d="M24 7 V19" stroke="#545a61" stroke-width="1.2"/><rect x="19" y="18" width="6" height="4" rx="0.8" fill="#e0a526"/>`);
+    case "warehouse":
+      // a long low shed with a row of dock doors, a trailer backed up to one
+      return svg(28, 28, `<path d="M2 12 L14 7 L26 12 V24 H2 Z" fill="#9aa3ab"/><path d="M2 12 L14 7 L26 12" fill="none" stroke="#5b6168" stroke-width="1.4" stroke-linejoin="round"/><rect x="4" y="16" width="4" height="8" fill="#3c4148"/><rect x="10" y="16" width="4" height="8" fill="#3c4148"/><rect x="16" y="16" width="4" height="8" fill="#3c4148"/><rect x="21.5" y="18" width="4.5" height="6" fill="#e0a526"/>`);
+    case "fueldepot":
+      // a horizontal bulk tank on saddles, and a pump under an orange canopy
+      return svg(28, 28, `<rect x="2" y="9" width="15" height="8" rx="4" fill="#dde0e4" stroke="#8d939a" stroke-width="0.8"/><rect x="4" y="17" width="2.4" height="4" fill="#9aa0a6"/><rect x="12.6" y="17" width="2.4" height="4" fill="#9aa0a6"/><rect x="2" y="21" width="15" height="3" fill="#7d8790"/><rect x="18" y="6" width="8" height="2.4" fill="#e2704a"/><rect x="19" y="8.4" width="1.2" height="15.6" fill="#6d737a"/><rect x="21.2" y="15" width="3.4" height="9" rx="0.6" fill="#3c4148"/><rect x="21.9" y="16.2" width="2" height="2" fill="#f2c94c"/>`);
     case "refinery":
       // a fractionating column with a flare stack and two round tanks
       return svg(28, 28, `<rect x="5" y="4" width="5" height="21" rx="1.4" fill="#b0b5bc" stroke="#6d737a" stroke-width="0.8"/><path d="M5 9 H10 M5 14 H10 M5 19 H10" stroke="#6d737a" stroke-width="0.8"/><rect x="12" y="7" width="2" height="18" fill="#545a61"/><path d="M13 7 Q11.4 4.6 13 2.2 Q14.6 4.6 13 7 Z" fill="#f08a3a"/><ellipse cx="21" cy="17" rx="4.6" ry="1.6" fill="#eef0f2"/><rect x="16.4" y="17" width="9.2" height="7" fill="#dde0e4"/><ellipse cx="21" cy="24" rx="4.6" ry="1.4" fill="#c9cdd2"/>`);
