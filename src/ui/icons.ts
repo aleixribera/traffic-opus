@@ -204,6 +204,12 @@ export const ICON = {
   power: svg(28, 28, `<path d="M15.5 2.5 L7 15.5 H13 L11 25.5 L21 11.5 H15 L18 2.5 Z" fill="${C.ochre}"/>`),
   roadCat: svg(28, 28, `<path d="M8 26 L12 2 H16 L20 26 Z" fill="${C.asphalt}"/><path d="M8 26 L12 2 M20 26 L16 2" stroke="${C.cream}" stroke-width="1.8" stroke-linecap="round"/><path d="M14 5 v3.5 M14 12 v4 M14 19.5 v4.5" stroke="${C.ochre}" stroke-width="2" stroke-linecap="round"/>`),
   keys: svg(18, 18, `<rect x="2" y="4.5" width="14" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 7.5 h1 M8.5 7.5 h1 M12 7.5 h1 M5.5 10.8 h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>`),
+  /** a company lorry seen from the side: ochre cab, cream box, dark wheels (the inspector's trucks) */
+  truck: svg(28, 28, `<rect x="2" y="7" width="15" height="12" fill="${C.cream}"/><path d="M2 10.5 H17" stroke="${C.cream2}" stroke-width="1.2"/><path d="M17.5 10 H22.5 L26 14.5 V19 H17.5 Z" fill="${C.ochre}"/><path d="M19 11.5 H22 L24.2 14.4 H19 Z" fill="${C.navy}"/><rect x="1.5" y="19" width="25" height="2.4" fill="${C.slate}"/><circle cx="7" cy="22" r="2.7" fill="${C.coal}" stroke="${C.cream2}" stroke-width="1.2"/><circle cx="21" cy="22" r="2.7" fill="${C.coal}" stroke="${C.cream2}" stroke-width="1.2"/>`),
+  /** a 1930s sedan from the side (the inspector's cars) */
+  sedan: svg(28, 28, `<path d="M2.5 19 V15.5 L6 14.6 L9.5 9.2 H18 L22 14.2 L25.5 15 V19 Z" fill="${C.steel}"/><path d="M10.6 10.6 H13.4 V14 H8.6 Z M14.8 10.6 H17.4 L19.8 14 H14.8 Z" fill="${C.navy}"/><path d="M2.5 16.6 H25.5" stroke="${C.cream}" stroke-width="1"/><circle cx="7.5" cy="19.4" r="2.8" fill="${C.coal}" stroke="${C.cream2}" stroke-width="1.2"/><circle cx="20.5" cy="19.4" r="2.8" fill="${C.coal}" stroke="${C.cream2}" stroke-width="1.2"/>`),
+  /** the camera follows it: a sight (control glyph, takes the button's colour) */
+  follow: svg(18, 18, `<circle cx="9" cy="9" r="5.2" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="9" cy="9" r="1.7" fill="currentColor"/><path d="M9 1 V4.2 M9 13.8 V17 M1 9 H4.2 M13.8 9 H17" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>`),
   close: svg(14, 14, `<path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>`),
 };
 

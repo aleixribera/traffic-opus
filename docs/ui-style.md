@@ -92,6 +92,50 @@ Section heads inside a panel (`.sub-h`) are 12px Barlow 600 caps in `--ochre-hi`
 
 No gradients except the rivets, no pill shapes, no icon-card grids, no centred hero.
 
+## Inspector
+
+Everything on the map is clickable with the inspect tool, and every selection opens the same panel (top right),
+built from one model (`src/ui/inspect.ts`, pure and tested) and drawn by `Hud.anatomy`:
+
+```
+┌───────────────────────────────────────────────┐
+│ [icon] TITLE               [Lv 1/4] [⌖][⛏] [×]│  header: level badge, small icon actions (follow, demolish)
+│        sub-title (cream-2, sentence case)     │
+╞═══════════════════════════════════════════════╡
+│ ◆ Working normally            Autumn harvest ×1.6│  status: one sentence, diamond = its tone; season tag
+│   what to do about it (only when wrong)       │
+│ ─────────────────────────────────────────────  │
+│  1.0/h     │  +$410        │  3/25            │  three key numbers, 20px tabular, caption under
+│  crops,…   │  profit, last │  trucks out      │
+│ ─────────────────────────────────────────────  │
+│ ■ From  [farm Farm 470 m] [farm Farm 280 m]   │  flow chips: click selects the place and lights it up
+│ ■ To    [town Elton 1.5 km]                   │  (cream square = suppliers, ochre = buyers: the map's colours)
+│ Lv 2 ━━━━━━━──────────────                    │  one thin level bar, one line
+│      6% · then ×2 output                      │
+│ ▸ Details                                     │  everything else, folded; open/closed remembered per kind
+└───────────────────────────────────────────────┘
+```
+
+- **Key numbers per kind**: a producing site shows output an hour against what it can make now (season included),
+  profit last hour (or loads shipped, for a feeder product nobody pays for) and trucks out of its fleet; a town shows
+  people (+homes a day), needs supplied and its most-missing need; a vehicle its speed, distance to go and arrival
+  time; a road its vehicles, speed against the limit and how full it is; a junction the vehicles queued, the worst
+  approach and those crossing now.
+- **Hide what doesn't apply**: no chart until something is made ("No output yet"), no level bar on warehouses and
+  depots, the season only as the status tag (never rows).
+- **Colour carries meaning only**, always with words beside it: good (green), trouble (`--bad`), neutral cream.
+- **Picking** (`src/ui/pick.ts`): a vehicle first, measured to its whole body within ~9 screen px (not when zoomed out
+  past where vehicles are drawn), then a bus stop, a building (a town hall selects the town), a junction, a road.
+  Hover draws a thin cream outline and shows the pointer cursor; Esc or a click on empty ground clears the selection.
+- **On the map** (`src/render/highlight3d.ts`): the selected building outlined ochre with a faint fill, its suppliers
+  cream and buyers amber, each over a navy underlay; its trucks on the road ringed small. A vehicle gets an ochre
+  ring and its route ahead as cream dashes over navy (anchored to the destination, so they don't crawl). A road gets
+  ochre lines down both edges, so the traffic on it stays visible. All of it is drawn over the map at every zoom, line
+  widths a few pixels at any scale, rebuilt only when the selection or the zoom step changes, the rings moved each
+  frame without allocating.
+- **Live numbers without losing clicks**: the panel refreshes four times a second but holds still while a button is
+  pressed in it, and keyboard focus returns to the same control after a refresh.
+
 ## Icons
 
 `src/ui/icons.ts` (UI pictograms), `src/ui/mapIcons.ts` (problem roundels on the map). One flat style, hand-written SVG:

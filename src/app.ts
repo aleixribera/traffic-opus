@@ -23,7 +23,7 @@ const PLACE_TURN_PER_PX = (10 * Math.PI) / 180 / 100;
 const FINE_TURN = Math.PI / 180;
 import { ZONES } from "./game/zones";
 import { MIN_DEPOSIT, PLANTS, PRODUCTS, UNPOWERED, isPlantKind, type Product } from "./game/industry";
-import { isHall, needsOf } from "./game/towns";
+import { needsOf } from "./game/towns";
 import { productIcon } from "./ui/icons";
 import { TownPings } from "./ui/townPings";
 import { STUCK_KEEP, StuckAlerts } from "./ui/stuckAlerts";
@@ -31,6 +31,9 @@ import { DEPOSIT_KINDS, DepositMarks } from "./ui/depositMarks";
 import { served } from "./game/settlements";
 import type { ModelSet } from "./render/models";
 import { Preview3D } from "./render/preview3d";
+import { Highlight3D } from "./render/highlight3d";
+import { junctionAt, pickAt, poseOf } from "./ui/pick";
+import type { Sel } from "./ui/inspect";
 import { Roads3D } from "./render/roads3d";
 import { RoadsFar } from "./render/roadsFar";
 import { MapLabels } from "./ui/labels";
@@ -126,6 +129,12 @@ export class App {
   private modeListeners: ((m: App["mode"]) => void)[] = [];
   overlay: OverlayId = "none";
   selected: Building | null = null;
+  /** what the inspector has selected (the HUD sets it; one at a time) */
+  sel: Sel | null = null;
+  /** the map's lit-up view of the selection (docs/ui-style.md "Inspector") */
+  readonly highlight = new Highlight3D();
+  /** an ordinary vehicle the camera follows (convoys use their tags' follow) */
+  private followV: number | null = null;
   private worldRoot = new THREE.Group();
   private cursor: V2 = v2(0, 0);
   private cursorPx: V2 = v2(0, 0);
@@ -158,6 +167,7 @@ export class App {
   constructor(canvas: HTMLCanvasElement, private models: ModelSet) {
     this.view = new View(canvas);
     this.view.scene.add(this.worldRoot);
+    this.view.scene.add(this.highlight.group);
     this.view.scene.add(this.preview.group);
   }
 
@@ -214,6 +224,7 @@ export class App {
    */
   glideTo(p: V2, halfH: number, dur = 1.6, lift = 0) {
     this.convoyTags.follow(null);
+    this.followV = null;
     if (reducedMotion()) {
       this.glide = null;
       this.view.cx = p.x;
@@ -270,6 +281,30 @@ export class App {
     this.fireworks.launch(b.c, Math.max(70, Math.hypot(b.hw, b.hd) * 0.8), 18, performance.now() / 1000 + 1.4);
   }
 
+  /** Have the camera follow a vehicle (null: let it go). A convoy uses its tag's follow, which zooms in to start. */
+  followVehicle(id: number | null) {
+    if (id === null) { this.followV = null; if (this.convoyTags.following !== null) this.convoyTags.follow(null); return; }
+    this.glide = null;
+    const v = this.game.traffic.vehicles.find((x) => x.id === id);
+    if (!v) return;
+    this.followV = id;
+    if (this.view.halfH > 260) this.followT = 1;
+  }
+
+  /** The vehicle the camera is following, if any. */
+  get following(): number | null { return this.followV ?? this.convoyTags.following; }
+
+  /** Whether a place is well inside the screen (not under the panels at its edges). */
+  onScreen(p: V2): boolean {
+    const s = this.view.toScreen(p);
+    return s.x > 80 && s.x < this.view.w - 360 && s.y > 80 && s.y < this.view.h - 80;
+  }
+
+  /** What the inspect tool would select at p (ui/pick.ts: vehicle, bus stop, building, junction, road). */
+  pickAt(p: V2): Sel | null {
+    return pickAt(this.game, p, this.view.mpp, this.view.halfH <= 1800);
+  }
+
   /** Point the camera at a place, zoomed out to at least `halfH`. */
   lookAt(p: V2, halfH: number) {
     this.view.cx = p.x;
@@ -298,6 +333,12 @@ export class App {
     this.transit3d = new Transit3D(this.models.props.get("busstop"));
     this.parks3d = new Parks3D(this.models);
     this.convoyTags.follow(null);
+    this.followV = null;
+    // (the old game's selection would name something else, or nothing, in this one)
+    this.hud?.closePanels();
+    this.sel = null;
+    this.highlight.set(null);
+    this.highlight.hoverV = null;
     this.glide = null;
     this.worldRoot.add(this.terrain3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.fireworks.group);
     this.roads.rebuildAll();
@@ -537,6 +578,7 @@ export class App {
       if (panning && pi.moved) {
         // (taking the camera by hand lets a followed convoy go)
         if (this.convoyTags.following !== null) this.convoyTags.follow(null);
+        this.followV = null;
         this.glide = null;
         this.view.pan(dx, dy);
         this.clampView();
@@ -875,19 +917,12 @@ export class App {
       return;
     }
     if (t === "inspect") {
-      const sid = this.stopAt(c, 6);
-      if (sid !== null) { this.selected = null; this.hud?.openStop(sid); return; }
-      const b = g.buildings.at(c);
-      this.selected = b;
-      // a town's hall opens the town
-      if (b && isHall(b.kind) && b.town !== undefined) this.hud?.openTown(b.town);
-      else if (b) this.hud?.openBuilding(b);
-      else {
-        // clicking a signalised junction opens its editor
-        const n = this.nodeAt(c);
-        if (n !== null && g.net.nodes.get(n)?.signal) this.hud?.openSignal(n);
-        else this.hud?.closePanels();
-      }
+      // anything on the map opens its panel; empty ground clears the selection
+      const s = this.pickAt(c);
+      if (!s) { this.hud?.closePanels(); return; }
+      if (s.k === "node") this.hud?.openSignal(s.id);
+      else this.hud?.openSel(s);
+      this.dirtyPreview = true;
       return;
     }
     if (t === "road" && this.st.mode === "replace") {
@@ -1022,15 +1057,7 @@ export class App {
   }
 
   private nodeAt(p: V2): number | null {
-    const g = this.game;
-    let best: number | null = null, bd = 14 * Math.max(1, this.view.mpp * 0.8);
-    for (const n of g.net.nodesNear(p, 30)) {
-      const ng = g.net.nodeGeom.get(n.id);
-      if (!ng || ng.kind !== "junction" || ng.arms.length < 3) continue;
-      const d = dist(n.p, p);
-      if (d < Math.max(bd, ng.radius)) { bd = d; best = n.id; }
-    }
-    return best;
+    return junctionAt(this.game, p, this.view.mpp);
   }
 
   /** Buildings whose centre is inside a screen rectangle. */
@@ -1140,6 +1167,8 @@ export class App {
     this.dirtyPreview = false;
     const pv = this.preview;
     pv.clear();
+    const t0 = this.st.tool;
+    if (t0 !== "inspect" || !this.hasCursor) { this.highlight.hoverV = null; this.view.canvas.style.cursor = ""; }
     if (!this.hasCursor) { if (pv.ghost) pv.ghost.visible = false; this.hud?.chips(null); return; }
     const g = this.game;
     const c = this.cursor;
@@ -1339,7 +1368,20 @@ export class App {
         }
       }
     } else if (t === "inspect") {
-      const b = g.buildings.at(c);
+      // what a click would select: a thin cream outline and a pointer (the selection itself is lit by Highlight3D)
+      const h = this.pickAt(c);
+      this.highlight.hoverV = h?.k === "vehicle" ? h.id : null;
+      this.view.canvas.style.cursor = h ? "pointer" : "";
+      const w = Math.max(0.8, 1.6 * this.view.mpp), cream = 0xf3ead6;
+      if (h && (h.k === "building" || h.k === "town") && !(this.sel && this.sel.k === h.k && this.sel.id === h.id)) {
+        const b = h.k === "building" ? g.buildings.byId.get(h.id) : g.buildings.at(c);
+        if (b) { const k = rectCorners(b.c, b.hw + 1, b.hd + 1, b.rot); pv.path([...k, k[0]], cream, w); }
+      } else if (h?.k === "seg" && !(this.sel?.k === "seg" && this.sel.id === h.id)) pv.highlight(g.net, [h.id]);
+      else if (h?.k === "node") {
+        const n = g.net.nodes.get(h.id), r = (g.net.nodeGeom.get(h.id)?.radius ?? 8) + 2;
+        if (n) pv.path(Array.from({ length: 33 }, (_, i) => ({ x: n.p.x + Math.cos(i / 16 * Math.PI) * r, y: n.p.y + Math.sin(i / 16 * Math.PI) * r })), cream, w);
+      }
+      const b = h?.k === "building" || h?.k === "town" ? g.buildings.at(c) : null;
       if (b) chips.push({ text: b.zone ? `${ZONES[b.zone].short} · ${b.town !== undefined ? g.towns.byId.get(b.town)?.name ?? "" : "level " + b.level}` : BUILDING_TYPES[b.kind].name, kind: "info" });
     }
     this.hud?.chips(chips.length ? this.cursorPx : null, chips);
@@ -1373,7 +1415,7 @@ export class App {
     // Q/E turn the view, R/F zoom (CS2)
     const turn = (this.keys.has("e") ? 1 : 0) - (this.keys.has("q") ? 1 : 0);
     const zoom = (this.keys.has("f") ? 1 : 0) - (this.keys.has("r") ? 1 : 0);
-    if ((mx || my) && (this.convoyTags.following !== null || this.glide)) { this.convoyTags.follow(null); this.glide = null; }
+    if ((mx || my) && (this.convoyTags.following !== null || this.followV !== null || this.glide)) { this.convoyTags.follow(null); this.followV = null; this.glide = null; }
     if (mx || my) {
       const c = Math.cos(this.view.rot), s = Math.sin(this.view.rot);
       this.view.cx += (mx * c - my * s) * pan;
@@ -1397,6 +1439,17 @@ export class App {
       this.view.cy = G.from.y + (G.to.y - G.from.y) * e;
       this.view.halfH = G.from.h + (G.to.h - G.from.h) * e + G.lift * Math.sin(Math.PI * e);
       if (k >= 1) this.glide = null;
+    } else if (this.followV !== null) {
+      // an ordinary vehicle followed from its panel: the same easing as a convoy's; gone (arrived) lets go
+      const v = g.traffic.vehicles.find((x) => x.id === this.followV);
+      if (!v) this.followV = null;
+      else {
+        const q = poseOf(v, g.alpha), k = 1 - Math.exp(-dt * 5);
+        const px = q.x - Math.cos(q.ang) * v.len * 0.4, py = q.y - Math.sin(q.ang) * v.len * 0.4;
+        this.view.cx += (px - this.view.cx) * k;
+        this.view.cy += (py - this.view.cy) * k;
+        if (this.followT > 0) { this.view.halfH += (Math.min(this.view.halfH, 160) - this.view.halfH) * k; this.followT = Math.max(0, this.followT - dt); }
+      }
     } else if (this.convoyTags.following !== null) {
       // the camera keeps a followed convoy in the middle, easing after it (and zooms in a little to start with)
       const v = g.traffic.vehicles.find((x) => x.id === this.convoyTags.following);
@@ -1440,6 +1493,8 @@ export class App {
     this.townPings.update(this.view);
     this.depositMarks.update(this.view);
     this.stuckAlerts.update(this.view);
+    this.highlight.group.visible = this.mode !== "menu";
+    this.highlight.update(g, g.alpha, this.view.mpp, dt);
     this.iconT += dt;
     if (this.iconT > 0.4) {
       this.iconT = 0;
