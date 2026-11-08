@@ -4,10 +4,10 @@ import type { Building } from "../game/buildings";
 import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
 import { MILESTONES, unlockedBy, type Milestone, type Unlocks } from "../game/progression";
 import { ZONES } from "../game/zones";
-import { BUILD_TIME, DEPOT_REACH, FLEET_HAUL, HIST_HOURS, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, SHELF, SUPPLY_STORE, UNPOWERED, isPlantKind, powerPace, type PlantKind, type Product } from "../game/industry";
+import { BUILD_TIME, DEPOT_REACH, FLEET_HAUL, HIST_HOURS, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, SUPPLY_STORE, UNPOWERED, isPlantKind, powerPace, type PlantKind, type Product } from "../game/industry";
 import { TRUCK_CLASSES, TRUCK_CLASS_ORDER, type TruckClass } from "../game/trucks";
 import { LEVEL_MULT, SITE_LEVELS, growNeed } from "../game/sites";
-import { MARKET, compassWords, served, type Town } from "../game/settlements";
+import { MARKET, type Town } from "../game/settlements";
 import { HALLS, TOWN_SIZES, demandPerDay, growthPerDay, needFrom, needsOf, nextNeed, sizeOf } from "../game/towns";
 import { HOUR } from "../game/society";
 import { PAL } from "../render/palette";
@@ -27,6 +27,8 @@ import { cleanName, COMPANY_NAME_MAX, randomHerald } from "../game/company";
 import { companyName } from "../game/names";
 import { landmarkDone, landmarkSite, parkSection, seasonLine, specialRows } from "./specials";
 import { MEGAS, isMega } from "../game/megaprojects";
+import { TipPrefs, joinedUp, tipFor } from "./tips";
+import { nextTown } from "./nextTown";
 
 export interface Chip {
   text: string;
@@ -217,6 +219,8 @@ export class Hud {
   private panelNode = -1;
   private panelPhase = 0;
   private tutHidden = false;
+  /** tips off, and the ones dismissed (kept per browser) */
+  private tipPrefs = new TipPrefs();
   private lastPanel = "";
   private lastWin = "";
   private lastAssets = "";
@@ -489,7 +493,8 @@ export class Hud {
     else if (st.tool !== "inspect") this.cat = null;
     if (st.tool === "road") this.lastRoad = st.roadType;
     for (const [k, b] of this.catBtns) {
-      const on = k === "bulldoze" ? st.tool === "bulldoze" : this.cat === k;
+      // (Towns opens the Towns window: lit while that is open)
+      const on = k === "bulldoze" ? st.tool === "bulldoze" : k === "towns" ? this.winKind === "city" : this.cat === k;
       b.classList.toggle("on", on);
       b.setAttribute(k === "bulldoze" ? "aria-pressed" : "aria-expanded", String(on));
     }
@@ -663,8 +668,9 @@ export class Hud {
    */
   private renderTips() {
     const g = this.app.game;
-    const tip = this.tipFor();
     if (this.panelKind || this.app.mode !== "play") { this.tut.hidden = true; this.hint(null); return; }
+    const prefs = this.tipPrefs;
+    const tip = prefs.off ? null : tipFor(g, (id) => prefs.dismissed.has(id));
     this.tut.hidden = false;
     const open = g.progress.open();
     const v = g.progressView();
@@ -680,7 +686,7 @@ export class Hud {
           <span class="bar gl-bar" role="progressbar" aria-label="${m.name}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p * 100)}"><i style="width:${Math.max(2, p * 100)}%"></i></span>
           <p class="gl-gift">${unlockList(m.unlocks).join(" · ")}</p></li>`;
       }).join("");
-      body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : `<p class="gl-done">Every milestone reached, to a City supplied with electronics and machinery. More comes with the Metropolis.</p>`}${tip ? `<p class="gl-tip">${tip.html}</p>` : ""}</div>`;
+      body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : `<p class="gl-done">Every milestone reached, to the first cars off the line. More comes with the Metropolis.</p>`}${tip ? `<div class="gl-tip" data-tip="${tip.id}"><p>${tip.html}</p><button class="gl-x" aria-label="Dismiss this tip" title="Dismiss this tip (Pause › Tips turns them all off)">${ICON.close}</button></div>` : ""}</div>`;
     }
     const html = head + body;
     if (this.tut.dataset.html !== html) {
@@ -689,62 +695,15 @@ export class Hud {
       this.tut.innerHTML = html;
       const btn = this.tut.querySelector(".gl-head") as HTMLButtonElement;
       btn.onclick = () => { this.tutHidden = !this.tutHidden; this.sfx.play("click"); this.renderTips(); };
-      if (hadFocus) btn.focus({ preventScroll: true });
+      const x = this.tut.querySelector<HTMLButtonElement>(".gl-x");
+      if (x && tip) x.onclick = () => { prefs.dismiss(tip.id); this.sfx.play("click"); this.renderTips(); this.tut.querySelector<HTMLButtonElement>(".gl-head")?.focus({ preventScroll: true }); };
+      if (hadFocus && !this.tut.contains(document.activeElement)) btn.focus({ preventScroll: true });
     }
     this.hint(folded ? null : tip?.cat ?? null);
   }
 
   private hint(cat: string | null) {
     for (const [k, b] of this.catBtns) b.classList.toggle("hint", k === cat && !b.classList.contains("on"));
-  }
-
-  private tipFor(): { key: string; html: string; cat?: string } | null {
-    const g = this.app.game;
-    const plants = g.buildings.list.filter((b) => b.plant);
-    const has = (k: string) => plants.some((b) => b.kind === k);
-    const home = g.towns.list[0];
-    const name = home ? escapeHtml(home.name) : "your town";
-    if (!has("farm")) return { key: "farm", cat: "industry", html: `<b>Start a food chain.</b> ${name} needs food. Lay a road out to fertile soil, then open <b>Industry</b> and place a <b>Farm</b> on it: the ground shows the soil while you place.` };
-    if (!has("foodplant")) return { key: "foodplant", cat: "industry", html: `<b>Build a food plant</b> (Industry › Processing) on a road between your farm and ${name}. Farm trucks bring it crops; its own trucks sell the food to the town's shops.` };
-    const stuck = plants.find((b) => b.built >= 1 && b.problem?.startsWith("Nobody your roads reach"));
-    if (stuck) return { key: "connect-" + stuck.id, cat: "roads", html: `<b>Your ${BUILDING_TYPES[stuck.kind].name.toLowerCase()} has nobody to sell to.</b> Join it by road to a plant or a town that uses what it makes.` };
-    const planksAt = needFrom("planks");
-    if (home && home.pop < planksAt * 0.6 && !has("loggingcamp")) return { key: "grow", html: `<b>Keep ${name} fed.</b> It grows while it gets the food it needs, fast while it is small; at ${planksAt} people it builds in timber and wants planks too. Towns (C) shows how well each town is supplied.` };
-    if (!has("loggingcamp") || !has("sawmill")) return { key: "planks", cat: "industry", html: `<b>Towns of ${planksAt} people want planks.</b> Place a <b>Logging camp</b> in the forest and a <b>Sawmill</b>, and join them by road to your towns.` };
-    // a town that sprang up and isn't on the company's roads yet
-    const lone = g.towns.list.find((t) => t.spawned && !served(t));
-    if (lone) {
-      let from: Town | null = null;
-      for (const t of g.towns.list) if (t !== lone && (!from || Math.hypot(t.c.x - lone.c.x, t.c.y - lone.c.y) < Math.hypot(from.c.x - lone.c.x, from.c.y - lone.c.y))) from = t;
-      const where = from ? `, ${km(Math.hypot(from.c.x - lone.c.x, from.c.y - lone.c.y))} ${compassWords(from.c, lone.c)} of ${escapeHtml(from.name)}` : "";
-      return { key: "spawned-" + lone.id, cat: "roads", html: `<b>${escapeHtml(lone.name)} has sprung up${where}.</b> Lay a road out to it and send it food: a new market, a new drive for your trucks. Click its marker to fly there.` };
-    }
-    // tier 2: mines and a power plant, then the smelter and cement works
-    const site = plants.find((b) => b.plant!.site);
-    if (site && !has("sawmill")) return { key: "site-planks", cat: "industry", html: `<b>Your ${BUILDING_TYPES[site.kind].name.toLowerCase()} is a building site.</b> It needs planks: a sawmill joined to it by road sends them.` };
-    if (g.placedUnlocked("ironmine") && (!has("ironmine") || !has("coalmine"))) return { key: "mines", cat: "industry", html: `<b>Tier 2 is open.</b> Place an <b>Iron mine</b> and a <b>Coal mine</b> on their deposits (the Resources view shows them). They start as building sites: your sawmill trucks them the planks.` };
-    if (g.placedUnlocked("coalplant") && !has("coalplant")) return { key: "power", cat: "industry", html: `<b>Build a Power plant</b> within ${PLANTS.coalplant.reach! / 1000} km of your mines, on the same roads. Without power, mines and plants work at ${Math.round(UNPOWERED * 100)}%; the plant burns coal from your coal mine.` };
-    if (g.placedUnlocked("smelter") && !has("smelter")) return { key: "smelter", cat: "industry", html: `<b>Build a Smelter</b> on a road your iron and coal mines reach: it makes steel from ore and coal.` };
-    if (g.placedUnlocked("cementworks") && (!has("quarry") || !has("cementworks"))) return { key: "cement", cat: "industry", html: `<b>Villages of ${fmtNum(nextNeed(300)?.pop ?? 600)} want cement.</b> Place a <b>Quarry</b> on limestone and a <b>Cement works</b> on a road between it, a coal mine and your towns.` };
-    // tier 3: fuel and household goods for a Town, construction parts for the blocks it puts up
-    const town = TOWN_SIZES[2].pop;
-    if (g.placedUnlocked("refinery") && (!has("oilwell") || !has("refinery"))) return { key: "fuel", cat: "industry", html: `<b>Towns of ${fmtNum(town)} want fuel.</b> Place an <b>Oil well</b> on oil, ${km(6000)} or more out (the Resources view shows it), and a <b>Refinery</b> on a road between it and your towns. The refinery draws power.` };
-    if (g.placedUnlocked("furniture") && (!has("sandpit") || !has("glassworks"))) return { key: "glass", cat: "industry", html: `<b>Towns of ${fmtNum(town)} want household goods.</b> Place a <b>Sand pit</b> on the sand along a river or lake shore, and a <b>Glassworks</b> your sand pit and coal mine reach: it makes glass.` };
-    if (g.placedUnlocked("furniture") && !has("furniture")) return { key: "goods", cat: "industry", html: `<b>Build a Furniture factory</b> on a road your glassworks and sawmill reach: it makes household goods from planks and glass, and its trucks sell them to the towns' shops.` };
-    if (g.placedUnlocked("constructionplant") && !has("constructionplant")) return { key: "parts", cat: "industry", html: `<b>Towns of ${fmtNum(town)} build in prefab.</b> Their new blocks wait for construction parts. Build a <b>Construction plant</b> your smelter and cement works reach: it makes parts from steel and cement.` };
-    // tier 4: copper, then electronics and machinery for a City
-    const city = TOWN_SIZES[3].pop;
-    if (g.placedUnlocked("coppermine") && !has("coppermine")) return { key: "copper", cat: "industry", html: `<b>Cities of ${fmtNum(city)} want electronics and machinery,</b> and both start with copper. Place a <b>Copper mine</b> on copper ore, ${km(10000)} or more out in the high ranges (the Resources view shows it). Its building site waits for construction parts as well as planks and cement.` };
-    if (g.placedUnlocked("coppersmelter") && !has("coppersmelter")) return { key: "coppersmelter", cat: "industry", html: `<b>Build a Copper smelter</b> on a road your copper mine and a coal mine reach: it smelts the ore with coal into copper. It draws power.` };
-    if (g.placedUnlocked("electronics") && !has("electronics")) return { key: "electronics", cat: "industry", html: `<b>Build an Electronics plant</b> your copper smelter and refinery reach: it makes electronics from copper and the refinery's plastics, and its trucks sell them to the shops of your cities.` };
-    if (g.placedUnlocked("machineworks") && !has("machineworks")) return { key: "machineworks", cat: "industry", html: `<b>Build a Machine works</b> your copper smelter and steel smelter reach: it makes machinery from steel and copper, and its flatbeds take it to the offices and towers of your cities.` };
-    // the deeper chains: fresh milk, supplies fed back up the chain, and the Motor Works (tier 5)
-    if (g.placedUnlocked("dairyfarm") && !has("dairyfarm")) return { key: "dairy", cat: "industry", html: `<b>Villages buy fresh milk.</b> Place a <b>Dairy farm</b> on fertile soil a short, clear drive from your towns: milk keeps for a run of about ${Math.round((SHELF.milk! * 12) / 1000)} km on clear roads, and a jam on the way costs it value.` };
-    if (g.placedUnlocked("creamery") && has("dairyfarm") && !has("creamery")) return { key: "creamery", cat: "industry", html: `<b>Build a Creamery</b> near your dairy farm: it turns milk into cheese, which keeps far longer and sells to towns farther out.` };
-    if (g.placedUnlocked("chemworks") && !has("chemworks")) return { key: "chemworks", cat: "industry", html: `<b>Build a Chemical works</b> your quarry and coal mine reach: its fertilizer and explosives are what farms and mines need past level 2. Without them they work at their level-2 pace and stop growing.` };
-    if (g.placedUnlocked("rubberplant") && !has("rubberplant")) return { key: "rubber", cat: "industry", html: `<b>Build a Rubber plant</b> your refinery and a coal mine reach: it makes rubber from plastics, for the Motor Works to come.` };
-    if (g.placedUnlocked("motorworks") && !has("motorworks")) return { key: "motorworks", cat: "industry", html: `<b>Build the Motor Works</b> where your steel, glass, rubber and electronics all reach it: it stops if any of them runs dry. Its cars sell to Towns and Cities, and every car sold puts more of their people on the road.` };
-    return null;
   }
 
   // ---------------------------------------------------------------- transient UI
@@ -1144,16 +1103,24 @@ export class Hud {
       let worst: Product | null = null;
       for (const p of needsOf(t.pop)) if (t.supply[p] !== undefined && (worst === null || t.supply[p]! < t.supply[worst]!)) worst = p;
       const ws = worst ? t.supply[worst]! : 1;
-      const need = worst && t.pop >= 60
+      // (a town that sprang up and no road reaches yet says so: its needs mean nothing till one does)
+      const need = t.spawned && !joinedUp(g, t)
+        ? `<span class="tw-need low">No road yet</span>`
+        : worst && t.pop >= 60
         ? `<span class="tw-need ${ws >= 0.8 ? "" : ws >= 0.5 ? "mid" : "low"}">${productIcon(worst)}${PRODUCTS[worst].name} ${Math.round(ws * 100)}%</span>`
         : "";
       return `<li><button class="tw-row" data-id="${t.id}"><span class="tw-name"><b>${escapeHtml(t.name)}</b><span class="small muted">${g.towns.sizeName(t)} · ${fmtNum(t.pop)} people</span></span>${miniSpark(t.hist.pop.slice(-72))}<span class="tw-right"><span class="tw-trend ${tr.cls}">${tr.short}</span>${need}</span></button></li>`;
     }).join("");
-    const html = `<dl class="facts">
+    // when the next town springs up: which goal brings it, and how far along that is
+    const nt = nextTown(g);
+    const next = nt
+      ? `<p class="tw-next"><span>Next town springs up at</span> <b>${escapeHtml(nt.m.name)}</b> · ${measureText(nt.m, nt.have, nt.need)}${nt.before ? ` <span class="muted">· opens after ${nt.before} more goal${nt.before === 1 ? "" : "s"}</span>` : ""}</p>`
+      : `<p class="tw-next muted">Every town the goals bring has sprung up.</p>`;
+    const html = `${next}<ul class="tw-list">${rows}</ul>
+      <dl class="facts">
         <dt>People in your towns</dt><dd>${fmtNum(s.population)}</dd>
         <dt>Working at your plants</dt><dd>${fmtNum(g.industry.plants().reduce((a, b) => a + g.people.workersAt(b.id), 0))}</dd>
       </dl>
-      <ul class="tw-list">${rows}</ul>
       ${sparkline(g.history.map((x) => x.pop), "Population")}`;
     if (!this.setWin("Towns", html)) return;
     for (const b of this.win.querySelectorAll<HTMLButtonElement>(".tw-row")) b.onclick = () => { this.sfx.play("click"); this.showTown(+b.dataset.id!); };
@@ -1728,6 +1695,7 @@ export class Hud {
         <button class="pm save">Save game</button>
         <button class="pm load">Load game</button>
         <button class="pm keys">Controls</button>
+        <button class="pm tips" role="switch" aria-label="Tips" aria-checked="${!this.tipPrefs.off}">Tips<span class="pm-v">${this.tipPrefs.off ? "Off" : "On"}</span></button>
         <button class="pm home">Main menu</button>
         <button class="pm new">New company</button>
       </div>`, "Pause menu");
@@ -1737,6 +1705,16 @@ export class Hud {
     on(".save", () => this.openSaves(true));
     on(".load", () => this.openSaves(false));
     on(".keys", () => this.openKeys());
+    on(".tips", () => {
+      // off, or back on with every dismissed tip back too
+      const off = !this.tipPrefs.off;
+      this.tipPrefs.setOff(off);
+      if (!off) this.tipPrefs.reset();
+      const b = dlg.querySelector(".tips") as HTMLButtonElement;
+      b.setAttribute("aria-checked", String(!off));
+      b.querySelector(".pm-v")!.textContent = off ? "Off" : "On";
+      this.renderTips();
+    });
     on(".pm.co", () => this.openCompany("pause"));
     on(".home", () => {
       if (app.mode === "play") app.saves.autosave(app.game);

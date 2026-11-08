@@ -323,10 +323,10 @@ describe("Convoys and landmarks in the game", () => {
 
   it("milestones open the landmarks; they have their own catalog tab", () => {
     const ids = MILESTONES.map((m) => m.id);
-    for (const id of ["bigiron", "skyline", "worldsfair"]) expect(ids).toContain(id);
+    for (const id of ["bigiron", "worldsfair"]) expect(ids).toContain(id);
     // (one block, after tier 4 and the City)
-    const at = ["bigiron", "skyline", "worldsfair"].map((id) => ids.indexOf(id));
-    expect(at).toEqual([at[0], at[0] + 1, at[0] + 2]);
+    const at = ["bigiron", "worldsfair"].map((id) => ids.indexOf(id));
+    expect(at).toEqual([at[0], at[0] + 1]);
     expect(at[0]).toBeGreaterThan(ids.indexOf("machinery1"));
     expect(at[0]).toBeGreaterThan(ids.indexOf("city"));
     const tab = PLACED_TABS.find((x) => x.id === "landmarks")!;

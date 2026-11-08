@@ -221,7 +221,7 @@ describe("Motor Works", () => {
     const at = (id: string) => MILESTONES.findIndex((m) => m.id === id);
     const unlock = (k: PlantKind) => MILESTONES.findIndex((m) => m.unlocks.buildings?.includes(k));
     expect(unlock("motorworks")).toBeGreaterThan(at("machinery1"));
-    expect(unlock("motorworks")).toBeGreaterThan(unlock("rubberplant"));
+    expect(unlock("motorworks")).toBeGreaterThanOrEqual(unlock("rubberplant"));
     expect(PLANTS.motorworks.tier).toBe(5);
     expect(PLANTS.rubberplant.tier).toBe(5);
     expect(PLANTS.rubberplant.inputs.plastics).toBeGreaterThan(0);

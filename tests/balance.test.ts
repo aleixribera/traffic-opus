@@ -591,14 +591,13 @@ describe("Balance: the game to Town size", () => {
     expect(r.copper).toBeGreaterThan(0);
     expect(r.electronics).toBeGreaterThan(0);
     expect(r.machinery).toBeGreaterThan(0);
-    for (const id of ["parts50", "copperore1", "goods60", "copper1"]) expect(at(id), id).toBeGreaterThanOrEqual(0);
+    for (const id of ["townSupplied", "pop4000"]) expect(at(id), id).toBeGreaterThanOrEqual(0);
     if (!T5) return;
     // the deeper chains: milk sold fresh, the chemical works' supplies, and the Motor Works' first car, in ladder order
     expect(r.milk).toBeGreaterThan(0);
     expect(r.supplies).toBeGreaterThan(0);
     expect(r.car).toBeGreaterThan(0);
-    for (const id of ["dairy", "milk1", "chemworks", "rubber", "motorworks", "cars1"]) expect(at(id), id).toBeGreaterThanOrEqual(0);
-    expect(at("rubber")).toBeLessThan(at("motorworks"));
-    expect(at("motorworks")).toBeLessThan(at("cars1"));
+    for (const id of ["villages2", "town", "worldsfair", "cars1"]) expect(at(id), id).toBeGreaterThanOrEqual(0);
+    expect(at("worldsfair")).toBeLessThan(at("cars1"));
   }, T5 ? 12_000_000 : T4 ? 9_000_000 : T3 ? 7_200_000 : 1_800_000);
 });

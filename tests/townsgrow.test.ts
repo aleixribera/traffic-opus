@@ -191,7 +191,7 @@ describe("a town growing into a town", () => {
     // (before the construction plant is unlocked a town builds without them)
     expect(g.placedUnlocked("constructionplant")).toBe(false);
     expect(g.buildings.list.some((b) => b.site)).toBe(false);
-    g.progress.done.push("cement30");
+    g.progress.done.push("goods1");
     expect(g.placedUnlocked("constructionplant")).toBe(true);
     // an old store in the centre is rebuilt as a new one
     const old = g.buildings.list.find((o) => o.town === t.id && o.kind === "store" && o.lot && o.built >= 1)!;

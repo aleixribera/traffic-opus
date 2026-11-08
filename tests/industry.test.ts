@@ -274,11 +274,11 @@ describe("Industry", () => {
     const pp = w.plant("coalplant", 500);
     expect(w.ind.trucksOf(pp)).toBe(0);
     // at its kind's cap a site stops growing and names the goal that opens its next level
-    (w.host as { levelCap?: () => { level: number; goal?: string } }).levelCap = () => ({ level: 2, goal: "Market day" });
+    (w.host as { levelCap?: () => { level: number; goal?: string } }).levelCap = () => ({ level: 2, goal: "Sawn timber" });
     farm.plant!.level = 2;
     farm.plant!.grow = 5;
     (w.ind as unknown as { growth(b: unknown, span: number, working: boolean, staff: number, pw: number, store: number): void }).growth(farm, 100, true, 1, 1, 10);
-    expect(farm.plant!.why).toBe('Level 3 opens with the goal "Market day"');
+    expect(farm.plant!.why).toBe('Level 3 opens with the goal "Sawn timber"');
     expect(farm.plant!.grow).toBe(0);
     expect(farm.plant!.level).toBe(2);
   });
