@@ -42,6 +42,8 @@ export const VEHICLE_MODELS = [
   "rt_flatbed_a", "rt_flatbed_b",
   // refrigerated bodies for perishables (milk, cheese), in every class
   "reefer", "heavy_reefer", "rt_reefer_a", "rt_reefer_b",
+  // car transporters for the Motor Works' cars, in every class, and a Motor Works car out on a town's streets
+  "carrier", "heavy_carrier", "rt_carrier_a", "rt_carrier_b", "motorcar",
 ] as const;
 /** Street furniture, drawn on its own (not a lot). */
 export const PROP_MODELS = ["busstop", "fence"] as const;

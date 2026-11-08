@@ -1294,7 +1294,13 @@ export class Hud {
       // supplies: a small store it draws down while it works (docs/design.md "Supplies")
       const sup = b.built >= 1 ? g.industry.supplyRows(b) : [];
       const lvl = P.level ?? 1;
-      const supRows = sup.map(({ p, stock: n, now }) => `<dt title="${now ? `Used up as it works at level ${lvl}` : `Needed in store to grow to level ${lvl + 1}`}">${PRODUCTS[p].name}${now ? "" : ` <span class="muted">(level ${lvl + 1})</span>`}</dt><dd>${stockBar(n, SUPPLY_STORE, PRODUCTS[p].color)}<span class="num">${n.toFixed(1)}</span></dd>`).join("");
+      // (what each one in store adds to its pace, as the badge by its gate on the map shows)
+      const gains = b.built >= 1 ? g.industry.boosts(b) : [];
+      const boost = (p: Product) => {
+        const x = gains.find((q) => q.p === p);
+        return x ? `<dt></dt><dd class="good boost-gain">+${x.pct}% output from ${PRODUCTS[p].name.toLowerCase()}</dd>` : "";
+      };
+      const supRows = sup.map(({ p, stock: n, now }) => `<dt title="${now ? `Used up as it works at level ${lvl}` : `Needed in store to grow to level ${lvl + 1}`}">${PRODUCTS[p].name}${now ? "" : ` <span class="muted">(level ${lvl + 1})</span>`}</dt><dd>${stockBar(n, SUPPLY_STORE, PRODUCTS[p].color)}<span class="num">${n.toFixed(1)}</span></dd>${boost(p)}`).join("");
       const supNote = sup.some((s) => s.now)
         ? `Drawn down as it works. Out of one, it slips back to the pace of a lower level (never below level 2) until your trucks bring more.`
         : `Its next level works through these: it needs them in store to grow.`;

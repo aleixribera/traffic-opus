@@ -4,7 +4,7 @@ import { carColor, EMERGE, fromLot, LONG, type PendingSpawn, type Traffic, type 
 import type { V2 } from "../core/math";
 import type { LotWay } from "./buildings3d";
 import { VEHICLE_MODELS, type ModelSet, type VehicleKind } from "./models";
-import { CARGO_COLOR } from "./palette";
+import { CARGO_COLOR, MOTOR_LIVERY } from "./palette";
 import { TRUCK_CLASSES } from "../game/trucks";
 import type { Unit } from "../sim/traffic";
 
@@ -28,12 +28,14 @@ const TRUCK_BODY: Record<string, VehicleKind> = {
   crops: "tipper", ore: "tipper", coal: "tipper", lime: "tipper", sand: "tipper", gravel: "tipper", copperore: "tipper",
   crude: "tanker", fuel: "tanker", chemicals: "tanker", cement: "tanker",
   logs: "flatbed", planks: "flatbed", steel: "flatbed", parts: "flatbed", machinery: "flatbed", copper: "flatbed",
-  slag: "tipper", chips: "tipper", cars: "flatbed",
+  slag: "tipper", chips: "tipper",
+  // the Motor Works' cars ride two decks of a car transporter
+  cars: "carrier",
   // perishables ride chilled, in refrigerated box bodies with the cold unit on the front
   milk: "reefer", cheese: "reefer",
   // (glass, plastics, household goods, electronics, fertilizer, explosives and rubber ride in box trucks: the default)
 };
-type Body = "truck" | "tipper" | "tanker" | "flatbed" | "reefer";
+type Body = "truck" | "tipper" | "tanker" | "flatbed" | "reefer" | "carrier";
 const truckBody = (t: Trip): Body => (TRUCK_BODY[t.haul?.product ?? t.cargo ?? ""] ?? "truck") as Body;
 /**
  * The models a truck is drawn with, front first: its class's (a light truck's, a heavy rigid's, or a road train's
@@ -49,12 +51,16 @@ function truckPieces(t: Trip): Piece[] {
   return [{ kind: b, back: 0 }];
 }
 const EMPTY_BOX = 0xf2f2ee;
+/** A Motor Works car's paint: one of the company's liveries. */
+const livery = (look: number) => MOTOR_LIVERY[look % MOTOR_LIVERY.length];
 /** What a truck's load part shows: the cargo's colour, or null for nothing on an open body (tipper, flatbed) running empty. */
 function loadOf(kind: Body, t: Trip): number | null {
+  // (a transporter's cars are one batch off the line, in one of the Motor Works' liveries)
+  if (kind === "carrier" && t.cargo) return MOTOR_LIVERY[Math.floor(t.startT) % MOTOR_LIVERY.length];
   if (t.cargo) return CARGO_COLOR[t.cargo] ?? EMPTY_BOX;
   if (kind === "tanker") return CARGO_COLOR[t.haul?.product ?? ""] ?? EMPTY_BOX; // the tank stays its product's colour
   if (kind === "reefer") return CARGO_COLOR[t.haul?.product ?? ""] ?? EMPTY_BOX; // (and a reefer its product's livery band)
-  return kind === "tipper" || kind === "flatbed" ? null : EMPTY_BOX;
+  return kind === "tipper" || kind === "flatbed" || kind === "carrier" ? null : EMPTY_BOX;
 }
 
 const cub = (l: Leg, t: number): V2 => {
@@ -133,6 +139,7 @@ export class Vehicles3D {
   static kindOf(v: Vehicle): VehicleKind {
     if (v.trip.bus) return "bus";
     if (v.truck) return truckPieces(v.trip)[0].kind;
+    if (v.trip.motor) return "motorcar";
     return v.look % 6 === 0 ? "van" : "car";
   }
 
@@ -166,7 +173,7 @@ export class Vehicles3D {
       const total = legs.reduce((n, l) => n + l.len, 0);
       const kind = Vehicles3D.kindOf(v);
       const pieces = v.truck ? truckPieces(v.trip) : undefined;
-      this.arriving.push({ kind, color: v.color, load: v.truck ? loadOf(truckBody(v.trip), v.trip) : EMPTY_BOX, legs, total, t0: now, dur: Math.min(4, Math.max(1.1, total / 4.5)), out: false, pieces });
+      this.arriving.push({ kind, color: v.trip.motor ? livery(v.look) : v.color, load: v.truck ? loadOf(truckBody(v.trip), v.trip) : EMPTY_BOX, legs, total, t0: now, dur: Math.min(4, Math.max(1.1, total / 4.5)), out: false, pieces });
     }
     for (const v of traffic.vehicles) if (!this.seen.has(v.id)) this.seen.set(v.id, v);
     if (this.arriving.length > 400) this.arriving.splice(0, this.arriving.length - 400);
@@ -200,8 +207,8 @@ export class Vehicles3D {
       const total = legs.reduce((n, l) => n + l.len, 0);
       const look = p.look ?? 0;
       const pieces = p.truck ? truckPieces(p.trip) : undefined;
-      const kind: VehicleKind = pieces ? pieces[0].kind : look % 6 === 0 ? "van" : "car";
-      this.leaving.set(p, { kind, color: p.truck ? 0xf5f5f0 : carColor(look), load: p.truck ? loadOf(truckBody(p.trip), p.trip) : EMPTY_BOX, legs, total, t0: p.go ?? p.t0 ?? traffic.time, dur: Math.min(EMERGE - 0.15, Math.max(1, total / 3.5)), out: true, pieces });
+      const kind: VehicleKind = pieces ? pieces[0].kind : p.trip.motor ? "motorcar" : look % 6 === 0 ? "van" : "car";
+      this.leaving.set(p, { kind, color: p.truck ? 0xf5f5f0 : p.trip.motor ? livery(look) : carColor(look), load: p.truck ? loadOf(truckBody(p.trip), p.trip) : EMPTY_BOX, legs, total, t0: p.go ?? p.t0 ?? traffic.time, dur: Math.min(EMERGE - 0.15, Math.max(1, total / 3.5)), out: true, pieces });
     }
     for (const p of this.leaving.keys()) if (!want.has(p)) this.leaving.delete(p);
   }
@@ -295,7 +302,7 @@ export class Vehicles3D {
         this.pose(this.m, x, y, h, ang, f);
         for (const { mesh, tint } of b.meshes) {
           mesh.setMatrixAt(i, tint === "cargo" && load === null ? this.none : this.m);
-          if (tint === "body") mesh.setColorAt(i, this.c.setHex(v.color));
+          if (tint === "body") mesh.setColorAt(i, this.c.setHex(v.trip.motor ? livery(v.look) : v.color));
           else if (tint === "cargo") mesh.setColorAt(i, this.c.setHex(load ?? EMPTY_BOX));
         }
       }

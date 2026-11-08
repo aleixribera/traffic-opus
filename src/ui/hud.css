@@ -404,6 +404,47 @@ kbd { font: inherit; font-size: 11px; font-weight: 500; padding: 1px 5px; border
 .map-icon.urgent { animation: icon-bob 0.9s ease-in-out infinite alternate; }
 @keyframes icon-bob { to { margin-top: -4px; } }
 @media (prefers-reduced-motion: reduce) { .map-icon.urgent { animation: none; } }
+.boost-gain { font-weight: 600; margin-top: -2px; }
+/* supply badge by a site's gate: what it is working on and how much it adds */
+.map-boost { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 1px; height: 20px; padding: 0 6px 0 3px;
+  border-radius: 10px; background: #fff; color: var(--good); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); font-weight: 650; font-size: 11px;
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+.map-boost i { display: grid; place-items: center; width: 15px; height: 15px; }
+.map-boost i svg { width: 13px; height: 13px; display: block; }
+.map-boost i.up { width: 14px; height: 14px; border-radius: 50%; background: var(--good); color: #fff; margin-right: 2px; }
+.map-boost i.up svg { width: 10px; height: 10px; }
+.map-boost b { margin-left: 3px; font-weight: 650; }
+
+/* money and moments rising off the map (ui/pops.ts) */
+.map-pops { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
+.pop { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 4px; white-space: nowrap; font-weight: 700;
+  font-size: 13px; font-variant-numeric: tabular-nums; letter-spacing: 0.01em; will-change: transform, opacity;
+  text-shadow: 0 0 2px #fff, 0 0 3px #fff, 0 1px 1px rgba(255, 255, 255, 0.9); }
+.pop em { font-style: normal; color: var(--good); }
+.pop i { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }
+.pop i svg { width: 13px; height: 13px; display: block; }
+.pop.sale { font-size: 12px; }
+.pop.fresh { color: #13706f; }
+.pop.fresh i.snow { background: #13706f; color: #fff; }
+.pop.fresh i.snow svg { width: 11px; height: 11px; }
+.pop.spoiled b { color: #9a5b12; }
+.pop.spoiled em { color: var(--bad); }
+.pop.cars { font-size: 14px; }
+.pop.cars b { color: #7a2e2a; }
+.pop.byproduct { color: #3e4146; font-size: 12px; }
+.pop.byproduct span { font-weight: 500; color: var(--ink-2); }
+
+/* a refrigerated truck's shelf time running down */
+.fresh-ring { position: absolute; left: 0; top: 0; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  background: conic-gradient(var(--c) var(--left), rgba(38, 40, 44, 0.22) 0); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); --c: #17807e; }
+.fresh-ring i { width: 18px; height: 18px; border-radius: 50%; background: #fff; display: grid; place-items: center; }
+.fresh-ring i svg { width: 12px; height: 12px; display: block; }
+.fresh-ring.late { --c: #d9901f; }
+.fresh-ring.spoiling { --c: var(--bad); animation: ring-pulse 0.8s ease-in-out infinite alternate; }
+@keyframes ring-pulse { to { box-shadow: 0 0 0 3px rgba(192, 51, 46, 0.35), 0 1px 3px rgba(0, 0, 0, 0.3); } }
+@media (prefers-reduced-motion: reduce) { .fresh-ring.spoiling { animation: none; } }
+body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
+
 .map-label { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; white-space: nowrap; color: #232529;
   /* a solid halo, so the name reads over dark asphalt as well as over grass */
   -webkit-text-stroke: 3.5px #f6f4ee; paint-order: stroke fill; text-shadow: 0 0 6px rgba(246, 244, 238, 0.85); will-change: transform; }

@@ -75,6 +75,9 @@ export const PRODUCTS: Record<Product, ProductDef> = {
 export const SHELF: Partial<Record<Product, number>> = { milk: 540, cheese: 1500 };
 /** The share of a perishable load's value left however late it arrives. */
 export const SPOIL_FLOOR = 0.2;
+/** A load handed over at `to`: what it paid, and for a perishable how fresh it arrived (0..1) and the value lost. */
+export interface Delivery { to: Building; from?: Building; product: Product; n: number; pay: number; fresh: number; lost: number }
+
 /** Share of its value a load keeps after `age` sim seconds on the road (1 for anything that doesn't perish). */
 export function freshness(p: Product, age: number): number {
   const s = SHELF[p];
@@ -417,6 +420,13 @@ export interface IndustryHost {
   short?(town: number, p: Product): number;
   /** a load reached one of a town's shops */
   sold(town: number, p: Product, n: number): void;
+  /**
+   * a load was handed over (to a town's shop or another plant): what it paid, and for a perishable how fresh it
+   * arrived and the value lost on the way (the map pops the money; a spoiled load is called out)
+   */
+  delivered?(d: Delivery): void;
+  /** a plant sent a by-product out to another plant (the map shows it leave as its own cargo) */
+  shipped?(from: Building, to: Building, p: Product, n: number): void;
   request(p: PendingSpawn): void;
   /** vehicles on the road and trips waiting to set off */
   trips(): Iterable<Trip>;
@@ -610,6 +620,26 @@ export class Industry {
   supplyRows(b: Building): { p: Product; stock: number; now: boolean }[] {
     const P = b.plant!, now = suppliesAt(b.kind as PlantKind, P.level);
     return Industry.wantsSupply(b).filter((p) => this.required(p)).map((p) => ({ p, stock: P.stock[p] ?? 0, now: now.includes(p) }));
+  }
+
+  /**
+   * What each supply in store adds to a site's pace (docs/design.md "Supplies"): the % more it makes than it would
+   * without that one supply (a farm at level 3 with fertilizer, a level-4 mine with explosives and machinery).
+   */
+  boosts(b: Building): { p: Product; pct: number }[] {
+    const P = b.plant;
+    if (!P || P.site || b.built < 1) return [];
+    const pace = this.paceLevel(b), out: { p: Product; pct: number }[] = [];
+    for (const p of suppliesAt(b.kind as PlantKind, pace)) {
+      if (!this.required(p)) continue;
+      // (the pace it would work at with this one supply run out)
+      const had = P.stock[p];
+      P.stock[p] = 0;
+      const without = this.paceLevel(b);
+      if (had === undefined) delete P.stock[p]; else P.stock[p] = had;
+      if (without < pace) out.push({ p, pct: Math.round((levelMult(pace) / levelMult(without) - 1) * 100) });
+    }
+    return out;
   }
 
   /** The supplies a site keeps a store of: those its level needs, and those it needs to grow to the next. */
@@ -962,6 +992,7 @@ export class Industry {
     this.h.spend(fuel, "fuel");
     from.plant!.now.spent += fuel;
     from.plant!.now.sent += n;
+    if (product === PLANTS[from.kind as PlantKind]?.byproduct) this.h.shipped?.(from, to, product, n);
     this.h.request({
       from: from.access!, fromSide: from.side, to: to.access!, toSide: to.side, truck: true, tries: 0, wait: 0, ...Industry.body(cls),
       trip: { kind: "cargo", from: from.id, to: to.id, resident: -1, cargo: product, startT: this.h.time, freeFlow: 0, haul: { plant: from.id, leg: "out", product, n, dest: to.id, ...(cls !== "light" ? { cls } : {}) } },
@@ -1048,9 +1079,9 @@ export class Industry {
    * books count the loss.
    */
   deliver(to: Building, product: Product, n: number, from?: Building, age = 0) {
-    const fresh = freshness(product, age);
+    const fresh = freshness(product, age), lost = perishable(product) ? PRODUCTS[product].price * n * (1 - fresh) : 0;
     if (perishable(product) && from?.plant) {
-      const P = from.plant, lost = PRODUCTS[product].price * n * (1 - fresh);
+      const P = from.plant;
       P.now.perish = (P.now.perish ?? 0) + n;
       P.perish = (P.perish ?? 0) + n;
       if (fresh >= 0.999) { P.now.fresh = (P.now.fresh ?? 0) + n; P.fresh = (P.fresh ?? 0) + n; }
@@ -1059,6 +1090,7 @@ export class Industry {
     if (to.plant && !to.plant.site && fresh < 1) {
       // (what spoiled on the way is thrown out at the gate)
       to.plant.stock[product] = (to.plant.stock[product] ?? 0) + n * fresh;
+      this.h.delivered?.({ to, from, product, n, pay: 0, fresh, lost });
       return;
     }
     if (to.plant) {
@@ -1071,6 +1103,7 @@ export class Industry {
         return;
       }
       to.plant.stock[product] = (to.plant.stock[product] ?? 0) + n;
+      if (perishable(product)) this.h.delivered?.({ to, from, product, n, pay: 0, fresh, lost });
       return;
     }
     // a town's building site: it takes what it still waits for (the town pays for it) and goes up once it has all
@@ -1087,6 +1120,7 @@ export class Industry {
     if (t !== null) this.h.sold(t, product, n);
     this.h.earn(pay);
     if (from?.plant) from.plant.now.earned += pay;
+    this.h.delivered?.({ to, from, product, n, pay, fresh, lost });
   }
 
   /** Wages and upkeep, and the hour's books (a building site costs nothing to keep). */

@@ -25,6 +25,8 @@ export interface Trip {
   bus?: BusRun;
   /** one of the company's trucks (see game/industry.ts) */
   haul?: HaulRun;
+  /** a resident driving a car the company's Motor Works built (drawn as one, in its livery) */
+  motor?: boolean;
 }
 
 /**

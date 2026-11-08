@@ -427,12 +427,15 @@ export class Society {
         return;
       }
     }
-    const real = !walk && g.rng() < carOdds(g.tripScale, motor);
+    const roll = walk ? 1 : g.rng();
+    const real = roll < carOdds(g.tripScale, motor);
     if (real) {
       this.carTrips++;
+      // (the trips a town drives only because of the cars the company sold it are driven in those cars)
+      const built = motor > 0 && roll >= carOdds(g.tripScale, 0);
       g.traffic.request({
         from: a, fromSide: from.side, to: b, toSide: to.side,
-        trip: { kind, from: from.id, to: to.id, resident: c.id, startT: this.now, freeFlow: 0 },
+        trip: { kind, from: from.id, to: to.id, resident: c.id, startT: this.now, freeFlow: 0, ...(built ? { motor: true } : {}) },
         truck: false, tries: 0, wait: 0,
       });
       c.next = Infinity;

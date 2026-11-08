@@ -6,10 +6,11 @@ import { describe, expect, it } from "vitest";
 import { v2, type V2 } from "../src/core/math";
 import { Game } from "../src/game/city";
 import {
-  Industry, PLANTS, SHELF, SPOIL_FLOOR, SUPPLY_USE, freshness, suppliesAt, type IndustryHost, type PlantKind, type Product,
+  Industry, PLANTS, SHELF, SPOIL_FLOOR, SUPPLY_USE, freshness, suppliesAt, type Delivery, type IndustryHost, type PlantKind,
+  type Product,
 } from "../src/game/industry";
 import type { Building } from "../src/game/buildings";
-import { GROW_NEED } from "../src/game/sites";
+import { GROW_NEED, levelMult } from "../src/game/sites";
 import { MOTOR_MAX, buys, motoring } from "../src/game/towns";
 import { WALK, carOdds, walkReach } from "../src/game/society";
 import { MILESTONES } from "../src/game/progression";
@@ -23,6 +24,8 @@ function world(canMake?: (p: Product) => boolean) {
   const pending: PendingSpawn[] = [];
   let money = 0;
   const sold: [number, Product, number][] = [];
+  const delivered: Delivery[] = [];
+  const shipped: [number, number, Product][] = [];
   const host: IndustryHost & { time: number } = {
     time: 0,
     buildings: { list, byId } as any,
@@ -38,6 +41,8 @@ function world(canMake?: (p: Product) => boolean) {
     earn: (v) => { money += v; },
     spend: (v) => { money -= v; },
     canMake,
+    delivered: (d) => { delivered.push(d); },
+    shipped: (a, b, p) => { shipped.push([a.id, b.id, p]); },
   };
   const ind = new Industry(host);
   let id = 1;
@@ -58,7 +63,7 @@ function world(canMake?: (p: Product) => boolean) {
   };
   const shop = (x: number, comp = 1) => make(x, comp, 3);
   const arrive = (p: PendingSpawn) => { pending.splice(pending.indexOf(p), 1); ind.onArrive({ trip: p.trip } as Vehicle); };
-  return { host, ind, plant, shop, pending, arrive, sold, get money() { return money; } };
+  return { host, ind, plant, shop, pending, arrive, sold, delivered, shipped, get money() { return money; } };
 }
 
 describe("Supplies", () => {
@@ -134,6 +139,66 @@ describe("Supplies", () => {
     w.ind.tick(0);
     const to = Object.fromEntries(w.pending.map((p) => [p.trip.haul!.product, p.trip.haul!.dest]));
     expect(to).toEqual({ explosives: mine.id, fertilizer: farm.id });
+  });
+});
+
+describe("Supply boosts (the badge by the gate, the panel's +N%)", () => {
+  it("each supply in store is worth what its site would lose without it, and asking leaves the stock as it was", () => {
+    const w = world(() => true);
+    const farm = w.plant("farm", 0);
+    farm.plant!.level = 3;
+    expect(w.ind.boosts(farm)).toEqual([]);
+    farm.plant!.stock.fertilizer = 1;
+    expect(w.ind.boosts(farm)).toEqual([{ p: "fertilizer", pct: Math.round((levelMult(3) / levelMult(2) - 1) * 100) }]);
+    // at level 4: without fertilizer it would drop to its level-2 pace, without machinery to its level-3 pace
+    farm.plant!.level = 4;
+    farm.plant!.stock.machinery = 1;
+    expect(w.ind.boosts(farm)).toEqual([
+      { p: "fertilizer", pct: Math.round((levelMult(4) / levelMult(2) - 1) * 100) },
+      { p: "machinery", pct: Math.round((levelMult(4) / levelMult(3) - 1) * 100) },
+    ]);
+    expect(farm.plant!.stock).toMatchObject({ fertilizer: 1, machinery: 1 });
+    expect(farm.plant!.stock.explosives).toBeUndefined();
+    // a supply the company can't make yet boosts nothing (nothing is asked of the site either)
+    const w2 = world(() => false);
+    const f2 = w2.plant("farm", 0);
+    f2.plant!.level = 3;
+    f2.plant!.stock.fertilizer = 1;
+    expect(w2.ind.boosts(f2)).toEqual([]);
+  });
+});
+
+describe("Moments (the map's pops and the ticker)", () => {
+  it("every load handed over is reported with its pay, and a perishable with how fresh it came and what it lost", () => {
+    const w = world();
+    const dairy = w.plant("dairyfarm", 0);
+    const shop = w.shop(800);
+    dairy.plant!.out.milk = 4;
+    w.ind.trucksOf = () => 2;
+    w.ind.tick(0);
+    const [a, b] = w.pending;
+    w.host.time = a.trip.startT + 60;
+    w.arrive(a);
+    expect(w.delivered.at(-1)).toMatchObject({ to: shop, from: dairy, product: "milk", fresh: 1, lost: 0 });
+    expect(w.delivered.at(-1)!.pay).toBeGreaterThan(0);
+    w.host.time = b.trip.startT + SHELF.milk! * 1.5;
+    w.arrive(b);
+    const late = w.delivered.at(-1)!;
+    expect(late.fresh).toBeLessThan(1);
+    expect(late.lost).toBeCloseTo(900 * b.trip.haul!.n * (1 - late.fresh), 3);
+  });
+
+  it("a by-product leaving its plant is reported as its own cargo; the main product is not", () => {
+    const w = world();
+    const saw = w.plant("sawmill", 0);
+    const cp = w.plant("coalplant", 700);
+    w.plant("furniture", 900);
+    saw.plant!.out.chips = 1;
+    saw.plant!.out.planks = 1;
+    w.ind.trucksOf = () => 2;
+    w.ind.tick(0);
+    expect(w.pending.map((p) => p.trip.haul!.product).sort()).toEqual(["chips", "planks"]);
+    expect(w.shipped).toEqual([[saw.id, cp.id, "chips"]]);
   });
 });
 

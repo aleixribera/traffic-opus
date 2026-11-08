@@ -3389,6 +3389,38 @@ def b_motorworks(M, P):
     oval = [(py, px + ty) for px, py in stadium_pts(0.0, 0.0, 3.6, 22.0, n=8)]
     ribbon(M, oval, 1.6, PAD_H + 0.02, PAD_H + 0.07, P["asphalt"], closed=True)
     motor_car(M, P, -12.0, ty - 3.6, P["car_red"], ang=0.0)
+    motor_car(M, P, 9.0, ty + 3.6, P["car_cream"], ang=math.pi)
+    motor_car(M, P, 23.4, ty, P["car_blue"], ang=math.pi / 2)
+    # the start line across the near straight in black and cream, and a little grandstand on the infield
+    for i in range(4):
+        box(M, 2.0 + (i % 2) * 0.4, 2.4 + (i % 2) * 0.4, ty - 4.4 + i * 0.4, ty - 4.0 + i * 0.4, PAD_H + 0.07, PAD_H + 0.08,
+            P["car_cream"] if i % 2 else P["car_roof"])
+    for k in range(3):
+        box(M, -4.0, 4.0, ty - 1.6 + k * 0.6, ty + 1.6, 0, 0.5 + 0.5 * k, P["mo_wall"])
+    extrude_profile(M, [(ty - 1.8, 2.6), (ty + 1.8, 3.2), (ty + 1.8, 3.4), (ty - 1.8, 2.8)], "x", -4.4, 4.4, P["ind_roof"])
+    # the Motor Works' emblem crowning the tower: a brass disc between two swept wings
+    cyl(M, tx, fy0 + 1.1, 0.95, 20.5, 21.6, P["mo_brass"], n=10)
+    for sd in (-1, 1):
+        box(M, tx + sd * 0.95, tx + sd * 3.4, fy0 + 0.75, fy0 + 1.45, 20.9 - 0.25, 21.3, P["mo_brass"])
+        box(M, tx + sd * 3.4, tx + sd * 4.4, fy0 + 0.85, fy0 + 1.35, 21.0, 21.25, P["mo_brass"])
+    # flags at the doors in the cars' colours
+    for i, c in enumerate((P["car_red"], P["car_blue"], P["car_green"])):
+        x = tx + 4.6 + i * 1.6
+        cyl(M, x, fy0 - 1.6, 0.06, 0, 7.2, P["ind_steel"], n=4)
+        box(M, x, x + 1.1, fy0 - 1.63, fy0 - 1.57, 6.3, 7.0, c)
+    # a car transporter at the dock beside the lot, loaded for the towns
+    cx, cy0, cy1 = 26.2, y0 + 20.5, y0 + 33.5
+    box(M, cx - 1.25, cx + 1.25, cy0, cy1, 0.9, 1.05, P["ind_dark"])
+    box(M, cx - 1.25, cx + 1.25, cy0 + 0.3, cy1, 2.55, 2.65, P["ind_dark"])
+    box(M, cx - 1.2, cx + 1.2, cy0 - 2.4, cy0, 0.4, 2.9, P["car_red"])
+    for k, c in enumerate((P["car_cream"], P["car_blue"])):
+        for z in (1.05, 2.65):
+            yc = cy0 + 3.4 + k * 6.0
+            box(M, cx - 0.8, cx + 0.8, yc - 2.1, yc + 2.1, z, z + 0.6, c)
+            box(M, cx - 0.62, cx + 0.62, yc - 0.4, yc + 1.1, z + 0.6, z + 1.0, P["car_roof"])
+    # the paint shop's roof vents
+    for i in range(4):
+        box(M, px0 + 2.0, px1 - 2.0, hy0 + 7.0 + i * 5.0, hy0 + 8.2 + i * 5.0, 11.0, 11.8, P["ind_steel"])
     return L
 
 
@@ -3678,6 +3710,34 @@ def v_reefer(Ms, P):
     cargo_body(Ms, P, "reefer", -2.25, 4.25, 0.98, 3.3)
 
 
+def v_carrier(Ms, P):
+    """Car transporter (the Motor Works' cars): two decks of cars on the rigid chassis."""
+    truck_base(Ms, P)
+    cargo_body(Ms, P, "carrier", -2.1, 4.25, 0.98, 3.3)
+
+
+def v_motorcar(Ms, P):
+    """A Motor Works car (1930s streamline sedan, 4.7 m): the body in its livery (tinted), black sweeping wings and
+    running boards, a fastback, a tall chrome grille between pod headlamps, chrome bumpers."""
+    body, glass, dark, chrome = Ms["body"], Ms["glass"], Ms["dark"], Ms["chrome"]
+    hw = 0.66
+    side_profile(body, [(-2.3, 0.42), (2.25, 0.42), (2.32, 0.78), (2.08, 1.06), (-2.18, 1.06), (-2.36, 0.86)], hw, P["body"])
+    taper(glass, (-0.62, 0.62, -0.6, 1.2), (-0.55, 0.55, -0.32, 0.92), 1.06, 1.44, P["glass"])
+    taper(body, (-0.56, 0.56, -0.34, 0.94), (-0.5, 0.5, -0.22, 0.82), 1.44, 1.55, P["body"])
+    extrude_profile(body, [(1.15, 1.06), (2.12, 1.06), (0.9, 1.47)], "x", -0.6, 0.6, P["body"])      # the fastback
+    for sd in (-1, 1):
+        a, b = (hw - 0.04, 0.9) if sd > 0 else (-0.9, -hw + 0.04)
+        extrude_profile(dark, [(-2.4, 0.4), (-0.95, 0.4), (-1.2, 0.72), (-1.75, 0.88), (-2.25, 0.8)], "x", a, b, P["dark"])
+        extrude_profile(dark, [(1.0, 0.4), (2.3, 0.4), (2.2, 0.72), (1.75, 0.86), (1.25, 0.76)], "x", a, b, P["dark"])
+        box(dark, a, b, -0.95, 1.0, 0.36, 0.44, P["dark"])                                            # running board
+        cyl(chrome, sd * 0.58, -1.95, 0.15, 0.86, 1.12, P["chrome"], n=6)                          # headlamp pod
+    box(chrome, -0.24, 0.24, -2.42, -2.34, 0.5, 1.02, P["chrome"])                                  # the grille
+    box(chrome, -0.92, 0.92, -2.52, -2.42, 0.36, 0.5, P["chrome"])                                  # bumpers
+    box(chrome, -0.9, 0.9, 2.3, 2.4, 0.36, 0.5, P["chrome"])
+    wheel_axle(dark, -1.55, 0.36, 0.84, P["dark"])
+    wheel_axle(dark, 1.6, 0.36, 0.84, P["dark"])
+
+
 def v_flatbed(Ms, P):
     """Flatbed (logs, planks, steel, machinery): a dark deck behind a headboard, the load strapped down on it."""
     body, dark, cargo = Ms["body"], Ms["dark"], Ms["cargo"]
@@ -3897,6 +3957,25 @@ def cargo_body(Ms, P, kind, y0, y1, zf, top):
             box(body, s * 1.2 - 0.04, s * 1.2 + 0.04, yb + 0.6, y1 - 2.6, zf - 0.55, zf, P["body"])
         box(insul, -0.95, 0.95, y0, yb, top - 1.15, top - 0.12, P["insul"], bevel=0.04)   # the fridge unit
         box(dark, -0.8, 0.8, y0, y0 + 0.04, top - 1.0, top - 0.3, P["dark"])            # its grille
+    elif kind == "carrier":
+        # a car transporter (the Motor Works' cars): two open decks on posts, the cars nose to tail on each, all in
+        # one batch's paint (the tinted "cargo"; an empty carrier runs home with bare decks)
+        zu = zf + 1.62
+        box(dark, -1.25, 1.25, y0, y1, zf - 0.02, zf + 0.12, P["dark"])            # lower deck
+        box(dark, -1.25, 1.25, y0 + 0.25, y1, zu - 0.1, zu, P["dark"])             # upper deck
+        box(body, -1.25, 1.25, y0, y0 + 0.16, zf, zu + 1.1, P["body"])             # headboard
+        n = max(2, int((y1 - y0) / 3.2))
+        for i in range(n + 1):
+            y = y0 + 0.08 + (y1 - y0 - 0.16) * i / n
+            for sd in (-1, 1):
+                box(body, sd * 1.22 - 0.07, sd * 1.22 + 0.07, y - 0.08, y + 0.08, zf, zu + 0.55, P["body"])
+        for sd in (-1, 1):                                                          # the upper deck's side rails
+            box(body, sd * 1.22 - 0.05, sd * 1.22 + 0.05, y0 + 0.25, y1, zu + 0.42, zu + 0.55, P["body"])
+        k = max(1, int((y1 - y0 - 0.3) / 4.55))
+        step = (y1 - y0 - 0.3) / k
+        for z in (zf + 0.12, zu):
+            for i in range(k):
+                deck_car(cargo, y0 + 0.3 + step * (i + 0.5), z, P["cargo"])
     else:  # flatbed
         zd = zf + 0.2
         box(dark, -1.25, 1.25, y0, y1, zf, zd, P["dark"])
@@ -3912,6 +3991,13 @@ def cargo_body(Ms, P, kind, y0, y1, zf, top):
         box(cargo, -1.1, 1.1, mid + 0.05, y1 - 0.1, zd, hz - 0.25, P["cargo"])
         for y, zt in ((y0 + 1.0, hz), ((y0 + mid) / 2 + 0.3, hz), (mid + 0.9, hz - 0.25), (y1 - 1.0, hz - 0.25)):
             box(dark, -1.14, 1.14, y - 0.08, y + 0.08, zt - 0.02, zt + 0.03, P["dark"])
+
+
+def deck_car(M, yc, z, m):
+    """A car riding a transporter deck: its body and glasshouse in one paint (a batch from the Motor Works)."""
+    M.loft([(-0.82, yc - 2.15, z), (0.82, yc - 2.15, z), (0.82, yc + 2.15, z), (-0.82, yc + 2.15, z)],
+           [(-0.8, yc - 2.05, z + 0.62), (0.8, yc - 2.05, z + 0.62), (0.8, yc + 2.1, z + 0.62), (-0.8, yc + 2.1, z + 0.62)], m)
+    taper(M, (-0.7, 0.7, yc - 0.55, yc + 1.25), (-0.6, 0.6, yc - 0.3, yc + 0.95), z + 0.62, z + 1.08, m)
 
 
 def heavy_rigid(kind):
@@ -3989,6 +4075,13 @@ VEHICLES = {
     "heavy_reefer": (heavy_rigid("reefer"), ("body", "glass", "dark", "cargo", "insul"), (2.7, 12.0, 3.62)),
     "rt_reefer_a": (rt_trailer("reefer", True), ("body", "dark", "cargo", "insul"), (2.58, 9.4, 3.97)),
     "rt_reefer_b": (rt_trailer("reefer", False), ("body", "dark", "cargo", "insul"), (2.58, 10.0, 3.97)),
+    # car transporters for the Motor Works' cars, in every class (the cars on the decks are the tinted cargo)
+    "carrier": (v_carrier, ("body", "glass", "dark", "cargo"), (2.58, 8.5, 3.7)),
+    "heavy_carrier": (heavy_rigid("carrier"), ("body", "glass", "dark", "cargo"), (2.7, 12.0, 3.72)),
+    "rt_carrier_a": (rt_trailer("carrier", True), ("body", "dark", "cargo"), (2.58, 9.4, 4.02)),
+    "rt_carrier_b": (rt_trailer("carrier", False), ("body", "dark", "cargo"), (2.58, 10.0, 4.02)),
+    # a car the Motor Works built, out on a town's streets in its livery
+    "motorcar": (v_motorcar, ("body", "glass", "dark", "chrome"), (1.84, 4.92, 1.55)),
     "bus": (v_bus, ("body", "trim", "lights", "glass", "dark"), (2.575, 12.17, 3.12)),
     # services (fixed colours)
     "garbagetruck": (v_garbagetruck, ("paint", "trim", "lights", "glass", "dark"), (2.5, 8.5, 3.2)),
@@ -4005,6 +4098,7 @@ def vehicle_mats():
         "glass": mat("glass", "#2b3440"),
         "dark": mat("dark", "#30343a"),
         "insul": mat("insul", "#e9ebe8"),
+        "chrome": mat("chrome", "#d6d9dc"),
     }
 
 
