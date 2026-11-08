@@ -88,19 +88,22 @@ Our own names, look and art throughout.
   time, which is why road design matters.
 - Destinations are automatic. Your own plants short of an input come first, then towns that need the product,
   nearest and neediest first. You never draw lines; you can block a destination for a building if you need to.
-- **Truck classes** unlock over the levels. Each building runs one class, picked in its panel (free to switch;
-  trucks already out finish their run first). The class sets the load, the road it takes and the cost; the
-  body still comes from the product: tankers (crude, fuel, chemicals, cement), flatbeds (logs, planks, steel,
-  parts), tippers (ore, coal, sand, limestone, gravel), box trucks for the rest.
+- **Truck classes** unlock over the levels, and every fleet moves up on its own (owner, 2026-11-08: no truck
+  micromanagement). Once a milestone unlocks heavy trucks or road trains, every building's new trips use the
+  best class unlocked; trucks already on the road finish their trip as they are. Nothing to buy or pick per
+  building: the panel shows the class read-only. The class sets the load and the road it takes; the body still
+  comes from the product: tankers (crude, fuel, chemicals, cement), flatbeds (logs, planks, steel, parts),
+  tippers (ore, coal, sand, limestone, gravel), box trucks for the rest.
 
-  | Class | Loads a trip | Length | Speed / pull-away | Truck | Upkeep | Fuel per km |
-  |---|---|---|---|---|---|---|
-  | Light truck | 1x | 8.5 m | 85% / 1x | $4,000 | - | 1x |
-  | Heavy truck (four-axle rigid) | 2x | 12 m | 82% / 0.8x | $9,000 | +$8/h | 1.5x |
-  | Road train (tractor + two trailers) | 4x | 22 m | 75% / 0.6x | $20,000 | +$24/h | 2.6x |
+  | Class | Loads a trip | Length | Speed / pull-away | Load x speed per truck | Fuel per km |
+  |---|---|---|---|---|---|
+  | Light truck | 1x | 8.5 m | 85% / 1x | 0.85 | 1x |
+  | Heavy truck (four-axle rigid) | 2x | 12 m | 82% / 0.8x | 1.64 | 1.5x |
+  | Road train (tractor + two trailers) | 4x | 22 m | 75% / 0.6x | 3.0 | 2.6x |
 
-  Money stays easy (pillar 5): a bigger class pays back within a few loads. What it costs is road: a road
-  train waits for half a load before it sets off, takes a long time to clear a junction, and fills a ring.
+  Each step up roughly doubles what one truck moves, so the same flow puts fewer trucks on the road: that is
+  the traffic payoff. Moving up costs no money (pillar 5) and fuel per load falls. What it costs is road: a
+  road train waits for half a load before it sets off, takes a long time to clear a junction, and fills a ring.
 - **Long vehicles in traffic.** A heavy or a road train is drawn piece by piece along the path its front drove,
   so trailers cut corners through a turn. The sim keeps the whole body in mind, not just its front:
   - a junction movement stays reserved until the last trailer has left it, and its tail blocks the lanes and
@@ -116,7 +119,8 @@ Our own names, look and art throughout.
   tankers stock a **fuel depot**, every truck whose run passes within 1.5 km of it fills up there at cost
   ($1 per km): one load of fuel lasts 400 light-truck km. The depot's panel shows its fuel, the trucks it
   filled and the money saved.
-- **Warehouses** (tier 2) store any product and re-ship it with their own trucks, so long chains can be split
+- **Warehouses** (tier 2) store any product and re-ship it with their own trucks (a fleet that comes with its
+  size, like a plant's), so long chains can be split
   into legs. A load's destination comes in this order: a plant short of the input, then a town that needs it,
   then a warehouse with room as overflow, never another warehouse. The exception is a warehouse set as a
   **feeder** for the product: it comes first when it is nearer than where the load would otherwise go. In
