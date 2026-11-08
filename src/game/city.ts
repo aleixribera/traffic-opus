@@ -5,16 +5,17 @@ import { add, dist, dist2, rectCorners, rectDistance, scale, sub, type V2 } from
 import { mulberry32 } from "../core/noise";
 import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/network";
 import {
-  applyTrim, chainPoints, planRoad, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type LanePlan, type Plan, type PlanError,
+  applyTrim, chainPoints, cubicClosest, planRoad, snap, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type LanePlan, type Plan, type PlanError,
 } from "../roads/planner";
 import { Traffic, type Trip, type Vehicle } from "../sim/traffic";
+import { siteFrame } from "./sites";
 import { Terrain } from "../world/terrain";
 import { Buildings, obbOverlap, type Building, type BuildingMove } from "./buildings";
 import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, type LotTemplate } from "./growables";
 import { Progress, tilePrice, type Feature, type Milestone, type ProgressView } from "./progression";
 import { DAY, HOUR, Society } from "./society";
 import { PLACED, SHORE_REACH, type PlacedKind } from "./placed";
-import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, TRUCK_COST, isPlantKind, type Product } from "./industry";
+import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, isPlantKind, type Product } from "./industry";
 import { PARTS_FOR, TownSystem } from "./settlements";
 import { BLOCK, demandPerDay, gridPt, isHall, needsOf } from "./towns";
 import { F } from "../world/gen";
@@ -56,6 +57,10 @@ export const SAVE_V = 5;
 
 /** Money a new company starts with: a farm, a food plant and some road, with a little to spare. */
 export const START_MONEY = 80000;
+/** A new site's street starts this far out of its gate (where a road drawn to the gate ends too)... */
+export const GATE_LINK_OUT = 7;
+/** ...and joins a road at most this far away (m); further out the site waits for the player's road. */
+export const GATE_LINK_REACH = 400;
 
 export class Game {
   seed: number;
@@ -225,18 +230,6 @@ export class Game {
   *trips(): Iterable<Trip> {
     for (const v of this.traffic.vehicles) yield v.trip;
     for (const p of this.traffic.pending) yield p.trip;
-  }
-
-  /** Buy one of the company's plants another truck. Null when bought, else why not. */
-  buyTruck(id: number): string | null {
-    const b = this.buildings.byId.get(id);
-    if (!b?.plant) return "Not a plant";
-    const why = this.industry.canBuyTruck(b, this.money);
-    if (why) return why;
-    b.plant.trucks++;
-    b.plant.bought = (b.plant.bought ?? 0) + 1;
-    this.charge(TRUCK_COST);
-    return null;
   }
 
   /** Pay for something that isn't part of the hourly books (a building, a new town). */
@@ -818,12 +811,12 @@ export class Game {
   // ---------------------------------------------------------------- buildings
 
   /** Where a placed building would go near p, and what it would cost and replace. */
-  placedPlan(kind: PlacedKind, p: V2, opts?: PlaceOpts): (Placement & { cost: number; deposit?: { name: string; share: number } }) | null {
+  placedPlan(kind: PlacedKind, p: V2, opts?: PlaceOpts): (Placement & { cost: number; deposit?: { name: string; share: number }; link?: Plan }) | null {
     const world = { ...this.world, unlocked: (q: V2) => this.unlocked(q) };
-    const pl = this.buildings.placement(kind, p, world, (o) => !!o.zone, opts);
-    if (!pl) return null;
+    const pl0 = this.buildings.placement(kind, p, world, (o) => !!o.zone, opts);
+    if (!pl0) return null;
     const D = PLACED[kind];
-    const cost = D.cost;
+    let pl: Placement & { link?: Plan } = pl0, cost = D.cost;
     if (pl.ok && !this.placedUnlocked(kind)) return { ...pl, ok: false, reason: "Not unlocked yet", cost };
     if (pl.ok && D.unique && this.buildings.list.some((b) => b.kind === kind)) return { ...pl, ok: false, reason: "Only one per city", cost };
     if (pl.ok && this.onTownSquare(pl.c, pl.rot, BUILDING_TYPES[kind].w / 2, BUILDING_TYPES[kind].d / 2)) return { ...pl, ok: false, reason: "On a town's square: that's for its hall", cost };
@@ -835,8 +828,50 @@ export class Game {
       deposit = { name: dep.name, share: this.industry.depositShare(dep.field, pl.c, pl.rot, T.w / 2, T.d / 2) };
       if (pl.ok && deposit.share < MIN_DEPOSIT) return { ...pl, ok: false, reason: `Needs ${dep.name.toLowerCase()}: ${Math.round(deposit.share * 100)}% here, ${Math.round(MIN_DEPOSIT * 100)}% at least`, cost, deposit };
     }
+    // a site with no road at its gate gets a street laid from its gate to the nearest road, as part of placing it
+    // (planned last: it is the dear part, and a spot refused anyway needs none)
+    const link = pl.ok && pl.free ? this.gateLink(kind, pl.c, pl.rot, pl.side) ?? undefined : undefined;
+    if (link) { pl = { ...pl, link }; cost += link.cost; }
     if (pl.ok && this.money < cost) return { ...pl, ok: false, reason: "Not enough money", cost, deposit };
     return { ...pl, cost, deposit };
+  }
+
+  /**
+   * The street the game lays from a new site's gate to the nearest road it can reach: out of the gate square to its
+   * fence, then curving round to meet the road at a right angle. Never through the site's own fence, and never
+   * through other buildings. Null: no road within reach can be joined that way (the site waits for one).
+   */
+  gateLink(kind: PlacedKind, c: V2, rot: number, side: 1 | -1): Plan | null {
+    const T = BUILDING_TYPES[kind], hw = T.w / 2, hd = T.d / 2;
+    const f = siteFrame(c, rot, side, hd);
+    const out = scale(f.into, -1);
+    const S = add(f.gate, scale(out, GATE_LINK_OUT));
+    const ahead = add(f.gate, scale(out, 30));
+    const net = this.net, R = GATE_LINK_REACH;
+    const cands: { p: V2; d: number }[] = [];
+    for (const id of net.segsNear(S.x - R, S.y - R, S.x + R, S.y + R)) {
+      const s = net.segs.get(id)!;
+      if (!ROAD_TYPES[s.type].allowsAccess) continue;
+      const r = cubicClosest(s.c, ahead);
+      if (net.heightOnSeg(id, r.t) > 0.5) continue;
+      const d = dist(r.p, S);
+      if (d <= R) cands.push({ p: r.p, d });
+    }
+    cands.sort((a, b) => a.d - b.d);
+    const world: BuildWorld = { ...this.world, money: () => Infinity };
+    let best: Plan | null = null;
+    for (const cd of cands.slice(0, 6)) {
+      const end = snap(net, cd.p, { mpp: 0.4, level: 0, type: "street" });
+      if (end.seg === undefined && end.node === undefined) continue;
+      const plan = planRoad(net, world, { start: { p: S, h: 0, guides: [] }, end, mode: "continuous", type: "street", startTangent: out });
+      if (plan.errors.length || !plan.strokes.length) continue;
+      const pts = plan.strokes.flatMap((st) => chainPoints(st.chain, 3));
+      if (pts.some((q) => rectDistance(q, c, hw, hd, rot) < 6)) continue;
+      // (never through a town's homes and shops: the company's street goes round them, or waits for the player)
+      if (this.lotsUnder(plan).length) continue;
+      if (!best || plan.cost < best.cost) best = plan;
+    }
+    return best;
   }
 
   /** Would a lot (centre c, turned rot, half sizes hw x hd) cover any of a town's square (kept for its hall)? */
@@ -882,14 +917,18 @@ export class Game {
       const o = this.buildings.byId.get(id);
       if (o) { removed.push(o); this.removeBuildingRaw(o); }
     }
+    // the street to its gate first (one undo takes the site and its street away together)
+    const link = pl.link;
+    const ops = link ? this.applyRoads(() => { for (const st of link.strokes) commitStrokes(this.net, [st]); }) : [];
     const b = this.buildings.add(kind, pl, this.time);
     b.placed = true;
     this.buildings.version++;
+    if (link) this.buildings.reattach();
     if (isPlantKind(kind)) this.industry.init(b, kind, pl.deposit ? Math.min(1, pl.deposit.share / 0.8) : 1);
     for (const c of this.lotCells(b)) c.lot = b.id;
     this.candVersion = -1;
     this.money -= pl.cost;
-    this.pushUndo({ label: "place", ops: [], money: pl.cost, added: [b], removed });
+    this.pushUndo({ label: "place", ops, money: pl.cost, added: [b], removed });
     this.emit({ t: "money" });
     this.emit({ t: "buildings" });
     return b;

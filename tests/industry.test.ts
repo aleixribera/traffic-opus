@@ -86,9 +86,10 @@ describe("Industry", () => {
     const near = w.plant("foodplant", 2000);
     w.shop(500); // shops don't buy crops
     farm.plant!.out.crops = 5;
+    w.ind.trucksOf = () => 2;
     w.ind.tick(0);
     // two trucks, two loads, both to the food plant on its roads
-    expect(w.pending.length).toBe(PLANTS.farm.trucks);
+    expect(w.pending.length).toBe(2);
     for (const p of w.pending) expect(p.trip.haul!.dest).toBe(near.id);
     expect(farm.plant!.out.crops).toBe(3);
     // the fuel for the round trip is paid as they set off
@@ -102,7 +103,7 @@ describe("Industry", () => {
     const w = world();
     const farm = w.plant("farm", 0);
     const fp = w.plant("foodplant", 1000);
-    farm.plant!.trucks = 1;
+    w.ind.trucksOf = () => 1;
     farm.plant!.out.crops = 3;
     w.ind.tick(0);
     expect(w.pending.length).toBe(1);
@@ -207,10 +208,11 @@ describe("Industry", () => {
     expect(w.spent.upkeep).toBe(PLANTS.sawmill.upkeep);
     mill.plant!.out.planks = 4;
     w.ind.tick(0);
-    expect(w.pending.length).toBe(PLANTS.sawmill.trucks);
+    // (its fleet has a truck for every load in the yard)
+    expect(w.pending.length).toBe(4);
     for (const p of w.pending) expect(p.trip.haul!.dest).toBe(sm.id);
     while (w.pending.length) w.arrive(w.pending.find((p) => p.trip.haul!.leg === "out") ?? w.pending[0]);
-    expect(sm.plant!.site!.got.planks).toBe(PLANTS.sawmill.trucks);
+    expect(sm.plant!.site!.got.planks).toBe(4);
     // the last loads complete it: the site is gone and the building goes up from nothing
     w.ind.deliver(sm, "planks", 20, mill);
     expect(sm.plant!.site).toBeUndefined();
@@ -228,12 +230,12 @@ describe("Industry", () => {
     const fp = w.plant("foodplant", 1000);
     (w.host as { load?: () => number }).load = () => 2;
     (w.host as { bays?: () => number }).bays = () => 1;
-    expect(w.ind.trucksOf(farm)).toBe(PLANTS.farm.trucks + 1);
-    farm.plant!.out.crops = 7;
+    expect(w.ind.trucksOf(farm)).toBe(Industry.fleetAt("farm", 1) + 1);
+    farm.plant!.out.crops = 6;
     w.ind.tick(0);
     expect(w.pending.length).toBe(3);
     expect(w.pending.map((p) => p.trip.haul!.n)).toEqual([2, 2, 2]);
-    expect(farm.plant!.out.crops).toBe(1);
+    expect(farm.plant!.out.crops).toBe(0);
     w.arrive(w.pending[0]);
     expect(fp.plant!.stock.crops).toBe(2);
     // a power plant runs no trucks, bays or not
@@ -280,7 +282,7 @@ describe("Industry", () => {
     sm.plant!.stock = { ore: 2, coal: 2 };
     w.ind.tick(HOUR);
     expect(w.pending.length).toBe(0);
-    expect(sm.problem).toBe("Full of steel: not enough trucks, or no construction plant on its roads");
+    expect(sm.problem).toBe("Full of steel: its trucks can't keep up (a long or jammed haul), or no construction plant on its roads");
     sm.plant!.out.steel = 2;
     sm.problem = null;
     w.ind.tick(0);

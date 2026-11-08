@@ -8,21 +8,22 @@
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Game, START_MONEY } from "../src/game/city";
+import type { Trip } from "../src/sim/traffic";
 import { DAY, HOUR } from "../src/game/society";
 import { BLOCK, TOWN_SIZES, gridPt, needsOf, sizeOf } from "../src/game/towns";
 import { TOWN_COST, TOWN_SPACING, type Town } from "../src/game/settlements";
-import { PLANTS, PRODUCTS, TRUCK_COST, type PlantKind, type Product } from "../src/game/industry";
+import { PLANTS, PRODUCTS, type PlantKind, type Product } from "../src/game/industry";
 import { MILESTONES, OPEN_AT_ONCE, tilePrice } from "../src/game/progression";
 import { F } from "../src/world/gen";
 import { BUILDING_TYPES } from "../src/config";
 import { add, dist, norm, scale, sub, v2, type V2 } from "../src/core/math";
-import { layRoad } from "./helpers";
+import { layRoad, roadErrors } from "./helpers";
 import type { Building, PlaceOpts } from "../src/game/buildings";
 
 /** (the test runs in Node; the project has no Node types) */
 declare const process: { env: Record<string, string | undefined>; stderr: { write(s: string): void } };
 
-const MAX_DAYS = 70;
+const MAX_DAYS = Number(process.env.BALANCE_DAYS ?? 70);
 /**
  * BALANCE_T3=1 plays on past first cement through tier 3 to a supplied Town and checks that leg too. It runs an hour or
  * more (the towns grow to thousands of people, all driving), so the everyday suite stops at first cement.
@@ -59,6 +60,8 @@ function play() {
   // ---------------------------------------------------------------- building, as a player would, with the money there is
   /** The straight legs of the last road built (one, two round an obstacle, or three over a bridge). */
   let lastLegs: [V2, V2][] = [];
+  /** why the last site() found no plot (plan refusals, counted) */
+  const siteWhy = new Map<string, number>();
   /** A street from a to b, as a player would get one through (round an obstacle, or over a bridge): built, too dear for now, or no way through. */
   const road = (name: string, a: V2, b: V2): true | "money" | "blocked" => {
     const r = layRoad(g, a, b, g.money - RESERVE);
@@ -173,6 +176,8 @@ function play() {
       if (sh >= 0.5) plots.push({ q, s: sh - 0.3 * dist(q, near) / R });
     }
     plots.sort((x, y) => y.s - x.s);
+    siteWhy.clear();
+    siteWhy.set(`${plots.length} plots`, 1);
     let tries = 0;
     for (const { q } of plots) {
       if (tries >= 10) break;
@@ -185,7 +190,7 @@ function play() {
         if (got === "money") return "money";
         if (got) pl = g.placedPlan(kind, q, opts);
       }
-      if (!pl?.ok) continue;
+      if (!pl?.ok) { siteWhy.set(pl?.reason ?? "no plan", (siteWhy.get(pl?.reason ?? "no plan") ?? 0) + 1); continue; }
       tries++;
       const b = g.place(kind, q, opts)!;
       const done = () => {
@@ -196,7 +201,7 @@ function play() {
       // a street to 4 m past the kerb in front of its gate
       const e = add(b.front, scale(norm(sub(b.front, b.c)), 4));
       const r = road(`to the ${T.name.toLowerCase()}`, a, e);
-      if (r !== true) { g.undo(); if (r === "money") return "money"; continue; }
+      if (r !== true) { siteWhy.set(`road ${r}: ${roadErrors[0] ?? ""}`, (siteWhy.get(`road ${r}: ${roadErrors[0] ?? ""}`) ?? 0) + 1); g.undo(); if (r === "money") return "money"; continue; }
       if (key && !roads[key]) { roads[key] = [a, e]; paths[key] = lastLegs; }
       return done();
     }
@@ -319,23 +324,29 @@ function play() {
       if (typeof t === "string") continue;
       say(`found ${t.name}, ${(dist(A.c, t.c) / 1000).toFixed(1)} km away`);
       extra.push(t);
-      const a = startFor(t.c), b = edge(t, a);
-      road(`to ${t.name}`, a, b);
+      // (the nearest road end first; a river or a site in the way: the next nearest)
+      const ends = [edge(A, t.c), ...(B ? [edge(B, t.c)] : []), ...extra.filter((e) => e !== t).map((e) => edge(e, t.c)), ...Object.values(roads).flat()].sort((x, y) => dist(x, t.c) - dist(y, t.c));
+      const got: string[] = [];
+      for (const a of ends.slice(0, 6)) { const r = road(`to ${t.name}`, a, edge(t, a)); if (r === true) return; got.push(r); }
+      say(`no road to ${t.name}: ${got.join(", ")} (last: ${roadErrors.join(" / ")})`);
       return;
     }
   };
 
   // ---------------------------------------------------------------- keeping up with the towns
   const lastAdd: Partial<Record<PlantKind, number>> = {};
-  const lastTruck = new Map<number, number>();
-  let lastPower = -1e9;
+    let lastPower = -1e9;
   const FIELD: Partial<Record<PlantKind, number>> = { farm: F.fert, loggingcamp: F.forest, ironmine: F.ore, coalmine: F.coal, quarry: F.lime, oilwell: F.oil, sandpit: F.sand };
   const HUB: PlantKind[] = ["smelter", "cementworks", "coalplant", "refinery", "glassworks", "constructionplant"];
   /** Another plant of a kind beside the ones already there. */
   const another = (k: PlantKind) => {
     const near = g.buildings.list.filter((b) => b.kind === k).at(-1)!.c;
     const f = FIELD[k];
-    if (f !== undefined) return site(k, f, near, undefined, 1500);
+    if (f !== undefined) {
+      const r = site(k, f, near, undefined, 1500);
+      if (!r) say(`no plot for another ${k}: ${[...siteWhy].map(([w, n]) => `${w}${n > 1 ? ` x${n}` : ""}`).join(", ")}`);
+      return r;
+    }
     if (HUB.includes(k)) return hub(k);
     const r = k === "foodplant" ? roads.towns ?? roads.farm : roads.wood;
     return (r ? place(k, ...r, 0.1, 0.9) : null) ?? hub(k);
@@ -355,13 +366,8 @@ function play() {
   };
   const scaleUp = () => {
     growing = true;
-    // a full yard: another truck (they are cheap)
-    for (const b of g.buildings.list) {
-      if (!b.plant || !b.problem?.startsWith("Full of") || !b.problem.includes("not enough trucks")) continue;
-      if (g.time - (lastTruck.get(b.id) ?? -1e9) < HOUR * 3 || g.money < RESERVE + TRUCK_COST) continue;
-      lastTruck.set(b.id, g.time);
-      if (!g.buyTruck(b.id)) trucks++;
-    }
+    // (a full yard is not the company's to fix with trucks: a site's fleet comes with its level)
+    trucks = g.buildings.list.filter((b) => b.plant && b.problem?.startsWith("Full of") && b.problem.includes("trucks")).length;
     // short of power: another power plant at the hub
     const dark = g.buildings.list.some((b) => b.plant && /power: working/.test(b.problem ?? ""));
     const plants = g.buildings.list.filter((b) => b.kind === "coalplant");
@@ -375,6 +381,10 @@ function play() {
   };
   let trucks = 0;
   const extra: Town[] = [];
+  // trucks that gave up on a trip today, by why
+  const gaveUp = new Map<string, number>();
+  const ev = (g.traffic as unknown as { ev: { fail(t: Trip, r: string, now: number): void } }).ev, fail0 = ev.fail;
+  ev.fail = (t, r, now) => { if (t.haul) gaveUp.set(r, (gaveUp.get(r) ?? 0) + 1); fail0(t, r, now); };
 
   // ---------------------------------------------------------------- the clock
   let steel = -1, cement = -1, fuel = -1, goods = -1, parts = -1, town = -1;
@@ -398,13 +408,19 @@ function play() {
       const sites = g.buildings.list.filter((b) => b.plant?.site).map((b) => `${b.kind} ${Object.entries(b.plant!.site!.need).map(([p, n]) => `${b.plant!.site!.got[p as Product] ?? 0}/${n}`).join("+")}`).join(", ");
       const plants = new Map<string, number>();
       for (const b of g.buildings.list) if (b.plant) plants.set(b.kind, (plants.get(b.kind) ?? 0) + 1);
-      say(`end of day: $${Math.round(g.money).toLocaleString("en-US")} · ${towns} · plants ${[...plants].map(([k, n]) => `${k} ${n}`).join(", ")} · trucks bought ${trucks}${sites ? ` · sites ${sites}` : ""} · ${((Date.now() - started) / 1000).toFixed(0)} s`);
+      say(`end of day: $${Math.round(g.money).toLocaleString("en-US")} · ${towns} · plants ${[...plants].map(([k, n]) => `${k} ${n}`).join(", ")} · yards short of trucks ${trucks}${sites ? ` · sites ${sites}` : ""} · ${((Date.now() - started) / 1000).toFixed(0)} s`);
       // what holds the plants up, grouped
       const why = new Map<string, number>();
       for (const b of g.buildings.list) if (b.plant && b.problem) why.set(`${b.kind}: ${b.problem}`, (why.get(`${b.kind}: ${b.problem}`) ?? 0) + 1);
       for (const [k, n] of why) put(`             ${k}${n > 1 ? ` (x${n})` : ""}`);
       const waiting = g.buildings.list.filter((b) => b.site).length;
       if (waiting) put(`             town blocks waiting for parts: ${waiting}`);
+      // where the company's trucks are: driving, stood still in traffic, or waiting at a gate to set off
+      const tv = g.traffic.vehicles.filter((v) => v.trip.haul), tp = g.traffic.pending.filter((p) => p.trip.haul);
+      const still = tv.filter((v) => v.v < 0.3).length, jammed = tv.filter((v) => v.stuck > 30).length;
+      const gate = tp.length ? tp.reduce((s, p) => s + p.wait, 0) / tp.length : 0;
+      put(`             trucks: ${tv.length} on the road (${still} stood still, ${jammed} stuck 30 s+), ${tp.length} waiting to set off (avg ${gate.toFixed(0)} s)${[...gaveUp].map(([k, n]) => ` · ${k} ${n}`).join("")}`);
+      gaveUp.clear();
     }
     if (T3 ? g.progress.isDone("townSupplied") : cement >= 0) break;
   }

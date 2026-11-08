@@ -424,7 +424,6 @@ kbd { font: inherit; font-size: 11px; font-weight: 500; padding: 1px 5px; border
 .map-label.click:focus-visible { outline: 2px solid var(--sel-line); }
 .map-labels.passive .map-label.click { pointer-events: none; }
 .facts dd .bar.site-grow { width: 110px; }
-.buy-truck { padding: 1px 7px; font-size: 11px; line-height: 15px; box-shadow: none; }
 
 /* a town's panel: its people over time, how far to its next size, its needs and what came */
 .tn-chart { display: block; width: 100%; height: auto; margin: 8px 0 2px; overflow: visible; }

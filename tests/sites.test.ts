@@ -5,11 +5,11 @@ import { describe, expect, it } from "vitest";
 import { BUILDING_TYPES } from "../src/config";
 import { add, rectDistance, scale, v2, type V2 } from "../src/core/math";
 import { Game } from "../src/game/city";
-import { Industry, PLANT_KINDS, type IndustryHost } from "../src/game/industry";
+import { Industry, PLANTS, PLANT_KINDS, type IndustryHost, type PlantKind } from "../src/game/industry";
 import type { Building } from "../src/game/buildings";
 import { GATE_REACH, GROW_NEED, LEVEL_MULT, SITE_LEVELS, siteFrame, siteLayout, slotHalf, type SiteLayout } from "../src/game/sites";
 import type { PendingSpawn } from "../src/sim/traffic";
-import { planRoad } from "../src/roads/planner";
+import { chainPoints, planRoad } from "../src/roads/planner";
 import { okCells, road, run } from "./helpers";
 
 const boxes = (L: SiteLayout) => L.slots.map((s) => ({ s, ...slotHalf(s) }));
@@ -125,7 +125,8 @@ describe("site levels", () => {
     expect(P.upAt).toBeGreaterThan(0);
     expect(P.upAt).toBeLessThanOrEqual(host.time);
     expect(b.cap).toBe(Math.round(jobs1 * LEVEL_MULT[1]));
-    expect(ind.trucksOf(b)).toBe(Math.round(trucks1 * LEVEL_MULT[1]));
+    expect(ind.trucksOf(b)).toBeGreaterThan(trucks1);
+    expect(ind.trucksOf(b)).toBe(Industry.fleetAt(b.kind as PlantKind, 2, P.yld));
     expect(Industry.storeOf(b)).toBe(Math.round(store1 * LEVEL_MULT[1]));
     // it makes twice as much in the same time
     const made = (hours: number) => { const m0 = P.now.made; work(hours); return P.now.made - m0; };
@@ -221,6 +222,50 @@ describe("free placement and the gate", () => {
     expect(b.problem).not.toBe("No road to the gate");
   });
 
+  it("turned freely by the player, it stands at the cursor and gets a street laid to its gate (one undo)", () => {
+    const g = openGame();
+    const p = openSpot(g, "foodplant");
+    const T = BUILDING_TYPES.foodplant;
+    const rot = 0.7;
+    const f = siteFrame(p, rot, 1, T.d / 2);
+    const out = scale(f.into, -1);
+    // with no road within reach it stands free and waits, as before
+    const lone = g.placedPlan("foodplant", p, { rot })!;
+    expect(lone.ok).toBe(true);
+    expect(lone.free).toBe(true);
+    expect(lone.link).toBeUndefined();
+    // a curving road passing ~140 m in front of the gate, slanted to it
+    const at = (o: number, k: number) => add(add(f.gate, scale(out, o)), scale(f.along, k));
+    const curve = planRoad(g.net, g.world, { start: { p: at(110, -260), h: 0, guides: [] }, end: { p: at(200, 260), h: 0, guides: [] }, ctrl: at(120, 40), mode: "curve", type: "street" });
+    expect(curve.errors).toEqual([]);
+    expect(g.build(curve)).toBe(true);
+    const segs = g.net.segs.size, money = g.money;
+    const pl = g.placedPlan("foodplant", p, { rot })!;
+    expect(pl.ok).toBe(true);
+    // no snapping: where the cursor is, turned as the player has it
+    expect(pl.c).toEqual(p);
+    expect(pl.rot).toBeCloseTo(rot);
+    expect(pl.link).toBeTruthy();
+    expect(pl.link!.length).toBeLessThan(250);
+    expect(pl.cost).toBeCloseTo(PLANTS.foodplant.cost + pl.link!.cost);
+    // never through its own fence
+    for (const st of pl.link!.strokes) for (const q of chainPoints(st.chain, 2)) expect(rectDistance(q, p, T.w / 2, T.d / 2, rot)).toBeGreaterThan(5);
+    const b = g.place("foodplant", p, { rot })!;
+    expect(b.access).not.toBeNull();
+    expect(g.net.segs.size).toBeGreaterThan(segs);
+    expect(g.money).toBeCloseTo(money - pl.cost);
+    run(g, 0.2);
+    expect(b.problem).not.toBe("No road to the gate");
+    // one undo takes the site and its street away
+    g.undo();
+    expect(g.buildings.byId.has(b.id)).toBe(false);
+    expect(g.net.segs.size).toBe(segs);
+    expect(g.money).toBeCloseTo(money);
+    // turned with its gate away from the road, the street never cuts through the site to reach it
+    const back = g.placedPlan("foodplant", p, { rot: rot + Math.PI })!;
+    for (const st of back.link?.strokes ?? []) for (const q of chainPoints(st.chain, 2)) expect(rectDistance(q, p, T.w / 2, T.d / 2, rot)).toBeGreaterThan(5);
+  });
+
   it("a road that only ends at the gate joins it too, and its trucks set off", () => {
     const g = openGame();
     const b = g.place("farm", openSpot(g, "farm"), { down: { x: 0, y: 1 } })!;
@@ -281,6 +326,32 @@ describe("free placement and the gate", () => {
     expect(cells.length).toBeGreaterThan(0);
     expect(okCells(g).filter((c) => rectDistance(c.c, b.c, b.hw, b.hd, b.rot) < 0.5)).toEqual([]);
   });
+
+  it("the street laid to a gate goes round a town's homes, and place, undo, redo, undo keeps every one", () => {
+    const g = new Game(7);
+    for (let i = -8; i <= 8; i++) for (let j = -8; j <= 8; j++) g.tiles.add(`${i},${j}`);
+    g.start();
+    run(g, 24 * 3);
+    const town = g.towns.list[0];
+    let links = 0, tried = false;
+    for (let r = 250; r <= 700; r += 75) for (let k = 0; k < 16; k++) for (let q = 0; q < 4; q++) {
+      const a = (k / 16) * 6.283, p = v2(town.c.x + Math.cos(a) * r, town.c.y + Math.sin(a) * r), rot = (q / 4) * 6.283;
+      const pl = g.placedPlan("foodplant", p, { rot });
+      if (!pl?.ok || !pl.link) continue;
+      links++;
+      expect(g.lotsUnder(pl.link)).toEqual([]);
+      if (tried) continue;
+      tried = true;
+      const homes = () => g.buildings.list.filter((b) => b.zone).map((b) => b.id).sort((x, y) => x - y);
+      const h0 = homes(), m0 = g.money;
+      expect(g.place("foodplant", p, { rot })).not.toBeNull();
+      expect(homes()).toEqual(h0);
+      g.undo(); g.redo(); g.undo();
+      expect(homes()).toEqual(h0);
+      expect(g.money).toBe(m0);
+    }
+    expect(links).toBeGreaterThan(10);
+  }, 300000);
 });
 
 describe("site frame", () => {

@@ -87,6 +87,11 @@ export interface Placement {
 export interface PlaceOpts {
   /** turn (radians) added with , and . : a turned site stands free where the cursor is */
   turn?: number;
+  /**
+   * The way the player has the site turned (radians, absolute): it stands where the cursor is, turned so, with no
+   * snapping to roads (the game lays a street to its gate instead).
+   */
+  rot?: number;
   /** the way the bottom of the screen points: a site with no road near faces its gate there */
   down?: V2;
 }
@@ -134,7 +139,7 @@ export class Buildings {
    */
   placement(kind: BuildingKind, p: V2, world: PlaceWorld, soft?: (o: Building) => boolean, opts: PlaceOpts = {}): Placement | null {
     const T = BUILDING_TYPES[kind];
-    const turned = Math.abs(wrapAngle(opts.turn ?? 0)) > 1e-3;
+    const turned = Math.abs(wrapAngle(opts.turn ?? 0)) > 1e-3 || (opts.rot !== undefined && T.zone === "placed");
     const snap = turned ? null : this.snapPose(kind, p);
     let snapped: Placement | null = null;
     if (snap) {
@@ -216,6 +221,10 @@ export class Buildings {
   private freePose(kind: BuildingKind, p: V2, opts: PlaceOpts): { rot: number; front: V2 } {
     const T = BUILDING_TYPES[kind];
     const net = this.net;
+    if (opts.rot !== undefined) {
+      const f = siteFrame(p, opts.rot, 1, T.d / 2);
+      return { rot: opts.rot, front: add(f.gate, scale(f.into, -GATE_SETBACK)) };
+    }
     let gd = opts.down ?? { x: 0, y: 1 };
     let near: { d: number; seg: number; t: number; q: V2 } | null = null;
     const R = FACE_REACH + T.d / 2;

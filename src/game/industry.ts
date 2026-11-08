@@ -6,7 +6,7 @@
 
 import type { V2 } from "../core/math";
 import type { Building, Buildings } from "./buildings";
-import { BUILDING_TYPES, type BuildingKind } from "../config";
+import { BUILDING_TYPES, ROAD_TYPES, type BuildingKind } from "../config";
 import type { PendingSpawn, Trip, Vehicle } from "../sim/traffic";
 import { F } from "../world/gen";
 import { GROW_DECAY, GROW_NEED, SITE_LEVELS, levelMult } from "./sites";
@@ -62,7 +62,7 @@ export interface PlantDef {
   cost: number;
   /** per hour */
   upkeep: number;
-  /** trucks it starts with */
+  /** fewest trucks it runs (0: none, a power plant); the fleet itself is sized from its output (Industry.fleetAt) */
   trucks: number;
   /** loads each store holds (each input and each output) */
   store: number;
@@ -170,8 +170,15 @@ export const WAGE = 1;
 export const MIN_DEPOSIT = 0.35;
 /** Fuel and wear per km a truck drives (both ways), charged when it sets off. */
 export const FUEL_PER_KM = 4;
-/** A truck bought for a plant: its price, its upkeep per hour, and how many a plant may buy. */
-export const TRUCK_COST = 4000, TRUCK_UPKEEP = 4, MAX_BOUGHT = 8;
+/**
+ * The haul a site's fleet is sized for (m, one way): at every level it has the trucks to carry its whole output,
+ * fully staffed, this far over streets, with the smallest truck and load. Nothing to buy: the fleet grows with the
+ * site, and bigger loads and truck classes stretch the same fleet over longer hauls. Idle trucks wait in the yard,
+ * so a fleet bigger than a short haul needs puts no extra traffic on the road.
+ */
+export const FLEET_HAUL = 3000;
+/** Round trip (s) behind FLEET_HAUL: there and back at a truck's street pace, plus loading, junctions and yards. */
+const FLEET_TRIP = (2 * FLEET_HAUL) / (ROAD_TYPES.street.speed * 0.85) + 45;
 /** Pace of a building that needs power and has none (it scales up to 1 with the share of power it gets). */
 export const UNPOWERED = 0.4;
 /** Time to put a building up once its site has every material (and a tier 1 building, from the start). */
@@ -189,9 +196,8 @@ export interface PlantState {
   prog: number;
   /** share of the lot on its deposit (1 for plants) */
   yld: number;
-  /** trucks it owns (on top of the bays every building gains from milestones), bought ones included */
-  trucks: number;
-  /** how many of those the player bought */
+  /** (saves from before fleets came from the site's level: trucks it owned and how many were bought; unused) */
+  trucks?: number;
   bought?: number;
   /** a construction site: the materials it waits for, and what has arrived */
   site?: { need: Partial<Record<Product, number>>; got: Partial<Record<Product, number>> };
@@ -285,17 +291,28 @@ export class Industry {
   /** Make a freshly placed building one of the company's plants (from tier 2, a site waiting for its materials). */
   init(b: Building, kind: PlantKind, yld = 1) {
     const d = PLANTS[kind];
-    b.plant = { stock: {}, out: {}, prog: 0, yld, trucks: d.trucks, now: books(), last: books(), level: 1, grow: 0, upAt: -1e9 };
+    b.plant = { stock: {}, out: {}, prog: 0, yld, now: books(), last: books(), level: 1, grow: 0, upAt: -1e9 };
     if (d.site) b.plant.site = { need: { ...d.site }, got: {} };
   }
 
-  /** Trucks a plant runs: its own (more at each site level), the ones bought for it, and the bays milestones added (a power plant has none). */
+  /** Trucks a plant runs: its site level's fleet (Industry.fleetAt) and the bays milestones added (a power plant has none). */
   trucksOf(b: Building): number {
     const P = b.plant!;
-    if (P.trucks <= 0) return 0;
-    // (the site's own trucks grow with its level; bought ones stay as many as were bought)
-    const own = P.trucks - (P.bought ?? 0);
-    return Math.round(own * levelMult(P.level)) + (P.bought ?? 0) + (this.h.bays?.() ?? 0);
+    const n = Industry.fleetAt(b.kind as PlantKind, P.level, P.yld);
+    return n > 0 ? n + (this.h.bays?.() ?? 0) : 0;
+  }
+
+  /**
+   * The fleet a site of this kind runs at a level: enough trucks to carry everything it makes, fully staffed on
+   * a deposit of this yield, FLEET_HAUL away and back (never fewer than its kind's least).
+   */
+  static fleetAt(kind: PlantKind, level: number, yld = 1): number {
+    const d = PLANTS[kind];
+    if (d.trucks <= 0) return 0;
+    let per = 0;
+    for (const n of Object.values(d.outputs)) per += n ?? 0;
+    const perSec = (per * levelMult(level) * yld) / d.cycle;
+    return Math.max(d.trucks, Math.ceil(perSec * FLEET_TRIP));
   }
 
   /** Loads each of a plant's stores holds (the yard grows with the site). */
@@ -306,15 +323,6 @@ export class Industry {
   /** Jobs at a site of this kind and level. */
   static jobsAt(jobs: number, level: number): number {
     return Math.round(jobs * levelMult(level));
-  }
-
-  /** Can the player buy this plant another truck (null) or why not. */
-  canBuyTruck(b: Building, money: number): string | null {
-    const P = b.plant;
-    if (!P || P.trucks <= 0) return "It runs no trucks";
-    if ((P.bought ?? 0) >= MAX_BOUGHT) return `It has all the trucks it can load (${MAX_BOUGHT} bought)`;
-    if (money < TRUCK_COST) return "Not enough money";
-    return null;
   }
 
   /** Is it up and working (not a site, not being built)? */
@@ -418,8 +426,8 @@ export class Industry {
     const s = short(), f = full();
     const fname = f && PRODUCTS[f].name.toLowerCase();
     b.problem = !b.access ? (b.placed ? "No road to the gate" : "No road access")
-      : f ? (PRODUCTS[f].price > 0 ? `Full of ${fname}: not enough trucks, or nobody to sell to`
-        : this.used(f) ? `Full of ${fname}: not enough trucks, or no ${Industry.takers(f)} on its roads`
+      : f ? (PRODUCTS[f].price > 0 ? `Full of ${fname}: its trucks can't keep up (a long or jammed haul), or nobody to sell to`
+        : this.used(f) ? `Full of ${fname}: its trucks can't keep up (a long or jammed haul), or no ${Industry.takers(f)} on its roads`
         : `Full of ${fname}: nothing uses it until tier ${Industry.laterTier(f)}`)
       : staff <= 0 ? "No workers"
       : s ? `Waiting for ${PRODUCTS[s].name.toLowerCase()}`
@@ -445,7 +453,7 @@ export class Industry {
       : !working ? (b.problem ?? "Not working")
       : staff < 0.8 ? "Needs more workers"
       : d.power && pw < 0.9 ? "Short of power"
-      : piled ? "Output piling up: needs more trucks or buyers"
+      : piled ? "Output piling up: a long or jammed haul, or no buyers"
       : null;
     P.why = why;
     P.grow = why ? Math.max(0, P.grow - span * GROW_DECAY) : P.grow + span;
@@ -677,7 +685,7 @@ export class Industry {
     for (const b of this.plants()) {
       const P = b.plant!;
       if (!P.site) {
-        const wages = this.h.workersAt(b.id) * WAGE, up = PLANTS[b.kind as PlantKind].upkeep * levelMult(P.level) + (P.bought ?? 0) * TRUCK_UPKEEP;
+        const wages = this.h.workersAt(b.id) * WAGE, up = PLANTS[b.kind as PlantKind].upkeep * levelMult(P.level);
         this.h.spend(wages, "wages");
         this.h.spend(up, "upkeep");
         P.now.spent += wages + up;

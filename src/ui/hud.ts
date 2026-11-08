@@ -4,7 +4,7 @@ import type { Building } from "../game/buildings";
 import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
 import { MILESTONES, unlockedBy, type Milestone, type Unlocks } from "../game/progression";
 import { ZONES } from "../game/zones";
-import { BUILD_TIME, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, TRUCK_COST, TRUCK_UPKEEP, UNPOWERED, isPlantKind, powerPace, type Product } from "../game/industry";
+import { BUILD_TIME, FLEET_HAUL, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, UNPOWERED, isPlantKind, powerPace, type Product } from "../game/industry";
 import { GROW_NEED, LEVEL_MULT, SITE_LEVELS } from "../game/sites";
 import { MARKET, TOWN_COST, TOWN_SPACING, type Town } from "../game/settlements";
 import { HALLS, TOWN_SIZES, demandPerDay, growthPerDay, needFrom, needsOf, nextNeed, sizeOf } from "../game/towns";
@@ -15,7 +15,7 @@ import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId } from
 import { ROUNDABOUTS, type RoundaboutSize } from "../roads/planner";
 import { ICON, placedIcon, productIcon, roadIcon } from "./icons";
 import { PLACED, PLACED_TABS, type PlacedKind } from "../game/placed";
-import { SAVE_V } from "../game/city";
+import { GATE_LINK_REACH, SAVE_V } from "../game/city";
 import { BUS_UPKEEP, STOP_COST } from "../game/transit";
 import { Sfx } from "./sfx";
 
@@ -126,11 +126,11 @@ const KEYS: [string, string][] = [
   ["Right click", "Undo the last click of a road; again to drop the tool"],
   ["W A S D / drag", "Move the camera"],
   ["Q / E", "Rotate the camera"],
-  ["R / F, wheel", "Zoom in / out"],
+  ["R / F, wheel", "Zoom in / out (placing a building: the wheel turns it, Ctrl + wheel zooms)"],
   ["Tab", "Next road mode"],
   ["Page Up / Down", "Raise or lower the road"],
   ["[ / ]", "Parallel road spacing"],
-  [", / .", "Turn the building you are placing"],
+  [", / .", "Turn the building you are placing 15°"],
   ["Shift", "15° angle steps"],
   ["B", "Bulldozer"],
   ["L", "Add lane (Shift or right click removes)"],
@@ -567,7 +567,7 @@ export class Hud {
       items.push(h("p", "to-text", `Click open land at least ${km(TOWN_SPACING)} from other towns, with one of your roads near. The town lays its own streets, and grows while you keep its needs supplied.`));
     } else if (st.tool === "place" && isPlantKind(st.placed)) {
       const D = PLANTS[st.placed];
-      items.push(h("p", "to-text", "Beside a road its gate faces the road. Anywhere else it stands free and waits for a road to its gate. Press , or . to turn it 15°."));
+      items.push(h("p", "to-text", `Scroll to turn it (Ctrl + scroll zooms; , and . turn it 15°). A street is laid from its gate to the nearest road within ${GATE_LINK_REACH} m, round any homes, shown before you click.`));
       items.push(h("p", "to-text", D.deposit
         ? `At least ${Math.round(MIN_DEPOSIT * 100)}% of the plot must be ${D.deposit.name}: the ground shows it while you place. More of it, faster work.`
         : `Trucks from your other plants bring it ${productList(D.inputs)}; ${D.makes ? `it powers the buildings on its roads within ${D.reach! / 1000} km that draw power`
@@ -1284,7 +1284,7 @@ export class Hud {
         ${siteLevel(b)}
         <dl class="facts">
           ${plantRows}${powerRow}
-          ${D.trucks ? `<dt>Trucks out</dt><dd>${busy} of ${g.industry.trucksOf(b)}<button class="btn buy-truck" ${g.industry.canBuyTruck(b, g.money) ? "disabled" : ""} title="${escapeHtml(g.industry.canBuyTruck(b, g.money) ?? `Another truck for this plant: ${formatMoney(TRUCK_COST)}, then ${formatMoney(TRUCK_UPKEEP)}/h`)}">+ Truck · ${formatMoney(TRUCK_COST)}</button></dd>` : ""}
+          ${D.trucks ? `<dt>Trucks out</dt><dd title="Its fleet comes with its level: enough trucks to carry everything it makes ${FLEET_HAUL / 1000} km away and back">${busy} of ${g.industry.trucksOf(b)}</dd>` : ""}
           <dt>Staff</dt><dd>${g.people.workersAt(b.id)} / ${b.cap}</dd>
           ${D.deposit ? `<dt>${cap(D.deposit.name)}</dt><dd>${Math.round(P.yld * 100)}% of full yield</dd>` : ""}
         </dl>
@@ -1358,11 +1358,6 @@ export class Hud {
     const g = this.app.game;
     const btn = this.panel.querySelector(".demolish") as HTMLButtonElement | null;
     if (btn) btn.onclick = () => { g.bulldoze([], [b.id]); this.closeSelection(); this.app.selected = null; this.sfx.play("remove"); };
-    const buy = this.panel.querySelector(".buy-truck") as HTMLButtonElement | null;
-    if (buy) buy.onclick = () => {
-      const why = g.buyTruck(b.id);
-      if (why) this.toast(why); else { this.sfx.play("place"); this.lastPanel = ""; this.fillBuilding(b); }
-    };
   }
 
   openSignal(node: number) {

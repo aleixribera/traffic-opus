@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { BUILDING_TYPES, LEVEL_H, TILE, MAX_LEVEL, ROAD_TYPES, SIM, roadWidth, type RoadTypeId } from "./config";
-import { dist, dot, formatMoney, norm, rectCorners, right, sub, v2, type V2 } from "./core/math";
+import { dist, dot, formatMoney, norm, rectCorners, right, sub, v2, wrapAngle, type V2 } from "./core/math";
 import type { Building } from "./game/buildings";
 import { Game } from "./game/city";
 import {
@@ -12,6 +12,8 @@ import { GATE_GAP, siteFrame, siteToWorld } from "./game/sites";
 
 /** How far outside a waiting site's gate the road tool snaps a road's end (m): clear of the fence, well in reach. */
 const GATE_SNAP = 7;
+/** How far one pixel of scrolling turns the building being placed (a wheel notch of ~100 px: ~10°). */
+const PLACE_TURN_PER_PX = (10 * Math.PI) / 180 / 100;
 import { ZONES } from "./game/zones";
 import { MIN_DEPOSIT, PLANTS, PRODUCTS, UNPOWERED, isPlantKind, type Product } from "./game/industry";
 import { TOWN_COST, TOWN_SPACING } from "./game/settlements";
@@ -57,7 +59,7 @@ export interface ToolState {
   bdzLevel: number | null; // bulldozer elevation filter (null = all)
   reverse: boolean; // upgrade tool flips one-ways instead
   placed: PlacedKind; // building being placed
-  /** turn (radians) given to the building being placed with , and . (0: it faces the nearest road) */
+  /** how the building being placed is turned (radians; 0: its gate toward the bottom of the screen): the scroll wheel turns it freely, , and . in 15° steps */
   placeTurn: number;
   transitMode: TransitMode;
 }
@@ -315,6 +317,13 @@ export class App {
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
       if (this.mode === "menu") return;
+      // a building in hand turns with the wheel (Ctrl + wheel still zooms; so do R and F)
+      if (this.st.tool === "place" && !e.ctrlKey) {
+        const px = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+        this.st.placeTurn = wrapAngle(this.st.placeTurn + Math.sign(px) * Math.min(Math.abs(px), 200) * PLACE_TURN_PER_PX);
+        this.dirtyPreview = true;
+        return;
+      }
       const r = el.getBoundingClientRect();
       const k = Math.exp(Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY), 120) * 0.0022);
       this.view.zoomAt(e.clientX - r.left, e.clientY - r.top, k);
@@ -485,7 +494,9 @@ export class App {
 
   /** How the building being placed is turned, and where the bottom of the screen points (a free site faces it). */
   private placeOpts() {
-    return { turn: this.st.placeTurn, down: { x: -Math.sin(this.view.rot), y: Math.cos(this.view.rot) } };
+    // (turned from facing the bottom of the screen, so it turns as the player sees it, whichever way the map is turned)
+    const down = { x: -Math.sin(this.view.rot), y: Math.cos(this.view.rot) };
+    return { rot: wrapAngle(Math.atan2(down.x, -down.y) + this.st.placeTurn), down };
   }
 
   /** Parallel road spacing for the current type. */
@@ -1163,8 +1174,11 @@ export class App {
           const o = g.buildings.byId.get(id);
           if (o) pv.footprint(rectCorners(o.c, o.hw, o.hd, o.rot), 0xf2a33a, gh.length > 0);
         }
-        if (pl.free) chips.push({ text: "No road yet: draw one to its gate", kind: "info" });
-        else if (pl.faces) chips.push({ text: `Faces a ${pl.faces.toLowerCase()}`, kind: "info" });
+        if (pl.link) {
+          pv.plan(pl.link, 0);
+          chips.push({ text: `Street to its gate: ${Math.round(pl.link.length)} m`, kind: "info" });
+        } else if (pl.free && pl.ok) chips.push({ text: "No road it can reach: turn its gate toward one, or draw one to it", kind: "info" });
+        else if (pl.faces) chips.push({ text: `Gate on a ${pl.faces.toLowerCase()}`, kind: "info" });
         // (the deposit share; a lot refused for too little of it gives the share in its reason instead)
         this.powerPreview(pv, chips, k, pl.c, pl.access?.seg);
         if (pl.deposit && pl.deposit.share >= MIN_DEPOSIT) chips.push({ text: `${pl.deposit.name[0].toUpperCase()}${pl.deposit.name.slice(1)} ${Math.round(pl.deposit.share * 100)}%`, kind: "info" });

@@ -83,9 +83,12 @@ Our own names, look and art throughout.
 
 ## Freight (routes itself)
 
-- Every building owns trucks (two to start; it gets more bays as the company level allows). A truck loads
-  output, drives it over your roads to a customer, unloads and comes back. Throughput is trucks x round-trip
-  time, which is why road design matters.
+- Every site runs its own fleet, which comes with its level: nothing to buy, no trucks to manage (owner,
+  2026-11-08). At each level it has enough trucks to carry everything the site makes 3 km away and back over
+  streets (FLEET_HAUL); bigger loads, truck classes and faster roads stretch the same fleet further. Idle trucks
+  wait in the yard, so a big fleet on a short haul adds no traffic. A truck loads output, drives it over your
+  roads to a customer, unloads and comes back. Past the haul it was sized for, or on a jammed road, the yard
+  fills: the fix is the road, never a purchase.
 - Destinations are automatic. Your own plants short of an input come first, then towns that need the product,
   nearest and neediest first. You never draw lines; you can block a destination for a building if you need to.
 - Truck classes unlock over the levels: light truck, heavy truck, road train, plus tankers (crude, fuel),
