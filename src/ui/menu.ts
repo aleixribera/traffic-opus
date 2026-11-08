@@ -161,11 +161,11 @@ export class MainMenu {
     this.timer = window.setInterval(() => this.tick(), 500);
   }
 
-  /** The live line under the city: its name, the clock, people and cars on the road right now. */
+  /** The live line under the city: its name, the clock (the time-lapse's, so it matches the light), people and cars on the road right now. */
   private tick() {
     const g = this.app.game;
     const st = g.people.stats;
-    this.live.innerHTML = `<b>${esc(g.cityName)}</b><span>${fmtNum(st.population)} people · ${fmtNum(g.buildings.list.length)} buildings</span><span class="mm-now"><i aria-hidden="true"></i>${clock(g.hour)} · ${fmtNum(g.traffic.vehicles.length)} vehicles on the road</span>`;
+    this.live.innerHTML = `<b>${esc(g.cityName)}</b><span>${fmtNum(st.population)} people · ${fmtNum(g.buildings.list.length)} buildings</span><span class="mm-now"><i aria-hidden="true"></i>${clock(this.app.dayCycle.hour)} · ${fmtNum(g.traffic.vehicles.length)} vehicles on the road</span>`;
   }
 
   private act(a: string) {

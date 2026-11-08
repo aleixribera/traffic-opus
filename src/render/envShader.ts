@@ -95,12 +95,19 @@ vec3 envGrass(vec3 c) {
    winter; 'shelter' > 0 keeps it thinner (under eaves, on warm ground). */
 float envSnowAt(vec2 p, float shelter) {
   if (envSnow <= 0.001) return 0.0;
-  // (each octave turned against the last, so the drifts never line up with the grid)
-  vec2 q1 = mat2(0.8, -0.6, 0.6, 0.8) * p, q2 = mat2(0.28, 0.96, -0.96, 0.28) * p;
-  float n = envNoise(p / 41.0) * 0.55 + envNoise(q1 / 13.0 + 7.1) * 0.3 + envNoise(q2 / 3.3 - 2.7) * 0.15;
+  // (big drifts, smaller ones, clumps and a fine grain that frays their edges, each octave turned against the
+  // last so the drifts never line up with the grid)
+  vec2 q0 = mat2(0.96, 0.28, -0.28, 0.96) * p, q1 = mat2(0.8, -0.6, 0.6, 0.8) * p, q2 = mat2(0.28, 0.96, -0.96, 0.28) * p;
+  vec2 q3 = mat2(-0.6, 0.8, -0.8, -0.6) * p;
+  // (the fine ones fade to their average once under a few pixels across: a zoomed-out drift edge stays smooth,
+  // not a fizz of pixels)
+  float mpp = fwidth(p.x) + fwidth(p.y);
+  float kC = 1.0 - smoothstep(0.25, 0.8, mpp), kB = 1.0 - smoothstep(1.2, 3.5, mpp);
+  float n = envNoise(q0 / 39.0) * 0.5 + envNoise(q1 / 12.0 + 7.1) * 0.27
+    + mix(0.5, envNoise(q2 / 3.3 - 2.7), kB) * 0.15 + mix(0.5, envNoise(q3 / 0.85 + 3.9), kC) * 0.08;
   float k = envSnow * (1.0 - shelter);
   float aa = max(fwidth(n), 0.004) * 1.5;
-  return smoothstep(1.02 - k * 0.64 - aa, 1.02 - k * 0.64 + aa + 0.05, n) * smoothstep(0.0, 0.2, envSnow);
+  return smoothstep(1.0 - k * 0.63 - aa, 1.0 - k * 0.63 + aa + 0.04, n) * smoothstep(0.0, 0.2, envSnow);
 }
 /* Snow's colour at a point: a little blue in the hollows. */
 vec3 envSnowCol(vec2 p) {
@@ -110,14 +117,15 @@ vec3 envSnowCol(vec2 p) {
    tree (which trees are evergreen, blossom, which colour they turn); q: the point in the crown (-1..1); lit: its lit
    side 0..1. Returns rgb and a coverage (bare branches let the ground through). */
 vec4 envLeaf(vec3 summer, float tone, float h, vec2 q, float lit, float evergreenShare) {
-  bool ever = h < evergreenShare;
   float d = length(q);
-  if (ever) {
+  // (one return at the end: early returns make Direct3D's compiler warn)
+  vec4 res;
+  if (h < evergreenShare) {
     // conifers: dark all year, snow lying on their lit side in winter
-    vec3 c = summer * vec3(0.72, 0.86, 0.8);
+    vec3 cv = summer * vec3(0.72, 0.86, 0.8);
     float sn = envSnow * smoothstep(0.35, 0.75, lit + envNoise(q * 4.0 + h * 40.0) * 0.5 - 0.2);
-    return vec4(mix(c, ${v3(SNOW)} * (0.82 + 0.18 * lit), sn * 0.85), 1.0);
-  }
+    res = vec4(mix(cv, ${v3(SNOW)} * (0.82 + 0.18 * lit), sn * 0.85), 1.0);
+  } else {
   vec3 c = summer;
   // spring: a brighter, yellower new green; blossom on about a third, in mottled clusters
   c = mix(c, c * vec3(1.02, 1.16, 0.72), envFresh);
@@ -150,9 +158,12 @@ vec4 envLeaf(vec3 summer, float tone, float h, vec2 q, float lit, float evergree
     wood = mix(wood, ${v3(SNOW)} * (0.85 + 0.15 * lit), envSnow * smoothstep(0.3, 0.8, lit + twig * 0.4) * 0.8);
     // the last leaves hanging on as it goes bare
     vec3 leaves = mix(c, wood, smoothstep(0.2, 1.0, bare));
-    return vec4(mix(c, leaves, smoothstep(0.0, 0.5, bare)), mix(1.0, cov * 0.92, smoothstep(0.35, 1.0, bare)));
+    res = vec4(mix(c, leaves, smoothstep(0.0, 0.5, bare)), mix(1.0, cov * 0.92, smoothstep(0.35, 1.0, bare)));
+  } else {
+    res = vec4(c, 1.0);
   }
-  return vec4(c, 1.0);
+  }
+  return res;
 }
 `;
 

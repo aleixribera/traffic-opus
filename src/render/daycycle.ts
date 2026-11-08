@@ -15,8 +15,8 @@ import { setEnv } from "./envShader";
 /** The sim time at a day of the year (fractional: the hour is its fraction) in the first year. */
 export const timeAtYday = (yday: number) => yday * DAY - START_HOUR * HOUR;
 
-/** The title menu's time-lapse: from an autumn day's golden hour, a day every two minutes. */
-const MENU_START = timeAtYday(2 * SEASON_DAYS + 3 + 16.5 / 24);
+/** The title menu's time-lapse: from an autumn afternoon, through its golden hour and a lamplit night, a day every two minutes. */
+const MENU_START = timeAtYday(2 * SEASON_DAYS + 5 + 14.5 / 24);
 const MENU_SPEED = DAY / 120;
 
 export interface EnvSet { hour?: number; season?: Season | number; day?: number; yday?: number; speed?: number; mode?: NightMode }

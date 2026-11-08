@@ -514,22 +514,37 @@ export class Buildings3D {
       // (a farm works by daylight: no masts over its fields)
       if (!b.placed || !b.plant || b.built < 1 || b.kind === "farm") continue;
       const fr = siteFrame(b.c, b.rot, b.side, b.hd);
-      const hw = b.hw, d = b.hd * 2, inset = 4;
-      const mid = siteToWorld(fr, 0, d / 2);
-      const spots: V2[] = [];
-      // a mast in each corner, and more along a long side
-      for (const sx of [-1, 1]) {
-        const n = Math.max(1, Math.round((d - 2 * inset) / 80));
-        for (let k = 0; k <= n; k++) spots.push(siteToWorld(fr, sx * (hw - inset), inset + ((d - 2 * inset) * k) / n));
+      const hw = b.hw, d = b.hd * 2, inset = 3;
+      // the yard as built so far (a young works stands in a corner of its fence: the masts light that, not the
+      // empty ground it will grow into)
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const pc of this.piecesOf(b)) {
+        const s = pc.slot;
+        if (!s) continue;
+        const r = Math.max(s.w, s.d) / 2 + 7;
+        x0 = Math.min(x0, s.x - r); x1 = Math.max(x1, s.x + r);
+        y0 = Math.min(y0, s.y - r); y1 = Math.max(y1, s.y + r);
       }
-      const across = Math.max(0, Math.round((2 * hw - 2 * inset) / 80) - 1);
-      for (let k = 1; k <= across; k++) {
-        const x = -hw + inset + ((2 * hw - 2 * inset) * k) / (across + 1);
-        spots.push(siteToWorld(fr, x, d - inset));
+      if (!(x1 > x0)) continue;
+      x0 = Math.max(x0, -hw + inset); x1 = Math.min(x1, hw - inset);
+      y0 = Math.max(y0, inset); y1 = Math.min(y1, d - inset);
+      const mid = siteToWorld(fr, (x0 + x1) / 2, (y0 + y1) / 2);
+      // (each mast throws about half way across a small yard, never more than a big one's 24 m)
+      const r = Math.max(11, Math.min(24, Math.min(x1 - x0, y1 - y0) * 0.42));
+      // a mast at each corner of it, and more along a long side, about every 60 m
+      const spots: V2[] = [];
+      const nx = Math.max(1, Math.round((x1 - x0) / 60)), ny = Math.max(1, Math.round((y1 - y0) / 60));
+      for (let k = 0; k < nx; k++) {
+        spots.push(siteToWorld(fr, x0 + ((x1 - x0) * k) / nx, y0));
+        spots.push(siteToWorld(fr, x1 - ((x1 - x0) * k) / nx, y1));
+      }
+      for (let k = 0; k < ny; k++) {
+        spots.push(siteToWorld(fr, x1, y0 + ((y1 - y0) * k) / ny));
+        spots.push(siteToWorld(fr, x0, y1 - ((y1 - y0) * k) / ny));
       }
       for (const s of spots) {
         const dx = mid.x - s.x, dy = mid.y - s.y, l = Math.hypot(dx, dy) || 1;
-        this.floods.push({ x: s.x, y: s.y, h: 0, dx: dx / l, dy: dy / l, kind: "flood" });
+        this.floods.push({ x: s.x, y: s.y, h: 0, dx: dx / l, dy: dy / l, kind: "flood", r });
       }
     }
     this.version++;

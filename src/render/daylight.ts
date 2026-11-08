@@ -112,8 +112,8 @@ export interface Light {
 interface Key { e: number; amb: RGB; sun: RGB }
 const NOON_KEY: Key = { e: 40, amb: [0.64, 0.64, 0.64], sun: [0.36, 0.36, 0.36] };
 const DUSK: Key[] = [
-  { e: -16, amb: [0.16, 0.19, 0.29], sun: [0, 0, 0] },
-  { e: -9, amb: [0.2, 0.215, 0.33], sun: [0, 0, 0] },
+  { e: -16, amb: [0.165, 0.19, 0.265], sun: [0, 0, 0] },
+  { e: -9, amb: [0.2, 0.215, 0.31], sun: [0, 0, 0] },
   { e: -4, amb: [0.3, 0.28, 0.42], sun: [0, 0, 0] },
   { e: 0, amb: [0.44, 0.36, 0.4], sun: [0.06, 0.025, 0.01] },
   { e: 4, amb: [0.5, 0.42, 0.4], sun: [0.3, 0.16, 0.06] },
@@ -122,8 +122,8 @@ const DUSK: Key[] = [
   NOON_KEY,
 ];
 const DAWN: Key[] = [
-  { e: -16, amb: [0.16, 0.19, 0.29], sun: [0, 0, 0] },
-  { e: -9, amb: [0.21, 0.225, 0.34], sun: [0, 0, 0] },
+  { e: -16, amb: [0.165, 0.19, 0.265], sun: [0, 0, 0] },
+  { e: -9, amb: [0.21, 0.225, 0.32], sun: [0, 0, 0] },
   { e: -4, amb: [0.33, 0.31, 0.44], sun: [0, 0, 0] },
   { e: 0, amb: [0.46, 0.4, 0.45], sun: [0.07, 0.04, 0.03] },
   { e: 4, amb: [0.52, 0.47, 0.47], sun: [0.3, 0.2, 0.12] },
@@ -132,7 +132,7 @@ const DAWN: Key[] = [
   NOON_KEY,
 ];
 /** The moon's light on a flat top at full night. */
-const MOONLIGHT: RGB = [0.05, 0.065, 0.1];
+const MOONLIGHT: RGB = [0.055, 0.066, 0.09];
 /** The darkest a flat top gets, by setting (luminance against the noon palette). */
 const NIGHT_FLOOR: Record<NightMode, number> = { full: 0, soft: 0.42, day: 1 };
 
@@ -263,7 +263,7 @@ export function seasonLook(yday: number): SeasonLook {
     fresh: bump(d, 0.5, 4, 14, 19),
     blossom: bump(d, 1.5, 4.5, 10, 13.5),
     lush: bump(d, 13, 18, 23, 28),
-    dry: bump(d, 22, 29, 35, 40),
+    dry: bump(d, 21, 27, 32, 36.5),
     fall: bump(d, 31.5, 35.5, 44, 48),
     litter: bump(d, 37, 43, 47.5, 50.5),
     bare: bump(d, 41, 46.5, 64.5, 67.5),
