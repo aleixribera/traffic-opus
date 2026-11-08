@@ -10,7 +10,7 @@ import type { BuildingKind } from "../config";
 import type { PendingSpawn, Trip, Vehicle } from "../sim/traffic";
 import { F } from "../world/gen";
 
-export type Product = "crops" | "logs" | "food" | "planks";
+export type Product = "crops" | "logs" | "food" | "planks" | "ore" | "coal" | "lime" | "steel" | "cement";
 
 export interface ProductDef {
   name: string;
@@ -25,9 +25,15 @@ export const PRODUCTS: Record<Product, ProductDef> = {
   logs: { name: "Logs", price: 0, color: 0x8a5a33 },
   food: { name: "Food", price: 450, color: 0xe2704a },
   planks: { name: "Planks", price: 400, color: 0xe8cf8f },
+  ore: { name: "Iron ore", price: 0, color: 0x93603f },
+  coal: { name: "Coal", price: 0, color: 0x3a3a3e },
+  lime: { name: "Limestone", price: 0, color: 0xd9d3bd },
+  // (steel goes to the construction plants of tier 3: no town buys it)
+  steel: { name: "Steel", price: 0, color: 0x8a96a3 },
+  cement: { name: "Cement", price: 650, color: 0xb9b6ae },
 };
 
-export type PlantKind = "farm" | "loggingcamp" | "foodplant" | "sawmill";
+export type PlantKind = "farm" | "loggingcamp" | "foodplant" | "sawmill" | "ironmine" | "coalmine" | "quarry" | "smelter" | "cementworks" | "coalplant";
 
 export interface PlantDef {
   kind: PlantKind;
@@ -45,6 +51,13 @@ export interface PlantDef {
   trucks: number;
   /** loads each store holds (each input and each output) */
   store: number;
+  /** power it draws at full work (MW); without it, it works at UNPOWERED of its pace (tier 2 on) */
+  power?: number;
+  /** a power plant: what it makes at full staff (MW) while it has coal to burn, and how far it reaches (m) */
+  makes?: number;
+  reach?: number;
+  /** what its construction site waits for, trucked in (tier 2 on); tier 1 costs money only */
+  site?: Partial<Record<Product, number>>;
   blurb: string;
 }
 
@@ -69,7 +82,37 @@ export const PLANTS: Record<PlantKind, PlantDef> = {
   sawmill: {
     kind: "sawmill", tier: 1, inputs: { logs: 1 }, outputs: { planks: 1 },
     cycle: HOUR, cost: 22000, upkeep: 22, trucks: 2, store: 8,
-    blurb: "Saws logs into planks. Its trucks sell the planks to the towns.",
+    blurb: "Saws logs into planks. Its trucks sell the planks to the towns and take them to your building sites.",
+  },
+  ironmine: {
+    kind: "ironmine", tier: 2, deposit: { field: F.ore, name: "iron ore" }, inputs: {}, outputs: { ore: 1 },
+    cycle: HOUR * 1.5, cost: 24000, upkeep: 30, trucks: 4, store: 8, power: 6, site: { planks: 6 },
+    blurb: "Digs iron ore. Its trucks take it to your smelters.",
+  },
+  coalmine: {
+    kind: "coalmine", tier: 2, deposit: { field: F.coal, name: "coal" }, inputs: {}, outputs: { coal: 1 },
+    cycle: HOUR * 1.2, cost: 24000, upkeep: 30, trucks: 4, store: 8, power: 6, site: { planks: 6 },
+    blurb: "Digs coal for your smelters, cement works and power plants.",
+  },
+  quarry: {
+    kind: "quarry", tier: 2, deposit: { field: F.lime, name: "limestone" }, inputs: {}, outputs: { lime: 1 },
+    cycle: HOUR * 1.5, cost: 20000, upkeep: 26, trucks: 4, store: 8, power: 6, site: { planks: 6 },
+    blurb: "Quarries limestone. Its trucks take it to your cement works.",
+  },
+  smelter: {
+    kind: "smelter", tier: 2, inputs: { ore: 1, coal: 1 }, outputs: { steel: 1 },
+    cycle: HOUR * 1.5, cost: 45000, upkeep: 50, trucks: 2, store: 8, power: 14, site: { planks: 10 },
+    blurb: "Smelts iron ore with coal into steel, for the construction plants to come.",
+  },
+  cementworks: {
+    kind: "cementworks", tier: 2, inputs: { lime: 1, coal: 1 }, outputs: { cement: 1 },
+    cycle: HOUR, cost: 40000, upkeep: 45, trucks: 3, store: 8, power: 10, site: { planks: 10 },
+    blurb: "Burns limestone with coal into cement. Its trucks sell it to villages that are building in concrete.",
+  },
+  coalplant: {
+    kind: "coalplant", tier: 2, inputs: { coal: 1 }, outputs: {},
+    cycle: HOUR * 3, cost: 32000, upkeep: 35, trucks: 0, store: 8, makes: 40, reach: 4000, site: { planks: 8 },
+    blurb: "Burns coal for power. It powers your tier 2 buildings on its roads within 4 km; without power they work at 40%.",
   },
 };
 
@@ -81,6 +124,12 @@ export const WAGE = 1;
 export const MIN_DEPOSIT = 0.35;
 /** Fuel and wear per km a truck drives (both ways), charged when it sets off. */
 export const FUEL_PER_KM = 4;
+/** Pace of a building that needs power and has none (it scales up to 1 with the share of power it gets). */
+export const UNPOWERED = 0.4;
+/** Time to put a building up once its site has every material (and a tier 1 building, from the start). */
+export const BUILD_TIME = HOUR * 1.5;
+/** Pace from the share of power a building gets. */
+export const powerPace = (share: number) => UNPOWERED + (1 - UNPOWERED) * Math.max(0, Math.min(1, share));
 
 /** A plant's working state (kept on its Building, so it saves with it). */
 export interface PlantState {
@@ -92,8 +141,10 @@ export interface PlantState {
   prog: number;
   /** share of the lot on its deposit (1 for plants) */
   yld: number;
-  /** trucks it owns */
+  /** trucks it owns (on top of the bays every building gains from milestones) */
   trucks: number;
+  /** a construction site: the materials it waits for, and what has arrived */
+  site?: { need: Partial<Record<Product, number>>; got: Partial<Record<Product, number>> };
   /** this hour's and the last full hour's books */
   now: PlantBooks;
   last: PlantBooks;
@@ -135,9 +186,19 @@ export interface IndustryHost {
   trips(): Iterable<Trip>;
   earn(v: number): void;
   spend(v: number, what: "wages" | "upkeep" | "fuel"): void;
+  /** truck bays every building has gained from milestones, on top of its own trucks */
+  bays?(): number;
+  /** loads one truck carries */
+  load?(): number;
+  /** share of the power a building needs that it gets (0..1) */
+  power?(b: Building): number;
+  /** a power plant has buildings within reach that want its power (it only burns coal then) */
+  wanted?(b: Building): boolean;
+  /** a plant made loads of a product (the company's tallies) */
+  made?(p: Product, n: number): void;
 }
 
-export interface Customer { b: Building; value: number }
+export interface Customer { b: Building; value: number; /** loads it can take */ room: number }
 
 export class Industry {
   constructor(private h: IndustryHost) {}
@@ -159,10 +220,28 @@ export class Industry {
     return on / n;
   }
 
-  /** Make a freshly placed building one of the company's plants. */
+  /** Make a freshly placed building one of the company's plants (from tier 2, a site waiting for its materials). */
   init(b: Building, kind: PlantKind, yld = 1) {
     const d = PLANTS[kind];
     b.plant = { stock: {}, out: {}, prog: 0, yld, trucks: d.trucks, now: books(), last: books() };
+    if (d.site) b.plant.site = { need: { ...d.site }, got: {} };
+  }
+
+  /** Trucks a plant runs: its own, plus the bays milestones added (a power plant has none). */
+  trucksOf(b: Building): number {
+    const P = b.plant!;
+    return P.trucks > 0 ? P.trucks + (this.h.bays?.() ?? 0) : 0;
+  }
+
+  /** Is it up and working (not a site, not being built)? */
+  static running(b: Building): boolean {
+    return !!b.plant && !b.plant.site && b.built >= 1;
+  }
+
+  /** Loads of a material a site still waits for (not counting what is on its way). */
+  static siteLeft(b: Building, p: Product): number {
+    const s = b.plant?.site;
+    return s ? (s.need[p] ?? 0) - (s.got[p] ?? 0) : 0;
   }
 
   /** Trucks out per plant, and loads on their way to each customer (counted fresh each tick). */
@@ -188,28 +267,49 @@ export class Industry {
     }
   }
 
-  /** Work through the current batch: staff, deposit and inputs on hand set the pace; a full store stops it. */
+  /**
+   * Work through the current batch: staff, deposit, power and inputs on hand set the pace; a full store stops it.
+   * A power plant's batch is the coal it burns, and it burns only while something within reach wants power.
+   */
   produce(b: Building, span: number) {
     const P = b.plant!, d = PLANTS[b.kind as PlantKind];
+    if (P.site) {
+      const left = entries(P.site.need).map(([p, n]) => [p, n - (P.site!.got[p] ?? 0)] as [Product, number]).filter(([, n]) => n > 0);
+      b.problem = left.length ? `Building site: waiting for ${left.map(([p, n]) => `${n} load${n === 1 ? "" : "s"} of ${PRODUCTS[p].name.toLowerCase()}`).join(" and ")}` : null;
+      return;
+    }
+    if (b.built < 1) { b.problem = null; return; }
     const staff = b.cap ? Math.min(1, this.h.workersAt(b.id) / b.cap) : 1;
+    const pw = d.power ? (this.h.power?.(b) ?? 1) : 1;
+    const idle = !!d.makes && !(this.h.wanted?.(b) ?? true);
     const short = () => entries(d.inputs).find(([p, n]) => (P.stock[p] ?? 0) < n)?.[0];
     const full = () => entries(d.outputs).find(([p]) => (P.out[p] ?? 0) >= d.store)?.[0];
-    if (b.access && staff > 0 && !short() && !full()) {
-      P.prog += (span * staff * P.yld) / d.cycle;
+    if (b.access && staff > 0 && !idle && !short() && !full()) {
+      P.prog += (span * staff * P.yld * powerPace(pw)) / d.cycle;
       while (P.prog >= 1) {
         P.prog -= 1;
         for (const [p, n] of entries(d.inputs)) P.stock[p] = (P.stock[p] ?? 0) - n;
-        for (const [p, n] of entries(d.outputs)) { P.out[p] = (P.out[p] ?? 0) + n; P.now.made += n; }
+        for (const [p, n] of entries(d.outputs)) { P.out[p] = (P.out[p] ?? 0) + n; P.now.made += n; this.h.made?.(p, n); }
         if (short() || full()) { P.prog = 0; break; }
       }
     }
     // the most pressing thing that holds it up (the trucks may add "nobody buys" when they find no customer)
     const s = short(), f = full();
+    const fname = f && PRODUCTS[f].name.toLowerCase();
     b.problem = !b.access ? "No road access"
-      : f ? `Full of ${PRODUCTS[f].name.toLowerCase()}: not enough trucks, or nobody to sell to`
+      : f ? (PRODUCTS[f].price > 0 || this.used(f) ? `Full of ${fname}: not enough trucks, or nobody to sell to` : `Full of ${fname}: nothing uses it until tier 3`)
       : staff <= 0 ? "No workers"
       : s ? `Waiting for ${PRODUCTS[s].name.toLowerCase()}`
-      : staff < 0.5 ? "Not enough workers" : null;
+      : idle ? "Idle: no tier 2 building within reach needs power"
+      : staff < 0.5 ? "Not enough workers"
+      : pw <= 0 ? `No power: working at ${Math.round(UNPOWERED * 100)}%`
+      : pw < 0.999 ? `Short of power: working at ${Math.round(powerPace(pw) * 100)}%`
+      : null;
+  }
+
+  /** Does any building of the company's take this product in (as an input or as a building material)? */
+  private used(p: Product): boolean {
+    return PLANT_KINDS.some((k) => PLANTS[k].inputs[p] || PLANTS[k].site?.[p]);
   }
 
   /** Who would take a load of `product` from `from`, best first. */
@@ -219,14 +319,20 @@ export class Industry {
     if (seg === undefined) return out;
     const on = (id: number) => coming.get(id)?.get(product) ?? 0;
     const km = (o: Building) => Math.hypot(o.c.x - from.c.x, o.c.y - from.c.y) / 1000;
-    // own plants short of it: they keep the chain running (worth more than any sale)
     for (const o of this.h.buildings.list) {
       if (!o.plant || o.id === from.id || !o.access || !this.h.connected(seg, o.access.seg)) continue;
+      // building sites waiting for it come first: a plant that isn't built makes nothing
+      if (o.plant.site) {
+        const room = Industry.siteLeft(o, product) - on(o.id);
+        if (room >= 1) out.push({ b: o, value: 20000 + room * 100 - km(o) * FUEL_PER_KM * 2, room });
+        continue;
+      }
+      // own plants short of it: they keep the chain running (worth more than any sale)
       const need = PLANTS[o.kind as PlantKind].inputs[product];
       if (!need) continue;
       const room = PLANTS[o.kind as PlantKind].store - (o.plant.stock[product] ?? 0) - on(o.id);
       if (room < 1) continue;
-      out.push({ b: o, value: 10000 + room * 100 - km(o) * FUEL_PER_KM * 2 });
+      out.push({ b: o, value: 10000 + room * 100 - km(o) * FUEL_PER_KM * 2, room });
     }
     // the towns' shops buy finished products, as much as each town uses in a day
     const price = PRODUCTS[product].price;
@@ -243,32 +349,34 @@ export class Industry {
         const l = t === null ? 0 : left.get(t)!;
         if (l < 1) continue;
         // nearest first; a town further short of its need, and a shop with emptier shelves, a little ahead
-        out.push({ b: o, value: price - km(o) * FUEL_PER_KM * 2 + Math.min(3, l) * 15 - (product === "food" ? o.stock * 15 : 0) });
+        out.push({ b: o, value: price - km(o) * FUEL_PER_KM * 2 + Math.min(3, l) * 15 - (product === "food" ? o.stock * 15 : 0), room: Math.ceil(l) });
       }
     }
     out.sort((a, b) => b.value - a.value);
     return out;
   }
 
-  /** Send free trucks off with whatever is waiting. */
+  /** Send free trucks off with whatever is waiting (a truck takes as many loads as it carries and the customer takes). */
   private dispatch(b: Building, busy: Map<number, number>, coming: Map<number, Map<Product, number>>) {
     const P = b.plant!;
-    if (!b.access) return;
-    let free = P.trucks - (busy.get(b.id) ?? 0);
+    if (!b.access || P.site) return;
+    let free = this.trucksOf(b) - (busy.get(b.id) ?? 0);
+    const load = Math.max(1, this.h.load?.() ?? 1);
     for (const [p] of entries(PLANTS[b.kind as PlantKind].outputs)) {
       while (free > 0 && (P.out[p] ?? 0) >= 1) {
         const c = this.customers(b, p, coming)[0];
         if (!c) {
-          if ((P.out[p] ?? 0) >= 2 && b.problem !== "No road access") b.problem = this.noBuyer(b, p);
+          if ((P.out[p] ?? 0) >= 2 && b.problem !== "No road access" && !b.problem?.startsWith("Full of")) b.problem = this.noBuyer(b, p);
           break;
         }
-        this.send(b, c.b, p, 1);
-        P.out[p]! -= 1;
+        const n = Math.max(1, Math.min(load, Math.floor(P.out[p]!), c.room));
+        this.send(b, c.b, p, n);
+        P.out[p]! -= n;
         free--;
         busy.set(b.id, (busy.get(b.id) ?? 0) + 1);
         let m = coming.get(c.b.id);
         if (!m) coming.set(c.b.id, (m = new Map()));
-        m.set(p, (m.get(p) ?? 0) + 1);
+        m.set(p, (m.get(p) ?? 0) + n);
       }
     }
   }
@@ -278,9 +386,13 @@ export class Industry {
     const name = PRODUCTS[p].name.toLowerCase();
     const seg = from.access?.seg;
     if (seg !== undefined) {
+      let site = false;
       for (const o of this.h.buildings.list) {
-        if (o.plant && o.access && PLANTS[o.kind as PlantKind].inputs[p] && this.h.connected(seg, o.access.seg)) return `Your plants that use ${name} have all they can store`;
+        if (!o.plant || !o.access || !PLANTS[o.kind as PlantKind].inputs[p] || !this.h.connected(seg, o.access.seg)) continue;
+        if (!o.plant.site) return `Your plants that use ${name} have all they can store`;
+        site = true;
       }
+      if (site) return `The plants that will use ${name} are still building sites`;
     }
     if (PRODUCTS[p].price > 0 && seg !== undefined) {
       for (const o of this.h.shops) {
@@ -289,6 +401,7 @@ export class Industry {
         if (t !== null && Number.isFinite(this.h.want(t, p))) return `Towns on your roads have all the ${name} they need today`;
       }
     }
+    if (!this.used(p) && PRODUCTS[p].price <= 0) return `Nothing uses ${name} until tier 3: it stays in the yard`;
     return `Nobody your roads reach buys ${name}`;
   }
 
@@ -332,9 +445,20 @@ export class Industry {
     if (r.leg === "out" && home?.plant) home.plant.out[r.product] = (home.plant.out[r.product] ?? 0) + r.n;
   }
 
-  /** Hand a load over: a plant stocks it; a shop pays for it and its town counts it toward its need. */
+  /**
+   * Hand a load over: a building site takes its materials (and starts going up once it has them all), a plant
+   * stocks it, a shop pays for it and its town counts it toward its need.
+   */
   deliver(to: Building, product: Product, n: number, from?: Building) {
     if (to.plant) {
+      const s = to.plant.site;
+      if (s) {
+        // (dispatch never sends more than is left; should two trucks still race, the spare load is left on the ground)
+        const take = Math.min(n, Math.max(0, Industry.siteLeft(to, product)));
+        s.got[product] = (s.got[product] ?? 0) + take;
+        if (entries(s.need).every(([p, k]) => (s.got[p] ?? 0) >= k)) { delete to.plant.site; to.built = 0; }
+        return;
+      }
       to.plant.stock[product] = (to.plant.stock[product] ?? 0) + n;
       return;
     }
@@ -347,14 +471,16 @@ export class Industry {
     if (from?.plant) from.plant.now.earned += pay;
   }
 
-  /** Wages and upkeep, and the hour's books. */
+  /** Wages and upkeep, and the hour's books (a building site costs nothing to keep). */
   hourly() {
     for (const b of this.plants()) {
       const P = b.plant!;
-      const wages = this.h.workersAt(b.id) * WAGE, up = PLANTS[b.kind as PlantKind].upkeep;
-      this.h.spend(wages, "wages");
-      this.h.spend(up, "upkeep");
-      P.now.spent += wages + up;
+      if (!P.site) {
+        const wages = this.h.workersAt(b.id) * WAGE, up = PLANTS[b.kind as PlantKind].upkeep;
+        this.h.spend(wages, "wages");
+        this.h.spend(up, "upkeep");
+        P.now.spent += wages + up;
+      }
       P.last = P.now;
       P.now = books();
     }

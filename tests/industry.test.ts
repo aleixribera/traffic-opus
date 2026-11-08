@@ -145,6 +145,23 @@ describe("Industry", () => {
     expect(fp.problem).toBe("Nobody your roads reach buys food");
   });
 
+  it("ore waits while the smelter that will take it is still a building site, and the mine says so", () => {
+    const w = world();
+    const mine = w.plant("ironmine", 0);
+    mine.plant!.site = undefined;
+    const sm = w.plant("smelter", 300);
+    expect(sm.plant!.site).toBeDefined();
+    mine.plant!.out.ore = 3;
+    w.ind.tick(0);
+    expect(w.pending.length).toBe(0);
+    expect(mine.problem).toBe("The plants that will use iron ore are still building sites");
+    // built: the ore goes
+    sm.plant!.site = undefined;
+    w.ind.tick(0);
+    expect(w.pending.length).toBeGreaterThan(0);
+    expect(w.pending[0].trip.haul!.dest).toBe(sm.id);
+  });
+
   it("a truck that can't get through brings its load back to the yard", () => {
     const w = world();
     const farm = w.plant("farm", 0);
@@ -174,5 +191,95 @@ describe("Industry", () => {
     expect(fp.plant!.last.earned).toBe(50);
     expect(fp.plant!.last.spent).toBe(fp.cap + PLANTS.foodplant.upkeep);
     expect(fp.plant!.now.earned).toBe(0);
+  });
+
+  it("a tier 2 plant starts as a building site: planks go to it first, then it goes up", () => {
+    const w = world();
+    const mill = w.plant("sawmill", 0);
+    const sm = w.plant("smelter", 1000);
+    w.shop(200); // a town nearer that would buy the planks
+    expect(sm.plant!.site).toEqual({ need: { planks: PLANTS.smelter.site!.planks }, got: {} });
+    // a site makes nothing, draws no wages or upkeep, and says what it waits for
+    w.ind.produce(sm, HOUR);
+    expect(sm.problem).toBe(`Building site: waiting for ${PLANTS.smelter.site!.planks} loads of planks`);
+    w.ind.hourly();
+    expect(w.spent.wages ?? 0).toBe(mill.cap);
+    expect(w.spent.upkeep).toBe(PLANTS.sawmill.upkeep);
+    mill.plant!.out.planks = 4;
+    w.ind.tick(0);
+    expect(w.pending.length).toBe(PLANTS.sawmill.trucks);
+    for (const p of w.pending) expect(p.trip.haul!.dest).toBe(sm.id);
+    while (w.pending.length) w.arrive(w.pending.find((p) => p.trip.haul!.leg === "out") ?? w.pending[0]);
+    expect(sm.plant!.site!.got.planks).toBe(PLANTS.sawmill.trucks);
+    // the last loads complete it: the site is gone and the building goes up from nothing
+    w.ind.deliver(sm, "planks", 20, mill);
+    expect(sm.plant!.site).toBeUndefined();
+    expect(sm.built).toBe(0);
+    // (more than it needed is left on the ground: a smelter's yard ships only steel, so it would sit there for good)
+    expect(sm.plant!.out.planks ?? 0).toBe(0);
+    expect(Industry.running(sm)).toBe(false);
+    sm.built = 1;
+    expect(Industry.running(sm)).toBe(true);
+  });
+
+  it("a truck carries as many loads as the milestones allow, and the bays add trucks", () => {
+    const w = world();
+    const farm = w.plant("farm", 0);
+    const fp = w.plant("foodplant", 1000);
+    (w.host as { load?: () => number }).load = () => 2;
+    (w.host as { bays?: () => number }).bays = () => 1;
+    expect(w.ind.trucksOf(farm)).toBe(PLANTS.farm.trucks + 1);
+    farm.plant!.out.crops = 7;
+    w.ind.tick(0);
+    expect(w.pending.length).toBe(3);
+    expect(w.pending.map((p) => p.trip.haul!.n)).toEqual([2, 2, 2]);
+    expect(farm.plant!.out.crops).toBe(1);
+    w.arrive(w.pending[0]);
+    expect(fp.plant!.stock.crops).toBe(2);
+    // a power plant runs no trucks, bays or not
+    const pp = w.plant("coalplant", 500);
+    expect(w.ind.trucksOf(pp)).toBe(0);
+  });
+
+  it("a power plant burns coal only while wanted; a building short of power works slower", () => {
+    const w = world();
+    const pp = w.plant("coalplant", 0);
+    delete pp.plant!.site;
+    pp.plant!.stock.coal = 3;
+    let wanted = false, share = 1;
+    (w.host as { wanted?: () => boolean }).wanted = () => wanted;
+    (w.host as { power?: () => number }).power = () => share;
+    w.ind.produce(pp, PLANTS.coalplant.cycle * 2);
+    expect(pp.plant!.stock.coal).toBe(3);
+    expect(pp.problem).toMatch(/^Idle/);
+    wanted = true;
+    w.ind.produce(pp, PLANTS.coalplant.cycle * 1.01);
+    expect(pp.plant!.stock.coal).toBe(2);
+    // a smelter: full pace with power, 40% with none
+    const sm = w.plant("smelter", 100);
+    delete sm.plant!.site;
+    sm.plant!.stock = { ore: 8, coal: 8 };
+    w.ind.produce(sm, PLANTS.smelter.cycle * 2.5);
+    expect(sm.plant!.out.steel).toBe(2);
+    share = 0;
+    sm.plant!.prog = 0;
+    w.ind.produce(sm, PLANTS.smelter.cycle * 2.5);
+    expect(sm.plant!.out.steel).toBe(3);
+    expect(sm.problem).toBe("No power: working at 40%");
+    share = 0.5;
+    w.ind.produce(sm, PLANTS.smelter.cycle * 0.1);
+    expect(sm.problem).toBe("Short of power: working at 70%");
+  });
+
+  it("steel waits in the yard until tier 3, and the smelter says so", () => {
+    const w = world();
+    const sm = w.plant("smelter", 0);
+    delete sm.plant!.site;
+    w.shop(100);
+    sm.plant!.out.steel = PLANTS.smelter.store;
+    sm.plant!.stock = { ore: 2, coal: 2 };
+    w.ind.tick(HOUR);
+    expect(w.pending.length).toBe(0);
+    expect(sm.problem).toBe("Full of steel: nothing uses it until tier 3");
   });
 });

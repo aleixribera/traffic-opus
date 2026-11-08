@@ -9,7 +9,7 @@ import {
 } from "./roads/planner";
 import { Buildings3D } from "./render/buildings3d";
 import { ZONES } from "./game/zones";
-import { MIN_DEPOSIT, PLANTS, isPlantKind } from "./game/industry";
+import { MIN_DEPOSIT, PLANTS, PRODUCTS, UNPOWERED, isPlantKind, type Product } from "./game/industry";
 import { TOWN_COST, TOWN_SPACING } from "./game/settlements";
 import type { ModelSet } from "./render/models";
 import { Preview3D } from "./render/preview3d";
@@ -197,7 +197,7 @@ export class App {
       else if (e.t === "buildings") { this.buildings3d.rebuild(g.buildings.list); this.applyTint(); this.dirtyPreview = true; }
       else if (e.t === "tiles") this.terrain3d.setTiles(g.tiles);
       else if (e.t === "zones") this.dirtyPreview = true;
-      else if (e.t === "milestone") { if (this.mode === "play") this.hud?.milestone(e.index); }
+      else if (e.t === "milestone") { if (this.mode === "play") this.hud?.milestone(e.m); }
       else if (e.t === "toast") { if (this.mode !== "menu") this.hud?.toast(e.msg); }
       this.hud?.refresh();
     });
@@ -248,7 +248,7 @@ export class App {
   /** The utility on show: its info view, or the one whose plant is being placed. */
   utilityView(): "power" | null {
     if (this.overlay === "power") return "power";
-    if (this.overlay === "none" && this.st.tool === "place" && PLACED[this.st.placed].utility === "power") return "power";
+    if (this.overlay === "none" && this.st.tool === "place" && (this.st.placed === "coalplant" || !!PLANTS[this.st.placed].power)) return "power";
     return null;
   }
 
@@ -258,13 +258,12 @@ export class App {
     const mode = this.overlay;
     const uv = this.utilityView();
     if (uv) {
-      // supply: buildings that get all they need go green, short ones orange to red; the plants stand out
+      // supply: the company's buildings that get all the power they need go green, short ones orange to red; the
+      // plants stand out in blue, everything that needs no power is grey
       this.buildings3d.tint((b) => {
-        if (b.placed) return PLACED[b.kind as PlacedKind]?.utility === uv ? 0x2f86e0 : 0xc9c9c9;
-        if (!b.zone || b.built < 1) return 0xc4c4c4;
-        if (!b.access) return 0xe5484d;
-        const s = g.utilities.supplyOf(b);
-        const v = s.power;
+        if (b.kind === "coalplant") return 0x2f86e0;
+        if (g.utilities.demandOf(b) <= 0) return 0xc9c9c9;
+        const v = g.utilities.supplyOf(b);
         return v >= 0.999 ? 0x3faa5a : v > 0.6 ? 0xf0a33a : 0xe5484d;
       });
       return;
@@ -890,6 +889,32 @@ export class App {
 
   // ---------------------------------------------------------------- per frame
 
+  /**
+   * Power while placing: a power plant shows the reach it would have and what it would power; a building that needs
+   * power shows the reach of the plants there are and whether it would be in one. In reach means near and on the same
+   * roads, as for the power itself. Placing either shows the power view.
+   */
+  private powerPreview(pv: Preview3D, chips: Chip[], k: PlacedKind, c: V2, seg: number | undefined) {
+    const g = this.game;
+    const D = PLANTS[k];
+    const plants = g.buildings.list.filter((b) => b.kind === "coalplant");
+    const linked = (b: Building) => seg !== undefined && !!b.access && g.connected(seg, b.access.seg);
+    const ring = (p: V2, r: number, color: number) => {
+      const pts: V2[] = [];
+      for (let i = 0; i <= 96; i++) pts.push(v2(p.x + Math.cos((i / 96) * Math.PI * 2) * r, p.y + Math.sin((i / 96) * Math.PI * 2) * r));
+      pv.path(pts, color, Math.max(3, this.view.halfH / 90));
+    };
+    if (D.makes) {
+      ring(c, D.reach!, 0x2f86e0);
+      const near = g.buildings.list.filter((b) => g.utilities.demandOf(b) > 0 && dist(b.c, c) <= D.reach! && linked(b)).length;
+      chips.push({ text: near ? `Powers ${near} building${near === 1 ? "" : "s"} within ${D.reach! / 1000} km` : `Nothing within ${D.reach! / 1000} km needs power yet`, kind: "info" });
+    } else if (D.power) {
+      for (const p of plants) ring(p.c, PLANTS.coalplant.reach!, 0x2f86e0);
+      const inReach = plants.some((p) => dist(p.c, c) <= PLANTS.coalplant.reach! && linked(p));
+      chips.push({ text: inReach ? `Needs ${D.power} MW: a power plant is in reach` : `Needs ${D.power} MW: no power plant in reach, works at ${Math.round(UNPOWERED * 100)}%`, kind: inReach ? "info" : "error" });
+    }
+  }
+
   private refreshPreview() {
     this.dirtyPreview = false;
     const pv = this.preview;
@@ -1094,11 +1119,14 @@ export class App {
           if (o) pv.footprint(rectCorners(o.c, o.hw, o.hd, o.rot), 0xf2a33a, !!gh);
         }
         // (the deposit share; a lot refused for too little of it gives the share in its reason instead)
+        this.powerPreview(pv, chips, k, pl.c, pl.access?.seg);
         if (pl.deposit && pl.deposit.share >= MIN_DEPOSIT) chips.push({ text: `${pl.deposit.name[0].toUpperCase()}${pl.deposit.name.slice(1)} ${Math.round(pl.deposit.share * 100)}%`, kind: "info" });
         if (!pl.ok) chips.push({ text: pl.reason ?? "Can't build here", kind: "error" });
         else {
           chips.push({ text: formatMoney(pl.cost), kind: pl.cost > g.money ? "error" : "cost" });
           chips.push({ text: `${formatMoney(PLACED[k].upkeep)}/h upkeep`, kind: "info" });
+          const site = PLANTS[k].site;
+          if (site) chips.push({ text: `Site: needs ${Object.entries(site).map(([p, q]) => `${q} load${q === 1 ? "" : "s"} of ${PRODUCTS[p as Product].name.toLowerCase()}`).join(", ")}`, kind: "info" });
           const n = pl.clears?.length ?? 0;
           if (n) chips.push({ text: `${n} building${n === 1 ? "" : "s"} replaced`, kind: "error" });
         }

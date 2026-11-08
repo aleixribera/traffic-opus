@@ -252,9 +252,10 @@ export class Traffic {
         p.clear.push({ lane: nl, s: ns });
         for (const o of nl.occ as Vehicle[]) {
           // we drive on (towards falling s on this far lane) while we cross it: keep that stretch clear too
-          if (o.s > ns - (o.v < 1 ? 12 : 3) && o.s - o.len < ns + 3) { p.why = "cross-occupied"; return "wait"; }
-          // someone on the far lane about to stop at their own driveway right where we'd cut across
-          if (o.destS >= 0 && o.s < o.destS + 1 && o.destS > ns - 12 && o.destS < ns + 4 && this.isFinal(o)) { p.why = "cross-occupied"; return "wait"; }
+          if (o.s > ns - (o.v < 1 ? 12 : 3) && o.s - o.len < ns + 3) { p.why = "cross-occupied"; p.blocker = o.id; return "wait"; }
+          // someone on the far lane about to stop at their own driveway right where we'd cut across (about to: a few
+          // seconds off, not a truck still a kilometre down a long feeder road heading for the same yard)
+          if (o.destS >= 0 && o.s < o.destS + 1 && o.destS - o.s < Math.max(30, o.v * 6) && o.destS > ns - 12 && o.destS < ns + 4 && this.isFinal(o)) { p.why = "cross-occupied"; p.blocker = o.id; return "wait"; }
           // the far lane needs a real gap (crossing it takes a couple of seconds); slow traffic can stop for us
           const need = p.wait > 20 ? 1.6 : p.wait > 8 ? 2.2 : 3;
           const yields = o.v < 4 && ns - 3 - o.s > 1.5 + (o.v * o.v) / (2 * SIM.idm.b) + o.v * 0.8;

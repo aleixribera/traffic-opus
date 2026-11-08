@@ -5,7 +5,8 @@
 import { expect } from "vitest";
 import { Game } from "../src/game/city";
 import { planRoad, snap, type Snap } from "../src/roads/planner";
-import { v2, type V2 } from "../src/core/math";
+import { dist, v2, type V2 } from "../src/core/math";
+import { LEVEL_H } from "../src/config";
 import { HOUR } from "../src/game/society";
 import type { Town } from "../src/game/settlements";
 import type { Cell, ZoneId } from "../src/game/zones";
@@ -24,6 +25,47 @@ export function road(g: Game, a: V2, b: V2, type: any = "street") {
   });
   expect(plan.errors.map((e) => e.msg)).toEqual([]);
   expect(g.build(plan)).toBe(true);
+}
+
+/**
+ * A street from a to b laid the way a player would get one through: straight, bent round an obstacle, or over a
+ * bridge (with ramps up to it) where water is in the way. It costs no more than `budget`. The legs it was laid in
+ * and what it cost; "money" if every way through costs more; "blocked" if there is none.
+ */
+export function layRoad(g: Game, a: V2, b: V2, budget = Infinity): { legs: [V2, V2][]; cost: number; bridge: number } | "money" | "blocked" {
+  const at = (p: V2, level: number): Snap => {
+    const s = snap(g.net, p, { mpp: 0.4, level, type: "street" });
+    return s.node !== undefined || s.seg !== undefined ? s : { p, h: level * LEVEL_H, guides: [] };
+  };
+  const L = dist(a, b), n = v2(-(b.y - a.y) / L, (b.x - a.x) / L);
+  const routes: { p: V2; lv: number }[][] = [];
+  for (const off of [0, 250, -250, 500, -500, 900, -900]) {
+    const mid = v2((a.x + b.x) / 2 + n.x * off, (a.y + b.y) / 2 + n.y * off);
+    routes.push(off === 0 ? [{ p: a, lv: 0 }, { p: b, lv: 0 }] : [{ p: a, lv: 0 }, { p: mid, lv: 0 }, { p: b, lv: 0 }]);
+  }
+  // a bridge deck (level 1) over the water on the straight line
+  const along = (d: number) => v2(a.x + (b.x - a.x) * (d / L), a.y + (b.y - a.y) * (d / L));
+  let w0 = -1, w1 = -1;
+  for (let d = 0; d <= L; d += 10) if (g.world.isWater(along(d))) { if (w0 < 0) w0 = d; w1 = d; }
+  if (w0 > 80 && w1 < L - 80) routes.push([{ p: a, lv: 0 }, { p: along(w0 - 70), lv: 1 }, { p: along(w1 + 70), lv: 1 }, { p: b, lv: 0 }]);
+  let dear = false;
+  for (const r of routes) {
+    const legs = r.slice(1).map((q, k) => [r[k], q] as const);
+    const plans = legs.map(([p, q]) => planRoad(g.net, g.world, { start: at(p.p, p.lv), end: at(q.p, q.lv), mode: "straight", type: "street" }));
+    if (plans.some((p) => p.errors.length)) continue;
+    const cost = plans.reduce((s, p) => s + p.cost, 0);
+    if (cost > budget) { dear = true; continue; }
+    // (each leg after the first is planned again once the one before is down, to join it)
+    let built = 0;
+    for (const [k, [p, q]] of legs.entries()) {
+      const pl = k === 0 ? plans[0] : planRoad(g.net, g.world, { start: at(p.p, p.lv), end: at(q.p, q.lv), mode: "straight", type: "street" });
+      if (pl.errors.length || !g.build(pl)) break;
+      built++;
+    }
+    if (built < legs.length) { for (let k = 0; k < built; k++) g.undo(); continue; }
+    return { legs: legs.map(([p, q]) => [p.p, q.p]), cost, bridge: r.length === 4 ? w1 - w0 + 140 : 0 };
+  }
+  return dear ? "money" : "blocked";
 }
 
 /** Run the sim for some game hours. */
