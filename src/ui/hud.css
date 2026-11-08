@@ -436,14 +436,24 @@ kbd { font: 600 var(--t-xs)/1 var(--f-text); padding: 3px 6px; border: 1px solid
 .map-label.click:hover .ml-plate > b { background: var(--plate-2); box-shadow: inset 0 0 0 1px var(--ochre), 0 2px 5px rgba(3, 7, 14, 0.5); }
 .map-label.click:focus-visible { outline: 2px solid var(--ochre); outline-offset: 2px; }
 .map-labels.passive .map-label.click { pointer-events: none; }
-/* how well the town is supplied: a gauge strip under the tab */
-.map-label .ml-bar { display: block; width: 52px; height: 5px; margin-top: 3px; background: var(--ink); border-radius: 0; overflow: hidden; box-shadow: 0 0 0 1px var(--edge); }
-.map-label .ml-bar i { display: block; height: 100%; background: var(--bar-ok); }
-.map-label .ml-bar.mid i { background: var(--bar-mid); }
-.map-label .ml-bar.low i { background: var(--bar-low); }
-.map-label .ml-icons { display: flex; gap: 4px; margin-top: 5px; }
-.map-label .ml-icons i { width: 24px; height: 24px; border-radius: 50%; background: var(--plate); box-shadow: 0 0 0 1.5px var(--bad), 0 2px 4px rgba(3, 7, 14, 0.55); display: grid; place-items: center; }
-.map-label .ml-icons svg { width: 16px; height: 16px; display: block; }
+/* its needs, only while one wants seeing to: each picture on a disc ringed by how it is doing, as in its panel */
+.map-label .ml-icons { display: flex; align-items: center; gap: 4px; margin-top: 5px; }
+.map-label .ml-icons i { width: 26px; height: 26px; border-radius: 50%; background: var(--plate); box-shadow: 0 0 0 2px var(--bar-ok), 0 2px 4px rgba(3, 7, 14, 0.55); display: grid; place-items: center; }
+.map-label .ml-icons svg { width: 17px; height: 17px; display: block; }
+/* (a need that is fine stays small and quiet beside the ones that aren't) */
+.map-label .ml-icons i.plenty, .map-label .ml-icons i.enough { width: 20px; height: 20px; }
+.map-label .ml-icons i.plenty svg, .map-label .ml-icons i.enough svg { width: 13px; height: 13px; }
+.map-label .ml-icons i.low { box-shadow: 0 0 0 2px var(--bar-mid), 0 2px 4px rgba(3, 7, 14, 0.55); }
+.map-label .ml-icons i.none { position: relative; box-shadow: 0 0 0 2.5px var(--bar-low), 0 0 0 4px var(--edge), 0 2px 4px rgba(3, 7, 14, 0.55); }
+.map-label .ml-icons i.none::after { content: "!"; position: absolute; top: -6px; right: -6px; width: 13px; height: 13px; border-radius: 50%; background: var(--bar-low); color: var(--cream); font: 800 10px/13px var(--f-text); text-align: center; box-shadow: 0 0 0 1px var(--edge); }
+.map-label .ml-icons i.noroad { box-shadow: 0 0 0 1.5px var(--cream-3), 0 2px 4px rgba(3, 7, 14, 0.55); }
+.map-label .ml-icons i.noroad svg { opacity: 0.6; }
+.map-label .ml-icons em { font: 600 var(--t-xs)/18px var(--f-text); font-style: normal; color: var(--cream); background: var(--plate); padding: 0 6px; border: 1px dashed var(--cream-3); border-radius: 1px; box-shadow: 0 2px 4px rgba(3, 7, 14, 0.55); }
+/* zoomed far out: only the needs in trouble, smaller */
+.map-label .ml-icons.far { gap: 3px; margin-top: 3px; }
+.map-label .ml-icons.far i.plenty, .map-label .ml-icons.far i.enough { display: none; }
+.map-label .ml-icons.far i { width: 20px; height: 20px; }
+.map-label .ml-icons.far svg { width: 13px; height: 13px; }
 
 .boost-gain { grid-column: 1 / -1; text-align: right; font-weight: 600; margin-top: -4px; }
 /* supply badge by a site's gate: a small stamped plate, what it is working on and how much it adds */
@@ -504,11 +514,6 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .tw-name { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 1px; }
 .tw-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 700 16px/1.1 var(--f-display); letter-spacing: 0.06em; text-transform: uppercase; }
 .tw-trend { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
-.facts.needs dd .bar { width: 96px; }
-.bar.need.ok i { background: var(--bar-ok); }
-.bar.need.mid i { background: var(--bar-mid); }
-.bar.need.low i { background: var(--bar-low); }
-.facts .need-sub { grid-column: 1 / -1; margin-top: -2px; justify-content: flex-start; }
 .link { background: none; border: 0; padding: 0; color: var(--ochre-hi); text-decoration: underline; text-underline-offset: 3px; font-weight: 600; }
 .link:hover { color: var(--cream); }
 .facts dd .bar.site-grow { width: 110px; }
@@ -522,24 +527,38 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .tn-chart .tc-base { stroke: var(--cream-3); }
 .tn-chart .tc-goal { stroke: var(--cream-2); stroke-dasharray: 4 3; }
 .tn-chart .tc-t { fill: var(--cream-2); font-size: var(--t-xs); font-family: var(--f-text); font-weight: 500; font-variant-numeric: tabular-nums; }
-.tn-next { margin: 10px 0 2px; }
-.tn-next .bar { margin-bottom: 3px; }
-.tn-next-top, .tn-need-top { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
-.tn-need-sub, .tn-next { display: grid; gap: 2px; }
-.tn-next-top { color: var(--cream-2); margin-bottom: 4px; }
-.tn-next .num, .tn-need .num, .tn-need-sub { font-variant-numeric: tabular-nums; }
-.tn-prog i { background: var(--ochre); }
-.tn-needs { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 12px; }
-.tn-need-top { justify-content: flex-start; }
-.tn-need-top b { font-weight: 600; flex: 1; }
-.tn-need-top svg { width: 16px; height: 16px; flex: none; }
-.tn-need .num { font-weight: 600; }
-.tn-need .num.ok { color: var(--good); }
-.tn-need .num.mid { color: var(--ochre-hi); }
-.tn-need .num.low { color: var(--bad); }
-.tn-bar { margin: 6px 0 4px; height: 9px; overflow: visible; }
-/* the mark: what it takes to grow (the whole bar is what its shops buy at most) */
-.tn-bar em { position: absolute; top: -3px; width: 2px; height: 15px; margin-left: -1px; background: var(--cream); }
+/* what it needs, for a child: the picture on a disc ringed by how it is doing, one word, a row of crates (loads a day
+   coming, filled, against loads a day wanted), and what to do. The figures are in the tooltip and under Details. */
+.nd-h { margin-top: 12px; }
+.nds { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 12px; }
+.nd { display: grid; grid-template-columns: 36px minmax(0, 1fr); column-gap: 10px; row-gap: 5px; align-items: center; }
+.nd > :not(.nd-ic) { grid-column: 2; }
+.nd-ic { grid-row: 1 / span 3; align-self: start; width: 36px; height: 36px; display: grid; place-items: center; background: var(--ink); border-radius: 50%; box-shadow: 0 0 0 2px var(--cream-3); }
+.nd-ic svg { width: 22px; height: 22px; display: block; }
+.nd.plenty .nd-ic, .nd.enough .nd-ic { box-shadow: 0 0 0 2px var(--bar-ok); }
+.nd.low .nd-ic { box-shadow: 0 0 0 2px var(--bar-mid); }
+.nd.none .nd-ic { box-shadow: 0 0 0 2.5px var(--bar-low); }
+.nd-top { display: flex; align-items: baseline; gap: 8px; font-size: var(--t-md); line-height: 1.2; }
+.nd-top b { flex: 1; min-width: 0; font-weight: 600; }
+.nd-st { font-weight: 700; white-space: nowrap; }
+.nd.plenty .nd-st, .nd.enough .nd-st { color: var(--good); }
+.nd.low .nd-st { color: var(--ochre-hi); }
+.nd.none .nd-st { color: var(--bad); }
+/* a crate: an empty one is a dashed outline; a filled one is a stamped box in the state's colour with a slat across */
+.nd-crates { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.cr { position: relative; flex: none; width: 16px; height: 16px; border: 1.5px dashed var(--cream-3); border-radius: 1px; overflow: hidden; }
+.cr.on { border: 1px solid var(--edge); background: var(--bar-ok); box-shadow: inset 0 0 0 2px rgba(5, 10, 18, 0.3); }
+.cr.on::after { content: ""; position: absolute; left: 50%; top: 50%; width: 20px; height: 1.5px; margin: -0.75px 0 0 -10px; background: rgba(5, 10, 18, 0.45); transform: rotate(-45deg); }
+.nd.low .cr.on { background: var(--bar-mid); }
+.nd.none .cr { border-color: var(--bad); }
+.nd-each { flex-basis: 100%; font-size: var(--t-xs); line-height: 1.2; color: var(--cream-3); font-variant-numeric: tabular-nums; }
+.nd-say { line-height: 1.35; color: var(--cream-2); }
+.nd.low .nd-say, .nd.none .nd-say { color: var(--cream); font-weight: 600; }
+/* a need still to come: greyed, friendly, no lock */
+.nd-soon { display: flex; align-items: center; gap: 10px; margin: 12px 0 0; padding-top: 10px; border-top: 1px dashed var(--rule-2); color: var(--cream-2); line-height: 1.35; }
+.nd-soon .nd-ic { grid-row: auto; width: 30px; height: 30px; flex: none; box-shadow: 0 0 0 1.5px var(--rule-2); }
+.nd-soon .nd-ic svg { width: 18px; height: 18px; opacity: 0.8; filter: grayscale(1) brightness(1.5); }
+.nd-soon b { font-weight: 600; color: var(--cream); }
 .tn-cost { margin: 12px 0 0; line-height: 1.45; color: var(--cream-2); padding: 8px 10px; background: rgba(156, 58, 40, 0.18); border-left: 3px solid var(--brick); }
 .tn-cost b { color: var(--bad); font-weight: 700; }
 .tw-spark { width: 56px; height: 20px; flex: none; }
@@ -680,7 +699,7 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
   animation: tp-pulse 2.4s cubic-bezier(.2, .6, .35, 1) infinite; }
 .tp-ring .tp-pulse + .tp-pulse { animation-delay: 1.2s; }
 @keyframes tp-pulse { 0% { opacity: .95; transform: scale(1); } 100% { opacity: 0; transform: scale(3.2); } }
-.tp-ring .tp-tag { position: absolute; left: 50%; top: calc(50% + 30px); transform: translateX(-50%); pointer-events: auto; cursor: pointer; white-space: nowrap;
+.tp-ring .tp-tag { position: absolute; left: 50%; top: calc(50% + 46px); transform: translateX(-50%); pointer-events: auto; cursor: pointer; white-space: nowrap;
   padding: 2px 8px; background: var(--ochre); color: var(--ink); font: 700 var(--t-xs)/1.3 var(--f-text); letter-spacing: 0.14em; text-transform: uppercase;
   border-radius: 2px; box-shadow: 0 0 0 1px var(--edge), 0 2px 5px rgba(0, 0, 0, 0.35); }
 .tp-ring:hover .tp-tag, .tp-ring:focus-visible .tp-tag { background: var(--ochre-hi); }
@@ -743,3 +762,82 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .sa-chip:hover { background: var(--plate); }
 .sa-chip:focus-visible { outline: 2px solid var(--ochre); outline-offset: 3px; }
 @media (prefers-reduced-motion: reduce) { .sa-pin .sa-sign { animation: none; } }
+
+/* ------------------------------------------------------------ inspector: one anatomy for every panel (docs/ui-style.md "Inspector") */
+.panel > header.ip-head { gap: 6px; padding-right: 38px; }
+/* the road and junction pictures are drawn dark (asphalt): a light plate behind them in the header */
+.ip-head .svc-tag.lit { background: var(--cream-3); border-radius: var(--r); padding: 2px; box-sizing: border-box; }
+.ip-head .svc-tag.lit svg { width: 20px; height: 20px; }
+.ip-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ip-tn, .ip-ts { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ip-ts { font: 500 var(--t-xs)/1.2 var(--f-text); letter-spacing: 0.02em; text-transform: none; color: var(--cream-2); }
+.lv-badge { flex: none; text-transform: none; padding: 3px 5px; border: 1px solid var(--pin); border-radius: 1px; font: 600 var(--t-xs)/1 var(--f-text); letter-spacing: 0.06em; color: var(--ochre-hi); font-variant-numeric: tabular-nums lining-nums; }
+.ip-act { flex: none; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; background: none; border: 1px solid transparent; border-radius: var(--r); color: var(--cream-2); }
+.ip-act svg { width: 16px; height: 16px; }
+.ip-act:hover { color: var(--cream); background: var(--plate-3); border-color: var(--rule-2); }
+.ip-act.on { color: var(--ochre-hi); border-color: var(--pin); }
+.ip-act.demolish.armed { color: var(--cream); background: var(--brick); border-color: var(--bad); }
+.ip-act:focus-visible, .fchip:focus-visible, .ip-more summary:focus-visible, .ip-flowbtn:focus-visible { outline: 2px solid var(--ochre); outline-offset: 1px; }
+
+/* the status: one sentence, a diamond whose colour repeats what the words say */
+.ip-st { display: flex; gap: 8px; align-items: baseline; margin: 0 0 4px; font-weight: 600; font-size: var(--t-md); line-height: 1.35; }
+.ip-st > i { width: 8px; height: 8px; flex: none; background: var(--cream-3); transform: translateY(-1px) rotate(45deg); }
+.ip-st.good > i { background: var(--good); }
+.ip-st.warn > i { background: var(--ochre); }
+.ip-st.bad > i { background: var(--bad); }
+.ip-st.bad .ip-st-t { color: var(--bad); }
+.ip-st-t { min-width: 0; }
+.ip-tag { margin-left: auto; padding-left: 8px; font: 500 var(--t-xs)/1.35 var(--f-text); color: var(--cream-2); white-space: nowrap; }
+.ip-fix { margin: 0 0 4px 16px; color: var(--cream-2); line-height: 1.4; }
+.ip-st + .ip-keys, .ip-fix + .ip-keys { margin-top: 10px; }
+
+/* the three key numbers: big tabular figures over a small caption, hairline columns */
+.ip-keys { display: grid; grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr)); margin: 10px 0 12px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.ip-key { padding: 8px 0 7px 10px; border-left: 1px solid var(--rule); min-width: 0; }
+.ip-key:first-child { border-left: 0; padding-left: 0; }
+.ip-key b { display: block; font: 600 20px/1.1 var(--f-text); color: var(--cream); font-variant-numeric: tabular-nums lining-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ip-key b small { margin-left: 2px; font-size: var(--t-sm); font-weight: 500; color: var(--cream-2); }
+.ip-key b.good { color: var(--good); }
+.ip-key b.bad { color: var(--bad); }
+.ip-key b.warn { color: var(--ochre-hi); }
+.ip-key span { display: block; margin-top: 2px; font-size: var(--t-xs); line-height: 1.3; color: var(--cream-2); }
+
+/* the flow: where it comes from, where it goes; chips select the place and light it on the map */
+.ip-flow { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 10px; margin: 0 0 12px; align-items: start; }
+.ip-flow dt { display: flex; align-items: center; gap: 6px; padding-top: 5px; font-size: var(--t-xs); letter-spacing: 0.04em; color: var(--cream-2); }
+.ip-flow dt::before { content: ""; width: 7px; height: 7px; flex: none; border: 1px solid var(--cream-3); }
+.ip-flow dt.fl-from::before { background: var(--cream); border-color: var(--cream); }
+.ip-flow dt.fl-to::before, .ip-flow dt.fl-heading-to::before { background: var(--ochre); border-color: var(--ochre); }
+.ip-flow dd { margin: 0; display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.fchip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; min-height: 32px; padding: 3px 8px 3px 5px; background: var(--plate-2); border: 1px solid var(--rule-2); border-radius: var(--r); color: var(--cream); font: 500 var(--t-sm)/1.2 var(--f-text); text-align: left; }
+button.fchip:hover { background: var(--plate-3); border-color: var(--pin); }
+.fchip.still { background: none; border-style: dashed; color: var(--cream-2); }
+.fchip svg { width: 16px; height: 16px; flex: none; }
+.fchip .fc-p { display: inline-flex; margin-left: -3px; }
+.fchip .fc-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fchip em { font-style: normal; font-size: var(--t-xs); color: var(--cream-2); white-space: nowrap; font-variant-numeric: tabular-nums lining-nums; }
+.fchip em.bad { color: var(--bad); }
+.fchip em.good { color: var(--good); }
+
+/* the level: one thin bar and one line */
+.ip-lvl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; align-items: center; margin: 0 0 4px; font-size: var(--t-xs); color: var(--cream-2); }
+.ip-lvl-k { font-weight: 600; color: var(--ochre-hi); font-variant-numeric: tabular-nums lining-nums; }
+.ip-lvl .bar { height: 4px; }
+.ip-lvl .bar i { background: var(--ochre); }
+.ip-lvl-t { grid-column: 2; line-height: 1.35; }
+.ip-lvl-t.bad { color: var(--bad); }
+
+/* everything else, folded away (remembered per kind) */
+.ip-more { margin-top: 12px; border-top: 1px solid var(--rule); }
+.ip-more summary { display: flex; align-items: center; gap: 7px; padding: 9px 0 3px; cursor: pointer; list-style: none; color: var(--cream-2); font-weight: 600; letter-spacing: 0.02em; }
+.ip-more summary::-webkit-details-marker { display: none; }
+.ip-more summary::before { content: ""; width: 0; height: 0; border-style: solid; border-width: 4px 0 4px 6px; border-color: transparent transparent transparent var(--ochre); transition: transform .12s; }
+.ip-more[open] summary::before { transform: rotate(90deg); }
+.ip-more summary:hover { color: var(--cream); }
+.ip-more-body { padding-top: 4px; }
+@media (prefers-reduced-motion: reduce) { .ip-more summary::before { transition: none; } }
+
+.ip-sig { margin-top: 4px; }
+.ip-flowbtn { margin-top: 2px; min-height: 32px; }
+/* a long panel (Details open) stops above the stuck-traffic chip while it shows, instead of running under it */
+body:has(> .sa-chip:not([hidden])) .panel { max-height: calc(100vh - var(--bar-h) - 82px); }

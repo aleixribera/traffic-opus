@@ -3,8 +3,7 @@ import { formatMoney, type V2 } from "../core/math";
 import type { Building } from "../game/buildings";
 import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
 import { MILESTONES, unlockedBy, type Milestone, type Unlocks } from "../game/progression";
-import { ZONES } from "../game/zones";
-import { BUILD_TIME, DEPOT_REACH, FLEET_HAUL, HIST_HOURS, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, SHELF, SUPPLY_STORE, UNPOWERED, isPlantKind, powerPace, type PlantKind, type Product } from "../game/industry";
+import { BUILD_TIME, DEPOT_REACH, HIST_HOURS, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, SHELF, SUPPLY_STORE, UNPOWERED, isPlantKind, powerPace, type PlantKind, type Product } from "../game/industry";
 import { TRUCK_CLASSES, TRUCK_CLASS_ORDER, type TruckClass } from "../game/trucks";
 import { LEVEL_MULT, SITE_LEVELS, growNeed } from "../game/sites";
 import { MARKET, compassWords, served, type Town } from "../game/settlements";
@@ -16,7 +15,10 @@ import { DEPOSIT_KINDS } from "./depositMarks";
 import type { SignalPlan } from "../roads/network";
 import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId } from "../app";
 import { ROUNDABOUTS, type RoundaboutSize } from "../roads/planner";
-import { ICON, placedIcon, productIcon, roadIcon } from "./icons";
+import { ICON, buildingIcon, placedIcon, productIcon, roadIcon } from "./icons";
+import { TradeLedger, approaches, modelOf, sameSel, type FlowChip, type PanelModel, type Sel } from "./inspect";
+import { comingNeeds, growthOf, townNeeds, type NeedView } from "./needs";
+import type { Lane } from "../roads/network";
 import { CHANGELOG } from "../changelog";
 import { PLACED, PLACED_TABS, type PlacedKind } from "../game/placed";
 import { GATE_LINK_REACH, SAVE_V } from "../game/city";
@@ -211,9 +213,12 @@ export class Hud {
   private tab: Record<CatId, string> = { roads: "small", industry: "extraction", transport: "bus" };
   private lastRoad: RoadTypeId = "street";
   private winKind: WinId | null = null;
-  private panelKind: "building" | "signal" | "stop" | "town" | null = null;
-  private stopId = -1;
-  private townId = -1;
+  /** the one thing selected on the map (its panel is open top right) */
+  private sel: Sel | null = null;
+  /** who trades with whom lately (the panels' flow chips) */
+  private ledger = new TradeLedger();
+  /** when the panel's demolish button was armed (a second click within 3 s pulls it down) */
+  private armed = 0;
   private panelNode = -1;
   private panelPhase = 0;
   private tutHidden = false;
@@ -224,6 +229,7 @@ export class Hud {
   private sfx = new Sfx();
 
   constructor(private app: App, parent: HTMLElement) {
+    this.holdPanel();
     parent.appendChild(this.root);
     this.build();
   }
@@ -645,15 +651,8 @@ export class Hud {
     this.clockEl.innerHTML = `<b>${String(Math.floor(hr)).padStart(2, "0")}:${String(mm).padStart(2, "0")}</b>${seasonLine(g.time)}`;
     this.clockEl.classList.toggle("night", hr < 6 || hr >= 21);
     this.renderTips();
-    if (this.panelKind === "town") this.fillTown();
-    if (this.panelKind === "stop") {
-      if (!g.transit.stops.has(this.stopId)) this.closeSelection();
-      else this.fillStop();
-    }
-    if (this.panelKind === "building" && this.app.selected) {
-      if (!g.buildings.byId.has(this.app.selected.id)) { this.closeSelection(); this.app.selected = null; }
-      else this.fillBuilding(this.app.selected);
-    }
+    this.ledger.observe(g);
+    if (this.sel) this.fillSel();
     if (this.winKind) this.fillWin();
   }
 
@@ -664,7 +663,7 @@ export class Hud {
   private renderTips() {
     const g = this.app.game;
     const tip = this.tipFor();
-    if (this.panelKind || this.app.mode !== "play") { this.tut.hidden = true; this.hint(null); return; }
+    if (this.sel || this.app.mode !== "play") { this.tut.hidden = true; this.hint(null); return; }
     this.tut.hidden = false;
     const open = g.progress.open();
     const v = g.progressView();
@@ -964,7 +963,7 @@ export class Hud {
   back(): boolean {
     if (!this.banner.hidden) { this.nextBanner(); return true; }
     if (!this.modal.hidden) { this.closeModal(); return true; }
-    if (this.panelKind) { this.closeSelection(); this.app.selected = null; return true; }
+    if (this.sel) { this.closeSelection(); return true; }
     if (this.winKind) { this.closeWin(); return true; }
     if (this.app.st.tool !== "inspect") { this.cat = null; this.app.setTool({ tool: "inspect" }); return true; }
     if (this.cat) { this.cat = null; this.refresh(); return true; }
@@ -973,15 +972,21 @@ export class Hud {
 
   /** Called when the tool changes away from inspecting: the selection panel gives way. */
   closePanels(): boolean {
-    const was = !!this.panelKind;
+    const was = !!this.sel;
     this.closeSelection();
     return was;
   }
 
   private closeSelection() {
     this.panel.hidden = true;
-    this.panelKind = null;
+    this.sel = null;
     this.lastPanel = "";
+    this.armed = 0;
+    this.app.sel = null;
+    this.app.selected = null;
+    this.app.highlight.set(null);
+    this.app.followVehicle(null);
+    this.renderTips();
   }
 
   private closeModal() {
@@ -1140,12 +1145,10 @@ export class Hud {
     const s = g.people.stats;
     const rows = g.towns.list.map((t) => {
       const tr = trendOf(t);
-      // its worst-supplied need
-      let worst: Product | null = null;
-      for (const p of needsOf(t.pop)) if (t.supply[p] !== undefined && (worst === null || t.supply[p]! < t.supply[worst]!)) worst = p;
-      const ws = worst ? t.supply[worst]! : 1;
+      // its worst-supplied need, in the panel's words ("Food · Running low")
+      const worst = townNeeds(t).reduce<NeedView | null>((w, v) => (!w || v.got / v.want < w.got / w.want ? v : w), null);
       const need = worst && t.pop >= 60
-        ? `<span class="tw-need ${ws >= 0.8 ? "" : ws >= 0.5 ? "mid" : "low"}">${productIcon(worst)}${PRODUCTS[worst].name} ${Math.round(ws * 100)}%</span>`
+        ? `<span class="tw-need ${worst.state === "low" ? "mid" : worst.state === "none" ? "low" : ""}">${productIcon(worst.p)}${PRODUCTS[worst.p].name} · ${worst.word}</span>`
         : "";
       return `<li><button class="tw-row" data-id="${t.id}"><span class="tw-name"><b>${escapeHtml(t.name)}</b><span class="small muted">${g.towns.sizeName(t)} · ${fmtNum(t.pop)} people</span></span>${miniSpark(t.hist.pop.slice(-72))}<span class="tw-right"><span class="tw-trend ${tr.cls}">${tr.short}</span>${need}</span></button></li>`;
     }).join("");
@@ -1253,7 +1256,7 @@ export class Hud {
 
   /** Bus line routes are drawn on the map while the lines list or a stop is open. */
   get linesShown(): boolean {
-    return this.winKind === "transport" || this.panelKind === "stop";
+    return this.winKind === "transport" || this.sel?.k === "stop";
   }
 
   /** Open the lines list with one line picked out. */
@@ -1262,76 +1265,221 @@ export class Hud {
     this.app.transit3d.focus = id;
   }
 
-  openStop(id: number) {
-    this.panelKind = "stop";
-    this.stopId = id;
-    this.lastPanel = "";
-    this.panel.hidden = false;
-    this.fillStop();
-  }
-
-  private fillStop() {
-    const tr = this.app.game.transit, st = tr.stops.get(this.stopId);
-    if (!st) return;
-    const lines = [...tr.lines.values()].filter((l) => l.stops.includes(st.id));
-    const ls = lines.length
-      ? `<ul class="bus-lines">${lines.map((l) => `<li class="bl"><i class="bl-sw" style="background:${hex(l.color)}"></i><span class="bl-name"><b>${l.name}</b><span class="small muted">${tr.busesOn(l.id)} buses · ${fmtNum(l.riders)} riders/h</span></span></li>`).join("")}</ul>`
-      : `<p class="status">No line stops here yet: draw one with Transport › Bus line.</p>`;
-    const html = `<header><span class="svc-tag">${ICON.busStop}</span>Bus stop</header>
-      <dl class="facts"><dt>Waiting</dt><dd>${st.wait.length}</dd></dl>
-      ${ls}
-      <button class="btn quiet danger demolish">Remove stop</button>`;
-    if (!this.setPanel(html)) return;
-    (this.panel.querySelector(".demolish") as HTMLButtonElement).onclick = () => {
-      tr.removeStop(st.id);
-      this.sfx.play("remove");
-      this.closeSelection();
-    };
-  }
-
   // ---------------------------------------------------------------- selection panel (top right)
 
   /** Set the panel's HTML only when it changed (keeps focus and hover steady under the live refresh). */
   private setPanel(html: string): boolean {
     if (html === this.lastPanel) return false;
+    // a button held down in the panel keeps it as it is until let go (a vehicle's numbers change four times a
+    // second: replacing the button between press and release would lose the click)
+    if (this.panelHeld) { this.panelHeld = 2; return false; }
+    // keyboard focus on a control stays on the same control in the new panel
+    const was = document.activeElement instanceof HTMLElement && this.panel.contains(document.activeElement) ? focusKey(document.activeElement) : null;
     this.lastPanel = html;
     this.panel.innerHTML = `<button class="close" aria-label="Close">${ICON.close}</button>${html}`;
-    (this.panel.querySelector(".close") as HTMLButtonElement).onclick = () => { this.closeSelection(); this.app.selected = null; };
+    if (was) (this.panel.querySelector<HTMLElement>(was) ?? null)?.focus({ preventScroll: true });
+    (this.panel.querySelector(".close") as HTMLButtonElement).onclick = () => { this.sfx.play("click"); this.closeSelection(); };
+    const more = this.panel.querySelector<HTMLDetailsElement>(".ip-more");
+    if (more) more.ontoggle = () => { setMoreOpen(more.dataset.k!, more.open); };
+    for (const c of this.panel.querySelectorAll<HTMLButtonElement>(".fchip[data-k]")) c.onclick = () => {
+      this.sfx.play("click");
+      const s = { k: c.dataset.k, id: +c.dataset.id! } as Sel;
+      this.openSel(s);
+      const at = s.k === "town" ? this.app.game.towns.byId.get(s.id)?.c : s.k === "building" ? this.app.game.buildings.byId.get(s.id)?.c : undefined;
+      if (at && !this.app.onScreen(at)) this.app.glideTo(at, this.app.view.halfH, 1);
+    };
     return true;
   }
 
-  openTown(id: number) {
-    this.panelKind = "town";
-    this.townId = id;
-    this.app.selected = null;
-    this.lastPanel = "";
-    this.panel.hidden = false;
-    this.fillTown();
+  /** 1: a pointer is down in the panel; 2: and a refresh waited for it */
+  private panelHeld = 0;
+  private holdPanel() {
+    this.panel.addEventListener("pointerdown", () => { this.panelHeld = 1; });
+    const up = () => {
+      if (!this.panelHeld) return;
+      const late = this.panelHeld === 2;
+      this.panelHeld = 0;
+      // (after the click has run: then catch up on what changed meanwhile)
+      if (late) setTimeout(() => { if (this.sel) this.fillSel(); }, 0);
+    };
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   }
 
-  private fillTown() {
-    const g = this.app.game, t = g.towns.byId.get(this.townId);
-    if (!t) { this.closeSelection(); return; }
+  /** Select something on the map and open its panel (the one selection: whatever was open gives way). */
+  openSel(s: Sel) {
+    if (!sameSel(this.sel, s)) { this.lastPanel = ""; this.armed = 0; }
+    this.sel = s;
+    this.app.sel = s;
+    this.app.selected = s.k === "building" ? this.app.game.buildings.byId.get(s.id) ?? null : null;
+    if (s.k !== "vehicle") this.app.followVehicle(null);
+    this.panel.hidden = false;
+    this.fillSel();
+    this.renderTips();
+  }
+
+  openTown(id: number) { this.openSel({ k: "town", id }); }
+  openStop(id: number) { this.openSel({ k: "stop", id }); }
+  openBuilding(b: Building) { this.openSel({ k: "building", id: b.id }); }
+  openSignal(node: number) {
+    if (!(this.sel?.k === "node" && this.sel.id === node)) this.panelPhase = 0;
+    this.panelNode = node;
+    this.openSel({ k: "node", id: node });
+  }
+
+  private fillSel() {
+    const s = this.sel;
+    if (!s) return;
+    const g = this.app.game;
+    const m = modelOf(g, s, this.ledger, compass);
+    if (!m) { this.closeSelection(); return; }
+    this.app.highlight.set(m.related);
+    if (s.k === "building") this.fillBuilding(g.buildings.byId.get(s.id)!, m);
+    else if (s.k === "town") this.fillTown(m);
+    else if (s.k === "vehicle") this.fillVehicle(m);
+    else if (s.k === "seg") this.fillRoad(m);
+    else if (s.k === "node") this.fillSignal(m);
+    else this.fillStop(m);
+  }
+
+  /**
+   * One panel anatomy for everything (docs/ui-style.md "Inspector"): the header with its level and small actions,
+   * a status line with its mark, three key numbers, the flow in and out as chips, the level bar, then whatever else
+   * there is to read tucked under Details (open or shut per kind, remembered).
+   */
+  private anatomy(m: PanelModel, o: { actions?: string; lead?: string; body?: string; details?: string; kind: string }): string {
+    const st = m.status;
+    const keys = m.keys.length ? `<div class="ip-keys" style="--n:${m.keys.length}">${m.keys.map((k) => `<div class="ip-key"${k.title ? ` title="${escapeHtml(k.title)}"` : ""}><b class="${k.tone ?? ""}">${escapeHtml(k.value)}${k.unit ? `<small>${escapeHtml(k.unit)}</small>` : ""}</b><span>${escapeHtml(k.label)}</span></div>`).join("")}</div>` : "";
+    const chip = (c: FlowChip) => {
+      // (a product with no picture of its own would show the plain diamond the status line uses: left out)
+      const pIcon = c.product && productIcon(c.product) !== NO_PRODUCT_ICON ? productIcon(c.product) : "";
+      const icon = c.town ? ICON.town : c.kind ? (isPlantKind(c.kind) ? placedIcon(c.kind) : buildingIcon(c.kind as BuildingKind, "")) : pIcon;
+      // (a place shows its cargo as a small product mark beside its own icon)
+      const prod = pIcon && (c.kind || c.town) ? `<span class="fc-p">${pIcon}</span>` : "";
+      const body = `${icon}${prod}<span class="fc-t">${escapeHtml(c.text)}</span>${c.note ? `<em class="${c.tone ?? ""}">${escapeHtml(c.note)}</em>` : ""}`;
+      return c.ref
+        ? `<button class="fchip" data-k="${c.ref.k}" data-id="${c.ref.id}" title="Select ${escapeHtml(c.text)} and light it up on the map">${body}</button>`
+        : `<span class="fchip still">${body}</span>`;
+    };
+    const flow = m.flow.length ? `<dl class="ip-flow">${m.flow.map((r) => `<dt class="fl-${r.label.toLowerCase().replace(/\s+/g, "-")}">${escapeHtml(r.label)}</dt><dd>${r.chips.map(chip).join("")}</dd>`).join("")}</dl>` : "";
+    const lv = m.level ? `<div class="ip-lvl"><span class="ip-lvl-k">${escapeHtml(m.level.label)}</span><span class="bar" role="img" aria-label="${Math.round(m.level.pct * 100)}% of the way"><i style="width:${Math.max(2, m.level.pct * 100)}%"></i></span><span class="ip-lvl-t ${m.level.tone ?? ""}">${escapeHtml(m.level.line)}</span></div>` : "";
+    const open = moreOpen(o.kind);
+    const details = o.details ? `<details class="ip-more" data-k="${o.kind}"${open ? " open" : ""}><summary>Details</summary><div class="ip-more-body">${o.details}</div></details>` : "";
+    return `<header class="ip-head"><span class="svc-tag${/^(junction|roundabout|road:)/.test(m.icon) ? " lit" : ""}">${iconFor(m.icon)}</span><span class="ip-t"><span class="ip-tn">${escapeHtml(m.title)}</span>${m.sub ? `<small class="ip-ts">${escapeHtml(m.sub)}</small>` : ""}</span>${m.badge ? `<span class="lv-badge" title="Site level">${m.badge}</span>` : ""}${o.actions ?? ""}</header>
+      <p class="ip-st ${st.tone}"><i aria-hidden="true"></i><span class="ip-st-t">${escapeHtml(st.text)}</span>${st.tag ? `<span class="ip-tag">${escapeHtml(st.tag)}</span>` : ""}</p>
+      ${st.fix ? `<p class="ip-fix">${escapeHtml(st.fix)}</p>` : ""}
+      ${o.lead ?? ""}${keys}${flow}${lv}${o.body ?? ""}${details}`;
+  }
+
+  /** The small icon buttons in a panel's header: demolish (two clicks), follow. */
+  private actionBtn(cls: string, icon: string, label: string, on?: boolean): string {
+    // (`on` given: a toggle, whose state screen readers hear either way)
+    return `<button class="ip-act ${cls}${on ? " on" : ""}" aria-label="${label}" title="${label}"${on === undefined ? "" : ` aria-pressed="${on}"`}>${icon}</button>`;
+  }
+
+  private demolishBtn(what: string): string {
+    const armed = this.armed && performance.now() - this.armed < 3000;
+    return this.actionBtn(`demolish${armed ? " armed" : ""}`, ICON.bulldoze, armed ? `Click again to ${what}` : cap(what));
+  }
+
+  /** Two clicks to pull something down: the first arms the button (it turns brick), the second within 3 s does it. */
+  private bindDemolishBtn(fn: () => void) {
+    const btn = this.panel.querySelector<HTMLButtonElement>(".ip-act.demolish");
+    if (!btn) return;
+    btn.onclick = () => {
+      if (this.armed && performance.now() - this.armed < 3000) { this.armed = 0; fn(); return; }
+      this.armed = performance.now();
+      this.sfx.play("click");
+      this.lastPanel = "";
+      this.fillSel();
+      setTimeout(() => { if (this.armed && performance.now() - this.armed >= 3000) { this.armed = 0; this.lastPanel = ""; this.fillSel(); } }, 3100);
+    };
+  }
+
+  private fillStop(m: PanelModel) {
+    const tr = this.app.game.transit, st = tr.stops.get(this.sel!.id)!;
+    const lines = [...tr.lines.values()].filter((l) => l.stops.includes(st.id));
+    const ls = lines.length ? `<ul class="bus-lines">${lines.map((l) => `<li class="bl"><i class="bl-sw" style="background:${hex(l.color)}"></i><span class="bl-name"><b>${l.name}</b><span class="small muted">${tr.busesOn(l.id)} buses · ${fmtNum(l.riders)} riders/h</span></span></li>`).join("")}</ul>` : "";
+    const html = this.anatomy(m, { kind: "stop", actions: this.demolishBtn("remove the stop"), body: ls });
+    if (!this.setPanel(html)) return;
+    this.bindDemolishBtn(() => { tr.removeStop(st.id); this.sfx.play("remove"); this.closeSelection(); });
+  }
+
+  private fillVehicle(m: PanelModel) {
+    const g = this.app.game, v = g.traffic.vehicles.find((x) => x.id === this.sel!.id)!;
+    const tr = v.trip, h = tr.haul;
+    const rows: [string, string][] = [];
+    if (h && !h.big) rows.push(["Truck", `${TRUCK_CLASSES[h.cls ?? "light"].name} · ${Math.round(v.len)} m`]);
+    if (h && h.leg === "out" && !h.big) rows.push(["Load", `${plural(h.n, "load")} of ${PRODUCTS[h.product].name.toLowerCase()}`]);
+    if (h && h.leg === "back") rows.push(["Load", "Empty, on its way back"]);
+    if (tr.bus) rows.push(["Aboard", plural(tr.bus.pax.length, "rider")]);
+    const elapsed = Math.max(0, g.time - tr.startT);
+    rows.push(["On the road", `${Math.round((elapsed / HOUR) * 60)} min`]);
+    if (tr.freeFlow > 0 && elapsed > tr.freeFlow * 1.15) rows.push(["Held up", `<span class="bad">+${Math.round(((elapsed - tr.freeFlow) / HOUR) * 60)} min</span> <span class="muted">over a clear road</span>`]);
+    if (v.block && v.v < 0.5) rows.push(["Waiting for", escapeHtml(v.block)]);
+    const on = v.edge.kind === "lane" ? g.net.segs.get((v.edge as Lane).seg) : undefined;
+    if (on) rows.push(["On", `${ROAD_TYPES[on.type].name} · ${Math.round(ROAD_TYPES[on.type].speed * 3.6)} km/h`]);
+    const details = `<dl class="facts">${rows.map(([k, x]) => `<dt>${k}</dt><dd>${x}</dd>`).join("")}</dl><p class="small muted">The dashed line on the map is the way it will take; its start and end are outlined.</p>`;
+    const following = this.app.following === v.id;
+    const html = this.anatomy(m, { kind: "vehicle", details, actions: this.actionBtn("follow", ICON.follow, "Follow with the camera", following) });
+    if (!this.setPanel(html)) return;
+    const f = this.panel.querySelector<HTMLButtonElement>(".ip-act.follow");
+    if (f) f.onclick = () => { this.sfx.play("click"); this.app.followVehicle(this.app.following === v.id ? null : v.id); this.lastPanel = ""; this.fillSel(); };
+  }
+
+  private fillRoad(m: PanelModel) {
+    const g = this.app.game, id = this.sel!.id, s = g.net.segs.get(id)!, geo = g.net.segGeom.get(id)!, T = ROAD_TYPES[s.type];
+    const dirRow = (k: number, name: string) => {
+      const f = g.traffic.flow.get(k);
+      const lanes = k % 2 === 0 ? T.fwd : T.bwd;
+      if (!lanes) return "";
+      return `<dt>${name}</dt><dd>${f ? `${plural(f.n, "vehicle")} · ${Math.round(f.speed * 100)}% speed${f.queue ? ` · <span class="bad">${f.queue} queued</span>` : ""}` : "empty"}</dd>`;
+    };
+    const a = g.net.nodes.get(s.a)!.p, b = g.net.nodes.get(s.b)!.p;
+    const d = { x: b.x - a.x, y: b.y - a.y };
+    const flowOn = this.app.overlay === "flow";
+    const details = `<dl class="facts">
+        <dt>Type</dt><dd>${T.name} · ${T.short}</dd>
+        <dt>Speed limit</dt><dd>${Math.round(T.speed * 3.6)} km/h</dd>
+        <dt>Length</dt><dd>${Math.round(geo.center.length)} m</dd>
+        ${dirRow(id * 2, `Toward ${compass(d)}`)}${dirRow(id * 2 + 1, `Toward ${compass({ x: -d.x, y: -d.y })}`)}
+        ${s.town !== undefined ? `<dt>Laid by</dt><dd>${escapeHtml(g.towns.byId.get(s.town)?.name ?? "a town")} <span class="muted">· no upkeep</span></dd>` : ""}
+      </dl>`;
+    const body = `<button class="btn quiet ip-flowbtn" aria-pressed="${flowOn}">${ICON.layers}${flowOn ? "Hide the traffic flow view" : "Show traffic flow on every road"}</button>`;
+    const html = this.anatomy(m, { kind: "road", details, body });
+    if (!this.setPanel(html)) return;
+    const fb = this.panel.querySelector<HTMLButtonElement>(".ip-flowbtn");
+    if (fb) fb.onclick = () => { this.sfx.play("click"); this.app.setOverlay("flow"); this.lastPanel = ""; this.fillSel(); };
+  }
+
+  private fillTown(m: PanelModel) {
+    const g = this.app.game, t = g.towns.byId.get(this.sel!.id)!;
     const si = sizeOf(t.pop), next = TOWN_SIZES[si + 1];
-    const tr = trendOf(t);
-    // its needs: what it takes to grow (the mark), what its shops buy at most (the whole bar), what came yesterday
+    // its needs, readable by a child (docs/design.md, 2026-11-08): per product its picture, one word for how it is
+    // doing, a row of crates (loads a day coming against loads a day wanted) and what to do. The figures sit in each
+    // row's tooltip and under Details.
     const mine = g.towns.buildingsOf(t);
     const stations = mine.filter((b) => BUILDING_TYPES[b.kind].fuel).length;
     const offices = mine.some((b) => Industry.isOffice(b) && b.built >= 1 && !b.abandoned);
-    const needs = needsOf(t.pop).map((p) => {
-      const buyer = p === "fuel" && stations ? "Filling stations buy" : p === "machinery" && offices ? "Offices buy" : "Shops buy";
-      const share = t.supply[p];
-      const want = demandPerDay(p, t.pop), market = want * MARKET;
-      const got = t.yesterday[p] ?? 0, today = t.today[p] ?? 0;
-      const pct = share === undefined ? null : Math.round(share * 100);
-      const col = share === undefined ? "" : share >= 0.8 ? "ok" : share >= 0.5 ? "mid" : "low";
-      const fill = Math.min(100, (got / market) * 100);
-      return `<li class="tn-need">
-          <span class="tn-need-top">${productIcon(p)}<b>${PRODUCTS[p].name}</b><span class="num ${col}">${pct === null ? "New need" : `${pct}% of needs`}</span></span>
-          <span class="bar need ${col} tn-bar" role="img" aria-label="${fmtLoads(got)} loads yesterday, ${fmtLoads(want)} needed to grow, ${buyer.toLowerCase()} up to ${fmtLoads(market)}"><i style="width:${Math.max(1.5, fill)}%"></i><em style="left:${100 / MARKET}%"></em></span>
-          <span class="tn-need-sub small muted"><span>Yesterday ${fmtLoads(got)} of ${fmtLoads(want)} needed</span><span>${buyer} up to ${fmtLoads(market)} · ${fmtLoads(today)} so far today</span></span>
+    const buyer = (p: Product) => (p === "fuel" && stations ? "Filling stations buy" : p === "machinery" && offices ? "Offices buy" : "Shops buy");
+    const views = townNeeds(t);
+    const rows = views.map((v) => {
+      const tip = `${fmtLoads(v.got)} loads a day coming, of the ${fmtLoads(v.want)} it needs to grow. ${buyer(v.p)} up to ${fmtLoads(v.want * MARKET)} a day; ${fmtLoads(t.today[v.p] ?? 0)} so far today.`;
+      const crates = Array.from({ length: v.crates.n }, (_, i) => `<i class="cr${i < v.crates.full ? " on" : ""}"></i>`).join("");
+      const each = v.crates.per > 1 ? `<span class="nd-each">1 crate = ${fmtNum(v.crates.per)} loads</span>` : "";
+      return `<li class="nd ${v.state}" title="${escapeHtml(tip)}">
+          <span class="nd-ic" aria-hidden="true">${productIcon(v.p)}</span>
+          <span class="nd-top"><b>${PRODUCTS[v.p].name}</b><span class="nd-st">${v.word}</span></span>
+          <span class="nd-crates" role="img" aria-label="${v.crates.full} of ${v.crates.n} crates filled">${crates}${each}</span>
+          <span class="nd-say">${escapeHtml(v.say)}</span>
         </li>`;
     }).join("");
+    const cn = comingNeeds(t.pop);
+    const soon = cn
+      ? `<p class="nd-soon">${cn.products.map((p) => `<span class="nd-ic" aria-hidden="true">${productIcon(p)}</span>`).join("")}<span><b>Soon: ${cn.products.map((p) => PRODUCTS[p].name).join(" and ")}</b> <span class="muted">when it reaches ${fmtNum(cn.pop)} people</span></span></p>`
+      : "";
+    const lead = `<h3 class="sub-h nd-h">What it needs</h3><ul class="nds">${rows}</ul>${soon}`;
+    const figures = views.map((v) => `<dt title="${buyer(v.p)} up to ${fmtLoads(v.want * MARKET)} a day; ${fmtLoads(t.today[v.p] ?? 0)} so far today">${PRODUCTS[v.p].name}</dt><dd>${fmtLoads(v.got)} <span class="muted">of ${fmtLoads(v.want)}</span></dd>`).join("");
     // what it is short of, and what that costs it
     const shortOf = needsOf(t.pop).filter((p) => (t.supply[p] ?? 1) < 0.8);
     let cost = "";
@@ -1357,64 +1505,37 @@ export class Hud {
     }
     const hall = g.buildings.byId.get(t.hall);
     const hallLine = hall ? `${BUILDING_TYPES[hall.kind].name}${hall.built < 1 ? ` <span class="muted">· building, ${Math.round(hall.built * 100)}%</span>` : ""}` : "None yet";
-    // how far to its next size, and what that size will need as well
-    const adds = next ? next.adds.filter((p) => needFrom(p) === next.pop).map((p) => PRODUCTS[p].name.toLowerCase()) : [];
-    const progress = next
-      ? `<div class="tn-next"><span class="tn-next-top"><span>${next.name} at ${fmtNum(next.pop)} people</span><span class="num">${Math.min(99, Math.floor((t.pop / next.pop) * 100))}%</span></span><span class="bar tn-prog"><i style="width:${Math.max(1.5, Math.min(100, (t.pop / next.pop) * 100))}%"></i></span>${adds.length ? `<span class="small muted">As a ${next.name.toLowerCase()} it needs ${adds.join(" and ")} as well</span>` : ""}</div>`
-      : "";
-    // a need that comes before the next size (cement in a grown village)
-    const nn = nextNeed(t.pop);
-    const soon = nn && (!next || nn.pop < next.pop) ? nextLine(t.pop, next) : "";
-    const html = `<header><span class="svc-tag">${ICON.town}</span>${escapeHtml(t.name)}<span class="muted head-sub">${TOWN_SIZES[si].name}</span></header>
-      <p class="status ${tr.cls}">${tr.long}</p>
-      ${townChart(t, next)}
-      ${progress}
+    const details = `${townChart(t, next)}
       <dl class="facts">
-        <dt>People</dt><dd>${fmtNum(t.pop)}</dd>
         <dt>Households</dt><dd>${fmtNum(t.households)} <span class="muted">of ${fmtNum(t.homes)} homes</span></dd>
+        <dt>Growth</dt><dd class="${t.trend >= 0.5 ? "good" : t.trend <= -0.5 ? "bad" : ""}">${Math.abs(t.trend) < 0.5 ? "none" : `${t.trend > 0 ? "+" : "−"}${plural(Math.abs(Math.round(t.trend)), "household")} a day`}</dd>
         <dt>Shops and offices</dt><dd>${t.shops} <span class="muted">· ${fmtNum(jobs)} jobs</span></dd>
         <dt>Hall</dt><dd>${hallLine}</dd>
         ${rebuilding ? `<dt>Rebuilding</dt><dd>${plural(rebuilding, "site")}</dd>` : ""}
         ${stations ? `<dt>Filling stations</dt><dd>${stations}</dd>` : ""}
         ${waiting ? `<dt>Waiting for parts</dt><dd class="${waiting > 3 ? "bad" : ""}">${plural(waiting, "block")}, ${plural(partsLeft, "load")}</dd>` : ""}
       </dl>
-      <h3 class="sub-h">Needs, loads a day</h3>
-      <ul class="tn-needs">${needs}</ul>
+      <h3 class="sub-h">Needs in figures <span class="muted">loads a day</span></h3>
+      <dl class="facts">${figures}</dl>
+      <p class="small muted">Its shops buy up to ${MARKET}× what it needs to grow, so extra loads still sell.</p>
       ${cost}
-      ${soon}
       <h3 class="sub-h">Delivered yesterday</h3>
       ${deliveries}`;
-    this.setPanel(html);
+    this.setPanel(this.anatomy(m, { kind: "town", lead, details }));
   }
 
-  openBuilding(b: Building) {
-    this.panelKind = "building";
-    this.lastPanel = "";
-    this.panel.hidden = false;
-    this.fillBuilding(b);
-  }
-
-  private fillBuilding(b: Building) {
+  private fillBuilding(b: Building, m: PanelModel) {
     const g = this.app.game;
     const T = BUILDING_TYPES[b.kind];
-    const rows: [string, string][] = [];
-    let status = "", statusCls = "";
+    const demolish = () => { g.bulldoze([], [b.id]); this.closeSelection(); this.sfx.play("remove"); };
+    const act = this.demolishBtn("demolish");
     if (b.plant && isPlantKind(b.kind)) {
       const D = PLANTS[b.kind], P = b.plant;
-      let busy = 0;
-      for (const tr of g.trips()) if (tr.haul && !tr.haul.done && tr.haul.plant === b.id) busy++;
-      if (P.site) { status = "Building site: waiting for materials"; }
-      else if (b.built < 1) { status = `Under construction · ${Math.round(b.built * 100)}%`; }
-      else if (b.problem) { status = b.problem; statusCls = "bad"; }
-      else { status = "Working normally"; statusCls = "good"; }
-      // a landmark's site: its ring and stage, materials and pieces, and what it will do once open
+      const chain = `<p class="small muted ip-chain">${chainText(b.kind)}</p>`;
+      // a landmark's site: its ring and stage, materials and pieces, and what it will do once open (it is the panel)
       const lmSite = landmarkSite(g, b);
       if (lmSite) {
-        const html = `<header><span class="svc-tag">${placedIcon(b.kind)}</span>${T.name}</header>
-          <p class="muted small">${chainText(b.kind)}</p>
-          ${lmSite}
-          <button class="btn quiet danger demolish">Demolish</button>`;
-        if (this.setPanel(html)) this.bindDemolish(b);
+        if (this.setPanel(this.anatomy(m, { kind: b.kind, actions: act, body: `${chain}${lmSite}` }))) this.bindDemolishBtn(demolish);
         return;
       }
       // a site: the materials trucked to it so far
@@ -1423,15 +1544,8 @@ export class Hud {
           const need = P.site!.need[p]!, got = Math.min(need, P.site!.got[p] ?? 0);
           return `<dt>${PRODUCTS[p].name}</dt><dd>${stockBar(got, need, PRODUCTS[p].color)}<span class="num">${Math.floor(got)} / ${need}</span></dd>`;
         }).join("");
-        let coming = 0;
-        for (const tr of g.trips()) if (tr.haul && !tr.haul.done && tr.haul.leg === "out" && tr.haul.dest === b.id) coming += tr.haul.n;
-        const html = `<header><span class="svc-tag">${placedIcon(b.kind)}</span>${T.name}</header>
-          <p class="muted small">${chainText(b.kind)}</p>
-          <p class="status">${status}</p>
-          <h3 class="sub-h">Materials delivered</h3><dl class="facts">${mats}</dl>
-          <p class="small muted">${coming ? `${plural(coming, "load")} on the way. ` : ""}Your plants that make them truck them here; once all are in, it takes ${BUILD_TIME / HOUR} hours to build. No wages or upkeep until then.</p>
-          <button class="btn quiet danger demolish">Demolish</button>`;
-        if (this.setPanel(html)) this.bindDemolish(b);
+        const body = `<dl class="facts">${mats}</dl><p class="small muted">Once all are in it takes ${BUILD_TIME / HOUR} hours to build. No wages or upkeep until then.</p>`;
+        if (this.setPanel(this.anatomy(m, { kind: b.kind, actions: act, body: chain + body }))) this.bindDemolishBtn(demolish);
         return;
       }
       const pw = D.power && b.built >= 1 ? g.utilities.supplyOf(b) : null;
@@ -1482,28 +1596,21 @@ export class Hud {
       if (logi) {
         const held = Industry.stored(b);
         const body = logi === "warehouse" ? this.warehouseBody(b, store, held) : this.depotBody(b, store);
-        const html = `<header><span class="svc-tag">${placedIcon(b.kind)}</span>${T.name}</header>
-          <p class="muted small">${chainText(b.kind)}</p>
-          <p class="status ${statusCls}">${status}</p>
-          ${body}
-          ${D.trucks ? `<dl class="facts">${classRow}<dt>Trucks out</dt><dd>${busy} of ${g.industry.trucksOf(b)}</dd></dl>` : ""}
-          <button class="btn quiet danger demolish">Demolish</button>`;
-        if (this.setPanel(html)) this.bindDemolish(b);
+        const details = `${chain}${body}${D.trucks ? `<dl class="facts">${classRow}</dl>` : ""}`;
+        if (this.setPanel(this.anatomy(m, { kind: b.kind, actions: act, details }))) this.bindDemolish(b, demolish);
         return;
       }
-      const html = `<header><span class="svc-tag">${placedIcon(b.kind)}</span>${T.name}</header>
-        <p class="muted small">${chainText(b.kind)}</p>
-        <p class="status ${statusCls}">${status}</p>
+      const details = `${chain}
         ${b.built >= 1 ? outputDay(b) : ""}
         ${ins ? `<h3 class="sub-h">In the yard</h3><dl class="facts">${ins}</dl>` : ""}
         ${outs ? `<h3 class="sub-h">Ready to ship</h3><dl class="facts">${outs}</dl>` : ""}
         ${flare ? `<p class="small muted">Its yard is full of ${PRODUCTS[flare].name.toLowerCase()}: ${g.industry.wants(flare) ? `your ${Industry.takers(flare)} can't take more for now` : Industry.usedBy(flare) ? `nothing of yours uses it until you build a ${Industry.takers(flare)}` : `nothing of yours uses it until tier ${Industry.laterTier(flare)}`}, so it burns off the rest and keeps making ${(Object.keys(D.outputs) as Product[]).filter((p) => p !== flare).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ")}.</p>` : ""}
         ${supRows ? `<h3 class="sub-h">Supplies</h3><dl class="facts">${supRows}</dl><p class="small muted">${supNote}</p>` : ""}
-        ${isMega(b.kind) ? landmarkDone(g, b) : siteLevel(b, sup.filter((s) => !s.now).map((s) => s.p))}
+        ${isMega(b.kind) ? "" : siteLevel(b, sup.filter((s) => !s.now).map((s) => s.p))}
+        <h3 class="sub-h">Running it</h3>
         <dl class="facts">
-          ${plantRows}${powerRow}${specialRows(g, b, stockBar)}
+          ${plantRows}${powerRow}${specialRows(g, b, stockBar, false)}
           ${classRow}
-          ${D.trucks ? `<dt>Trucks out</dt><dd title="Its fleet comes with its level: enough trucks to carry everything it makes ${FLEET_HAUL / 1000} km away and back">${busy} of ${g.industry.trucksOf(b)}</dd>` : ""}
           <dt>Staff</dt><dd>${g.people.workersAt(b.id)} / ${b.cap}</dd>
           ${D.deposit ? `<dt>${cap(D.deposit.name)}</dt><dd>${Math.round(P.yld * 100)}% of full yield</dd>` : ""}
         </dl>
@@ -1514,23 +1621,17 @@ export class Hud {
           <dt>Earned</dt><dd class="${L.earned > 0 ? "good" : ""}">${signed(L.earned)}</dd>
           <dt>Spent</dt><dd class="${L.spent > 0 ? "bad" : ""}">${signed(-L.spent)}</dd>
           ${freshRows}
-        </dl>
-        <button class="btn quiet danger demolish">Demolish</button>`;
-      if (this.setPanel(html)) this.bindDemolish(b);
+        </dl>`;
+      const body = isMega(b.kind) ? landmarkDone(g, b) : "";
+      if (this.setPanel(this.anatomy(m, { kind: b.kind, actions: act, body, details }))) this.bindDemolishBtn(demolish);
       return;
     }
     if (!b.zone) {
-      if (!this.setPanel(`<header>${T.name}</header><p class="muted">${T.blurb}</p><button class="btn quiet danger demolish">Demolish</button>`)) return;
-      this.bindDemolish(b);
+      if (this.setPanel(this.anatomy(m, { kind: "other", actions: act, details: `<p class="muted">${T.blurb}</p>` }))) this.bindDemolishBtn(demolish);
       return;
     }
-    const Z = ZONES[b.zone], grp = ZONE_GROUP[b.zone];
-    const health = (b as Building & { health?: number }).health ?? 1;
-    if (b.abandoned) { status = "Abandoned: it will be cleared and something new can grow"; statusCls = "bad"; }
-    else if (b.site) status = "Building site: waiting for its construction parts";
-    else if (b.built < 1) { status = `Under construction · ${Math.round(b.built * 100)}%`; }
-    else if (b.problem) { status = b.problem; statusCls = "bad"; }
-    else { status = grp === "res" ? "Residents are happy here" : "Business is doing well"; statusCls = "good"; }
+    const grp = ZONE_GROUP[b.zone];
+    const rows: [string, string][] = [];
     // (a block a Town puts up waits for construction parts, trucked in from the company's construction plant)
     if (b.site) for (const p of Object.keys(b.site.need) as Product[]) {
       const need = b.site.need[p]!, got = Math.min(need, b.site.got[p] ?? 0);
@@ -1538,44 +1639,22 @@ export class Hud {
     }
     if (grp === "res") {
       const hhs = g.people.hhAt.get(b.id) ?? [];
-      let res = 0, adults = 0, emp = 0, kids = 0, old = 0;
-      for (const hh of hhs) {
-        for (const c of hh.members) {
-          res++;
-          if (c.age === 1) { adults++; if (c.job >= 0) emp++; } else if (c.age === 0) kids++; else old++;
-        }
-      }
-      rows.push(["Households", `${hhs.length} / ${b.cap}`]);
-      rows.push(["Residents", `${res}${res ? ` <span class="muted">· ${kids} children, ${old} seniors</span>` : ""}`]);
-      if (adults) rows.push(["Working", `${emp} of ${adults} adults`]);
-    } else {
-      const w = g.people.workersAt(b.id);
-      rows.push(["Workers", `${w} / ${b.cap}`]);
-      if (grp === "com" && T.fuel) rows.push(["Sells", `${productIcon("fuel")} the town's fuel`]);
-      else if (grp === "com") {
-        rows.push(["Food on the shelves", stockBar(b.stock, 6)]);
-        // (a City's offices and towers take its machinery)
-        const tw = b.town !== undefined ? g.towns.byId.get(b.town) : undefined;
-        if (Industry.isOffice(b) && tw && needsOf(tw.pop).includes("machinery")) rows.push(["Buys", `${productIcon("machinery")} Machinery`]);
-        rows.push(["Customers", b.custDay !== undefined ? `${fmtNum(b.custDay)} <span class="muted">yesterday</span>` : `${fmtNum(b.custToday ?? 0)} <span class="muted">so far</span>`]);
-      }
-      if (b.built >= 1 && !b.abandoned) rows.push(["Efficiency", `${Math.round(health * 100)}%`]);
+      let kids = 0, old = 0;
+      for (const hh of hhs) for (const c of hh.members) { if (c.age === 0) kids++; else if (c.age !== 1) old++; }
+      rows.push(["Children", String(kids)], ["Seniors", String(old)]);
+    } else if (grp === "com" && T.fuel) rows.push(["Sells", `${productIcon("fuel")} the town's fuel`]);
+    else if (grp === "com") {
+      rows.push(["Food on the shelves", stockBar(b.stock, 6)]);
+      // (a City's offices and towers take its machinery)
+      const tw = b.town !== undefined ? g.towns.byId.get(b.town) : undefined;
+      if (Industry.isOffice(b) && tw && needsOf(tw.pop).includes("machinery")) rows.push(["Buys", `${productIcon("machinery")} Machinery`]);
     }
-    const next = b.level < 5 ? LEVEL_LV[b.level + 1] : null;
-    const lvBar = `<span class="bar lv"><i style="width:${Math.max(3, b.lv)}%"></i>${next ? `<em style="left:${next}%"></em>` : ""}</span>`;
+    const nextLv = b.level < 5 ? LEVEL_LV[b.level + 1] : null;
+    const lvBar = `<span class="bar lv"><i style="width:${Math.max(3, b.lv)}%"></i>${nextLv ? `<em style="left:${nextLv}%"></em>` : ""}</span>`;
     rows.push(["Land value", `${lvBar}<span class="num">${Math.round(b.lv)}</span>`]);
-    const town = b.town !== undefined ? g.towns.byId.get(b.town) : undefined;
-    if (town) rows.unshift(["Town", `<button class="link town-link">${escapeHtml(town.name)}</button>`]);
-    const stars = Array.from({ length: 5 }, (_, i) => `<i class="${i < b.level ? "on" : ""}"></i>`).join("");
-    const html = `<header><span class="zone-tag" style="background:${hex(Z.color)}">${Z.short}</span>${T.fuel ? T.name : Z.name}</header>
-      <div class="lvl-row"><span class="stars" role="img" aria-label="Level ${b.level} of 5">${stars}</span><span class="muted">Level ${b.level}${next ? ` · next at land value ${next}` : " · top level"}</span></div>
-      <p class="status ${statusCls}">${status}</p>
-      <dl class="facts">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
-      <button class="btn quiet danger demolish">Demolish</button>`;
-    if (!this.setPanel(html)) return;
-    this.bindDemolish(b);
-    const link = this.panel.querySelector(".town-link") as HTMLButtonElement | null;
-    if (link && town) link.onclick = () => { this.sfx.play("click"); this.showTown(town.id); };
+    rows.push(["Level", `${b.level} of 5 <span class="muted">· ${nextLv ? `next at land value ${nextLv}` : "top level"}</span>`]);
+    const details = `<dl class="facts">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
+    if (this.setPanel(this.anatomy(m, { kind: grp === "res" ? "home" : "shop", actions: act, details }))) this.bindDemolishBtn(demolish);
   }
 
   /** A warehouse's panel: what it holds, and per product whether it takes it and whether it is a feeder for it. */
@@ -1611,11 +1690,12 @@ export class Hud {
       <p class="small muted">Your trucks whose run passes within ${(DEPOT_REACH / 1000).toFixed(1)} km of it fill up here at cost, not the market price, while it has fuel. Your refineries' tankers keep it stocked.</p>`;
   }
 
-  private bindDemolish(b: Building) {
+
+  /** A warehouse's or depot's panel controls, and the demolish button. */
+  private bindDemolish(b: Building, demolish: () => void) {
     const g = this.app.game;
-    const btn = this.panel.querySelector(".demolish") as HTMLButtonElement | null;
-    if (btn) btn.onclick = () => { g.bulldoze([], [b.id]); this.closeSelection(); this.app.selected = null; this.sfx.play("remove"); };
-    const redraw = () => { this.lastPanel = ""; this.fillBuilding(b); };
+    this.bindDemolishBtn(demolish);
+    const redraw = () => { this.lastPanel = ""; this.fillSel(); };
     for (const el of this.panel.querySelectorAll<HTMLInputElement>(".wh-take, .wh-feed")) el.onchange = () => {
       const p = el.dataset.p as Product;
       const why = g.setWarehouse(b.id, p, el.classList.contains("wh-take") ? { take: el.checked } : { feed: el.checked });
@@ -1623,20 +1703,11 @@ export class Hud {
     };
   }
 
-  openSignal(node: number) {
-    this.panelKind = "signal";
-    this.panelNode = node;
-    this.panelPhase = 0;
-    this.lastPanel = "";
-    this.panel.hidden = false;
-    this.fillSignal();
-  }
-
-  private fillSignal() {
+  private fillSignal(m: PanelModel) {
     const g = this.app.game;
-    const node = g.net.nodes.get(this.panelNode);
-    const ng = g.net.nodeGeom.get(this.panelNode);
-    if (!node || !ng) { this.closeSelection(); return; }
+    this.panelNode = this.sel!.id;
+    const node = g.net.nodes.get(this.panelNode)!;
+    const ng = g.net.nodeGeom.get(this.panelNode)!;
     const plan = node.signal;
     const arms = ng.arms;
     const ph = plan ? plan.phases[Math.min(this.panelPhase, plan.phases.length - 1)] : null;
@@ -1645,42 +1716,44 @@ export class Hud {
       const x = 50 + a.dir.x * 40, y = 50 + a.dir.y * 40;
       const lx = 50 + a.dir.x * 47 + (Math.abs(a.dir.y) > 0.7 ? 9 : 0), ly = 50 + a.dir.y * 47 + (Math.abs(a.dir.x) > 0.7 ? -8 : 4);
       const stop = !plan && node.stops?.includes(a.seg);
-      return `<line x1="50" y1="50" x2="${x}" y2="${y}" stroke="${on ? "#2a9e49" : plan ? "#e5484d" : "#b6bbc1"}" stroke-width="10" stroke-linecap="round" ${on || !plan ? "" : 'stroke-dasharray="2 5"'}/>` +
-        (stop ? `<polygon points="${octagon(50 + a.dir.x * 30, 50 + a.dir.y * 30, 7)}" fill="#d9302c" stroke="#fff" stroke-width="1.5"/>` : "") +
-        `<text x="${lx}" y="${ly}" font-size="10" font-weight="600" fill="#5d6168" text-anchor="middle">${compass(a.dir)}</text>`;
+      return `<line x1="50" y1="50" x2="${x}" y2="${y}" stroke="${on ? "#6fae5c" : plan ? "#d4573d" : "#a99f8a"}" stroke-width="10" stroke-linecap="round" ${on || !plan ? "" : 'stroke-dasharray="2 5"'}/>` +
+        (stop ? `<polygon points="${octagon(50 + a.dir.x * 30, 50 + a.dir.y * 30, 7)}" fill="#d9302c" stroke="#f3ead6" stroke-width="1.5"/>` : "") +
+        `<text x="${lx}" y="${ly}" font-size="10" font-weight="600" fill="#cfc4ab" text-anchor="middle">${compass(a.dir)}</text>`;
     }).join("");
-    const diagram = `<svg viewBox="-8 -8 116 116" class="diagram" aria-hidden="true">${spokes}<circle cx="50" cy="50" r="9" fill="#fff" stroke="#8d939a" stroke-width="2"/></svg>`;
+    const diagram = `<svg viewBox="-8 -8 116 116" class="diagram" aria-hidden="true">${spokes}<circle cx="50" cy="50" r="9" fill="#f3ead6" stroke="#0c1524" stroke-width="2"/></svg>`;
     const sigOn = g.featureUnlocked("signals");
     let body = "";
     if (!plan) {
       const stops = node.stops ?? [];
       // (approaches only: not a roundabout's own ring, nor a one-way leading away)
       const stopArms = arms.filter((a) => !g.net.segs.get(a.seg)?.ring && ng.conns.some((c) => c.armIn === a.seg));
-      body = `<p class="muted">Unsignalled: cars give way by road priority. A stop sign makes an approach stop and give way to all the others. Lights stop traffic in turns and help busy crossings.</p>
+      body = `<p class="small muted">Unsignalled: cars give way by road priority. A stop sign makes an approach stop and give way to all the others. Lights stop traffic in turns and help busy crossings.</p>
         <div class="phase stops"><span class="ph-name">Stop signs</span><span class="ph-arms">${stopArms.map((a) => `<button class="arm stop-arm ${stops.includes(a.seg) ? "on stop" : ""}" data-seg="${a.seg}" aria-pressed="${stops.includes(a.seg)}" title="Stop sign on this approach">${compass(a.dir)}</button>`).join("")}</span></div>
         <button class="btn primary add-sig" ${sigOn ? "" : "disabled"}>${sigOn ? `Add traffic lights · ${formatMoney(SIGNAL_COST)}` : `Traffic lights unlock with ${unlockedBy((u) => u.features?.includes("signals"))!.name}`}</button>`;
     } else {
-      body = `<p class="muted small">The lights follow the traffic: a green ends early when its road is empty and runs up to twice its time while cars keep coming. Cars may turn right on red after stopping.</p>` + plan.phases.map((p, i) => `<div class="phase ${i === this.panelPhase ? "on" : ""}" data-i="${i}">
+      body = `<p class="small muted">The lights follow the traffic: a green ends early when its road is empty and runs up to twice its time while cars keep coming. Cars may turn right on red after stopping.</p>` + plan.phases.map((p, i) => `<div class="phase ${i === this.panelPhase ? "on" : ""}" data-i="${i}">
           <span class="ph-name">${i + 1}. ${p.left ? "Left turns" : "All turns"}<button class="ph-left ${p.left ? "on" : ""}" data-i="${i}" aria-pressed="${!!p.left}" title="Only left turns (and U-turns) go in this phase">Left only</button></span>
           <span class="ph-arms">${arms.map((a) => `<button class="arm ${p.arms.includes(a.seg) ? "on" : ""}" data-i="${i}" data-seg="${a.seg}" title="Toggle this approach">${compass(a.dir)}</button>`).join("")}</span>
           <span class="ph-dur"><button class="dur" data-i="${i}" data-d="-2" aria-label="Shorter">−</button><b title="Usual green time">${p.dur}s</b><button class="dur" data-i="${i}" data-d="2" aria-label="Longer">+</button></span>
           ${plan.phases.length > 1 ? `<button class="ph-del" data-i="${i}" aria-label="Remove phase">${ICON.close}</button>` : ""}
         </div>`).join("") + `<div class="row"><button class="btn add-ph">+ Add phase</button><button class="btn quiet danger rm-sig">Remove lights</button></div>`;
     }
-    this.lastPanel = "";
-    this.setPanel(`<header>Junction</header>${diagram}${body}`);
+    const ap = approaches(g, this.panelNode);
+    const details = `<dl class="facts">${ap.map((a) => `<dt>From the ${compass(a.dir)}</dt><dd>${plural(a.cars, "vehicle")}${a.queue ? ` · <span class="${a.queue >= 6 ? "bad" : ""}">${a.queue} queued</span>` : ""}</dd>`).join("")}</dl>`;
+    if (!this.setPanel(this.anatomy(m, { kind: "junction", details, body: `<div class="ip-sig">${diagram}${body}</div>` }))) return;
     const q = <T extends Element>(s: string) => [...this.panel.querySelectorAll<T & HTMLElement>(s)];
-    const set = (p: SignalPlan | null) => { if (!g.setSignal(this.panelNode, p)) this.toast("Not enough money", true); this.fillSignal(); };
+    const redraw = () => { this.lastPanel = ""; this.fillSel(); };
+    const set = (p: SignalPlan | null) => { if (!g.setSignal(this.panelNode, p)) this.toast("Not enough money", true); redraw(); };
     q(".add-sig").forEach((b) => (b.onclick = () => { set(g.defaultSignal(this.panelNode)); this.sfx.play("build"); }));
     q(".rm-sig").forEach((b) => (b.onclick = () => set(null)));
     q(".stop-arm").forEach((b) => (b.onclick = () => {
       const seg = +b.dataset.seg!, cur = node.stops ?? [];
       g.setStops(this.panelNode, cur.includes(seg) ? cur.filter((x) => x !== seg) : [...cur, seg]);
       this.sfx.play("build");
-      this.fillSignal();
+      redraw();
     }));
     q(".add-ph").forEach((b) => (b.onclick = () => { const p = clonePlan(plan!); p.phases.push({ arms: [], dur: 10 }); this.panelPhase = p.phases.length - 1; set(p); }));
-    q(".phase").forEach((el) => (el.onclick = (e) => { if ((e.target as HTMLElement).closest("button")) return; this.panelPhase = +el.dataset.i!; this.fillSignal(); }));
+    q(".phase").forEach((el) => (el.onclick = (e) => { if ((e.target as HTMLElement).closest("button")) return; this.panelPhase = +el.dataset.i!; redraw(); }));
     q(".arm:not(.stop-arm)").forEach((b) => (b.onclick = () => {
       const p = clonePlan(plan!);
       const i = +b.dataset.i!, seg = +b.dataset.seg!;
@@ -1885,7 +1958,10 @@ function outputDay(b: Building): string {
   const m = Industry.madeLately(b, ps[0]);
   const hrs = m.hours;
   const head = hrs >= HIST_HOURS ? "A day, last 24 hours" : hrs ? `Its first ${plural(hrs, "hour")}` : "Its first hour";
-  return `<h3 class="sub-h">${head}</h3><dl class="facts">${rows}</dl>${hourBars(m.byHour, Industry.perDay(b, ps[0]) / 24, PRODUCTS[ps[0]])}`;
+  // (nothing made yet: one line instead of an empty chart)
+  const any = ps.some((p) => Industry.madeLately(b, p).made > 0);
+  const chart = any ? hourBars(m.byHour, Industry.perDay(b, ps[0]) / 24, PRODUCTS[ps[0]]) : `<p class="small muted">No output yet.</p>`;
+  return `<h3 class="sub-h">${head}</h3><dl class="facts">${rows}</dl>${chart}`;
 }
 
 /** A tiny row of 24 hourly bars (the Economy window's production list). */
@@ -2007,23 +2083,10 @@ function siteText(o: Partial<Record<Product, number>>): string {
   return (Object.entries(o) as [Product, number][]).map(([p, n]) => `${plural(n, "load")} of ${PRODUCTS[p].name.toLowerCase()}`).join(" and ");
 }
 
-/** A town's next step up: the next need it adds (cement in a grown village), or its next size. */
-function nextLine(pop: number, next: (typeof TOWN_SIZES)[number] | undefined): string {
-  const n = nextNeed(pop);
-  const from = (q: number) => TOWN_SIZES.flatMap((s) => s.adds).filter((p) => needFrom(p) === q).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ");
-  if (n && (!next || n.pop < next.pop)) return `<p class="small muted">At ${fmtNum(n.pop)} people it needs ${from(n.pop)} as well.</p>`;
-  if (!next) return "";
-  const adds = from(next.pop);
-  return `<p class="small muted">${next.name} at ${fmtNum(next.pop)} people${adds ? `: needs ${adds} as well` : ""}.</p>`;
-}
-
-/** Which way a town is heading, short (the Towns list) and long (its panel). */
-function trendOf(t: Town): { short: string; long: string; cls: string } {
-  if (t.pop < 60) return { short: "Settling", long: "Settling in: its first homes go up on their own", cls: "" };
-  const short = needsOf(t.pop).filter((p) => (t.supply[p] ?? 1) < 0.5).map((p) => PRODUCTS[p].name.toLowerCase());
-  if (t.trend >= 0.5) return { short: `+${Math.round(t.trend)}/day`, long: `Growing: about ${Math.round(t.trend)} more households a day`, cls: "good" };
-  if (t.trend <= -0.5) return { short: `${Math.round(t.trend)}/day`, long: `Shrinking: short of ${short.join(" and ") || "supplies"}`, cls: "bad" };
-  return { short: "Steady", long: short.length ? `Not growing: short of ${short.join(" and ")}` : "Holding steady", cls: short.length ? "bad" : "" };
+/** Which way a town is heading, in a word (the Towns list): no numbers, as in its panel (needs.ts growthOf). */
+function trendOf(t: Town): { short: string; cls: string } {
+  const gr = growthOf(t);
+  return { short: gr.word, cls: gr.tone };
 }
 
 function clonePlan(p: SignalPlan): SignalPlan {
@@ -2059,4 +2122,37 @@ function octagon(cx: number, cy: number, r: number): string {
     pts.push(`${(cx + Math.cos(t) * r).toFixed(1)},${(cy + Math.sin(t) * r).toFixed(1)}`);
   }
   return pts.join(" ");
+}
+
+/** Whether a kind's Details are open (remembered per kind; the browser may refuse storage: then shut). */
+function moreOpen(kind: string): boolean {
+  try { return localStorage.getItem(`flowtown.more.${kind}`) === "1"; } catch { return false; }
+}
+
+function setMoreOpen(kind: string, open: boolean) {
+  try { localStorage.setItem(`flowtown.more.${kind}`, open ? "1" : "0"); } catch { /* private window: not remembered */ }
+}
+
+/** The header icon of a panel model's kind. */
+/** A selector that finds the same control again after the panel is redrawn (by class and data keys). */
+function focusKey(el: HTMLElement): string | null {
+  const cls = [...el.classList].filter((c) => c !== "on" && c !== "armed").map((c) => `.${CSS.escape(c)}`).join("");
+  if (!cls && !el.tagName) return null;
+  const data = Object.entries(el.dataset).map(([k, v]) => `[data-${k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase())}="${CSS.escape(v ?? "")}"]`).join("");
+  return `${el.tagName.toLowerCase()}${cls}${data}`;
+}
+
+/** What productIcon draws for a product without a picture of its own. */
+const NO_PRODUCT_ICON = productIcon("");
+
+function iconFor(k: string): string {
+  if (k === "town") return ICON.town;
+  if (k === "truck" || k === "convoy") return ICON.truck;
+  if (k === "car") return ICON.sedan;
+  if (k === "bus") return ICON.busCat;
+  if (k === "stop") return ICON.busStop;
+  if (k === "junction") return ICON.junction;
+  if (k === "roundabout") return ICON.roundabout;
+  if (k.startsWith("road:")) return roadIcon(k.slice(5) as RoadTypeId);
+  return isPlantKind(k) ? placedIcon(k) : buildingIcon(k as BuildingKind, "");
 }
