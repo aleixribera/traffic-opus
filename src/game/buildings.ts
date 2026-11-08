@@ -7,6 +7,7 @@ import type { ZoneId } from "./zones";
 import type { PlantState, Product } from "./industry";
 import { GATE_CLEAR, GATE_REACH, GATE_SETBACK, siteFrame } from "./sites";
 import { isPlantKind } from "./industry";
+import { isHall } from "./towns";
 
 export interface Lot {
   block: string; // zone block key
@@ -429,8 +430,8 @@ export class Buildings {
         const r = cubicClosest(s.c, b.front);
         if (r.d < reach(b, g.width)) {
           a.s = g.center.length * arcFrac(s.c, r.t, g.center.pts);
-          // (a home's driveway starts at the kerb, wherever an upgrade or downgrade moved it)
-          if (b.zone) { b.front = kerbAt(s.c, r.t, g.width, b.c); a.p = b.front; }
+          // (a home's driveway, or a hall's path, starts at the kerb, wherever an upgrade or downgrade moved it)
+          if (behindStrip(b)) { b.front = kerbAt(s.c, r.t, g.width, b.c); a.p = b.front; }
           // (a site's gate stays off the junction mouths: a road that now meets the road by it moves it along)
           const sC = b.placed && b.plant ? this.gateS(a.seg, a.s, true) : a.s;
           if (sC !== null && sC !== a.s) { b.front = this.gateKerb(a.seg, a.s, sC, b.front); a.p = b.front; a.s = sC; }
@@ -455,14 +456,14 @@ export class Buildings {
         }
         continue;
       }
-      const look = b.zone ? ZONE_SETBACK : 6;
+      const look = behindStrip(b) ? ZONE_SETBACK : 6;
       for (const id of net.segsNear(b.front.x - look, b.front.y - look, b.front.x + look, b.front.y + look)) {
         const s = net.segs.get(id)!;
         if (!ROAD_TYPES[s.type].allowsAccess) continue;
         const g = net.segGeom.get(id)!;
         const r = cubicClosest(s.c, b.front);
         if (r.d < reach(b, g.width) && net.heightOnSeg(id, r.t) < 0.5) {
-          if (b.zone) b.front = kerbAt(s.c, r.t, g.width, b.c);
+          if (behindStrip(b)) b.front = kerbAt(s.c, r.t, g.width, b.c);
           b.access = { seg: id, s: g.center.length * arcFrac(s.c, r.t, g.center.pts), p: b.front };
           b.side = sideOf(s.c, r.t, b.c);
           this.attachedTo.set(b, g);
@@ -541,8 +542,11 @@ export class Buildings {
  * Which side of the road p is on. A road that ends square-on at a site's gate has the plot straight ahead, on
  * neither side: then it keeps `keep`, so the site's driveway doesn't flip kerbs from one rebuild to the next.
  */
+/** Homes, shops and the town halls' squares stand behind a front strip (config ZONE_SETBACK); their kerb point follows the kerb. */
+const behindStrip = (b: Building) => !!b.zone || isHall(b.kind);
+
 /** How far a building's kerb point may be from a road's centreline and still be on it (a home: across its front strip). */
-const reach = (b: Building, width: number) => (b.zone ? Math.max(width / 2, ZONE_SETBACK) : width / 2) + 1.5;
+const reach = (b: Building, width: number) => (behindStrip(b) ? Math.max(width / 2, ZONE_SETBACK) : width / 2) + 1.5;
 
 /** The kerb of a road at t, on the side of p. */
 function kerbAt(c: import("../core/math").Cubic, t: number, width: number, p: V2): V2 {

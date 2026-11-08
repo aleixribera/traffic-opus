@@ -73,7 +73,7 @@ const CORRIDOR = 10;
  * How far the town square keeps from the grid lines round it (m): half a street, its pavement and a margin, and at
  * least the setback homes keep, so the streets round it can be upgraded as theirs can.
  */
-const SQUARE_INSET = Math.max(roadWidth(ROAD_TYPES.street) / 2 + SIDEWALK.small, ZONE_SETBACK) + 1.5;
+export const SQUARE_INSET = Math.max(roadWidth(ROAD_TYPES.street) / 2 + SIDEWALK.small, ZONE_SETBACK) + 1.5;
 /** A town opens its first filling station at Town size and its second at this many people. */
 export const STATION2_POP = 4000;
 /**
