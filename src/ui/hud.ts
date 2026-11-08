@@ -7,7 +7,7 @@ import { BUILD_TIME, DEPOT_REACH, HIST_HOURS, Industry, PLANTS, PRODUCTS, MIN_DE
 import { TRUCK_CLASSES, TRUCK_CLASS_ORDER, type TruckClass } from "../game/trucks";
 import { LEVEL_MULT, SITE_LEVELS, growNeed } from "../game/sites";
 import { MARKET, compassWords, served, type Town } from "../game/settlements";
-import { HALLS, TOWN_SIZES, demandPerDay, growthPerDay, needFrom, needsOf, nextNeed, sizeOf } from "../game/towns";
+import { HALLS, SUPPLY_COVER, TOWN_SIZES, demandPerDay, needFrom, needsOf, nextNeed, sizeOf } from "../game/towns";
 import { HOUR } from "../game/society";
 import { PAL } from "../render/palette";
 import { F } from "../world/gen";
@@ -1483,15 +1483,12 @@ export class Hud {
       : "";
     const lead = `<h3 class="sub-h nd-h">What it needs</h3><ul class="nds">${rows}</ul>${soon}`;
     const figures = views.map((v) => `<dt title="${buyer(v.p)} up to ${fmtLoads(v.want * MARKET)} a day; ${fmtLoads(t.today[v.p] ?? 0)} so far today">${PRODUCTS[v.p].name}</dt><dd>${fmtLoads(v.got)} <span class="muted">of ${fmtLoads(v.want)}</span></dd>`).join("");
-    // what it is short of, and what that costs it
-    const shortOf = needsOf(t.pop).filter((p) => (t.supply[p] ?? 1) < 0.8);
+    // what holds it back: the need its supply runs out on, and how much more of it would let it grow (by a quarter)
+    const holds = t.pop >= 60 ? t.limit ?? needsOf(t.pop).find((p) => (t.supply[p] ?? 1) < 0.8) : undefined;
     let cost = "";
-    if (shortOf.length && t.pop >= 60) {
-      const full = { ...t.supply };
-      for (const p of shortOf) full[p] = 1;
-      const could = Math.round(growthPerDay(full, t.pop)), now = Math.round(growthPerDay(t.supply, t.pop));
-      const more = shortOf.map((p) => `${fmtLoads(Math.max(1, demandPerDay(p, t.pop) - (t.yesterday[p] ?? 0)))} more ${PRODUCTS[p].name.toLowerCase()}`).join(" and ");
-      cost = `<p class="tn-cost"><b>Short of ${shortOf.map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ")}.</b> ${cap(more)} a day would grow it by about ${plural(could, "household")} a day${now > 0 ? ` instead of ${now}` : now < 0 ? `; it is losing ${-now} a day` : "; it isn't growing now"}.</p>`;
+    if (holds) {
+      const to = Math.round(t.pop * 1.25), more = Math.max(1, demandPerDay(holds, to) * SUPPLY_COVER - (t.rate?.[holds] ?? 0));
+      cost = `<p class="tn-cost"><b>Held back by ${PRODUCTS[holds].name.toLowerCase()}.</b> What it has had of it supports about ${fmtNum(t.supports ?? 0)} people; ${fmtLoads(more)} more loads a day, kept up for two days, would grow it to about ${fmtNum(to)}.</p>`;
     }
     // what came, by product, and what it was worth
     const sold = (Object.entries(t.yesterday) as [Product, number][]).filter(([, n]) => n > 0);
@@ -1510,6 +1507,7 @@ export class Hud {
     const hallLine = hall ? `${BUILDING_TYPES[hall.kind].name}${hall.built < 1 ? ` <span class="muted">· building, ${Math.round(hall.built * 100)}%</span>` : ""}` : "None yet";
     const details = `${townChart(t, next)}
       <dl class="facts">
+        <dt>People</dt><dd>${fmtNum(t.pop)}${t.pop >= 60 && t.supports !== undefined && Number.isFinite(t.supports) ? ` <span class="muted">· supplies support ${fmtNum(t.supports)}</span>` : ""}</dd>
         <dt>Households</dt><dd>${fmtNum(t.households)} <span class="muted">of ${fmtNum(t.homes)} homes</span></dd>
         <dt>Growth</dt><dd class="${t.trend >= 0.5 ? "good" : t.trend <= -0.5 ? "bad" : ""}">${Math.abs(t.trend) < 0.5 ? "none" : `${t.trend > 0 ? "+" : "−"}${plural(Math.abs(Math.round(t.trend)), "household")} a day`}</dd>
         <dt>Shops and offices</dt><dd>${t.shops} <span class="muted">· ${fmtNum(jobs)} jobs</span></dd>

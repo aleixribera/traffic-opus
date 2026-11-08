@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { TOWN_SIZES, sizeOf, needsOf, demandPerDay, supplyShare, growthPerDay, townRadius, gridPt, edgeKey, nextEdge, SEED_EDGES, BLOCK, nuisanceAt, type GridEdge } from "../src/game/towns";
+import {
+  TOWN_SIZES, sizeOf, needsOf, demandPerDay, supplyShare, growthPerDay, townRadius, gridPt, edgeKey, nextEdge, SEED_EDGES, BLOCK, nuisanceAt, type GridEdge,
+  SUPPLY_HOURS, SUPPLY_COVER, SUPPLY_WARMUP, CROSS, averageSupply, supportOf, supportedPop,
+} from "../src/game/towns";
 
 describe("town sizes and needs", () => {
   it("names the size for a population and adds needs as it grows", () => {
@@ -54,24 +57,58 @@ describe("town sizes and needs", () => {
     expect(supplyShare({}, 99)).toEqual({ food: 0 });
   });
 
-  it("a supplied town grows, an unsupplied one shrinks, and a new one fills its first streets regardless", () => {
-    expect(growthPerDay({ food: 0 }, 20)).toBeGreaterThan(0);
-    expect(growthPerDay({ food: 1 }, 500)).toBeGreaterThan(growthPerDay({ food: 0.6 }, 500));
-    expect(growthPerDay({ food: 0.3 }, 500)).toBe(0);
-    expect(growthPerDay({ food: 0 }, 500)).toBeLessThan(0);
-    // a hamlet nobody serves yet (one that has just sprung up) holds on instead of dwindling
-    expect(growthPerDay({ food: 0 }, 70)).toBe(0);
-    // the worst-supplied need decides
-    expect(growthPerDay({ food: 1, planks: 0 }, 500)).toBeLessThan(0);
+  it("a town's supply is two days' deliveries averaged, and a first truckload alone isn't one", () => {
+    // a steady 10 loads a day, an hour at a time
+    const steady = Array.from({ length: 60 }, () => ({ food: 10 / 24 }));
+    expect(averageSupply(steady).food).toBeCloseTo(10, 6);
+    // (only the last SUPPLY_HOURS count: a burst three days ago is gone)
+    expect(averageSupply([{ food: 500 }, ...steady.slice(0, SUPPLY_HOURS)]).food).toBeCloseTo(10, 6);
+    // a day without any halves it, rather than emptying it
+    expect(averageSupply([...steady.slice(0, 24), ...Array.from({ length: 24 }, () => ({}))]).food).toBeCloseTo(5, 6);
+    // a new town's one truckload in its first hour counts over SUPPLY_WARMUP hours, not as a day's worth an hour
+    expect(averageSupply([{ food: 4 }]).food).toBeCloseTo((4 * 24) / SUPPLY_WARMUP, 6);
+    // a supply that has just begun goes on the hours since its first load (the empty hours before it don't count)
+    expect(averageSupply([...Array.from({ length: 20 }, () => ({})), ...steady.slice(0, 16)]).food).toBeCloseTo(10, 6);
+  });
+
+  it("a supply supports the people it covers with a margin, each size using more a head", () => {
+    // 25 food a day: a hamlet's worth at 1/8 a head, less the margin
+    expect(supportedPop("food", 25)).toBe(Math.floor((25 / SUPPLY_COVER) * 8));
+    expect(demandPerDay("food", supportedPop("food", 25)) * SUPPLY_COVER).toBeLessThanOrEqual(25 + 1e-9);
+    // 28 doesn't reach the Village line (300); 40 would feed 400 hamlet-folk, but a village eats 1.6x a head: it
+    // carries the town just over the line (CROSS) and no further until the supply covers a village's appetite
+    expect(supportedPop("food", 28)).toBe(280);
+    expect(supportedPop("food", 40)).toBe(Math.ceil(300 * CROSS));
+    const v = demandPerDay("food", 300) * SUPPLY_COVER;
+    expect(supportedPop("food", v * 0.98)).toBe(Math.ceil(300 * CROSS));
+    expect(supportedPop("food", v * 1.5)).toBe(Math.floor((v * 1.5) / SUPPLY_COVER / (demandPerDay("food", 300) / 300)));
+    for (let s = 1; s < 4000; s += 37) expect(supportedPop("food", s)).toBeGreaterThanOrEqual(supportedPop("food", s - 1));
+  });
+
+  it("the worst-supplied need sets what a town supports; a need short at its opening holds it, never shrinks it", () => {
+    const S = supportOf({ food: 100, planks: 30 }, 250);
+    expect(S.by).toBe("planks");
+    expect(S.pop).toBe(supportedPop("planks", 30));
     // a hamlet's planks (a need opened ahead of its size) hold it back but never shrink it; its food still does
-    expect(growthPerDay({ food: 1, planks: 0 }, 120)).toBe(0);
-    expect(growthPerDay({ food: 0, planks: 1 }, 120)).toBeLessThan(0);
+    const h = supportOf({ food: 100 }, 150);
+    expect(h.pop).toBe(0);
+    expect(h.by).toBe("planks");
+    expect(h.floor).toBe(supportedPop("food", 100));
+    expect(supportOf({ food: 5, planks: 100 }, 150).floor).toBe(supportedPop("food", 5));
+    // goods and fuel don't hold a village back before it can buy them; once a Town, short of them, it holds
+    expect(supportOf({ food: 1e4, planks: 1e4, cement: 1e4 }, 1400).pop).toBeGreaterThan(1500);
+    const town = supportOf({ food: 1e4, planks: 1e4, cement: 1e4 }, 1520);
+    expect(town.pop).toBe(0);
+    expect(town.floor).toBe(1500);
+    // the pace well supplied: fast while small, slower as it grows
+    expect(growthPerDay(50) / 50).toBeGreaterThan(growthPerDay(1000) / 1000);
+    expect(growthPerDay(1000) / 1000).toBeGreaterThan(growthPerDay(8000) / 8000);
   });
 
   it("the street radius grows with population, within a cap", () => {
     expect(townRadius(0)).toBeGreaterThan(BLOCK);
     expect(townRadius(5000)).toBeGreaterThan(townRadius(500));
-    expect(townRadius(1e7)).toBe(1600);
+    expect(townRadius(1e7)).toBe(2200);
   });
 });
 

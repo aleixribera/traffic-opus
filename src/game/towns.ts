@@ -95,6 +95,11 @@ export function nextNeed(pop: number): { p: Product; pop: number } | null {
  * there being more residents: demand climbs exponentially through the sizes, as the design asks.
  */
 export function demandPerDay(p: Product, pop: number): number {
+  return Math.max(1, pop * perHead(p) * Math.pow(1.6, sizeOf(pop)));
+}
+
+/** Loads a day of a product each resident of a Hamlet uses (each size up uses 1.6 times as much a head). */
+function perHead(p: Product): number {
   // (a new need starts lighter per resident than the old staples: a Town wants about 64 loads a day of goods and of
   // fuel, a City several hundred; a new City about 250 of electronics and 175 of machinery)
   const per: Partial<Record<Product, number>> = {
@@ -102,8 +107,7 @@ export function demandPerDay(p: Product, pop: number): number {
     // (the extras: a Village of 300 takes ~24 loads of milk a day and ~10 of cheese; a new Town ~25 of cars)
     milk: 1 / 20, cheese: 1 / 50, cars: 1 / 150,
   };
-  const base = per[p] ?? 1 / 24;
-  return Math.max(1, pop * base * Math.pow(1.6, sizeOf(pop)));
+  return per[p] ?? 1 / 24;
 }
 
 // ------------------------------------------------------------------ extras and cars (docs/design.md "Perishables", "Motor Works")
@@ -161,26 +165,95 @@ export const earlyBoost = (pop: number): number => 1 + EARLY * Math.max(0, 1 - p
 export const SETTLING = 60;
 
 /**
- * Households a town gains (or loses, negative) per day. A new town grows a little on its own, up to a small
- * starting size; past that it grows only with its needs met, and it shrinks when they go unmet (all but a need that
- * opens ahead of its size, which only holds it back). Small towns grow fast (earlyBoost); the rate slows with size.
+ * Households a day a town grows by while its supply supports more people than it has: a hamlet of a few dozen by
+ * more than half again a day, a village past 450 by about a fifth, a city ~7%. (It slows as it nears what its supply
+ * supports: TownSystem.grow.)
  */
-export function growthPerDay(supply: Partial<Record<Product, number>>, pop: number): number {
-  const shares = Object.values(supply) as number[];
-  const worst = shares.length ? Math.min(...shares) : 1;
-  // well supplied: a hamlet of a few dozen grows by more than half again a day, a village past 450 by about a quarter, a city ~10%
-  const fed = worst >= 0.8 ? Math.max(4, pop * RATE[sizeOf(pop)] * earlyBoost(pop) * (0.5 + worst)) : 0;
-  if (pop < SETTLING) return Math.max(6, fed); // a new settlement fills its first streets regardless
-  if (worst >= 0.8) return fed;
-  if (worst >= 0.5) return 2;
-  if (worst >= 0.2) return 0;
-  // (a hamlet nobody serves yet, a town that has just sprung up say, holds on rather than dwindling away)
-  if (pop < SETTLING * 1.5) return 0;
-  // (a need that opens ahead of the town's size, a hamlet's planks, holds it back but never shrinks it)
+export function growthPerDay(pop: number): number {
+  return Math.max(4, pop * RATE[sizeOf(pop)] * earlyBoost(pop) * 1.5);
+}
+
+// ------------------------------------------------------------------ steady growth on a proven supply
+
+/**
+ * A town grows on the supply it has been getting, not on a lucky hour (owner, 2026-11-08: "it should be 100% sure the
+ * supplies will continue before growing", "the last 48h-72h average or something"): its supply is the loads a day
+ * of each need delivered over the last SUPPLY_HOURS game hours (two days, 32 minutes at 1x)...
+ */
+export const SUPPLY_HOURS = 48;
+/**
+ * ...or, for a supply that began less than two days ago, over the hours since its first load came (the hours before
+ * there was any are no shortfall); but over at least SUPPLY_WARMUP hours, so a first truckload alone is never taken
+ * for a supply.
+ */
+export const SUPPLY_WARMUP = 8;
+/**
+ * It grows only into the people whose needs that supply covers at least this share of (the "supplied" bar of the
+ * panels and milestones). The safety is in time rather than quantity: two days of proof before growing, and a long
+ * shortfall before shrinking. (Its plants are worked by its own people: a town held to well under what they can
+ * make would never grow the hands to make more, measured 2026-11-08.)
+ */
+export const SUPPLY_COVER = 0.8;
+/**
+ * It shrinks only after SHRINK_AFTER hours in a row of its supply (the better of the last two days' average and the
+ * last day's) covering less than SHRINK_AT of its households (a day without deliveries, a jammed truck, doesn't do
+ * it), and then slowly: SHRINK_RATE of its households a day at
+ * most, and never below what the supply still covers.
+ */
+export const SHRINK_AT = 0.85, SHRINK_AFTER = 48, SHRINK_RATE = 0.03;
+
+/** Loads a day of each product delivered, averaged over the hours given (oldest first; see SUPPLY_HOURS). */
+export function averageSupply(hours: readonly Partial<Record<Product, number>>[]): Partial<Record<Product, number>> {
+  const out: Partial<Record<Product, number>> = {};
+  const last = hours.slice(-SUPPLY_HOURS);
+  const since: Partial<Record<Product, number>> = {};
+  last.forEach((h, i) => {
+    for (const [p, n] of Object.entries(h) as [Product, number][]) {
+      if (!n) continue;
+      out[p] = (out[p] ?? 0) + n;
+      since[p] ??= last.length - i;
+    }
+  });
+  for (const p of Object.keys(out) as Product[]) out[p] = (out[p]! * 24) / Math.max(since[p]!, SUPPLY_WARMUP);
+  return out;
+}
+
+/**
+ * A supply that covers a size's people all the way to the next size line carries the town this far past it, on the
+ * appetite it had (each size eats 1.6x a head, so without this a town would have to prove the bigger size's supply
+ * before it could become it). Past that, it grows on the new size's appetite. It doesn't shrink back over the line:
+ * the same supply that carried it there is still what supportOf's floor counts.
+ */
+export const CROSS = 1.03;
+
+/** The most people whose needs a supply of a product (loads a day) covers SUPPLY_COVER of, each size using more a head. */
+export function supportedPop(p: Product, perDay: number): number {
+  const loads = perDay / SUPPLY_COVER;
+  let best = 0;
+  for (let s = 0; s < TOWN_SIZES.length; s++) {
+    const lo = TOWN_SIZES[s].pop, hi = TOWN_SIZES[s + 1]?.pop ?? Infinity;
+    const x = Math.floor(loads / (perHead(p) * Math.pow(1.6, s)) + 1e-6);
+    if (x >= lo) best = Math.max(best, x >= hi ? Math.ceil(hi * CROSS) : x);
+  }
+  return best;
+}
+
+/**
+ * What a town's supply (loads a day of each need, averageSupply) supports at its population: `pop`, the most people it
+ * grows to, set by the need `by`; and `floor`, the fewest a shortfall would shrink it to. A need that opens on the
+ * way up doesn't hold it back before it opens (it couldn't be bought), and once open, being short of it holds the
+ * town where it is rather than shrinking it below the population the need opened at; nor does a need opened ahead
+ * of the town's size (a hamlet's planks) ever shrink it.
+ */
+export function supportOf(perDay: Partial<Record<Product, number>>, pop: number): { pop: number; floor: number; by: Product | null } {
+  let cap = Infinity, floor = Infinity, by: Product | null = null;
   const size = sizeOf(pop);
-  const own = (Object.entries(supply) as [Product, number][]).filter(([p]) => TOWN_SIZES.findIndex((s) => s.adds.includes(p)) <= size);
-  if (own.every(([, v]) => v >= 0.2)) return 0;
-  return -Math.max(1, pop * 0.02);
+  for (const p of needsOf(pop)) {
+    const x = supportedPop(p, perDay[p] ?? 0);
+    if (x < cap) { cap = x; by = p; }
+    if (TOWN_SIZES.findIndex((s) => s.adds.includes(p)) <= size) floor = Math.min(floor, Math.max(x, needFrom(p)));
+  }
+  return { pop: cap, floor, by };
 }
 
 // ------------------------------------------------------------------ town hall and the eras of building
@@ -250,9 +323,12 @@ export const redevPerDay = (size: number, buildings: number) => 2 + size + Math.
 /** Share of a town's homes that may be building sites for redevelopment at once. */
 export const REDEV_SHARE = 0.05;
 
-/** Radius the streets may reach for a population. */
+/**
+ * Radius the streets may reach for a population. Towns spread out (owner, 2026-11-08: "less dense overall, more of
+ * an outward expansion"): about a third further than the old packed grids for the same people.
+ */
 export function townRadius(pop: number): number {
-  return Math.min(1600, 150 + 9 * Math.sqrt(pop));
+  return Math.min(2200, 200 + 12 * Math.sqrt(pop));
 }
 
 // ------------------------------------------------------------------ street grid
@@ -273,11 +349,15 @@ export const edgeKey = (e: GridEdge) => {
 export const SEED_EDGES: GridEdge[] = [[0, 0, 1, 0], [0, 0, -1, 0], [0, 0, 0, 1], [0, 0, 0, -1]];
 
 /**
- * The next street to lay: a grid edge touching the streets already built, inside the radius, not tried and
+ * The next street to lay: a lattice edge touching the streets already built, inside the radius, not tried and
  * failed before. Edges that close a block (both ends already on a street) come first, then the ones nearest the
- * centre, so the town fills in block by block and spreads in a rough circle.
+ * centre, so the town fills in block by block and spreads in a rough circle. `rOf` is how far a node is from the
+ * centre in blocks, where the town's plan puts it (townplan.ts; the plain grid by default).
  */
-export function nextEdge(built: Set<string>, failed: Set<string>, radiusBlocks: number, jitter: (k: string) => number, cost?: (e: GridEdge) => number): GridEdge | null {
+export function nextEdge(
+  built: Set<string>, failed: Set<string>, radiusBlocks: number, jitter: (k: string) => number, cost?: (e: GridEdge) => number,
+  rOf: (i: number, j: number) => number = Math.hypot,
+): GridEdge | null {
   const nodes = new Set<string>();
   for (const k of built) for (const n of k.split("|")) nodes.add(n);
   let best: GridEdge | null = null, bs = Infinity;
@@ -287,9 +367,10 @@ export function nextEdge(built: Set<string>, failed: Set<string>, radiusBlocks: 
       const e: GridEdge = [i, j, i + di, j + dj];
       const k = edgeKey(e);
       if (built.has(k) || failed.has(k)) continue;
-      const mx = i + di / 2, my = j + dj / 2;
-      const r = Math.hypot(mx, my);
-      if (Math.hypot(i + di, j + dj) > radiusBlocks) continue;
+      // (how far out it is, by where the town's plan puts its nodes: blocks from the centre)
+      const far = rOf(i + di, j + dj);
+      if (far > radiusBlocks) continue;
+      const r = (rOf(i, j) + far) / 2;
       const closes = nodes.has(`${i + di},${j + dj}`);
       // (cost: how much the land puts a town off, in blocks; Infinity where it won't build at all)
       const extra = cost ? cost(e) : 0;

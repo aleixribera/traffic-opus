@@ -223,7 +223,12 @@ function play() {
         if (key && !roads[key]) { roads[key] = [a, e]; paths[key] = [[a, e]]; }
         return done();
       }
-      const r = road(`to the ${T.name.toLowerCase()}`, a, e);
+      // (from the nearest road end, or the next ones if houses or a river block the way from there)
+      let r: ReturnType<typeof road> = "blocked";
+      for (const st of [a, ...startsFor(q).filter((x) => dist(x, a) > 50).slice(0, 2)]) {
+        r = road(`to the ${T.name.toLowerCase()}`, st, e);
+        if (r !== "blocked") break;
+      }
       if (r !== true) { siteWhy.set(`road ${r}: ${roadErrors[0] ?? ""}`, (siteWhy.get(`road ${r}: ${roadErrors[0] ?? ""}`) ?? 0) + 1); g.undo(); if (r === "money") return "money"; continue; }
       if (key && !roads[key]) { roads[key] = [a, e]; paths[key] = lastLegs; }
       return done();
@@ -313,20 +318,21 @@ function play() {
     if ((B || A.pop >= 60) && has("foodplant") && count("farm") < 2) site("farm", F.fert, soil);
     // (as a player watching the Towns window would: a town short of food gets another farm, and a food plant
     // for every two farms; past the first few, scaleUp grows the chains where their plants' panels say they're short)
-    const hungry = g.towns.list.some((t) => t.pop > 40 && (t.supply.food ?? 1) < 0.8);
+    // (or one held back by its food: grown to what its supply supports, the Towns window says so)
+    const hungry = g.towns.list.some((t) => t.pop > 40 && ((t.supply.food ?? 1) < 0.8 || t.limit === "food"));
     if (hungry && count("farm") >= 2 && count("farm") < 4 && g.time - lastFarm > HOUR * 8) {
       if (count("farm") < 2 * count("foodplant")) {
-        if (g.money > PLANTS.farm.cost + RESERVE) { lastFarm = g.time; site("farm", F.fert, soil, undefined, 1200); }
-      } else if (g.money > PLANTS.foodplant.cost + RESERVE) { lastFarm = g.time; place("foodplant", ...(roads.towns ?? roads.farm!), 0.3, 0.7); }
+        if (g.money > PLANTS.farm.cost + RESERVE) { lastFarm = g.time; if (!site("farm", F.fert, soil, undefined, 1200)) say(`no plot for another farm: ${[...siteWhy].map(([w, n]) => `${w}${n > 1 ? ` x${n}` : ""}`).join(", ")}`); }
+      } else if (g.money > PLANTS.foodplant.cost + RESERVE) { lastFarm = g.time; byFood("foodplant"); }
     }
     // the same for timber once the towns want planks: another camp, and a sawmill for every two camps
-    const noPlanks = g.towns.list.some((t) => t.supply.planks !== undefined && t.supply.planks < 0.8);
+    const noPlanks = g.towns.list.some((t) => (t.supply.planks !== undefined && t.supply.planks < 0.8) || t.limit === "planks");
     if (noPlanks && roads.wood && has("sawmill") && count("loggingcamp") < 4 && g.time - lastCamp > HOUR * 8) {
       if (count("loggingcamp") < 2 * count("sawmill")) {
         if (g.money > PLANTS.loggingcamp.cost + RESERVE) { lastCamp = g.time; site("loggingcamp", F.forest, wood, undefined, 1200); }
-      } else if (g.money > PLANTS.sawmill.cost + RESERVE) { lastCamp = g.time; place("sawmill", ...roads.wood, 0.2, 0.4); }
+      } else if (g.money > PLANTS.sawmill.cost + RESERVE) { lastCamp = g.time; place("sawmill", ...roads.wood, 0.2, 0.95); }
     }
-    if (roads.towns && has("sawmill") && count("foodplant") < 2) place("foodplant", ...roads.towns, 0.3, 0.7);
+    if (roads.towns && has("sawmill") && count("foodplant") < 2) byFood("foodplant");
     // tier 2: the mines first (they wait as building sites for planks), then the power plant and the smelter
     if (u.has("ironmine") && has("sawmill")) mine("ore", "ironmine", F.ore, "iron ore");
     if (u.has("coalmine") && has("ironmine")) mine("coal", "coalmine", F.coal, "coal");
@@ -372,6 +378,9 @@ function play() {
   const joinTowns = () => {
     const s = spawned.find((x) => x.joined < 0);
     if (!s || g.time - lastJoin < HOUR * 3) return;
+    // (the towns the company already serves come first: a new town's road, and its share of the food, wait for up
+    // to a day until there is money for the next food plant too, as a player saving for both would)
+    if (g.time - s.at < DAY && g.money < RESERVE + PLANTS.foodplant.cost + 20000) return;
     lastJoin = g.time;
     const t = s.t;
     // (from the network's loose ends nearest the town, the dead ends of a town's streets and the company's roads
@@ -417,8 +426,19 @@ function play() {
       return r;
     }
     if (HUB.includes(k)) return hub(k);
-    const r = k === "foodplant" || k === "creamery" ? roads.towns ?? roads.farm : roads.wood;
-    return (r ? place(k, ...r, 0.1, 0.9) : null) ?? hub(k);
+    // (a food plant by the road to the towns, or failing a spot there by the road to the farms)
+    if (k === "foodplant" || k === "creamery") return byFood(k) ?? hub(k);
+    const x = roads.wood ? place(k, ...roads.wood, 0.1, 0.9) : null;
+    return x ?? hub(k);
+  };
+  /**
+   * A food plant (or creamery) by the road to the towns, else along the road out to the farms, leg by leg (a town's
+   * own streets can run beside the straight line from its edge to the farm, where a player would pick the next stretch).
+   */
+  const byFood = (k: PlantKind): Building | null => {
+    if (roads.towns) { const x = place(k, ...roads.towns, 0.3, 0.7); if (x) return x; }
+    for (const r of [roads.farm, ...(paths.farm ?? [])]) { const x = r ? place(k, ...r, 0.1, 0.9) : null; if (x) return x; }
+    return null;
   };
   /** A chain short of p: another plant at its weakest link (the input most of its plants wait for). */
   const grow = (p: Product, depth = 0): void => {
@@ -450,7 +470,7 @@ function play() {
     if (dark && plants.some((b) => b.problem === "Waiting for coal")) grow("coal");
     else if (dark && has("coalmine") && !saving() && g.time - lastPower > HOUR * 8 && !plants.some((b) => b.plant!.site || b.built < 1)) { lastPower = g.time; hub("coalplant"); }
     // a town short of something it needs, plant sites short of materials for a day, blocks waiting for parts
-    for (const t of g.towns.list) if (t.pop > 100) for (const p of needsOf(t.pop)) if ((t.supply[p] ?? 1) < 0.8) grow(p);
+    for (const t of g.towns.list) if (t.pop > 100) for (const p of needsOf(t.pop)) if ((t.supply[p] ?? 1) < 0.8 || t.limit === p) grow(p);
     if (g.buildings.list.some((b) => b.plant?.site && g.time - b.born > DAY)) { grow("planks"); grow("cement"); if (T4) grow("parts"); }
     if (g.buildings.list.filter((b) => b.site).length > 4) grow("parts");
   };

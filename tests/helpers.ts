@@ -108,7 +108,7 @@ export function hostTown(g: Game, households: number): Town {
     t = {
       id, name: "Testbury", c: v2(0, 0), ang: 0, built: new Set(), failed: new Set(), target: households,
       today: {}, yesterday: {}, supply: {}, trend: 0, founded: g.time, size: 0, hall: 0, sq: [1, 1], hist: { pop: [], households: [], days: [] },
-      redevAt: -Infinity, redevToday: 0, pop: 0, households: 0, homes: 0, shops: 0, reach: 0, fixed: true,
+      redevAt: -Infinity, redevToday: 0, layout: 0, pop: 0, households: 0, homes: 0, shops: 0, reach: 0, fixed: true,
     };
     g.towns.list.push(t);
     g.towns.byId.set(id, t);

@@ -134,7 +134,7 @@ describe("a town growing into a town", () => {
     let n = 0;
     for (const c of g.zones.allCells()) {
       if (!c.ok || c.lot || !c.zone || dist(c.c, t.c) > t.reach) continue;
-      expect(c.zone).toBe(g.towns.planZone(t, c.c, c.rot)); // its ring, or a high street (tests/commerce.test.ts)
+      expect(c.zone).toBe(g.towns.planZoneAt(t, c)); // its ring, or a high street (tests/commerce.test.ts)
       n++;
     }
     expect(n).toBeGreaterThan(0);

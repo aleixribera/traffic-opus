@@ -38,10 +38,6 @@ describe("a town's needs, read out", () => {
     expect(needState(crate, crate)).toBe("low");
     expect(needState(0.19, crate)).toBe("none");
     expect(needState(0, crate)).toBe("none");
-    // "Enough" is exactly where a town grows at full pace, and a hair less is not
-    expect(growthPerDay({ food: ENOUGH }, 400)).toBeGreaterThan(growthPerDay({ food: ENOUGH - 0.01 }, 400) * 2);
-    // and "Plenty" grows it faster still
-    expect(growthPerDay({ food: 1 }, 400)).toBeGreaterThan(growthPerDay({ food: ENOUGH }, 400));
   });
 
   it("a crate is one load for a small town, a round number of loads for a big one, never more than ten crates", () => {
@@ -160,7 +156,7 @@ describe("a town's needs, read out", () => {
       t.hours = Array.from({ length: 24 }, () => Object.fromEntries(needsOf(p).map((q) => [q, want(q) / 24])));
       t.hourNow = {};
       t.supply = Object.fromEntries(needsOf(p).map((q) => [q, Math.min(1, share[q] ?? 1)]));
-      t.trend = growthPerDay(t.supply, p) * k;
+      t.trend = growthPerDay(p) * k;
       return growthOf(t);
     };
     for (const p of [400, 2500, 8000]) {

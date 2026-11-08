@@ -7,8 +7,9 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { Game } from "../src/game/city";
 import { ZONE_GROUP } from "../src/game/growables";
 import type { Town } from "../src/game/settlements";
-import { BLOCK, HIGH_STREET, RINGS, gridPt, highLine, highStreetReach, ringZone } from "../src/game/towns";
+import { BLOCK, HIGH_STREET, RINGS, highLine, highStreetReach, ringZone } from "../src/game/towns";
 import { ZONE_RANK } from "../src/game/zones";
+import { dist } from "../src/core/math";
 
 describe("high streets", () => {
   it("run further out the more shops a town wants, from a Village on", () => {
@@ -42,7 +43,7 @@ describe("a City's commerce", () => {
     g = new Game(7);
     g.start();
     t = g.towns.list[0];
-    for (let d = 0; d < 60 && t.pop < 7000; d++) g.fastForward(t.id, 24);
+    for (let d = 0; d < 240 && t.pop < 7000; d++) g.fastForward(t.id, 6);
     // then a few days at that size, for its old houses on the high streets to make way for shops
     const hold = t.target;
     for (let d = 0; d < 8; d++) { t.target = hold; g.fastForward(t.id, 24); t.target = hold; }
@@ -52,13 +53,18 @@ describe("a City's commerce", () => {
   it("zones its high streets for shops, and the streets between for homes", () => {
     expect(t.size).toBe(3);
     const reach = highStreetReach(3, g.towns.shopsWanted(t));
-    // along the main street, out past the centre ring: shops; a street over: homes, as its ring has them
+    // along the main street, out past the centre ring: shops; a street over: homes, as its ring has them (points of
+    // the town's own plan, which bends its streets: townplan.ts)
+    const P = g.towns.planOf(t);
     for (const [a, b] of [[2.5, 0.25], [-3.2, -0.25], [0.25, 3.5], [-0.25, -2.8]]) {
-      if (Math.hypot(a, b) >= reach) continue;
-      const along = Math.abs(a) > Math.abs(b) ? t.ang : t.ang + Math.PI / 2;
-      expect(g.towns.planZone(t, gridPt(t.c, t.ang, a, b), along)).toBe(HIGH_STREET[3]);
-      const off = Math.abs(a) > Math.abs(b) ? [a, b + 1] : [a + 1, b];
-      expect(g.towns.planZone(t, gridPt(t.c, t.ang, off[0], off[1]), along)).toBe(ringZone(3, Math.hypot(off[0], off[1])));
+      const p = P.at(a, b);
+      if (dist(p, t.c) / BLOCK >= reach) continue;
+      const q = Math.abs(a) > Math.abs(b) ? P.at(a + 0.05, 0) : P.at(0, b + 0.05);
+      const r = Math.abs(a) > Math.abs(b) ? P.at(a, 0) : P.at(0, b);
+      const along = Math.atan2(q.y - r.y, q.x - r.x);
+      expect(g.towns.planZone(t, p, along)).toBe(HIGH_STREET[3]);
+      const off = Math.abs(a) > Math.abs(b) ? P.at(a, b + 1) : P.at(a + 1, b);
+      expect(g.towns.planZone(t, off, along)).toBe(ringZone(3, dist(off, t.c) / BLOCK));
     }
   });
 

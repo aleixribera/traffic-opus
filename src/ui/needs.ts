@@ -119,7 +119,7 @@ export function growthOf(t: Town): { word: GrowthWord; tone: "good" | "bad" | ""
   const why = short.length ? `needs ${short.length > 1 ? `${short.slice(0, -1).join(", ")} and ${short[short.length - 1]}` : short[0]}` : "";
   if (t.trend <= -0.5) return { word: "Shrinking", tone: "bad", why };
   if (t.trend < 0.5) return { word: "Not growing", tone: short.length ? "bad" : "", why };
-  const best = growthPerDay(Object.fromEntries(needsOf(t.pop).map((p) => [p, 1])), t.pop);
+  const best = growthPerDay(t.pop);
   const k = best > 0 ? t.trend / best : 1;
   if (k >= GROW_FAST) return { word: "Growing fast", tone: "good", why: "" };
   if (k >= GROW_OK) return { word: "Growing", tone: "good", why: "" };

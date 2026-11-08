@@ -1,0 +1,90 @@
+// Towns grow only on a proven supply and shrink only after a long shortfall (docs/design.md, "Steady growth"):
+// owner, 2026-11-08: "it should be 100% sure the supplies will continue before growing crazily".
+import { describe, expect, it } from "vitest";
+import { Game } from "../src/game/city";
+import { HOUR, DAY } from "../src/game/society";
+import { BUILD_TIME, type Product } from "../src/game/industry";
+import { SHRINK_AFTER, SHRINK_RATE, averageSupply } from "../src/game/towns";
+
+const STEADY: Partial<Record<Product, number>> = { food: 100, planks: 40, cement: 20 };
+
+/**
+ * The start town of seed 7 with no traffic: every need's loads come in through the day at a steady rate (as far as
+ * its shops buy), except in the [from, to) days of `off`. Its households every 6 game hours.
+ */
+function run(days: number, off?: [number, number]) {
+  const g = new Game(7);
+  g.start();
+  const t = g.towns.list[0];
+  const g2 = g as unknown as { time: number; dayN: number; traffic: { time: number } };
+  const TICK = HOUR / 8;
+  const hh: number[] = [];
+  let maxLack = 0;
+  for (let k = 0; k < days * 24 * 8; k++) {
+    g2.time += TICK;
+    g2.traffic.time = g2.time;
+    for (const b of g.buildings.list) {
+      if (b.site) { delete b.site; b.problem = null; }
+      if (b.built < 1 && !b.plant?.site) b.built = Math.min(1, b.built + TICK / BUILD_TIME);
+    }
+    for (const b of g.shops) { b.stock = Math.max(b.stock, 4); b.badT = 0; }
+    const day = g2.time / DAY;
+    if (!(off && day >= off[0] && day < off[1])) {
+      for (const [p, r] of Object.entries(STEADY) as [Product, number][]) {
+        const w = g.towns.want(t.id, p);
+        if (w > 0) g.towns.sold(t.id, p, Math.min(w, r / 192));
+      }
+    }
+    g.towns.tick();
+    if (k % 8 === 7) {
+      g.towns.hourly();
+      maxLack = Math.max(maxLack, t.lack ?? 0);
+      if ((k + 1) % 48 === 0) hh.push(t.households);
+    }
+    const dn = Math.floor(g2.time / DAY);
+    if (dn !== g2.dayN) { g.towns.daily(); g2.dayN = dn; }
+  }
+  return { hh, t, maxLack };
+}
+
+/** The sample index at the end of day d (samples every 6 hours). */
+const at = (d: number) => d * 4 - 1;
+
+describe("steady growth on a proven supply", () => {
+  const days = 10;
+
+  it("steady deliveries: households only ever rise, then level off, never above where they settle", () => {
+    const steady = run(days);
+    const h = steady.hh;
+    for (let i = 1; i < h.length; i++) expect(h[i], `sample ${i}`).toBeGreaterThanOrEqual(h[i - 1]);
+    const last = h[h.length - 1];
+    expect(Math.max(...h)).toBe(last);
+    // (levelled off: the last three days add next to nothing)
+    expect(last - h[at(days - 3)]).toBeLessThanOrEqual(Math.max(2, last * 0.01));
+    // (and it got somewhere: past Village size on this supply)
+    expect(steady.t.pop).toBeGreaterThan(300);
+    // the panel's figure is the two-day average of the loads that came in
+    expect(steady.t.rate).toEqual(averageSupply(steady.t.hours!));
+    expect(steady.t.rate!.food!).toBeGreaterThan(0);
+    expect(steady.maxLack).toBe(0);
+  });
+
+  it("a day without deliveries shrinks nothing", () => {
+    const gap = run(days, [6, 7]);
+    const before = gap.hh[at(6)];
+    for (let i = at(6); i < gap.hh.length; i++) expect(gap.hh[i], `sample ${i}`).toBeGreaterThanOrEqual(before);
+    expect(gap.maxLack).toBeLessThan(SHRINK_AFTER);
+  });
+
+  it("a long cut: it holds for two days, then declines slowly", () => {
+    const cut = run(days + 2, [6, 99]);
+    const before = cut.hh[at(6)];
+    // (held through the first day and a half of it)
+    expect(cut.hh[at(7.5)]).toBe(before);
+    // (then down, but never by more than SHRINK_RATE of it a day, give or take a household)
+    const end = cut.hh[cut.hh.length - 1];
+    expect(end).toBeLessThan(before);
+    for (let i = at(6) + 4; i < cut.hh.length; i += 4) expect(cut.hh[i - 4] - cut.hh[i]).toBeLessThanOrEqual(Math.ceil(before * SHRINK_RATE) + 1);
+    expect(end).toBeGreaterThan(before * 0.75);
+  });
+}, 600_000);
