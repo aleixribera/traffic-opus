@@ -2,6 +2,10 @@ import type { V2 } from "../core/math";
 import type { Building } from "../game/buildings";
 import { siteFrame } from "../game/sites";
 import type { View } from "../render/view";
+import type { Product } from "../game/industry";
+import { productIcon } from "./icons";
+
+const UP = `<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2 6.5 5 3.5 8 6.5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 /** What a problem looks like on the map: the pictogram and how urgent it is (urgent ones bounce). */
 function iconFor(p: string): { key: string; svg: string; urgent: boolean } {
@@ -27,7 +31,13 @@ const ROAD = `<svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14
 export class MapIcons {
   readonly el = document.createElement("div");
   private pool: HTMLElement[] = [];
-  private shown: { at: V2; el: HTMLElement }[] = [];
+  private shown: { at: V2; el: HTMLElement; dx?: number }[] = [];
+  private badges: HTMLElement[] = [];
+  /**
+   * The supplies boosting a company site and by how much (docs/design.md "Supplies"): a badge by its gate shows the
+   * site working past its level-2 pace on fertilizer, explosives or machinery (set by the app).
+   */
+  boostOf: ((b: Building) => { p: Product; pct: number }[]) | null = null;
 
   constructor() {
     this.el.className = "map-icons";
@@ -41,7 +51,7 @@ export class MapIcons {
     // and a city's dozens of "Out of food" pins would bury the company's own warnings)
     const town = view.halfH < 260;
     this.shown = [];
-    let n = 0;
+    let n = 0, nb = 0;
     if (on) {
       const pad = 40;
       for (const b of list) {
@@ -63,17 +73,41 @@ export class MapIcons {
         this.shown.push({ at, el });
         if (++n >= 300) break;
       }
+      // the supply badges: a green chevron, what is in store and the % it adds, beside the gate (right of any warning)
+      if (this.boostOf) for (const b of list) {
+        if (!b.plant || !b.placed || b.built < 1 || nb >= 120) continue;
+        const bs = this.boostOf(b);
+        if (!bs.length) continue;
+        const f = siteFrame(b.c, b.rot, b.side, b.hd);
+        const at = { x: f.gate.x + f.into.x * 30, y: f.gate.y + f.into.y * 30 };
+        const s = view.toScreen(at);
+        if (s.x < -60 || s.y < -40 || s.x > view.w + 60 || s.y > view.h + 40) continue;
+        let el = this.badges[nb];
+        if (!el) { el = document.createElement("div"); el.className = "map-boost"; this.el.appendChild(el); this.badges.push(el); }
+        const total = Math.round((bs.reduce((m, x) => m * (1 + x.pct / 100), 1) - 1) * 100);
+        const key = bs.map((x) => `${x.p}${x.pct}`).join(",");
+        if (el.dataset.k !== key) {
+          el.dataset.k = key;
+          el.innerHTML = `<i class="up">${UP}</i>${bs.map((x) => `<i>${productIcon(x.p)}</i>`).join("")}<b>+${total}%</b>`;
+        }
+        el.style.display = "";
+        this.shown.push({ at, el, dx: b.problem && !b.abandoned ? 16 : 0 });
+        nb++;
+      }
     }
     for (let i = n; i < this.pool.length; i++) this.pool[i].style.display = "none";
+    for (let i = nb; i < this.badges.length; i++) this.badges[i].style.display = "none";
     this.update(view);
   }
 
   /** Follow the camera (every frame). */
   update(view: View) {
     const lift = Math.min(28, 9 / Math.max(0.12, view.mpp));
-    for (const { at, el } of this.shown) {
+    for (const { at, el, dx } of this.shown) {
       const s = view.toScreen(at);
-      el.style.transform = `translate(${s.x.toFixed(1)}px, ${(s.y - lift).toFixed(1)}px) translate(-50%, -100%)`;
+      // (a badge stands just right of the gate, clear of a warning icon there)
+      if (dx !== undefined) el.style.transform = `translate(${(s.x + dx).toFixed(1)}px, ${(s.y - lift).toFixed(1)}px) translate(0, -100%)`;
+      else el.style.transform = `translate(${s.x.toFixed(1)}px, ${(s.y - lift).toFixed(1)}px) translate(-50%, -100%)`;
     }
   }
 }

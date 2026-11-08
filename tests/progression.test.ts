@@ -6,9 +6,9 @@ import { Game } from "../src/game/city";
 const view = (o: Partial<ProgressView> = {}): ProgressView => ({ towns: [], made: {}, sold: {}, bestDay: {}, bestEarned: 0, powered: 0, ...o });
 
 describe("Milestones", () => {
-  it("are a ladder of tiers 1 to 4: unique, each with a goal and something concrete to unlock or a grant", () => {
+  it("are a ladder of tiers 1 to 5: unique, each with a goal and something concrete to unlock or a grant", () => {
     expect(MILESTONES.length).toBeGreaterThanOrEqual(38);
-    expect(MILESTONES.length).toBeLessThanOrEqual(50);
+    expect(MILESTONES.length).toBeLessThanOrEqual(60);
     expect(new Set(MILESTONES.map((m) => m.id)).size).toBe(MILESTONES.length);
     for (const m of MILESTONES) {
       expect(m.goal.length).toBeGreaterThan(5);

@@ -44,6 +44,11 @@ export const PLACED: Record<PlacedKind, PlacedDef> = {
   coppersmelter: plant("coppersmelter"),
   electronics: plant("electronics"),
   machineworks: plant("machineworks"),
+  chemworks: plant("chemworks"),
+  dairyfarm: plant("dairyfarm"),
+  creamery: plant("creamery"),
+  rubberplant: plant("rubberplant"),
+  motorworks: plant("motorworks"),
   warehouse: plant("warehouse"),
   fueldepot: plant("fueldepot"),
   // the landmarks: one of each, the dam on a river (megaprojects.ts has where the others may stand)
@@ -56,8 +61,8 @@ export const isPlacedKind = (k: BuildingKind | string): k is PlacedKind => k in 
 
 /** Build-menu tabs of the Industry category. */
 export const PLACED_TABS: { id: string; label: string; kinds: PlacedKind[]; blurb: string }[] = [
-  { id: "extraction", label: "Extraction", kinds: ["farm", "loggingcamp", "ironmine", "coalmine", "quarry", "oilwell", "sandpit", "coppermine"], blurb: "Extractors stand on a deposit and send what they win to your plants." },
-  { id: "processing", label: "Processing", kinds: ["foodplant", "sawmill", "smelter", "cementworks", "refinery", "glassworks", "furniture", "constructionplant", "coppersmelter", "electronics", "machineworks"], blurb: "Plants turn one product into another and sell finished goods to the towns." },
+  { id: "extraction", label: "Extraction", kinds: ["farm", "dairyfarm", "loggingcamp", "ironmine", "coalmine", "quarry", "oilwell", "sandpit", "coppermine"], blurb: "Extractors stand on a deposit and send what they win to your plants." },
+  { id: "processing", label: "Processing", kinds: ["foodplant", "creamery", "sawmill", "smelter", "cementworks", "chemworks", "refinery", "glassworks", "furniture", "constructionplant", "coppersmelter", "electronics", "machineworks", "rubberplant", "motorworks"], blurb: "Plants turn one product into another and sell finished goods to the towns." },
   { id: "logistics", label: "Logistics", kinds: ["warehouse", "fueldepot"], blurb: "Warehouses hold what nobody can take yet; fuel depots fill passing trucks at cost." },
   { id: "power", label: "Power", kinds: ["coalplant"], blurb: "Power plants burn coal and power the buildings that need it on their roads within reach." },
   { id: "landmarks", label: "Landmarks", kinds: ["hydrodam", "skylinetower", "exposition"], blurb: "One-off megaprojects: a building site that takes huge loads of materials and oversized pieces over days, and pays off for good." },

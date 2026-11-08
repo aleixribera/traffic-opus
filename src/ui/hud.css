@@ -440,6 +440,52 @@ kbd { font: 600 var(--t-xs)/1 var(--f-text); padding: 3px 6px; border: 1px solid
 .map-label .ml-icons i { width: 24px; height: 24px; border-radius: 50%; background: var(--plate); box-shadow: 0 0 0 1.5px var(--bad), 0 2px 4px rgba(3, 7, 14, 0.55); display: grid; place-items: center; }
 .map-label .ml-icons svg { width: 16px; height: 16px; display: block; }
 
+.boost-gain { grid-column: 1 / -1; text-align: right; font-weight: 600; margin-top: -4px; }
+/* supply badge by a site's gate: a small stamped plate, what it is working on and how much it adds */
+.map-boost { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 1px; height: 20px; padding: 0 6px 0 3px;
+  border-radius: var(--r); background: var(--plate); border: 1px solid var(--edge); box-shadow: inset 0 0 0 1px var(--rule-2), 0 2px 5px rgba(3, 7, 14, 0.5);
+  color: var(--good); font: 700 var(--t-xs)/1 var(--f-text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.map-boost i { display: grid; place-items: center; width: 15px; height: 15px; }
+.map-boost i svg { width: 13px; height: 13px; display: block; }
+.map-boost i.up { width: 14px; height: 14px; border-radius: 50%; background: var(--good-fill); color: var(--cream); margin-right: 2px; }
+.map-boost i.up svg { width: 10px; height: 10px; }
+.map-boost b { margin-left: 3px; font-weight: 700; }
+
+/* money and moments rising off the map (ui/pops.ts) */
+.map-pops { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
+/* (a shipping tag: a stamped plate, its edge ruled in the moment's colour, so it reads over field, forest or road) */
+.pop { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 5px; white-space: nowrap;
+  font: 700 var(--t-xs)/1.25 var(--f-text); font-variant-numeric: tabular-nums; will-change: transform, opacity; color: var(--cream);
+  background: var(--plate); border: 1px solid var(--edge); border-left: 3px solid var(--tag, var(--good)); border-radius: var(--r);
+  padding: 3px 7px 3px 5px; box-shadow: inset 0 0 0 1px var(--rule), 0 3px 10px rgba(3, 7, 14, 0.5); }
+.pop em { font-style: normal; color: var(--good); }
+.pop i { display: grid; place-items: center; width: 16px; height: 16px; }
+.pop i svg { width: 14px; height: 14px; display: block; }
+.pop.sale { --tag: var(--good); padding: 2px 6px 2px 4px; }
+.pop.fresh { --tag: var(--info); color: var(--info); }
+.pop.fresh i.snow { border-radius: 50%; background: var(--info); color: var(--plate); }
+.pop.fresh i.snow svg { width: 10px; height: 10px; }
+.pop.spoiled { --tag: var(--bad); }
+.pop.spoiled b { color: var(--ochre-hi); }
+.pop.spoiled em { color: var(--bad); }
+.pop.cars { --tag: var(--ochre); font-size: var(--t-sm); box-shadow: inset 0 0 0 1px var(--ochre), 0 3px 12px rgba(224, 168, 51, 0.25); }
+.pop.cars b { color: var(--ochre-hi); font-family: var(--f-display); letter-spacing: 0.04em; }
+.pop.byproduct { --tag: var(--cream-3); }
+.pop.byproduct span { font-weight: 500; color: var(--cream-2); }
+
+/* a refrigerated truck's shelf time running down */
+.fresh-ring { position: absolute; left: 0; top: 0; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  background: conic-gradient(var(--c) var(--left), rgba(7, 13, 23, 0.55) 0); box-shadow: 0 0 0 1px var(--edge), 0 1px 3px rgba(0, 0, 0, 0.4); --c: var(--info); }
+.fresh-ring i { width: 18px; height: 18px; border-radius: 50%; background: var(--plate); color: var(--cream); display: grid; place-items: center; }
+.fresh-ring i svg { width: 12px; height: 12px; display: block; }
+.fresh-ring.late { --c: var(--ochre); }
+.fresh-ring.spoiling { --c: var(--bad); }
+.fresh-ring.spoiling::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; box-shadow: 0 0 0 3px rgba(239, 138, 108, 0.45);
+  opacity: 0; animation: ring-pulse 0.8s ease-in-out infinite alternate; pointer-events: none; }
+@keyframes ring-pulse { to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .fresh-ring.spoiling::after { animation: none; opacity: 1; } }
+body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
+
 .ov-power { background: linear-gradient(90deg, #e5484d 0 30%, #f0a33a 30% 55%, #3faa5a 55%); }
 /* the deposit colours the Resources view paints (palette.ts resFert, resForest, resOre, resCoal, resLime) */
 .ov-resources { background: linear-gradient(90deg, #e0c040 0 20%, #2f7a3a 20% 40%, #c0622e 40% 60%, #2b2b2f 60% 80%, #f2eee0 80%); }

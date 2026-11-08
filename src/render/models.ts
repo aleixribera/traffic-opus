@@ -29,6 +29,8 @@ export const BUILDING_MODELS: BuildingKind[] = [
 export const SITE_PIECES: string[] = [
   ...SITE_MODELS, "oilwell", "sandpit", "refinery", "glassworks", "furniture", "constructionplant", "coppermine",
   "coppersmelter", "electronics", "machineworks",
+  // deeper chains: the chemical works, the dairy and creamery, the rubber plant and the Motor Works
+  "chemworks", "dairyfarm", "creamery", "rubberplant", "motorworks",
   // logistics (a warehouse, a fuel depot)
   "warehouse", "fueldepot",
   // the company's landmarks, three stages each (foundations, the structure rising, finished)
@@ -48,6 +50,10 @@ export const VEHICLE_MODELS = [
   "rt_flatbed_a", "rt_flatbed_b",
   // an oversized-load convoy (game/convoys.ts): escort cars front and back, the heavy-haul tractor and its low-loader
   "escort_car", "ll_tractor", "ll_trailer_turbine", "ll_trailer_girder",
+  // refrigerated bodies for perishables (milk, cheese), in every class
+  "reefer", "heavy_reefer", "rt_reefer_a", "rt_reefer_b",
+  // car transporters for the Motor Works' cars, in every class, and a Motor Works car out on a town's streets
+  "carrier", "heavy_carrier", "rt_carrier_a", "rt_carrier_b", "motorcar",
 ] as const;
 /** Street furniture, drawn on its own (not a lot). */
 export const PROP_MODELS = ["busstop", "fence"] as const;

@@ -16,10 +16,10 @@ import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, type LotTemplate }
 import { Progress, type Feature, type Milestone, type ProgressView } from "./progression";
 import { DAY, HOUR, Society } from "./society";
 import { PLACED, SHORE_REACH, type PlacedKind } from "./placed";
-import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, isPlantKind, type Product } from "./industry";
+import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, isPlantKind, type Delivery, type Product } from "./industry";
 import { TRUCK_CLASS_ORDER, type TruckClass } from "./trucks";
 import { PARTS_FOR, TownSystem } from "./settlements";
-import { BLOCK, demandPerDay, gridPt, isHall, needsOf } from "./towns";
+import { BLOCK, CARS_PER_LOAD, demandPerDay, gridPt, isHall, needsOf } from "./towns";
 import { F } from "../world/gen";
 import { Transit } from "./transit";
 import { Utilities } from "./utilities";
@@ -53,7 +53,11 @@ export type GameEvent =
   /** one of the company's landmarks is finished (its banner) */
   | { t: "landmark"; b: number }
   /** an oversized-load convoy set off ("out") or got there ("in") */
-  | { t: "convoy"; phase: "out" | "in"; kind: BigKind; from: number; to: number };
+  | { t: "convoy"; phase: "out" | "in"; kind: BigKind; from: number; to: number }
+  /** a load was handed over (the map pops its money; a perishable shows how fresh it came, cars arrive in town) */
+  | { t: "delivery"; d: Delivery }
+  /** a by-product left a plant for another plant, as its own cargo */
+  | { t: "shipped"; from: Building; to: Building; p: Product; n: number };
 
 /** The company's books for an hour. Income comes only from loads delivered to towns (and bus fares). */
 export interface Budget {
@@ -172,6 +176,10 @@ export class Game {
       made: (p, n) => this.progress.onMade(p, n),
       madeAt: (b, _p, n) => this.convoys.made(b, n),
       season: (k) => seasonMult(k, this.time),
+      // a supply (fertilizer, explosives, machinery) is only asked of sites once a plant that makes it is unlocked
+      canMake: (p) => [...this.progress.unlocked.buildings].some((k) => isPlantKind(k) && !!PLANTS[k].outputs[p]),
+      delivered: (d) => this.delivered(d),
+      shipped: (from, to, p, n) => this.emit({ t: "shipped", from, to, p, n }),
       grew: (b, level) => { this.toast(`${BUILDING_TYPES[b.kind].name} grew to level ${level}: more output, jobs and trucks`); this.emit({ t: "buildings" }); },
     });
     this.convoys = new Convoys({
@@ -362,6 +370,31 @@ export class Game {
 
   toast(msg: string) {
     this.emit({ t: "toast", msg });
+  }
+
+  /** When each plant last had a spoiled load called out, and each town new cars (the ticker says so once an hour). */
+  private calledOut = new Map<string, number>();
+  /**
+   * A load was handed over: the map pops it, and the ticker calls out what is special about it: perishables that
+   * spoiled on the way (and what it cost), and a town taking delivery of the Motor Works' cars.
+   */
+  private delivered(d: Delivery) {
+    this.emit({ t: "delivery", d });
+    const once = (key: string) => {
+      if (this.time - (this.calledOut.get(key) ?? -1e12) < HOUR) return false;
+      this.calledOut.set(key, this.time);
+      return true;
+    };
+    const money = (v: number) => `$${Math.round(v).toLocaleString("en-US")}`;
+    const name = PRODUCTS[d.product].name.toLowerCase();
+    const town = d.to.town !== undefined ? this.towns.byId.get(d.to.town) : undefined;
+    const where = town?.name ?? `the ${BUILDING_TYPES[d.to.kind].name}`;
+    if (d.lost >= 1 && d.from && once(`spoiled:${d.from.id}`)) {
+      this.toast(`Spoiled on the way: ${name} from the ${BUILDING_TYPES[d.from.kind].name} reached ${where} at ${Math.round(d.fresh * 100)}% (${money(d.lost)} lost). A nearer buyer or a quicker road keeps it fresh.`);
+    }
+    if (d.product === "cars" && town && once(`cars:${town.id}`)) {
+      this.toast(`${town.name} took delivery of ${d.n * CARS_PER_LOAD} new Motor Works cars: watch for them on its streets`);
+    }
   }
 
   // ---------------------------------------------------------------- road edits

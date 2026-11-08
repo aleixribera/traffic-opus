@@ -15,6 +15,16 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.62", date: "2026-11-08", title: "Deeper chains and the Motor Works",
+    notes: [
+      "A Chemical Works makes fertilizer and explosives: farms need fertilizer and mines need explosives to work at full pace from level 3, and a badge at the gate shows the boost.",
+      "Dairy farms and creameries: milk and cheese ride in refrigerated trucks with a ring that counts down their shelf time, and arrive fresh or lose value.",
+      "By-products: sawmills make wood chips that power plants burn, and smelters make slag that cement works take instead of limestone.",
+      "Tier 5: a Rubber Plant and the Motor Works, whose cars ride car transporters to big towns. People there drive more, in sedans in your company's colours.",
+      "Deliveries pop a shipping tag over the map: the money earned, how fresh a load came, the cars sold.",
+    ],
+  },
+  {
     v: "v0.0.61", date: "2026-11-08", title: "A Deco skin for the whole interface",
     notes: [
       "Every panel is a navy enamel plate with an ochre pinstripe and rivets, headed in condensed display capitals.",

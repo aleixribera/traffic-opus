@@ -28,6 +28,7 @@ import { Roads3D } from "./render/roads3d";
 import { RoadsFar } from "./render/roadsFar";
 import { MapLabels } from "./ui/labels";
 import { MapIcons } from "./ui/mapIcons";
+import { Pops } from "./ui/pops";
 import { Terrain3D } from "./render/terrain3d";
 import { Vehicles3D } from "./render/vehicles3d";
 import { Transit3D, legPoints } from "./render/transit3d";
@@ -83,6 +84,8 @@ export class App {
   private glide: { from: { x: number; y: number; h: number }; to: { x: number; y: number; h: number }; t: number; dur: number } | null = null;
   parks3d!: Parks3D;
   fireworks = new Fireworks();
+  /** money and moments rising off the map, and the shelf-time rings over refrigerated trucks */
+  pops = new Pops();
   private iconT = 0;
   private labelKey = "";
   vehicles!: Vehicles3D;
@@ -229,7 +232,12 @@ export class App {
     this.roads.rebuildAll();
     this.buildings3d.rebuild(g.buildings.list);
     this.groundOverlay();
+    this.pops.clear();
+    this.icons.boostOf = (b) => g.industry.boosts(b);
     g.on((e) => {
+      // (a delivery or a by-product leaving only pops over the map: nothing else on screen changes)
+      if (e.t === "delivery") { if (this.mode !== "menu") this.pops.delivery(e.d, this.view); return; }
+      if (e.t === "shipped") { if (this.mode !== "menu") this.pops.shipped(e.from, e.to, e.p, this.view); return; }
       if (e.t === "roads") { this.roads.apply(e.cs); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
       else if (e.t === "buildings") { this.buildings3d.rebuild(g.buildings.list); this.applyTint(); this.dirtyPreview = true; }
       else if (e.t === "zones") this.dirtyPreview = true;
@@ -1306,6 +1314,7 @@ export class App {
       this.convoyTags.sync(g.traffic.vehicles, g.buildings.byId, this.uiHidden || this.mode === "menu");
     }
     else this.icons.update(this.view);
+    this.pops.update(this.view, this.uiHidden || this.mode === "menu" || far ? null : g.traffic, g.alpha);
     this.hud?.compassAngle(this.view.rot);
     this.view.render();
     requestAnimationFrame(this.frame);

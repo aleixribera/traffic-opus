@@ -64,4 +64,8 @@ export const CARGO_COLOR: Record<string, number> = {
   ore: 0x93603f, coal: 0x3a3a3e, lime: 0xd9d3bd, steel: 0x8a96a3, cement: 0xb9b6ae,
   crude: 0x2e2a26, sand: 0xe0c78e, fuel: 0xd99a2b, plastics: 0x6fb7c9, glass: 0x9fd3d6, goods: 0xb0603e, parts: 0x7f8b6a,
   copperore: 0x4f8a78, copper: 0xc4703a, electronics: 0x3f5f8f, machinery: 0xd8a22e,
+  fertilizer: 0xb9c98a, explosives: 0xb8402e, rubber: 0x34322f, cars: 0x7a2e2a, milk: 0xf2efe6, cheese: 0xe6bf55,
+  slag: 0x5e5a54, chips: 0xc9a46a,
 };
+/** The Motor Works' liveries (its cars on the streets and on the transporters): maroon, navy, racing green, cream. */
+export const MOTOR_LIVERY = [0x7a2e2a, 0x2f4a6a, 0x3f5a3a, 0xd8ccb0];

@@ -64,9 +64,47 @@ export function demandPerDay(p: Product, pop: number): number {
   // fuel, a City several hundred; a new City about 250 of electronics and 175 of machinery)
   const per: Partial<Record<Product, number>> = {
     food: 1 / 8, planks: 1 / 20, cement: 1 / 30, goods: 1 / 60, fuel: 1 / 60, electronics: 1 / 100, machinery: 1 / 140,
+    // (the extras: a Village of 300 takes ~24 loads of milk a day and ~10 of cheese; a new Town ~25 of cars)
+    milk: 1 / 20, cheese: 1 / 50, cars: 1 / 150,
   };
   const base = per[p] ?? 1 / 24;
   return Math.max(1, pop * base * Math.pow(1.6, sizeOf(pop)));
+}
+
+// ------------------------------------------------------------------ extras and cars (docs/design.md "Perishables", "Motor Works")
+
+/**
+ * Products a town buys from a population on without needing them to grow: fresh milk and cheese from a Village, motor
+ * cars from a Town. They sell like needs (up to MARKET times a day's use) and each one supplied adds a little to the
+ * town's growth (COMFORT_BONUS), but none holds it back.
+ */
+export const EXTRAS: Partial<Record<Product, number>> = { milk: 300, cheese: 300, cars: 1500 };
+/** Growth a town gains for each extra it was supplied with (80%+) over the last day, when it grows. */
+export const COMFORT_BONUS = 0.06;
+/** Everything a town of this population buys that it doesn't need: its extras. */
+export const extrasOf = (pop: number): Product[] => (Object.entries(EXTRAS) as [Product, number][]).filter(([, at]) => pop >= at).map(([p]) => p);
+/** Does a town of this population buy the product at all (a need or an extra)? */
+export const buys = (pop: number, p: Product): boolean => needsOf(pop).includes(p) || extrasOf(pop).includes(p);
+/** The growth multiplier from the extras supplied over the last day (1 with none). */
+export function comfortOf(delivered: Partial<Record<Product, number>>, pop: number): number {
+  let k = 1;
+  for (const p of extrasOf(pop)) if ((delivered[p] ?? 0) >= demandPerDay(p, pop) * 0.8) k += COMFORT_BONUS;
+  return k;
+}
+
+/** Cars in one truckload delivered to a town. */
+export const CARS_PER_LOAD = 4;
+/** Most a town's motoring can add to the share of its trips driven as real cars (+50%). */
+export const MOTOR_MAX = 0.5;
+/** Share of its cars a town scraps each day (so it keeps buying to keep its streets full). */
+export const CAR_SCRAP = 0.02;
+/**
+ * How much more a town drives (0..MOTOR_MAX) with the cars the company has sold it: rising with cars per household,
+ * full at one new car a household. Its people drive more of their trips and walk less (Society.travel).
+ */
+export function motoring(cars: number, households: number): number {
+  if (households <= 0 || cars <= 0) return 0;
+  return MOTOR_MAX * Math.min(1, (cars * CARS_PER_LOAD) / households);
 }
 
 /** Share of the last day's needs delivered, 0..1 per need (1 with none). */

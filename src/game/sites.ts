@@ -36,6 +36,9 @@ export const SITE_MODEL_SIZE: Record<string, [number, number]> = {
   constructionplant: [50, 42], coppermine: [44, 40], coppersmelter: [50, 42], electronics: [44, 36], machineworks: [52, 44],
   // the landmarks' cores (one model per construction stage, all the same footprint: megaprojects.ts)
   mega_hydrodam: [150, 80], mega_skylinetower: [80, 80], mega_exposition: [170, 120],
+  // deeper chains: pasture and a milking parlour round the dairy, finished cars waiting round the Motor Works
+  site_pasture: [64, 64], site_cowshed: [30, 24], site_carlot: [40, 30],
+  chemworks: [50, 42], dairyfarm: [40, 40], creamery: [36, 32], rubberplant: [46, 38], motorworks: [64, 50],
 };
 /** Every model a site can use (the renderer loads them all). */
 export const SITE_MODELS = Object.keys(SITE_MODEL_SIZE).filter((k) => k.startsWith("site_"));
@@ -65,6 +68,14 @@ const PLAN: Record<PlantKind, { core: string; mods: string[] }> = {
   coppersmelter: { core: "coppersmelter", mods: ["site_hall_l", "site_heap_cu", "site_heap_coal", "coppersmelter", "site_tanks", "site_office", "site_heap_cu", "site_hall_m"] },
   electronics: { core: "electronics", mods: ["site_hall_l", "site_hall_m", "electronics", "site_silos", "site_hall_l", "site_office", "site_hall_m"] },
   machineworks: { core: "machineworks", mods: ["site_hall_l", "site_workshop", "machineworks", "site_hall_l", "site_hall_m", "site_office", "site_workshop"] },
+  // supplies: acid towers and tanks, lime and coal heaps round the chemical works
+  chemworks: { core: "chemworks", mods: ["site_tanks", "site_heap_lime", "site_silos", "chemworks", "site_heap_coal", "site_tanks", "site_hall_m", "site_office"] },
+  // perishables: pasture round the milking parlours; the creamery's cold halls and milk silos
+  dairyfarm: { core: "dairyfarm", mods: ["site_pasture", "site_cowshed", "site_pasture", "site_silos", "site_pasture", "site_cowshed", "site_barn", "site_pasture"] },
+  creamery: { core: "creamery", mods: ["site_silos", "site_hall_m", "creamery", "site_tanks", "site_hall_l", "site_office", "site_silos"] },
+  // tier 5: the rubber plant's tank farm and mixing halls; the Motor Works' assembly halls and lots of new cars
+  rubberplant: { core: "rubberplant", mods: ["site_tanks", "site_hall_l", "rubberplant", "site_silos", "site_hall_m", "site_tanks", "site_office"] },
+  motorworks: { core: "motorworks", mods: ["site_hall_l", "site_carlot", "site_hall_l", "site_carlot", "motorworks", "site_workshop", "site_hall_l", "site_carlot", "site_office"] },
   // (small plots: the shed or the depot alone, facing the gate)
   warehouse: { core: "warehouse", mods: ["site_hall_m", "site_office"] },
   fueldepot: { core: "fueldepot", mods: ["site_tanks"] },

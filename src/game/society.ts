@@ -9,6 +9,7 @@ import type { Trip, TripKind, Vehicle } from "../sim/traffic";
 import type { Building } from "./buildings";
 import type { Game } from "./city";
 import { ZONE_GROUP } from "./growables";
+import { MOTOR_MAX } from "./towns";
 
 /** Sim seconds per game hour; the clock starts at 06:00 on day 1. */
 export const HOUR = 40;
@@ -410,12 +411,14 @@ export class Society {
     c.tStart = this.now;
     this.allTrips++;
     const fromP = from.c, toP = to.c;
+    // a town the company has sold cars to drives more: further before they walk, more of their trips as real cars
+    const home = g.buildings.byId.get(c.home);
+    const motor = g.towns.motorOf(home?.town);
     // round the corner to work or the shops: people walk
-    const walk = dist(fromP, toP) < WALK;
+    const walk = dist(fromP, toP) < walkReach(motor);
     // a bus that goes their way, about as quick as driving: they take it (and leave the car at home)
     if (!walk && g.transit.lines.size) {
       // (about one household in four has no car; more in flats)
-      const home = g.buildings.byId.get(c.home);
       const carless = c.hh >= 0 && (c.hh * 7919) % 100 < (home?.zone === "resHigh" || home?.zone === "resMed" || home?.zone === "resTower" ? 40 : 22);
       const bus = g.transit.plan(fromP, toP, carless);
       if (bus && g.rng() < Math.min(0.95, bus.p)) {
@@ -425,12 +428,15 @@ export class Society {
         return;
       }
     }
-    const real = !walk && g.rng() * g.tripScale < 1;
+    const real = !walk && g.rng() < carOdds(g.tripScale, motor);
     if (real) {
       this.carTrips++;
+      // (the households the company's cars went to drive them: motor / MOTOR_MAX is the share of households with one,
+      // and the same households keep theirs, picked by a hash of the household)
+      const built = motor > 0 && c.hh >= 0 && ((Math.imul(c.hh + 1, 2654435761) >>> 0) % 1000) / 1000 < motor / MOTOR_MAX;
       g.traffic.request({
         from: a, fromSide: from.side, to: b, toSide: to.side,
-        trip: { kind, from: from.id, to: to.id, resident: c.id, startT: this.now, freeFlow: 0 },
+        trip: { kind, from: from.id, to: to.id, resident: c.id, startT: this.now, freeFlow: 0, ...(built ? { motor: true } : {}) },
         truck: false, tries: 0, wait: 0,
       });
       c.next = Infinity;
@@ -554,6 +560,18 @@ export class Society {
  * are small, and a town's own cars going about its streets are much of what makes it look alive.)
  */
 export const WALK = 200;
+
+/**
+ * How far (m) people walk rather than drive: WALK, and down to half that in a town fully motored by the company's cars
+ * (`motor` 0..MOTOR_MAX, towns.ts motoring).
+ */
+export const walkReach = (motor: number) => WALK * (1 - Math.max(0, Math.min(0.5, motor)));
+
+/**
+ * The chance a driven trip is a real car on the roads: one in `tripScale` (big towns stand one car for several
+ * trips), times 1 + motor for a town with the company's cars, so every car sold is more traffic.
+ */
+export const carOdds = (tripScale: number, motor: number) => Math.min(1, (1 + Math.max(0, motor)) / Math.max(1, tripScale));
 
 /** Rough door-to-door time for a trip that isn't simulated as a car. */
 export function estTime(a: V2, b: V2): number {

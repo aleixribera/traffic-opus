@@ -5,7 +5,8 @@
 // checks the milestones come in the ladder's order, that the company stays solvent all the way and that money is
 // never what holds it up once tier 3 opens, and prints the timeline: the numbers docs/design.md's "Pacing" is judged
 // on. (`npx vitest run tests/balance.test.ts --disableConsoleIntercept` shows it; with BALANCE_T3=1 it plays tier 3 too,
-// and with BALANCE_T4=1 on through tier 4's copper, electronics and machinery.)
+// with BALANCE_T4=1 on through tier 4's copper, electronics and machinery, and with BALANCE_T5=1 on through the deeper
+// chains: the dairy and creamery, the chemical works' supplies, the rubber plant and the Motor Works' first car.)
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Game, START_MONEY } from "../src/game/city";
@@ -29,13 +30,19 @@ declare const process: { env: Record<string, string | undefined>; stderr: { writ
  * plant and a machine works, until the first electronics and machinery are made (or the days run out). It implies
  * BALANCE_T3 and takes longer still.
  */
-const T4 = !!process.env.BALANCE_T4;
-const MAX_DAYS = Number(process.env.BALANCE_DAYS ?? (T4 ? 120 : 70));
+/**
+ * BALANCE_T5=1 plays on past tier 4 through the deeper chains: a dairy on the soil and a creamery by the farms, a
+ * chemical works at the hub feeding fertilizer and explosives back to the farms and mines, then a rubber plant and the
+ * Motor Works, until the first car is sold to a town. It implies BALANCE_T4 and is the longest run of all.
+ */
+const T5 = !!process.env.BALANCE_T5;
+const T4 = !!process.env.BALANCE_T4 || T5;
+const MAX_DAYS = Number(process.env.BALANCE_DAYS ?? (T5 ? 170 : T4 ? 120 : 70));
 /**
  * BALANCE_T3=1 plays on past first cement through tier 3 to a supplied Town and checks that leg too. It runs an hour or
  * more (the towns grow to thousands of people, all driving), so the everyday suite stops at first cement.
  */
-const T3 = !!process.env.BALANCE_T3 || !!process.env.BALANCE_T4;
+const T3 = !!process.env.BALANCE_T3 || T4;
 /** BALANCE_LIVE=1 prints the timeline as it happens too (a long run shows where it is). */
 const LIVE = !!process.env.BALANCE_LIVE;
 /** The pace the game is held to: first steel and first cement, first fuel and goods, and a Town, by these days. */
@@ -48,6 +55,8 @@ const MAKER: Partial<Record<Product, PlantKind>> = {
   coal: "coalmine", ore: "ironmine", steel: "smelter", crude: "oilwell", fuel: "refinery", sand: "sandpit",
   glass: "glassworks", goods: "furniture", parts: "constructionplant",
   copperore: "coppermine", copper: "coppersmelter", electronics: "electronics", machinery: "machineworks",
+  fertilizer: "chemworks", explosives: "chemworks", milk: "dairyfarm", cheese: "creamery", rubber: "rubberplant",
+  cars: "motorworks",
 };
 
 function play() {
@@ -180,10 +189,13 @@ function play() {
         say(`place ${kind}${b.plant!.yld < 1 ? ` (${Math.round(b.plant!.yld * 100)}% on its deposit)` : ""}, ${(dist(b.c, A.c) / 1000).toFixed(1)} km from ${A.name} · $${Math.round(g.money).toLocaleString("en-US")} left`);
         return b;
       };
-      // (placing it lays a street from its gate to the nearest road: the chain's next plant goes along that way)
-      if (b.access) { if (key && !roads[key]) { roads[key] = [a, b.front]; paths[key] = []; } return done(); }
       // a street to 4 m past the kerb in front of its gate
       const e = add(b.front, scale(norm(sub(b.front, b.c)), 4));
+      // (placing it laid its own street to the gate: that is the deposit's road now, for the plants beside it)
+      if (b.access) {
+        if (key && !roads[key]) { roads[key] = [a, e]; paths[key] = [[a, e]]; }
+        return done();
+      }
       const r = road(`to the ${T.name.toLowerCase()}`, a, e);
       if (r !== true) { siteWhy.set(`road ${r}: ${roadErrors[0] ?? ""}`, (siteWhy.get(`road ${r}: ${roadErrors[0] ?? ""}`) ?? 0) + 1); g.undo(); if (r === "money") return "money"; continue; }
       if (key && !roads[key]) { roads[key] = [a, e]; paths[key] = lastLegs; }
@@ -314,6 +326,15 @@ function play() {
     if (u.has("coppersmelter") && has("coppermine") && !has("coppersmelter")) hub("coppersmelter");
     if (u.has("electronics") && has("coppersmelter") && !has("electronics")) hub("electronics");
     if (u.has("machineworks") && has("coppersmelter") && !has("machineworks")) hub("machineworks");
+    if (!T5) return;
+    // the deeper chains: a dairy on the soil and a creamery on the farm road (milk spoils, so close by); the chemical
+    // works at the hub by the quarry's lime; then the rubber plant beside the refinery and the Motor Works beside the
+    // smelter, the glassworks and the electronics plant
+    if (u.has("dairyfarm") && !has("dairyfarm")) site("dairyfarm", F.fert, soil, undefined, 1500);
+    if (u.has("creamery") && has("dairyfarm") && !has("creamery") && roads.farm) place("creamery", ...roads.farm, 0.1, 0.6);
+    if (u.has("chemworks") && !has("chemworks")) hub("chemworks");
+    if (u.has("rubberplant") && !has("rubberplant")) hub("rubberplant");
+    if (u.has("motorworks") && has("rubberplant") && !has("motorworks")) hub("motorworks");
   };
 
   /** A town founded 2-4 km from the first, away from the deposits, joined to the nearest road end. */
@@ -338,8 +359,8 @@ function play() {
   // ---------------------------------------------------------------- keeping up with the towns
   const lastAdd: Partial<Record<PlantKind, number>> = {};
   let lastPower = -1e9;
-  const FIELD: Partial<Record<PlantKind, number>> = { farm: F.fert, loggingcamp: F.forest, ironmine: F.ore, coalmine: F.coal, quarry: F.lime, oilwell: F.oil, sandpit: F.sand, coppermine: F.copper };
-  const HUB: PlantKind[] = ["smelter", "cementworks", "coalplant", "refinery", "glassworks", "constructionplant", "coppersmelter", "electronics", "machineworks"];
+  const FIELD: Partial<Record<PlantKind, number>> = { farm: F.fert, dairyfarm: F.fert, loggingcamp: F.forest, ironmine: F.ore, coalmine: F.coal, quarry: F.lime, oilwell: F.oil, sandpit: F.sand, coppermine: F.copper };
+  const HUB: PlantKind[] = ["smelter", "cementworks", "coalplant", "refinery", "glassworks", "constructionplant", "coppersmelter", "electronics", "machineworks", "chemworks", "rubberplant", "motorworks"];
   /** Another plant of a kind beside the ones already there. */
   const another = (k: PlantKind) => {
     const near = g.buildings.list.filter((b) => b.kind === k).at(-1)!.c;
@@ -350,7 +371,7 @@ function play() {
       return r;
     }
     if (HUB.includes(k)) return hub(k);
-    const r = k === "foodplant" ? roads.towns ?? roads.farm : roads.wood;
+    const r = k === "foodplant" || k === "creamery" ? roads.towns ?? roads.farm : roads.wood;
     return (r ? place(k, ...r, 0.1, 0.9) : null) ?? hub(k);
   };
   /** A chain short of p: another plant at its weakest link (the input most of its plants wait for). */
@@ -387,7 +408,7 @@ function play() {
   ev.fail = (t, r, now) => { if (t.haul) gaveUp.set(r, (gaveUp.get(r) ?? 0) + 1); fail0(t, r, now); };
 
   // ---------------------------------------------------------------- the clock
-  let steel = -1, cement = -1, fuel = -1, goods = -1, parts = -1, town = -1, copper = -1, electronics = -1, machinery = -1;
+  let steel = -1, cement = -1, fuel = -1, goods = -1, parts = -1, town = -1, copper = -1, electronics = -1, machinery = -1, milk = -1, supplies = -1, car = -1;
   const started = Date.now();
   for (let h = 0; h < MAX_DAYS * 24; h++) {
     plan();
@@ -405,6 +426,9 @@ function play() {
     if (copper < 0 && (made.copper ?? 0) >= 1) { copper = g.time; say("FIRST COPPER"); }
     if (electronics < 0 && (made.electronics ?? 0) >= 1) { electronics = g.time; say("FIRST ELECTRONICS"); }
     if (machinery < 0 && (made.machinery ?? 0) >= 1) { machinery = g.time; say("FIRST MACHINERY"); }
+    if (milk < 0 && (g.progress.sold.milk ?? 0) >= 1) { milk = g.time; say("FIRST MILK SOLD"); }
+    if (supplies < 0 && ((made.fertilizer ?? 0) >= 1 || (made.explosives ?? 0) >= 1)) { supplies = g.time; say("FIRST SUPPLIES FROM THE CHEMICAL WORKS"); }
+    if (car < 0 && (g.progress.sold.cars ?? 0) >= 1) { car = g.time; say("FIRST CAR SOLD"); }
     if (h % 24 === 23) {
       const pct = (o: Partial<Record<Product, number>>) => Object.entries(o).map(([p, v]) => `${p} ${Math.round(v! * 100)}%`).join(" ");
       const towns = g.towns.list.map((t) => `${t.name} ${t.pop} (${pct(t.supply)})`).join(", ");
@@ -425,10 +449,10 @@ function play() {
       put(`             trucks: ${tv.length} on the road (${still} stood still, ${jammed} stuck 30 s+), ${tp.length} waiting to set off (avg ${gate.toFixed(0)} s)${[...gaveUp].map(([k, n]) => ` · ${k} ${n}`).join("")}`);
       gaveUp.clear();
     }
-    if (T4 ? electronics >= 0 && machinery >= 0 : T3 ? g.progress.isDone("townSupplied") : cement >= 0) break;
+    if (T5 ? car >= 0 : T4 ? electronics >= 0 && machinery >= 0 : T3 ? g.progress.isDone("townSupplied") : cement >= 0) break;
   }
   const supplied = reached.find((r) => r.id === "townSupplied")?.t ?? -1;
-  return { g, lines, reached, low, steel, cement, fuel, goods, parts, town, supplied, poorHours, copper, electronics, machinery };
+  return { g, lines, reached, low, steel, cement, fuel, goods, parts, town, supplied, poorHours, copper, electronics, machinery, milk, supplies, car };
 }
 
 describe("Balance: the game to Town size", () => {
@@ -442,7 +466,7 @@ describe("Balance: the game to Town size", () => {
   });
   afterAll(() => vi.restoreAllMocks());
 
-  it(`a scripted company reaches steel and cement${T3 ? ", then fuel, goods and a supplied Town," : ""}${T4 ? " then copper, electronics and machinery," : ""} in ladder order, and stays solvent`, () => {
+  it(`a scripted company reaches steel and cement${T3 ? ", then fuel, goods and a supplied Town," : ""}${T4 ? " then copper, electronics and machinery," : ""}${T5 ? " then milk, supplies and a car," : ""} in ladder order, and stays solvent`, () => {
     const t0 = Date.now();
     const r = play();
     const { g, lines, reached, low, steel, cement } = r;
@@ -450,7 +474,7 @@ describe("Balance: the game to Town size", () => {
     const day = (t: number) => (t < 0 ? "never" : (t / DAY).toFixed(2));
     console.log(["", "Balance timeline (seed 7):", ...lines,
       `milestones: ${reached.map((x) => `${x.id}@${(x.t / DAY).toFixed(2)}`).join(" ")}`,
-      `first steel day ${day(steel)}, first cement day ${day(cement)}, first fuel day ${day(r.fuel)}, first goods day ${day(r.goods)}, first parts day ${day(r.parts)}, a Town day ${day(r.town)}, a Town supplied day ${day(r.supplied)}${T4 ? `, first copper day ${day(r.copper)}, first electronics day ${day(r.electronics)}, first machinery day ${day(r.machinery)}` : ""}`,
+      `first steel day ${day(steel)}, first cement day ${day(cement)}, first fuel day ${day(r.fuel)}, first goods day ${day(r.goods)}, first parts day ${day(r.parts)}, a Town day ${day(r.town)}, a Town supplied day ${day(r.supplied)}${T4 ? `, first copper day ${day(r.copper)}, first electronics day ${day(r.electronics)}, first machinery day ${day(r.machinery)}` : ""}${T5 ? `, first milk sold day ${day(r.milk)}, first supplies day ${day(r.supplies)}, first car day ${day(r.car)}` : ""}`,
       `lowest balance $${Math.round(low).toLocaleString("en-US")}; hours a build waited for money in tier 3: ${r.poorHours}; ${((Date.now() - t0) / 1000).toFixed(0)} s`].join("\n"));
     // solvent all the way
     expect(low).toBeGreaterThanOrEqual(0);
@@ -492,5 +516,13 @@ describe("Balance: the game to Town size", () => {
     expect(r.electronics).toBeGreaterThan(0);
     expect(r.machinery).toBeGreaterThan(0);
     for (const id of ["parts50", "copperore1", "goods60", "copper1"]) expect(at(id), id).toBeGreaterThanOrEqual(0);
-  }, T4 ? 9_000_000 : T3 ? 7_200_000 : 1_800_000);
+    if (!T5) return;
+    // the deeper chains: milk sold fresh, the chemical works' supplies, and the Motor Works' first car, in ladder order
+    expect(r.milk).toBeGreaterThan(0);
+    expect(r.supplies).toBeGreaterThan(0);
+    expect(r.car).toBeGreaterThan(0);
+    for (const id of ["dairy", "milk1", "chemworks", "rubber", "motorworks", "cars1"]) expect(at(id), id).toBeGreaterThanOrEqual(0);
+    expect(at("rubber")).toBeLessThan(at("motorworks"));
+    expect(at("motorworks")).toBeLessThan(at("cars1"));
+  }, T5 ? 12_000_000 : T4 ? 9_000_000 : T3 ? 7_200_000 : 1_800_000);
 });

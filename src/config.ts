@@ -90,6 +90,8 @@ export type BuildingKind =
   | "ironmine" | "coalmine" | "quarry" | "smelter" | "cementworks" | "coalplant"
   | "oilwell" | "sandpit" | "refinery" | "glassworks" | "furniture" | "constructionplant"
   | "coppermine" | "coppersmelter" | "electronics" | "machineworks"
+  // deeper chains: the chemical works, the dairy and creamery, and the Motor Works with its rubber plant
+  | "chemworks" | "dairyfarm" | "creamery" | "rubberplant" | "motorworks"
   // the company's logistics: a store that buffers deliveries, and a depot that fuels trucks at cost
   | "warehouse" | "fueldepot"
   // the company's landmarks, one of each, built once over days (see game/megaprojects.ts)
@@ -151,6 +153,11 @@ export const BUILDING_TYPES: Record<BuildingKind, BuildingType> = {
   coppersmelter: { kind: "coppersmelter", name: "Copper Smelter", zone: "placed", w: 230, d: 210, residents: 0, jobs: 16, pollution: 150, parking: 4, blurb: "Smelts copper ore with coal into copper." },
   electronics: { kind: "electronics", name: "Electronics Plant", zone: "placed", w: 200, d: 180, residents: 0, jobs: 18, pollution: 30, parking: 5, blurb: "Builds electronics from copper and plastics." },
   machineworks: { kind: "machineworks", name: "Machine Works", zone: "placed", w: 220, d: 200, residents: 0, jobs: 18, pollution: 80, parking: 4, blurb: "Builds machinery from steel and copper." },
+  chemworks: { kind: "chemworks", name: "Chemical Works", zone: "placed", w: 220, d: 200, residents: 0, jobs: 16, pollution: 140, parking: 4, blurb: "Burns limestone with coal into fertilizer and explosives, the supplies your sites need to grow past level 2." },
+  dairyfarm: { kind: "dairyfarm", name: "Dairy Farm", zone: "placed", w: 290, d: 270, residents: 0, jobs: 8, pollution: 0, parking: 2, blurb: "Milks a herd on fertile pasture. Its refrigerated trucks sell the milk before it spoils." },
+  creamery: { kind: "creamery", name: "Creamery", zone: "placed", w: 190, d: 170, residents: 0, jobs: 12, pollution: 20, parking: 4, blurb: "Turns milk into cheese, which keeps about three times as long." },
+  rubberplant: { kind: "rubberplant", name: "Rubber Plant", zone: "placed", w: 210, d: 190, residents: 0, jobs: 14, pollution: 120, parking: 4, blurb: "Makes synthetic rubber from plastics with coal." },
+  motorworks: { kind: "motorworks", name: "Motor Works", zone: "placed", w: 290, d: 260, residents: 0, jobs: 30, pollution: 90, parking: 8, blurb: "Builds motor cars from steel, glass, rubber and electronics. Every car a town buys is more traffic on its roads." },
   warehouse: { kind: "warehouse", name: "Warehouse", zone: "placed", w: 110, d: 84, residents: 0, jobs: 0, pollution: 0, parking: 3, blurb: "Stores products your plants and towns can't take yet, and its own trucks ship them on when there's a buyer." },
   fueldepot: { kind: "fueldepot", name: "Fuel Depot", zone: "placed", w: 64, d: 52, residents: 0, jobs: 0, pollution: 10, parking: 1, blurb: "Takes fuel from your refineries: trucks on runs that pass near it fill up at cost instead of market price." },
   hydrodam: { kind: "hydrodam", name: "Hydro Dam", zone: "placed", w: 200, d: 170, residents: 0, jobs: 12, pollution: 0, parking: 3, blurb: "A dam and power station across the river: power for every building on its roads within 15 km, with no coal to feed." },
