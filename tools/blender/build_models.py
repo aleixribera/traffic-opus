@@ -2897,6 +2897,56 @@ def b_glasstower(M, P):
     cyl(M, x1 - 1.6, b1 - 1.6, 0.1, 58.8, 64.0, P["ind_steel"], n=5)
     return L
 
+def b_aptower(M, P):
+    """Apartment tower: a cross-plan residential high-rise in white render with terracotta panels, corner
+    balconies on every floor, a glazed lobby on a low podium, a roof plant room and a garden at its foot."""
+    L = lot(M, P, 30, 30, bay_row(6))
+    y0, y1 = L.y0, L.y1
+    cx, cy = 0.0, (y0 + y1) / 2 + 0.5
+    st, n = 3.0, 14
+    h = n * st + 1.0
+    # podium: lobby and bike store
+    box(M, -12.5, 12.5, y0 + 1.0, y1 - 0.5, 0, 4.0, P["mf_wall"])
+    band(M, -12.5, 12.5, y0 + 1.0, y1 - 0.5, 0.4, 3.4, P["mf_glass"], o=0.05)
+    box(M, -12.8, 12.8, y0 + 0.7, y1 - 0.2, 4.0, 4.4, P["mf_dark"])
+    box(M, -12.2, 12.2, y0 + 1.3, y1 - 0.8, 4.4, 4.5, P["mf_green"])
+    # cross-plan shaft: two crossing slabs
+    a, b = 9.0, 4.2
+    arms = ((cx - a, cx + a, cy - b, cy + b), (cx - b, cx + b, cy - a, cy + a))
+    for (x0, x1, c0, c1) in arms:
+        box(M, x0, x1, c0, c1, 4.5, h, P["mf_wall"])
+        for s in range(1, n):
+            z = s * st + 1.5
+            band(M, x0, x1, c0, c1, z + 0.8, z + 2.2, P["mf_glass"], o=0.04)
+    # terracotta panels up the arm ends
+    for (x0, x1, c0, c1) in ((cx - a - 0.06, cx - a, cy - 2.0, cy + 2.0), (cx + a, cx + a + 0.06, cy - 2.0, cy + 2.0),
+                             (cx - 2.0, cx + 2.0, cy - a - 0.06, cy - a), (cx - 2.0, cx + 2.0, cy + a, cy + a + 0.06)):
+        box(M, x0, x1, c0, c1, 4.5, h, P["hs_wall2"])
+    # balconies in the four inner corners from the second floor up
+    for s in range(2, n):
+        z = s * st + 1.5
+        for sx in (-1, 1):
+            for sy in (-1, 1):
+                bx0, bx1 = sorted((cx + sx * b, cx + sx * (b + 2.4)))
+                by0, by1 = sorted((cy + sy * b, cy + sy * (b + 2.4)))
+                box(M, bx0, bx1, by0, by1, z - 0.1, z + 0.1, P["mf_wall"])
+                ex = bx1 if sx > 0 else bx0
+                ey = by1 if sy > 0 else by0
+                box(M, min(ex, ex + sx * 0.1), max(ex, ex + sx * 0.1), by0, by1, z + 0.1, z + 1.0, P["mf_rail"])
+                box(M, bx0, bx1, min(ey, ey + sy * 0.1), max(ey, ey + sy * 0.1), z + 0.1, z + 1.0, P["mf_rail"])
+    for (x0, x1, c0, c1) in arms:
+        box(M, x0 - 0.25, x1 + 0.25, c0 - 0.25, c1 + 0.25, h, h + 0.6, P["mf_dark"])
+        box(M, x0 + 0.1, x1 - 0.1, c0 + 0.1, c1 - 0.1, h + 0.6, h + 0.4 + 0.25, P["tb_grey"])
+    box(M, cx - b + 0.4, cx + b - 0.4, cy + 3.4, cy + a - 0.4, h + 0.65, h + 0.72, P["mf_green"])
+    box(M, cx - 3.0, cx + 3.0, cy - 3.0, cy + 3.0, h + 0.4, h + 3.0, P["mf_wall"])
+    box(M, cx - 3.2, cx + 3.2, cy - 3.2, cy + 3.2, h + 3.0, h + 3.3, P["mf_dark"])
+    for (px, py) in ((cx + 6.0, cy - 2.0), (cx - 6.0, cy + 2.0)):
+        M.loft([(px - 1.6, py - 1.2, h + 0.7), (px + 1.6, py - 1.2, h + 0.7), (px + 1.6, py - 1.2, h + 0.75),
+                (px - 1.6, py - 1.2, h + 0.75)],
+               [(px - 1.6, py + 1.2, h + 1.35), (px + 1.6, py + 1.2, h + 1.35), (px + 1.6, py + 1.2, h + 1.4),
+                (px - 1.6, py + 1.2, h + 1.4)], P["solar"])
+    return L
+
 
 SERVICES = ("garbage", "firestation", "police", "clinic", "hospital", "school", "highschool", "university",
             "park", "parklarge", "windturbine", "coalplant", "solarfarm", "waterpump", "sewageoutlet",
@@ -2915,6 +2965,7 @@ BUILDINGS = {
     "highstreet": (b_highstreet, 18, 20, 3),
     "modernflats": (b_modernflats, 30, 30, 6),
     "glasstower": (b_glasstower, 30, 30, 6),
+    "aptower": (b_aptower, 30, 30, 6),
     "mine": (b_mine, 26, 30, 2),
     "farm": (b_farm, 40, 40, 2),
     "works": (b_works, 36, 32, 4),
