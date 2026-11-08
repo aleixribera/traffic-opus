@@ -37,6 +37,7 @@ import { MapLabels } from "./ui/labels";
 import { MapIcons } from "./ui/mapIcons";
 import { Pops } from "./ui/pops";
 import { Terrain3D } from "./render/terrain3d";
+import { Clearing, clearShapes } from "./render/clearing";
 import { Vehicles3D } from "./render/vehicles3d";
 import { Transit3D, legPoints } from "./render/transit3d";
 import { STOP_COST } from "./game/transit";
@@ -107,6 +108,7 @@ export class App {
   vehicles!: Vehicles3D;
   buildings3d!: Buildings3D;
   terrain3d!: Terrain3D;
+  private clearing!: Clearing;
   preview = new Preview3D();
   saves = new Saves();
   hud!: Hud;
@@ -285,9 +287,15 @@ export class App {
     for (const c of [...this.worldRoot.children]) this.worldRoot.remove(c);
     const small = Math.min(window.innerWidth, window.innerHeight) < 700;
     this.terrain3d = new Terrain3D(g.terrain, small);
+    // (no trees on roads, their verges, sites or plots: the ground's crowns give way round whatever is built)
+    this.clearing?.dispose();
+    this.clearing = new Clearing(() => clearShapes(g.net, g.buildings.list));
+    const sh = this.terrain3d.shared;
+    sh.uClear.value = this.clearing.tex; sh.uClearO.value = this.clearing.origin; sh.uClearS.value = this.clearing.size;
     this.roads = new Roads3D(g.net, {
       props: this.models.props, isWater: (p) => g.terrain.isWater(p),
       drives: () => g.buildings.list.filter((b) => b.access && !b.plant).map((b) => b.front),
+      gates: () => g.buildings.list.filter((b) => b.placed && b.plant).map((b) => ({ ...siteFrame(b.c, b.rot, b.side, b.hd), front: b.front })),
     });
     this.roadsFar = new RoadsFar(g.net);
     this.labels.set([]);
@@ -309,9 +317,9 @@ export class App {
       // (a delivery or a by-product leaving only pops over the map: nothing else on screen changes)
       if (e.t === "delivery") { if (this.mode !== "menu") this.pops.delivery(e.d, this.view); return; }
       if (e.t === "shipped") { if (this.mode !== "menu") this.pops.shipped(e.from, e.to, e.p, this.view); return; }
-      if (e.t === "roads") { this.roads.apply(e.cs); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
+      if (e.t === "roads") { this.roads.apply(e.cs); this.clearing.invalidate(); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
       else if (e.t === "buildings") {
-        this.buildings3d.rebuild(g.buildings.list); this.applyTint(); this.dirtyPreview = true;
+        this.buildings3d.rebuild(g.buildings.list); this.roads.refreshGates(); this.clearing.invalidate(); this.applyTint(); this.dirtyPreview = true;
         // (street trees make way for new driveways: at most twice a second while a town grows)
         if (!this.treesDue) this.treesDue = setTimeout(() => { this.treesDue = 0; this.roads.refreshTrees(); }, 500);
       }
@@ -1433,6 +1441,7 @@ export class App {
     const far = this.view.halfH > 1800;
     this.vehicles.group.visible = !far;
     this.view.sun.castShadow = this.view.halfH < 2400;
+    this.clearing.update(this.view.renderer, this.view.cx, this.view.cy);
     this.terrain3d.update(this.view);
     this.roadsFar.update(this.view.mpp, this.view.w, this.view.h);
     this.labels.update(this.view);

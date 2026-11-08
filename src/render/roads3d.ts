@@ -3,6 +3,7 @@ import { LANE_W, ROAD_TYPES, SHOULDER, SIDEWALK, STREET_TREES, isHighway, roadGr
 import { add, clamp, dist, dot, norm, polyAt, polyClosest, polyDir, right, scale, smoothstep, sub, type Polyline, type V2 } from "../core/math";
 import { pocketZones, type ChangeSet, type RoadNetwork } from "../roads/network";
 import { ringsNear } from "../roads/planner";
+import { goreIslands } from "./gore";
 import { dkey } from "../sim/router";
 import type { Traffic } from "../sim/traffic";
 import { PAL } from "./palette";
@@ -26,7 +27,12 @@ export interface BridgeParts {
   isWater?: (p: V2) => boolean;
   /** Where driveways meet the kerb (homes, shops, halls): no street tree stands in front of one. */
   drives?: () => V2[];
+  /** Company sites' gates (and the way into each site): a street that ends just outside one runs into its yard. */
+  gates?: () => { gate: V2; into: V2; front?: V2 }[];
 }
+
+/** A site's yard concrete (Buildings3D's service roads), carried out of its gate to the street that reaches it. */
+const GATE_APRON = 0x85847c;
 
 /** Shared road surface material: Lambert (so it takes shadows) with markings drawn in the fragment shader. */
 export function makeRoadMaterial(opts: { color?: number; opacity?: number; markings?: boolean; arrows?: boolean; highway?: boolean } = {}) {
@@ -228,6 +234,10 @@ export class Roads3D {
   private hwPlain = makeRoadMaterial({ highway: true, markings: false });
   private edgeMat = new THREE.MeshLambertMaterial({ color: PAL.roadEdge });
   private walkMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  private apronMat = new THREE.MeshLambertMaterial({ color: GATE_APRON });
+  /** Dead ends drawn as a site gate's apron instead of a turning bulb, as last built. */
+  private gateEnds = new Set<number>();
+  private gateList: { gate: V2; into: V2; front?: V2 }[] | null = null;
   private seamHw = seamMaterial(PAL.hwRoad, PAL.hwLane);
   private seamTown = seamMaterial(PAL.road, PAL.lane);
   // street trees: flat round crowns, darker rim and a lit side, one instanced mesh for the whole map
@@ -338,7 +348,80 @@ export class Roads3D {
     this.collectTrees();
   }
 
+  /**
+   * Redraw the dead ends whose site came or went (after buildings change): the street a site is placed with is
+   * built just before the site itself, so its end is first drawn as a turning bulb.
+   */
+  refreshGates() {
+    this.gateList = null;
+    let changed = false;
+    for (const [id, ng] of this.net.nodeGeom) {
+      if (ng.kind !== "end" && !this.gateEnds.has(id)) continue;
+      if (!!this.gateAt(id) === this.gateEnds.has(id)) continue;
+      this.dropNode(id);
+      if (this.net.nodes.has(id)) this.buildNode(id);
+      changed = true;
+    }
+    if (changed) this.batch.flush();
+  }
+
+  /** The site gate a dead end runs straight into (the street laid out of a site's gate ends just outside it). */
+  private gateAt(id: number): { gate: V2; into: V2; front?: V2 } | null {
+    const ng = this.net.nodeGeom.get(id), n = this.net.nodes.get(id);
+    if (!ng || !n || ng.kind !== "end" || ng.arms.length !== 1 || n.h > 0.3) return null;
+    const A = ng.arms[0];
+    this.gateList ??= this.parts?.gates?.() ?? [];
+    for (const g of this.gateList) {
+      const d = sub(g.gate, n.p), L = Math.hypot(d.x, d.y);
+      if (L < 2 || L > 14) continue;
+      // the gate straight ahead of the road's end, and the road leaving it square out of the gate
+      if (dot(d, A.dir) / L > -0.9 || dot(g.into, A.dir) > -0.9) continue;
+      return g;
+    }
+    return null;
+  }
+
+  /**
+   * A street that ends at a site's gate: no turning bulb, but the yard's concrete carried out of the gate to the
+   * street, as wide as the street and its pavements where it meets it, narrowing to the yard road at the gate.
+   */
+  private buildGateApron(id: number, gate: { gate: V2; into: V2; front?: V2 }) {
+    const n = this.net.nodes.get(id)!, ng = this.net.nodeGeom.get(id)!;
+    const A = ng.arms[0], s = this.net.segs.get(A.seg), g = this.net.segGeom.get(A.seg);
+    if (!s || !g) return;
+    const walk = SIDEWALK[roadGroup(ROAD_TYPES[s.type])] ?? 0;
+    const w0 = A.halfW + walk, w1 = 3.5; // (the yard's spine road is 7 m wide)
+    // from a little back along the street (the site's own drive starts ~2 m in from the end) to just inside the gate
+    const back = Math.min(2.6, g.center.length * 0.4);
+    const f = polyAt(g.center, A.end === "a" ? back : g.center.length - back);
+    const r0 = right(scale(A.dir, -1)), r1 = right(gate.into);
+    const inner = add(gate.gate, scale(gate.into, 0.6));
+    const pts = [
+      add(f, scale(r0, -w0)), add(n.p, scale(r0, -w0)), add(gate.gate, scale(r1, -w1)), add(inner, scale(r1, -w1)),
+      add(inner, scale(r1, w1)), add(gate.gate, scale(r1, w1)), add(n.p, scale(r0, w0)), add(f, scale(r0, w0)),
+    ];
+    // (and all of the site's drive strip, which runs from where the site meets the street straight to the gate: where
+    // the street comes in on a curve, its corners would show past the apron's sides)
+    if (gate.front && dist(gate.front, gate.gate) > 0.6) {
+      const rd = right(norm(sub(gate.gate, gate.front)));
+      for (const q of [gate.front, gate.gate]) pts.push(add(q, scale(rd, 3.55)), add(q, scale(rd, -3.55)));
+    }
+    const poly = convexHull(pts);
+    const geo = new THREE.ShapeGeometry(new THREE.Shape(poly.map((p) => new THREE.Vector2(p.x, p.y))), 1);
+    geo.rotateX(Math.PI / 2);
+    flipWinding(geo);
+    // (just above the site's drive strip, so the yard's concrete is the one that shows)
+    geo.translate(0, n.h + 0.085, 0);
+    geo.deleteAttribute("uv");
+    const m = new THREE.Mesh(geo, this.apronMat);
+    m.receiveShadow = true;
+    this.gateEnds.add(id);
+    this.show([m]);
+    this.nodes.set(id, [m]);
+  }
+
   rebuildAll() {
+    this.gateList = null;
     for (const id of [...this.segs.keys()]) this.dropSeg(id);
     for (const id of [...this.nodes.keys()]) this.dropNode(id);
     for (const id of this.net.segs.keys()) this.buildSeg(id);
@@ -350,6 +433,7 @@ export class Roads3D {
   }
 
   apply(cs: ChangeSet) {
+    this.gateList = null;
     for (const id of cs.removedSegs) this.dropSeg(id);
     for (const id of cs.removedNodes) this.dropNode(id);
     for (const id of cs.dirtySegs) { this.dropSeg(id); if (this.net.segs.has(id)) this.buildSeg(id); }
@@ -380,6 +464,7 @@ export class Roads3D {
     }
     this.nodes.delete(id);
     this.bendFlow.delete(id);
+    this.gateEnds.delete(id);
   }
 
   private buildSeg(id: number) {
@@ -389,6 +474,29 @@ export class Roads3D {
     const s0 = g.trimA, s1 = Math.max(g.trimA + 0.3, g.center.length - g.trimB);
     const { pts, hs, ss } = sampleRange(g.center.pts, g.center.cum, g.hs, s0, s1);
     const halfW = g.width / 2;
+    // where it meets a junction, the road ends exactly on the junction's mouth, square across it: on a curving road
+    // the point a trim's length along the curve is a little off the mouth (and turned from it), and the gap shows
+    const lat: Lat = [];
+    if (!s.ring) {
+      for (const [nid, end, i] of [[s.a, "a", 0], [s.b, "b", pts.length - 1]] as const) {
+        const ng = this.net.nodeGeom.get(nid), n = this.net.nodes.get(nid);
+        // where the road just carries on into its next piece, both pieces end square across one shared tangent, or
+        // on a curve each one's last chord turns its end a little and a wedge of ground opens on the outside
+        if (ng?.kind === "cont" && n && ng.arms.length === 2) {
+          const me = ng.arms.find((x) => x.seg === id && x.end === end), other = ng.arms.find((x) => x !== me);
+          if (!me || !other || this.net.segs.get(other.seg)?.ring) continue;
+          const u = norm(sub(me.dir, other.dir)); // along this piece, away from the node
+          pts[i] = n.p;
+          lat[i] = end === "a" ? right(u) : scale(right(u), -1);
+          continue;
+        }
+        const arm = ng?.kind === "junction" ? ng.arms.find((x) => x.seg === id && x.end === end) : undefined;
+        if (!arm || !n) continue;
+        const d = arm.mouth?.dir ?? arm.dir;
+        pts[i] = arm.mouth?.p ?? add(n.p, scale(arm.dir, arm.trim));
+        lat[i] = end === "a" ? right(d) : scale(right(d), -1);
+      }
+    }
     // tapers: where a slip road or an extra lane opens out of (or closes into) the road it runs beside, the
     // surface starts narrow on that side and widens to full
     const L = g.center.length;
@@ -424,7 +532,7 @@ export class Roads3D {
       const na = nose(s.a), nb = nose(s.b);
       medEnd = ss.map((sc) => Math.min(na ? sc - s0 : 1e4, nb ? s1 - sc : 1e4));
     }
-    const geo = ribbon(pts, hs, ss, halfW, LIFT, [T.fwd, T.bwd], edges, T.median ?? 0, medEnd, ss.map((sc) => Math.min(sc - s0, s1 - sc)), pock);
+    const geo = ribbon(pts, hs, ss, halfW, LIFT, [T.fwd, T.bwd], edges, T.median ?? 0, medEnd, ss.map((sc) => Math.min(sc - s0, s1 - sc)), pock, lat);
     const hw = isHighway(T);
     const surface = new THREE.Mesh(geo, s.ring ? this.ringSurface.mat : hw ? this.hwSurface.mat : this.surface.mat);
     surface.receiveShadow = true;
@@ -436,7 +544,7 @@ export class Roads3D {
       const inner = { l: edges ? edges.l : pts.map(() => -halfW), r: edges ? edges.r : pts.map(() => halfW) };
       const ok = (i: number, side: 1 | -1) => hs[i] < 0.3 && Math.abs(side > 0 ? inner.r[i] : inner.l[i]) > halfW - 0.02;
       // (each road's pavement a hair apart in height, so two that meet or overlap never flicker)
-      const wg = sidewalkGeo(pts, hs, inner, walk, ok, (id % 4) * 0.0004);
+      const wg = sidewalkGeo(pts, hs, inner, walk, ok, (id % 4) * 0.0004, lat);
       if (wg) { const wm = new THREE.Mesh(wg, this.walkMat); wm.receiveShadow = true; extra.push(wm); }
       const tr = STREET_TREES[grp];
       if (tr) {
@@ -469,7 +577,7 @@ export class Roads3D {
     }
     const maxH = Math.max(...hs);
     if (maxH > 0.3) {
-      const deck = deckSides(pts, hs, halfW, LIFT, edges);
+      const deck = deckSides(pts, hs, halfW, LIFT, edges, lat);
       const dm = new THREE.Mesh(deck, this.deckMat);
       dm.castShadow = true;
       extra.push(dm);
@@ -577,7 +685,10 @@ export class Roads3D {
   private buildNode(id: number) {
     const n = this.net.nodes.get(id)!;
     const ng = this.net.nodeGeom.get(id);
-    if (!ng || !ng.poly) return;
+    if (!ng) return;
+    const gate = this.gateAt(id);
+    if (gate) { this.buildGateApron(id, gate); return; }
+    if (!ng.poly) return;
     // roundabout nodes are drawn with their ring (continuous surface + flared mouths)
     if (this.net.segsAt(id).some((sg) => sg.ring)) return;
     const out: THREE.Object3D[] = [];
@@ -626,20 +737,39 @@ export class Roads3D {
     }
     out.push(m);
     const walk = n.h < 0.3 ? this.nodeWalk(id) : 0;
-    for (const k of ng.kerbs) {
+    // each kerb runs from one arm's mouth round to the next one's: there it turns square across the mouth, like the
+    // road's own kerb and pavement it carries on into
+    const ends = ng.kerbs.map((k, i): Lat | undefined => {
+      if (ng.kind !== "junction" || ng.kerbs.length !== ng.arms.length || k.length < 2) return undefined;
+      const A = ng.arms[i], B = ng.arms[(i + 1) % ng.arms.length];
+      const e: Lat = [];
+      e[0] = scale(right(A.mouth?.dir ?? A.dir), -1);
+      e[k.length - 1] = right(B.mouth?.dir ?? B.dir);
+      return e;
+    });
+    for (const [ki, k] of ng.kerbs.entries()) {
       if (k.length < 2 || walk <= 0) continue;
       // the pavement carries on round the corner, outside the kerb line
       const mi = k.length >> 1, lat = lateralAt(k, mi);
       const out_ = lat.x * (n.p.x - k[mi].x) + lat.y * (n.p.y - k[mi].y) > 0 ? -1 : 1;
       const z = k.map(() => 0);
       // (just above the roads' own pavements, so round the corner it wins cleanly)
-      const wg = sidewalkGeo(k, k.map(() => n.h), { l: z, r: z }, walk, (_, side) => side === out_, 0.002);
+      const wg = sidewalkGeo(k, k.map(() => n.h), { l: z, r: z }, walk, (_, side) => side === out_, 0.002, ends[ki]);
       if (wg) { const wm = new THREE.Mesh(wg, this.walkMat); wm.receiveShadow = true; out.push(wm); }
     }
-    for (const k of ng.kerbs) {
+    // where two roads part at a shallow angle, the ground between them is paved in one piece out to where their
+    // pavements part (above both pavements, under the road surfaces), so neither one's rim cuts across the other's
+    if (walk > 0) {
+      for (const isl of goreIslands(this.net, id)) {
+        const wm = new THREE.Mesh(paveGeo(isl, n.h + LIFT - 0.0025), this.walkMat);
+        wm.receiveShadow = true;
+        out.push(wm);
+      }
+    }
+    for (const [ki, k] of ng.kerbs.entries()) {
       if (k.length < 2) continue;
       // the line is the road's outer edge; draw the band just inside it, like the segment shader does
-      const km = new THREE.Mesh(kerbStrip(k, y + 0.01, n.p), this.hwNode(id) ? this.hwEdgeMat : this.edgeMat);
+      const km = new THREE.Mesh(kerbStrip(k, y + 0.01, n.p, ends[ki]), this.hwNode(id) ? this.hwEdgeMat : this.edgeMat);
       km.receiveShadow = true;
       out.push(km);
     }
@@ -952,15 +1082,19 @@ function lateralAt(pts: V2[], i: number): V2 {
   return right(norm(sub(b, a)));
 }
 
+/** Per-point lateral directions set by hand (a road's ends, square across the junction mouth they meet). */
+type Lat = (V2 | undefined)[];
+const latAt = (pts: V2[], i: number, lat?: Lat): V2 => lat?.[i] ?? lateralAt(pts, i);
+
 /** Road ribbon with aRoad = (lateral u, arc length v, fwd lanes, bwd lanes). */
-export function ribbon(pts: V2[], hs: number[], ss: number[], halfW: number, lift: number, lanes: [number, number], edges?: { l: number[]; r: number[] }, median = 0, medEnd?: number[], treeEnd?: number[], pock?: number[][]): THREE.BufferGeometry {
+export function ribbon(pts: V2[], hs: number[], ss: number[], halfW: number, lift: number, lanes: [number, number], edges?: { l: number[]; r: number[] }, median = 0, medEnd?: number[], treeEnd?: number[], pock?: number[][], lat?: Lat): THREE.BufferGeometry {
   const n = pts.length;
   const pos = new Float32Array(n * 2 * 3);
   const nor = new Float32Array(n * 2 * 3);
   const road = new Float32Array(n * 2 * 4);
   const flow = new Float32Array(n * 2 * 2).fill(1);
   for (let i = 0; i < n; i++) {
-    const r = lateralAt(pts, i);
+    const r = latAt(pts, i, lat);
     const p = pts[i], y = hs[i] + lift;
     // left (u = -halfW) and right (u = +halfW), or the tapered edges
     const ul = edges ? edges.l[i] : -halfW, ur = edges ? edges.r[i] : halfW;
@@ -1000,7 +1134,7 @@ export function ribbon(pts: V2[], hs: number[], ss: number[], halfW: number, lif
 }
 
 /** Vertical deck faces under an elevated ribbon, plus the underside. */
-function deckSides(pts: V2[], hs: number[], halfW: number, lift: number, edges?: { l: number[]; r: number[] }): THREE.BufferGeometry {
+function deckSides(pts: V2[], hs: number[], halfW: number, lift: number, edges?: { l: number[]; r: number[] }, lat?: Lat): THREE.BufferGeometry {
   // (a tapered road's deck follows its tapered edges, or the underside shows through where the surface is pulled in)
   const at = (i: number, side: number) => (edges ? (side > 0 ? edges.r[i] : edges.l[i]) : halfW * side);
   const pos: number[] = [];
@@ -1009,7 +1143,7 @@ function deckSides(pts: V2[], hs: number[], halfW: number, lift: number, edges?:
   for (const side of [-1, 1]) {
     const base = pos.length / 3;
     for (let i = 0; i < n; i++) {
-      const r = lateralAt(pts, i);
+      const r = latAt(pts, i, lat);
       const p = pts[i], y = hs[i] + lift;
       const u = at(i, side);
       const x = p.x + r.x * u, z = p.y + r.y * u;
@@ -1024,7 +1158,7 @@ function deckSides(pts: V2[], hs: number[], halfW: number, lift: number, edges?:
   // underside
   const base = pos.length / 3;
   for (let i = 0; i < n; i++) {
-    const r = lateralAt(pts, i);
+    const r = latAt(pts, i, lat);
     const p = pts[i], y = Math.max(0.02, hs[i] + lift - DECK);
     const ul = at(i, -1), ur = at(i, 1);
     pos.push(p.x + r.x * ul, y, p.y + r.y * ul, p.x + r.x * ur, y, p.y + r.y * ur);
@@ -1207,7 +1341,7 @@ function seamGeo(
   return geo;
 }
 
-function sidewalkGeo(pts: V2[], hs: number[], edge: { l: number[]; r: number[] }, walk: number, ok: (i: number, side: 1 | -1) => boolean, lift = 0): THREE.BufferGeometry | null {
+function sidewalkGeo(pts: V2[], hs: number[], edge: { l: number[]; r: number[] }, walk: number, ok: (i: number, side: 1 | -1) => boolean, lift = 0, lat?: Lat): THREE.BufferGeometry | null {
   const pos: number[] = [], col: number[] = [], idx: number[] = [];
   const cw = new THREE.Color(PAL.sidewalk), ce = new THREE.Color(PAL.sidewalkEdge);
   const rim = Math.min(0.22, walk * 0.15);
@@ -1215,7 +1349,7 @@ function sidewalkGeo(pts: V2[], hs: number[], edge: { l: number[]; r: number[] }
     let prev = -1;
     for (let i = 0; i < pts.length; i++) {
       if (!ok(i, side)) { prev = -1; continue; }
-      const r = lateralAt(pts, i), y = hs[i] + LIFT - 0.005 + lift;
+      const r = latAt(pts, i, lat), y = hs[i] + LIFT - 0.005 + lift;
       const e = side > 0 ? edge.r[i] : edge.l[i];
       const base = pos.length / 3;
       // four across: road edge, rim start (twice, for a hard colour change), outer edge
@@ -1242,12 +1376,12 @@ function sidewalkGeo(pts: V2[], hs: number[], edge: { l: number[]; r: number[] }
 }
 
 /** Flat strip of width w along a polyline (kerbs, guides). */
-export function strip(pts: V2[], y: number, w: number, off = 0): THREE.BufferGeometry {
+export function strip(pts: V2[], y: number, w: number, off = 0, lat?: Lat): THREE.BufferGeometry {
   const pos: number[] = [];
   const idx: number[] = [];
   const n = pts.length;
   for (let i = 0; i < n; i++) {
-    const r = lateralAt(pts, i);
+    const r = latAt(pts, i, lat);
     const p = { x: pts[i].x + r.x * off, y: pts[i].y + r.y * off };
     pos.push(p.x - r.x * w / 2, y, p.y - r.y * w / 2, p.x + r.x * w / 2, y, p.y + r.y * w / 2);
   }
@@ -1296,6 +1430,18 @@ function plainPoly(poly: V2[], y: number): THREE.BufferGeometry {
   return plainGeo(geo);
 }
 
+/** A flat paved polygon in plain pavement colour (for the pavement material). */
+function paveGeo(poly: V2[], y: number): THREE.BufferGeometry {
+  const geo = new THREE.ShapeGeometry(new THREE.Shape(poly.map((p) => new THREE.Vector2(p.x, p.y))), 1);
+  geo.rotateX(Math.PI / 2);
+  flipWinding(geo);
+  geo.translate(0, y, 0);
+  geo.deleteAttribute("uv"); // (so it batches with the other pavements)
+  const c = new THREE.Color(PAL.sidewalk), cnt = geo.getAttribute("position").count;
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(new Array(cnt).fill(0).flatMap(() => [c.r, c.g, c.b]), 3));
+  return geo;
+}
+
 /** Give any surface geometry the attributes the road shader expects, as a plain (unmarked) surface. */
 function plainGeo(geo: THREE.BufferGeometry): THREE.BufferGeometry {
   const cnt = geo.getAttribute("position").count;
@@ -1305,11 +1451,22 @@ function plainGeo(geo: THREE.BufferGeometry): THREE.BufferGeometry {
 }
 
 /** Kerb band along an outer road edge, drawn on the side facing `inside` (like the segment shader's edge). */
-function kerbStrip(k: V2[], y: number, inside: V2): THREE.BufferGeometry {
+function kerbStrip(k: V2[], y: number, inside: V2, ends?: Lat): THREE.BufferGeometry {
   const mi = k.length >> 1;
-  const lat = lateralAt(k, mi);
+  const lat = latAt(k, mi, ends);
   const s = lat.x * (inside.x - k[mi].x) + lat.y * (inside.y - k[mi].y) > 0 ? 1 : -1;
-  return strip(k, y, 0.42, s * 0.21);
+  return strip(k, y, 0.42, s * 0.21, ends);
+}
+
+/** The convex hull of some points (Andrew's monotone chain), counter-clockwise. */
+function convexHull(pts: V2[]): V2[] {
+  const p = pts.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+  if (p.length < 3) return p;
+  const cr = (o: V2, a: V2, b: V2) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const lo: V2[] = [], hi: V2[] = [];
+  for (const q of p) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+  for (const q of p.reverse()) { while (hi.length >= 2 && cr(hi[hi.length - 2], hi[hi.length - 1], q) <= 0) hi.pop(); hi.push(q); }
+  return [...lo.slice(0, -1), ...hi.slice(0, -1)];
 }
 
 function circlePts(c: V2, r: number, n: number): V2[] {
