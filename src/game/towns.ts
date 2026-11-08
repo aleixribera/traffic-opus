@@ -3,12 +3,43 @@
 // company keeps those needs supplied. Pure model here; city.ts builds the streets and counts the deliveries.
 
 import type { BuildingKind } from "../config";
-import type { V2 } from "../core/math";
+import { rectDistance, type V2 } from "../core/math";
 import type { Product } from "./industry";
 import type { ZoneId } from "./zones";
 
 /** Metres between neighbouring parallel streets of a town grid. */
 export const BLOCK = 96;
+
+// ------------------------------------------------------------------ smoke and noise
+
+/**
+ * How far a dirty plant's smoke reaches into the towns' land value past its fence (m): its pollution radius, half
+ * again and more, further when it is linked into a park (parks.ts, PARK_SMOKE).
+ */
+export const smokeReach = (pollution: number, parkSmoke = 1) => pollution * 1.6 * parkSmoke;
+/** How much further a plant's noise carries than its smoke (m): towns keep their homes clear of both. */
+export const NOISE = 60;
+/** A dirty plant as the towns see it: its fence, and how far its smoke and noise reach past it. */
+export interface Nuisance { c: V2; hw: number; hd: number; rot: number; reach: number }
+/**
+ * Towns keep away from the company's dirty plants (docs/design.md, "Towns": they grow the other way): no new street
+ * where a plant's smoke and noise are worse than NUISANCE_STREET, no new homes past NUISANCE_HOMES, no new shops past
+ * NUISANCE_SHOPS. Land a town gives up this way stays open ground, a green belt between the works and the homes.
+ */
+export const NUISANCE_STREET = 0.35, NUISANCE_HOMES = 0.12, NUISANCE_SHOPS = 0.9;
+
+/** How badly the worst plant's smoke and noise reach p: 1 at its fence, 0 at its reach and beyond. */
+export function nuisanceAt(p: V2, list: readonly Nuisance[]): number {
+  let worst = 0;
+  for (const o of list) {
+    const far = o.reach + Math.max(o.hw, o.hd) * 1.42;
+    const dx = p.x - o.c.x, dy = p.y - o.c.y;
+    if (dx * dx + dy * dy >= far * far) continue;
+    const d = rectDistance(p, o.c, o.hw, o.hd, o.rot);
+    if (d < o.reach) worst = Math.max(worst, 1 - d / o.reach);
+  }
+  return worst;
+}
 
 export interface TownSize {
   name: string;
@@ -28,8 +59,11 @@ export const TOWN_SIZES: TownSize[] = [
   { name: "Metropolis", pop: 20000, adds: [] },
 ];
 
-/** Needs a size adds only once the town has grown further into it: a village builds in timber, then in concrete. */
-export const NEED_FROM: Partial<Record<Product, number>> = { cement: 600 };
+/**
+ * Needs that open at their own population rather than with their size: a hamlet of 100 starts building in timber
+ * (so the second chain comes early, docs/design.md "Pacing"), a village of 600 in concrete.
+ */
+export const NEED_FROM: Partial<Record<Product, number>> = { planks: 100, cement: 600 };
 
 export function sizeOf(pop: number): number {
   let s = 0;
@@ -42,7 +76,8 @@ export const needFrom = (p: Product): number => NEED_FROM[p] ?? TOWN_SIZES.find(
 
 /** Everything a town of this population needs. */
 export function needsOf(pop: number): Product[] {
-  return TOWN_SIZES.slice(0, sizeOf(pop) + 1).flatMap((s) => s.adds).filter((p) => needFrom(p) <= pop);
+  // (a need opens at its own population, which may come before the size that adds it: planks at 100)
+  return TOWN_SIZES.flatMap((s) => s.adds).filter((p) => needFrom(p) <= pop);
 }
 
 /** The next need a town of this population will have, and the population it starts at (null: none for now). */
@@ -114,18 +149,37 @@ export function supplyShare(delivered: Partial<Record<Product, number>>, pop: nu
   return out;
 }
 
+/** Growth rate (households per resident per day, well supplied) at each size: slowing as a town gets bigger. */
+const RATE = [0.09, 0.08, 0.06, 0.045, 0.035];
+/**
+ * The early boost: a small town grows several times faster than the base rate, fading out by EARLY_TO people, so the
+ * first hour moves (docs/design.md "Pacing": something new every few minutes) and the late game is as it was.
+ */
+export const EARLY = 7, EARLY_TO = 450;
+export const earlyBoost = (pop: number): number => 1 + EARLY * Math.max(0, 1 - pop / EARLY_TO);
+/** Below this many people a town is still settling: it fills its first streets whether supplied or not. */
+export const SETTLING = 60;
+
 /**
  * Households a town gains (or loses, negative) per day. A new town grows a little on its own, up to a small
- * starting size; past that it grows only with its needs met, and it shrinks when they go unmet.
+ * starting size; past that it grows only with its needs met, and it shrinks when they go unmet (all but a need that
+ * opens ahead of its size, which only holds it back). Small towns grow fast (earlyBoost); the rate slows with size.
  */
 export function growthPerDay(supply: Partial<Record<Product, number>>, pop: number): number {
   const shares = Object.values(supply) as number[];
   const worst = shares.length ? Math.min(...shares) : 1;
-  if (pop < 60) return 6; // a new settlement fills its first streets regardless
-  // well supplied: a hamlet or village grows ~30% a day, slowing to ~12% for a city
-  if (worst >= 0.8) return Math.max(4, pop * [0.09, 0.08, 0.06, 0.045, 0.035][sizeOf(pop)] * (0.5 + worst));
+  // well supplied: a hamlet of a few dozen grows by more than half again a day, a village past 450 by about a quarter, a city ~10%
+  const fed = worst >= 0.8 ? Math.max(4, pop * RATE[sizeOf(pop)] * earlyBoost(pop) * (0.5 + worst)) : 0;
+  if (pop < SETTLING) return Math.max(6, fed); // a new settlement fills its first streets regardless
+  if (worst >= 0.8) return fed;
   if (worst >= 0.5) return 2;
   if (worst >= 0.2) return 0;
+  // (a hamlet nobody serves yet, a town that has just sprung up say, holds on rather than dwindling away)
+  if (pop < SETTLING * 1.5) return 0;
+  // (a need that opens ahead of the town's size, a hamlet's planks, holds it back but never shrinks it)
+  const size = sizeOf(pop);
+  const own = (Object.entries(supply) as [Product, number][]).filter(([p]) => TOWN_SIZES.findIndex((s) => s.adds.includes(p)) <= size);
+  if (own.every(([, v]) => v >= 0.2)) return 0;
   return -Math.max(1, pop * 0.02);
 }
 
@@ -223,7 +277,7 @@ export const SEED_EDGES: GridEdge[] = [[0, 0, 1, 0], [0, 0, -1, 0], [0, 0, 0, 1]
  * failed before. Edges that close a block (both ends already on a street) come first, then the ones nearest the
  * centre, so the town fills in block by block and spreads in a rough circle.
  */
-export function nextEdge(built: Set<string>, failed: Set<string>, radiusBlocks: number, jitter: (k: string) => number): GridEdge | null {
+export function nextEdge(built: Set<string>, failed: Set<string>, radiusBlocks: number, jitter: (k: string) => number, cost?: (e: GridEdge) => number): GridEdge | null {
   const nodes = new Set<string>();
   for (const k of built) for (const n of k.split("|")) nodes.add(n);
   let best: GridEdge | null = null, bs = Infinity;
@@ -237,7 +291,10 @@ export function nextEdge(built: Set<string>, failed: Set<string>, radiusBlocks: 
       const r = Math.hypot(mx, my);
       if (Math.hypot(i + di, j + dj) > radiusBlocks) continue;
       const closes = nodes.has(`${i + di},${j + dj}`);
-      const s = r - (closes ? 1.5 : 0) + jitter(k) * 0.8;
+      // (cost: how much the land puts a town off, in blocks; Infinity where it won't build at all)
+      const extra = cost ? cost(e) : 0;
+      if (extra === Infinity) continue;
+      const s = r - (closes ? 1.5 : 0) + jitter(k) * 0.8 + extra;
       if (s < bs) { bs = s; best = e; }
     }
   }

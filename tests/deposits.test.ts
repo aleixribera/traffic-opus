@@ -48,3 +48,23 @@ describe("deposits by tier", () => {
     }
   });
 });
+
+describe("finding deposits (the map's tags and pointers)", () => {
+  it("lists a kind's deposits nearest first, its first one among them, and only that kind", () => {
+    for (const seed of SEEDS) {
+      const g = new WorldGen(seed);
+      for (const d of DEPOSITS) {
+        const found = g.depositsNear(d.field, 0, 0, 24000);
+        expect(found.length, `seed ${seed} ${d.key}`).toBeGreaterThan(0);
+        const first = g.sites.find((x) => x.key === d.key)!;
+        expect(found.some((f) => f.x === first.x && f.y === first.y), `seed ${seed} ${d.key} first`).toBe(true);
+        for (let i = 1; i < found.length; i++) expect(Math.hypot(found[i].x, found[i].y)).toBeGreaterThanOrEqual(Math.hypot(found[i - 1].x, found[i - 1].y));
+        // (every one listed really is that kind's ground at its middle, and all lie within the reach asked)
+        for (const f of found.slice(0, 4)) {
+          expect(Math.hypot(f.x, f.y)).toBeLessThanOrEqual(24000);
+          expect(g.at(f.x, f.y, new Float32Array(NF))[d.field], `seed ${seed} ${d.key} at ${f.x.toFixed(0)},${f.y.toFixed(0)}`).toBeGreaterThanOrEqual(0.5);
+        }
+      }
+    }
+  });
+});

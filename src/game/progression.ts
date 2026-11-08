@@ -1,11 +1,11 @@
 // Milestones (docs/design.md, "Milestones"): concrete achievements in a rough ladder, never accumulated XP. A few
 // are open at once (the first OPEN_AT_ONCE not yet reached, in ladder order), so there is always a choice of what
-// to chase next; reaching one opens the next. Each unlocks something concrete: a building, a road type or tool,
-// town slots, bigger truck classes, the next level for named kinds of site, or a grant. There is no land to buy: the company builds anywhere
-// its roads reach, and the deposits of each tier, kilometres apart, are what open the map up. The company starts with
-// tier 1 (farms, logging camps, food plants, sawmills), founding towns and the basic roads. This ladder covers tiers 1
-// to 4: copper, electronics and machinery open on the way to a City (which needs them) and its last steps reward a City
-// supplied and tier 4 volume.
+// next; reaching one opens the next. Each unlocks something concrete: a building, a road type or tool, a fresh
+// town that springs up by itself (the player never founds one), bigger truck classes, the next level for named kinds
+// of site, or a grant. There is no land to buy: the company builds anywhere its roads reach, and the deposits of each
+// tier, kilometres apart, are what open the map up. The company starts with tier 1 (farms, logging camps, food plants,
+// sawmills), its first hamlet and the basic roads. The new towns come as the towns there are grow (a hamlet of 150,
+// two villages, three villages, a big village, a Town...), each further out than the last.
 
 import type { RoadTypeId } from "../config";
 import { PLANTS, type PlantKind, type Product } from "./industry";
@@ -19,7 +19,7 @@ export interface Unlocks {
   roads?: RoadTypeId[];
   features?: Feature[];
   buildings?: PlacedKind[];
-  /** more towns it may run */
+  /** fresh towns that spring up when it is reached (far from the others, unconnected: settlements.ts spawn) */
   towns?: number;
   /**
    * The level these kinds of site may now grow to (a site grows itself, up to the level its kind is cleared for: see
@@ -62,11 +62,10 @@ export interface Milestone {
 }
 
 /** What a company has before any milestone. */
-export const BASE: Required<Pick<Unlocks, "roads" | "features" | "towns">> = {
+export const BASE: Required<Pick<Unlocks, "roads" | "features">> = {
   // (the one- and two-lane highways too: hauls between deposits kilometres apart want them from the start)
   roads: ["street", "one1", "hw1", "hw2"],
   features: ["parallel"],
-  towns: 2,
 };
 
 /** The level a site of a kind some milestone clears for more may grow to before that milestone. */
@@ -83,6 +82,8 @@ export const fullySupplied = (t: ProgressView["towns"][number], only?: Product[]
 const n = (o: Partial<Record<Product, number>>, p: Product) => o[p] ?? 0;
 const biggest = (v: ProgressView) => v.towns.reduce((a, t) => Math.max(a, t.pop), 0);
 const allSold = (v: ProgressView) => Object.values(v.sold).reduce((a: number, k) => a + (k ?? 0), 0);
+/** Towns of at least this size (TOWN_SIZES index). */
+const ofSize = (v: ProgressView, size: number) => v.towns.filter((t) => sizeOf(t.pop) >= size).length;
 
 export const MILESTONES: Milestone[] = [
   {
@@ -91,14 +92,15 @@ export const MILESTONES: Milestone[] = [
     unlocks: { roads: ["avenue", "one2"], grant: 5000 },
   },
   {
-    id: "town2", name: "A second town", goal: "Run two towns",
-    measure: (v) => [v.towns.length, 2],
+    // (the first new town springs up a short drive away, as the start hamlet is getting going)
+    id: "hamlet150", name: "Growing hamlet", goal: "Grow a town to 150 people",
+    measure: (v) => [biggest(v), 150],
     unlocks: { features: ["roundabout"], roads: ["streetM"], towns: 1 },
   },
   {
     id: "village", name: "Village", goal: "Grow a town to Village size: 300 people",
     measure: (v) => [biggest(v), 300],
-    unlocks: { buildings: ["ironmine", "coalmine", "coalplant"], grant: 15000 },
+    unlocks: { buildings: ["ironmine", "coalmine", "coalplant"], grant: 40000 },
   },
   {
     id: "planks10", name: "Sawn timber", goal: "Saw 10 loads of planks",
@@ -108,13 +110,13 @@ export const MILESTONES: Milestone[] = [
   {
     id: "food20", name: "Market day", goal: "Deliver 20 loads of food in one day",
     measure: (v) => [n(v.bestDay, "food"), 20],
-    unlocks: { buildings: ["smelter"], levels: { kinds: ["foodplant"], to: 3 } },
+    unlocks: { buildings: ["smelter"], levels: { kinds: ["foodplant"], to: 3 }, grant: 10000 },
   },
   {
     // (food and planks only: a village of 600 also wants cement, and this is the milestone that unlocks it)
     id: "supplied", name: "Village supplied", goal: "Keep a village in all the food and planks it needs for a day",
     measure: (v) => [v.towns.some((t) => sizeOf(t.pop) >= 1 && fullySupplied(t, ["food", "planks"])) ? 1 : 0, 1],
-    unlocks: { buildings: ["quarry", "cementworks"] },
+    unlocks: { buildings: ["quarry", "cementworks"], grant: 30000 },
   },
   {
     id: "steel", name: "First steel", goal: "Make your first load of steel",
@@ -132,8 +134,8 @@ export const MILESTONES: Milestone[] = [
     unlocks: { features: ["transit"] },
   },
   {
-    id: "towns3", name: "Three towns", goal: "Run three towns",
-    measure: (v) => [v.towns.length, 3],
+    id: "villages2", name: "Two villages", goal: "Grow two towns to Village size: 300 people",
+    measure: (v) => [ofSize(v, 1), 2],
     unlocks: { towns: 1, roads: ["boulevard"] },
   },
   {
@@ -193,8 +195,8 @@ export const MILESTONES: Milestone[] = [
     unlocks: { levels: { kinds: ["constructionplant"], to: 3 } },
   },
   {
-    id: "towns5", name: "Five towns", goal: "Run five towns",
-    measure: (v) => [v.towns.length, 5],
+    id: "villages3", name: "Three villages", goal: "Grow three towns to Village size",
+    measure: (v) => [ofSize(v, 1), 3],
     unlocks: { towns: 1 },
   },
   {
@@ -220,16 +222,16 @@ export const MILESTONES: Milestone[] = [
   {
     id: "trade100k", name: "Big trading day", goal: "Take $100,000 from deliveries in one day",
     measure: (v) => [Math.floor(v.bestEarned), 100000], money: true,
-    unlocks: { towns: 1 },
+    unlocks: { grant: 50000 },
   },
   {
     id: "pop4000", name: "Market town", goal: "Grow a town to 4,000 people",
     measure: (v) => [biggest(v), 4000],
-    unlocks: { grant: 40000 },
+    unlocks: { towns: 1, grant: 40000 },
   },
   {
     id: "towns2town", name: "Twin towns", goal: "Grow two towns to Town size",
-    measure: (v) => [v.towns.filter((t) => sizeOf(t.pop) >= 2).length, 2],
+    measure: (v) => [ofSize(v, 2), 2],
     unlocks: { towns: 1, grant: 80000 },
   },
   // ---------------------------------------------------------------- tier 4: copper, electronics and machinery
@@ -299,7 +301,7 @@ const LOGISTICS: (Milestone & { after: string })[] = [
   {
     after: "powered3", id: "heavy", name: "Heavy haulage", goal: "Deliver 150 loads to your towns in all",
     measure: (v) => [allSold(v), 150],
-    unlocks: { trucks: ["heavy"] },
+    unlocks: { trucks: ["heavy"], grant: 30000 },
   },
   {
     after: "cement", id: "warehouse", name: "Stockpiles", goal: "Make 30 loads of coal",
@@ -397,6 +399,8 @@ const CHAINS: (Milestone & { after: string })[] = [
 for (const { after, ...m } of CHAINS) MILESTONES.splice(MILESTONES.findIndex((x) => x.id === after) + 1, 0, m);
 
 export const milestoneById = new Map(MILESTONES.map((m) => [m.id, m]));
+/** Milestones renamed since a save was made: the old id stands for the new one (towns used to be founded by slot). */
+export const RENAMED: Record<string, string> = { town2: "hamlet150", towns3: "villages2", towns5: "villages3" };
 
 /** The milestone that unlocks something, if one does. */
 export const unlockedBy = (test: (u: Unlocks) => boolean | undefined): Milestone | undefined => MILESTONES.find((m) => test(m.unlocks));
@@ -406,7 +410,6 @@ export interface Unlocked {
   roads: Set<RoadTypeId>;
   features: Set<Feature>;
   buildings: Set<PlacedKind>;
-  towns: number;
   trucks: Set<TruckClass>;
   /** the level each kind of site is cleared to grow to, for the kinds a milestone clears (see levelCap) */
   levels: Map<PlantKind, number>;
@@ -434,7 +437,7 @@ export function unlocksOf(done: Iterable<string>): Unlocked {
   const u: Unlocked = {
     roads: new Set(BASE.roads), features: new Set(BASE.features),
     buildings: new Set((Object.keys(PLANTS) as PlacedKind[]).filter((k) => PLANTS[k].tier === 1)),
-    towns: BASE.towns, trucks: new Set<TruckClass>(["light"]), levels: new Map(),
+    trucks: new Set<TruckClass>(["light"]), levels: new Map(),
   };
   for (const id of done) {
     const m = milestoneById.get(id)?.unlocks;
@@ -443,7 +446,6 @@ export function unlocksOf(done: Iterable<string>): Unlocked {
     for (const f of m.features ?? []) u.features.add(f);
     for (const b of m.buildings ?? []) u.buildings.add(b);
     for (const t of m.trucks ?? []) u.trucks.add(t);
-    u.towns += m.towns ?? 0;
     if (m.levels) for (const k of m.levels.kinds) u.levels.set(k, Math.max(u.levels.get(k) ?? 0, m.levels.to));
   }
   return u;
@@ -459,6 +461,8 @@ export interface ProgressJSON {
   bestEarned: number;
   /** oversized pieces delivered (saves from before convoys have none) */
   pieces?: number;
+  /** the towns each milestone brought (saves from before towns sprang up have none) */
+  spawned?: Record<string, number[]>;
 }
 
 /** The company's record: milestones reached, in order, and the tallies they are measured on. */
@@ -473,6 +477,8 @@ export class Progress {
   bestEarned = 0;
   /** oversized pieces delivered by convoy, all time */
   pieces = 0;
+  /** the towns that sprang up for each milestone (town ids) */
+  spawned: Record<string, number[]> = {};
   private cache: { n: number; u: Unlocked } | null = null;
 
   isDone(id: string): boolean {
@@ -539,11 +545,11 @@ export class Progress {
   }
 
   toJSON(): ProgressJSON {
-    return { done: [...this.done], made: { ...this.made }, sold: { ...this.sold }, today: { ...this.today }, bestDay: { ...this.bestDay }, earnedToday: this.earnedToday, bestEarned: this.bestEarned, pieces: this.pieces };
+    return { done: [...this.done], made: { ...this.made }, sold: { ...this.sold }, today: { ...this.today }, bestDay: { ...this.bestDay }, earnedToday: this.earnedToday, bestEarned: this.bestEarned, pieces: this.pieces, spawned: { ...this.spawned } };
   }
 
   load(d: ProgressJSON) {
-    this.done = [...d.done];
+    this.done = [...new Set(d.done.map((id) => RENAMED[id] ?? id))];
     this.made = { ...d.made };
     this.sold = { ...d.sold };
     this.today = { ...d.today };
@@ -551,6 +557,7 @@ export class Progress {
     this.earnedToday = d.earnedToday;
     this.bestEarned = d.bestEarned;
     this.pieces = d.pieces ?? 0;
+    this.spawned = { ...(d.spawned ?? {}) };
     this.cache = null;
   }
 }

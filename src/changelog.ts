@@ -15,6 +15,19 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.68", date: "2026-11-08", title: "Towns spring up, and building takes material",
+    notes: [
+      "You no longer found towns. Goals about towns growing bring new hamlets of their own, each a little further out than the last, with a banner to fly there and a pointer at the screen's edge until your road reaches them.",
+      "A faster first hour: small towns grow quicker, a hamlet starts wanting planks at 100 people, a site's first level comes inside a day, and the early goals pay more.",
+      "While you place a mine, quarry, well or pit, every deposit of its kind carries a tag on the map, and the nearest ones off screen get a pointer with the way and the distance. The Resources view tags every deposit on screen.",
+      "Building takes far more material: plant sites need five times the planks, cement and parts, landmarks twice as much, and a town's apartments, shops and towers three times the construction parts.",
+      "Towns keep away from your smoky, noisy works: no new streets or homes close by them, a strip of open ground in between, and the town grows the other way instead.",
+      "Traffic lights no longer lock up: a car whose way out is full doesn't take a green it can't use, and one stuck waiting to turn into a driveway drives on and comes back round.",
+      "Traffic that has stood still for a minute and a half gets a small amber warning on the map, and a chip above the clock counts the places; click it to fly to each.",
+      "Cars leaving a roundabout no longer wait behind a car still going round once it is past the exit.",
+    ],
+  },
+  {
     v: "v0.0.67", date: "2026-11-08", title: "Sites earn their levels",
     notes: [
       "Goals no longer hand out an extra truck at every building or an extra load on every truck. A site's fleet comes from its level, and trucks carry more only as bigger classes: a light truck 1 load, a heavy truck 2, a road train 4.",

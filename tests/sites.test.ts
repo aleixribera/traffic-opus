@@ -8,7 +8,7 @@ import { Game } from "../src/game/city";
 import { Industry, PLANTS, PLANT_KINDS, type IndustryHost, type PlantKind } from "../src/game/industry";
 import type { Building } from "../src/game/buildings";
 import { PLACED } from "../src/game/placed";
-import { GATE_REACH, GROW_NEED, LEVEL_MULT, SITE_LEVELS, siteFrame, siteLayout, slotHalf, type SiteLayout } from "../src/game/sites";
+import { GATE_REACH, GROW_NEED, GROW_NEED_FIRST, LEVEL_MULT, SITE_LEVELS, siteFrame, siteLayout, slotHalf, type SiteLayout } from "../src/game/sites";
 import type { PendingSpawn } from "../src/sim/traffic";
 import { chainPoints, planRoad } from "../src/roads/planner";
 import { okCells, road, run } from "./helpers";
@@ -121,14 +121,14 @@ function lonePlant() {
 }
 
 describe("site levels", () => {
-  it("grows a level after a few days near capacity, with more output, jobs, trucks and store", () => {
+  it("grows a level after a while near capacity (the first one soonest), with more output, jobs, trucks and store", () => {
     const { ind, b, work, grew, host } = lonePlant();
     const P = b.plant!;
     const jobs1 = b.cap, trucks1 = ind.trucksOf(b), store1 = Industry.storeOf(b);
-    work(Math.floor(GROW_NEED / 40) - 2);
+    work(Math.floor(GROW_NEED_FIRST / 40) - 1);
     expect(P.level).toBe(1);
     expect(P.why).toBeNull();
-    expect(P.grow / GROW_NEED).toBeGreaterThan(0.9);
+    expect(P.grow / GROW_NEED_FIRST).toBeGreaterThan(0.9);
     work(3);
     expect(P.level).toBe(2);
     expect(grew).toEqual([2]);
@@ -157,7 +157,7 @@ describe("site levels", () => {
   it("is held back (and loses progress, never a level) when its output piles up or its gate has no road", () => {
     const { b, work } = lonePlant();
     const P = b.plant!;
-    work(Math.floor(GROW_NEED / 40 / 2));
+    work(Math.floor(GROW_NEED_FIRST / 40 / 2));
     const half = P.grow;
     expect(half).toBeGreaterThan(0);
     // nobody takes the crops: the yard fills and it stops

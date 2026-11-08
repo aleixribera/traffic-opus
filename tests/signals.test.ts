@@ -170,3 +170,33 @@ describe("Traffic lights adapt to the traffic (CS2)", () => {
     expect(ctl.st).toBe(0);
   });
 });
+
+describe("lights in a town", () => {
+  it("never lock up: a car held at its driveway by the queue for the red drives on and comes back round", async () => {
+    const { Game } = await import("../src/game/city");
+    const { HOUR } = await import("../src/game/society");
+    // Alder Run grown to a village on seed 7, lights at its centre crossing: before, a car turning in across the
+    // queue for the red stood at its driveway for good, its lane and the junction behind it locked (2026-11-08)
+    const g = new Game(7);
+    g.start();
+    g.unlockAll();
+    g.money = 1e8;
+    const t = g.towns.list[0];
+    t.target = 400;
+    const stock = () => { for (const b of g.shops) b.stock = Math.max(b.stock, 8); };
+    for (let i = 0; i < 14 * HOUR * 30; i++) { g.step(1 / 30); if (i % 600 === 0) t.target = Math.max(t.target, 400); stock(); }
+    const c = [...g.net.nodes.values()].sort((a, b) => Math.hypot(a.p.x - t.c.x, a.p.y - t.c.y) - Math.hypot(b.p.x - t.c.x, b.p.y - t.c.y))[0];
+    const arms = [...g.net.segs.values()].filter((s) => s.a === c.id || s.b === c.id);
+    expect(arms.length).toBe(4);
+    const ew = arms.filter((s) => { const o = g.net.nodes.get(s.a === c.id ? s.b : s.a)!; return Math.abs(o.p.x - c.p.x) > Math.abs(o.p.y - c.p.y); }).map((s) => s.id);
+    g.setSignal(c.id, { phases: [{ arms: ew, dur: 15 }, { arms: arms.map((s) => s.id).filter((i) => !ew.includes(i)), dur: 15 }] });
+    let worst = 0;
+    for (let i = 0; i < 40 * HOUR * 30; i++) {
+      g.step(1 / 30);
+      stock();
+      if (i % 30 === 0) for (const v of g.traffic.vehicles) if (v.v < 0.5) worst = Math.max(worst, v.wait);
+    }
+    // (a red, then a full green for the other road, at most: no one waits through cycle after cycle)
+    expect(worst).toBeLessThan(45);
+  }, 120000);
+});

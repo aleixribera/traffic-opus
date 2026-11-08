@@ -258,6 +258,42 @@ export function productIcon(p: string): string {
     case "chips":
       // a pile of wood chips
       return svg(16, 16, `<path d="M1 13.5 Q4 5.5 8 5.2 Q12 5.5 15 13.5 Z" fill="${C.woodL}" stroke="${C.wood}" stroke-width=".9"/><path d="M4.6 10.4l1.6-.8M8 8.2l1.4.6M9.6 11.2l1.8-.4M6.4 12l1-.9" stroke="${C.wood}" stroke-width=".9" stroke-linecap="round"/>`);
+    case "crops":
+      // a sheaf of wheat, tied
+      return svg(16, 16, `<path d="M8 15V6M8 10 5 4.5M8 10l3-5.5M8 12.5 3.6 7.5M8 12.5l4.4-5" stroke="${C.ochreD}" stroke-width="1.1" fill="none" stroke-linecap="round"/><ellipse cx="8" cy="3.6" rx="1.4" ry="2.6" fill="${C.ochre}"/><ellipse cx="4.6" cy="4" rx="1.2" ry="2.3" fill="${C.ochre}" transform="rotate(-28 4.6 4)"/><ellipse cx="11.4" cy="4" rx="1.2" ry="2.3" fill="${C.ochre}" transform="rotate(28 11.4 4)"/><path d="M5.8 11.2h4.4" stroke="${C.brick}" stroke-width="1.6"/>`);
+    case "logs":
+      // three logs stacked, end on
+      return svg(16, 16, `<circle cx="4.6" cy="11.4" r="3.2" fill="${C.woodL}" stroke="${C.wood}" stroke-width="1.1"/><circle cx="11.4" cy="11.4" r="3.2" fill="${C.woodL}" stroke="${C.wood}" stroke-width="1.1"/><circle cx="8" cy="5.6" r="3.2" fill="${C.woodL}" stroke="${C.wood}" stroke-width="1.1"/><circle cx="4.6" cy="11.4" r="1.1" fill="none" stroke="${C.wood}" stroke-width=".8"/><circle cx="11.4" cy="11.4" r="1.1" fill="none" stroke="${C.wood}" stroke-width=".8"/><circle cx="8" cy="5.6" r="1.1" fill="none" stroke="${C.wood}" stroke-width=".8"/>`);
+    case "ore":
+      // rust-red lumps of iron ore
+      return svg(16, 16, `<path d="M1.5 13.5 3 8.6 6.4 7.2 8.6 9.4 8 13.5Z" fill="${C.ore}" stroke="${C.brickD}" stroke-width=".9"/><path d="M7.4 13.5 8.2 7.8 11.2 4.6 14.2 7.4 14.6 13.5Z" fill="${C.ore}" stroke="${C.brickD}" stroke-width=".9"/><path d="M9.6 7.4 11.2 6.2M3.8 10l1.6-.9" stroke="${C.woodL}" stroke-width=".9" stroke-linecap="round"/>`);
+    case "coal":
+      // black lumps of coal with a glint
+      return svg(16, 16, `<path d="M1.5 13.5 2.6 9 6 7.6 8.4 10 7.8 13.5Z" fill="${C.coal}" stroke="${C.steel}" stroke-width=".8"/><path d="M7 13.5 7.8 7.6 10.8 4.4 14 7.2 14.5 13.5Z" fill="${C.coal}" stroke="${C.steel}" stroke-width=".8"/><path d="M9.6 7.2 11 6M3.6 10.2l1.4-.7" stroke="${C.cream}" stroke-width=".9" stroke-linecap="round"/>`);
+    case "lime":
+      // a cut block of pale limestone
+      return svg(16, 16, `<path d="M2 6.5 6 3.5H14V11L10 14H2Z" fill="${C.cream}" stroke="${C.cream2}" stroke-width=".9"/><path d="M2 6.5H10V14M10 6.5 14 3.5" stroke="${C.cream2}" stroke-width=".9" fill="none"/><path d="M4 9.6h3.4M5 11.8h2.6" stroke="${C.cream2}" stroke-width=".8" stroke-linecap="round"/>`);
+    case "crude":
+      // a drop of crude oil
+      return svg(16, 16, `<path d="M8 1.5C6 5 3.6 7.6 3.6 10.2a4.4 4.4 0 0 0 8.8 0C12.4 7.6 10 5 8 1.5Z" fill="${C.coal}" stroke="${C.steel}" stroke-width=".9"/><path d="M6 10.6a2 2 0 0 0 1.8 2" stroke="${C.cream}" stroke-width="1" fill="none" stroke-linecap="round"/>`);
+    case "sand":
+      // a heap of sand
+      return svg(16, 16, `<path d="M1 13.5Q4 5.6 8 5.2Q12 5.6 15 13.5Z" fill="${C.sand}" stroke="${C.woodL}" stroke-width=".9"/><circle cx="6" cy="10" r=".55" fill="${C.wood}"/><circle cx="9" cy="8.6" r=".55" fill="${C.wood}"/><circle cx="10.4" cy="11.4" r=".55" fill="${C.wood}"/><circle cx="7.2" cy="12.2" r=".55" fill="${C.wood}"/>`);
+    case "copperore":
+      // a grey rock veined with green copper
+      return svg(16, 16, `<path d="M1.5 13.5 2.8 7.6 7 4 12.6 5.2 14.6 10 13.5 13.5Z" fill="${C.asphalt}" stroke="${C.coal}" stroke-width=".9"/><path d="M4.2 11 7 8.4 9 9.6 12 7.2M7.6 12l1.8-1.4" stroke="${C.verdigris}" stroke-width="1.5" fill="none" stroke-linecap="round"/>`);
+    case "steel":
+      // a steel I-beam, end on
+      return svg(16, 16, `<path d="M3 2.5h10v2.6H9.4v5.8H13v2.6H3v-2.6h3.6V5.1H3Z" fill="${C.steel}" stroke="${C.slate}" stroke-width=".9"/>`);
+    case "copper":
+      // a coil of copper wire
+      return svg(16, 16, `<ellipse cx="8" cy="8" rx="6" ry="5.2" fill="none" stroke="${C.copper}" stroke-width="2.2"/><ellipse cx="8" cy="8" rx="2.6" ry="2.2" fill="none" stroke="${C.copper}" stroke-width="1.6"/><path d="M13.6 9.6 15 12" stroke="${C.copper}" stroke-width="1.4" stroke-linecap="round"/>`);
+    case "glass":
+      // a pane of glass with a highlight
+      return svg(16, 16, `<rect x="3" y="2" width="10" height="12" fill="${C.glass}" stroke="${C.cream}" stroke-width="1"/><path d="M5.4 7.6 9 4M6.6 10.6l4-4" stroke="${C.cream}" stroke-width="1" stroke-linecap="round"/>`);
+    case "plastics":
+      // a sack of plastic pellets
+      return svg(16, 16, `<path d="M4 4.6h8L13.5 14h-11Z" fill="${C.steel}" stroke="${C.slate}" stroke-width=".9"/><path d="M5.6 2.4h4.8L12 4.6H4Z" fill="${C.slate}"/><circle cx="6.6" cy="9.6" r="1" fill="${C.glass}"/><circle cx="9.4" cy="8.4" r="1" fill="${C.glass}"/><circle cx="8.8" cy="11.4" r="1" fill="${C.glass}"/>`);
     default:
       return svg(16, 16, `<rect x="4" y="4" width="8" height="8" fill="${C.cream2}" transform="rotate(45 8 8)"/>`);
   }

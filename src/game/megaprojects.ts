@@ -60,19 +60,19 @@ export const MEGA_PLANTS: Record<MegaKind, PlantDef> = {
   hydrodam: {
     kind: "hydrodam", tier: 4, inputs: {}, outputs: {}, cycle: HOUR, cost: 250000, upkeep: 40, trucks: 0, store: 8,
     makes: 360, reach: 15000, mega: true, pieces: MEGAS.hydrodam.pieces,
-    site: { cement: 160, steel: 100, parts: 60, machinery: 30 },
+    site: { cement: 320, steel: 200, parts: 120, machinery: 60 },
     blurb: "A dam and power station across the river. Waits for cement, steel, construction parts, machinery and three turbines.",
   },
   skylinetower: {
     kind: "skylinetower", tier: 4, inputs: {}, outputs: {}, cycle: HOUR, cost: 400000, upkeep: 60, trucks: 0, store: 8,
     mega: true, pieces: MEGAS.skylinetower.pieces,
-    site: { steel: 120, glass: 80, parts: 100, electronics: 30 },
+    site: { steel: 240, glass: 160, parts: 200, electronics: 60 },
     blurb: "A stepped skyscraper for a City. Waits for steel, glass, construction parts, electronics and four steel girders.",
   },
   exposition: {
     kind: "exposition", tier: 4, inputs: {}, outputs: {}, cycle: HOUR, cost: 500000, upkeep: 80, trucks: 0, store: 8,
     mega: true, pieces: MEGAS.exposition.pieces,
-    site: { planks: 100, glass: 60, parts: 60, goods: 50, electronics: 40 },
+    site: { planks: 200, glass: 120, parts: 120, goods: 100, electronics: 80 },
     blurb: "A world's fair of pavilions round a great hall and a tower. Waits for planks, glass, parts, household goods, electronics and two girders.",
   },
 };

@@ -9,7 +9,7 @@ import type { Building, Buildings } from "./buildings";
 import { BUILDING_TYPES, ROAD_TYPES, type BuildingKind } from "../config";
 import type { PendingSpawn, Trip, Vehicle } from "../sim/traffic";
 import { F } from "../world/gen";
-import { GROW_DECAY, GROW_NEED, SITE_LEVELS, levelMult } from "./sites";
+import { GROW_DECAY, SITE_LEVELS, growNeed, levelMult } from "./sites";
 import { TRUCK_CLASS_ORDER, classOf, fleetMix, type FleetMix, type TruckClass } from "./trucks";
 import type { BigKind, BigState } from "./convoys";
 import { MEGA_PLANTS, megaValue, type LandmarkState, type MegaKind } from "./megaprojects";
@@ -166,127 +166,127 @@ export const PLANTS: Record<PlantKind, PlantDef> = {
   },
   ironmine: {
     kind: "ironmine", tier: 2, deposit: { field: F.ore, name: "iron ore" }, inputs: {}, outputs: { ore: 1 },
-    cycle: HOUR * 1.5, cost: 24000, upkeep: 30, trucks: 4, store: 8, power: 6, site: { planks: 6 }, supplies: { explosives: 3 },
+    cycle: HOUR * 1.5, cost: 24000, upkeep: 30, trucks: 4, store: 8, power: 6, site: { planks: 30 }, supplies: { explosives: 3 },
     blurb: "Digs iron ore. Its trucks take it to your smelters.",
   },
   coalmine: {
     kind: "coalmine", tier: 2, deposit: { field: F.coal, name: "coal" }, inputs: {}, outputs: { coal: 1 },
-    cycle: HOUR * 1.2, cost: 24000, upkeep: 30, trucks: 4, store: 8, power: 6, site: { planks: 6 }, supplies: { explosives: 3 },
+    cycle: HOUR * 1.2, cost: 24000, upkeep: 30, trucks: 4, store: 8, power: 6, site: { planks: 30 }, supplies: { explosives: 3 },
     blurb: "Digs coal for your smelters, cement works and power plants.",
   },
   quarry: {
     kind: "quarry", tier: 2, deposit: { field: F.lime, name: "limestone" }, inputs: {}, outputs: { lime: 1 },
-    cycle: HOUR * 1.5, cost: 20000, upkeep: 26, trucks: 4, store: 8, power: 6, site: { planks: 6 }, supplies: { explosives: 3 },
+    cycle: HOUR * 1.5, cost: 20000, upkeep: 26, trucks: 4, store: 8, power: 6, site: { planks: 30 }, supplies: { explosives: 3 },
     blurb: "Quarries limestone. Its trucks take it to your cement works.",
   },
   smelter: {
     kind: "smelter", tier: 2, inputs: { ore: 1, coal: 1 }, outputs: { steel: 1, slag: 1 }, byproduct: "slag",
-    cycle: HOUR * 1.5, cost: 45000, upkeep: 50, trucks: 2, store: 8, power: 14, site: { planks: 10 },
+    cycle: HOUR * 1.5, cost: 45000, upkeep: 50, trucks: 2, store: 8, power: 14, site: { planks: 50 },
     blurb: "Smelts iron ore with coal into steel, for the construction plants to come. Its slag goes to your cement works, which grind it in place of limestone.",
   },
   cementworks: {
     kind: "cementworks", tier: 2, inputs: { lime: 1, coal: 1 }, alt: { lime: "slag" }, outputs: { cement: 1 },
-    cycle: HOUR, cost: 40000, upkeep: 45, trucks: 3, store: 8, power: 10, site: { planks: 10 },
+    cycle: HOUR, cost: 40000, upkeep: 45, trucks: 3, store: 8, power: 10, site: { planks: 50 },
     blurb: "Burns limestone (or the smelters' slag in its place) with coal into cement. Its trucks sell it to villages that are building in concrete.",
   },
   coalplant: {
     kind: "coalplant", tier: 2, inputs: { coal: 1 }, alt: { coal: "chips" }, outputs: {},
-    cycle: HOUR * 3, cost: 32000, upkeep: 35, trucks: 0, store: 8, makes: 40, reach: 4000, site: { planks: 8 },
+    cycle: HOUR * 3, cost: 32000, upkeep: 35, trucks: 0, store: 8, makes: 40, reach: 4000, site: { planks: 40 },
     blurb: "Burns coal (or the sawmills' wood chips) for power. It powers your tier 2 buildings on its roads within 4 km; without power they work at 40%.",
   },
   // tier 3: the building sites wait for planks and cement
   oilwell: {
     kind: "oilwell", tier: 3, deposit: { field: F.oil, name: "oil" }, inputs: {}, outputs: { crude: 1 },
-    cycle: HOUR * 1.2, cost: 28000, upkeep: 30, trucks: 4, store: 8, site: { planks: 6, cement: 4 }, supplies: { explosives: 3 },
+    cycle: HOUR * 1.2, cost: 28000, upkeep: 30, trucks: 4, store: 8, site: { planks: 30, cement: 20 }, supplies: { explosives: 3 },
     blurb: "Pumps crude oil. Its tankers take it to your refineries.",
   },
   sandpit: {
     kind: "sandpit", tier: 3, deposit: { field: F.sand, name: "sand" }, inputs: {}, outputs: { sand: 1 },
-    cycle: HOUR * 1.2, cost: 22000, upkeep: 24, trucks: 4, store: 8, site: { planks: 6, cement: 4 }, supplies: { explosives: 3 },
+    cycle: HOUR * 1.2, cost: 22000, upkeep: 24, trucks: 4, store: 8, site: { planks: 30, cement: 20 }, supplies: { explosives: 3 },
     blurb: "Digs sand by the water. Its tippers take it to your glassworks.",
   },
   refinery: {
     kind: "refinery", tier: 3, inputs: { crude: 1 }, outputs: { fuel: 1, plastics: 1 },
-    cycle: HOUR, cost: 60000, upkeep: 60, trucks: 4, store: 8, power: 16, site: { planks: 12, cement: 10 },
+    cycle: HOUR, cost: 60000, upkeep: 60, trucks: 4, store: 8, power: 16, site: { planks: 60, cement: 50 },
     blurb: "Splits crude oil into fuel and plastics. Its tankers sell the fuel to the towns' filling stations.",
   },
   glassworks: {
     kind: "glassworks", tier: 3, inputs: { sand: 1, coal: 1 }, outputs: { glass: 1 },
-    cycle: HOUR, cost: 48000, upkeep: 50, trucks: 3, store: 8, power: 12, site: { planks: 10, cement: 8 },
+    cycle: HOUR, cost: 48000, upkeep: 50, trucks: 3, store: 8, power: 12, site: { planks: 50, cement: 40 },
     blurb: "Melts sand with coal into glass for your furniture factories.",
   },
   furniture: {
     kind: "furniture", tier: 3, inputs: { planks: 1, glass: 1 }, outputs: { goods: 1 },
-    cycle: HOUR, cost: 42000, upkeep: 45, trucks: 3, store: 8, site: { planks: 10, cement: 6 },
+    cycle: HOUR, cost: 42000, upkeep: 45, trucks: 3, store: 8, site: { planks: 50, cement: 30 },
     blurb: "Builds furniture and fittings from planks and glass: household goods for the towns' shops.",
   },
   constructionplant: {
     kind: "constructionplant", tier: 3, inputs: { steel: 1, cement: 1 }, outputs: { parts: 1 },
-    cycle: HOUR, cost: 52000, upkeep: 55, trucks: 3, store: 8, power: 14, site: { planks: 10, cement: 10 },
+    cycle: HOUR, cost: 52000, upkeep: 55, trucks: 3, store: 8, power: 14, site: { planks: 50, cement: 50 },
     blurb: "Casts steel and cement into construction parts: towns put up their blocks and towers from them.",
   },
   // tier 4: the building sites wait for construction parts as well as planks and cement
   coppermine: {
     kind: "coppermine", tier: 4, deposit: { field: F.copper, name: "copper ore" }, inputs: {}, outputs: { copperore: 1 },
-    cycle: HOUR * 1.2, cost: 34000, upkeep: 34, trucks: 4, store: 8, site: { planks: 6, cement: 4, parts: 3 }, supplies: { explosives: 3 },
+    cycle: HOUR * 1.2, cost: 34000, upkeep: 34, trucks: 4, store: 8, site: { planks: 30, cement: 20, parts: 15 }, supplies: { explosives: 3 },
     blurb: "Digs copper ore in the high ranges. Its tippers take it to your copper smelters.",
   },
   coppersmelter: {
     kind: "coppersmelter", tier: 4, inputs: { copperore: 1, coal: 1 }, outputs: { copper: 1 },
-    cycle: HOUR * 1.2, cost: 62000, upkeep: 60, trucks: 3, store: 8, power: 16, site: { planks: 10, cement: 8, parts: 6 },
+    cycle: HOUR * 1.2, cost: 62000, upkeep: 60, trucks: 3, store: 8, power: 16, site: { planks: 50, cement: 40, parts: 30 },
     blurb: "Smelts copper ore with coal into copper, for your electronics plants and machine works.",
   },
   electronics: {
     kind: "electronics", tier: 4, inputs: { copper: 1, plastics: 1 }, outputs: { electronics: 1 },
-    cycle: HOUR, cost: 70000, upkeep: 62, trucks: 3, store: 8, power: 12, site: { planks: 10, cement: 8, parts: 6 },
+    cycle: HOUR, cost: 70000, upkeep: 62, trucks: 3, store: 8, power: 12, site: { planks: 50, cement: 40, parts: 30 },
     blurb: "Builds electronics from copper and plastics. Its trucks sell them to the shops of your cities.",
   },
   machineworks: {
     kind: "machineworks", tier: 4, inputs: { steel: 1, copper: 1 }, outputs: { machinery: 1 },
-    cycle: HOUR * 1.2, cost: 72000, upkeep: 64, trucks: 3, store: 8, power: 14, site: { planks: 12, cement: 10, parts: 8 },
+    cycle: HOUR * 1.2, cost: 72000, upkeep: 64, trucks: 3, store: 8, power: 14, site: { planks: 60, cement: 50, parts: 40 },
     blurb: "Builds machinery from steel and copper. Its flatbeds take it to the offices and towers of your cities.",
   },
   // supplies (docs/design.md "Supplies"): limestone burnt with coal makes lime-nitrogen fertilizer for the farms and,
   // from the coal tar, explosives for the mines, quarries, pits and wells, which need them to grow past level 2
   chemworks: {
     kind: "chemworks", tier: 3, inputs: { lime: 1, coal: 1 }, outputs: { fertilizer: 1, explosives: 1 },
-    cycle: HOUR, cost: 50000, upkeep: 50, trucks: 3, store: 8, power: 12, site: { planks: 10, cement: 8 },
+    cycle: HOUR, cost: 50000, upkeep: 50, trucks: 3, store: 8, power: 12, site: { planks: 50, cement: 40 },
     blurb: "Burns limestone with coal into fertilizer and explosives. Your farms need fertilizer, and your mines, quarries, pits and wells explosives, to grow past level 2 and keep up their pace.",
   },
   // perishables (docs/design.md "Perishables"): milk from a herd on fertile soil, in refrigerated trucks; the
   // creamery's cheese keeps about three times as long
   dairyfarm: {
     kind: "dairyfarm", tier: 2, deposit: { field: F.fert, name: "fertile soil" }, inputs: {}, outputs: { milk: 1 },
-    cycle: HOUR * 1.2, cost: 16000, upkeep: 16, trucks: 2, store: 6, site: { planks: 4 }, supplies: { fertilizer: 3 },
+    cycle: HOUR * 1.2, cost: 16000, upkeep: 16, trucks: 2, store: 6, site: { planks: 30 }, supplies: { fertilizer: 3 },
     blurb: "Milks a herd on fertile pasture. Its refrigerated trucks sell the milk to villages and towns, or take it to your creameries; it spoils if the trip runs long.",
   },
   creamery: {
     kind: "creamery", tier: 2, inputs: { milk: 1 }, outputs: { cheese: 1 },
-    cycle: HOUR, cost: 30000, upkeep: 32, trucks: 2, store: 8, power: 8, site: { planks: 8 },
+    cycle: HOUR, cost: 30000, upkeep: 32, trucks: 2, store: 8, power: 8, site: { planks: 40 },
     blurb: "Turns milk into cheese, which keeps about three times as long: its refrigerated trucks sell it further afield.",
   },
   // tier 5 (docs/design.md "Motor Works"): the refinery's plastics with coal make rubber; steel, glass, rubber and
   // electronics make cars, and every car a town buys puts more of its people on the road
   rubberplant: {
     kind: "rubberplant", tier: 5, inputs: { plastics: 1, coal: 1 }, outputs: { rubber: 1 },
-    cycle: HOUR, cost: 68000, upkeep: 58, trucks: 3, store: 8, power: 14, site: { planks: 10, cement: 8, parts: 6 },
+    cycle: HOUR, cost: 68000, upkeep: 58, trucks: 3, store: 8, power: 14, site: { planks: 50, cement: 40, parts: 30 },
     blurb: "Makes synthetic rubber from the refinery's plastics with coal, for your Motor Works' tyres.",
   },
   motorworks: {
     kind: "motorworks", tier: 5, inputs: { steel: 1, glass: 1, rubber: 1, electronics: 1 }, outputs: { cars: 1 },
-    cycle: HOUR * 1.2, cost: 120000, upkeep: 90, trucks: 3, store: 8, power: 20, site: { planks: 12, cement: 12, parts: 10 },
+    cycle: HOUR * 1.2, cost: 120000, upkeep: 90, trucks: 3, store: 8, power: 20, site: { planks: 60, cement: 60, parts: 50 },
     blurb: "Builds motor cars from steel, glass, rubber and electronics, and stops when any of the four runs out. Towns buy the cars, and every one sold puts more traffic on their roads.",
   },
   // logistics (docs/design.md "Freight"): a warehouse buffers any product and its own trucks carry it on; a fuel
   // depot takes fuel from the refineries and fills the company's trucks that pass it at cost
   warehouse: {
     kind: "warehouse", tier: 2, inputs: {}, outputs: {}, logistics: "warehouse",
-    cycle: HOUR, cost: 18000, upkeep: 18, trucks: 12, store: 60, site: { planks: 6 },
+    cycle: HOUR, cost: 18000, upkeep: 18, trucks: 12, store: 60, site: { planks: 30 },
     blurb: "Stores any product your buildings send it and re-ships it with its own trucks: it takes the overflow, or splits a long haul into two legs as a feeder.",
   },
   fueldepot: {
     kind: "fueldepot", tier: 3, inputs: { fuel: 1 }, outputs: {}, logistics: "depot",
-    cycle: HOUR, cost: 14000, upkeep: 10, trucks: 0, store: 8, site: { planks: 4, cement: 2 },
+    cycle: HOUR, cost: 14000, upkeep: 10, trucks: 0, store: 8, site: { planks: 20, cement: 10 },
     blurb: "Takes fuel from your refineries. Your trucks whose run passes within 1.5 km fill up here at cost instead of paying the market price.",
   },
   // landmarks (docs/design.md "Landmarks"): defined with the rest of the megaprojects
@@ -889,7 +889,7 @@ export class Industry {
       : null;
     P.why = why;
     P.grow = why ? Math.max(0, P.grow - span * GROW_DECAY) : P.grow + span;
-    if (P.grow >= GROW_NEED) this.levelUp(b);
+    if (P.grow >= growNeed(P.level)) this.levelUp(b);
   }
 
   /** Grow a site one level: more output, jobs and trucks, and its next buildings go up. */

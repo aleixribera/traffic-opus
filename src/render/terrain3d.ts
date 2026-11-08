@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { NF, RIVER_K, RIVER_S } from "../world/gen";
+import { F, NF, RIVER_K, RIVER_S } from "../world/gen";
 import { CH, RES, type Terrain } from "../world/terrain";
 import { PAL } from "./palette";
 import type { View } from "./view";
@@ -31,6 +31,7 @@ export class Terrain3D {
   private plane = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2).translate(0.5, 0, 0.5);
   readonly shared = {
     uOverlay: { value: 0 }, // 0 none, 1 resources
+    uFocus: { value: -1 }, // the one deposit field shown at full strength (an extractor being placed); -1 all of them
     uSun: { value: new THREE.Vector2(-0.56, -0.83) },
     uRot: { value: new THREE.Vector2(1, 0) },
   };
@@ -42,8 +43,10 @@ export class Terrain3D {
     this.group.add(bg);
   }
 
-  setOverlay(mode: "none" | "resources") {
+  /** The resources overlay on or off; `focus`: the one deposit field to show strongly, the rest faint. */
+  setOverlay(mode: "none" | "resources", focus = -1) {
     this.shared.uOverlay.value = mode === "resources" ? 1 : 0;
+    this.shared.uFocus.value = focus;
   }
 
   /** Call every frame: keeps the chunks covering the view built, at the right detail, within a time budget. */
@@ -165,7 +168,7 @@ const c3 = (c: number) => {
 const GROUND_GLSL = /* glsl */ `
 varying vec2 vWorld;
 uniform sampler2D uF0; uniform sampler2D uF1; uniform sampler2D uF2;
-uniform vec2 uOrigin; uniform float uRes; uniform float uOverlay; uniform vec2 uSun; uniform vec2 uRot;
+uniform vec2 uOrigin; uniform float uRes; uniform float uOverlay; uniform float uFocus; uniform vec2 uSun; uniform vec2 uRot;
 
 vec4 bsw(float t) {
   float t2 = t * t, t3 = t2 * t;
@@ -210,6 +213,8 @@ float vnoise(vec2 p) {
 }
 // coverage of a field above 0.5 with a one-pixel soft edge
 float cov(float v) { float w = max(fwidth(v), 1e-4) * 0.75; return smoothstep(0.5 - w, 0.5 + w, v); }
+/* a deposit field's strength in the resources overlay: full, or faint beside the one an extractor being placed works */
+float fw(float f) { return uFocus < 0.0 || abs(uFocus - f) < 0.5 ? 1.0 : 0.22; }
 
 vec3 groundColor(vec2 p) {
   vec4 A, B, D;
@@ -336,14 +341,15 @@ vec3 groundColor(vec2 p) {
   // resources overlay
   if (uOverlay > 0.5) {
     c = mix(c, c * 0.72 + 0.28 * vec3(1.0), 0.6);
-    c = mix(c, ${c3(PAL.resFert)}, cov(fert) * 0.75 * (1.0 - wa));
-    c = mix(c, ${c3(PAL.resForest)}, cov(forest) * 0.7);
-    c = mix(c, ${c3(PAL.resOre)}, cov(ore) * 0.85);
-    c = mix(c, ${c3(PAL.resOil)}, cov(oil) * 0.85);
-    c = mix(c, ${c3(PAL.resCoal)}, cov(coal) * 0.85);
-    c = mix(c, ${c3(PAL.resLime)}, cov(lime) * 0.85);
-    c = mix(c, ${c3(PAL.resSand)}, cov(sandD) * 0.85);
-    c = mix(c, ${c3(PAL.resCopper)}, cov(copper) * 0.85);
+    // (placing an extractor: its own deposit at full strength, the others faint)
+    c = mix(c, ${c3(PAL.resFert)}, cov(fert) * 0.75 * (1.0 - wa) * fw(${F.fert}.0));
+    c = mix(c, ${c3(PAL.resForest)}, cov(forest) * 0.7 * fw(${F.forest}.0));
+    c = mix(c, ${c3(PAL.resOre)}, cov(ore) * 0.85 * fw(${F.ore}.0));
+    c = mix(c, ${c3(PAL.resOil)}, cov(oil) * 0.85 * fw(${F.oil}.0));
+    c = mix(c, ${c3(PAL.resCoal)}, cov(coal) * 0.85 * fw(${F.coal}.0));
+    c = mix(c, ${c3(PAL.resLime)}, cov(lime) * 0.85 * fw(${F.lime}.0));
+    c = mix(c, ${c3(PAL.resSand)}, cov(sandD) * 0.85 * fw(${F.sand}.0));
+    c = mix(c, ${c3(PAL.resCopper)}, cov(copper) * 0.85 * fw(${F.copper}.0));
   }
   return c;
 }

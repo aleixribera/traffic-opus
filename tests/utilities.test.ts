@@ -148,7 +148,7 @@ describe("Company power", () => {
     expect(sm.plant!.site).toBeDefined();
     run(g, 0.5);
     expect(g.utilities.demandOf(sm)).toBe(0);
-    expect(sm.problem).toMatch(/^Building site: waiting for 10 loads of planks/);
+    expect(sm.problem).toMatch(new RegExp(`^Building site: waiting for ${PLANTS.smelter.site!.planks} loads of planks`));
   });
 
   it("a loaded save shows its power before the clock runs", () => {
@@ -178,7 +178,7 @@ describe("Tier 2 unlocks", () => {
     const pl = g.placedPlan("smelter", v2(150, 190));
     expect(pl?.ok).toBe(false);
     expect(pl?.reason).toBe("Not unlocked yet");
-    g.progress.done.push("food10", "town2", "planks10", "village");
+    g.progress.done.push("food10", "hamlet150", "planks10", "village");
     expect(g.placedUnlocked("ironmine")).toBe(true);
     expect(g.placedUnlocked("coalplant")).toBe(true);
     expect(g.placedUnlocked("smelter")).toBe(false);

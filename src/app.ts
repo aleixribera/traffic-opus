@@ -23,9 +23,12 @@ const PLACE_TURN_PER_PX = (10 * Math.PI) / 180 / 100;
 const FINE_TURN = Math.PI / 180;
 import { ZONES } from "./game/zones";
 import { MIN_DEPOSIT, PLANTS, PRODUCTS, UNPOWERED, isPlantKind, type Product } from "./game/industry";
-import { TOWN_COST, TOWN_SPACING } from "./game/settlements";
 import { isHall, needsOf } from "./game/towns";
 import { productIcon } from "./ui/icons";
+import { TownPings } from "./ui/townPings";
+import { STUCK_KEEP, StuckAlerts } from "./ui/stuckAlerts";
+import { DEPOSIT_KINDS, DepositMarks } from "./ui/depositMarks";
+import { served } from "./game/settlements";
 import type { ModelSet } from "./render/models";
 import { Preview3D } from "./render/preview3d";
 import { Roads3D } from "./render/roads3d";
@@ -42,7 +45,7 @@ import { Saves } from "./game/saves";
 import { PLACED, type PlacedKind } from "./game/placed";
 import type { Hud, Chip } from "./ui/hud";
 
-export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "town" | "place" | "transit";
+export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "place" | "transit";
 /** The bus tool: put stops on the kerb, or click stops in order to make a line. */
 export type TransitMode = "stop" | "line";
 /** Road tool modes, as in Transport Fever 2: the two drawing modes (curve, straight) and Upgrade (change type / reverse). */
@@ -83,9 +86,15 @@ export class App {
   icons = new MapIcons();
   /** tags over the oversized-load convoys (click one to follow it) */
   convoyTags = new ConvoyTags((id) => { this.followT = id === null ? 0 : 1; });
+  /** markers on towns that have just sprung up (click the edge pointer to fly there) */
+  /** the deposits' tags and the "nearest coal" pointers (while an extractor is placed, and in the Resources view) */
+  depositMarks = new DepositMarks(() => this.game.terrain.gen, (c) => this.flyTo(c));
+  stuckAlerts = new StuckAlerts((c) => this.flyTo(c, 140));
+  townPings = new TownPings({ fly: (id) => this.flyToTown(id), open: (id) => { this.setTool({ tool: "inspect" }); this.hud?.openTown(id); } });
   private followT = 0;
   /** the camera gliding to a place (a finished landmark): from, to, start and length (s) */
-  private glide: { from: { x: number; y: number; h: number }; to: { x: number; y: number; h: number }; t: number; dur: number } | null = null;
+  /** a camera glide under way; `lift`: how much further out (m of half height) it pulls at the middle of the way */
+  private glide: { from: { x: number; y: number; h: number }; to: { x: number; y: number; h: number }; t: number; dur: number; lift: number } | null = null;
   parks3d!: Parks3D;
   fireworks = new Fireworks();
   /** money and moments rising off the map, and the shelf-time rings over refrigerated trucks */
@@ -199,10 +208,58 @@ export class App {
     this.setGame(Game.load(data));
   }
 
-  /** Glide the camera to a place over `dur` seconds (eased), ending zoomed to `halfH`. */
-  glideTo(p: V2, halfH: number, dur = 1.6) {
+  /**
+   * Glide the camera to a place over `dur` seconds (eased), ending zoomed to `halfH`, pulling out by up to `lift` on
+   * the way (a jump, with reduced motion asked for).
+   */
+  glideTo(p: V2, halfH: number, dur = 1.6, lift = 0) {
     this.convoyTags.follow(null);
-    this.glide = { from: { x: this.view.cx, y: this.view.cy, h: this.view.halfH }, to: { x: p.x, y: p.y, h: Math.min(this.view.maxHalfH, halfH) }, t: 0, dur };
+    if (reducedMotion()) {
+      this.glide = null;
+      this.view.cx = p.x;
+      this.view.cy = p.y;
+      this.view.halfH = Math.min(this.view.maxHalfH, halfH);
+      return;
+    }
+    this.glide = { from: { x: this.view.cx, y: this.view.cy, h: this.view.halfH }, to: { x: p.x, y: p.y, h: Math.min(this.view.maxHalfH, halfH) }, t: 0, dur, lift };
+  }
+
+  /**
+   * Fly the camera to a town (a new one's marker or banner): a longer glide the further it is, pulling out over the
+   * way there, and ending over the town with its panel open.
+   */
+  flyToTown(id: number) {
+    const t = this.game.towns.byId.get(id);
+    if (!t) return;
+    this.townPings.seen(id);
+    const d = Math.hypot(t.c.x - this.view.cx, t.c.y - this.view.cy);
+    // (out far enough at the middle of the way to see both ends of it, so a far town reads as far)
+    const lift = Math.max(0, Math.min(this.view.maxHalfH, d * 0.4) - Math.max(this.view.halfH, 420));
+    this.glideTo(t.c, 420, Math.min(3.2, 1.4 + d / 4000), lift);
+    this.setTool({ tool: "inspect" });
+    this.hud?.openTown(id);
+  }
+
+  /** Fly the camera to a place on the map (a deposit's tag or pointer): longer the further, pulling out on the way. */
+  flyTo(c: V2, halfH = 650) {
+    const d = Math.hypot(c.x - this.view.cx, c.y - this.view.cy);
+    const lift = Math.max(0, Math.min(this.view.maxHalfH, d * 0.4) - Math.max(this.view.halfH, halfH));
+    this.glideTo(c, halfH, Math.min(3.2, 1.2 + d / 4000), lift);
+  }
+
+  /** The deposit kinds the map marks now: the one the extractor being placed works, or every kind in the Resources view. */
+  private markedDeposits(): { kinds: typeof DEPOSIT_KINDS extends Map<number, infer K> ? K[] : never; focus: boolean } {
+    if (this.uiHidden || this.mode === "menu") return { kinds: [], focus: false };
+    const k = this.st.placed;
+    if (this.st.tool === "place" && isPlantKind(k) && PLANTS[k].deposit) return { kinds: [DEPOSIT_KINDS.get(PLANTS[k].deposit!.field)!], focus: true };
+    if (this.overlay === "resources") return { kinds: [...DEPOSIT_KINDS.values()], focus: false };
+    return { kinds: [], focus: false };
+  }
+
+  /** Which way b lies from a on screen: radians clockwise from screen up (the camera may be turned). */
+  screenBearing(a: V2, b: V2): number {
+    const p = this.view.toScreen(a), q = this.view.toScreen(b);
+    return Math.atan2(q.x - p.x, -(q.y - p.y));
   }
 
   /** A landmark is finished: the camera swings over to it and a fireworks show goes up over it. */
@@ -259,7 +316,8 @@ export class App {
         if (!this.treesDue) this.treesDue = setTimeout(() => { this.treesDue = 0; this.roads.refreshTrees(); }, 500);
       }
       else if (e.t === "zones") this.dirtyPreview = true;
-      else if (e.t === "milestone") { if (this.mode === "play") this.hud?.milestone(e.m); }
+      else if (e.t === "milestone") { if (this.mode === "play") this.hud?.milestone(e.m, e.towns); }
+      else if (e.t === "townSpawned") { if (this.mode === "play") this.hud?.townSpawned(e.town, e.from, e.dist, e.dir); }
       else if (e.t === "toast") { if (this.mode !== "menu") this.hud?.toast(e.msg); }
       else if (e.t === "townSize") { if (this.mode === "play") this.hud?.townGrew(e.town, e.size); }
       else if (e.t === "landmark") { if (this.mode === "play") { this.hud?.landmarkDone(e.b); this.celebrate(e.b); } }
@@ -306,7 +364,7 @@ export class App {
   private groundOverlay() {
     const k = this.st.placed;
     const extractor = this.st.tool === "place" && isPlantKind(k) && !!PLANTS[k].deposit;
-    this.terrain3d?.setOverlay(this.overlay === "resources" || extractor ? "resources" : "none");
+    this.terrain3d?.setOverlay(this.overlay === "resources" || extractor ? "resources" : "none", extractor && isPlantKind(k) ? PLANTS[k].deposit?.field ?? -1 : -1);
   }
 
   /** The utility on show: its info view, or the one whose plant is being placed. */
@@ -816,14 +874,6 @@ export class App {
       this.dirtyPreview = true;
       return;
     }
-    if (t === "town") {
-      const town = g.towns.found(c);
-      if (typeof town === "string") { this.reject(town); return; }
-      this.hud?.sound("build");
-      this.hud?.toast(`${town.name} founded for ${formatMoney(TOWN_COST)}`);
-      this.dirtyPreview = true;
-      return;
-    }
     if (t === "inspect") {
       const sid = this.stopAt(c, 6);
       if (sid !== null) { this.selected = null; this.hud?.openStop(sid); return; }
@@ -1221,18 +1271,6 @@ export class App {
           }
         }
       }
-    } else if (t === "town") {
-      // the new town's first blocks, and how close the other towns let it come
-      const why = g.towns.foundBlock(c);
-      const ring = (q: V2, r: number) => Array.from({ length: 48 }, (_, k) => v2(q.x + Math.cos((k / 48) * Math.PI * 2) * r, q.y + Math.sin((k / 48) * Math.PI * 2) * r));
-      for (const o of g.towns.list) if (dist(o.c, c) < TOWN_SPACING * 1.6) pv.footprint(ring(o.c, TOWN_SPACING), 0x888888);
-      pv.footprint(ring(c, 150), why ? 0xe5484d : 0x58c8e6);
-      chips.push({ text: "Found a town", kind: "info" });
-      if (why) chips.push({ text: why, kind: "error" });
-      else {
-        chips.push({ text: formatMoney(TOWN_COST), kind: "cost" });
-        if (g.towns.cutOff(c)) chips.push({ text: "None of your roads near: it starts cut off", kind: "error" });
-      }
     } else if (t === "lane") {
       const lp = planAddLane(g.net, g.world, c, this.keys.has("Shift"));
       if (lp) {
@@ -1357,7 +1395,7 @@ export class App {
       const k = Math.min(1, G.t / G.dur), e = k * k * (3 - 2 * k);
       this.view.cx = G.from.x + (G.to.x - G.from.x) * e;
       this.view.cy = G.from.y + (G.to.y - G.from.y) * e;
-      this.view.halfH = G.from.h + (G.to.h - G.from.h) * e;
+      this.view.halfH = G.from.h + (G.to.h - G.from.h) * e + G.lift * Math.sin(Math.PI * e);
       if (k >= 1) this.glide = null;
     } else if (this.convoyTags.following !== null) {
       // the camera keeps a followed convoy in the middle, easing after it (and zooms in a little to start with)
@@ -1399,12 +1437,19 @@ export class App {
     this.roadsFar.update(this.view.mpp, this.view.w, this.view.h);
     this.labels.update(this.view);
     this.convoyTags.update(this.view, g.alpha);
+    this.townPings.update(this.view);
+    this.depositMarks.update(this.view);
+    this.stuckAlerts.update(this.view);
     this.iconT += dt;
     if (this.iconT > 0.4) {
       this.iconT = 0;
       this.icons.set(this.uiHidden || this.mode === "menu" ? [] : g.buildings.list, this.view);
       this.townLabels();
       this.convoyTags.sync(g.traffic.vehicles, g.buildings.byId, this.uiHidden || this.mode === "menu");
+      this.townPings.sync(g.towns.list, g.time, served, this.uiHidden || this.mode === "menu");
+      this.stuckAlerts.sync(g.traffic.stuckCars(STUCK_KEEP), g.time, this.uiHidden || this.mode === "menu");
+      const dm = this.markedDeposits();
+      this.depositMarks.show(dm.kinds, dm.focus);
     }
     else this.icons.update(this.view);
     this.pops.update(this.view, this.uiHidden || this.mode === "menu" || far ? null : g.traffic, g.alpha);
@@ -1466,4 +1511,9 @@ export function ramp(v: number): number {
   if (t < 0.5) c.lerpColors(new THREE.Color(0xe5484d), new THREE.Color(0xf5b82e), t / 0.5);
   else c.lerpColors(new THREE.Color(0xf5b82e), new THREE.Color(0x4cc46a), (t - 0.5) / 0.5);
   return c.getHex();
+}
+
+/** The player asked their system for less motion: the camera jumps instead of gliding. */
+export function reducedMotion(): boolean {
+  return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 }

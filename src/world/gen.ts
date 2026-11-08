@@ -182,6 +182,25 @@ export class WorldGen {
     }
   }
 
+  /**
+   * The deposit blobs of a field within R of a point, nearest first: the guaranteed first ones and the scattered ones
+   * (centre and radius, m). For the map's deposit markers and the "nearest coal" pointers; fertile soil and forest
+   * only have their first patch here (elsewhere they are natural fields, everywhere).
+   */
+  depositsNear(field: number, x: number, y: number, R: number): { x: number; y: number; r: number }[] {
+    const out: { x: number; y: number; r: number; d: number }[] = [];
+    const add = (s: Site) => {
+      if (s.field !== field) return;
+      const d = Math.hypot(s.x - x, s.y - y);
+      if (d <= R) out.push({ x: s.x, y: s.y, r: s.r, d });
+    };
+    for (const s of this.sites) add(s);
+    const i0 = Math.floor((x - R) / CELL), i1 = Math.floor((x + R) / CELL);
+    const j0 = Math.floor((y - R) / CELL), j1 = Math.floor((y + R) / CELL);
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const s = this.cell(i, j); if (s) add(s); }
+    return out.sort((a, b) => a.d - b.d).map(({ x, y, r }) => ({ x, y, r }));
+  }
+
   /** The deposit of a scatter cell, if it has one: a kind whose distance band it is in, near the cell's middle. */
   private cell(i: number, j: number): Site | null {
     const k = (i + 32768) * 65536 + (j + 32768);

@@ -105,7 +105,12 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .lg-level { background: linear-gradient(90deg, #dfe8f1, #2a5fa8); }
 .lg-prob { background: linear-gradient(90deg, #e5484d 0 50%, #7d8796 50%); }
 .lg-key { display: flex; align-items: center; gap: 6px; }
-.lg-key i { width: 11px; height: 11px; border-radius: 1px; box-shadow: 0 0 0 1px rgba(243, 234, 214, 0.35); }
+.lg-key i { width: 11px; height: 11px; border-radius: 1px; box-shadow: 0 0 0 1px rgba(243, 234, 214, 0.35); flex: none; }
+/* a deposit kind in the Resources legend: a button to its nearest deposit, with the distance */
+.lg-go { min-height: 32px; padding: 4px 8px; border: 1px solid var(--pin); border-radius: 3px; background: var(--plate-2); color: var(--cream); font: inherit; text-align: left; cursor: pointer; }
+.lg-go .lg-km { margin-left: auto; color: var(--cream-2); font-variant-numeric: tabular-nums; }
+.lg-go:hover { border-color: var(--ochre-hi); }
+.lg-go:focus-visible { outline: 2px solid var(--ochre-hi); outline-offset: 2px; }
 
 /* ------------------------------------------------------------ bottom: the bar */
 .bottom { position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; pointer-events: none; }
@@ -664,3 +669,77 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .convoy-tag:focus-visible { outline: 2px solid #ffd26a; outline-offset: 2px; }
 @keyframes ctlamp { 50% { background: #5a3d10; box-shadow: none; } }
 @media (prefers-reduced-motion: reduce) { .convoy-tag .ct-lamp { animation: none; } }
+
+/* a town that has just sprung up: ochre rings pulse out from its hall till the first delivery, and a pointer at the
+   screen's edge shows the way while it is off screen (click it to fly there) */
+.town-pings { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
+.tp-ring { position: absolute; left: 0; top: 0; width: 150px; height: 150px; padding: 0; border: 0; background: none; pointer-events: none; will-change: transform; }
+.tp-ring .tp-dot { position: absolute; inset: 0; margin: auto; width: 46px; height: 46px; border-radius: 50%;
+  border: 2px solid var(--ochre); box-shadow: 0 0 0 3px rgba(7, 13, 23, 0.45), inset 0 0 0 3px rgba(7, 13, 23, 0.35), 0 0 0 5px var(--pin); }
+.tp-ring .tp-pulse { position: absolute; inset: 0; margin: auto; width: 46px; height: 46px; border-radius: 50%; border: 2px solid var(--ochre-hi); opacity: 0;
+  animation: tp-pulse 2.4s cubic-bezier(.2, .6, .35, 1) infinite; }
+.tp-ring .tp-pulse + .tp-pulse { animation-delay: 1.2s; }
+@keyframes tp-pulse { 0% { opacity: .95; transform: scale(1); } 100% { opacity: 0; transform: scale(3.2); } }
+.tp-ring .tp-tag { position: absolute; left: 50%; top: calc(50% + 30px); transform: translateX(-50%); pointer-events: auto; cursor: pointer; white-space: nowrap;
+  padding: 2px 8px; background: var(--ochre); color: var(--ink); font: 700 var(--t-xs)/1.3 var(--f-text); letter-spacing: 0.14em; text-transform: uppercase;
+  border-radius: 2px; box-shadow: 0 0 0 1px var(--edge), 0 2px 5px rgba(0, 0, 0, 0.35); }
+.tp-ring:hover .tp-tag, .tp-ring:focus-visible .tp-tag { background: var(--ochre-hi); }
+.tp-ring:focus-visible { outline: none; }
+.tp-ring:focus-visible .tp-dot { outline: 2px solid var(--ochre-hi); outline-offset: 4px; }
+.tp-edge { position: absolute; left: 0; top: 0; pointer-events: auto; display: grid; grid-template-columns: auto auto auto; grid-template-rows: auto auto; column-gap: 8px;
+  align-items: center; padding: 5px 10px 5px 6px; text-align: left; white-space: nowrap; will-change: transform; cursor: pointer;
+  background: var(--plate); color: var(--cream); border: 1px solid var(--ochre); border-radius: 3px; font-family: var(--f-text); line-height: 1.2;
+  box-shadow: 0 0 0 2px var(--plate), 0 0 0 3px var(--pin), 0 3px 10px rgba(0, 0, 0, 0.4); }
+.tp-edge .tp-arrow { grid-row: 1 / 3; width: 26px; height: 26px; border-radius: 50%; background: var(--plate-2); box-shadow: inset 0 0 0 1px var(--ochre); position: relative; }
+/* (a long, narrow head, so its point reads at a glance; a shaft behind it) */
+.tp-edge .tp-arrow::before { content: ""; position: absolute; left: 5px; top: 12px; width: 9px; height: 2px; background: var(--ochre-hi); }
+.tp-edge .tp-arrow::after { content: ""; position: absolute; left: 12px; top: 8px; border-style: solid; border-color: transparent transparent transparent var(--ochre-hi); border-width: 5px 0 5px 10px; }
+.tp-edge .tp-k { grid-column: 2; grid-row: 1; font-size: var(--t-xs); font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ochre-hi); }
+.tp-edge b { grid-column: 2 / 4; grid-row: 2; font: 700 15px/1.1 var(--f-display); letter-spacing: 0.04em; text-transform: uppercase; }
+.tp-edge .tp-km { grid-column: 3; grid-row: 1; justify-self: end; font-size: var(--t-xs); color: var(--cream-2); font-variant-numeric: tabular-nums; }
+.tp-edge:hover { border-color: var(--ochre-hi); background: var(--plate-2); }
+.tp-edge:focus-visible { outline: 2px solid var(--ochre-hi); outline-offset: 3px; }
+/* the new town's banner: a compass rose beside the name, its needle the way the town lies on screen */
+.banner.nt .nt-head { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 4px; }
+.banner.nt .nt-head header { margin-bottom: 0; }
+.banner.nt .nt-rose { flex: none; }
+@media (prefers-reduced-motion: reduce) { .tp-ring .tp-pulse { animation: none; opacity: .55; transform: scale(1.7); } .tp-ring .tp-pulse + .tp-pulse { transform: scale(2.4); opacity: .3; } }
+
+/* deposits on the map (depositMarks.ts): an enamel tag at each deposit's middle; ochre-ringed for the kind being placed */
+.deposit-marks { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
+.dm-tag { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 6px; padding: 3px 9px 3px 4px; pointer-events: auto; cursor: pointer;
+  white-space: nowrap; will-change: transform; background: var(--plate); color: var(--cream); border: 1px solid var(--pin); border-radius: 3px;
+  font: 700 12px/1.1 var(--f-display); letter-spacing: 0.08em; text-transform: uppercase; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35); opacity: 0.88; }
+.dm-tag i { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--plate-2); }
+.dm-tag i svg { width: 14px; height: 14px; }
+.dm-tag.on { font-size: 14px; padding: 4px 11px 4px 5px; border-color: var(--ochre); opacity: 1; box-shadow: 0 0 0 2px var(--plate), 0 0 0 3px var(--ochre), 0 3px 10px rgba(0, 0, 0, 0.45); }
+.dm-tag.on i { width: 24px; height: 24px; box-shadow: inset 0 0 0 1px var(--ochre); }
+.dm-tag.on i svg { width: 16px; height: 16px; }
+.dm-tag:hover { opacity: 1; border-color: var(--ochre-hi); background: var(--plate-2); }
+.dm-tag:focus-visible { outline: 2px solid var(--ochre-hi); outline-offset: 3px; }
+
+/* traffic that is really stuck (stuckAlerts.ts): a small amber warning diamond on the map at the spot, and one chip
+   above the clock while any spot is stuck */
+.stuck-alerts { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
+.sa-sign { display: block; position: relative; width: 13px; height: 13px; transform: rotate(45deg); background: var(--ochre);
+  border: 1.5px solid var(--ink); border-radius: 1.5px; box-shadow: 0 0 0 1px var(--ochre); }
+/* (the "!": a bar and a dot, upright) */
+.sa-sign::before, .sa-sign::after { content: ""; position: absolute; left: 50%; top: 50%; background: var(--ink); transform: translate(-50%, -50%) rotate(-45deg); }
+.sa-sign::before { width: 2px; height: 6px; margin: -1.5px 0 0 -1.5px; }
+.sa-sign::after { width: 2px; height: 2px; margin: 3px 0 0 3px; }
+.sa-pin { position: absolute; left: 0; top: 0; padding: 4px 4px 9px; border: 0; background: none; pointer-events: auto; cursor: pointer; will-change: transform; }
+/* (a short post under the sign, standing it on the spot) */
+.sa-pin::after { content: ""; position: absolute; left: 50%; bottom: 1px; width: 2px; height: 7px; margin-left: -1px; background: var(--ink); opacity: .8; }
+.sa-pin .sa-sign { filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .6)); animation: sa-nod 2.6s ease-in-out infinite; }
+@keyframes sa-nod { 0%, 70%, 100% { transform: rotate(45deg) scale(1); } 80% { transform: rotate(45deg) scale(1.25); } }
+.sa-pin:hover .sa-sign, .sa-pin:focus-visible .sa-sign { box-shadow: 0 0 0 1px var(--ochre), 0 0 0 3px var(--ink), 0 0 0 4px var(--ochre); }
+.sa-pin:focus-visible { outline: none; }
+.sa-chip { position: fixed; right: 16px; bottom: 96px; z-index: 3; display: flex; align-items: center; gap: 8px; padding: 5px 10px 5px 9px; cursor: pointer;
+  background: var(--bar); color: var(--cream); border: 1px solid var(--ochre); border-radius: 2px; font-family: var(--f-text); font-size: var(--t-xs); line-height: 1.2;
+  box-shadow: 0 0 0 2px var(--bar), 0 3px 10px rgba(0, 0, 0, .45); white-space: nowrap; }
+.sa-chip[hidden] { display: none; }
+.sa-chip b { font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--ochre); }
+.sa-chip .sa-n { color: var(--cream-2); font-variant-numeric: tabular-nums; }
+.sa-chip:hover { background: var(--plate); }
+.sa-chip:focus-visible { outline: 2px solid var(--ochre); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { .sa-pin .sa-sign { animation: none; } }

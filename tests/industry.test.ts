@@ -220,6 +220,15 @@ describe("Industry", () => {
     expect(fp.plant!.now.earned).toBe(0);
   });
 
+  it("construction is a real haul (owner, 2026-11-08: \"waaaaay tougher\"): every site from tier 2 waits for dozens of loads", () => {
+    for (const k of Object.keys(PLANTS) as (keyof typeof PLANTS)[]) {
+      const d = PLANTS[k];
+      if (d.tier < 2 || !d.site) continue;
+      const loads = Object.values(d.site).reduce((a, n) => a + (n ?? 0), 0);
+      expect(loads, k).toBeGreaterThanOrEqual(30);
+    }
+  });
+
   it("a tier 2 plant starts as a building site: planks go to it first, then it goes up", () => {
     const w = world();
     const mill = w.plant("sawmill", 0);
@@ -240,7 +249,7 @@ describe("Industry", () => {
     while (w.pending.length) w.arrive(w.pending.find((p) => p.trip.haul!.leg === "out") ?? w.pending[0]);
     expect(sm.plant!.site!.got.planks).toBe(4);
     // the last loads complete it: the site is gone and the building goes up from nothing
-    w.ind.deliver(sm, "planks", 20, mill);
+    w.ind.deliver(sm, "planks", PLANTS.smelter.site!.planks!, mill);
     expect(sm.plant!.site).toBeUndefined();
     expect(sm.built).toBe(0);
     // (more than it needed is left on the ground: a smelter's yard ships only steel, so it would sit there for good)
@@ -434,9 +443,9 @@ describe("Tier 3 chains", () => {
     w.ind.tick(0);
     expect(w.pending.length).toBeGreaterThan(0);
     for (const p of w.pending) expect(p.trip.haul!.dest).toBe(rf.id);
-    w.ind.deliver(rf, "planks", 50, mill);
+    w.ind.deliver(rf, "planks", PLANTS.refinery.site!.planks!, mill);
     expect(rf.plant!.site).toBeDefined();
-    w.ind.deliver(rf, "cement", 50, cw);
+    w.ind.deliver(rf, "cement", PLANTS.refinery.site!.cement!, cw);
     expect(rf.plant!.site).toBeUndefined();
     expect(rf.built).toBe(0);
   });

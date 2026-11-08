@@ -4,10 +4,11 @@ import { planGrid, planRoad, planRoundabout, snap, type Snap } from "../src/road
 import { v2, type V2 } from "../src/core/math";
 import { HOUR } from "../src/game/society";
 import { ZONE_GROUP } from "../src/game/growables";
-import { TOWN_COST, TOWN_SPACING } from "../src/game/settlements";
+import { TOWN_SPACING } from "../src/game/settlements";
 import { SEED_EDGES } from "../src/game/towns";
 import { MILESTONES } from "../src/game/progression";
 import { hostTown, okCells, road, zoneFor } from "./helpers";
+import { NUISANCE_HOMES } from "../src/game/towns";
 
 const free = (p: V2): Snap => ({ p, h: 0, guides: [] });
 
@@ -95,7 +96,7 @@ describe("Towns", () => {
 
   it("a town street laid onto the player's junction drops the undo that would take the junction away", () => {
     const g = new Game(7);
-    const t = g.towns.found(SITE, { free: true });
+    const t = g.towns.found(SITE);
     if (typeof t === "string") throw new Error(t);
     const end = v2(SITE.x - 500, SITE.y - 300);
     road(g, v2(SITE.x - 500, SITE.y + 100), end);
@@ -113,7 +114,7 @@ describe("Towns", () => {
   it("a town lays its own streets, zones its land, and homes and shops appear and fill", () => {
     const g = new Game(7);
     expect(g.towns.foundBlock(SITE)).toBeNull();
-    const t = g.towns.found(SITE, { free: true });
+    const t = g.towns.found(SITE);
     if (typeof t === "string") throw new Error(t);
     // its first streets are down at once, and they are the town's (no upkeep, not the player's to undo)
     expect(t.built.size).toBe(SEED_EDGES.length);
@@ -137,12 +138,36 @@ describe("Towns", () => {
     for (const hh of g.people.households.values()) expect(g.buildings.byId.get(hh.home)?.town).toBe(t.id);
   }, 120000);
 
-  it("founding a town costs money and is refused too close to another, on water or without the money", () => {
+  it("a town grows away from the company's smoky plants: no new homes in their smoke, more streets the other way", () => {
+    const g = new Game(7);
+    g.unlockAll();
+    g.money = 1e7;
+    const t = g.towns.found(SITE);
+    if (typeof t === "string") throw new Error(t);
+    // a smelter (smoke and noise to about 300 m past its fence) set down just east of the centre, built
+    const sm = g.place("smelter", v2(SITE.x + 330, SITE.y));
+    if (!sm) throw new Error("no room for the smelter");
+    sm.plant!.site = undefined;
+    sm.built = 1;
+    t.target = 90;
+    run(g, 30);
+    const homes = g.buildings.list.filter((b) => b.town === t.id && ZONE_GROUP[b.zone!] === "res");
+    expect(homes.length).toBeGreaterThan(30);
+    // nobody moved in under the smoke: no home stands where the smelter's smoke and noise are past what homes take
+    for (const b of homes) expect(g.towns.nuisanceAt(b.c)).toBeLessThanOrEqual(NUISANCE_HOMES + 1e-9);
+    // and the town spread the other way: far more of its homes lie west of the centre than east
+    const east = homes.filter((b) => b.c.x > SITE.x + 60).length, west = homes.filter((b) => b.c.x < SITE.x - 60).length;
+    expect(west).toBeGreaterThan(east * 2);
+    // the land it gave up is left open, not zoned for homes
+    for (const c of okCells(g)) if (c.zone && ZONE_GROUP[c.zone] === "res") expect(g.towns.nuisanceAt(c.c)).toBeLessThanOrEqual(NUISANCE_HOMES + 1e-9);
+  }, 120000);
+
+  it("a town is never set down too close to another or on water, costs nothing, and knows when it starts cut off", () => {
     const g = new Game(7);
     const m0 = g.money;
     const a = g.towns.found(SITE);
     if (typeof a === "string") throw new Error(a);
-    expect(g.money).toBe(m0 - TOWN_COST);
+    expect(g.money).toBe(m0);
     expect(g.towns.foundBlock(v2(SITE.x + TOWN_SPACING * 0.8, SITE.y))).toMatch(/^Too close to /);
     // water: the lake south of the start on seed 7
     let wet: V2 | null = null;
@@ -151,9 +176,6 @@ describe("Towns", () => {
     expect(g.towns.foundBlock(wet!)).toBe("Too close to water");
     const far = v2(SITE.x, SITE.y + TOWN_SPACING * 1.2);
     expect(g.towns.foundBlock(far)).toBeNull();
-    g.money = TOWN_COST - 1;
-    expect(g.towns.foundBlock(far)).toBe("Not enough money");
-    expect(g.towns.found(far)).toBe("Not enough money");
     // with no company road near, it warns that the town starts cut off
     expect(g.towns.cutOff(far)).toBe(true);
   });
@@ -183,9 +205,8 @@ describe("Towns", () => {
     expect(seen).toEqual(["food10"]);
     expect(g.money - m0).toBe(5000);
     expect(g.roadsUnlocked.has("avenue")).toBe(true);
-    // a second town: roundabouts and a town slot more
+    // (roundabouts come with the growing hamlet, later)
     expect(g.featureUnlocked("roundabout")).toBe(false);
-    expect(g.townSlots).toBe(2);
   });
 
   it("no milestone hands out land: the company builds anywhere its roads reach", () => {
@@ -288,9 +309,10 @@ describe("Traffic in a growing town", () => {
 
   it("a town's own grid keeps flowing as it grows", () => {
     const g = new Game(7);
-    const t = g.towns.found(SITE, { free: true });
+    const t = g.towns.found(SITE);
     if (typeof t === "string") throw new Error(t);
     t.target = 120;
+    t.fixed = true; // (its growth is set here, not by its supply)
     const { worst, cars } = run(g, 40);
     expect(t.households).toBeGreaterThan(60);
     // (a small town walks to most places: its cars are the few trips across it)

@@ -3,7 +3,7 @@
 An industrial company on a road map.
 
 Decided 2026-11-07 with the owner. You run an **industrial company**. You claim deposits, build big extractors
-and plants, found towns that grow on their own, and draw the roads that tie it all together. Freight routes
+and plants, serve towns that spring up and grow on their own, and draw the roads that tie it all together. Freight routes
 itself; your job is the network and the buildings. References: Captain of Industry for resources and chains,
 Transport Fever 2 for self-growing towns with needs, Cities: Skylines 2 only for roads, traffic and controls.
 Our own names, look and art throughout.
@@ -39,6 +39,11 @@ Our own names, look and art throughout.
 
   Every kind recurs further out, so later sites can be chosen for convenience. Two different kinds are never
   next to each other: the chains are always a drive apart.
+- **Finding them (owner, 2026-11-08: "hard to find and know what resources I need").** While an extractor is
+  placed, only its own deposit is tinted strongly (the rest faint), each deposit of its kind carries an enamel
+  tag at its middle ("COAL"), and the nearest two off screen get a pointer at the screen's edge with the
+  distance; click one to fly there. The Resources view tags every kind on screen, and its legend lists each
+  mined kind with the distance to its nearest deposit, a click away. The tool card says what ground it needs.
 - No outside world: no gateway cities, imports or exports. Your towns and your own plants are the only
   customers. The start is an empty region with one small town and a few hundred metres of road.
 
@@ -59,6 +64,11 @@ Our own names, look and art throughout.
   holds one or two. See "Industry sites" below.
 - **Construction:** tier 1 buildings cost money only. From tier 2 a new plant is a construction site that waits
   for materials trucked to it: planks (tier 2), planks + cement (tier 3), construction parts (tier 4).
+  **A real haul (owner, 2026-11-08: "waaaaay tougher"):** every site from tier 2 waits for at least 30 loads (a
+  mine 30 planks, a smelter 50, a refinery 60 planks + 50 cement, a machine works 60 + 60 + 50 parts): a
+  stream of lorries to the site, so building out a chain is itself a traffic job, and bigger truck classes pay
+  off. Town blocks and towers built from construction parts need 3-12 loads each, and the company projects
+  twice their old bill.
 - **Power** runs along the roads from power plants that burn coal brought by truck.
 - **Supplies (2026-11-08): the chain feeds itself.** The chemical works' fertilizer goes back to farms and dairy
   farms from level 3; its explosives go to iron, coal and copper mines, quarries, sand pits and oil wells from
@@ -280,7 +290,7 @@ sinks the milestones promise.
   - A banner in the period's manner ("The Company Presents · The Grand Exposition is open") with its reward
     and a "Show me" button.
   - The camera glides over to it, and a fireworks show goes up above it.
-- **Unlocks.** "Finish a landmark" ("World's fair") unlocks the Grand Exposition and a town slot. The catalog
+- **Unlocks.** "Finish a landmark" ("World's fair") unlocks the Grand Exposition, and a new town springs up. The catalog
   has a Landmarks tab.
 
 ## Seasons
@@ -324,9 +334,24 @@ itself across modes; you build tracks, docks and the transfer points, never line
 
 ## Towns (like Transport Fever 2)
 
-- Found a town by picking a spot. It lays out its own streets, growing outward in a rough circle, and joins
-  them to your roads where they meet. Houses and shops build themselves along its streets. How many towns you
-  can run grows with company level.
+- A town lays out its own streets, growing outward in a rough circle, and joins them to your roads where they
+  meet. Houses and shops build themselves along its streets.
+- **Towns spring up; the player never founds one (owner, 2026-11-08).** The company starts with one hamlet. Fresh
+  hamlets (level 0) appear as milestones are reached, and the milestones that bring them are about the towns
+  there are growing: a hamlet of 150 people, two villages, a big village of 1,000, three villages, a market town of
+  4,000, twin Towns, a City supplied, then late volume goals and the World's fair.
+  - **Where.** Each one lies further from the start town than the last, roughly exponentially: the first about
+    1.9 km out, each next one 1.55x further, capped at 16 km (settlements.ts `spawnDistance`). It is never nearer
+    another town than 1.8 km or about half that distance, and stands on open dry land (not in water, not on a
+    site, not boxed in by mountains or a lake), at least 450 m clear of the company's roads, with soil, forest and
+    other deposits within reach so it is worth serving. The spot is deterministic from the seed.
+  - **Cut off.** It comes with its first few streets, hall and homes already lived in, and no road to the
+    company's network: joining it up is the player's job.
+  - **The arrival.** A Deco banner names it, with its distance and direction ("Fort Pryor has sprung up 3.2 km
+    north-east of Alder Run") and buttons to fly there or open its panel. The milestone banner reads "A new town:
+    Fort Pryor". A ticker line says the same. Until the company first delivers to it, a ring pulses over its
+    hall, and while it is off screen a pointer at the screen's edge shows the way and the distance; clicking
+    it glides the camera there (a jump instead with reduced motion) and opens the town.
 - Every resident is simulated: a home in a town, a job at one of your buildings within reach, a commute in
   traffic. Buses carry workers to plants and take cars off the roads your trucks need.
 - **Needs** open with town size, and a town grows past each size only while that tier is supplied:
@@ -334,13 +359,24 @@ itself across modes; you build tracks, docks and the transfer points, never line
   | Size | Population | Needs |
   |---|---|---|
   | Hamlet | 0+ | food |
-  | Village | 300+ | + building materials (planks, later cement) |
+  | Village | 300+ | + building materials (planks from 100 people, cement from 600) |
   | Town | 1,500+ | + household goods and fuel |
   | City | 6,000+ | + electronics and machinery |
 
-  Supply is the share of each need delivered over the last day. Good supply speeds growth, bigger and denser
-  buildings, and more workers; shortfalls stall growth and finally shrink the town.
+  Supply is the share of each need delivered over the last 24 game hours, rolling hour by hour. Towns grow hour
+  by hour too, so a delivery shows in the town within the hour, not at the next day's end. Good supply speeds
+  growth, bigger and denser buildings, and more workers; shortfalls stall growth and finally shrink the town (a
+  need that opens ahead of the town's size, a hamlet's planks, only stalls it). A small town grows fastest for
+  its size (several times faster at a few dozen people, tapering off by 450), so the first hour moves.
 - Deliveries go to the town's shops, filling stations and building sites, so trucks drive into town streets.
+- **Towns grow away from the works (owner, 2026-11-08: "avoid pollution/noise").** A dirty plant's smoke reaches
+  its pollution radius ×1.6 past its fence (further in a park) and its noise 60 m beyond that; building sites count
+  as the plant they will be. A town lays no street where that is worse than 35% (1 at the fence, 0 at the reach),
+  zones no new homes past 12%, and rebuilds no homes there denser. Shops don't mind the works (only right at a
+  fence, past 90%): a hamlet with its food plant a block off still gets its shop. The land it gives up stays
+  open, a green belt between the works and the homes, and its street radius stretches the other way so it keeps
+  the area its people need. Homes already standing stay (their land value falls). New towns spring up clear of
+  the smoke too.
 - **Front strips (owner, 2026-11-08: upgrading a street must not demolish its homes).** Homes, shops and the town
   hall's square stand back from their street's centreline by `ZONE_SETBACK` (about 11.7 m: the half-width of the
   widest road that still takes driveways, a divided avenue, plus its pavement). Each lot's driveway crosses the
@@ -418,7 +454,7 @@ Unlocks come from **milestones**, concrete achievements, never from cumulative X
 
 There are about 40 milestones in a rough ladder, with a few open at once so there is always a choice of what to
 chase next. Each unlocks something concrete: a chain, the next level for named kinds of site, a truck class, a
-road type or junction tool, town slots, warehouses, fuel depots, a grant. The last ones unlock **company projects**: huge buildings that
+road type or junction tool, a new town springing up, warehouses, fuel depots, a grant. The last ones unlock **company projects**: huge buildings that
 take hundreds of mixed loads, as long-term goals and goods sinks.
 
 **Order of the long game:** the first half is a pure road-and-truck game. Tiers 1-3 chains, truck classes, every
@@ -428,9 +464,15 @@ demand has outgrown even road trains on a good highway network), and barges afte
 ## Pacing (no waiting)
 
 - At every stage there should be at least three useful things to do: something new to build, a bottleneck to
-  fix, and a town to supply or found.
-- Early income is quick (tier 1 sells to the first town), so the first hour flows: road to the farm, food
-  plant, first deliveries, second town, sawmill.
+  fix, and a town to supply or join up.
+- **The first hour must not drag (owner, 2026-11-08).** A day is 16 real minutes at 1x. Targets at 1x:
+  something new every 3 to 6 minutes; the second chain (logging and sawmill) inside 10 to 15 minutes; a Village
+  in 20 to 30 minutes; first steel and first cement inside about an hour and a half. The flow: road to the farm,
+  food plant, first deliveries, the hamlet asks for planks at 100 people, sawmill, the first new town springs up
+  at 150, a road to it, Village. A site's first level comes in under a day of work; the later ones take longer.
+  The milestones around Village pay grants (Market day $10k, Village $40k, Village supplied $30k, Heavy haulage
+  $30k) so the steel chain is in reach as soon as it opens: traffic, not money, is what holds the player up.
+  The late game is unchanged.
 - The bottleneck moves on its own: more towns mean more commuters on the roads trucks use, and longer chains
   mean longer trips, so road work keeps being needed.
 - **The map paces itself by tier, not by land.** There is no land cap and nothing to buy before building: each
@@ -457,6 +499,13 @@ demand has outgrown even road trains on a good highway network), and barges afte
   - **Custom road configurator** for lane counts, median and speed (from Road Builder), at a later milestone.
 - Traffic info views: flow per road, congestion hotspots, routes through a selected road or building, and a
   journey breakdown per resident.
+- **Lights never lock up (2026-11-08).** A car waiting to turn into a driveway across a standing queue (the queue
+  for a red, above all) drives on after 8 s and comes back round, taking the way on that gets it back soonest. A car
+  at the line whose way out is full back to the junction doesn't call a green: the roads that can go get it.
+- **Really stuck traffic shows (2026-11-08: "a tiny but persistent alert").** Where cars have stood still for a
+  minute and a half, a small amber warning diamond stands on the map, and one chip above the clock says how many
+  places and for how long ("Traffic stuck · 2 places · 3 min"). Click the chip to fly to each in turn. An alert
+  stays until its cars have moved on for a few seconds, so a shuffling queue doesn't make it flicker.
 
 ## Controls and road building (owner, 2026-11-07: "exactly like Cities: Skylines 2")
 

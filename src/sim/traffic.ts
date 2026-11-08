@@ -561,7 +561,13 @@ export class Traffic {
               this.ev.arrive(v, this.time);
               return true;
             }
-          } else if (lane.idx === this.turnIdx(v, lane) && v.s >= v.destS - 0.8) {
+          } else if (lane.idx === this.turnIdx(v, lane) && v.s >= v.destS - 1.5) {
+            // pulled up just short of it, waiting to turn in (a car stops about 0.85 m short): the same patience
+            // with a queue across the driveway as one right at it
+            if (v.s < v.destS - 0.8) {
+              if (v.v < 0.5 && v.wait > 8 && !this.canTurnIn(v, lane) && this.turnBlockedByQueue) this.goRound(v, lane);
+              return false;
+            }
             if ((v.turnOk && v.v > 1) || this.canTurnIn(v, lane)) {
               if (v.trip.bus && !v.lost) {
                 const nx = this.ev.busAt?.(v);
@@ -585,7 +591,7 @@ export class Traffic {
             v.v = 0; // stopped at the driveway (never pulled back: that shows as a jump)
             // a stopped queue sits across the driveway: rather than wait it out (and maybe lock the
             // junction behind us), drive on and come back round to turn in from the near side
-            if (v.wait > 8 && this.turnBlockedByQueue) this.reroute(v);
+            if (v.wait > 8 && this.turnBlockedByQueue) this.goRound(v, lane);
             return false;
           }
           if (lane.idx !== this.turnIdx(v, lane) && v.s > v.destS + 1) {
@@ -978,6 +984,9 @@ export class Traffic {
           }
           // (at the line, one that this phase doesn't let go holds up everyone behind it in its lane)
           if (!goesIn(ph, seg, turn)) { if (back === 0) break; continue; }
+          // (and so does one at the line whose way out is full to the junction: a green for it would be wasted
+          // while the queue it is in can't move, and the roads that could go wait on red)
+          if (!gap && back === 0 && k === occ.length - 1 && d < 12 && v.next && this.exitJammed(v.next.to)) break;
           if (cur && !ph.left && goesIn(cur, seg, turn)) continue;
           // a left-turn phase is called by left turns held up (by the oncoming traffic), not by any coming along:
           // with nothing oncoming they just turn on the green
@@ -989,6 +998,13 @@ export class Traffic {
       }
     }
     return false;
+  }
+
+  /** Is a lane out of a junction standing full right back to it (its last car stopped at its very start)? */
+  private exitJammed(l: Lane): boolean {
+    const o = l.occ as Vehicle[];
+    const last = o[0];
+    return !!last && last.v < 0.5 && last.s - last.len < 4 && o.length * 7 > l.pl.length * 0.8;
   }
 
   private canEnter(v: Vehicle, c: Connector, toEnd: number): boolean {
@@ -1723,11 +1739,15 @@ export class Traffic {
     {
       const src = (e.kind === "conn" ? (e as Connector).from : e) as Lane;
       const myPos = e.kind === "conn" ? v.s : v.s - e.pl.length;
+      const mine = e.kind === "conn" ? (e as Connector) : v.next;
       if (myPos > -30 && src.outs) for (const sib of src.outs) {
         if (sib === e) continue;
+        // (only while its tail is still where the two paths run side by side: past the fork it is on its own way,
+        // and a car leaving a roundabout mustn't wait on one still going round)
+        const shared = mine && mine.from === src ? Math.min(7, this.forkAt(sib, mine)) : 7;
         for (const u of sib.occ as Vehicle[]) {
           const rear = u.s - u.len;
-          if (rear > 7) continue;
+          if (rear > shared) continue;
           const g2 = rear - myPos;
           if (g2 > -0.5) con(Math.max(g2, 0.1), u.v);
         }
@@ -1946,6 +1966,39 @@ export class Traffic {
     if (v.lost) return;
     this.ev.fail(v.trip, "missed its turn", this.time);
     v.lost = true;
+  }
+
+  /**
+   * Drive on past the driveway and come back round to it: the way on from the end of this road that gets back
+   * soonest. (Planning afresh from this road would only lead straight back to the driveway it is stopped at: a car
+   * that did that stood there for good, its lane and the junction behind it locked, at lights above all, where the
+   * queue for the red sits across the driveways.)
+   */
+  private goRound(v: Vehicle, lane: Lane) {
+    const k = dkey(lane.seg, lane.dir);
+    let best: number[] | null = null, bl = Infinity;
+    for (const c of lane.outs) {
+      const r = this.router.routeFromKey(dkey(c.to.seg, c.to.dir), v.dest);
+      if (!r) continue;
+      let L = 0;
+      for (const x of r) L += this.router.segLen(x);
+      if (L < bl) { bl = L; best = r; }
+    }
+    if (!best) { this.reroute(v); return; }
+    if (v.holding) this.release(v);
+    v.next = null;
+    v.granted = false;
+    v.destS = -1;
+    v.turnOk = false;
+    v.ri = 0;
+    v.route = [k, ...best];
+  }
+
+  /** The cars that have stood still at least `min` seconds (ui/stuckAlerts.ts): where each is, and for how long. */
+  stuckCars(min: number): { p: V2; t: number }[] {
+    const out: { p: V2; t: number }[] = [];
+    for (const v of this.vehicles) if (v.stuck >= min && !v.dwell) out.push({ p: { x: v.x, y: v.y }, t: v.stuck });
+    return out;
   }
 
   /** Keep route[0..from] and plan the rest from route[from]. */
