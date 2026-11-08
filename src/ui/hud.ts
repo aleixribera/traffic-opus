@@ -529,14 +529,15 @@ export class Hud {
       s.append(h("span", "to-label", title), ...kids);
       return s;
     };
-    const seg = (items: { html: string; on: boolean; title: string; fn: () => void; cls?: string; disabled?: boolean }[], cls = "") => {
+    const seg = (items: { html: string; on: boolean; title: string; label?: string; fn: () => void; cls?: string; disabled?: boolean }[], cls = "") => {
       const w = h("div", "seg " + cls);
       for (const it of items) {
         const b = h("button", "seg-btn " + (it.cls ?? ""), it.html);
         b.classList.toggle("on", it.on);
         b.setAttribute("aria-pressed", String(it.on));
         b.title = it.title;
-        b.setAttribute("aria-label", it.title);
+        // (the tooltip can run long: a short name for screen readers when there is one)
+        b.setAttribute("aria-label", it.label ?? it.title);
         b.disabled = !!it.disabled;
         b.onclick = () => { it.fn(); this.sfx.play("click"); };
         w.appendChild(b);
@@ -556,25 +557,23 @@ export class Hud {
     const items: HTMLElement[] = [];
     if (st.tool === "road") {
       const T = ROAD_TYPES[st.roadType];
-      const MODE: Record<RoadMode, { icon: string; title: string }> = {
-        curve: { icon: ICON.curve, title: "Curve: click the start; the road bends after the cursor, leaving its start smoothly. Click to set the end and carry on; right click ends the chain" },
-        straight: { icon: ICON.straight, title: "Straight: click the start, then the end; carries on from the end" },
-        replace: { icon: ICON.replace, title: "Upgrade: click a road to change it to this type" },
+      const MODE: Record<RoadMode, { icon: string; title: string; label: string }> = {
+        curve: { icon: ICON.curve, label: "Curve", title: "Curve: click the start; the road bends after the cursor, leaving its start smoothly. Click to set the end and carry on; right click ends the chain" },
+        straight: { icon: ICON.straight, label: "Straight", title: "Straight: click the start, then the end; carries on from the end" },
+        replace: { icon: ICON.replace, label: "Upgrade", title: "Upgrade: click a road to change it to this type" },
       };
-      items.push(sec("Mode", seg(ROAD_MODES.map((m) => ({ html: MODE[m].icon, on: st.mode === m, title: MODE[m].title + " (Tab)", fn: () => app.setTool({ mode: m }) })))));
+      items.push(sec("Mode", seg(ROAD_MODES.map((m) => ({ html: MODE[m].icon, on: st.mode === m, title: MODE[m].title + " (Tab)", label: `${MODE[m].label} mode`, fn: () => app.setTool({ mode: m }) })))));
       if (st.mode === "replace") {
         items.push(sec("Upgrade", seg([
           { html: "Type", on: !st.reverse, title: `Turn a road into ${T.name}`, fn: () => app.setTool({ reverse: false }) },
           { html: "Reverse", on: st.reverse, title: "Flip a one-way road (Shift+click)", fn: () => app.setTool({ reverse: true }) },
         ])));
       } else {
-        {
-          const off = Math.round(app.parallelOffset());
-          const par = seg([{ html: ICON.parallel, on: st.parallel, title: T.bwd === 0 ? "Parallel: also build the opposite carriageway" : "Parallel: also build a second road alongside", fn: () => app.setTool({ parallel: !st.parallel }) }]);
-          items.push(st.parallel
-            ? sec("Parallel", par, stepper(`${off} m`, "", () => app.nudgeParallel(-1), () => app.nudgeParallel(1), ["Closer ([)", "Further apart (])"], [false, false]))
-            : sec("Parallel", par));
-        }
+        const off = Math.round(app.parallelOffset());
+        const par = seg([{ html: ICON.parallel, on: st.parallel, title: T.bwd === 0 ? "Parallel: also build the opposite carriageway" : "Parallel: also build a second road alongside", fn: () => app.setTool({ parallel: !st.parallel }) }]);
+        items.push(st.parallel
+          ? sec("Parallel", par, stepper(`${off} m`, "", () => app.nudgeParallel(-1), () => app.nudgeParallel(1), ["Closer ([)", "Further apart (])"], [false, false]))
+          : sec("Parallel", par));
         items.push(elevation());
         const snap = h("div", "snaps");
         const opts: { k: "geometry" | "guides" | "netSide" | "length" | "angle"; label: string; on: boolean }[] = [
