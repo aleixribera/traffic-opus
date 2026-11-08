@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
-import { ROAD_TYPES, isHighway, type RoadType } from "../config";
+import { ROAD_TYPES, isHighway, isUnpaved, type RoadType } from "../config";
 import type { RoadNetwork } from "../roads/network";
 import { PAL } from "./palette";
 
@@ -18,9 +18,10 @@ export class RoadsFar {
 
   constructor(private net: RoadNetwork) {
     this.group.renderOrder = 5;
-    // town roads, boulevards, and highways (widest, in highway grey)
+    // dirt tracks (thinnest, in earth brown), town roads, boulevards, and highways (widest, in highway grey)
     this.tiers = [
-      { px: 2.2, fill: PAL.road, casing: PAL.roadEdge, pick: (t) => t.allowsAccess, mats: [], lines: [] },
+      { px: 1.5, fill: PAL.dirt, casing: PAL.dirtRut, pick: isUnpaved, mats: [], lines: [] },
+      { px: 2.2, fill: PAL.road, casing: PAL.roadEdge, pick: (t) => t.allowsAccess && !isUnpaved(t), mats: [], lines: [] },
       { px: 3.6, fill: PAL.road, casing: PAL.roadEdge, pick: (t) => !t.allowsAccess && !isHighway(t), mats: [], lines: [] },
       { px: 3.6, fill: PAL.hwRoad, casing: PAL.hwEdge, pick: isHighway, mats: [], lines: [] },
     ];

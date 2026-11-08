@@ -12,7 +12,7 @@ const C = {
   cream: "#f3ead6", cream2: "#cfc4ab", ochre: "#e0a833", ochreD: "#a87a1f", brick: "#c0533a", brickD: "#8e3523",
   navy: "#0c1524", slate: "#5d7093", steel: "#9fb0c8", olive: "#7e9f4e", oliveD: "#56702f", wood: "#a8743f",
   woodL: "#d9ad6a", coal: "#2a2f38", ore: "#b0623a", sand: "#e6c98a", glass: "#8fd0d6", fire: "#f08a3a", asphalt: "#46566f",
-  copper: "#d07a45", verdigris: "#6fb39a",
+  copper: "#d07a45", verdigris: "#6fb39a", earth: "#b48c5c", earthD: "#7f6143",
 };
 
 /** A 16-unit cog outline, shared by the machinery product and the machine works. */
@@ -23,6 +23,14 @@ const svg = (w: number, h: number, body: string) =>
 
 export function roadIcon(id: RoadTypeId): string {
   const T = ROAD_TYPES[id];
+  if (T.unpaved) {
+    // a dirt road: an earth band with ragged edges and no kerbs, a pair of wheel ruts in each lane, no lines
+    let b = `<path d="M7.4 2 L20.6 2 L21.3 7 L20.5 12 L21.4 18 L20.7 26 L7.2 26 L6.6 20 L7.5 14 L6.7 8 Z" fill="${C.earth}"/>`;
+    for (const x of [9.2, 12.4, 15.6, 18.8]) b += `<path d="M${x} 3 Q${x + 0.7} 9 ${x} 14 T${x} 25" fill="none" stroke="${C.earthD}" stroke-width="1.2" stroke-linecap="round"/>`;
+    b += `<path d="M9.2 16 L10.8 19 L12.4 16" fill="none" stroke="${C.cream}" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>`;
+    b += `<path d="M15.6 12 L17.2 9 L18.8 12" fill="none" stroke="${C.cream}" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>`;
+    return svg(28, 28, b);
+  }
   const n = T.fwd + T.bwd;
   const med = T.median ? 3 : 0;
   const lw = n + med / 5 > 6 ? 4 : 5;

@@ -1,6 +1,6 @@
 import {
   LANE_W, CLEARANCE, ELEVATED_COST_MULT, LEVEL_H, MAX_GRADE, MAX_LEVEL, MIN_ARM_ANGLE, MIN_SEG_LEN, NODE_SNAP_PX, ROAD_SNAP_PX,
-  ROAD_TYPES, ROUNDABOUT_COST, WATER_BRIDGE_MULT, BULLDOZE_REFUND, roadWidth, isHighway, type RoadTypeId,
+  ROAD_TYPES, ROUNDABOUT_COST, WATER_BRIDGE_MULT, BULLDOZE_REFUND, PAVED_DECK, roadWidth, isHighway, type RoadTypeId,
 } from "../config";
 import {
   type Cubic, type V2, add, angleOf, arcCubics, arcThenLine, rampCurve, rampCurves, clamp, cubicAt, cubicTangent, dist, dot, fromAngle, hermiteCubic,
@@ -382,7 +382,13 @@ export interface Plan {
   endAngleDeg?: number;
   /** The start or end was moved by an automatic fix (onto a road it stopped just short of). */
   fixed?: string[];
+  /** Drawn over a dirt road: the stretches of it paved in place (to `type`), in order, instead of a new road. */
+  pave?: { type: RoadTypeId; pieces: PavePiece[] };
 }
+
+/** A stretch of an existing road changed in place: road `seg` from curve parameter t0 to t1 (0 and 1: all of it). */
+/** A stretch of dirt road to pave; `flip` when a one-way type is drawn against the way the road was built. */
+export interface PavePiece { seg: number; t0: number; t1: number; flip?: boolean }
 
 export function chainPoints(chain: Cubic[], step = 2): V2[] {
   const pts: V2[] = [];
@@ -522,10 +528,43 @@ export function strokeProfile(net: RoadNetwork, st: Stroke, step = 2): { pts: V2
   return { pts, hs: strokeHeights(net, st, pts, makePolyline(pts).cum) };
 }
 
-function costOfPoints(pts: V2[], hs: number[], type: RoadTypeId, world: BuildWorld): number {
-  const T = ROAD_TYPES[type];
+/**
+ * What a stroke's piece i is built as. A dirt road leaves the ground only on a bridge, and the bridge and its ramps
+ * (every piece raised at either end) are a plain paved street.
+ */
+export function pieceType(st: Stroke, i: number): RoadTypeId {
+  if (!ROAD_TYPES[st.type].unpaved) return st.type;
+  const a = st.hj?.[i] ?? st.h0, b = st.hj?.[i + 1] ?? st.h1;
+  return Math.max(a, b) > RAISED ? PAVED_DECK : st.type;
+}
+/** Above this (m), a dirt road's piece is off the ground (a bridge or its ramp). */
+const RAISED = 0.5;
+
+/** Does any piece of the stroke get built paved where it was drawn as dirt (it has a bridge)? */
+export function pavedPieces(st: Stroke): boolean {
+  return !!ROAD_TYPES[st.type].unpaved && st.chain.some((_, i) => pieceType(st, i) !== st.type);
+}
+
+/** The type of the stroke's piece at arc length s (pieces `lens` long). */
+function typeAtS(st: Stroke, lens: number[], s: number): RoadTypeId {
+  let i = 0;
+  while (i < lens.length - 1 && s > lens[i]) { s -= lens[i]; i++; }
+  return pieceType(st, i);
+}
+
+/** What a stroke costs, at the price of what each piece is built as (a dirt road's bridge is a paved street). */
+function strokeCost(st: Stroke, pts: V2[], hs: number[], world: BuildWorld): number {
+  if (!pavedPieces(st)) return costOfPoints(pts, hs, st.type, world);
+  const lens = st.chain.map((c) => makePolyline(sampleCubic(c, 2)).length);
+  const tot = lens.reduce((a, b) => a + b, 0) || 1;
+  const pl = makePolyline(pts), L = pl.length || 1;
+  return costOfPoints(pts, hs, st.type, world, (i) => typeAtS(st, lens, ((pl.cum[i - 1] + pl.cum[i]) / 2 / L) * tot));
+}
+
+function costOfPoints(pts: V2[], hs: number[], type: RoadTypeId, world: BuildWorld, typeAt?: (i: number) => RoadTypeId): number {
   let c = 0;
   for (let i = 1; i < pts.length; i++) {
+    const T = ROAD_TYPES[typeAt ? typeAt(i) : type];
     const L = dist(pts[i - 1], pts[i]);
     const lv = clamp(hs[i] / LEVEL_H, 0, 3);
     const i0 = Math.floor(lv), i1 = Math.min(3, i0 + 1);
@@ -1192,7 +1231,8 @@ function autoBridge(net: RoadNetwork, world: BuildWorld, st: Stroke, ignore: { s
     for (let i = 0; i < outPts.length; i++) if (outPl.cum[i] >= sp.f0 - 1 && outPl.cum[i] <= sp.f1 + 1) idx.push(i);
     return {
       a: polyAt(outPl, sp.s0), b: polyAt(outPl, sp.s1), footA: polyAt(outPl, sp.f0), footB: polyAt(outPl, sp.f1),
-      h: sp.h, length: sp.s1 - sp.s0, cost: costOfPoints(idx.map((i) => outPts[i]), idx.map((i) => outH[i]), st.type, world),
+      // (a dirt road's bridge and its ramps are built as a paved street, at a street's price)
+      h: sp.h, length: sp.s1 - sp.s0, cost: costOfPoints(idx.map((i) => outPts[i]), idx.map((i) => outH[i]), T.unpaved ? PAVED_DECK : st.type, world),
       over: sp.water && sp.road ? "both" : sp.water ? "water" : "road",
     };
   });
@@ -1264,6 +1304,11 @@ function roadAt(net: RoadNetwork, p: V2, h: number): Snap | null {
 function planRoadOnce(net: RoadNetwork, world: BuildWorld, inp: PlanInput): Plan {
   const { type } = inp;
   let { start, end } = inp;
+  // a dirt road stays on the ground (it gets over water or a road on a paved bridge of its own)
+  if (ROAD_TYPES[type].unpaved && Math.max(start.h, end.h) > RAISED) {
+    const p = start.h > RAISED ? start.p : end.p;
+    return { strokes: [], cost: 0, length: 0, errors: [{ msg: "Dirt roads stay on the ground: start and end it at ground level, or pick a paved road", p }], crossings: [], kind: "road" };
+  }
   if (!inp.parallel && inp.mode === "straight") {
     const x = planSlipExtend(net, world, start, end, type);
     if (x) return x;
@@ -1321,6 +1366,11 @@ function planRoadOnce(net: RoadNetwork, world: BuildWorld, inp: PlanInput): Plan
   const asRamp = mode === "curve" && ((slip.ta && ta === slip.ta && !tb) || (slip.tb && tb === slip.tb && !ta));
   if (asRamp) chain = rch;
   if (!chain.length) chain = makeChain(mode, start.p, end.p, ta, tb);
+  // drawn right along a dirt road in a paved type: that stretch of it is paved in place
+  if (!inp.parallel && !slip.ta && !slip.tb) {
+    const pv = planPave(net, world, start, end, chain, type);
+    if (pv) return pv;
+  }
   // a highway ramp off (or onto) a highway carriageway comes with its slip lane, on whichever side it is: the ramp leaves
   // from the end of a deceleration lane running beside the carriageway, or arrives at the start of an acceleration lane.
   // The carriageway itself stays as it is.
@@ -1407,6 +1457,7 @@ function planRoadOnce(net: RoadNetwork, world: BuildWorld, inp: PlanInput): Plan
     if (builtMinRadius(net, chain, sn, !!slip.ta, type) < ROAD_TYPES[type].minRadius * 0.98) plan.errors.push({ msg: "Too tight where it merges: draw the slip road longer", p: sn.p });
   }
   if (piece) plan.note = piece.joined ? "Slip lanes joined" : `${Math.round(piece.length)} m slip lane`;
+  else if (strokes.some(pavedPieces)) plan.note = `A dirt road's bridge is built as a paved ${ROAD_TYPES[PAVED_DECK].name.toLowerCase()}`;
   if (par) plan.parallelEnds = par;
   if (trim) plan.trim = trim;
   if (chain.length) {
@@ -1750,7 +1801,7 @@ export function validateStrokes(
       }
       if (a.node !== undefined && net.segsAt(a.node).length >= 6) errors.push({ msg: "Too many roads at this junction: join the road further along", p: a.p });
     }
-    cost += costOfPoints(pts, hs, st.type, world);
+    cost += strokeCost(st, pts, hs, world);
   }
   if (kind === "roundabout") cost += ROUNDABOUT_COST;
   if (cost > world.money() + 0.5) errors.push({ msg: `Not enough money (${fmt(cost)})`, p: anchors[anchors.length - 1]?.p ?? { x: 0, y: 0 } });
@@ -1950,6 +2001,7 @@ export function commitStrokes(net: RoadNetwork, strokes: Stroke[]): number[] {
     }
     // segment cubics between consecutive breaks: cut the chain at the break arc-lengths
     const cubics = cutChain(st.chain, pieceLen, merged.map((b) => b.s));
+    const paved = pavedPieces(st);
     for (let i = 0; i < cubics.length; i++) {
       const a = merged[i].node!, b = merged[i + 1].node!;
       if (a === b) continue;
@@ -1957,7 +2009,9 @@ export function commitStrokes(net: RoadNetwork, strokes: Stroke[]): number[] {
       // snap the cubic's ends onto the actual node positions
       const na = net.nodes.get(a)!.p, nb = net.nodes.get(b)!.p;
       const fixed: Cubic = { p0: na, p1: add(c.p1, sub(na, c.p0)), p2: add(c.p2, sub(nb, c.p3)), p3: nb };
-      created.push(net.addSeg(a, b, st.type, fixed, st.ring ?? 0));
+      // (a dirt road's bridge and ramps: the piece the middle of this road lies in decides)
+      const type = paved ? typeAtS(st, pieceLen, (merged[i].s + merged[i + 1].s) / 2) : st.type;
+      created.push(net.addSeg(a, b, type, fixed, st.ring ?? 0));
     }
   }
   return created;
@@ -2222,6 +2276,139 @@ export function planGrid(net: RoadNetwork, world: BuildWorld, a: V2, b: V2, axis
 }
 
 // ---------------------------------------------------------------------------------------------
+// Paving a dirt road by drawing over it
+// ---------------------------------------------------------------------------------------------
+
+/** How far (m) the drawn line may stray from a dirt road's centreline and still be drawn over it. */
+const PAVE_TOL = 2;
+
+/**
+ * A paved road drawn right along a dirt road (both ends on it, every point within PAVE_TOL of its centreline) is
+ * that stretch of the dirt road paved in place, through the upgrade path, not a second road on top of it. Pieces
+ * of it already that type are left as they are; the ends split the road where they fall mid-way along it. null: not
+ * drawn over a dirt road (the road is planned as usual).
+ */
+export function planPave(net: RoadNetwork, world: BuildWorld, start: Snap, end: Snap, chain: Cubic[], type: RoadTypeId): Plan | null {
+  const T = ROAD_TYPES[type];
+  if (T.unpaved || !chain.length) return null;
+  const onNet = (sn: Snap) => sn.node !== undefined || sn.seg !== undefined;
+  if (!onNet(start) || !onNet(end)) return null;
+  const pts = chainPoints(chain, 2);
+  const pl = makePolyline(pts);
+  if (pl.length < MIN_SEG_LEN) return null;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const q of pts) { x0 = Math.min(x0, q.x); y0 = Math.min(y0, q.y); x1 = Math.max(x1, q.x); y1 = Math.max(y1, q.y); }
+  const cands: RSeg[] = [];
+  for (const id of net.segsNear(x0 - 10, y0 - 10, x1 + 10, y1 + 10)) {
+    const sg = net.segs.get(id)!;
+    // (raised roads stay in: a dirt road's bridge is a street, which a Street drawn along it simply passes over)
+    if (sg.ring || !net.segGeom.get(id)) continue;
+    cands.push(sg);
+  }
+  const ok = (sg: RSeg) => ROAD_TYPES[sg.type].unpaved || sg.type === type;
+  // walk the drawn line, keeping to the road it is on while it stays on it, and moving on to the next one at a joint
+  // (`back`: the line is drawn from the road's b end towards its a end)
+  const path: { seg: RSeg; tLo: number; tHi: number; back: boolean }[] = [];
+  let cur: { seg: RSeg; tLo: number; tHi: number; back: boolean } | null = null;
+  for (let i = 0; i < pts.length; i++) {
+    const q = pts[i];
+    const dir = polyDir(pl, pl.cum[i]);
+    const on = (sg: RSeg) => { const r = cubicClosest(sg.c, q); return r.d < PAVE_TOL ? r : null; };
+    const here = cur && on(cur.seg);
+    if (cur && here) { cur.tLo = Math.min(cur.tLo, here.t); cur.tHi = Math.max(cur.tHi, here.t); continue; }
+    // the next road: one it runs along (not one it only crosses), nearest first
+    let best: { sg: RSeg; t: number; d: number; back: boolean } | null = null;
+    for (const sg of cands) {
+      if (path.some((x) => x.seg.id === sg.id)) continue;
+      const r = on(sg);
+      if (!r) continue;
+      const along = dot(norm(cubicTangent(sg.c, r.t)), dir);
+      if (Math.abs(along) < 0.9) continue;
+      if (!best || r.d < best.d) best = { sg, t: r.t, d: r.d, back: along < 0 };
+    }
+    if (!best || !ok(best.sg)) return null;
+    // (each road joins the last at a junction or bend it shares)
+    if (cur && cur.seg.a !== best.sg.a && cur.seg.a !== best.sg.b && cur.seg.b !== best.sg.a && cur.seg.b !== best.sg.b) return null;
+    cur = { seg: best.sg, tLo: best.t, tHi: best.t, back: best.back };
+    path.push(cur);
+  }
+  if (!path.length || !path.some((x) => ROAD_TYPES[x.seg.type].unpaved)) return null;
+  // the ends: on the first and last roads (or at a node of theirs)
+  const first = path[0], last = path[path.length - 1];
+  const holds = (x: { seg: RSeg }, sn: Snap) => sn.seg === x.seg.id || (sn.node !== undefined && (x.seg.a === sn.node || x.seg.b === sn.node));
+  if (!holds(first, start) || !holds(last, end)) return null;
+  // each road's stretch: all of it between the two ends, from the snap where an end falls mid-way along it
+  const pieces: PavePiece[] = [];
+  let len = 0;
+  const errors: PlanError[] = [];
+  let cost = 0;
+  for (const [k, x] of path.entries()) {
+    const sg = x.seg, g = net.segGeom.get(sg.id)!;
+    let t0 = 0, t1 = 1;
+    const shared = (o?: { seg: RSeg }) => (o ? (o.seg.a === sg.a || o.seg.b === sg.a ? sg.a : sg.b) : undefined);
+    const ends: [Snap | undefined, number | undefined][] = [[k === 0 ? start : undefined, shared(path[k - 1])], [k === path.length - 1 ? end : undefined, shared(path[k + 1])]];
+    const ts: number[] = [];
+    for (const [sn, node] of ends) {
+      if (node !== undefined) ts.push(node === sg.a ? 0 : 1);
+      else if (sn?.seg === sg.id) ts.push(sn.t ?? 0);
+      else if (sn?.node !== undefined) ts.push(sn.node === sg.a ? 0 : 1);
+    }
+    if (ts.length === 2) { t0 = Math.min(ts[0], ts[1]); t1 = Math.max(ts[0], ts[1]); }
+    // (a leftover shorter than a road can be goes too; a stretch that short is no paving)
+    const L = g.center.length;
+    const at = (t: number) => makePolyline(sampleCubic(splitCubic(sg.c, clamp(t, 1e-4, 1))[0], 1)).length;
+    let s0 = t0 <= 1e-4 ? 0 : at(t0), s1 = t1 >= 1 - 1e-4 ? L : at(t1);
+    if (s0 < MIN_SEG_LEN) { s0 = 0; t0 = 0; }
+    if (L - s1 < MIN_SEG_LEN) { s1 = L; t1 = 1; }
+    if (s1 - s0 < MIN_SEG_LEN) {
+      if (path.length === 1) return { strokes: [], ghosts: [{ chain, h0: start.h, h1: end.h, type }], cost: 0, length: pl.length, errors: [{ msg: `Too short: pave at least ${MIN_SEG_LEN} m`, p: end.p }], crossings: [], kind: "road" };
+      continue;
+    }
+    if (sg.type === type) continue;
+    const u = upgradeCost(net, world, sg.id, type);
+    const f = (s1 - s0) / (L || 1);
+    cost += u.cost * f;
+    len += s1 - s0;
+    errors.push(...u.errors.filter((e) => e.msg !== "Not enough money"));
+    // (a one-way runs the way it was drawn, whichever way the dirt road under it was built)
+    pieces.push({ seg: sg.id, t0, t1, ...(T.bwd === 0 && x.back ? { flip: true } : {}) });
+  }
+  if (!pieces.length) return null;
+  if (cost > world.money() + 0.5) errors.push({ msg: `Not enough money (${fmt(cost)})`, p: end.p });
+  const seen = new Set<string>();
+  return {
+    strokes: [], ghosts: [{ chain, h0: start.h, h1: end.h, type }], cost, length: pl.length, crossings: [], kind: "road",
+    errors: errors.filter((e) => (seen.has(e.msg) ? false : (seen.add(e.msg), true))),
+    pave: { type, pieces },
+    note: `Paves ${Math.round(len)} m of dirt road`,
+    endTangent: norm(cubicTangent(chain[chain.length - 1], 1)),
+  };
+}
+
+/** Pave a plan's stretches in place (planPave): split where an end falls mid-way along a road, then change its type. */
+export function applyPave(net: RoadNetwork, pave: NonNullable<Plan["pave"]>): void {
+  for (const pc of pave.pieces) {
+    const s = net.segs.get(pc.seg);
+    if (!s) continue;
+    let id = s.id, t0 = pc.t0;
+    const a = s.a;
+    if (pc.t1 < 1 - 1e-4) {
+      const n = net.splitSeg(id, pc.t1);
+      id = net.segsAt(n).find((x) => x.a === a || x.b === a)!.id;
+      t0 = t0 / pc.t1; // (the first piece of a split cubic is the curve from 0 to t1, run at 1 / t1 the pace)
+    }
+    if (t0 > 1e-4) {
+      const sg = net.segs.get(id)!;
+      const b = sg.b;
+      const n = net.splitSeg(id, t0);
+      id = net.segsAt(n).find((x) => x.a === b || x.b === b)!.id;
+    }
+    net.setType(id, pave.type);
+    if (pc.flip) net.flip(id);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Upgrades and removal
 // ---------------------------------------------------------------------------------------------
 
@@ -2236,6 +2423,12 @@ export function upgradeCost(net: RoadNetwork, world: BuildWorld, segId: number, 
   const cost = Math.max(0, next - now * BULLDOZE_REFUND);
   const T = ROAD_TYPES[to];
   const mid = pts[Math.floor(pts.length / 2)];
+  if (T.unpaved) {
+    // (a dirt road is only ever on the ground, with no turn lanes and no ring)
+    if (hs.some((h) => h > RAISED)) errors.push({ msg: "Dirt roads stay on the ground: a bridge stays paved", p: mid });
+    else if (s.ring) errors.push({ msg: "Roundabouts stay paved", p: mid });
+    else if (s.pk?.a || s.pk?.b) errors.push({ msg: "Take its turn lanes off first: a dirt road has none", p: mid });
+  }
   if (g.minR < T.minRadius * 0.98) errors.push({ msg: `Curve too tight for ${T.name}`, p: mid });
   const w = roadWidth(T);
   if (w > g.width + 0.1) {
@@ -2331,6 +2524,7 @@ export function planAddLane(net: RoadNetwork, world: BuildWorld, p: V2, remove =
   }
   if (isHighway(T) && T.bwd === 0) return planMotorwayLane(net, world, p, id);
   if (s.ring) return fail("Not on a roundabout");
+  if (T.unpaved) return fail("Pave the dirt road first: draw a street over it");
   const name = side === "r" ? "Right-turn lane" : "Left-turn lane";
   if (remove) return fail(`No ${name.toLowerCase()} here`);
   const node = dir === 1 ? s.b : s.a;

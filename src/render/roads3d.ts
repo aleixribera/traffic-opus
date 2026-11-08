@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { LANE_W, ROAD_TYPES, SHOULDER, SIDEWALK, STREET_TREES, isHighway, roadGroup, roadWidth } from "../config";
+import { LANE_W, ROAD_TYPES, SHOULDER, SIDEWALK, STREET_TREES, isHighway, isUnpaved, roadGroup, roadWidth } from "../config";
 import { add, clamp, dist, dot, norm, polyAt, polyClosest, polyDir, right, scale, smoothstep, sub, type Polyline, type V2 } from "../core/math";
 import { pocketZones, type ChangeSet, type RoadNetwork } from "../roads/network";
 import { ringsNear } from "../roads/planner";
@@ -168,6 +168,142 @@ vec3 flowTint(float r) {
   return { mat, uniforms };
 }
 
+/** How far a dirt road's worn edge spills out into the grass either side (m). */
+const DIRT_FRINGE = 1.15;
+/** The fringe sits just under every road surface, so wherever a road or junction covers it, the road wins. */
+const FRINGE_DROP = 0.008;
+
+// world-space value noise for the dirt: one hash (stable at large coordinates), smoothed
+const DIRT_NOISE = `
+float dHash(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+float dNoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(dHash(i), dHash(i + vec2(1.0, 0.0)), f.x), mix(dHash(i + vec2(0.0, 1.0)), dHash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+// packed earth in soft patches, with gravel: small round stones, most pale, a few dark, one at most per 0.4 m cell
+vec3 dirtBase(vec2 w) {
+  float n = dNoise(w * 0.16) * 0.55 + dNoise(w * 0.72) * 0.3 + dNoise(w * 2.4) * 0.15;
+  vec3 c = mix(uDirt * 0.95, uDirtLight, smoothstep(0.3, 0.78, n));
+  vec2 q = w * 2.5, cell = floor(q);
+  float g = dHash(cell);
+  // (the derivative is taken outside the branch: it is undefined where neighbouring pixels branch apart)
+  float aa = fwidth(q.x) * 0.7 + 1e-4;
+  if (g > 0.72 || g < 0.06) {
+    vec2 o = vec2(dHash(cell + 17.0), dHash(cell + 41.0)) * 0.6 + 0.2;
+    float d = length(fract(q) - o), r = 0.09 + 0.08 * dHash(cell + 7.0);
+    float stone = 1.0 - smoothstep(r - aa, r + aa, d);
+    c = mix(c, g > 0.5 ? uDirtLight * 1.08 : uDirtRut * 0.85, stone * 0.6);
+  }
+  return c;
+}
+`;
+
+/**
+ * A dirt road's surface (opaque) or its worn edge (`fringe`: see below), both procedural: packed earth and gravel in
+ * world space, so pieces, bends and junctions run into each other without a seam. On the road itself, two pairs of
+ * darker wheel ruts (one per lane, where the wheels run) that wander a little, and a paler crown between them; no
+ * markings. The fringe (aFr: 0 at the road's edge, 1 out in the grass) fades the earth out with a ragged edge.
+ */
+function makeDirtMaterial(fringe = false) {
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: fringe, depthWrite: !fringe });
+  const uniforms = {
+    uDirt: { value: new THREE.Color(PAL.dirt) },
+    uDirtLight: { value: new THREE.Color(PAL.dirtLight) },
+    uDirtRut: { value: new THREE.Color(PAL.dirtRut) },
+    uDirtEdge: { value: new THREE.Color(PAL.dirtEdge) },
+    uFlowMode: { value: 0 },
+  };
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, uniforms);
+    sh.vertexShader = sh.vertexShader
+      .replace("#include <common>", `#include <common>\nvarying vec2 vDW;\n${fringe ? "attribute float aFr;\nvarying float vFr;" : "attribute vec4 aRoad;\nattribute vec2 aFlow;\nattribute vec3 aMed;\nvarying vec4 vRoad;\nvarying vec2 vFlow;\nvarying float vEnd;"}`)
+      .replace("#include <begin_vertex>", `#include <begin_vertex>\nvDW = (modelMatrix * vec4(transformed, 1.0)).xz;\n${fringe ? "vFr = aFr;" : "vRoad = aRoad;\nvFlow = aFlow;\nvEnd = aMed.z;"}`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace(
+        "#include <common>",
+        `#include <common>
+uniform vec3 uDirt; uniform vec3 uDirtLight; uniform vec3 uDirtRut; uniform vec3 uDirtEdge; uniform float uFlowMode;
+varying vec2 vDW;
+${fringe ? "varying float vFr;" : "varying vec4 vRoad; varying vec2 vFlow; varying float vEnd;"}
+${DIRT_NOISE}
+vec3 flowTint(float r) {
+  float k = clamp((0.92 - r) / 0.6, 0.0, 1.0);
+  return mix(vec3(1.0), mix(vec3(1.0, 0.62, 0.28), vec3(0.86, 0.13, 0.16), smoothstep(0.35, 1.0, k)), smoothstep(0.0, 0.25, k));
+}
+`,
+      )
+      .replace(
+        "#include <color_fragment>",
+        fringe
+          ? `#include <color_fragment>
+{
+  // ragged: the earth gives out a little further in places, and stray patches reach on into the grass
+  float t = vFr + (dNoise(vDW * 0.85) - 0.5) * 0.6 + (dNoise(vDW * 3.3) - 0.5) * 0.28;
+  float a = 1.0 - smoothstep(0.28, 0.78, t);
+  if (a < 0.01) discard;
+  vec3 c = mix(dirtBase(vDW), uDirtEdge, clamp(vFr * 0.9, 0.0, 1.0));
+  diffuseColor.rgb *= c;
+  diffuseColor.a *= a;
+}`
+          : `#include <color_fragment>
+{
+  float u = vRoad.x, f = vRoad.z;
+  vec3 c = dirtBase(vDW);
+  if (f >= 0.0) {
+    // the wheel ruts: one pair down the middle, where everything drives with nothing coming the other way (a 1.6 m
+    // track), and the fainter tracks of each lane (centred ${(LANE_W / 2).toFixed(2)} m out) for when two meet; all
+    // wandering together a little, and fading out over the last few metres into a junction or turning circle (vEnd:
+    // how far off one is)
+    float uu = u + (dNoise(vDW * 0.045) - 0.5) * 0.6;
+    float au = abs(uu);
+    // (squares, not pow(): pow of a negative base is undefined in GLSL and NaN on some drivers)
+    float r0 = (au - 0.8) / 0.3, r1 = (au - ${(LANE_W / 2 - 0.8).toFixed(2)}) / 0.3, r2 = (au - ${(LANE_W / 2 + 0.8).toFixed(2)}) / 0.32;
+    float rutMain = exp(-r0 * r0);
+    float lane = exp(-r1 * r1) * 0.5 + exp(-r2 * r2);
+    float wear = (0.7 + 0.6 * dNoise(vDW * 0.9)) * smoothstep(0.5, 7.0, vEnd);
+    c = mix(c, uDirtLight * 1.03, (1.0 - smoothstep(0.2, 0.5, au)) * 0.3 * wear);
+    c = mix(c, uDirtRut, clamp((rutMain * 0.62 + lane * 0.22) * wear, 0.0, 0.8));
+  }
+  if (uFlowMode > 0.5) {
+    float r = (vRoad.w > 0.0 && u < 0.0) ? vFlow.y : vFlow.x;
+    vec3 t = flowTint(r);
+    c = mix(c, t * 0.82, (1.0 - smoothstep(0.97, 1.0, min(t.g, t.b))) * 0.8);
+  }
+  diffuseColor.rgb *= c;
+}`,
+      );
+  };
+  return { mat, uniforms };
+}
+
+/**
+ * A dirt road's worn edge: a band from a line (lateral offsets `off` from `pts`, or the line itself) out by
+ * DIRT_FRINGE on one side, aFr running 0 -> 1 across it. null if too short.
+ */
+function fringeGeo(pts: V2[], hs: number[] | number, off: number[] | null, side: 1 | -1): THREE.BufferGeometry | null {
+  if (pts.length < 2) return null;
+  const pos: number[] = [], fr: number[] = [], idx: number[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const r = lateralAt(pts, i), o = off ? off[i] : 0, y = (typeof hs === "number" ? hs : hs[i]) + LIFT - FRINGE_DROP;
+    const b = pos.length / 3;
+    for (const [d, k] of [[0, 0], [DIRT_FRINGE, 1]] as const) {
+      const u = o + side * d;
+      pos.push(pts[i].x + r.x * u, y, pts[i].y + r.y * u);
+      fr.push(k);
+    }
+    if (i > 0 && dist(pts[i], pts[i - 1]) > 1e-4) idx.push(b - 2, b, b - 1, b - 1, b, b + 1);
+  }
+  if (!idx.length) return null;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("normal", new THREE.Float32BufferAttribute(pos.map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
+  g.setAttribute("aFr", new THREE.Float32BufferAttribute(fr, 1));
+  g.setIndex(idx);
+  fixUpWinding(g);
+  g.computeBoundingSphere();
+  return g;
+}
+
 interface SegMeshes {
   surface: THREE.Mesh;
   extra: THREE.Object3D[];
@@ -226,6 +362,8 @@ export class Roads3D {
   private hwSurface = makeRoadMaterial({ highway: true });
   private hwRing = makeRoadMaterial({ highway: true, arrows: false });
   private hwPlain = makeRoadMaterial({ highway: true, markings: false });
+  private dirt = makeDirtMaterial();
+  private dirtFringe = makeDirtMaterial(true);
   private edgeMat = new THREE.MeshLambertMaterial({ color: PAL.roadEdge });
   private walkMat = new THREE.MeshLambertMaterial({ vertexColors: true });
   private seamHw = seamMaterial(PAL.hwRoad, PAL.hwLane);
@@ -235,12 +373,28 @@ export class Roads3D {
   private treeSpots = new Map<number, { x: number; y: number; h: number; r: number }[]>();
   private hwEdgeMat = new THREE.MeshLambertMaterial({ color: PAL.hwEdge });
   /** Every marked surface material, so overlay modes reach all of them. */
-  private get marked() { return [this.surface, this.ringSurface, this.hwSurface, this.hwRing]; }
-  /** Pavement width round a junction or bend: the narrowest of its roads', none if any road there has none. */
+  private get marked() { return [this.surface, this.ringSurface, this.hwSurface, this.hwRing, this.dirt]; }
+  /** Pavement width round a junction or bend: the narrowest of its paved roads', none if any road there has none
+   * (a dirt road has none of its own, but a street meeting it keeps its pavement round the corner). */
   private nodeWalk(id: number): number {
     const at = this.net.segsAt(id);
     if (!at.length || at.some((sg) => sg.ring)) return 0;
-    return Math.min(...at.map((sg) => SIDEWALK[roadGroup(ROAD_TYPES[sg.type])]));
+    const paved = at.filter((sg) => !isUnpaved(ROAD_TYPES[sg.type]));
+    if (!paved.length) return 0;
+    return Math.min(...paved.map((sg) => SIDEWALK[roadGroup(ROAD_TYPES[sg.type])]));
+  }
+  /** Is every road meeting this node a dirt road (so its junction, bend or turning circle is earth too)? */
+  private dirtNode(id: number): boolean {
+    const at = this.net.segsAt(id);
+    return at.length > 0 && at.every((sg) => !sg.ring && isUnpaved(ROAD_TYPES[sg.type]));
+  }
+  /** The worn edge along a line, as a mesh (none if too short). */
+  private fringe(pts: V2[], hs: number[] | number, off: number[] | null, side: 1 | -1): THREE.Mesh | null {
+    const g = fringeGeo(pts, hs, off, side);
+    if (!g) return null;
+    const m = new THREE.Mesh(g, this.dirtFringe.mat);
+    m.receiveShadow = true;
+    return m;
   }
   /** Is every road meeting this node a highway (so its junction or bend is drawn in highway asphalt)? */
   private hwNode(id: number): boolean {
@@ -424,14 +578,27 @@ export class Roads3D {
       const na = nose(s.a), nb = nose(s.b);
       medEnd = ss.map((sc) => Math.min(na ? sc - s0 : 1e4, nb ? s1 - sc : 1e4));
     }
-    const geo = ribbon(pts, hs, ss, halfW, LIFT, [T.fwd, T.bwd], edges, T.median ?? 0, medEnd, ss.map((sc) => Math.min(sc - s0, s1 - sc)), pock);
     const hw = isHighway(T);
-    const surface = new THREE.Mesh(geo, s.ring ? this.ringSurface.mat : hw ? this.hwSurface.mat : this.surface.mat);
+    const dirt = isUnpaved(T) && !s.ring;
+    // (on a dirt road the same attribute says how far it is to a junction or turning circle, where its ruts fade out)
+    // (not at an all-dirt bend: its curve carries the ruts on at full strength)
+    const polyEnd = (nid: number) => { const ng = this.net.nodeGeom.get(nid); return !!ng?.poly && !(ng.curve && this.dirtNode(nid)); };
+    const pa = dirt && polyEnd(s.a), pb = dirt && polyEnd(s.b);
+    const geo = ribbon(pts, hs, ss, halfW, LIFT, [T.fwd, T.bwd], edges, T.median ?? 0, medEnd,
+      ss.map((sc) => (dirt ? Math.min(pa ? sc - s0 : 1e4, pb ? s1 - sc : 1e4) : Math.min(sc - s0, s1 - sc))), pock);
+    const surface = new THREE.Mesh(geo, dirt ? this.dirt.mat : s.ring ? this.ringSurface.mat : hw ? this.hwSurface.mat : this.surface.mat);
     surface.receiveShadow = true;
     const extra: THREE.Object3D[] = [];
+    // a dirt road: no kerbs or pavement, its worn edge fading into the grass either side
+    if (dirt) {
+      for (const side of [-1, 1] as const) {
+        const f = this.fringe(pts, hs, edges ? (side > 0 ? edges.r : edges.l) : pts.map(() => halfW * side), side);
+        if (f) extra.push(f);
+      }
+    }
     // town roads: pavements both sides on the ground (not on bridges or round roundabouts), trees on bigger roads
     const grp = roadGroup(T);
-    const walk = s.ring ? 0 : SIDEWALK[grp];
+    const walk = s.ring || dirt ? 0 : SIDEWALK[grp];
     if (walk > 0) {
       const inner = { l: edges ? edges.l : pts.map(() => -halfW), r: edges ? edges.r : pts.map(() => halfW) };
       const ok = (i: number, side: 1 | -1) => hs[i] < 0.3 && Math.abs(side > 0 ? inner.r[i] : inner.l[i]) > halfW - 0.02;
@@ -591,11 +758,20 @@ export class Roads3D {
       const hs = [ng.curve.hs[0], ...ng.curve.hs, ng.curve.hs[n0 - 1]].map((h) => h + 0.004);
       const ss: number[] = [0];
       for (let i = 1; i < pts.length; i++) ss.push(ss[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
-      const geo = ribbon(pts, hs, ss, halfW, LIFT, lanes, undefined, ng.curve.median);
+      const earth = this.dirtNode(id);
+      const geo = ribbon(pts, hs, ss, halfW, LIFT, lanes, undefined, ng.curve.median, undefined, earth ? pts.map(() => 1e4) : undefined);
       // no one-way chevrons on the curve: the straights either side already point the way, and they'd clip at the joins
-      const surface = new THREE.Mesh(geo, this.hwNode(id) ? this.hwRing.mat : this.ringSurface.mat);
+      const surface = new THREE.Mesh(geo, earth ? this.dirt.mat : this.hwNode(id) ? this.hwRing.mat : this.ringSurface.mat);
       surface.receiveShadow = true;
       out.push(surface);
+      if (earth) {
+        // (the worn edge along the curve itself, not the overlap into the straights: they have their own)
+        const ch = ng.curve.hs;
+        for (const side of [-1, 1] as const) {
+          const f = this.fringe(c0, ch, c0.map(() => halfW * side), side);
+          if (f) out.push(f);
+        }
+      }
       const walk = this.nodeWalk(id);
       if (walk > 0) {
         const wg = sidewalkGeo(pts, hs, { l: pts.map(() => -halfW), r: pts.map(() => halfW) }, walk, (i) => hs[i] < 0.3);
@@ -615,8 +791,17 @@ export class Roads3D {
       return;
     }
     const y = n.h + LIFT + 0.012;
-    const m = new THREE.Mesh(plainPoly(ng.poly, y), this.hwNode(id) ? this.hwPlain.mat : this.plain.mat);
+    // where only dirt roads meet, the junction (or turning circle) is earth with a worn edge round it, no kerbs; where
+    // a paved road comes in, it's paved, and its kerbs run round every corner but one between two dirt roads
+    const earth = this.dirtNode(id);
+    const m = new THREE.Mesh(plainPoly(ng.poly, y), earth ? this.dirt.mat : this.hwNode(id) ? this.hwPlain.mat : this.plain.mat);
     m.receiveShadow = true;
+    const dirtArm = (i: number) => {
+      const a = ng.arms[((i % ng.arms.length) + ng.arms.length) % ng.arms.length];
+      const sg = a && this.net.segs.get(a.seg);
+      return !!sg && isUnpaved(ROAD_TYPES[sg.type]);
+    };
+    const bare = (ki: number) => earth || (ng.kind === "junction" && dirtArm(ki) && dirtArm(ki + 1));
     if (n.h > 0.3) {
       const deck = new THREE.Mesh(polyDeck(ng.poly, y), this.deckMat);
       deck.castShadow = true;
@@ -626,8 +811,8 @@ export class Roads3D {
     }
     out.push(m);
     const walk = n.h < 0.3 ? this.nodeWalk(id) : 0;
-    for (const k of ng.kerbs) {
-      if (k.length < 2 || walk <= 0) continue;
+    for (const [ki, k] of ng.kerbs.entries()) {
+      if (k.length < 2 || walk <= 0 || bare(ki)) continue;
       // the pavement carries on round the corner, outside the kerb line
       const mi = k.length >> 1, lat = lateralAt(k, mi);
       const out_ = lat.x * (n.p.x - k[mi].x) + lat.y * (n.p.y - k[mi].y) > 0 ? -1 : 1;
@@ -636,13 +821,21 @@ export class Roads3D {
       const wg = sidewalkGeo(k, k.map(() => n.h), { l: z, r: z }, walk, (_, side) => side === out_, 0.002);
       if (wg) { const wm = new THREE.Mesh(wg, this.walkMat); wm.receiveShadow = true; out.push(wm); }
     }
-    for (const k of ng.kerbs) {
-      if (k.length < 2) continue;
+    ng.kerbs.forEach((k, ki) => {
+      if (k.length < 2) return;
+      if (bare(ki)) {
+        // the worn edge, outward from the corner
+        const mi = k.length >> 1, lat = lateralAt(k, mi);
+        const side = lat.x * (n.p.x - k[mi].x) + lat.y * (n.p.y - k[mi].y) > 0 ? -1 : 1;
+        const f = this.fringe(k, n.h, null, side);
+        if (f) out.push(f);
+        return;
+      }
       // the line is the road's outer edge; draw the band just inside it, like the segment shader does
       const km = new THREE.Mesh(kerbStrip(k, y + 0.01, n.p), this.hwNode(id) ? this.hwEdgeMat : this.edgeMat);
       km.receiveShadow = true;
       out.push(km);
-    }
+    });
     const arrows = this.turnArrows(id);
     if (arrows) out.push(arrows);
     out.push(...this.stopMarks(id));
@@ -653,7 +846,7 @@ export class Roads3D {
   /** Does this arm of a signalled town junction have a zebra crossing (pavements, not a highway)? */
   private crossing(id: number, seg: number): boolean {
     const n = this.net.nodes.get(id), s = this.net.segs.get(seg);
-    return !!n?.signal && !!s && !s.ring && !isHighway(ROAD_TYPES[s.type]) && n.h < 0.3 && this.nodeWalk(id) > 0;
+    return !!n?.signal && !!s && !s.ring && !isHighway(ROAD_TYPES[s.type]) && !isUnpaved(ROAD_TYPES[s.type]) && n.h < 0.3 && this.nodeWalk(id) > 0;
   }
 
   /**
@@ -692,9 +885,12 @@ export class Roads3D {
         }
       }
       const inn = g.lanes.filter((l) => l.to === id && l.seg === a.seg && (a.end === "b" ? l.dir === 1 : l.dir === -1));
+      // (no paint on earth: a dirt road's stop is the sign alone)
+      const bareArm = isUnpaved(ROAD_TYPES[this.net.segs.get(a.seg)?.type ?? "street"]);
       let kerb: (typeof inn)[number] | null = null;
       for (const l of inn) {
         if (!kerb || l.idx < kerb.idx) kerb = l;
+        if (bareArm) continue;
         const L = l.pl.length, at = Math.max(0, L - 0.45);
         const p = polyAt(l.pl, at), d = polyDir(l.pl, at), r = right(d);
         const h = (l.hs[l.hs.length - 1] ?? 0) + LIFT + 0.017;

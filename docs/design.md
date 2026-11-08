@@ -488,8 +488,13 @@ demand has outgrown even road trains on a good highway network), and barges afte
 ## Roads (core features from mods)
 
 - Existing tools stay: draw Curve/Straight, height levels, bridges/ramps, roundabouts, upgrade,
-  reverse, bulldoze. Road types: street, avenue, boulevard, one-way 1/2, highway 2/3/4, plus rural road and
-  gravel road.
+  reverse, bulldoze. Road types: dirt road, street, avenue, boulevard, one-way 1/2, highway 2/3/4, plus rural
+  road and gravel road.
+- **Dirt road (2026-11-08: "Roads are hella expensive for early game").** 1+1 packed earth at $1.5/m, a quarter of
+  a street, first in the build bar and open from the start. 32 km/h; loaded heavy trucks run at 0.85 of that.
+  Houses and sites can face it. Drawing a paved road over it paves it in place (same nodes and buildings, priced
+  like any road upgrade). It stays on the ground: a bridge on a dirt road is built as a
+  paved street at a street's price, and the chip says so.
 - Ideas taken from popular mods:
   - **Lane connector**, **priority signs** (stop/yield/priority road), **turn restrictions** and a
     **traffic light editor** with timed and actuated phases (from the Traffic mod).

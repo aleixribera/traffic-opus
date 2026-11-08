@@ -185,6 +185,8 @@ export const TRAIN = 16;
 /** A driver gives up after this long (s) standing in traffic without getting PROGRESS m further on. */
 export const GIVE_UP = 150;
 const PROGRESS = 8;
+/** Share of its usual pace a heavy truck or road train keeps on a dirt road (the ruts and the dust). */
+const ROUGH_HEAVY = 0.85;
 /** Edges kept in a vehicle's history (a road train spans a lane, a junction and the lane before it). */
 const HIST = 8;
 /** A car's paint from its look. */
@@ -1496,6 +1498,8 @@ export class Traffic {
     const e = v.edge;
     const tf = v.vf ?? (v.truck ? 0.85 : 1); // trucks take everything a bit slower
     let v0 = e.speed * tf;
+    // a heavy truck or a road train on a dirt road eases off more (it pulls away slower: af < 1)
+    if (e.kind === "lane" && (e as Lane).rough && v.af !== undefined && v.af < 1) v0 *= ROUGH_HEAVY;
     if (v.vmax !== undefined) v0 = Math.min(v0, v.vmax);
     // everything ahead to keep behind, as (gap, its speed): the hardest one to follow decides
     const G = this.conG, L = this.conL;
