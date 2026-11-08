@@ -241,7 +241,7 @@ function play() {
         // (from the nearest road end, or the next ones if a road from there is blocked: houses along the road it
         // would run beside, a river it can't bridge there)
         let a = startFor(d), r: ReturnType<typeof road> = "blocked";
-        for (const st of startsFor(d).filter((x, i, xs) => xs.findIndex((y) => dist(x, y) < 50) === i).slice(0, 3)) {
+        for (const st of startsFor(d).filter((x, i, xs) => xs.findIndex((y) => dist(x, y) < 50) === i).slice(0, 6)) {
           a = st;
           r = road(`to the ${name}`, a, d);
           if (r === true || r === "money") break;
