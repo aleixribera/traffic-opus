@@ -111,6 +111,8 @@ def palette():
         "bs_frame": "#3c4148", "bs_glass": "#cfe6f2", "bs_roof": "#3f5470", "bs_sign": "#2f6fd0",
         # industry site fence: galvanised posts and rails on a concrete kerb
         "fn_post": "#5f625f", "fn_rail": "#7d807c", "fn_kerb": "#b9b6ad",
+        # front gardens: clipped privet (two greens over a shaded foot) and a white-painted picket fence
+        "hg_leaf": "#4d6d2b", "hg_leaf2": "#587a32", "hg_foot": "#3c5422", "pk_white": "#f1ede2", "pk_post": "#e3ddcf",
         # bridges: warm poured concrete with cream Deco courses, red-oxide steel trusses, brass and a pale lamp
         "br_concrete": "#c7c0ae", "br_footing": "#a8a191", "br_cream": "#ece3cb", "br_steel": "#97432f",
         "br_steel2": "#7e3626", "br_brass": "#b88a3a", "br_lamp": "#f6ecc4",
@@ -1279,6 +1281,43 @@ def b_fence(M, P):
     box(M, -4.3, 4.5, -0.04, 0.04, 0.22, 0.28, P["fn_rail"])
     # a slim stay halfway along keeps the mesh taut
     box(M, -0.04, 0.04, -0.05, 0.05, 0.18, 2.0, P["fn_rail"])
+    return L
+
+
+# ------------------------------------------------------------------ front gardens (a home's front strip)
+# Laid by the game along the back of the pavement, a 4 m run at a time end to end (scaled along X to fit), and
+# stopped short of the driveway.
+
+def b_hedge(M, P):
+    """4 m of clipped privet along X, centred: a waist-high hedge with rounded shoulders, cut in three lengths a
+    hand's breadth apart in height so a long run doesn't read as one extruded bar, over a darker foot."""
+    L = Lot(4.0, 0.8)
+    L.bays = []
+    box(M, -2.0, 2.0, -0.38, 0.38, 0, 0.3, P["hg_foot"], bevel=0.04)
+    for x0, x1, h, w, m in ((-2.0, -0.45, 0.98, 0.37, "hg_leaf"), (-0.75, 0.85, 1.04, 0.38, "hg_leaf2"),
+                            (0.55, 2.0, 0.95, 0.365, "hg_leaf")):
+        box(M, x0, x1, -w, w, 0.2, h, P[m], bevel=0.1)
+    return L
+
+
+def b_picket(M, P):
+    """4 m of white picket fence along X, centred: square capped posts every 2 m (at its -X end and halfway, so
+    runs laid end to end keep the beat), two rails on the garden side, and 20 pickets on the street side. Seen from
+    above it reads as a crisp white line beaded with posts."""
+    L = Lot(4.0, 0.24)
+    L.bays = []
+    for x in (-2.0, 0.0):
+        x0 = max(x - 0.08, -2.0)
+        box(M, x0, x0 + 0.16, -0.08, 0.08, 0, 1.12, P["pk_post"])
+        box(M, x0 - 0.02, x0 + 0.18, -0.11, 0.11, 1.12, 1.19, P["pk_white"])
+    for z in (0.28, 0.8):
+        box(M, -1.9, 2.0, 0.0, 0.06, z, z + 0.09, P["pk_post"])
+    n = 20
+    for k in range(n):
+        x = -1.9 + (k + 0.5) * (3.9 / n)
+        if abs(x) < 0.13:
+            continue
+        box(M, x - 0.05, x + 0.05, -0.05, 0.0, 0.06, 1.0, P["pk_white"])
     return L
 
 
@@ -4268,6 +4307,8 @@ BUILDINGS = {
     "parklarge": (b_parklarge, 48, 48, 0),
     "busstop": (b_busstop, 4.4, 1.8, 0),
     "fence": (b_fence, 9.0, 0.28, 0),
+    "hedge": (b_hedge, 4.0, 0.8, 0),
+    "picket": (b_picket, 4.0, 0.2, 0),
     "bridge_pier": (b_bridge_pier, 12.0, 3.2, 0),
     "bridge_abutment": (b_bridge_abutment, 15.8, 8.0, 0),
     "bridge_pylon": (b_bridge_pylon, 1.6, 1.6, 0),

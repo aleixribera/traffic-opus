@@ -75,7 +75,8 @@ export function roadWidth(t: RoadType): number {
 /**
  * Homes and shops stand this far back from a street's centreline (m), behind a front strip their driveways cross:
  * room for the street to be upgraded to any road that still takes driveways (up to a divided avenue, with its
- * pavement) without touching them. About 11.7 m: four rows of lots each side of a 96 m town block.
+ * pavement) without touching them. About 11.7 m: a 96 m town block keeps five rows of lots on one side and four on
+ * the other (src/game/zones.ts, DEPTH).
  */
 export const ZONE_SETBACK = Math.max(
   ...Object.values(ROAD_TYPES).filter((t) => t.allowsAccess).map((t) => roadWidth(t) / 2 + SIDEWALK[roadGroup(t)] + 0.3),

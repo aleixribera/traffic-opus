@@ -380,9 +380,17 @@ itself across modes; you build tracks, docks and the transfer points, never line
 - **Front strips (owner, 2026-11-08: upgrading a street must not demolish its homes).** Homes, shops and the town
   hall's square stand back from their street's centreline by `ZONE_SETBACK` (about 11.7 m: the half-width of the
   widest road that still takes driveways, a divided avenue, plus its pavement). Each lot's driveway crosses the
-  strip to the kerb. Upgrading the street fills the strip and only shortens the driveways; downgrading lengthens
-  them again. Street trees make way for driveways. A 96 m town block keeps four rows of lots each side. Towns from
-  saves before this keep their homes where they stood (an upgrade there can still clear the front ones).
+  strip to the kerb, and the hall's path runs on to it. The strip reads as part of each plot: a home's lawn runs
+  out to the pavement, more than half with a clipped hedge or a white picket fence (houses and terraces) along it,
+  open at the driveway, and some with a tree in a deep enough front lawn; a shop, office or filling station has
+  a paved apron instead, a town square its paving or lawn out to every kerb, and a corner lot's side runs on to
+  the side street's pavement. All of it lies under the pavements and roads, so upgrading the street lets the road and its
+  pavement take the strip: the lawns narrow, the driveways shorten to the new kerb, and the hedges and trees that
+  no longer fit go (none at a divided avenue). Downgrading gives it all back. Street trees make way for driveways.
+  A block runs five rows of lots back behind the strip, so a 96 m town block splits five rows and four and both
+  sides take the deeper lots; a City keeps about the shops and jobs it had before the strips. Saves from before
+  this move their homes and shops back behind the strip on load (as deep as their block has room for, refitted),
+  and their town squares shrink to the new inset.
 - **Filling stations and construction parts (tier 3, 2026-11-08).** A Town keeps filling stations on its
   commercial land: one from Town size, two from 4,000 people. A station grows like a shop, or, when the
   commercial land is full, is rebuilt from the town's outermost shop as one of its redevelopments. Fuel goes to

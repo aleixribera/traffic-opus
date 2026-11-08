@@ -293,7 +293,7 @@ export class App {
     this.labels.set([]);
     this.labelKey = "";
     this.vehicles = new Vehicles3D(this.models);
-    this.buildings3d = new Buildings3D(this.models, () => this.game.time);
+    this.buildings3d = new Buildings3D(this.models, () => this.game.time, g.net);
     this.vehicles.lotOf = (id) => { const b = g.buildings.byId.get(id); return b ? this.buildings3d.lotWay(b) : null; };
     this.transit3d = new Transit3D(this.models.props.get("busstop"));
     this.parks3d = new Parks3D(this.models);
