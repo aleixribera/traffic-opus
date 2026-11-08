@@ -16,11 +16,12 @@ import { DAY, HOUR, Society } from "./society";
 import { PLACED, SHORE_REACH, type PlacedKind } from "./placed";
 import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, TRUCK_COST, isPlantKind } from "./industry";
 import { TownSystem } from "./settlements";
-import { BLOCK, gridPt } from "./towns";
+import { BLOCK, demandPerDay, gridPt, isHall, needsOf } from "./towns";
 import { F } from "../world/gen";
 import { Transit } from "./transit";
 import { Utilities } from "./utilities";
 import type { PlaceOpts, Placement } from "./buildings";
+import type { BuildingKind } from "../config";
 import { CELL, DEPTH, ZoneMap, type Block, type Cell, type ZoneGroup, type ZoneId } from "./zones";
 
 interface UndoEntry {
@@ -39,7 +40,9 @@ export type GameEvent =
   | { t: "milestone"; m: Milestone }
   | { t: "money" }
   | { t: "tiles" }
-  | { t: "toast"; msg: string };
+  | { t: "toast"; msg: string }
+  /** a town has grown into a new size */
+  | { t: "townSize"; town: number; size: number };
 
 /** The company's books for an hour. Income comes only from loads delivered to towns (and bus fares). */
 export interface Budget {
@@ -443,10 +446,36 @@ export class Game {
   }
 
   /** Zoned buildings standing where a road now runs: demolished (CS2 clears growables in a road's path). */
-  private clearRoadsOverLots(): Building[] {
+  private clearRoadsOverLots(ops?: Op[]): Building[] {
     const gone: Building[] = [];
+    // only the area a set of road edits touched (a town laying a street shouldn't scan a whole city's lots)
+    let box: [number, number, number, number] | null = null;
+    if (ops) {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      const take = (p: V2) => { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); };
+      const seg = (id: number) => {
+        const s = this.net.segs.get(id);
+        if (!s) return;
+        for (const n of [s.a, s.b]) { const nd = this.net.nodes.get(n); if (nd) take(nd.p); }
+        const g = this.net.segGeom.get(id);
+        if (g) for (const p of g.center.pts) take(p);
+      };
+      for (const op of ops) {
+        if (op.t === "addSeg" || op.t === "delSeg") {
+          seg(op.seg.id);
+          for (const n of [op.seg.a, op.seg.b]) { const nd = this.net.nodes.get(n); if (nd) take(nd.p); }
+        }
+        else if (op.t === "addNode" || op.t === "delNode") take(op.node.p);
+        else if (op.t === "setType" || op.t === "setPocket") seg(op.id);
+      }
+      if (x0 > x1) return gone;
+      // (a junction's neighbours change shape too: pockets, wider mouths)
+      const pad = 60;
+      box = [x0 - pad, y0 - pad, x1 + pad, y1 + pad];
+    }
     for (const b of [...this.buildings.list]) {
       if (!b.zone) continue;
+      if (box && (b.c.x < box[0] || b.c.x > box[2] || b.c.y < box[1] || b.c.y > box[3])) continue;
       const pts = rectCorners(b.c, b.hw - 1, b.hd - 1, b.rot);
       pts.push(b.c);
       let hit = false;
@@ -513,7 +542,7 @@ export class Game {
         }
       }
     });
-    const gone = this.clearRoadsOverLots();
+    const gone = this.clearRoadsOverLots(ops);
     this.money -= plan.cost;
     this.pushUndo({ label: plan.kind, ops, money: plan.cost, added: [], removed: gone });
     this.emit({ t: "money" });
@@ -560,7 +589,7 @@ export class Game {
     for (let i = 0; i < this.undoStack.length; i++) if (touches(this.undoStack[i])) last = i;
     if (last >= 0) this.undoStack.splice(0, last + 1);
     this.redoStack = [];
-    this.clearRoadsOverLots();
+    this.clearRoadsOverLots(ops);
     this.emit({ t: "buildings" });
     return true;
   }
@@ -573,7 +602,7 @@ export class Game {
     if (!pk || !this.net.segs.has(pk.seg)) return false;
     const ops = this.applyRoads(() => this.net.setPocket(pk.seg, pk.end, pk.to));
     if (!ops.length) return false;
-    const gone = this.clearRoadsOverLots();
+    const gone = this.clearRoadsOverLots(ops);
     this.money -= lp.cost;
     this.pushUndo({ label: "lane", ops, money: lp.cost, added: [], removed: gone });
     this.emit({ t: "money" });
@@ -587,7 +616,7 @@ export class Game {
     const removed: Building[] = [];
     for (const id of bIds) {
       const b = this.buildings.byId.get(id);
-      if (!b) continue;
+      if (!b || isHall(b.kind)) continue; // (a town's hall is the town's: it can't be pulled down)
       removed.push(b);
       this.removeBuildingRaw(b);
     }
@@ -620,7 +649,7 @@ export class Game {
     if (u.errors.length) return false;
     this.buildings.applyMoves(u.moves, true);
     const ops = this.applyRoads(() => this.net.setType(segId, to));
-    const gone = this.clearRoadsOverLots();
+    const gone = this.clearRoadsOverLots(ops);
     this.money -= u.cost;
     this.pushUndo({ label: "upgrade", ops, money: u.cost, added: [], removed: gone, moved: u.moves.length ? u.moves : undefined });
     this.emit({ t: "money" });
@@ -766,6 +795,7 @@ export class Game {
     const cost = D.cost;
     if (pl.ok && !this.placedUnlocked(kind)) return { ...pl, ok: false, reason: "Not unlocked yet", cost };
     if (pl.ok && D.unique && this.buildings.list.some((b) => b.kind === kind)) return { ...pl, ok: false, reason: "Only one per city", cost };
+    if (pl.ok && this.onTownSquare(pl.c, pl.rot, BUILDING_TYPES[kind].w / 2, BUILDING_TYPES[kind].d / 2)) return { ...pl, ok: false, reason: "On a town's square: that's for its hall", cost };
     if (pl.ok && D.shore && !this.nearWater(pl.c, pl.rot, BUILDING_TYPES[kind].w / 2, BUILDING_TYPES[kind].d / 2)) return { ...pl, ok: false, reason: "Has to be on a shore", cost };
     const dep = isPlantKind(kind) ? PLANTS[kind].deposit : undefined;
     let deposit: { name: string; share: number } | undefined;
@@ -776,6 +806,21 @@ export class Game {
     }
     if (pl.ok && this.money < cost) return { ...pl, ok: false, reason: "Not enough money", cost, deposit };
     return { ...pl, cost, deposit };
+  }
+
+  /** Would a lot (centre c, turned rot, half sizes hw x hd) cover any of a town's square (kept for its hall)? */
+  onTownSquare(c: V2, rot: number, hw: number, hd: number): boolean {
+    const near = this.towns.list.filter((t) => dist(t.c, c) < Math.hypot(hw, hd) + BLOCK * 1.5);
+    if (!near.length) return false;
+    const u = { x: Math.cos(rot), y: Math.sin(rot) }, v = { x: -u.y, y: u.x };
+    // every ~10 m over the lot (a square is a whole block, so none slips between)
+    const na = Math.max(1, Math.ceil((2 * hw) / 10)), nb = Math.max(1, Math.ceil((2 * hd) / 10));
+    for (let i = 0; i <= na; i++) for (let j = 0; j <= nb; j++) {
+      const a = -hw + (2 * hw * i) / na, b = -hd + (2 * hd * j) / nb;
+      const p = { x: c.x + u.x * a + v.x * b, y: c.y + u.y * a + v.y * b };
+      if (near.some((t) => this.towns.onSquare(t, p))) return true;
+    }
+    return false;
   }
 
   /** Is there water within SHORE_REACH of a lot (centre c, turned rot, half sizes hw x hd)? */
@@ -844,7 +889,7 @@ export class Game {
 
   /** Zone cells under a building's lot. */
   lotCells(b: Building): Cell[] {
-    if (!b.zone && !b.placed) return [];
+    if (!b.zone && !b.placed && !isHall(b.kind)) return [];
     return this.zones.inPoly(rectCorners(b.c, b.hw - 0.5, b.hd - 0.5, b.rot));
   }
 
@@ -936,8 +981,103 @@ export class Game {
     return true;
   }
 
+  /** Buildings pulled down for a town (redevelopment, its hall): households move to the town's other homes, or wait. */
+  private clearForTown(town: number, list: Building[]): Cell[] {
+    let moved = 0;
+    const cells: Cell[] = [];
+    for (const b of list) {
+      cells.push(...this.lotCells(b));
+      if (b.zone && ZONE_GROUP[b.zone] === "res") moved += this.people.householdsIn(b.id);
+      this.removeBuildingRaw(b);
+    }
+    // (the rest wait for a home: the town's target still counts them, so they move in as homes go up)
+    if (moved) this.moveInto(town, moved);
+    return cells.filter((c) => !c.lot);
+  }
+
+  /**
+   * Redevelopment: pull down a town's old buildings on one stretch of street (columns lo..hi of a zone block) and
+   * grow one building of a denser zone there, a building site first. The new building, or null if none fits (the land
+   * is left zoned for the town to grow on).
+   */
+  rebuildLots(town: number, ids: number[], zone: ZoneId, block: string, lo: number, hi: number): Building | null {
+    const blk = this.zones.blocks.get(block);
+    const old = ids.map((id) => this.buildings.byId.get(id)).filter((b): b is Building => !!b);
+    const freed = this.clearForTown(town, old);
+    if (blk) for (let k = lo; k < hi; k++) for (let r = 0; r < DEPTH; r++) {
+      const c = blk.cells[k * DEPTH + r];
+      if (c.ok && !c.lot) freed.push(c);
+    }
+    this.zones.paint(freed, zone);
+    const fronts = blk ? freed.filter((c) => c.block === blk && c.row === 0 && c.col >= lo && c.col < hi) : [];
+    const nb = this.grow(fronts, true);
+    if (nb) { nb.town = town; nb.redev = true; }
+    this.emit({ t: "zones" });
+    if (this.ticking) this.grew = true; else this.emit({ t: "buildings" });
+    return nb;
+  }
+
+  /** A town's hall on its square (see TownSystem.buildHall): whatever of the town stands there makes way. */
+  addHall(town: number, kind: BuildingKind, c: V2, rot: number, side: 1 | -1, front: V2, half: number): Building {
+    const gone = this.buildings.list.filter((o) => o.zone && obbOverlap(c, half, half, rot, o.c, o.hw - 0.5, o.hd - 0.5, o.rot));
+    this.clearForTown(town, gone);
+    const b: Building = {
+      id: this.buildings.nextId++, town, kind, c: { ...c }, rot, hw: half, hd: half, front: { ...front }, access: null, side,
+      level: 1, cap: 0, fit: 1, tall: 1, built: 0, abandoned: 0, lv: 0, upT: 0, badT: 0, problem: null, stock: 0, prodT: 0, visits: 0, born: this.time,
+    };
+    this.buildings.insert(b);
+    for (const cc of this.lotCells(b)) { cc.lot = b.id; cc.zone = null; }
+    this.buildings.reattach();
+    this.zones.version++;
+    this.candVersion = -1;
+    if (this.ticking) this.grew = true; else this.emit({ t: "buildings" });
+    return b;
+  }
+
+  /** A town's hall is rebuilt for its new size: the old one makes way for a building site. */
+  rebuildHall(b: Building, kind: BuildingKind) {
+    b.kind = kind;
+    b.built = 0;
+    b.born = this.time;
+    if (this.ticking) this.grew = true; else this.emit({ t: "buildings" });
+  }
+
+  /**
+   * Debug and tests: run a town's own growth for some game hours without the traffic, every need met. Construction,
+   * streets, zoning, redevelopment, households and its history all run as in play; trips and the plants don't.
+   */
+  fastForward(town: number, hours: number) {
+    const t = this.towns.byId.get(town);
+    if (!t) return;
+    const TICK = HOUR / 8;
+    this.ticking = true;
+    this.grew = false;
+    try {
+      for (let k = 0; k < hours * 8; k++) {
+        this.time += TICK;
+        this.traffic.time = this.time;
+        for (const b of this.buildings.list) if (b.built < 1 && !b.plant?.site) b.built = Math.min(1, b.built + TICK / BUILD_TIME);
+        for (const b of this.shops) { b.stock = Math.max(b.stock, 4); b.badT = 0; }
+        // every need met: deliveries come in through the day, and the town wants to grow
+        for (const p of needsOf(t.pop)) t.today[p] = Math.max(t.today[p] ?? 0, demandPerDay(p, t.pop) * ((k % 192) + 1) / 192);
+        this.towns.tick();
+        if (k % 8 === 7) this.towns.hourly();
+        const day = Math.floor(this.time / DAY);
+        if (day !== this.dayN) { this.towns.daily(); this.dayN = day; }
+      }
+    } finally { this.ticking = false; }
+    this.towns.census();
+    this.emit({ t: "zones" });
+    this.emit({ t: "buildings" });
+  }
+
+  /** A town has grown into a new size (its banner). */
+  townGrew(t: { id: number }, size: number) {
+    this.emit({ t: "townSize", town: t.id, size });
+  }
+
   /** Try to grow a building on one of these candidate cells. */
-  private grow(cands: Cell[]): Building | null {
+  private grow(cands: Cell[], biggest = false): Building | null {
     if (!cands.length) return null;
     for (let attempt = 0; attempt < 6; attempt++) {
       const c = cands[(this.rng() * cands.length) | 0];
@@ -947,7 +1087,7 @@ export class Game {
       if (!seg) continue;
       const temps = ZONE_LOTS[c.zone];
       // (some variety between the two main sizes; the small ones only where nothing bigger fits)
-      const order = this.rng() < 0.35 && temps.length > 1 ? [temps[1], temps[0], ...temps.slice(2)] : temps;
+      const order = !biggest && this.rng() < 0.35 && temps.length > 1 ? [temps[1], temps[0], ...temps.slice(2)] : temps;
       for (const t of order) {
         // where along the free run to put it: snug against a neighbour or the block's end if it can, so no strip too
         // narrow for any lot is left beside it; one that can't be avoided goes to the lot as extra yard (CS2 lots fill
@@ -1277,6 +1417,7 @@ export class Game {
     let jobs = 0;
     for (const b of this.buildings.list) if ((b.placed || (b.zone && ZONE_GROUP[b.zone] !== "res")) && !b.abandoned) jobs += b.cap;
     this.history.push({ money: this.money, pop: st.population, jobs });
+    this.towns.hourly();
     if (this.history.length > 72) this.history.shift();
     this.landValue();
     for (const [id, t] of this.noRouteAt) if (this.time - t > HOUR * 3) this.noRouteAt.delete(id);

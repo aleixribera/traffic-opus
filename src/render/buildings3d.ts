@@ -6,6 +6,7 @@ import { ZONE_GROUP } from "../game/growables";
 import type { PlantKind } from "../game/industry";
 import { GATE_GAP, GROW_ANIM, siteDir, siteFrame, siteLayout, siteToWorld, slotHalf, type SiteFrame, type SiteLayout, type SiteSlot } from "../game/sites";
 import type { MergedModel, ModelSet } from "./models";
+import { isHall } from "../game/towns";
 import { CAR_COLORS, PAL } from "./palette";
 
 /** Model matrix for a lot: model +z (its front) faces the road, origin at the footprint centre. */
@@ -43,6 +44,11 @@ const VARY = [0xffffff, 0xffffff, 0xf2ebe4, 0xe2dcd8, 0xfbf3e6, 0xdcdcdc, 0xf5f0
 /** Ground of a grown lot: lawn for homes, paving for business. */
 const YARD: Record<string, number> = { res: 0x99994f, com: 0xb3ae9b, ind: 0xaaa490, off: 0xb3ae9b };
 const ABANDONED = 0x77736b;
+/** A town hall's square: a lawn, and paving round the hall. */
+const SQUARE_LAWN = 0x8f9a4c;
+const SQUARE_PAVING = 0xc2bcaa;
+/** Paving round a town hall (m), wider as the town grows: hamlet green, village square, civic plaza. */
+const PLAZA: Partial<Record<BuildingKind, number>> = { hamlethall: 4, villagehall: 7, townhall: 10, cityhall: 13 };
 
 // industry sites: a galvanised fence on posts, worn concrete service roads, faint pads where the next buildings go
 const FENCE_H = 2.1;
@@ -161,6 +167,12 @@ export class Buildings3D {
     return (bb.max.z - bb.min.z) * b.fit;
   }
 
+  /** Half the depth of a building's model as it stands (unfitted). */
+  private halfDepth(b: Building): number {
+    const bb = this.geoOf(b.kind)?.geo.boundingBox;
+    return bb ? (bb.max.z - bb.min.z) / 2 : b.hd;
+  }
+
   private slotMatrix(out: THREE.Matrix4, f: SiteFrame, s: SiteSlot, rise: number, y = 0): THREE.Matrix4 {
     faceMatrix(out, siteToWorld(f, s.x, s.y), siteDir(f, s.fx, s.fy), y);
     if (rise < 1) out.multiply(this.tmp2.makeScale(1, rise, 1));
@@ -184,7 +196,11 @@ export class Buildings3D {
     const b = p.b;
     if (p.slot) return this.slotMatrix(out, siteFrame(b.c, b.rot, b.side, b.hd), p.slot, this.rise(p));
     lotMatrix(out, b.c, b.rot, b.side);
-    if (!b.zone) return out;
+    if (!b.zone) {
+      // a town hall rises from its building site like the town's other buildings
+      if (b.built < 1 && isHall(b.kind)) out.multiply(this.tmp2.makeScale(1, 0.08 + 0.92 * b.built, 1));
+      return out;
+    }
     // the model stands near the street; deep lots keep the rest as a back yard
     const spare = Math.max(0, b.hd * 2 - this.depth(b));
     const grow = b.built >= 1 ? 1 : 0.08 + 0.92 * b.built;
@@ -215,8 +231,9 @@ export class Buildings3D {
     const live = new Set(list.map((b) => b.id));
     for (const id of this.layouts.keys()) if (!live.has(id)) this.layouts.delete(id);
     const lots = list.filter((b) => b.zone);
-    if (lots.length) {
-      const ym = new THREE.InstancedMesh(this.yardGeo, new THREE.MeshLambertMaterial({ color: 0xffffff }), lots.length);
+    const halls = list.filter((b) => isHall(b.kind));
+    if (lots.length || halls.length) {
+      const ym = new THREE.InstancedMesh(this.yardGeo, new THREE.MeshLambertMaterial({ color: 0xffffff }), lots.length + halls.length * 2);
       ym.receiveShadow = true;
       ym.renderOrder = 1;
       const sc = new THREE.Matrix4();
@@ -225,6 +242,20 @@ export class Buildings3D {
         // the lot is hw along the road and hd deep; in lot space x runs along the road
         ym.setMatrixAt(i, this.tmp.multiply(sc.makeScale(b.hw * 2 - 0.8, 1, b.hd * 2 - 0.8)));
         ym.setColorAt(i, this.col.setHex(b.built < 1 ? SITE : YARD[ZONE_GROUP[b.zone!]]));
+      });
+      // a hall's square: lawn to the pavements, paving round the hall (bare earth while it is being built)
+      halls.forEach((b, k) => {
+        const i = lots.length + k * 2;
+        lotMatrix(this.tmp, b.c, b.rot, b.side, 0.04);
+        ym.setMatrixAt(i, this.tmp.multiply(sc.makeScale(b.hw * 2 - 0.8, 1, b.hd * 2 - 0.8)));
+        ym.setColorAt(i, this.col.setHex(SQUARE_LAWN));
+        const bb = this.models.buildings.get(b.kind)?.geo.boundingBox;
+        const pad = PLAZA[b.kind] ?? 6;
+        const w = Math.min(b.hw * 2 - 2, (bb ? bb.max.x - bb.min.x : 20) + pad * 2);
+        const d = Math.min(b.hd * 2 - 2, (bb ? bb.max.z - bb.min.z : 20) + pad * 2);
+        lotMatrix(this.tmp, b.c, b.rot, b.side, 0.06);
+        ym.setMatrixAt(i + 1, this.tmp.multiply(sc.makeScale(w, 1, d)));
+        ym.setColorAt(i + 1, this.col.setHex(b.built < 1 ? SITE : SQUARE_PAVING));
       });
       ym.computeBoundingSphere();
       this.yards = ym;
@@ -402,7 +433,9 @@ export class Buildings3D {
     const u = fromAngle(b.rot);
     const away = right(u);
     const into = { x: away.x * b.side, y: away.y * b.side };
-    const reach = b.zone ? b.hd - setback(Math.max(0, b.hd * 2 - this.depth(b))) + 0.5 : b.hd;
+    // placed buildings: from the kerb to the lot edge; zoned lots start at the kerb, so to the model's front; a
+    // town hall, across its square to its door
+    const reach = b.zone ? b.hd - setback(Math.max(0, b.hd * 2 - this.depth(b))) + 0.5 : isHall(b.kind) ? this.halfDepth(b) : b.hd;
     const drive = { x: b.c.x - into.x * reach, y: b.c.y - into.y * reach };
     const kerb = { ...b.front };
     const bays: LotWay["bays"] = [];
@@ -456,12 +489,13 @@ export class Buildings3D {
       }
       const u = fromAngle(b.rot);
       const away = right(u); // * side points away from the road
-      // placed buildings: from the kerb to the lot edge; zoned lots start at the kerb, so to the model's front
-      const reach = b.zone ? b.hd - setback(Math.max(0, b.hd * 2 - this.depth(b))) + 0.5 : b.hd;
+      // placed buildings: from the kerb to the lot edge; zoned lots start at the kerb, so to the model's front; a
+      // town hall, across its square to its door
+      const reach = b.zone ? b.hd - setback(Math.max(0, b.hd * 2 - this.depth(b))) + 0.5 : isHall(b.kind) ? this.halfDepth(b) : b.hd;
       const ex = { x: b.c.x - away.x * b.side * reach, y: b.c.y - away.y * b.side * reach };
       const a = b.front;
       if (Math.hypot(ex.x - a.x, ex.y - a.y) < 0.6) continue;
-      const w = b.zone && b.hw > 14 ? 2.6 : 1.7;
+      const w = isHall(b.kind) ? 2.4 : b.zone && b.hw > 14 ? 2.6 : 1.7;
       q.strip(a, ex, w * 2, 0.08);
     }
     const m = q.mesh(this.driveMat, 3);

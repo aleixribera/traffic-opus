@@ -12,7 +12,7 @@ export const DEPTH = 6;
 /** The shallowest lot any zone grows (cells): shallower strips aren't zoneable. */
 export const MIN_LOT_DEPTH = 2;
 
-export type ZoneId = "resLow" | "resRow" | "resMed" | "resHigh" | "comLow" | "comHigh";
+export type ZoneId = "resLow" | "resRow" | "resMed" | "resHigh" | "resTower" | "comLow" | "comMid" | "comHigh" | "comTower";
 export type ZoneGroup = "res" | "com";
 
 export interface ZoneDef {
@@ -29,10 +29,15 @@ export const ZONES: Record<ZoneId, ZoneDef> = {
   resRow: { id: "resRow", name: "Residential row housing", short: "Row homes", group: "res", high: false, color: 0x4fae5c },
   resMed: { id: "resMed", name: "Residential medium density", short: "Mid homes", group: "res", high: true, color: 0x2f9a4e },
   resHigh: { id: "resHigh", name: "Residential high density", short: "High homes", group: "res", high: true, color: 0x1d7a3c },
+  resTower: { id: "resTower", name: "Residential towers", short: "Towers", group: "res", high: true, color: 0x14602f },
   comLow: { id: "comLow", name: "Commercial low density", short: "Low shops", group: "com", high: false, color: 0x4f9be8 },
+  comMid: { id: "comMid", name: "Commercial medium density", short: "Mid shops", group: "com", high: false, color: 0x3d85dc },
   comHigh: { id: "comHigh", name: "Commercial high density", short: "High shops", group: "com", high: true, color: 0x2a6fcf },
+  comTower: { id: "comTower", name: "Commercial towers", short: "Towers", group: "com", high: true, color: 0x1d55a8 },
 };
-export const ZONE_ORDER: ZoneId[] = ["resLow", "resRow", "resMed", "resHigh", "comLow", "comHigh"];
+export const ZONE_ORDER: ZoneId[] = ["resLow", "resRow", "resMed", "resHigh", "resTower", "comLow", "comMid", "comHigh", "comTower"];
+/** How dense a zone is within its group (a town only ever rezones its land denser). */
+export const ZONE_RANK: Record<ZoneId, number> = { resLow: 0, resRow: 1, resMed: 2, resHigh: 3, resTower: 4, comLow: 0, comMid: 1, comHigh: 2, comTower: 3 };
 
 export interface Cell {
   c: V2; // centre
@@ -220,7 +225,10 @@ export class ZoneMap {
     for (const id of affected) drop(id);
     for (const id of cs.removedSegs) drop(id);
     // a dropped block may have been holding cells of a younger block outside the region: re-open them
-    for (const c of old) for (const n of this.near(c.c, CELL)) if (!n.ok && n.block.age > c.block.age) this.revalidate(n.block);
+    // (each such block once: it is revalidated as a whole)
+    const reopen = new Set<Block>();
+    for (const c of old) for (const n of this.near(c.c, CELL)) if (!n.ok && n.block.age > c.block.age) reopen.add(n.block);
+    for (const b of reopen) if (this.blocks.get(b.key) === b) this.revalidate(b);
     const ids = [...affected].filter((id) => this.net.segs.has(id)).sort((a, b) => a - b);
     for (const id of ids) this.ageOf(id); // new segs get ages in creation order
     ids.sort((a, b) => this.ageOf(a) - this.ageOf(b));

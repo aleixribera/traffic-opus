@@ -51,6 +51,8 @@ export interface Building {
   plant?: PlantState;
   /** Placed by the player (see game/placed.ts), not grown on zoned land. */
   placed?: boolean;
+  /** Built where a town pulled down older buildings for a denser one (see TownSystem.redevelop). */
+  redev?: boolean;
 }
 
 export interface BuildingMove {

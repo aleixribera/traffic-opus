@@ -81,8 +81,10 @@ export const SIGNAL_COST = 300;
 // ---------- Buildings ----------
 
 export type BuildingKind =
-  | "house" | "terrace" | "apartments"
-  | "shop" | "store" | "mall"
+  | "house" | "terrace" | "apartments" | "modernflats" | "aptower"
+  | "highstreet" | "shop" | "store" | "office" | "mall" | "tower" | "glasstower"
+  // each town's hall at its centre, rebuilt bigger at each size (see game/settlements.ts)
+  | "hamlethall" | "villagehall" | "townhall" | "cityhall"
   // placed by the player (see game/placed.ts): the company's extractors and plants, and power
   | "farm" | "loggingcamp" | "foodplant" | "sawmill"
   | "ironmine" | "coalmine" | "quarry" | "smelter" | "cementworks" | "coalplant";
@@ -108,9 +110,19 @@ export const BUILDING_TYPES: Record<BuildingKind, BuildingType> = {
   house: { kind: "house", name: "Small Residential", zone: "res", w: 12, d: 15, residents: 2, jobs: 0, pollution: 0, parking: 1, blurb: "A family home. Residents visit shops and commute to work." },
   terrace: { kind: "terrace", name: "Medium Residential", zone: "res", w: 24, d: 17, residents: 5, jobs: 0, pollution: 0, parking: 3, blurb: "A row of townhouses." },
   apartments: { kind: "apartments", name: "Large Residential", zone: "res", w: 30, d: 30, residents: 12, jobs: 0, pollution: 0, parking: 6, blurb: "Apartment block. Lots of trips from one driveway." },
+  modernflats: { kind: "modernflats", name: "Modern Flats", zone: "res", w: 30, d: 30, residents: 24, jobs: 0, pollution: 0, parking: 6, blurb: "A modern block of flats round a courtyard." },
+  aptower: { kind: "aptower", name: "Apartment Tower", zone: "res", w: 30, d: 30, residents: 50, jobs: 0, pollution: 0, parking: 6, blurb: "A residential tower in a city core." },
+  highstreet: { kind: "highstreet", name: "High Street Shop", zone: "com", w: 18, d: 20, residents: 0, jobs: 3, shelves: true, pollution: 0, parking: 3, blurb: "An old shop-house on the high street: a shop below, the owners above." },
   shop: { kind: "shop", name: "Small Commercial", zone: "com", w: 18, d: 20, residents: 0, jobs: 3, shelves: true, pollution: 0, parking: 4, blurb: "Sells the town its food: needs customers, staff and the company's food deliveries." },
   store: { kind: "store", name: "Medium Commercial", zone: "com", w: 30, d: 28, residents: 0, jobs: 7, shelves: true, pollution: 0, parking: 8, blurb: "A bigger store that draws customers from further away." },
+  office: { kind: "office", name: "Offices", zone: "com", w: 20, d: 22, residents: 0, jobs: 8, shelves: true, pollution: 0, parking: 5, blurb: "Offices with a shop on the ground floor." },
   mall: { kind: "mall", name: "Large Commercial", zone: "com", w: 48, d: 40, residents: 0, jobs: 14, shelves: true, pollution: 0, parking: 14, blurb: "Shopping centre. Expect heavy traffic at the entrance." },
+  tower: { kind: "tower", name: "Office Tower", zone: "com", w: 30, d: 30, residents: 0, jobs: 20, shelves: true, pollution: 0, parking: 9, blurb: "An office tower with shops at its foot." },
+  glasstower: { kind: "glasstower", name: "Glass Tower", zone: "com", w: 30, d: 30, residents: 0, jobs: 30, shelves: true, pollution: 0, parking: 6, blurb: "A glass office tower: the city's skyline." },
+  hamlethall: { kind: "hamlethall", name: "Hamlet Hall", zone: "placed", w: 20, d: 18, residents: 0, jobs: 0, pollution: 0, parking: 2, blurb: "The hamlet's hall on its green, with a bell cupola." },
+  villagehall: { kind: "villagehall", name: "Village Hall", zone: "placed", w: 28, d: 24, residents: 0, jobs: 0, pollution: 0, parking: 3, blurb: "The village's arcaded market hall on its square." },
+  townhall: { kind: "townhall", name: "Town Hall", zone: "placed", w: 40, d: 36, residents: 0, jobs: 0, pollution: 0, parking: 4, blurb: "The town's domed hall round a courtyard." },
+  cityhall: { kind: "cityhall", name: "City Hall", zone: "placed", w: 60, d: 50, residents: 0, jobs: 0, pollution: 0, parking: 6, blurb: "The city's hall, belfry and copper spire, on a square with fountains." },
   farm: { kind: "farm", name: "Farm", zone: "placed", w: 290, d: 270, residents: 0, jobs: 8, pollution: 0, parking: 2, blurb: "Grows crops on fertile soil. Its trucks take them to your food plants." },
   loggingcamp: { kind: "loggingcamp", name: "Logging Camp", zone: "placed", w: 250, d: 230, residents: 0, jobs: 8, pollution: 0, parking: 2, blurb: "Fells timber in the forest. Its trucks take the logs to your sawmills." },
   foodplant: { kind: "foodplant", name: "Food Plant", zone: "placed", w: 180, d: 160, residents: 0, jobs: 12, pollution: 90, parking: 4, blurb: "Turns crops into food. Its trucks sell the food to the towns' shops." },

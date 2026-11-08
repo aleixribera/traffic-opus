@@ -241,6 +241,32 @@ describe("free placement and the gate", () => {
     expect([...g.trips()].some((t) => t.haul?.plant === b.id && t.haul.dest === fp!.id)).toBe(true);
   });
 
+  it("keeps off a town's square, and a town's hall is never taken for a site", () => {
+    const g = openGame();
+    g.start();
+    for (let i = -8; i <= 8; i++) for (let j = -8; j <= 8; j++) g.tiles.add(`${i},${j}`);
+    g.money = 1e7;
+    const t = g.towns.list[0];
+    const hall = g.buildings.byId.get(t.hall!)!;
+    // the hall: a town building, not one of the company's sites (no fence, no gate, no levels)
+    expect(hall.placed).toBeFalsy();
+    expect(hall.plant).toBeUndefined();
+    expect(g.inSite(hall.c)).toBe(false);
+    // a plant standing free (turned, so it stays where the cursor is) can't cover any of the square
+    const T = BUILDING_TYPES.foodplant;
+    for (const off of [0, 60, T.w / 2 + 20]) {
+      const p = add(hall.c, scale({ x: Math.cos(t.ang), y: Math.sin(t.ang) }, off * t.sq![0]));
+      const pl = g.placedPlan("foodplant", p, { turn: 0.25 })!;
+      expect(pl.ok, `${off} m along: ${pl.reason}`).toBe(false);
+    }
+    expect(g.onTownSquare(hall.c, 0, 5, 5)).toBe(true);
+    // just past the square's edge (the hall's own lot misses it) still counts as on the square
+    const edge = add(hall.c, scale({ x: Math.cos(t.ang), y: Math.sin(t.ang) }, -hall.hw * t.sq![0] - 2));
+    expect(g.onTownSquare(edge, t.ang, 3, 3)).toBe(true);
+    expect(g.place("foodplant", hall.c, { turn: 0.25 })).toBeNull();
+    expect(g.buildings.byId.get(hall.id)?.kind).toBe(hall.kind);
+  });
+
   it("no town builds inside a site's fence", () => {
     const g = openGame();
     const p = openSpot(g, "foodplant");
