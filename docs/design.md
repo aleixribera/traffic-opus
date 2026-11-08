@@ -66,7 +66,9 @@ Our own names, look and art throughout.
   (`,` and `.` turn it in 15 degree steps; with a road close by it turns its gate to face it). Its **gate** is
   the middle of one side, marked on the map while it has no road. Any road that passes the gate or ends in front
   of it (within ~12 m) connects it; the site says "Connected" and its trucks start. Until then it shows
-  "No road to the gate" and does nothing but wait.
+  "No road to the gate" and does nothing but wait. A gate never joins the road in a junction's mouth: within
+  24 m of one (a road train's length) its drive runs along the kerb to a point that far down the road, so trucks
+  waiting to turn in or pull out stand clear of the box.
 - **Four levels, growing by themselves (like TF2).** Level 1 is the core plant by the gate with its truck yard,
   about a fifth of the plot; levels 2-4 fill the plot to roughly 45%, 70% and full. A site grows one level when
   it has run near its capacity for a sustained stretch (most of a few in-game days) with its output being
@@ -123,7 +125,14 @@ Our own names, look and art throughout.
     ring has room for its whole length, counting the long trucks already waiting at the other entries;
   - a lane change needs a gap beside its whole length;
   - one long truck at a time pulls out of a lot's gate: the next waits in the yard until the last trailer
-    has cleared the kerb.
+    has cleared the kerb. Trucks queued in a yard behind the first wait their turn; only the first's wait
+    for a gap counts toward "blocked driveway" (90 s).
+- **Giving up.** A driver gives up ("gave up in traffic": the load goes back to its yard) only after standing
+  150 s without getting 8 m further on, the last resort against a broken layout. A queue that crawls on gets there.
+- **Jammed hauls in the panels.** A full site whose trucks are held up says so: "the road at its gate is jammed"
+  (trucks still in its yard a minute after they were called) or "its trucks are stuck in traffic on the haul"
+  (standing 30 s+), and a plant waiting for an input says when the loads on their way are stuck in traffic. So
+  the panel tells a road to fix from a long haul or no buyer.
 - **Fuel** is a running cost per km at a market price ($4 per light-truck km, both ways). Once your refinery's
   tankers stock a **fuel depot**, every truck whose run passes within 1.5 km of it fills up there at cost
   ($1 per km): one load of fuel lasts 400 light-truck km. The depot's panel shows its fuel, the trucks it

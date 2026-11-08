@@ -162,6 +162,7 @@ export class Game {
       sold: (town, p, n) => { this.towns.sold(town, p, n); this.progress.onSold(p, n); },
       request: (sp) => this.traffic.request(sp),
       trips: () => this.trips(),
+      held: () => this.heldTrips(),
       earn: (v) => { this.money += v; this.budgetNow.income.sales += v; this.progress.onEarned(v); },
       spend: (v, what) => { this.money -= v; this.budgetNow.expense[what] += v; },
       bays: () => this.progress.unlocked.bays,
@@ -278,6 +279,14 @@ export class Game {
   *trips(): Iterable<Trip> {
     for (const v of this.traffic.vehicles) yield v.trip;
     for (const p of this.traffic.pending) yield p.trip;
+  }
+
+  /** The trips held up now: still in their yard a minute after they were called, or standing in traffic 30 s+. */
+  private heldTrips(): Map<Trip, "gate" | "road"> {
+    const m = new Map<Trip, "gate" | "road">(), now = this.traffic.time;
+    for (const v of this.traffic.vehicles) if (v.trip.haul && v.stuck > 30) m.set(v.trip, "road");
+    for (const p of this.traffic.pending) if (p.trip.haul && now - (p.t0 ?? now) > 60) m.set(p.trip, "gate");
+    return m;
   }
 
   /** Truck classes the company may run now. */

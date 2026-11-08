@@ -342,6 +342,9 @@ export interface IndustryHost {
   request(p: PendingSpawn): void;
   /** vehicles on the road and trips waiting to set off */
   trips(): Iterable<Trip>;
+  /** the trips held up now: still in their yard a minute after they were called ("gate"), or standing in traffic
+   *  30 s and more ("road") */
+  held?(): Map<Trip, "gate" | "road">;
   earn(v: number): void;
   spend(v: number, what: "wages" | "upkeep" | "fuel"): void;
   /** truck bays every building has gained from milestones, on top of its own trucks */
@@ -368,6 +371,14 @@ export interface Customer { b: Building; value: number; /** loads it can take */
 
 export class Industry {
   constructor(private h: IndustryHost) {}
+
+  /** Per building, this tick: its trucks held at its own gate or in traffic, and loads on their way to it held up. */
+  private jam = new Map<number, { gate: number; road: number; on: Partial<Record<Product, number>>; held: Partial<Record<Product, number>> }>();
+  private jamOf(id: number) {
+    let j = this.jam.get(id);
+    if (!j) this.jam.set(id, (j = { gate: 0, road: 0, on: {}, held: {} }));
+    return j;
+  }
 
   /** The company's extractors and plants. */
   plants(): Building[] {
@@ -525,14 +536,27 @@ export class Industry {
     return PLANT_KINDS.some((k) => PLANTS[k].inputs[p] || PLANTS[k].site?.[p]);
   }
 
-  /** Trucks out per plant (in all and by class), and loads on their way to each customer (counted fresh each tick). */
+  /**
+   * Trucks out per plant (in all and by class), and loads on their way to each customer (counted fresh each tick).
+   * Also how many of each plant's trucks are held up, at its gate or out in traffic, and how many loads on their way
+   * to each customer are: what tells a jammed haul (the roads' fault) from a long one or no buyer.
+   */
   private census() {
     const busy = new Map<number, number>(), busyBy = new Map<number, Partial<FleetMix>>(), coming = new Map<number, Map<Product, number>>();
+    const held = this.h.held?.();
+    this.jam.clear();
     for (const t of this.h.trips()) {
       const r = t.haul;
       // (a convoy with an oversized piece is not one of its works' trucks: convoys.ts keeps its own count)
       if (!r || r.done || r.big) continue;
       busy.set(r.plant, (busy.get(r.plant) ?? 0) + 1);
+      const h = held?.get(t);
+      if (h) { const j = this.jamOf(r.plant); if (h === "gate" && r.leg === "out") j.gate++; else j.road++; }
+      if (held && r.leg === "out") {
+        const d = this.jamOf(r.dest);
+        d.on[r.product] = (d.on[r.product] ?? 0) + r.n;
+        if (h) d.held[r.product] = (d.held[r.product] ?? 0) + r.n;
+      }
       let by = busyBy.get(r.plant);
       if (!by) busyBy.set(r.plant, (by = {}));
       const c = r.cls ?? "light";
@@ -596,17 +620,38 @@ export class Industry {
     const s = short(), f = full();
     const fname = f && PRODUCTS[f].name.toLowerCase();
     b.problem = !b.access ? (b.placed ? "No road to the gate" : "No road access")
+      : f && this.jammed(b, out) ? `Full of ${fname}: ${this.jammed(b, out)}`
       : f ? (PRODUCTS[f].price > 0 ? `Full of ${fname}: its trucks can't keep up (a long or jammed haul), or nobody to sell to`
         : this.used(f) ? `Full of ${fname}: its trucks can't keep up (a long or jammed haul), or no ${Industry.takers(f)} on its roads`
         : `Full of ${fname}: nothing uses it until tier ${Industry.laterTier(f)}`)
       : staff <= 0 ? "No workers"
-      : s ? `Waiting for ${PRODUCTS[s].name.toLowerCase()}`
+      : s ? `Waiting for ${PRODUCTS[s].name.toLowerCase()}${this.stuckIn(b, s) ? ": the loads on their way are stuck in traffic" : ""}`
       : idle ? "Idle: no building within reach needs power"
       : staff < 0.5 ? "Not enough workers"
       : pw <= 0 ? `No power: working at ${Math.round(UNPOWERED * 100)}%`
       : pw < 0.999 ? `Short of power: working at ${Math.round(powerPace(pw) * 100)}%`
       : null;
     this.growth(b, span, working, staff, pw, store);
+  }
+
+  /**
+   * Why a full site's trucks can't keep up, when it is the roads: a good share of them (out of `out` on the road or
+   * waiting to set off) held at its gate, or standing in traffic. Null when they are moving (a long haul, or no buyer).
+   */
+  private jammed(b: Building, out: number): string | null {
+    const j = this.jam.get(b.id);
+    if (!j || out <= 0) return null;
+    const many = (n: number) => n >= 2 && n >= out / 4;
+    if (many(j.gate)) return "the road at its gate is jammed, its trucks can't get out";
+    if (many(j.road)) return "its trucks are stuck in traffic on the haul (a jammed road)";
+    return null;
+  }
+
+  /** Most of the loads of `p` on their way to `b` are held up in traffic (or at their yard's gate). */
+  private stuckIn(b: Building, p: Product): boolean {
+    const j = this.jam.get(b.id);
+    const held = j?.held[p] ?? 0;
+    return held >= 1 && held * 2 >= (j!.on[p] ?? 0);
   }
 
   /**

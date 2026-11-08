@@ -20,6 +20,12 @@ export const LEVEL_FILL = [0.2, 0.45, 0.7, 1];
 export const GATE_GAP = 14;
 /** How far in front of the gate a road may run (from its edge) and still connect the site (m). */
 export const GATE_REACH = 12;
+/**
+ * How far a site's gate joins a road from the mouth of a junction (m): a road train (22 m) waiting there to turn in
+ * across the oncoming traffic stands clear of the junction, and one pulling out has room to wait in line. A gate
+ * placed closer slides along the road to here (its drive runs to it at a slant).
+ */
+export const GATE_CLEAR = 24;
 /** The drive from the road to the gate on a site placed beside a road (m). */
 export const GATE_SETBACK = 2.2;
 

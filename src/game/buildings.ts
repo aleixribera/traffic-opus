@@ -1,11 +1,11 @@
 import { BUILDING_TYPES, ROAD_TYPES, type BuildingKind } from "../config";
-import { type V2, add, angleOf, cubicTangent, dist, dot, norm, rectCorners, rectDistance, right, scale, sub, wrapAngle } from "../core/math";
+import { type V2, add, angleOf, cubicTangent, dist, dot, norm, polyAt, polyDir, rectCorners, rectDistance, right, scale, sub, wrapAngle } from "../core/math";
 import type { RoadNetwork } from "../roads/network";
 import { cubicClosest } from "../roads/planner";
 import type { Access } from "../sim/router";
 import type { ZoneId } from "./zones";
 import type { PlantState, Product } from "./industry";
-import { GATE_REACH, GATE_SETBACK, siteFrame } from "./sites";
+import { GATE_CLEAR, GATE_REACH, GATE_SETBACK, siteFrame } from "./sites";
 
 export interface Lot {
   block: string; // zone block key
@@ -319,14 +319,39 @@ export class Buildings {
     const s = net.segs.get(best.seg)!, g = net.segGeom.get(best.seg)!;
     const to = sub(G, best.q), L = Math.hypot(to.x, to.y) || 1;
     const front = add(best.q, scale(to, Math.min(g.width / 2, L) / L));
-    let sC = g.center.length * arcFrac(s.c, best.t, g.center.pts);
-    // (kept off the junction mouths, where a car can't stop)
-    const lo = g.trimA + 2, hi = g.center.length - g.trimB - 2;
-    if (hi <= lo) return null; // (a road all junction mouth: no room for a driveway)
-    sC = Math.max(lo, Math.min(hi, sC));
+    const s0 = g.center.length * arcFrac(s.c, best.t, g.center.pts);
+    const sC = this.gateS(best.seg, s0);
+    if (sC === null) return null; // (a road all junction mouth: no room for a driveway)
     const rs = sideOf(s.c, best.t, c, side);
     // (rot, side) and (rot + PI, -side) are the same plot: keep its gate where it is
-    return { access: { seg: best.seg, s: sC, p: front }, front, side: rs, rot: rs === side ? rot : wrapAngle(rot + Math.PI), type: ROAD_TYPES[s.type].name };
+    const kerb = this.gateKerb(best.seg, s0, sC, front);
+    return { access: { seg: best.seg, s: sC, p: kerb }, front: kerb, side: rs, rot: rs === side ? rot : wrapAngle(rot + Math.PI), type: ROAD_TYPES[s.type].name };
+  }
+
+  /**
+   * Where along road `id` (centre arc-length) a site's gate joins it, from where it meets it (`s`): off the junction
+   * mouths, by GATE_CLEAR at a junction (a long truck waiting to turn in, or to pull out, stands clear of the box) and
+   * 2 m at a plain end or bend; on a road too short for that, halfway between its junctions. Null: no room at all.
+   */
+  private gateS(id: number, s: number): number | null {
+    const net = this.net, g = net.segGeom.get(id)!, sg = net.segs.get(id)!, L = g.center.length;
+    const lo = g.trimA + 2, hi = L - g.trimB - 2;
+    if (hi <= lo) return null;
+    const clear = (n: number) => (net.segsAt(n).length >= 3 ? GATE_CLEAR : 2);
+    const lo2 = g.trimA + clear(sg.a), hi2 = L - g.trimB - clear(sg.b);
+    if (hi2 < lo2) return Math.max(lo, Math.min(hi, (lo2 + hi2) / 2));
+    return Math.max(lo2, Math.min(hi2, s));
+  }
+
+  /** The kerb point a gate's drive meets the road at: `front` where it joins where it meets it, else moved along to `sC`. */
+  private gateKerb(id: number, s0: number, sC: number, front: V2): V2 {
+    if (Math.abs(sC - s0) < 0.5) return front;
+    const g = this.net.segGeom.get(id)!;
+    const q = polyAt(g.center, s0), r = right(polyDir(g.center, s0));
+    // (the side of the road the gate is on, as where it met it)
+    const k = dot(sub(front, q), r) >= 0 ? 1 : -1;
+    const q2 = polyAt(g.center, sC), r2 = right(polyDir(g.center, sC));
+    return add(q2, scale(r2, (k * g.width) / 2));
   }
 
   add(kind: BuildingKind, pl: Placement, now = 0): Building {
@@ -399,6 +424,9 @@ export class Buildings {
         const r = cubicClosest(s.c, b.front);
         if (r.d < g.width / 2 + 1.5) {
           a.s = g.center.length * arcFrac(s.c, r.t, g.center.pts);
+          // (a site's gate stays off the junction mouths: a road that now meets the road by it moves it along)
+          const sC = b.placed && b.plant ? this.gateS(a.seg, a.s) : a.s;
+          if (sC !== null && sC !== a.s) { b.front = this.gateKerb(a.seg, a.s, sC, b.front); a.p = b.front; a.s = sC; }
           const side = sideOf(s.c, r.t, b.c, b.placed ? b.side : undefined);
           // (a site keeps its gate where it is whichever way the road now runs)
           if (b.placed && side !== b.side) b.rot = wrapAngle(b.rot + Math.PI);

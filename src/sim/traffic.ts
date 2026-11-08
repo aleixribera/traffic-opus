@@ -76,6 +76,10 @@ export interface Vehicle {
   lcCool: number;
   wait: number;
   stuck: number;
+  /** Distance driven so far (m), and when it last got PROGRESS m further on: a crawling queue isn't a jam to give up in. */
+  odo?: number;
+  progOdo?: number;
+  progT?: number;
   dest: Access;
   destSide: 1 | -1; // side of the destination relative to the seg's a->b direction
   destS: number; // lane arc-length of the driveway on the final lane (-1 = not computed)
@@ -168,6 +172,9 @@ export const goesIn = (ph: SignalPhase, seg: number, turn?: string) => ph.arms.i
 const TR_N = 100, TR_STEP = 0.35; // drawn-path samples per car (35 m: enough for a road train or an escorted convoy)
 /** A vehicle at least this long is tracked over the edges its body still trails back across. */
 export const LONG = 10;
+/** A driver gives up after this long (s) standing in traffic without getting PROGRESS m further on. */
+export const GIVE_UP = 150;
+const PROGRESS = 8;
 /** Edges kept in a vehicle's history (a road train spans a lane, a junction and the lane before it). */
 const HIST = 8;
 /** A car's paint from its look. */
@@ -395,6 +402,7 @@ export class Traffic {
     if (this.pending.length) {
       const keep: PendingSpawn[] = [];
       const gated = new Set<number>(); // lots whose gate a long truck already has this step
+      const queued = new Set<number>(); // lots with a trip already held up this step (the ones after it wait their turn)
       for (const p of this.pending) {
         let t0 = p.t0 ?? 0;
         if (fromLot(p) && (p.len ?? 0) >= LONG) {
@@ -414,7 +422,16 @@ export class Traffic {
         if (fromLot(p) && this.time - t0 < EMERGE) { keep.push(p); continue; }
         const r = this.trySpawn(p);
         if (r === "ok" && p.go !== undefined) { this.gates.set(p.trip.from, { v: this.vehicles[this.vehicles.length - 1], at: p.from.p }); gated.delete(p.trip.from); } // (the next in line is up)
-        if (r === "wait") { p.wait += dt; p.tries++; if (p.wait < (p.through ? 300 : 90)) keep.push(p); else this.ev.fail(p.trip, "blocked driveway", this.time); } // (a car driving in from beyond the map waits its turn off-map, as at a CS outside connection)
+        if (r === "wait") {
+          // (the first in a yard waiting for a gap is held up by the road; the ones after it are only waiting their
+          // turn behind it: their time isn't a blocked driveway)
+          const lot = fromLot(p) ? p.trip.from : -1;
+          if (lot < 0 || !queued.has(lot)) p.wait += dt;
+          if (lot >= 0) queued.add(lot);
+          p.tries++;
+          // (a car driving in from beyond the map waits its turn off-map, as at a CS outside connection)
+          if (p.wait < (p.through ? 300 : 90)) keep.push(p); else this.ev.fail(p.trip, "blocked driveway", this.time);
+        }
         else if (r === "fail") this.ev.fail(p.trip, "no route", this.time);
       }
       this.pending = keep;
@@ -457,6 +474,8 @@ export class Traffic {
       v.s += v.v * dt;
       v.ideal += v.constrained ? (v.v * dt) / Math.max(v.v0e, 1) : dt;
       if (v.v < 0.3) { v.wait += dt; v.stuck += dt; } else { v.wait = 0; v.stuck = Math.max(0, v.stuck - dt * 2); }
+      v.odo = (v.odo ?? 0) + v.v * dt;
+      if (v.odo - (v.progOdo ?? 0) > PROGRESS) { v.progOdo = v.odo; v.progT = this.time; }
       if (v.fade < 1) v.fade = Math.min(1, v.fade + dt * 2.5);
       if (v.lat !== 0) {
         // steer across smoothly: sideways speed builds up and eases off (an S-curve), and it comes from driving
@@ -484,8 +503,10 @@ export class Traffic {
       if (hc && v.edge !== hc.from && v.edge !== hc && !(v.edge === hc.to && v.s - v.len <= 0.5) && !this.bodyOn(v, hc, 0.5)) this.release(v);
       if (v.boxes) this.boxesOn(v);
       if (r) done.push(v);
-      else if (v.stuck > 150) {
-        // last resort so a broken layout can never freeze the city: the driver gives up
+      else if (v.stuck > GIVE_UP && this.time - (v.progT ?? v.born) > GIVE_UP) {
+        // last resort so a broken layout can never freeze the city: the driver gives up. Only where it is really
+        // stuck: a queue that keeps crawling on (stop, roll a car length, stop again) gets there in the end, and
+        // giving up in it would only send the load out again from the start, into the same queue
         this.ev.fail(v.trip, "gave up in traffic", this.time);
         done.push(v);
       }
