@@ -4,7 +4,8 @@ import type { Building } from "../game/buildings";
 import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
 import { MILESTONES, unlockedBy, type Milestone, type Unlocks } from "../game/progression";
 import { ZONES } from "../game/zones";
-import { BUILD_TIME, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, TRUCK_COST, TRUCK_UPKEEP, UNPOWERED, isPlantKind, powerPace, type Product } from "../game/industry";
+import { BUILD_TIME, DEPOT_REACH, FLEET_HAUL, HIST_HOURS, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, UNPOWERED, isPlantKind, powerPace, type PlantKind, type Product } from "../game/industry";
+import { TRUCK_CLASSES, TRUCK_CLASS_ORDER, type TruckClass } from "../game/trucks";
 import { GROW_NEED, LEVEL_MULT, SITE_LEVELS } from "../game/sites";
 import { MARKET, TOWN_COST, TOWN_SPACING, type Town } from "../game/settlements";
 import { HALLS, TOWN_SIZES, demandPerDay, growthPerDay, needFrom, needsOf, nextNeed, sizeOf } from "../game/towns";
@@ -14,10 +15,14 @@ import type { SignalPlan } from "../roads/network";
 import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId } from "../app";
 import { ROUNDABOUTS, type RoundaboutSize } from "../roads/planner";
 import { ICON, placedIcon, productIcon, roadIcon } from "./icons";
+import { CHANGELOG } from "../changelog";
 import { PLACED, PLACED_TABS, type PlacedKind } from "../game/placed";
-import { SAVE_V } from "../game/city";
+import { GATE_LINK_REACH, SAVE_V } from "../game/city";
 import { BUS_UPKEEP, STOP_COST } from "../game/transit";
 import { Sfx } from "./sfx";
+import { heraldSvg } from "./herald";
+import { cleanName, COMPANY_NAME_MAX, randomHerald } from "../game/company";
+import { companyName } from "../game/names";
 
 export interface Chip {
   text: string;
@@ -97,20 +102,36 @@ const fmtNum = (n: number) => (n >= 10000 ? `${(n / 1000).toFixed(n >= 100000 ? 
 type Banner = { m: Milestone } | { town: number; size: number };
 const signed = (n: number) => `${n >= 0 ? "+" : "−"}${formatMoney(Math.abs(Math.round(n)))}`;
 const hex = (c: number) => "#" + c.toString(16).padStart(6, "0");
+const lum = (c: number) => {
+  const ch = (v: number) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * ch((c >> 16) & 255) + 0.7152 * ch((c >> 8) & 255) + 0.0722 * ch(c & 255);
+};
+const mixRgb = (a: number, b: number, k: number) =>
+  [16, 8, 0].reduce((o, s) => o | (Math.round(((a >> s) & 255) * (1 - k) + ((b >> s) & 255) * k) << s), 0);
+const PLATE_LUM = lum(0x122036), CREAM_2 = 0xcfc4ab;
+/**
+ * A product's colour for bars and pips on the dark plates (theme --plate): a dark one (coal, crude oil) is lifted
+ * toward cream until it reads at 3:1, the others pass as they are.
+ */
+const onPlate = (c: number) => {
+  let x = c;
+  for (let k = 0.1; k <= 1 && (lum(x) + 0.05) / (PLATE_LUM + 0.05) < 3; k += 0.1) x = mixRgb(c, CREAM_2, k);
+  return hex(x);
+};
 
 const FEATURE_NAME = { roundabout: "Roundabouts", signals: "Traffic lights", grid: "Grid tool", parallel: "Parallel roads", transit: "Buses" } as const;
 const plural = (n: number, one: string, many = one + "s") => `${n} ${n === 1 ? one : many}`;
 
-/** What a milestone unlocks, item by item: "Iron Mine", "+4 map tiles", "$15,000 grant". */
+/** What a milestone unlocks, item by item: "Iron Mine", "+1 town to run", "$15,000 grant". */
 function unlockList(u: Unlocks): string[] {
   return [
     ...(u.buildings ?? []).map((k) => BUILDING_TYPES[k].name),
+    ...(u.trucks ?? []).map((c) => `${TRUCK_CLASSES[c].name}s`),
     ...(u.roads ?? []).map((r) => ROAD_TYPES[r].name),
     ...(u.features ?? []).map((f) => FEATURE_NAME[f]),
     ...(u.towns ? [`+${plural(u.towns, "town")} to run`] : []),
     ...(u.bays ? ["+1 truck at every building"] : []),
     ...(u.load ? ["+1 load on every truck"] : []),
-    ...(u.tiles ? [`+${plural(u.tiles, "map tile")}`] : []),
     ...(u.grant ? [`${formatMoney(u.grant)} grant`] : []),
   ];
 }
@@ -126,15 +147,14 @@ const KEYS: [string, string][] = [
   ["Right click", "Undo the last click of a road; again to drop the tool"],
   ["W A S D / drag", "Move the camera"],
   ["Q / E", "Rotate the camera"],
-  ["R / F, wheel", "Zoom in / out"],
+  ["R / F, wheel", "Zoom in / out (placing a building: the wheel turns it, Ctrl + wheel zooms)"],
   ["Tab", "Next road mode"],
   ["Page Up / Down", "Raise or lower the road"],
   ["[ / ]", "Parallel road spacing"],
-  [", / .", "Turn the building you are placing"],
+  [", / .", "Turn the building you are placing 15°"],
   ["Shift", "15° angle steps"],
   ["B", "Bulldozer"],
   ["L", "Add lane (Shift or right click removes)"],
-  ["M", "Map tiles"],
   ["P / Z / C / X", "Progression / Economy / Towns / Transport"],
   ["Space, 1 2 3", "Pause, game speed"],
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
@@ -155,7 +175,7 @@ export class Hud {
   private assets = h("section", "card assets");
   private toolOpts = h("section", "card toolopts");
   // corners
-  private tlBtns = new Map<WinId | "menu" | "tiles", HTMLButtonElement>();
+  private tlBtns = new Map<WinId | "menu", HTMLButtonElement>();
   private win = h("section", "card win");
   private tut = h("section", "card goals");
   private panel = h("aside", "card panel");
@@ -164,9 +184,10 @@ export class Hud {
   private modal = h("div", "modal");
   private rectEl = h("div", "selrect");
   private banner = h("section", "card banner");
+  /** the company's name and herald, top left by the menu (click: rename it) */
+  private companyEl = h("button", "company");
+  private companyKey = "";
   private compass = h("button", "btn icon-btn compass");
-  /** The company's herald and name, top left (filled in by setCompany; hidden until then). */
-  private companyEl = h("div", "company", `<span class="company-herald"></span><span class="company-name"></span>`);
   private compassRot = NaN;
   private undoBtn = h("button", "cat hist");
   private redoBtn = h("button", "cat hist");
@@ -197,7 +218,7 @@ export class Hud {
     // ---- top left: the menu and the city's info buttons
     const tl = h("div", "corner tl");
     const row = h("div", "tl-row");
-    const tlb = (k: WinId | "menu" | "tiles", icon: string, title: string, fn: () => void) => {
+    const tlb = (k: WinId | "menu", icon: string, title: string, fn: () => void) => {
       const b = h("button", "tlb", icon);
       b.title = title;
       b.setAttribute("aria-label", title);
@@ -205,17 +226,16 @@ export class Hud {
       this.tlBtns.set(k, b);
       row.appendChild(b);
     };
-    // ---- COMPANY SLOT: herald + name, see setCompany()
-    this.companyEl.hidden = true;
-    row.appendChild(this.companyEl);
     tlb("menu", ICON.menu, "Pause menu (Esc)", () => this.openPause());
+    this.companyEl.title = "Your company: rename it, change its badge";
+    this.companyEl.onclick = () => { this.sfx.play("click"); this.openCompany(); };
+    row.appendChild(this.companyEl);
     row.appendChild(h("span", "tl-sep"));
     tlb("info", ICON.layers, "Info views", () => this.toggleWin("info"));
     tlb("progression", ICON.flag, "Progression (P)", () => this.toggleWin("progression"));
     tlb("economy", ICON.coins, "Economy (Z)", () => this.toggleWin("economy"));
     tlb("city", ICON.chart, "Towns (C)", () => this.toggleWin("city"));
     tlb("transport", ICON.car, "Transportation overview (X)", () => this.toggleWin("transport"));
-    tlb("tiles", ICON.tiles, "Map tiles (M)", () => app.setTool({ tool: app.st.tool === "unlock" ? "inspect" : "unlock" }));
     this.compass.innerHTML = ICON.north;
     this.compass.title = "North up (the map is turned: Q / E or middle-drag)";
     this.compass.setAttribute("aria-label", "Turn the map north up");
@@ -467,9 +487,10 @@ export class Hud {
       b.setAttribute(k === "bulldoze" ? "aria-pressed" : "aria-expanded", String(on));
     }
     for (const [k, b] of this.tlBtns) {
-      const on = k === "tiles" ? st.tool === "unlock" : k === "info" ? this.winKind === "info" || app.overlay !== "none" : this.winKind === k;
+      const on = k === "info" ? this.winKind === "info" || app.overlay !== "none" : this.winKind === k;
       b.classList.toggle("on", on);
     }
+    this.syncCompany();
     this.undoBtn.disabled = !g.canUndo();
     this.redoBtn.disabled = !g.canRedo();
     const sb = this.speed.children;
@@ -572,7 +593,7 @@ export class Hud {
       items.push(h("p", "to-text", `Click open land at least ${km(TOWN_SPACING)} from other towns, with one of your roads near. The town lays its own streets, and grows while you keep its needs supplied.`));
     } else if (st.tool === "place" && isPlantKind(st.placed)) {
       const D = PLANTS[st.placed];
-      items.push(h("p", "to-text", "Beside a road its gate faces the road. Anywhere else it stands free and waits for a road to its gate. Press , or . to turn it 15°."));
+      items.push(h("p", "to-text", `Scroll to turn it (Ctrl + scroll zooms; , and . turn it 15°). A street is laid from its gate to the nearest road within ${GATE_LINK_REACH} m, round any homes, shown before you click.`));
       items.push(h("p", "to-text", D.deposit
         ? `At least ${Math.round(MIN_DEPOSIT * 100)}% of the plot must be ${D.deposit.name}: the ground shows it while you place. More of it, faster work.`
         : `Trucks from your other plants bring it ${productList(D.inputs)}; ${D.makes ? `it powers the buildings on its roads within ${D.reach! / 1000} km that draw power`
@@ -587,24 +608,11 @@ export class Hud {
       items.push(h("p", "to-text", "Click a junction to add traffic lights or edit their phases."));
     } else if (st.tool === "lane") {
       items.push(h("p", "to-text", "Click a road where the turn lane should start, back from the junction. Middle half: left turns, kerb half: right turns. On a motorway, click before an exit or after an entry. Shift or right click removes."));
-    } else if (st.tool === "unlock") {
-      const left = g.tileSlotsLeft;
-      items.push(h("p", "to-text", left > 0
-        ? `Next tile ${formatMoney(g.nextTilePrice)} · ${left} more allowed. Click a darkened tile next to your land.`
-        : "Reach the next milestone to buy more land."));
     }
     if (!items.length) { el.hidden = true; return; }
     el.hidden = false;
     el.append(h("header", "to-head", "Tool options"), ...items);
     if (focusKey) [...el.querySelectorAll<HTMLElement>("[aria-label]")].find((e) => e.getAttribute("aria-label") === focusKey)?.focus();
-  }
-
-  /** Show the company's name and herald (svg markup) at the top left; null hides the plate. */
-  setCompany(name: string | null, herald = "") {
-    this.companyEl.hidden = !name;
-    (this.companyEl.firstElementChild as HTMLElement).innerHTML = herald;
-    (this.companyEl.lastElementChild as HTMLElement).textContent = name ?? "";
-    this.companyEl.title = name ?? "";
   }
 
   compassAngle(rot: number) {
@@ -671,7 +679,7 @@ export class Hud {
           <span class="bar gl-bar" role="progressbar" aria-label="${m.name}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p * 100)}"><i style="width:${Math.max(2, p * 100)}%"></i></span>
           <p class="gl-gift">${unlockList(m.unlocks).join(" · ")}</p></li>`;
       }).join("");
-      body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : `<p class="gl-done">Every milestone of tiers 1 to 3 reached. Tier 4 comes next.</p>`}${tip ? `<p class="gl-tip">${tip.html}</p>` : ""}</div>`;
+      body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : `<p class="gl-done">Every milestone reached, to a City supplied with electronics and machinery. More comes with the Metropolis.</p>`}${tip ? `<p class="gl-tip">${tip.html}</p>` : ""}</div>`;
     }
     const html = head + body;
     if (this.tut.dataset.html !== html) {
@@ -715,6 +723,12 @@ export class Hud {
     if (g.placedUnlocked("furniture") && (!has("sandpit") || !has("glassworks"))) return { key: "glass", cat: "industry", html: `<b>Towns of ${fmtNum(town)} want household goods.</b> Place a <b>Sand pit</b> on the sand along a river or lake shore, and a <b>Glassworks</b> your sand pit and coal mine reach: it makes glass.` };
     if (g.placedUnlocked("furniture") && !has("furniture")) return { key: "goods", cat: "industry", html: `<b>Build a Furniture factory</b> on a road your glassworks and sawmill reach: it makes household goods from planks and glass, and its trucks sell them to the towns' shops.` };
     if (g.placedUnlocked("constructionplant") && !has("constructionplant")) return { key: "parts", cat: "industry", html: `<b>Towns of ${fmtNum(town)} build in prefab.</b> Their new blocks wait for construction parts. Build a <b>Construction plant</b> your smelter and cement works reach: it makes parts from steel and cement.` };
+    // tier 4: copper, then electronics and machinery for a City
+    const city = TOWN_SIZES[3].pop;
+    if (g.placedUnlocked("coppermine") && !has("coppermine")) return { key: "copper", cat: "industry", html: `<b>Cities of ${fmtNum(city)} want electronics and machinery,</b> and both start with copper. Place a <b>Copper mine</b> on copper ore, ${km(10000)} or more out in the high ranges (the Resources view shows it). Its building site waits for construction parts as well as planks and cement.` };
+    if (g.placedUnlocked("coppersmelter") && !has("coppersmelter")) return { key: "coppersmelter", cat: "industry", html: `<b>Build a Copper smelter</b> on a road your copper mine and a coal mine reach: it smelts the ore with coal into copper. It draws power.` };
+    if (g.placedUnlocked("electronics") && !has("electronics")) return { key: "electronics", cat: "industry", html: `<b>Build an Electronics plant</b> your copper smelter and refinery reach: it makes electronics from copper and the refinery's plastics, and its trucks sell them to the shops of your cities.` };
+    if (g.placedUnlocked("machineworks") && !has("machineworks")) return { key: "machineworks", cat: "industry", html: `<b>Build a Machine works</b> your copper smelter and steel smelter reach: it makes machinery from steel and copper, and its flatbeds take it to the offices and towers of your cities.` };
     return null;
   }
 
@@ -796,8 +810,9 @@ export class Hud {
     if ("town" in X && !t) { this.nextBanner(); return; }
     if ("m" in X) {
       const M = X.m;
-      this.banner.innerHTML = `<header>${M.name}</header>
-        <p class="sub">Milestone reached · ${M.goal}</p>
+      const co = g.company;
+      this.banner.innerHTML = `<header class="banner-co">${heraldSvg(co.herald, co.name, 26)}<span>${M.name}</span></header>
+        <p class="sub">${escapeHtml(co.name)} · milestone reached · ${M.goal}</p>
         <p class="gifts">Unlocked: ${unlockList(M.unlocks).join(" · ")}</p>
         <div class="banner-btns"><button class="btn primary" data-k="ok">Continue</button></div>`;
     } else {
@@ -840,6 +855,60 @@ export class Hud {
   newCity() {
     this.tutHidden = false;
     this.refresh();
+    this.openCompany("new");
+  }
+
+  /** The company's name and herald by the menu, redrawn when either changes. */
+  private syncCompany() {
+    const co = this.app.game.company;
+    const key = co.name + "|" + co.herald.shape + co.herald.field + co.herald.ink;
+    if (key === this.companyKey) return;
+    this.companyKey = key;
+    this.companyEl.innerHTML = `${heraldSvg(co.herald, co.name, 28)}<span class="company-name">${escapeHtml(co.name)}</span>`;
+    this.companyEl.setAttribute("aria-label", `${co.name}: rename the company or change its badge`);
+  }
+
+  /**
+   * The company: its name (edit it, or draw another) and its herald (draw another). A new game opens on it, to
+   * name the company before the first road.
+   */
+  openCompany(from: "hud" | "pause" | "new" = "hud") {
+    const fresh = from === "new";
+    const app = this.app, g = app.game;
+    if (this.modal.hidden && !g.paused) { app.togglePause(); this.resumeOnClose = true; }
+    let herald = { ...g.company.herald };
+    const dlg = this.showModal(`<header>${fresh ? "Your company" : "Company"}</header>
+      <form class="co-form">
+        <div class="co-badge"></div>
+        <label class="co-field"><span>Name</span><input name="n" maxlength="${COMPANY_NAME_MAX}" autocomplete="off" spellcheck="false" value="${escapeHtml(g.company.name)}"></label>
+        <div class="co-btns">
+          <button class="btn" type="button" data-k="name">Another name</button>
+          <button class="btn" type="button" data-k="badge">Another badge</button>
+          <button class="btn primary" type="submit">${fresh ? "Start" : "Done"}</button>
+        </div>
+      </form>`, "Company");
+    dlg.classList.add("co-dlg");
+    if (from === "pause") this.backButton(dlg);
+    const input = dlg.querySelector("input") as HTMLInputElement;
+    const badge = dlg.querySelector(".co-badge") as HTMLElement;
+    const draw = () => { badge.innerHTML = heraldSvg(herald, input.value || g.company.name, 72, "Company badge"); };
+    draw();
+    input.oninput = draw;
+    (dlg.querySelector('[data-k="name"]') as HTMLButtonElement).onclick = () => { input.value = companyName(Math.random); draw(); };
+    (dlg.querySelector('[data-k="badge"]') as HTMLButtonElement).onclick = () => {
+      let n = randomHerald(Math.random);
+      for (let k = 0; k < 8 && n.shape === herald.shape && n.field === herald.field; k++) n = randomHerald(Math.random);
+      herald = n;
+      draw();
+    };
+    (dlg.querySelector("form") as HTMLFormElement).onsubmit = (e) => {
+      e.preventDefault();
+      g.company = { name: cleanName(input.value) || g.company.name, herald };
+      this.syncCompany();
+      if (from === "pause") this.openPause();
+      else this.closeModal();
+    };
+    requestAnimationFrame(() => { input.focus(); input.select(); });
   }
 
   back(): boolean {
@@ -964,9 +1033,23 @@ export class Hud {
       const L = b.plant!.last, net = L.earned - L.spent;
       return `<dt>${BUILDING_TYPES[b.kind].name}</dt><dd class="${net >= 0 ? "good" : "bad"}">${signed(net)}</dd>`;
     }).join("");
+    // what the company made over the last day, per product, against what its plants can make
+    const made = new Map<Product, { made: number; can: number; byHour: number[] }>();
+    for (const b of g.industry.plants()) {
+      if (b.built < 1 || b.plant!.site) continue;
+      for (const p of Object.keys(PLANTS[b.kind as PlantKind].outputs) as Product[]) {
+        const m = Industry.madeLately(b, p), e = made.get(p) ?? { made: 0, can: 0, byHour: Array(HIST_HOURS).fill(0) };
+        // (a plant not a day old yet: what it could make in the hours it has worked)
+        e.made += m.made; e.can += Industry.perDay(b, p) * Math.min(1, m.hours / HIST_HOURS);
+        m.byHour.forEach((v, i) => { e.byHour[HIST_HOURS - m.byHour.length + i] += v; });
+        made.set(p, e);
+      }
+    }
+    const prodRows = [...made].map(([p, e]) => `<li><span class="pd-name">${productIcon(p)}${PRODUCTS[p].name}</span>${hourTicks(e.byHour, PRODUCTS[p].color)}<span class="num"><b>${fmtNum(Math.round(e.made))}</b><span class="muted"> / ${fmtNum(Math.round(e.can))}</span></span></li>`).join("");
     const html = `<p class="win-sub">Average hour, last ${n} hour${n === 1 ? "" : "s"}</p>
       <dl class="facts money-rows">${rows.filter(([, v, always]) => always || Math.abs(v) >= 0.5).map(([k, v]) => `<dt>${k}</dt><dd class="${v > 0 ? "good" : v < 0 ? "bad" : ""}">${signed(v)}</dd>`).join("")}
       <dt class="tot">Balance</dt><dd class="tot ${total >= 0 ? "good" : "bad"}">${signed(total)}</dd></dl>
+      ${prodRows ? `<h3 class="sub-h">Made, last 24 hours <span class="muted">· made / can make</span></h3><ul class="pd-list">${prodRows}</ul>` : ""}
       ${plants ? `<h3 class="sub-h">Your plants, last hour</h3><dl class="facts">${plants}</dl>` : ""}
       ${sparkline(g.history.map((x) => x.money), "Money")}`;
     this.setWin("Economy", html);
@@ -1172,8 +1255,9 @@ export class Hud {
     // its needs: what it takes to grow (the mark), what its shops buy at most (the whole bar), what came yesterday
     const mine = g.towns.buildingsOf(t);
     const stations = mine.filter((b) => BUILDING_TYPES[b.kind].fuel).length;
+    const offices = mine.some((b) => Industry.isOffice(b) && b.built >= 1 && !b.abandoned);
     const needs = needsOf(t.pop).map((p) => {
-      const buyer = p === "fuel" && stations ? "Filling stations buy" : "Shops buy";
+      const buyer = p === "fuel" && stations ? "Filling stations buy" : p === "machinery" && offices ? "Offices buy" : "Shops buy";
       const share = t.supply[p];
       const want = demandPerDay(p, t.pop), market = want * MARKET;
       const got = t.yesterday[p] ?? 0, today = t.today[p] ?? 0;
@@ -1288,16 +1372,41 @@ export class Hud {
       const outs = (Object.keys(D.outputs) as Product[]).map((p) => stock(p, P.out[p] ?? 0)).join("");
       const L = P.last;
       const flare = b.built >= 1 ? Industry.flaring(b) : undefined;
+      const logi = D.logistics;
+      // its fleet by class: the mix its level runs, up to the best class unlocked (read-only: nothing to pick)
+      const mix = D.trucks ? g.industry.mixOf(b) : null;
+      const short: Record<TruckClass, [string, string]> = { light: ["light", "light"], heavy: ["heavy", "heavy"], roadtrain: ["road train", "road trains"] };
+      const used = mix ? TRUCK_CLASS_ORDER.filter((c) => mix[c] > 0) : [];
+      const mixText = mix ? used.map((c) => `${mix[c]} ${short[c][mix[c] === 1 ? 0 : 1]}`).join(" · ") : "";
+      const mixBar = mix && used.length > 1 ? `<span class="fm-bar" aria-hidden="true">${used.map((c) => `<i class="fm-${c}" style="flex:${mix[c]}"></i>`).join("")}</span>` : "";
+      const next = TRUCK_CLASS_ORDER.find((c) => !g.truckUnlocked(c));
+      const loads = TRUCK_CLASS_ORDER.filter((c) => g.truckUnlocked(c)).map((c) => `${TRUCK_CLASSES[c].name.toLowerCase()}s carry ${plural(g.industry.capOf(b, c), "load")}`).join(", ");
+      const classTip = `Its level sets the mix: each level swaps light trucks for bigger ones, and a level ${SITE_LEVELS} site runs mostly the biggest. ${cap(loads)}. A truck at the dock waits for a full load, up to an hour, so a big one doesn't set off half empty.${next ? ` ${TRUCK_CLASSES[next].name}s join the mix with the “${unlockedBy((u) => u.trucks?.includes(next))?.name}” milestone.` : ""}`;
+      const classRow = D.trucks ? `<dt>Fleet</dt><dd title="${escapeHtml(classTip)}">${used.length > 1 ? plural(g.industry.trucksOf(b), "truck") : mixText}</dd>${mixBar ? `<dd class="fm-row" title="${escapeHtml(classTip)}">${mixBar}<span class="fm-key">${mixText}</span></dd>` : ""}` : "";
+      if (logi) {
+        const held = Industry.stored(b);
+        const body = logi === "warehouse" ? this.warehouseBody(b, store, held) : this.depotBody(b, store);
+        const html = `<header><span class="svc-tag">${placedIcon(b.kind)}</span>${T.name}</header>
+          <p class="muted small">${chainText(b.kind)}</p>
+          <p class="status ${statusCls}">${status}</p>
+          ${body}
+          ${D.trucks ? `<dl class="facts">${classRow}<dt>Trucks out</dt><dd>${busy} of ${g.industry.trucksOf(b)}</dd></dl>` : ""}
+          <button class="btn quiet danger demolish">Demolish</button>`;
+        if (this.setPanel(html)) this.bindDemolish(b);
+        return;
+      }
       const html = `<header><span class="svc-tag">${placedIcon(b.kind)}</span>${T.name}</header>
         <p class="muted small">${chainText(b.kind)}</p>
         <p class="status ${statusCls}">${status}</p>
+        ${b.built >= 1 ? outputDay(b) : ""}
         ${ins ? `<h3 class="sub-h">In the yard</h3><dl class="facts">${ins}</dl>` : ""}
         ${outs ? `<h3 class="sub-h">Ready to ship</h3><dl class="facts">${outs}</dl>` : ""}
-        ${flare ? `<p class="small muted">Its yard is full of ${PRODUCTS[flare].name.toLowerCase()}: nothing of yours uses it until tier ${Industry.laterTier(flare)}, so it burns off the rest and keeps making ${(Object.keys(D.outputs) as Product[]).filter((p) => p !== flare).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ")}.</p>` : ""}
+        ${flare ? `<p class="small muted">Its yard is full of ${PRODUCTS[flare].name.toLowerCase()}: ${g.industry.wants(flare) ? `your ${Industry.takers(flare)} can't take more for now` : Industry.usedBy(flare) ? `nothing of yours uses it until you build a ${Industry.takers(flare)}` : `nothing of yours uses it until tier ${Industry.laterTier(flare)}`}, so it burns off the rest and keeps making ${(Object.keys(D.outputs) as Product[]).filter((p) => p !== flare).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ")}.</p>` : ""}
         ${siteLevel(b)}
         <dl class="facts">
           ${plantRows}${powerRow}
-          ${D.trucks ? `<dt>Trucks out</dt><dd>${busy} of ${g.industry.trucksOf(b)}<button class="btn buy-truck" ${g.industry.canBuyTruck(b, g.money) ? "disabled" : ""} title="${escapeHtml(g.industry.canBuyTruck(b, g.money) ?? `Another truck for this plant: ${formatMoney(TRUCK_COST)}, then ${formatMoney(TRUCK_UPKEEP)}/h`)}">+ Truck · ${formatMoney(TRUCK_COST)}</button></dd>` : ""}
+          ${classRow}
+          ${D.trucks ? `<dt>Trucks out</dt><dd title="Its fleet comes with its level: enough trucks to carry everything it makes ${FLEET_HAUL / 1000} km away and back">${busy} of ${g.industry.trucksOf(b)}</dd>` : ""}
           <dt>Staff</dt><dd>${g.people.workersAt(b.id)} / ${b.cap}</dd>
           ${D.deposit ? `<dt>${cap(D.deposit.name)}</dt><dd>${Math.round(P.yld * 100)}% of full yield</dd>` : ""}
         </dl>
@@ -1346,6 +1455,9 @@ export class Hud {
       if (grp === "com" && T.fuel) rows.push(["Sells", `${productIcon("fuel")} the town's fuel`]);
       else if (grp === "com") {
         rows.push(["Food on the shelves", stockBar(b.stock, 6)]);
+        // (a City's offices and towers take its machinery)
+        const tw = b.town !== undefined ? g.towns.byId.get(b.town) : undefined;
+        if (Industry.isOffice(b) && tw && needsOf(tw.pop).includes("machinery")) rows.push(["Buys", `${productIcon("machinery")} Machinery`]);
         rows.push(["Customers", b.custDay !== undefined ? `${fmtNum(b.custDay)} <span class="muted">yesterday</span>` : `${fmtNum(b.custToday ?? 0)} <span class="muted">so far</span>`]);
       }
       if (b.built >= 1 && !b.abandoned) rows.push(["Efficiency", `${Math.round(health * 100)}%`]);
@@ -1367,14 +1479,48 @@ export class Hud {
     if (link && town) link.onclick = () => { this.sfx.play("click"); this.showTown(town.id); };
   }
 
+  /** A warehouse's panel: what it holds, and per product whether it takes it and whether it is a feeder for it. */
+  private warehouseBody(b: Building, store: number, held: number): string {
+    const g = this.app.game, P = b.plant!;
+    const stock = (Object.keys(P.stock) as Product[]).filter((p) => (P.stock[p] ?? 0) >= 1);
+    // the products the company can make by now, and anything already in store
+    const made = new Set<Product>(stock);
+    for (const k of g.progress.unlocked.buildings) for (const p of Object.keys(PLANTS[k].outputs) as Product[]) made.add(p);
+    const list = (Object.keys(PRODUCTS) as Product[]).filter((p) => made.has(p));
+    const rows = stock.map((p) => `<dt>${PRODUCTS[p].name}</dt><dd>${stockBar(P.stock[p]!, store, PRODUCTS[p].color)}<span class="num">${Math.floor(P.stock[p]!)}</span></dd>`).join("");
+    const takes = (p: Product) => !P.takes || P.takes.includes(p), feeds = (p: Product) => !!P.feeds?.includes(p);
+    const opts = list.map((p) => `<tr><th scope="row">${productIcon(p)}${PRODUCTS[p].name}</th>
+        <td><label class="wh-hit"><input type="checkbox" class="wh-take" data-p="${p}" aria-label="Take ${escapeHtml(PRODUCTS[p].name.toLowerCase())}" ${takes(p) ? "checked" : ""}></label></td>
+        <td><label class="wh-hit"><input type="checkbox" class="wh-feed" data-p="${p}" aria-label="Feeder for ${escapeHtml(PRODUCTS[p].name.toLowerCase())}" ${feeds(p) ? "checked" : ""}></label></td></tr>`).join("");
+    return `<h3 class="sub-h">In store <span class="muted num">${Math.floor(held)} / ${store}</span></h3>
+      ${rows ? `<dl class="facts">${rows}</dl>` : `<p class="small muted">Empty. Your buildings send it what no plant or town can take yet.</p>`}
+      <h3 class="sub-h">Products</h3>
+      <table class="wh-opts"><thead><tr><th scope="col"><span class="sr">Product</span></th><th scope="col" title="Your trucks may bring it here when nothing else will take it">Take</th><th scope="col" title="Sent here first, before plants and towns farther away: it splits a long haul into two legs">Feeder</th></tr></thead><tbody>${opts}</tbody></table>
+      <p class="small muted">Taken products come here only when no plant or town wants them. A feeder product comes here first when the warehouse is nearer than its buyers, and its own trucks carry it on.</p>`;
+  }
+
+  /** A fuel depot's panel: its fuel, the trucks it filled and what that saved. */
+  private depotBody(b: Building, store: number): string {
+    const P = b.plant!;
+    const fuel = P.stock.fuel ?? 0;
+    return `<dl class="facts">
+        <dt>Fuel</dt><dd>${stockBar(fuel, store, PRODUCTS.fuel.color)}<span class="num">${fuel.toFixed(1)}</span></dd>
+        <dt>Trucks filled</dt><dd>${fmtNum(P.served ?? 0)}</dd>
+        <dt>Saved on fuel</dt><dd class="${(P.saved ?? 0) > 0 ? "good" : ""}">${formatMoney(Math.round(P.saved ?? 0))}</dd>
+        <dt>Last hour</dt><dd>${plural(P.last.served ?? 0, "truck")} · ${formatMoney(Math.round(P.last.saved ?? 0))}</dd>
+      </dl>
+      <p class="small muted">Your trucks whose run passes within ${(DEPOT_REACH / 1000).toFixed(1)} km of it fill up here at cost, not the market price, while it has fuel. Your refineries' tankers keep it stocked.</p>`;
+  }
+
   private bindDemolish(b: Building) {
     const g = this.app.game;
     const btn = this.panel.querySelector(".demolish") as HTMLButtonElement | null;
     if (btn) btn.onclick = () => { g.bulldoze([], [b.id]); this.closeSelection(); this.app.selected = null; this.sfx.play("remove"); };
-    const buy = this.panel.querySelector(".buy-truck") as HTMLButtonElement | null;
-    if (buy) buy.onclick = () => {
-      const why = g.buyTruck(b.id);
-      if (why) this.toast(why); else { this.sfx.play("place"); this.lastPanel = ""; this.fillBuilding(b); }
+    const redraw = () => { this.lastPanel = ""; this.fillBuilding(b); };
+    for (const el of this.panel.querySelectorAll<HTMLInputElement>(".wh-take, .wh-feed")) el.onchange = () => {
+      const p = el.dataset.p as Product;
+      const why = g.setWarehouse(b.id, p, el.classList.contains("wh-take") ? { take: el.checked } : { feed: el.checked });
+      if (why) this.toast(why); else { this.sfx.play("click"); redraw(); }
     };
   }
 
@@ -1475,9 +1621,11 @@ export class Hud {
   openPause() {
     const app = this.app;
     if (!app.game.paused) { app.togglePause(); this.resumeOnClose = true; }
-    const dlg = this.showModal(`<header class="pm-head">${escapeHtml(app.game.cityName)}<span class="muted">Paused</span></header>
+    const co = app.game.company;
+    const dlg = this.showModal(`<header class="pm-head pm-co">${heraldSvg(co.herald, co.name, 36)}<span class="pm-co-t">${escapeHtml(co.name)}<span class="muted">Paused · ${escapeHtml(app.game.cityName)}</span></span></header>
       <div class="pm-list">
         <button class="pm resume">Resume</button>
+        <button class="pm co">Company</button>
         <button class="pm save">Save game</button>
         <button class="pm load">Load game</button>
         <button class="pm keys">Controls</button>
@@ -1490,6 +1638,7 @@ export class Hud {
     on(".save", () => this.openSaves(true));
     on(".load", () => this.openSaves(false));
     on(".keys", () => this.openKeys());
+    on(".pm.co", () => this.openCompany("pause"));
     on(".home", () => {
       if (app.mode === "play") app.saves.autosave(app.game);
       this.resumeOnClose = false;
@@ -1506,6 +1655,7 @@ export class Hud {
       this.closeModal();
       this.tutHidden = false;
       this.toast(app.saves.latest() ? "New company. Your last one is in the autosaves." : "New company");
+      this.openCompany("new");
     });
     requestAnimationFrame(() => (dlg.querySelector(".resume") as HTMLButtonElement).focus());
   }
@@ -1514,6 +1664,18 @@ export class Hud {
     const b = h("button", "btn quiet back", `${ICON.caret}<span>Back</span>`);
     b.onclick = () => (this.app.mode === "menu" ? this.closeModal() : this.openPause());
     dlg.prepend(b);
+  }
+
+  /** What's new: every release, newest first, scrolling back to the first. */
+  openNews(back = true) {
+    const when = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    const rels = CHANGELOG.map((r, i) => `<section class="cl-rel${i === 0 ? " latest" : ""}">
+        <h3><span class="cl-v">${r.v}</span><span class="cl-t">${escapeHtml(r.title)}</span><time datetime="${r.date}">${when(r.date)}</time></h3>
+        <ul>${r.notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("")}</ul>
+      </section>`).join("");
+    const dlg = this.showModal(`<header>What's new</header><div class="cl-list" tabindex="0" aria-label="Updates, newest first">${rels}</div>`, "What's new");
+    dlg.classList.add("news");
+    if (back) this.backButton(dlg);
   }
 
   openKeys() {
@@ -1532,7 +1694,7 @@ export class Hud {
         const old = (m.v ?? 1) !== SAVE_V;
         return `<li data-id="${m.id}">
           ${m.thumb ? `<img src="${m.thumb}" alt="" width="96" height="60">` : `<span class="thumb-empty"></span>`}
-          <span class="save-meta"><b>${escapeHtml(m.name)}</b><span>${old ? "Older version: can't be loaded" : `${plural(m.level, "milestone")} · ${fmtNum(m.residents)} people · ${fmtTime(m.playtime)} played`}</span></span>
+          <span class="save-meta"><b>${escapeHtml(m.name)}</b>${m.company ? `<span class="save-co">${heraldSvg(m.company.herald, m.company.name, 16)}${escapeHtml(m.company.name)}</span>` : ""}<span>${old ? "Older version: can't be loaded" : `${plural(m.level, "milestone")} · ${fmtNum(m.residents)} people · ${fmtTime(m.playtime)} played`}</span></span>
           ${saving ? "" : `<button class="btn load" ${old ? "disabled" : ""}>Load</button>`}${m.auto ? "" : `<button class="btn icon-btn del" aria-label="Delete save" title="Delete save">${ICON.bulldoze}</button>`}
         </li>`;
       }).join("") || `<li class="muted">No saves yet. The game autosaves every minute.</li>`}</ul>`, saving ? "Save game" : "Load game");
@@ -1606,6 +1768,54 @@ function townChart(t: Town, next: (typeof TOWN_SIZES)[number] | undefined): stri
   </svg>`;
 }
 
+/**
+ * What a plant makes a day: per product, the loads made over the last day and what it can make at its level, fully
+ * staffed and powered; under it, its main product hour by hour against that pace.
+ */
+function outputDay(b: Building): string {
+  const D = PLANTS[b.kind as PlantKind];
+  const ps = (Object.keys(D.outputs) as Product[]);
+  if (!ps.length) return "";
+  const rows = ps.map((p) => {
+    const m = Industry.madeLately(b, p), can = Industry.perDay(b, p) * Math.min(1, Math.max(m.hours, 1) / HIST_HOURS);
+    const made = m.hours ? fmtNum(Math.round(m.made)) : "–";
+    const share = m.hours >= HIST_HOURS && can > 0 ? m.made / can : null;
+    const cls = share === null ? "" : share >= 0.8 ? "good" : share < 0.4 ? "bad" : "";
+    return `<dt>${PRODUCTS[p].name}</dt><dd><b class="num pd-made ${cls}">${made}</b><span class="muted"> of ${fmtNum(Math.round(can))} it can make</span></dd>`;
+  }).join("");
+  const m = Industry.madeLately(b, ps[0]);
+  const hrs = m.hours;
+  const head = hrs >= HIST_HOURS ? "A day, last 24 hours" : hrs ? `Its first ${plural(hrs, "hour")}` : "Its first hour";
+  return `<h3 class="sub-h">${head}</h3><dl class="facts">${rows}</dl>${hourBars(m.byHour, Industry.perDay(b, ps[0]) / 24, PRODUCTS[ps[0]])}`;
+}
+
+/** A tiny row of 24 hourly bars (the Economy window's production list). */
+function hourTicks(vs: number[], color: number): string {
+  const hi = Math.max(1, ...vs), W = 72, H = 16, bw = W / vs.length;
+  const bars = vs.map((v, i) => v > 0 ? `<rect x="${(i * bw).toFixed(1)}" y="${(H - (v / hi) * H).toFixed(1)}" width="${(bw - 0.6).toFixed(1)}" height="${((v / hi) * H).toFixed(1)}"/>` : "").join("");
+  return `<svg class="pd-ticks" style="--pc:${onPlate(color)}" viewBox="0 0 ${W} ${H}" aria-hidden="true">${bars}</svg>`;
+}
+
+/** Bars of loads made each hour (oldest left), with the full pace as a dashed line. */
+function hourBars(vs: number[], pace: number, P: { name: string; color: number }): string {
+  if (vs.length < 2) return "";
+  const W = 248, H = 60, top = 18, bot = 46, n = HIST_HOURS;
+  const hi = niceCeil(Math.max(1, pace * 1.15, ...vs));
+  const y = (v: number) => bot - (v / hi) * (bot - top);
+  const bw = W / n;
+  const x0 = (n - vs.length) * bw;
+  const bars = vs.map((v, i) => v > 0 ? `<rect x="${(x0 + i * bw + 1).toFixed(1)}" y="${y(v).toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${(bot - y(v)).toFixed(1)}"/>` : "").join("");
+  const pl = y(pace);
+  const total = vs.reduce((a, v) => a + v, 0);
+  return `<svg class="tn-chart hb-chart" style="--pc:${onPlate(P.color)}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${P.name} made each hour over the last ${vs.length} hours: ${fmtNum(Math.round(total))} loads, against a full pace of ${pace.toFixed(1)} an hour">
+    <line class="tc-base" x1="0" x2="${W}" y1="${bot}" y2="${bot}"/>
+    ${bars}
+    <line class="tc-goal" x1="0" x2="${W}" y1="${pl.toFixed(1)}" y2="${pl.toFixed(1)}"/>
+    <text class="tc-t" x="${W}" y="9" text-anchor="end">dashed: full pace, ${pace < 10 ? pace.toFixed(1) : Math.round(pace)} an hour</text>
+    <text class="tc-t" x="0" y="${H - 2}">${n} hours ago</text><text class="tc-t" x="${W}" y="${H - 2}" text-anchor="end">now</text>
+  </svg>`;
+}
+
 /** A round number at or above v, for a chart's top line: 10, 15, 20, 30, 40, 50, 60, 80, 100… */
 function niceCeil(v: number): number {
   const m = Math.pow(10, Math.floor(Math.log10(v)));
@@ -1635,7 +1845,7 @@ function rbIcon(size: RoundaboutSize): string {
 
 function stockBar(n: number, max: number, color?: number): string {
   const k = Math.max(0, Math.min(max, Math.floor(n)));
-  const st = color === undefined ? "" : ` style="--pc:${hex(color)}"`;
+  const st = color === undefined ? "" : ` style="--pc:${onPlate(color)}"`;
   // (a big store shows as 12 pips, each a share of it)
   const pips = Math.min(max, 12), on = Math.round((k / Math.max(1, max)) * pips);
   return `<span class="pips" role="img" aria-label="${k} of ${max}"${st}>${Array.from({ length: pips }, (_, i) => `<i class="${i < on ? "on" : ""}"></i>`).join("")}</span>`;
@@ -1681,6 +1891,8 @@ function productList(o: Partial<Record<Product, number>>): string {
 /** What a plant takes and makes: "Fertile soil → crops", "Crops → food". */
 function chainText(k: keyof typeof PLANTS): string {
   const D = PLANTS[k];
+  if (D.logistics === "warehouse") return "Any product → stored, shipped on";
+  if (D.logistics === "depot") return "Fuel → your trucks, at cost";
   const to = D.makes ? "power" : productList(D.outputs);
   // (a mine digs what its deposit is: "Coal deposit → coal", not "Coal → coal")
   const from = D.deposit ? `${cap(D.deposit.name)}${D.deposit.name === to ? " deposit" : ""}` : cap(productList(D.inputs));

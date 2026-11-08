@@ -70,7 +70,6 @@ it("builds a late-game company", () => {
   g.start();
   g.unlockAll();
   g.money = 1e9;
-  for (let i = -12; i <= 12; i++) for (let j = -12; j <= 12; j++) g.tiles.add(`${i},${j}`);
   const A = g.towns.list[0];
 
   // two more towns, a road from the start town to each

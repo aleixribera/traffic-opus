@@ -32,6 +32,8 @@ export function road(g: Game, a: V2, b: V2, type: any = "street") {
  * bridge (with ramps up to it) where water is in the way. It costs no more than `budget`. The legs it was laid in
  * and what it cost; "money" if every way through costs more; "blocked" if there is none.
  */
+/** Why the last layRoad found no way through: the first planner error of each route it tried. */
+export const roadErrors: string[] = [];
 export function layRoad(g: Game, a: V2, b: V2, budget = Infinity): { legs: [V2, V2][]; cost: number; bridge: number } | "money" | "blocked" {
   const at = (p: V2, level: number): Snap => {
     const s = snap(g.net, p, { mpp: 0.4, level, type: "street" });
@@ -49,10 +51,11 @@ export function layRoad(g: Game, a: V2, b: V2, budget = Infinity): { legs: [V2, 
   for (let d = 0; d <= L; d += 10) if (g.world.isWater(along(d))) { if (w0 < 0) w0 = d; w1 = d; }
   if (w0 > 80 && w1 < L - 80) routes.push([{ p: a, lv: 0 }, { p: along(w0 - 70), lv: 1 }, { p: along(w1 + 70), lv: 1 }, { p: b, lv: 0 }]);
   let dear = false;
+  roadErrors.length = 0;
   for (const r of routes) {
     const legs = r.slice(1).map((q, k) => [r[k], q] as const);
     const plans = legs.map(([p, q]) => planRoad(g.net, g.world, { start: at(p.p, p.lv), end: at(q.p, q.lv), mode: "straight", type: "street" }));
-    if (plans.some((p) => p.errors.length)) continue;
+    if (plans.some((p) => p.errors.length)) { roadErrors.push(plans.find((p) => p.errors.length)!.errors[0].msg); continue; }
     const cost = plans.reduce((s, p) => s + p.cost, 0);
     if (cost > budget) { dear = true; continue; }
     // (each leg after the first is planned again once the one before is down, to join it)

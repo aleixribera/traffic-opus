@@ -6,6 +6,7 @@ import { cubicClosest } from "../roads/planner";
 import { cubicTangent, formatMoney, norm, scale, sub, v2, type V2 } from "../core/math";
 import { ROAD_TYPES } from "../config";
 import { SAVE_V, START_MONEY } from "../game/city";
+import { CHANGELOG, VERSION } from "../changelog";
 
 type SaveData = ReturnType<Game["serialize"]>;
 
@@ -35,6 +36,8 @@ export class MainMenu {
   private live = document.createElement("div");
   private curtain = document.createElement("div");
   private strip = document.createElement("div");
+  /** the version in the bottom-right corner, in every mode; it opens What's new */
+  private ver = document.createElement("button");
   private data: SaveData | null = null;
   private timer = 0;
 
@@ -45,7 +48,12 @@ export class MainMenu {
     this.curtain.hidden = true;
     this.strip.className = "card mm-strip";
     this.strip.hidden = true;
-    document.body.append(this.root, this.curtain, this.strip);
+    this.ver.className = "ver-tag";
+    this.ver.textContent = VERSION;
+    this.ver.title = "What's new";
+    this.ver.setAttribute("aria-label", `Version ${VERSION}: what's new`);
+    this.ver.onclick = () => { this.hud.sound("click"); this.hud.openNews(app.mode === "menu"); };
+    document.body.append(this.root, this.curtain, this.strip, this.ver);
     app.onMode((m) => {
       this.root.hidden = m !== "menu";
       this.strip.hidden = m !== "explore";
@@ -140,11 +148,12 @@ export class MainMenu {
           <button class="mm-item" data-a="explore"><span class="mm-l">Explore ${esc(name)}</span><span class="mm-s">The company behind this menu. Look round, try the tools; nothing is saved</span></button>
           <button class="mm-item" data-a="keys"><span class="mm-l">Controls</span></button>
         </div>
+        <button class="mm-news" data-a="news"><span class="mm-news-k">New in ${VERSION}</span><span class="mm-news-t">${esc(CHANGELOG[0].title)}</span></button>
       </nav>`;
     this.live.className = "card mm-live";
     this.live.setAttribute("aria-live", "off");
     this.root.append(this.live);
-    for (const b of this.root.querySelectorAll<HTMLButtonElement>(".mm-item")) b.onclick = () => this.act(b.dataset.a!);
+    for (const b of this.root.querySelectorAll<HTMLButtonElement>(".mm-item, .mm-news")) b.onclick = () => this.act(b.dataset.a!);
     this.strip.innerHTML = `<span><b>Exploring ${esc(name)}</b><span class="muted"> · nothing here is saved</span></span><button class="btn">Main menu</button>`;
     (this.strip.querySelector("button") as HTMLButtonElement).onclick = () => this.open();
     this.tick();
@@ -175,5 +184,6 @@ export class MainMenu {
     } else if (a === "load") this.hud.openSaves(false);
     else if (a === "explore") app.setMode("explore");
     else if (a === "keys") this.hud.openKeys();
+    else if (a === "news") this.hud.openNews();
   }
 }

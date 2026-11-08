@@ -29,6 +29,10 @@ component rule when a token exists; add a token if a new one is needed.
 | `--good`, `--good-fill` | `#93c97a`, `#3a7036` | good lettering; go fills | 8.5; cream on fill 4.9 |
 | `--info` | `#7fb6e0` | neutral data lines, power | 7.5 |
 | `--bar-ok/mid/low` | green / ochre / red | supply and progress bars | |
+| `--copper` | `#d07a45` | a material colour: copper, the road-train share of the fleet bar | |
+
+Product colours (bars, pips, hour charts) go through `onPlate()` in `hud.ts`: a dark one (coal, crude oil) is lifted
+toward cream until it reaches 3:1 on `--plate`. Selected text is ochre with navy lettering (`::selection`).
 
 Each signal colour has one meaning. Ochre is selection and progress, never "warning"; brick is trouble. Text never
 goes below 4.5:1 against the plate it sits on; `--cream-3` is the floor and only on `--plate`/`--plate-2`.
@@ -109,9 +113,22 @@ A solid plate (not a text halo) keeps the label at full contrast over any terrai
 
 ## The company slot
 
-`hud.setCompany(name, heraldSvg)` fills `.company` at the far left of the top-left bar: a 32px herald then the name in
-display caps (19px, max 250px, ellipsis, full name in the tooltip), with a rule separating it from the menu buttons.
-It's hidden until called. The explore strip at the top centre keeps clear of it (`left: max(50%, 790px)`).
+`.company` is a button in the top-left bar, after the menu button: the company's 28px herald (`herald.ts`) then its
+name in display caps (19px, max 250px, ellipsis). Hover raises it to `--plate-2` with ochre lettering; a click opens
+the company dialog (`.co-dlg`): the badge on an inset `--ink` well with a pinstripe, the name field in display caps,
+and Another name / Another badge / Done. The herald also signs the milestone banner (`.banner-co`), the pause menu
+header (`.pm-co`) and each save (`.save-co`, ochre lettering). The explore strip at the top centre keeps clear of the
+bar (`left: max(50%, 790px)`).
+
+## Bulletins and readouts added with the industry chains
+
+- **What's new** (`.dialog.news`): one release per block, version in `--ochre-hi` for the latest, date in small caps,
+  points marked with ochre diamonds. The menu card's foot carries the latest as an inset `--ink` slip (`.mm-news`).
+- **Version tab** (`.ver-tag`): 12px `--cream-3` on `--bar` (7.0:1), bottom right on the title menu, on the bottom
+  bar's top rule in play so it never covers the speed buttons.
+- **Hour bars and production ticks** (`.hb-chart`, `.pd-ticks`): bars in the product's colour on an inset `--ink` well.
+- **Fleet split bar** (`.fm-bar`): light, heavy, road train as `--cream-2`, `--ochre`, `--copper`, pale to deep.
+- **Warehouse table** (`.wh-opts`): ledger rows with hairlines, stamped TAKE / FEEDER heads, square ochre checkboxes.
 
 ## Viewports
 

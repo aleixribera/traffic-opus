@@ -62,16 +62,23 @@ vec3 flowTint(float r) {
     float halfW = (f + b) * LW * 0.5 + ${SHOULDER.toFixed(2)} + med;
     // where a taper pulls the surface in on this side, the edge band and line follow it in
     // (by the distance in from each side's own edge: a deep taper pulls one edge right past the centreline)
-    float de = min(halfW - vClip.y - u, u + halfW - vClip.x);
+    float deR = halfW - vClip.y - u, deL = u + halfW - vClip.x; // in from the right and left edges
+    float de = min(deR, deL);
     float edge = smoothstep(0.42, 0.42 + fwidth(u), de);
-    float dash = step(fract(v / 9.0), 0.5);
+    // US lane lines: 3 m dashes with 9 m gaps
+    float dash = step(fract(v / 12.0), 0.25);
     float lanes = 0.0;
+    // the median's half-width here: it stops short of a junction in a rounded nose (vMed.y: distance to the nearer
+    // junction end)
+    float dn = vMed.y - 2.2;
+    float mh = med <= 0.0 ? 0.0 : dn >= med ? med : (dn <= 0.0 ? 0.0 : sqrt(med * med - (med - dn) * (med - dn)));
     if (b > 0.0) {
-      // centre line: a dashed single line on small streets, a solid double line on bigger roads
+      // centre line (US): a dashed yellow line on 1+1 streets, double solid yellow on wider two-way roads; on a divided
+      // road a solid yellow line down each side of the median, closing to a double yellow past its nose
       if (med <= 0.0) {
-        if (max(f, b) < 1.5) c = mix(c, uCentre, band(u, 0.12) * step(fract(v / 6.0), 0.6));
-        else c = mix(c, uCentre, band(abs(u) - 0.2, 0.09));
-      }
+        if (max(f, b) < 1.5) c = mix(c, uCentre, band(u, 0.08) * dash);
+        else c = mix(c, uCentre, band(abs(u) - 0.2, 0.08));
+      } else c = mix(c, uCentre, band(abs(u) - mh - 0.32, 0.08));
       // turn pockets (vPock: how open the left and right pockets are, this side then the other): a left one opens
       // on the inside and the through lanes move out for it; a right one opens outside them
       float fi = med + vPock.x * LW, bi = med + vPock.z * LW;
@@ -104,9 +111,15 @@ vec3 flowTint(float r) {
         lanes = max(lanes, band(y + ax * 0.9 + 0.5, 0.22) * m);
       }
     }
-    // highways: a solid white line along each edge, just inside the shoulder
-    if (uHw > 0.5) lanes = max(lanes, band(de - ${SHOULDER.toFixed(2)} - 0.05, 0.11));
+    // highways (US freeway): a solid white line along the right edge and a yellow one along the left, just inside the
+    // shoulders
+    float yl = 0.0;
+    if (uHw > 0.5) {
+      lanes = max(lanes, band(deR - ${SHOULDER.toFixed(2)} - 0.05, 0.1));
+      yl = band(deL - ${SHOULDER.toFixed(2)} - 0.05, 0.1);
+    }
     c = mix(c, uLane, lanes);
+    c = mix(c, uCentre, yl);
     if (uFlowMode > 0.5) {
       float r = (b > 0.0 && u < 0.0) ? vFlow.y : vFlow.x;
       // dark asphalt: tint by mixing rather than multiplying, so the colour reads; free-flowing roads stay as they are
@@ -115,9 +128,6 @@ vec3 flowTint(float r) {
     }
     if (med > 0.0) {
       // planted median: a kerb either side, grass between, and a row of trees when it is wide enough
-      // it stops short of a junction in a rounded nose (vMed.y: distance to the nearer junction end)
-      float dn = vMed.y - 2.2;
-      float mh = dn >= med ? med : (dn <= 0.0 ? 0.0 : sqrt(med * med - (med - dn) * (med - dn)));
       float au = abs(u), fw = fwidth(u) + 1e-4;
       float inMed = 1.0 - smoothstep(mh - fw, mh, au);
       vec3 mc = mix(uEdge, uGrass, 1.0 - smoothstep(mh - 0.32 - fw, mh - 0.32, au));
@@ -559,8 +569,9 @@ export class Roads3D {
           const p = { x: m.x + d.x * (CROSS_START + CROSS_END) / 2, y: m.y + d.y * (CROSS_START + CROSS_END) / 2 };
           const h = n.h + LIFT + 0.017, half = (CROSS_END - CROSS_START) / 2;
           const c = (x: number, y: number) => [p.x + r.x * x + d.x * y, h, p.y + r.y * x + d.y * y];
-          for (let k = 0; k < 4; k++) {
-            const x0 = -1.5 + k * 0.85, x1 = x0 + 0.45;
+          // US continental bars: three to a lane, 0.6 m wide, clear of the lane lines
+          for (let k = 0; k < 3; k++) {
+            const x0 = (k - 1) * (LANE_W / 3) - 0.3, x1 = x0 + 0.6;
             pos.push(...c(x0, -half), ...c(x1, -half), ...c(x1, half), ...c(x0, -half), ...c(x1, half), ...c(x0, half));
           }
         }
@@ -572,7 +583,7 @@ export class Roads3D {
         const L = l.pl.length, at = Math.max(0, L - 0.45);
         const p = polyAt(l.pl, at), d = polyDir(l.pl, at), r = right(d);
         const h = (l.hs[l.hs.length - 1] ?? 0) + LIFT + 0.017;
-        const hw = LANE_W * 0.47, hd = stop ? 0.45 : 0.22;
+        const hw = LANE_W * 0.47, hd = stop ? 0.3 : 0.22; // (US stop bars: 0.6 m at a stop sign)
         const c = (x: number, y: number) => [p.x + r.x * x + d.x * y, h, p.y + r.y * x + d.y * y];
         pos.push(...c(-hw, -hd), ...c(hw, -hd), ...c(hw, hd), ...c(-hw, -hd), ...c(hw, hd), ...c(-hw, hd));
       }

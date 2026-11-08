@@ -25,8 +25,9 @@ Our own names, look and art throughout.
 
 ## The map
 
-- An endless procedural world in 640 m tiles. Roads can go anywhere. Buildings need land the company owns:
-  tiles are bought next to land you own or along your roads, and company levels raise how many you may own.
+- An endless procedural world with no land to buy (owner decision, 2026-11-08): the company builds anywhere its
+  roads reach, and a site can go down anywhere before them. Nothing on the map is locked or for sale; what opens
+  it up is the milestones unlocking each tier's plants, and that tier's deposits lying kilometres further out.
 - **Deposits** sit in distinct regions that never run out, spread by tier:
 
   | Tier | Deposit | Where | Distance from start |
@@ -78,21 +79,64 @@ Our own names, look and art throughout.
   heaps tinted to the material, offices, workshops, truck yards; fields for farms, log yards for camps).
 - **Trucks** stop at the truck yard by the gate; internal movement isn't simulated.
 - **Towns** never grow into a site's fence.
-- **Land:** a site needs only the tile under its centre (a 290 m plot spans several 640 m tiles; owning every one
-  made land, not traffic, the wall by day 8).
+- **No land to own:** a site stands wherever its plot fits (owning map tiles once made land, not traffic, the
+  wall by day 8, and then got in the player's way; it was dropped on 2026-11-08).
 
 ## Freight (routes itself)
 
-- Every building owns trucks (two to start; it gets more bays as the company level allows). A truck loads
-  output, drives it over your roads to a customer, unloads and comes back. Throughput is trucks x round-trip
-  time, which is why road design matters.
+- Every site runs its own fleet, which comes with its level: nothing to buy, no trucks to manage (owner,
+  2026-11-08). At each level it has enough trucks to carry everything the site makes 3 km away and back over
+  streets (FLEET_HAUL); bigger loads, truck classes and faster roads stretch the same fleet further. Idle trucks
+  wait in the yard, so a big fleet on a short haul adds no traffic. A truck loads output, drives it over your
+  roads to a customer, unloads and comes back. Past the haul it was sized for, or on a jammed road, the yard
+  fills: the fix is the road, never a purchase.
 - Destinations are automatic. Your own plants short of an input come first, then towns that need the product,
   nearest and neediest first. You never draw lines; you can block a destination for a building if you need to.
-- Truck classes unlock over the levels: light truck, heavy truck, road train, plus tankers (crude, fuel),
-  flatbeds (logs, steel) and tippers (ore, coal, sand, limestone).
-- **Fuel** is a running cost per km at a market price. Once your refinery stocks your fuel depots, trucks that
-  pass one fill up there at cost.
-- **Warehouses** (tier 2) buffer any product and re-ship it, so long chains can be split into legs.
+- **Truck classes** unlock with milestones, and a site's level sets its fleet's mix (owner, 2026-11-08: no truck
+  micromanagement; "each level increases the number of higher tier trucks ... up until last level, where they
+  should be greatly favoring the better option"). LEVEL_MIX (light / heavy / road train): level 1 all light,
+  level 2 55/40/5, level 3 25/50/25, level 4 10/30/60; a class not unlocked yet hands its share to the best one
+  that is, and a warehouse runs level 3's mix. The classes take turns: the one with the most of its trucks at
+  home goes next. The truck at the dock waits for a full load (or what the customer takes, or half the yard,
+  whichever is least) for up to HOLD, a game hour, per product, so a big truck never sets off with one load on
+  board (owner: "they will keep sending the lightest truck as soon as 1 food is available"). Trucks already on
+  the road finish their trip as they are. Nothing to buy or pick per building: the panel shows the mix read-only. The class sets the load and the road it takes; the body still
+  comes from the product: tankers (crude, fuel, chemicals, cement), flatbeds (logs, planks, steel, parts),
+  tippers (ore, coal, sand, limestone, gravel), box trucks for the rest.
+
+  | Class | Loads a trip | Length | Speed / pull-away | Load x speed per truck | Fuel per km |
+  |---|---|---|---|---|---|
+  | Light truck | 1x | 8.5 m | 85% / 1x | 0.85 | 1x |
+  | Heavy truck (four-axle rigid) | 2x | 12 m | 82% / 0.8x | 1.64 | 1.5x |
+  | Road train (tractor + two trailers) | 4x | 22 m | 75% / 0.6x | 3.0 | 2.6x |
+
+  Each step up roughly doubles what one truck moves, so the same flow puts fewer trucks on the road: that is
+  the traffic payoff. Moving up costs no money (pillar 5) and fuel per load falls. What it costs is road: a
+  road train takes a long time to clear a junction, and fills a ring.
+- **Long vehicles in traffic.** A heavy or a road train is drawn piece by piece along the path its front drove,
+  so trailers cut corners through a turn. The sim keeps the whole body in mind, not just its front:
+  - a junction movement stays reserved until the last trailer has left it, and its tail blocks the lanes and
+    connectors it still covers;
+  - turns that pass close without crossing (closer than 3.5 m, or 4.3 m for two curved turns) conflict when
+    one of the vehicles is long;
+  - a roundabout counts its load in car-sized slots, so a road train counts as about three cars and a heavy as two. It won't enter unless the
+    ring has room for its whole length, counting the long trucks already waiting at the other entries;
+  - a lane change needs a gap beside its whole length;
+  - one long truck at a time pulls out of a lot's gate: the next waits in the yard until the last trailer
+    has cleared the kerb.
+- **Fuel** is a running cost per km at a market price ($4 per light-truck km, both ways). Once your refinery's
+  tankers stock a **fuel depot**, every truck whose run passes within 1.5 km of it fills up there at cost
+  ($1 per km): one load of fuel lasts 400 light-truck km. The depot's panel shows its fuel, the trucks it
+  filled and the money saved.
+- **Warehouses** (tier 2) store any product and re-ship it with their own trucks (a fleet that comes with its
+  size, like a plant's), so long chains can be split
+  into legs. A load's destination comes in this order: a plant short of the input, then a town that needs it,
+  then a warehouse with room as overflow, never another warehouse. The exception is a warehouse set as a
+  **feeder** for the product: it comes first when it is nearer than where the load would otherwise go. In
+  the panel the player picks the products it takes (all by default) and the ones it feeds, and sees the stock.
+- **Unlocks:** heavy trucks with "Heavy haulage" (after "Lights on"), warehouses with
+  "Stockpiles" (tier 2), depots with "Own pumps" (the first refined fuel), road trains with "Road trains"
+  (on the way to a Town).
 
 ## Transport modes
 
@@ -138,6 +182,12 @@ itself across modes; you build tracks, docks and the transfer points, never line
   blocks, stores and offices take 1 load, modern flats 2, malls and towers 3, glass towers 4. The town pays for
   them on delivery. Houses, terraces and high-street shops need none. This gives steel its buyer from Town
   size; tier 4 plant sites will take parts too.
+- **Electronics and machinery (tier 4, 2026-11-08).** A City's electronics go to its shops. Its machinery goes to its
+  offices and office towers, the firms that fit out its works; a city with none standing yet takes it at its shops,
+  the way fuel falls back to the shops before the first filling station. Tier 4 plant sites wait for construction
+  parts on top of planks and cement. Copper ore lies in the high ranges: on the flat floor of an upland valley, with
+  mountain round it. Copper opens before a town reaches City (as oil opens before a town wants fuel), so the chains
+  are running when it gets there. A Metropolis adds no needs of its own yet.
 - No city services, taxes, policies or zoning.
 
 ### Towns grow into cities (owner, 2026-11-08)
@@ -172,7 +222,7 @@ A town should visibly turn from a hamlet into a city over a playthrough: bigger,
 
 - Income: payment for every load delivered to a town. Plant-to-plant transfers earn nothing; they keep the
   chain running.
-- Costs: roads (build and upkeep), buildings and upgrades, wages, trucks, fuel, land. Loans exist; going
+- Costs: roads (build and upkeep), buildings and upgrades, wages, trucks, fuel. Loans exist; going
   bankrupt ends the game.
 - **Money is not the challenge.** Every sensible build pays for itself within a game day or two; the first
   chain is in profit as soon as its first trucks deliver. Demand outruns supply at every size (a town always
@@ -193,7 +243,7 @@ Unlocks come from **milestones**, concrete achievements, never from cumulative X
 
 There are about 40 milestones in a rough ladder, with a few open at once so there is always a choice of what to
 chase next. Each unlocks something concrete: a chain, a building size, a truck class, a road type or junction
-tool, town slots, land, warehouses, fuel depots. The last ones unlock **company projects**: huge buildings that
+tool, town slots, warehouses, fuel depots, a grant. The last ones unlock **company projects**: huge buildings that
 take hundreds of mixed loads, as long-term goals and goods sinks.
 
 **Order of the long game:** the first half is a pure road-and-truck game. Tiers 1-3 chains, truck classes, every
@@ -208,6 +258,9 @@ demand has outgrown even road trains on a good highway network), and barges afte
   plant, first deliveries, second town, sawmill.
 - The bottleneck moves on its own: more towns mean more commuters on the roads trucks use, and longer chains
   mean longer trips, so road work keeps being needed.
+- **The map paces itself by tier, not by land.** There is no land cap and nothing to buy before building: each
+  tier's plants unlock with milestones, and its deposits lie kilometres further out than the last, so the
+  company's reach grows with the roads it can afford to run out to them.
 - **Demand rises exponentially.** From the mid game it should be obvious that each town size multiplies its
   needs (per-resident use rises with size, and towns grow faster when supplied). In the long road phase that
   means bigger trucks, more of them, highways and interchanges; only once volumes outgrow even that do rail
@@ -255,7 +308,7 @@ height levels shown while drawing, and the instant upgrade preview.
 **Simulation:** Space pauses; 1/2/3 set normal, fast and very fast speed.
 
 **Panels:**
-- M: map tiles. P: progression; Z: economy; C: city info; V: statistics; X: transportation, as those panels
+- P: progression; Z: economy; C: city info; V: statistics; X: transportation, as those panels
   arrive.
 - F5/F9: quicksave and quickload.
 - ` (backtick): hide the UI.
@@ -298,3 +351,26 @@ beds. A muted, satellite-like but clean palette, in our own models and colours. 
 in the same realistic register, with deposit regions readable on the ground. Clear company HUD (money and
 milestones at the top, build categories at the bottom: roads, extraction, plants, logistics, towns), inspector
 panels, no generic AI look.
+
+### Look: Industry Booming America (owner, 2026-11-08)
+
+The game's setting is 1920s-40s American industry: steel, oil, highways, Deco.
+
+- **Town names** are original American place names from curated parts (src/game/names.ts): "<Surname>
+  Falls/Junction/Springs/Crossing/Landing...", "<Stem>ville/-burg/-ton/-field/-wood/-brook", "<Tree> Creek",
+  "<Red/Iron/Lone...> Bluff/Butte/Prairie", "New/Fort/Port <Surname>". Never a famous city whole (a reject list
+  catches the few the parts can make), at most 16 characters, unique in a world, deterministic per seed (a name
+  takes two draws from the game's generator, as before). Saved towns keep their names.
+- **US road markings.** 1+1 streets: a dashed yellow centre line. Wider two-way roads: double solid yellow.
+  Divided roads: a solid yellow line down each side of the median, closing to a double yellow past its nose at a
+  junction. Lane lines between same-direction lanes: white, 3 m dashes with 9 m gaps. One-way town streets: all
+  white. Highways and ramps (US freeway): solid yellow along the left (median) edge, solid white along the right.
+  Stop bars white (0.6 m at a stop sign); crosswalks at lit junctions in town are white continental bars, three to
+  a lane. Town roads have kerbs, so no white edge lines.
+- **The company** has a period name ("Carver & Sons Haulage", "Great Western Freight Co.", "Halston Iron & Rail")
+  and a **herald**: a Deco badge (shield, roundel, winged roundel or lozenge) with its monogram, in a colour pair
+  from the period palette (navy, ochre, brick red, cream, forest green). Both come from the seed at a new game; a
+  new game opens on the company dialog to rename it or draw another name or badge, and the HUD's company button
+  (top left, by the menu) and the pause menu's Company item reopen it. Name and herald show in the HUD, on the
+  pause menu, in the saves list and on milestone banners, and are saved (older saves get one from their seed).
+  Not on the trucks: the camera looks straight down, so cab doors never show, and a roof badge is a few pixels.

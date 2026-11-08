@@ -8,7 +8,6 @@ const world = (over: Partial<BuildWorld> = {}): BuildWorld => ({
   isWater: () => false,
   isMountain: () => false,
   inBounds: () => true,
-  unlocked: () => true,
   buildingsHit: () => [],
   money: () => 1e9,
   ...over,

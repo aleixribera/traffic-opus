@@ -66,12 +66,11 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .tl-sep { width: 1px; height: 24px; background: var(--rule-2); margin: 0 4px; }
 .compass { width: 36px; height: 36px; padding: 0; justify-content: center; border-color: transparent; background: transparent; }
 .compass[hidden] { display: none; }
-/* the company: herald + name (filled in by the company-identity work; hidden until then) */
-.company { display: flex; align-items: center; gap: 8px; padding: 0 12px 0 4px; margin-right: 4px; border-right: 1px solid var(--rule-2); min-height: 36px; max-width: 250px; }
-.company[hidden] { display: none; }
-.company-herald { width: 32px; height: 32px; flex: none; display: grid; place-items: center; }
-.company-herald:empty { display: none; }
-.company-herald svg, .company-herald img { width: 32px; height: 32px; display: block; }
+/* the company: a button by the menu (opens its dialog), dressed as a works nameplate: herald + name in display caps */
+.company { display: flex; align-items: center; gap: 8px; height: 36px; max-width: 250px; padding: 0 10px 0 4px; background: transparent; border: 1px solid transparent; border-radius: var(--r); color: var(--cream); }
+.company:hover { background: var(--plate-2); border-color: var(--rule-2); }
+.company:hover .company-name { color: var(--ochre-hi); }
+.company .herald { flex: none; display: block; }
 .company-name { font: 700 19px/1 var(--f-display); letter-spacing: 0.06em; text-transform: uppercase; color: var(--cream); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* windows that open from the top-left buttons */
@@ -245,7 +244,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .panel > header { margin: 0 -14px 10px; padding: 8px 40px 7px 14px; display: flex; align-items: center; }
 .panel > .close { top: 4px; right: 5px; z-index: 1; }
 .head-sub { margin-left: 10px; font: 600 var(--t-xs)/1 var(--f-text); letter-spacing: 0.1em; color: var(--ochre-hi); }
-.zone-tag { display: inline-block; padding: 1px 6px; border-radius: 1px; color: #fff; font: 700 var(--t-xs)/16px var(--f-text); margin-right: 8px; letter-spacing: 0.04em; text-shadow: 0 0 2px rgba(0, 0, 0, 0.6); }
+.zone-tag { display: inline-block; padding: 1px 6px; border-radius: 1px; color: var(--cream); font: 700 var(--t-xs)/16px var(--f-text); margin-right: 8px; letter-spacing: 0.04em; text-shadow: 0 0 2px rgba(0, 0, 0, 0.6); }
 .lvl-row { display: flex; align-items: center; gap: 8px; }
 .stars { display: flex; gap: 3px; }
 .stars i { width: 10px; height: 10px; background: var(--plate-3); transform: rotate(45deg) scale(0.85); }
@@ -269,6 +268,22 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .bar.lv em { position: absolute; top: -2px; width: 2px; height: 10px; background: var(--cream); }
 .spark { width: 100%; height: 46px; display: block; margin-top: 8px; }
 .spark polyline { stroke: var(--ochre); }
+.sub-h .num { font-weight: 400; margin-left: 4px; font-variant-numeric: tabular-nums; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* a warehouse's products: take / feeder checkboxes in two narrow columns, stamped like a ledger */
+.wh-opts { width: 100%; border-collapse: collapse; margin: 4px 0 2px; }
+.wh-opts th, .wh-opts td { padding: 3px 0; font-weight: 400; }
+.wh-opts thead th { color: var(--cream-3); font: 600 var(--t-xs)/16px var(--f-text); text-transform: uppercase; letter-spacing: 0.08em; text-align: center; width: 56px; }
+.wh-opts thead th:first-child { width: auto; }
+.wh-opts tbody th { text-align: left; color: var(--cream-2); display: flex; align-items: center; gap: 6px; }
+.wh-opts tbody tr + tr { border-top: 1px solid var(--rule); }
+.wh-opts td { text-align: center; padding: 0; }
+.wh-hit { display: flex; justify-content: center; align-items: center; height: 26px; cursor: pointer; }
+.wh-opts input { appearance: none; margin: 0; width: 16px; height: 16px; display: grid; place-items: center; background: var(--ink); border: 1px solid var(--rule-2); border-radius: 1px; cursor: pointer; }
+.wh-opts input:checked { background: var(--ochre); border-color: var(--ochre); }
+.wh-opts input:checked::after { content: ""; width: 8px; height: 4px; margin-top: -2px; border: solid var(--bar); border-width: 0 0 2px 2px; transform: rotate(-45deg); }
+.wh-hit:hover input:not(:focus-visible) { border-color: var(--ochre-hi); }
+.wh-opts input:focus-visible { outline: 2px solid var(--ochre); outline-offset: 2px; }
 /* bus lines: colour bar, name and numbers, buses - n +, delete */
 .bus-lines { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; }
 .bl { display: grid; grid-template-columns: 6px 1fr auto auto; gap: 8px; align-items: center; padding: 6px 4px 6px 0; border-top: 1px solid var(--rule); }
@@ -447,7 +462,6 @@ kbd { font: 600 var(--t-xs)/1 var(--f-text); padding: 3px 6px; border: 1px solid
 .link:hover { color: var(--cream); }
 .facts dd .bar.site-grow { width: 110px; }
 .facts dd .bar.site-grow i { background: var(--ochre); }
-.buy-truck { padding: 2px 8px; font-size: var(--t-xs); line-height: 16px; }
 
 /* a town's panel: its people over time, how far to its next size, its needs and what came */
 .tn-chart { display: block; width: 100%; height: auto; margin: 10px 0 2px; overflow: visible; }
@@ -484,3 +498,56 @@ kbd { font: 600 var(--t-xs)/1 var(--f-text); padding: 3px 6px; border: 1px solid
 .tw-need svg { width: 14px; height: 14px; }
 .tw-need.mid { color: var(--ochre-hi); }
 .tw-need.low { color: var(--bad); }
+
+/* output a day: the building panel's hourly bars and the Economy window's production list */
+.hb-chart rect, .pd-ticks rect { fill: var(--pc, var(--ochre)); }
+.hb-chart { margin-top: 4px; }
+.pd-made { font-size: var(--t-big); font-weight: 600; font-variant-numeric: tabular-nums lining-nums; }
+.pd-list { list-style: none; margin: 4px 0 8px; padding: 0; }
+.pd-list li { display: grid; grid-template-columns: 1fr 72px 76px; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--rule); }
+.pd-list .pd-name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--cream); }
+.pd-list .num { text-align: right; font-variant-numeric: tabular-nums lining-nums; }
+.pd-ticks { width: 72px; height: 16px; display: block; background: var(--ink); box-shadow: inset 0 0 0 1px var(--rule); }
+.sub-h .muted { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--cream-3); }
+
+/* ------------------------------------------------------------ what's new: a bulletin of releases */
+.dialog.news { width: min(500px, calc(100vw - 24px)); display: flex; flex-direction: column; max-height: min(660px, calc(100vh - 40px)); overflow: hidden; }
+.cl-list { overflow-y: auto; margin: 0 -14px -14px; padding: 0 14px 14px; overscroll-behavior: contain; scrollbar-color: var(--plate-3) transparent; }
+.cl-list:focus-visible { outline: 2px solid var(--ochre); outline-offset: -2px; }
+.cl-rel { padding: 12px 0 10px; border-top: 1px solid var(--rule); }
+.cl-rel:first-child { border-top: 0; padding-top: 2px; }
+.cl-rel h3 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 6px; font: 700 var(--t-md)/1.25 var(--f-text); color: var(--cream); }
+.cl-v { font: 600 var(--t-xs)/1 var(--f-text); font-variant-numeric: tabular-nums lining-nums; color: var(--cream-2); min-width: 50px; letter-spacing: 0.04em; }
+.cl-rel.latest .cl-v { color: var(--ochre-hi); }
+.cl-t { flex: 1; min-width: 0; text-wrap: balance; }
+.cl-rel time { font-size: var(--t-xs); font-weight: 400; color: var(--cream-3); white-space: nowrap; text-transform: uppercase; letter-spacing: 0.06em; }
+.cl-rel ul { margin: 0; padding: 0 0 0 60px; list-style: none; }
+.cl-rel li { position: relative; font-size: var(--t-sm); line-height: 18px; color: var(--cream-2); margin: 3px 0; text-wrap: pretty; }
+.cl-rel li::before { content: ""; position: absolute; left: -12px; top: 7px; width: 4px; height: 4px; background: var(--ochre); transform: rotate(45deg); }
+
+/* a site's fleet by class: a split bar and its key under the Fleet row (light, heavy, road train: pale to deep) */
+.facts dd.fm-row { grid-column: 1 / -1; flex-direction: column; align-items: stretch; gap: 4px; margin-top: -1px; }
+.fm-bar { display: flex; height: 7px; border-radius: 1px; overflow: hidden; gap: 2px; background: var(--ink); box-shadow: inset 0 0 0 1px var(--rule); }
+.fm-bar i { display: block; min-width: 3px; }
+.fm-light { background: var(--cream-2); }
+.fm-heavy { background: var(--ochre); }
+.fm-roadtrain { background: var(--copper); }
+.fm-key { font-size: var(--t-xs); color: var(--cream-2); text-align: right; }
+
+/* ---- where the company signs: the milestone banner, the pause menu, saves, and its dialog */
+.banner-co { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.banner-co .herald { flex: none; }
+.pm-co { flex-direction: row !important; align-items: center; gap: 12px !important; }
+.pm-co .herald { flex: none; }
+.pm-co-t { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pm-co-t .muted { font: 400 var(--t-xs)/1.2 var(--f-text); text-transform: none; letter-spacing: 0.02em; color: var(--cream-3); }
+.save-co { display: flex; align-items: center; gap: 6px; color: var(--ochre-hi) !important; font-weight: 600; }
+.save-co .herald { flex: none; }
+.co-dlg { width: min(460px, calc(100vw - 32px)); }
+.co-form { display: grid; grid-template-columns: auto 1fr; gap: 14px 16px; align-items: center; }
+.co-badge { grid-row: span 2; display: grid; place-items: center; width: 92px; height: 92px; background: var(--ink); border: 1px solid var(--edge); outline: 1px solid var(--pin); outline-offset: -5px; border-radius: var(--r); }
+.co-field { display: flex; flex-direction: column; gap: 5px; font: 600 var(--t-xs)/16px var(--f-text); text-transform: uppercase; letter-spacing: 0.1em; color: var(--ochre-hi); }
+.co-field input { font: 700 var(--t-plate)/1.2 var(--f-display); text-transform: uppercase; letter-spacing: 0.06em; color: var(--cream); background: var(--ink); padding: 7px 9px; border: 1px solid var(--rule-2); border-radius: var(--r); min-width: 0; }
+.co-field input:focus-visible { outline: 2px solid var(--ochre); outline-offset: 1px; border-color: var(--ochre); }
+.co-btns { grid-column: 2; display: flex; flex-wrap: wrap; gap: 6px; }
+.co-btns .primary { margin-left: auto; }

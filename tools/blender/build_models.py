@@ -3007,6 +3007,100 @@ def b_fuelstation(M, P):
     return L
 
 
+def b_warehouse(M, P):
+    """Distribution warehouse: a long low portal-frame shed with a shallow pitched roof and rooflight strips, a row
+    of dock doors along the front, each with its black seal, yellow bollards and a level apron, a dock canopy,
+    a two-storey office at one end, and a trailer drop yard with parked trailers at the other."""
+    L = lot(M, P, 72, 44, bay_row(6, -9.0))
+    y0, y1 = L.y0, L.y1
+    wall, roof, dark = P["ind_wall"], P["ind_roof"], P["ind_dark"]
+    # the apron between the bays and the docks
+    box(M, -36.0, 36.0, L.yf + PARK_DEPTH, y0 + 3.0, PAD_H, PAD_H + 0.01, P["asphalt"])
+    for x in (-24.0, -12.0, 0.0, 12.0):
+        box(M, x - 0.08, x + 0.08, L.yf + PARK_DEPTH + 0.5, y0 + 2.6, PAD_H + 0.01, PAD_H + 0.022, P["line"])
+    # the shed
+    sx0, sx1, sy0, sy1 = -27.0, 22.0, y0 + 3.0, y1
+    box(M, sx0, sx1, sy0, sy1, 0, 10.0, wall)
+    band(M, sx0, sx1, sy0, sy1, 0.0, 1.2, P["concrete"], o=0.05)       # precast plinth
+    band(M, sx0, sx1, sy0, sy1, 8.8, 9.4, P["ind_dark"], o=0.05)
+    gable2(M, sx0, sx1, sy0, sy1, 10.0, 11.6, roof, P["work_roof"], wall, ridge=P["ind_steel"], oh=0.4)
+    mid = (sy0 + sy1) / 2
+    for x in (-21.0, -11.0, -1.0, 9.0, 17.0):                            # rooflight strips down both slopes
+        for a, b in ((sy0 + 2.5, mid - 2.0), (mid + 2.0, sy1 - 2.5)):
+            za = 10.0 + 1.6 * (a - sy0) / (mid - sy0) if a < mid else 11.6 - 1.6 * (a - mid) / (sy1 - mid)
+            zb = 10.0 + 1.6 * (b - sy0) / (mid - sy0) if b < mid else 11.6 - 1.6 * (b - mid) / (sy1 - mid)
+            extrude_profile(M, [(a, za + 0.06), (b, zb + 0.06), (b, zb + 0.14), (a, za + 0.14)], "x", x - 1.2, x + 1.2,
+                            P["work_glass"])
+    # dock doors: a black seal round a grey roller door, a dock leveller lip, yellow bollards each side
+    for i in range(8):
+        x = -23.0 + i * 5.6
+        box(M, x - 1.75, x + 1.75, sy0 - 0.35, sy0, 0.9, 4.6, dark)
+        box(M, x - 1.4, x + 1.4, sy0 - 0.4, sy0 - 0.35, 1.2, 4.3, P["ind_steel"])
+        box(M, x - 1.3, x + 1.3, sy0 - 1.2, sy0 - 0.35, 0.9, 1.0, P["ind_steel"])
+        for dx in (-2.1, 2.1):
+            cyl(M, x + dx, sy0 - 0.9, 0.16, 0, 1.1, P["ind_yellow"], n=6)
+    box(M, sx0 + 1.0, sx1 - 1.0, sy0 - 3.0, sy0, 5.4, 5.7, P["ind_roof"])  # dock canopy
+    box(M, sx0 + 1.0, sx1 - 1.0, sy0 - 3.05, sy0 - 2.85, 5.0, 5.7, P["ind_dark"])
+    # the office at the left end: two storeys of ribbon windows and an entrance canopy
+    ox0, ox1, oy0, oy1 = -35.0, sx0, y0 + 3.0, y0 + 16.0
+    top = flat_block(M, ox0, ox1, oy0, oy1, 7.2, P["work_wall"], P["work_roof"], parapet=P["work_trim"])
+    for z in (1.3, 4.5):
+        band(M, ox0, ox1, oy0, oy1, z, z + 1.4, P["work_glass"], o=0.04)
+    box(M, ox0 + 1.0, ox0 + 5.0, oy0 - 2.0, oy0, 3.1, 3.35, P["work_trim"])
+    ac_unit(M, (ox0 + ox1) / 2, (oy0 + oy1) / 2, top, P)
+    box(M, ox0, ox1, oy1 + 1.0, y1, PAD_H, PAD_H + 0.03, P["grass"])
+    for y in (oy1 + 4.0, y1 - 3.0):
+        tree(M, P, -32.0, y, s=0.8)
+    # trailer drop yard at the right end: three trailers nosed in on their landing legs
+    tx0, tx1 = sx1 + 1.0, 35.0
+    box(M, tx0, tx1, y0 + 3.0, y1, PAD_H, PAD_H + 0.01, P["asphalt"])
+    for i in range(3):
+        x = tx0 + 2.2 + i * 4.3
+        ty0, ty1 = y1 - 13.5, y1 - 0.8
+        box(M, x - 1.0, x + 1.0, ty0 + 1.0, ty1 - 0.4, 0.0, 1.25, dark)
+        box(M, x - 1.25, x + 1.25, ty0, ty1, 1.25, 4.0, P["tb_white"] if i != 1 else P["tb_grey"], bevel=0.05)
+    return L
+
+
+def b_fueldepot(M, P):
+    """Company fuel depot: two horizontal bulk tanks on concrete saddles in a bund, a covered loading lane with a
+    pump island for the trucks, a small control kiosk, and the tanker unloading point by the gate."""
+    L = lot(M, P, 38, 28, bay_row(2, cx=-12.0))
+    y0, y1 = L.y0, L.y1
+    dark = P["ind_dark"]
+    # the bund and its two tanks, along X at the back
+    bx0, bx1, by0, by1 = -17.5, 6.0, y1 - 10.5, y1
+    frame(M, bx0, bx1, by0, by1, 0, 0.8, 0.4, P["concrete"])
+    box(M, bx0 + 0.4, bx1 - 0.4, by0 + 0.4, by1 - 0.4, PAD_H, PAD_H + 0.02, P["gravel"])
+    for cy in (by0 + 2.7, by1 - 2.7):
+        for x in (bx0 + 3.0, (bx0 + bx1) / 2, bx1 - 3.0):
+            box(M, x - 0.5, x + 0.5, cy - 1.5, cy + 1.5, 0, 1.4, P["concrete"])
+        pipe_x(M, cy, 2.75, 1.9, bx0 + 1.4, bx1 - 1.4, P["ind_tank"], n=12)
+        for x in (bx0 + 1.4, bx1 - 1.4):                      # dished ends
+            box(M, x - 0.12, x + 0.12, cy - 1.6, cy + 1.6, 1.15, 4.35, P["ind_tank"])
+        box(M, bx0 + 5.0, bx0 + 6.2, cy - 0.5, cy + 0.5, 4.6, 4.9, dark)   # manway
+    box(M, bx0 + 2.0, bx1 - 2.0, by0 + 5.0, by0 + 5.5, 4.1, 4.3, P["ind_steel"])  # walkway across the tops
+    # the loading lane: a canopy on four posts over a pump island, the pipe from the tanks
+    lx0, lx1, ly0, ly1 = 7.5, 18.0, y0 - 1.0, y1 - 1.0
+    box(M, lx0, lx1, ly0, ly1, PAD_H, PAD_H + 0.01, P["asphalt"])
+    box(M, 11.9, 13.6, ly0 + 3.0, ly1 - 3.0, PAD_H, PAD_H + 0.22, P["concrete"], bevel=0.05)
+    for py in (ly0 + 5.5, ly1 - 5.5):
+        box(M, 12.35, 13.15, py - 0.4, py + 0.4, PAD_H + 0.22, 2.0, P["fs_pump"], bevel=0.04)
+    for cx in (lx0 + 0.6, lx1 - 0.6):
+        for cy in (ly0 + 2.5, ly1 - 2.5):
+            box(M, cx - 0.2, cx + 0.2, cy - 0.2, cy + 0.2, 0, 5.4, P["ind_steel"])
+    box(M, lx0, lx1, ly0 + 1.6, ly1 - 1.6, 5.4, 5.9, P["fs_canopy"])
+    box(M, lx0 - 0.05, lx1 + 0.05, ly0 + 1.55, ly1 - 1.55, 5.9, 6.3, P["ind_orange"])
+    pipe_x(M, by0 + 1.0, 1.2, 0.22, bx1 - 0.5, 12.7, P["ind_steel"], n=6)
+    # the control kiosk and the unloading point by the gate
+    flat_block(M, -6.0, -1.0, y0, y0 + 4.0, 3.2, P["work_wall"], P["work_roof"])
+    band(M, -6.0, -1.0, y0, y0 + 4.0, 1.2, 2.3, P["work_glass"], o=0.04)
+    box(M, 1.5, 4.5, y0 + 0.5, y0 + 2.0, PAD_H, 1.6, P["ind_steel"])
+    for x in (2.2, 3.8):
+        cyl(M, x, y0 + 1.25, 0.2, 1.6, 2.2, P["ind_orange"], n=6)
+    return L
+
+
 SERVICES = ("garbage", "firestation", "police", "clinic", "hospital", "school", "highschool", "university",
             "park", "parklarge", "windturbine", "coalplant", "solarfarm", "waterpump", "sewageoutlet",
             "townhall", "hamlethall", "villagehall", "cityhall", "stadium", "obstower", "concerthall", "skytower")
@@ -3047,6 +3141,8 @@ BUILDINGS = {
     "coppersmelter": (b_coppersmelter, 50, 42, 4),
     "electronics": (b_electronics, 44, 36, 5),
     "machineworks": (b_machineworks, 52, 44, 5),
+    "warehouse": (b_warehouse, 72, 44, 6),
+    "fueldepot": (b_fueldepot, 38, 28, 2),
     "site_truckyard": (b_site_truckyard, 44, 30, 8),
     "site_hall_l": (b_site_hall_l, 60, 34, 0),
     "site_hall_m": (b_site_hall_m, 40, 26, 0),
@@ -3186,7 +3282,7 @@ def v_tipper(Ms, P):
     box(dark, -1.25, 1.25, y0, y1, 0.98, zf + 0.12, P["dark"])               # tub floor
     for s in (-1, 1):                                                         # side walls with a top rail
         box(body, s * 1.25 - 0.06, s * 1.25 + 0.06, y0, y1, zf, zt, P["body"])
-        box(dark, s * 1.25 - 0.08, s * 1.25 + 0.08, y0, y1, zt - 0.12, zt + 0.02, P["dark"])
+        box(body, s * 1.25 - 0.1, s * 1.25 + 0.1, y0, y1, zt - 0.12, zt + 0.02, P["body"])  # (light from above)
     box(body, -1.25, 1.25, y0, y0 + 0.16, zf, zt + 0.45, P["body"])          # headboard, taller, over the cab
     box(body, -1.22, 1.22, y0 - 0.5, y0, zt + 0.25, zt + 0.45, P["body"])    # its canopy lip
     box(body, -1.25, 1.25, y1 - 0.14, y1, zf, zt - 0.1, P["body"])           # tailgate
@@ -3365,6 +3461,134 @@ def v_bus(Ms, P):
     wheel_axle(dark, 3.2, 0.5, 1.22, P["dark"])
 
 
+# Bigger truck classes (src/game/trucks.ts): a four-axle heavy rigid, and a road train drawn in three pieces that
+# each follow the driven path: a tractor, a lead trailer with a fifth wheel over its rear axles, and a rear
+# trailer. The lengths and pivots match ROAD_TRAIN_UNITS in trucks.ts.
+
+def cab(Ms, P, yf, hw=1.25, top=3.1, deep=2.0, sleeper=0.0):
+    """A forward-control cab with its front at y = yf (tinted "body"), glass, a roof light bar, a front bumper.
+    A sleeper adds a raised roof pod behind it."""
+    body, glass, dark = Ms["body"], Ms["glass"], Ms["dark"]
+    yb = yf + deep
+    side_profile(body, [(yf + 0.03, 0.62), (yb, 0.62), (yb, top), (yf + 0.3, top), (yf + 0.03, top - 0.35)], hw, P["body"])
+    if sleeper:
+        side_profile(body, [(yf + 0.6, top), (yb + sleeper, top), (yb + sleeper, top + 0.55), (yf + 0.9, top + 0.55)],
+                     hw - 0.08, P["body"])
+        box(body, -hw + 0.05, hw - 0.05, yb, yb + sleeper, 0.95, top, P["body"])
+    box(glass, -hw + 0.15, hw - 0.15, yf, yf + 0.03, 1.55, top - 0.45, P["glass"])
+    for s in (-1, 1):
+        x0, x1 = (hw, hw + 0.03) if s > 0 else (-hw - 0.03, -hw)
+        box(glass, x0, x1, yf + 0.25, yf + 1.15, 1.65, top - 0.4, P["glass"])
+        box(dark, s * (hw + 0.05) - 0.05, s * (hw + 0.05) + 0.05, yf + 0.15, yf + 0.3, 1.6, 2.4, P["dark"])  # mirrors
+    box(glass, -0.9, 0.9, yf + 0.3, yf + 0.6, top + (0.55 if sleeper else 0.0), top + (0.64 if sleeper else 0.09), P["glass"])
+    box(dark, -hw, hw, yf, yf + 0.2, 0.35, 0.8, P["dark"])
+
+
+def cargo_body(Ms, P, kind, y0, y1, zf, top):
+    """A freight body from y0 (front) to y1 on a floor at zf, up to about `top`: box, tipper, tanker or flatbed.
+    The load is the tinted "cargo" part; walls, headboards and bulkheads are the tinted "body"."""
+    body, dark, cargo = Ms["body"], Ms["dark"], Ms["cargo"]
+    if kind == "truck":
+        box(cargo, -1.25, 1.25, y0, y1, zf, top, P["cargo"], bevel=0.04)
+        box(body, -1.27, 1.27, y0, y0 + 0.12, zf, top + 0.02, P["body"])        # front bulkhead frame
+        for s in (-1, 1):                                                         # side skirts
+            box(body, s * 1.2 - 0.04, s * 1.2 + 0.04, y0 + 0.6, y1 - 2.6, zf - 0.55, zf, P["body"])
+    elif kind == "tipper":
+        zt = zf + (top - zf) * 0.8
+        box(dark, -1.25, 1.25, y0, y1, zf - 0.02, zf + 0.12, P["dark"])
+        for s in (-1, 1):
+            box(body, s * 1.25 - 0.06, s * 1.25 + 0.06, y0, y1, zf, zt, P["body"])
+            box(body, s * 1.25 - 0.1, s * 1.25 + 0.1, y0, y1, zt - 0.12, zt + 0.02, P["body"])  # top rail
+        box(body, -1.25, 1.25, y0, y0 + 0.16, zf, top, P["body"])
+        box(body, -1.25, 1.25, y1 - 0.14, y1, zf, zt - 0.1, P["body"])
+        n = max(2, int((y1 - y0) / 1.8))
+        for i in range(1, n):
+            y = y0 + (y1 - y0) * i / n
+            for s in (-1, 1):
+                box(dark, s * 1.31 - 0.04, s * 1.31 + 0.04, y - 0.08, y + 0.08, zf, zt - 0.05, P["dark"])
+        taper(cargo, (-1.18, 1.18, y0 + 0.17, y1 - 0.15), (-0.55, 0.55, y0 + 0.9, y1 - 1.6), zf + 0.12, zt + 0.3,
+              P["cargo"])
+    elif kind == "tanker":
+        rz = (top - zf) / 2 - 0.12
+        cz = zf + 0.2 + rz
+        for y in (y0 + 0.5, y1 - 0.6):
+            box(dark, -1.0, 1.0, y - 0.15, y + 0.15, zf - 0.1, cz - 0.3, P["dark"])
+        _tube_y(cargo, y0 + 0.12, y1 - 0.12, 1.22, rz, cz, P["cargo"])
+        _tube_y(cargo, y0, y0 + 0.12, 1.14, rz - 0.08, cz, P["cargo"])
+        _tube_y(cargo, y1 - 0.12, y1, 1.14, rz - 0.08, cz, P["cargo"])
+        t = cz + rz
+        box(dark, -0.16, 0.16, y0 + 0.5, y1 - 0.6, t - 0.04, t + 0.05, P["dark"])
+        n = max(3, int((y1 - y0) / 2.6))
+        for i in range(n):
+            cyl(dark, 0.0, y0 + 1.0 + (y1 - y0 - 2.0) * i / (n - 1), 0.3, t - 0.02, t + 0.12, P["dark"], n=6)
+        box(body, -1.15, 1.15, y1 - 0.3, y1, zf - 0.1, zf + 0.3, P["body"])     # rear valve cabinet
+    else:  # flatbed
+        zd = zf + 0.2
+        box(dark, -1.25, 1.25, y0, y1, zf, zd, P["dark"])
+        box(body, -1.22, 1.22, y0, y0 + 0.14, zd, top, P["body"])
+        n = max(3, int((y1 - y0) / 3.0))
+        for i in range(n + 1):
+            y = y0 + 0.4 + (y1 - y0 - 0.6) * i / n
+            for s in (-1, 1):
+                box(dark, s * 1.2 - 0.06, s * 1.2 + 0.06, y - 0.07, y + 0.07, zd, zd + 0.95, P["dark"])
+        mid = y0 + (y1 - y0) * 0.5
+        hz = top - 0.6
+        box(cargo, -1.1, 1.1, y0 + 0.3, mid - 0.1, zd, hz, P["cargo"])
+        box(cargo, -1.1, 1.1, mid + 0.05, y1 - 0.1, zd, hz - 0.25, P["cargo"])
+        for y, zt in ((y0 + 1.0, hz), ((y0 + mid) / 2 + 0.3, hz), (mid + 0.9, hz - 0.25), (y1 - 1.0, hz - 0.25)):
+            box(dark, -1.14, 1.14, y - 0.08, y + 0.08, zt - 0.02, zt + 0.03, P["dark"])
+
+
+def heavy_rigid(kind):
+    """A 12 m four-axle rigid: twin steer axles under a deep cab, a tandem at the back, the body behind."""
+    def fn(Ms, P):
+        dark = Ms["dark"]
+        cab(Ms, P, -6.0, top=3.2, deep=2.2)
+        box(dark, -0.85, 0.85, -5.8, 5.85, 0.5, 1.0, P["dark"])               # chassis
+        box(dark, -1.1, 1.1, 5.8, 6.0, 0.3, 0.55, P["dark"])                  # underrun bar
+        for y in (-4.85, -3.2, 3.35, 4.6):
+            wheel_axle(dark, y, 0.52, 1.22, P["dark"])
+        cargo_body(Ms, P, kind, -3.6, 6.0, 1.0, 3.6)
+    return fn
+
+
+def v_rt_tractor(Ms, P):
+    """Road-train tractor (6.4 m): a sleeper cab over the steer axle, a tandem drive with the fifth wheel on it."""
+    body, dark = Ms["body"], Ms["dark"]
+    cab(Ms, P, -3.2, top=3.05, deep=1.95, sleeper=0.65)
+    box(dark, -0.85, 0.85, -3.0, 3.15, 0.5, 1.0, P["dark"])
+    for y in (-1.9, 1.35, 2.55):
+        wheel_axle(dark, y, 0.52, 1.22, P["dark"])
+    box(dark, -1.05, 1.05, 1.1, 2.7, 1.0, 1.18, P["dark"])                    # fifth wheel plate
+    for s in (-1, 1):                                                          # mudguards and fuel tanks
+        box(body, s * 1.24 - 0.06, s * 1.24 + 0.06, 0.75, 3.15, 0.9, 1.15, P["body"])
+        box(dark, s * 1.0 - 0.25, s * 1.0 + 0.25, -0.55, 0.65, 0.45, 1.0, P["dark"])
+    box(dark, -1.0, 1.0, 3.05, 3.2, 0.35, 0.6, P["dark"])
+
+
+def rt_trailer(kind, lead):
+    """A road-train trailer: the lead one (9.4 m) carries its body up front and a fifth wheel over its rear axles for
+    the second; the rear one (10 m) is body all the way. Both stand on a tandem near the back."""
+    L = 9.4 if lead else 10.0
+    h = L / 2
+    def fn(Ms, P):
+        dark = Ms["dark"]
+        zf = 1.3
+        box(dark, -0.6, 0.6, -h, h - 0.05, 0.85, zf, P["dark"])                # spine
+        for y in (3.05, 4.15) if lead else (3.05, 4.15):
+            wheel_axle(dark, y, 0.5, 1.22, P["dark"])
+        for s in (-1, 1):                                                       # landing legs
+            box(dark, s * 0.9 - 0.08, s * 0.9 + 0.08, -h + 1.9, -h + 2.05, 0.0, zf, P["dark"])
+        if lead:
+            cargo_body(Ms, P, kind, -h, 2.5, zf, 3.95)
+            box(dark, -1.1, 1.1, 2.55, h, zf - 0.1, zf + 0.08, P["dark"])      # fifth-wheel deck
+            box(dark, -1.0, 1.0, 3.0, 4.2, zf + 0.08, zf + 0.22, P["dark"])
+        else:
+            cargo_body(Ms, P, kind, -h, h - 0.2, zf, 3.95)
+            box(dark, -1.1, 1.1, h - 0.2, h, 0.35, 0.6, P["dark"])             # underrun bar
+    return fn
+
+
 VEHICLES = {
     "car": (v_car, ("body", "glass", "dark"), (1.85, 4.4, 1.45)),
     "van": (v_van, ("body", "glass", "dark"), (2.0, 5.0, 2.0)),
@@ -3372,6 +3596,19 @@ VEHICLES = {
     "tipper": (v_tipper, ("body", "glass", "dark", "cargo"), (2.7, 8.5, 3.04)),
     "tanker": (v_tanker, ("body", "glass", "dark", "cargo"), (2.46, 8.5, 3.1)),
     "flatbed": (v_flatbed, ("body", "glass", "dark", "cargo"), (2.52, 8.5, 3.04)),
+    "heavy_truck": (heavy_rigid("truck"), ("body", "glass", "dark", "cargo"), (2.7, 12.0, 3.62)),
+    "heavy_tipper": (heavy_rigid("tipper"), ("body", "glass", "dark", "cargo"), (2.7, 12.0, 3.6)),
+    "heavy_tanker": (heavy_rigid("tanker"), ("body", "glass", "dark", "cargo"), (2.7, 12.0, 3.68)),
+    "heavy_flatbed": (heavy_rigid("flatbed"), ("body", "glass", "dark", "cargo"), (2.7, 12.0, 3.6)),
+    "rt_tractor": (v_rt_tractor, ("body", "glass", "dark"), (2.7, 6.4, 3.69)),
+    "rt_truck_a": (rt_trailer("truck", True), ("body", "dark", "cargo"), (2.54, 9.4, 3.97)),
+    "rt_truck_b": (rt_trailer("truck", False), ("body", "dark", "cargo"), (2.54, 10.0, 3.97)),
+    "rt_tipper_a": (rt_trailer("tipper", True), ("body", "dark", "cargo"), (2.7, 9.4, 3.95)),
+    "rt_tipper_b": (rt_trailer("tipper", False), ("body", "dark", "cargo"), (2.7, 10.0, 3.95)),
+    "rt_tanker_a": (rt_trailer("tanker", True), ("body", "dark", "cargo"), (2.44, 9.4, 4.03)),
+    "rt_tanker_b": (rt_trailer("tanker", False), ("body", "dark", "cargo"), (2.44, 10.0, 4.03)),
+    "rt_flatbed_a": (rt_trailer("flatbed", True), ("body", "dark", "cargo"), (2.52, 9.4, 3.95)),
+    "rt_flatbed_b": (rt_trailer("flatbed", False), ("body", "dark", "cargo"), (2.52, 10.0, 3.95)),
     "bus": (v_bus, ("body", "trim", "lights", "glass", "dark"), (2.575, 12.17, 3.12)),
     # services (fixed colours)
     "garbagetruck": (v_garbagetruck, ("paint", "trim", "lights", "glass", "dark"), (2.5, 8.5, 3.2)),

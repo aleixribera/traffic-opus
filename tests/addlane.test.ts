@@ -6,7 +6,7 @@ import { LANE_W, type RoadTypeId } from "../src/config";
 import { Game } from "../src/game/city";
 
 const world = (over: Partial<BuildWorld> = {}): BuildWorld => ({
-  isWater: () => false, isMountain: () => false, inBounds: () => true, unlocked: () => true, buildingsHit: () => [], money: () => 1e9, ...over,
+  isWater: () => false, isMountain: () => false, inBounds: () => true, buildingsHit: () => [], money: () => 1e9, ...over,
 });
 
 function road(net: RoadNetwork, a: number, b: number, type: RoadTypeId = "street") {

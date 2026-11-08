@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import { BUILDING_TYPES, LEVEL_H, TILE, MAX_LEVEL, ROAD_TYPES, SIM, roadWidth, type RoadTypeId } from "./config";
-import { dist, dot, formatMoney, norm, rectCorners, right, sub, v2, type V2 } from "./core/math";
+import { BUILDING_TYPES, LEVEL_H, MAX_LEVEL, ROAD_TYPES, SIM, roadWidth, type RoadTypeId } from "./config";
+import { dist, dot, formatMoney, norm, rectCorners, right, sub, v2, wrapAngle, type V2 } from "./core/math";
 import type { Building } from "./game/buildings";
 import { Game } from "./game/city";
 import {
@@ -12,6 +12,8 @@ import { GATE_GAP, siteFrame, siteToWorld } from "./game/sites";
 
 /** How far outside a waiting site's gate the road tool snaps a road's end (m): clear of the fence, well in reach. */
 const GATE_SNAP = 7;
+/** How far one pixel of scrolling turns the building being placed (a wheel notch of ~100 px: ~10°). */
+const PLACE_TURN_PER_PX = (10 * Math.PI) / 180 / 100;
 import { ZONES } from "./game/zones";
 import { MIN_DEPOSIT, PLANTS, PRODUCTS, UNPOWERED, isPlantKind, type Product } from "./game/industry";
 import { TOWN_COST, TOWN_SPACING } from "./game/settlements";
@@ -32,7 +34,7 @@ import { Saves } from "./game/saves";
 import { PLACED, type PlacedKind } from "./game/placed";
 import type { Hud, Chip } from "./ui/hud";
 
-export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "town" | "unlock" | "place" | "transit";
+export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "town" | "place" | "transit";
 /** The bus tool: put stops on the kerb, or click stops in order to make a line. */
 export type TransitMode = "stop" | "line";
 /** Road tool modes, as in CS2: the four drawing modes, a 3-click grid, and Replace (change type / reverse). */
@@ -57,7 +59,7 @@ export interface ToolState {
   bdzLevel: number | null; // bulldozer elevation filter (null = all)
   reverse: boolean; // upgrade tool flips one-ways instead
   placed: PlacedKind; // building being placed
-  /** turn (radians) given to the building being placed with , and . (0: it faces the nearest road) */
+  /** how the building being placed is turned (radians; 0: its gate toward the bottom of the screen): the scroll wheel turns it freely, , and . in 15° steps */
   placeTurn: number;
   transitMode: TransitMode;
 }
@@ -199,12 +201,10 @@ export class App {
     this.worldRoot.add(this.terrain3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group);
     this.roads.rebuildAll();
     this.buildings3d.rebuild(g.buildings.list);
-    this.terrain3d.setTiles(g.tiles);
     this.groundOverlay();
     g.on((e) => {
       if (e.t === "roads") { this.roads.apply(e.cs); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
       else if (e.t === "buildings") { this.buildings3d.rebuild(g.buildings.list); this.applyTint(); this.dirtyPreview = true; }
-      else if (e.t === "tiles") this.terrain3d.setTiles(g.tiles);
       else if (e.t === "zones") this.dirtyPreview = true;
       else if (e.t === "milestone") { if (this.mode === "play") this.hud?.milestone(e.m); }
       else if (e.t === "toast") { if (this.mode !== "menu") this.hud?.toast(e.msg); }
@@ -315,6 +315,13 @@ export class App {
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
       if (this.mode === "menu") return;
+      // a building in hand turns with the wheel (Ctrl + wheel still zooms; so do R and F)
+      if (this.st.tool === "place" && !e.ctrlKey) {
+        const px = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+        this.st.placeTurn = wrapAngle(this.st.placeTurn + Math.sign(px) * Math.min(Math.abs(px), 200) * PLACE_TURN_PER_PX);
+        this.dirtyPreview = true;
+        return;
+      }
       const r = el.getBoundingClientRect();
       const k = Math.exp(Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY), 120) * 0.0022);
       this.view.zoomAt(e.clientX - r.left, e.clientY - r.top, k);
@@ -462,7 +469,6 @@ export class App {
     }
     else if (k === "b") this.setTool({ tool: "bulldoze" });
     else if (k === "l") this.setTool({ tool: this.st.tool === "lane" ? "inspect" : "lane" });
-    else if (k === "m") this.setTool({ tool: this.st.tool === "unlock" ? "inspect" : "unlock" });
     else if (k === "p") this.hud?.toggleWin("progression");
     else if (k === "z") this.hud?.toggleWin("economy");
     else if (k === "c") this.hud?.toggleWin("city");
@@ -485,7 +491,9 @@ export class App {
 
   /** How the building being placed is turned, and where the bottom of the screen points (a free site faces it). */
   private placeOpts() {
-    return { turn: this.st.placeTurn, down: { x: -Math.sin(this.view.rot), y: Math.cos(this.view.rot) } };
+    // (turned from facing the bottom of the screen, so it turns as the player sees it, whichever way the map is turned)
+    const down = { x: -Math.sin(this.view.rot), y: Math.cos(this.view.rot) };
+    return { rot: wrapAngle(Math.atan2(down.x, -down.y) + this.st.placeTurn), down };
   }
 
   /** Parallel road spacing for the current type. */
@@ -818,18 +826,6 @@ export class App {
       this.hud?.openSignal(n);
       return;
     }
-    if (t === "unlock") {
-      const [i, j] = g.tileOf(c);
-      if (g.tiles.has(`${i},${j}`)) return;
-      const why = g.tileBlock(i, j);
-      if (why) { this.reject(why); return; }
-      const price = g.nextTilePrice;
-      g.unlockTile(i, j);
-      this.hud?.sound("place");
-      this.hud?.toast(`Bought land for ${formatMoney(price)}`);
-      if (g.tileSlotsLeft <= 0) this.setTool({ tool: "inspect" });
-      else this.hud?.refresh();
-    }
   }
 
   private finishRect() {
@@ -1135,15 +1131,6 @@ export class App {
         pv.marker(node.p, node.h);
         chips.push({ text: node.signal ? "Edit traffic lights" : "Junction: lanes & lights", kind: "info" });
       }
-    } else if (t === "unlock") {
-      const [i, j] = g.tileOf(c);
-      if (!g.tiles.has(`${i},${j}`)) {
-        const T = TILE, a = (i - 0.5) * T, b = (j - 0.5) * T;
-        const why = g.tileBlock(i, j);
-        pv.footprint([v2(a, b), v2(a + T, b), v2(a + T, b + T), v2(a, b + T)], why ? 0x888888 : 0x58c8e6);
-        chips.push(why ? { text: why, kind: "error" } : { text: "Buy this tile", kind: "info" });
-        chips.push({ text: formatMoney(g.nextTilePrice), kind: g.nextTilePrice > g.money ? "error" : "cost" });
-      }
     } else if (t === "transit") {
       this.transitPreview(pv, chips);
     } else if (t === "place") {
@@ -1163,8 +1150,11 @@ export class App {
           const o = g.buildings.byId.get(id);
           if (o) pv.footprint(rectCorners(o.c, o.hw, o.hd, o.rot), 0xf2a33a, gh.length > 0);
         }
-        if (pl.free) chips.push({ text: "No road yet: draw one to its gate", kind: "info" });
-        else if (pl.faces) chips.push({ text: `Faces a ${pl.faces.toLowerCase()}`, kind: "info" });
+        if (pl.link) {
+          pv.plan(pl.link, 0);
+          chips.push({ text: `Street to its gate: ${Math.round(pl.link.length)} m`, kind: "info" });
+        } else if (pl.free && pl.ok) chips.push({ text: "No road it can reach: turn its gate toward one, or draw one to it", kind: "info" });
+        else if (pl.faces) chips.push({ text: `Gate on a ${pl.faces.toLowerCase()}`, kind: "info" });
         // (the deposit share; a lot refused for too little of it gives the share in its reason instead)
         this.powerPreview(pv, chips, k, pl.c, pl.access?.seg);
         if (pl.deposit && pl.deposit.share >= MIN_DEPOSIT) chips.push({ text: `${pl.deposit.name[0].toUpperCase()}${pl.deposit.name.slice(1)} ${Math.round(pl.deposit.share * 100)}%`, kind: "info" });

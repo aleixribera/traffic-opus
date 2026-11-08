@@ -38,6 +38,7 @@
   --bad: #ef8a6c;       /* trouble lettering (6.6 on --plate) */
   --good: #93c97a;      /* good lettering (8.5 on --plate) */
   --good-fill: #3a7036; /* go fills (cream on it 4.9) */
+  --copper: #d07a45; /* a material colour: copper, and the deepest of the fleet split bar */
   --info: #7fb6e0;      /* neutral data lines, power plants (7.5) */
   --bar-ok: #6fae5c;
   --bar-mid: #e0a833;
@@ -61,3 +62,6 @@
   --shadow: 0 1px 0 rgba(0, 0, 0, 0.5), 0 4px 14px rgba(3, 7, 14, 0.45);
   --rivet: radial-gradient(circle at 45% 40%, #8796ad 0 0.8px, #3a4c6c 1.3px, #1b2a42 2.1px, transparent 2.6px);
 }
+
+/* selected text (the company name, the save name) is ochre with navy lettering, not the browser blue */
+::selection { background: var(--ochre); color: var(--bar); }

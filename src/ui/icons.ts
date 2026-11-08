@@ -12,7 +12,11 @@ const C = {
   cream: "#f3ead6", cream2: "#cfc4ab", ochre: "#e0a833", ochreD: "#a87a1f", brick: "#c0533a", brickD: "#8e3523",
   navy: "#0c1524", slate: "#5d7093", steel: "#9fb0c8", olive: "#7e9f4e", oliveD: "#56702f", wood: "#a8743f",
   woodL: "#d9ad6a", coal: "#2a2f38", ore: "#b0623a", sand: "#e6c98a", glass: "#8fd0d6", fire: "#f08a3a", asphalt: "#46566f",
+  copper: "#d07a45", verdigris: "#6fb39a",
 };
+
+/** A 16-unit cog outline, shared by the machinery product and the machine works. */
+const GEAR = "M6.9 1.5h2.2l.4 1.9 1.3.6 1.6-1.1 1.6 1.6-1.1 1.6.6 1.3 1.9.4v2.2l-1.9.4-.6 1.3 1.1 1.6-1.6 1.6-1.6-1.1-1.3.6-.4 1.9H6.9l-.4-1.9-1.3-.6-1.6 1.1-1.6-1.6 1.1-1.6-.6-1.3-1.9-.4V6.9l1.9-.4.6-1.3-1.1-1.6 1.6-1.6 1.6 1.1 1.3-.6z";
 
 const svg = (w: number, h: number, body: string) =>
   `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true" focusable="false">${body}</svg>`;
@@ -95,6 +99,12 @@ export function placedIcon(kind: string): string {
     case "sandpit":
       // a pale sand heap in a pit, a conveyor feeding it
       return svg(28, 28, `<path d="M2 25.5 H26 L23 19.5 H5 Z" fill="${C.wood}"/><path d="M4 22.5 Q11 8 18 22.5 Z" fill="${C.sand}"/><path d="M14.5 12.5 L25 7" stroke="${C.cream}" stroke-width="2" stroke-linecap="round"/><path d="M24 7 V19.5" stroke="${C.cream}" stroke-width="1.4"/><rect x="19" y="18" width="6" height="4" fill="${C.ochre}"/>`);
+    case "warehouse":
+      // a long low shed with a row of dock doors, a trailer backed up to the last one
+      return svg(28, 28, `<path d="M2 12.5 L14 6.5 L26 12.5 V25 H2 Z" fill="${C.cream}"/><path d="M1.2 12.8 L14 6.4 L26.8 12.8" fill="none" stroke="${C.cream2}" stroke-width="1.4" stroke-linejoin="round"/><g fill="${C.navy}"><rect x="4" y="16.5" width="4" height="8.5"/><rect x="10" y="16.5" width="4" height="8.5"/><rect x="16" y="16.5" width="4" height="8.5"/></g><path d="M4 19 H8 M10 19 H14 M16 19 H20" stroke="${C.slate}" stroke-width="1.2"/><rect x="21" y="18" width="6" height="7" fill="${C.ochre}"/><path d="M21 21.5 H27" stroke="${C.ochreD}" stroke-width="1.2"/>`);
+    case "fueldepot":
+      // a horizontal bulk tank on saddles, and a pump under a brick canopy
+      return svg(28, 28, `<rect x="2" y="8.5" width="15" height="8.5" rx="4.25" fill="${C.cream}"/><path d="M6 8.5 V17 M13 8.5 V17" stroke="${C.cream2}" stroke-width="1.2"/><path d="M4 17 V22 M13.5 17 V22" stroke="${C.steel}" stroke-width="2.4"/><rect x="2" y="22" width="24" height="3" fill="${C.cream2}"/><rect x="17.5" y="4.5" width="9" height="3" fill="${C.brick}"/><path d="M19 7.5 V22" stroke="${C.cream2}" stroke-width="1.4"/><rect x="21" y="13" width="4.4" height="9" fill="${C.ochre}"/><rect x="22" y="14.4" width="2.4" height="2.4" fill="${C.navy}"/>`);
     case "refinery":
       // a fractionating column, a flare stack burning, two round tanks
       return svg(28, 28, `<rect x="4.5" y="4" width="5.5" height="21" rx="1.5" fill="${C.cream}"/><path d="M4.5 9 H10 M4.5 14 H10 M4.5 19 H10" stroke="${C.navy}" stroke-width="1.2"/><rect x="12" y="8" width="2.2" height="17" fill="${C.cream2}"/><path d="M13.1 8 Q11.2 5 13.1 1.8 Q15 5 13.1 8 Z" fill="${C.fire}"/><rect x="16.4" y="15" width="9.2" height="10" rx="1.5" fill="${C.steel}"/><path d="M16.4 18.5 H25.6" stroke="${C.slate}" stroke-width="1.2"/>`);
@@ -107,6 +117,18 @@ export function placedIcon(kind: string): string {
     case "constructionplant":
       // a yard crane over a stack of prefab panels, a mixer silo
       return svg(28, 28, `<path d="M6 25 V4.5 H24" fill="none" stroke="${C.ochre}" stroke-width="2.4"/><path d="M6 9 L10.5 4.5" stroke="${C.ochre}" stroke-width="1.6"/><path d="M19.5 4.5 V11" stroke="${C.cream2}" stroke-width="1.2"/><rect x="16" y="11" width="7" height="2.6" fill="${C.steel}"/><rect x="10" y="20.4" width="15" height="2.8" fill="${C.cream2}"/><rect x="11" y="17.2" width="13" height="2.8" fill="${C.steel}"/><rect x="1.5" y="14" width="3.5" height="11" rx="1.75" fill="${C.cream}"/>`);
+    case "coppermine":
+      // an open pit stepped down into the hillside, a conveyor up to a heap of green copper ore
+      return svg(28, 28, `<path d="M2 25.5 H17 V21 H13 V16.5 H9 V12 H5.5 V7.5 H2 Z" fill="${C.cream2}"/><path d="M2 12 H5.5 M2 16.5 H9 M2 21 H13" stroke="#9c927b" stroke-width="1.2"/><path d="M13.5 17.5 L21.5 8.5" stroke="${C.cream}" stroke-width="2" stroke-linecap="round"/><path d="M20.5 8.5 V14" stroke="${C.cream}" stroke-width="1.3"/><path d="M14.5 25.5 Q21 11.5 27 25.5 Z" fill="${C.verdigris}"/><rect x="3" y="21.6" width="6" height="3" fill="${C.ochre}"/>`);
+    case "coppersmelter":
+      // a smelter stack banded in copper, the casting shed, and copper ingots cooling in front
+      return svg(28, 28, `<path d="M4 25 L6 8.5 H11 L13 25 Z" fill="${C.cream}"/><rect x="7" y="2.5" width="3" height="6" fill="${C.cream2}"/><path d="M5.3 13.5 H11.7" stroke="${C.copper}" stroke-width="2.2"/><rect x="6.5" y="18" width="4" height="3.6" fill="${C.fire}"/><path d="M13 25 V12.5 L19.5 8.5 L26 12.5 V25 Z" fill="${C.steel}"/><path d="M14.5 24.5 L15.6 21.4 H19.6 L20.7 24.5 Z M20.3 24.5 L21.4 21.4 H25.4 L26.5 24.5 Z" fill="${C.copper}"/><path d="M15.6 21.4 H19.6 M21.4 21.4 H25.4" stroke="${C.cream}" stroke-width="1.2"/>`);
+    case "electronics":
+      // a clean assembly hall with a glazed sawtooth roof, and a circuit chip in front
+      return svg(28, 28, `<path d="M2 21 V12 L6.5 7 V12 L11 7 V12 L15.5 7 V12 L20 7 V12 H26 V21 Z" fill="${C.cream}"/><path d="M6.5 7 V12 M11 7 V12 M15.5 7 V12 M20 7 V12" stroke="${C.glass}" stroke-width="1.6"/><path d="M13 16 V14 M16 16 V14 M19 16 V14 M13 25 V27 M16 25 V27 M19 25 V27 M10 18.5 H8 M10 22.5 H8 M22 18.5 H24 M22 22.5 H24" stroke="${C.cream2}" stroke-width="1.3"/><rect x="10" y="16" width="12" height="9" fill="${C.slate}"/><rect x="13.5" y="18.4" width="5" height="4.2" fill="${C.ochre}"/>`);
+    case "machineworks":
+      // a tall machine hall under a gantry crane, and a cog in front
+      return svg(28, 28, `<path d="M2 25 V10 L12 5.5 L22 10 V25 Z" fill="${C.steel}"/><rect x="5" y="13" width="14" height="3" fill="${C.slate}"/><path d="M4 25 V3.5 M24.5 25 V3.5 M2.5 3.5 H26" fill="none" stroke="${C.ochre}" stroke-width="2"/><path d="M17 3.5 V9" stroke="${C.cream}" stroke-width="1.3"/><rect x="15" y="9" width="4" height="2.2" fill="${C.cream}"/><g transform="translate(4 13.5) scale(0.78)"><path d="${GEAR}" fill="${C.cream}"/><circle cx="8" cy="8" r="2.4" fill="${C.navy}"/></g>`);
     default:
       return FALLBACK;
   }
@@ -123,7 +145,6 @@ export const ICON = {
   lane: svg(28, 28, `<path d="M11 26 V16 L5.5 10.5 V2 H22 V26 Z" fill="${C.asphalt}"/><path d="M13.6 2.5 V12" stroke="${C.cream2}" stroke-width="1.2" stroke-dasharray="2 1.6"/><path d="M9.4 10.5 V7.4 Q9.4 5.6 7.6 5.6" fill="none" stroke="${C.ochre}" stroke-width="1.9" stroke-linecap="round"/><path d="M8.9 4 L7 5.6 L8.9 7.2" fill="none" stroke="${C.ochre}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M17.6 23 V7" stroke="${C.cream}" stroke-width="1.8" stroke-linecap="round"/><path d="M15.4 9.2 L17.6 6.6 L19.8 9.2" fill="none" stroke="${C.cream}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>`),
   upgrade: svg(28, 28, `<path d="M6 21 L14 7 L22 21" fill="none" stroke="${C.cream}" stroke-width="2.4" stroke-linejoin="round"/><path d="M14 7 v15" stroke="${C.ochre}" stroke-width="1.6" stroke-dasharray="2.4 2"/>`),
   bulldoze: svg(28, 28, `<path d="M3 19.5 H17 L19.5 13.5 H14 L12.5 8 H6.5 Z" fill="${C.ochre}"/><rect x="8" y="9.5" width="3.5" height="3.5" fill="${C.navy}"/><rect x="3" y="19.5" width="16" height="4.5" rx="2.25" fill="${C.cream2}"/><circle cx="7" cy="21.75" r="1.2" fill="${C.navy}"/><circle cx="15" cy="21.75" r="1.2" fill="${C.navy}"/><path d="M20 12 L25.5 21.5 H20.5 Z" fill="${C.steel}"/>`),
-  unlock: svg(28, 28, `<rect x="4" y="4" width="20" height="20" fill="none" stroke="${C.cream2}" stroke-width="1.6" stroke-dasharray="3 2"/><path d="M14 9 v10 M9 14 h10" stroke="${C.ochre}" stroke-width="2.6"/>`),
   undo: svg(20, 20, `<path d="M7 5 L3 9 L7 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.5 9 H12 a4.5 4.5 0 0 1 0 9 H9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`),
   redo: svg(20, 20, `<path d="M13 5 L17 9 L13 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M16.5 9 H8 a4.5 4.5 0 0 0 0 9 H11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`),
   pause: svg(16, 16, `<rect x="4" y="3" width="3" height="10" fill="currentColor"/><rect x="9" y="3" width="3" height="10" fill="currentColor"/>`),
@@ -153,13 +174,11 @@ export const ICON = {
   town: svg(28, 28, `<path d="M2 25 V15.5 L6.5 11.5 L11 15.5 V25 Z" fill="${C.cream2}"/><path d="M10 25 V10 L15 3 L20 10 V25 Z" fill="${C.cream}"/><path d="M19 25 V15.5 L22.5 12 L26 15.5 V25 Z" fill="${C.cream2}"/><path d="M10 10 L15 3 L20 10" fill="none" stroke="${C.brick}" stroke-width="2" stroke-linejoin="round"/><rect x="13.5" y="17" width="3" height="8" fill="${C.navy}"/><circle cx="15" cy="12.5" r="1.6" fill="${C.ochre}"/>`),
   people: svg(14, 14, `<circle cx="7" cy="4.3" r="2.6" fill="currentColor"/><path d="M2 13 a5 5 0 0 1 10 0 Z" fill="currentColor"/>`),
   lock: svg(10, 12, `<rect x="1" y="5" width="8" height="6.5" rx="0.6" fill="currentColor"/><path d="M3 5 V3.6 a2 2 0 0 1 4 0 V5" fill="none" stroke="currentColor" stroke-width="1.5"/>`),
-  land: svg(28, 28, `<path d="M4 9 L14 4 L24 9 L24 20 L14 25 L4 20 Z" fill="${C.olive}" stroke="${C.cream}" stroke-width="1.4"/><path d="M14 10 v9 M9.5 14.5 h9" stroke="${C.ochre}" stroke-width="2.6"/>`),
   layers: svg(18, 18, `<path d="M9 2.5 L16 6 L9 9.5 L2 6 Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M2 9.5 L9 13 L16 9.5 M2 12.5 L9 16 L16 12.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>`),
   flag: svg(18, 18, `<path d="M4 16.5 V2.5 M4 3 H14 L11.5 6.5 L14 10 H4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>`),
   coins: svg(18, 18, `<ellipse cx="7" cy="5" rx="4.5" ry="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M2.5 5 v3.5 c0 1.1 2 2 4.5 2 M2.5 8.5 v3.5 c0 1.1 2 2 4.5 2" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12.5" cy="11.5" r="3.6" fill="none" stroke="currentColor" stroke-width="1.7"/>`),
   chart: svg(18, 18, `<path d="M2.5 15.5 H15.5" stroke="currentColor" stroke-width="1.7"/><rect x="3.5" y="9" width="2.8" height="5" fill="currentColor"/><rect x="7.6" y="5" width="2.8" height="9" fill="currentColor"/><rect x="11.7" y="2.5" width="2.8" height="11.5" fill="currentColor"/>`),
   car: svg(18, 18, `<path d="M3 11 L4.4 6.6 C4.7 5.7 5.4 5.2 6.3 5.2 H11.7 C12.6 5.2 13.3 5.7 13.6 6.6 L15 11 V14 H3 Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="6" cy="11" r="1.2" fill="currentColor"/><circle cx="12" cy="11" r="1.2" fill="currentColor"/>`),
-  tiles: svg(18, 18, `<path d="M2.5 2.5 H15.5 V15.5 H2.5 Z M2.5 9 H15.5 M9 2.5 V15.5" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="9.8" y="9.8" width="4.9" height="4.9" fill="currentColor" opacity=".5"/>`),
   power: svg(28, 28, `<path d="M15.5 2.5 L7 15.5 H13 L11 25.5 L21 11.5 H15 L18 2.5 Z" fill="${C.ochre}"/>`),
   roadCat: svg(28, 28, `<path d="M8 26 L12 2 H16 L20 26 Z" fill="${C.asphalt}"/><path d="M8 26 L12 2 M20 26 L16 2" stroke="${C.cream}" stroke-width="1.8" stroke-linecap="round"/><path d="M14 5 v3.5 M14 12 v4 M14 19.5 v4.5" stroke="${C.ochre}" stroke-width="2" stroke-linecap="round"/>`),
   keys: svg(18, 18, `<rect x="2" y="4.5" width="14" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 7.5 h1 M8.5 7.5 h1 M12 7.5 h1 M5.5 10.8 h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>`),
@@ -187,6 +206,12 @@ export function productIcon(p: string): string {
     case "parts":
       // a steel I-beam over a precast panel
       return svg(16, 16, `<rect x="2" y="9" width="12" height="5" fill="${C.cream2}"/><path d="M5 11.5h2M9 11.5h2" stroke="${C.navy}" stroke-width="1.1"/><path d="M1.5 2.5h13v1.8h-5.4v1.6h5.4v1.8h-13V5.9h5.4V4.3H1.5z" fill="${C.steel}"/>`);
+    case "electronics":
+      // a chip on its pins
+      return svg(16, 16, `<path d="M5.5 1.5v2.5M8 1.5v2.5M10.5 1.5v2.5M5.5 12v2.5M8 12v2.5M10.5 12v2.5M1.5 5.5h2.5M1.5 8h2.5M1.5 10.5h2.5M12 5.5h2.5M12 8h2.5M12 10.5h2.5" stroke="${C.cream2}" stroke-width="1.3"/><rect x="3.6" y="3.6" width="8.8" height="8.8" fill="${C.steel}"/><rect x="6" y="6" width="4" height="4" fill="${C.ochre}"/>`);
+    case "machinery":
+      // a cog
+      return svg(16, 16, `<path d="${GEAR}" fill="${C.ochre}"/><circle cx="8" cy="8" r="2.4" fill="${C.navy}"/>`);
     default:
       return svg(16, 16, `<rect x="4" y="4" width="8" height="8" fill="${C.cream2}" transform="rotate(45 8 8)"/>`);
   }

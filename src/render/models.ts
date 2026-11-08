@@ -28,8 +28,17 @@ export const BUILDING_MODELS: BuildingKind[] = [
 export const SITE_PIECES: string[] = [
   ...SITE_MODELS, "oilwell", "sandpit", "refinery", "glassworks", "furniture", "constructionplant", "coppermine",
   "coppersmelter", "electronics", "machineworks",
+  // logistics (a warehouse, a fuel depot)
+  "warehouse", "fueldepot",
 ];
-export const VEHICLE_MODELS = ["car", "van", "truck", "tipper", "tanker", "flatbed", "bus"] as const;
+export const VEHICLE_MODELS = [
+  "car", "van", "truck", "tipper", "tanker", "flatbed", "bus",
+  // the bigger truck classes (game/trucks.ts): heavy rigids, and a road train's tractor and its lead (a) and rear (b)
+  // trailers, drawn piece by piece along the path
+  "heavy_truck", "heavy_tipper", "heavy_tanker", "heavy_flatbed",
+  "rt_tractor", "rt_truck_a", "rt_truck_b", "rt_tipper_a", "rt_tipper_b", "rt_tanker_a", "rt_tanker_b",
+  "rt_flatbed_a", "rt_flatbed_b",
+] as const;
 /** Street furniture, drawn on its own (not a lot). */
 export const PROP_MODELS = ["busstop", "fence"] as const;
 export type VehicleKind = (typeof VEHICLE_MODELS)[number];

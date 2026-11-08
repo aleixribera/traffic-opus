@@ -6,6 +6,7 @@ import { HOUR } from "../src/game/society";
 import { ZONE_GROUP } from "../src/game/growables";
 import { TOWN_COST, TOWN_SPACING } from "../src/game/settlements";
 import { SEED_EDGES } from "../src/game/towns";
+import { MILESTONES } from "../src/game/progression";
 import { hostTown, okCells, road, zoneFor } from "./helpers";
 
 const free = (p: V2): Snap => ({ p, h: 0, guides: [] });
@@ -182,27 +183,13 @@ describe("Towns", () => {
     expect(seen).toEqual(["food10"]);
     expect(g.money - m0).toBe(5000);
     expect(g.roadsUnlocked.has("avenue")).toBe(true);
-    expect(g.tileSlotsLeft).toBe(3);
     // a second town: roundabouts and a town slot more
     expect(g.featureUnlocked("roundabout")).toBe(false);
     expect(g.townSlots).toBe(2);
   });
 
-  it("buys land next to owned tiles, at a rising price, up to the milestone's limit", () => {
-    const g = new Game(7);
-    expect(g.tileBlock(2, 0)).toBe("Reach the next milestone to buy more land");
-    g.progress.done.push("village"); // Village: 4 more tiles
-    expect(g.tileBlock(3, 0)).toMatch(/border/);
-    const p0 = g.nextTilePrice;
-    const m0 = g.money;
-    expect(g.unlockTile(2, 0)).toBe(true);
-    expect(g.money).toBe(m0 - p0);
-    expect(g.nextTilePrice).toBeGreaterThan(p0);
-    expect(g.unlockTile(3, 0)).toBe(true);
-    expect(g.unlockTile(4, 0)).toBe(true);
-    expect(g.unlockTile(5, 0)).toBe(true);
-    expect(g.tileSlotsLeft).toBe(0);
-    expect(g.unlockTile(6, 0)).toBe(false);
+  it("no milestone hands out land: the company builds anywhere its roads reach", () => {
+    for (const m of MILESTONES) expect(Object.keys(m.unlocks), m.id).not.toContain("tiles");
   });
 });
 
@@ -231,6 +218,21 @@ describe("Saves", () => {
     run(h, 2); // and it keeps running
     expect(h.towns.byId.get(t.id)!.households).toBeGreaterThan(0);
   }, 60000);
+
+  it("saves from when land was bought still load (their tiles are ignored), and build anywhere", () => {
+    const g = new Game(7);
+    g.start();
+    const json = { ...JSON.parse(JSON.stringify(g.serialize())), tiles: ["-1,-1", "0,0", "1,1", "2,0"] };
+    const h = Game.load(json);
+    expect(h.towns.list.length).toBe(g.towns.list.length);
+    expect("tiles" in h.serialize()).toBe(false);
+    // a farm far outside the old start tiles
+    let ok = false;
+    for (let r = 3000; r < 8000 && !ok; r += 250) for (let k = 0; k < 24 && !ok; k++) {
+      ok = !!h.placedPlan("farm", v2(Math.cos((k / 24) * 6.283) * r, Math.sin((k / 24) * 6.283) * r))?.ok;
+    }
+    expect(ok).toBe(true);
+  });
 
   it("saves from before the company economy are refused, clearly", () => {
     const g = new Game(7);
