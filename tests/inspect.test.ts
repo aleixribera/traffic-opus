@@ -8,11 +8,12 @@ import { HOUR } from "../src/game/society";
 import { BLOCK, gridPt } from "../src/game/towns";
 import { Industry } from "../src/game/industry";
 import { F } from "../src/world/gen";
+import { seasonMult } from "../src/game/calendar";
 import type { V2 } from "../src/core/math";
 import type { Building } from "../src/game/buildings";
 import {
   TradeLedger, congestion, fmtNum, fmtRate, junctionModel, metresLeft, modelOf, rateLately, roadModel, siteModel, splitProblem,
-  townModel, trucksOut, vehicleModel, vehiclesOnSeg, type PanelModel,
+  townModel, trucksOut, vehicleModel, vehiclesOnSeg,
 } from "../src/ui/inspect";
 import { junctionAt, pickAt, pickRadius, poseOf, vehicleAt } from "../src/ui/pick";
 import { placeAlong, road } from "./helpers";
@@ -38,8 +39,6 @@ function chain(g: Game) {
   return { t, farm, foodplant };
 }
 
-const key = (m: PanelModel, label: RegExp) => m.keys.find((k) => label.test(k.label));
-
 describe("The inspector's panels", () => {
   let g: Game, farm: Building, foodplant: Building, led: TradeLedger;
   const truckOf = (b: Building) => g.traffic.vehicles.find((v) => v.trip.haul?.plant === b.id && v.trip.haul.leg === "out");
@@ -59,7 +58,8 @@ describe("The inspector's panels", () => {
   it("a producing site: output an hour (made vs can make), what it earns or ships, and trucks out of the fleet", () => {
     const m = siteModel(g, farm, led);
     expect(m.keys).toHaveLength(3);
-    const r = rateLately(farm, "crops"), can = Industry.perDay(farm, "crops") / 24;
+    // (its pace now, the season's swing included: a farm in autumn can make more than its year-round pace)
+    const r = rateLately(farm, "crops"), can = (Industry.perDay(farm, "crops") / 24) * seasonMult("farm", g.time);
     expect(r).not.toBeNull();
     expect(m.keys[0]).toMatchObject({ value: fmtRate(r!), unit: "/h", label: `crops, can ${fmtRate(can)}` });
     // crops only feed your own plants: no price, so it shows what it shipped, not a "profit" that's only costs
@@ -77,6 +77,8 @@ describe("The inspector's panels", () => {
     expect(to.chips.some((c) => c.ref?.k === "building" && c.ref.id === foodplant.id)).toBe(true);
     expect(m.related.to).toContain(foodplant.id);
     expect(m.badge).toBe(`Lv ${farm.plant!.level}/${4}`);
+    // the season: one small tag in the status line ("Autumn harvest ×1.6"), nothing more
+    expect(m.status.tag).toMatch(/^(Spring|Summer|Autumn|Winter) (sowing|growing|harvest|fallow) ×\d\.\d$/);
     expect(m.level?.label).toBe(`Lv ${farm.plant!.level + 1}`);
   });
 
@@ -117,7 +119,7 @@ describe("The inspector's panels", () => {
 
   it("a road: vehicles on it now, speed against the limit, how full; a junction: queues and the worst approach", () => {
     const v = truckOf(farm)!;
-    const seg = v.edge.kind === "lane" ? v.edge.seg : null;
+    const seg = "seg" in v.edge ? (v.edge.seg as number) : null;
     const s = seg ?? [...g.net.segs.keys()][0];
     const m = roadModel(g, s)!;
     expect(m.keys).toHaveLength(3);
@@ -170,8 +172,14 @@ describe("The inspector's panels", () => {
     expect(pickAt(g, { x: 99999, y: 99999 }, 0.3, false)).toBeNull();
   });
 
-  it("the trade ledger remembers who sent what to whom", () => {
+  it("the trade ledger remembers who sent what to whom, and forgets it on another game", () => {
     const runs = [...led.runs()];
     expect(runs.some((r) => r.from === farm.id && r.to === foodplant.id && r.p === "crops")).toBe(true);
+    // another game: nothing carried over (its ids name other things)
+    const other = new TradeLedger();
+    other.observe(g);
+    expect([...other.runs()].length).toBeGreaterThan(0);
+    other.observe(new Game(8));
+    expect([...other.runs()]).toEqual([]);
   });
 });

@@ -236,10 +236,7 @@ export class App {
     return s.x > 80 && s.x < this.view.w - 360 && s.y > 80 && s.y < this.view.h - 80;
   }
 
-  /**
-   * What the inspect tool would select at p: a vehicle first (they move, so they get the forgiving pick), then a bus
-   * stop, a junction, a building (a town hall selects its town), and last a road.
-   */
+  /** What the inspect tool would select at p (ui/pick.ts: vehicle, bus stop, building, junction, road). */
   pickAt(p: V2): Sel | null {
     return pickAt(this.game, p, this.view.mpp, this.view.halfH <= 1800);
   }
@@ -270,6 +267,8 @@ export class App {
     this.parks3d = new Parks3D(this.models);
     this.convoyTags.follow(null);
     this.followV = null;
+    // (the old game's selection would name something else, or nothing, in this one)
+    this.hud?.closePanels();
     this.sel = null;
     this.highlight.set(null);
     this.highlight.hoverV = null;

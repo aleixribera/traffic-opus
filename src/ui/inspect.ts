@@ -8,6 +8,7 @@ import { formatMoney } from "../core/math";
 import type { Building } from "../game/buildings";
 import type { Game } from "../game/city";
 import { SEASONAL, SEASON_NAME, seasonMult, seasonOf } from "../game/calendar";
+import { SEASON_WORD } from "./specials";
 import { ZONE_GROUP } from "../game/growables";
 import { Industry, PLANTS, PRODUCTS, isPlantKind, type Product } from "../game/industry";
 import { GROW_NEED, LEVEL_MULT, SITE_LEVELS } from "../game/sites";
@@ -106,7 +107,11 @@ export class TradeLedger {
   private pruneT = 0;
   static KEEP = HOUR * 4;
 
+  private game: Game | null = null;
+
   observe(g: Game) {
+    // (a game loaded or started: what the last one traded means nothing here)
+    if (g !== this.game) { this.game = g; this.clear(); }
     const now = g.time;
     for (const tr of g.trips()) {
       const h = tr.haul;
@@ -127,7 +132,7 @@ export class TradeLedger {
     }
   }
 
-  clear() { this.seen.clear(); }
+  clear() { this.seen.clear(); this.pruneT = 0; }
 }
 
 // ------------------------------------------------------------------------------------------- formatting
@@ -237,7 +242,9 @@ export function siteModel(g: Game, b: Building, led?: TradeLedger): PanelModel {
   else status = { text: D.logistics === "depot" ? "Filling your trucks" : D.logistics === "warehouse" ? "Storing and shipping" : "Working normally", tone: "good" };
   if (SEASONAL[b.kind] && !P.site && b.built >= 1) {
     const m = seasonMult(b.kind, g.time);
-    status.tag = `${SEASON_NAME[seasonOf(g.time)]} ×${m.toFixed(1)}`;
+    // the season is one small tag ("Autumn harvest ×1.6"), never rows of its own
+    const se = seasonOf(g.time), word = SEASON_WORD[b.kind]?.[se];
+    status.tag = `${SEASON_NAME[se]}${word ? ` ${word}` : ""} ×${m.toFixed(1)}`;
   }
 
   // ---- key numbers
@@ -270,7 +277,8 @@ export function siteModel(g: Game, b: Building, led?: TradeLedger): PanelModel {
     if (fuel) keys.push({ value: String(Math.floor(P.stock[fuel] ?? 0)), unit: `/${Industry.storeOf(b)}`, label: `${lower(fuel)} in the yard`, tone: (P.stock[fuel] ?? 0) < 1 ? "bad" : "" });
   } else if (b.built >= 1 && outs.length) {
     const p0 = outs[0];
-    const r = rateLately(b, p0), can = Industry.perDay(b, p0) / 24;
+    // ("can" is its pace now: the season's harvest swing included, as the plant itself makes it)
+    const r = rateLately(b, p0), can = (Industry.perDay(b, p0) / 24) * (SEASONAL[b.kind] ? seasonMult(b.kind, g.time) : 1);
     keys.push(r === null
       ? { value: "–", label: "no output yet", title: `Can make ${fmtRate(can)} ${lower(p0)} an hour` }
       : { value: fmtRate(r), unit: "/h", label: `${lower(p0)}, can ${fmtRate(can)}`, tone: can > 0 ? toneOf(r / can, 0.75, 0.35) : "", title: `${PRODUCTS[p0].name} made an hour lately, against ${fmtRate(can)} an hour fully staffed and supplied` });
@@ -338,7 +346,8 @@ export function siteModel(g: Game, b: Building, led?: TradeLedger): PanelModel {
 
   // ---- level
   let level: PanelModel["level"];
-  if (b.placed && b.built >= 1 && !P.site && !D.mega) {
+  // (warehouses and depots don't grow: no level bar, as no badge)
+  if (b.placed && b.built >= 1 && !P.site && !D.mega && !D.logistics) {
     if (L >= SITE_LEVELS) level = { label: "Top level", pct: 1, line: `fully grown · ×${LEVEL_MULT[L - 1]} output` };
     else {
       const k = Math.max(0, Math.min(1, (P.grow ?? 0) / GROW_NEED));
@@ -397,7 +406,8 @@ export function townModel(g: Game, t: Town, led?: TradeLedger): PanelModel {
   const from: FlowChip[] = [];
   for (const [id, p] of sup) {
     const b = g.buildings.byId.get(id);
-    if (b) from.push({ ...placeChip(g, b), product: p, note: PRODUCTS[p].name.toLowerCase() });
+    // (the cargo shows as its picture; the distance tells two plants of one kind apart)
+    if (b) from.push({ ...placeChip(g, b), product: p, note: km(Math.hypot(b.c.x - t.c.x, b.c.y - t.c.y)) });
   }
   rel.from = [...sup.keys()];
   for (const v of g.traffic.vehicles) if (v.trip.haul && v.trip.haul.leg === "out" && !v.trip.haul.done && mine.has(v.trip.haul.dest)) rel.vehicles.push(v.id);

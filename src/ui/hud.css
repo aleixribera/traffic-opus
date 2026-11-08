@@ -667,11 +667,14 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 
 /* ------------------------------------------------------------ inspector: one anatomy for every panel (docs/ui-style.md "Inspector") */
 .panel > header.ip-head { gap: 6px; padding-right: 38px; }
+/* the road and junction pictures are drawn dark (asphalt): a light plate behind them in the header */
+.ip-head .svc-tag.lit { background: var(--cream-3); border-radius: var(--r); padding: 2px; box-sizing: border-box; }
+.ip-head .svc-tag.lit svg { width: 20px; height: 20px; }
 .ip-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .ip-tn, .ip-ts { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ip-ts { font: 500 var(--t-xs)/1.2 var(--f-text); letter-spacing: 0.02em; text-transform: none; color: var(--cream-2); }
 .lv-badge { flex: none; text-transform: none; padding: 3px 5px; border: 1px solid var(--pin); border-radius: 1px; font: 600 var(--t-xs)/1 var(--f-text); letter-spacing: 0.06em; color: var(--ochre-hi); font-variant-numeric: tabular-nums lining-nums; }
-.ip-act { flex: none; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; background: none; border: 1px solid transparent; border-radius: var(--r); color: var(--cream-2); }
+.ip-act { flex: none; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; background: none; border: 1px solid transparent; border-radius: var(--r); color: var(--cream-2); }
 .ip-act svg { width: 16px; height: 16px; }
 .ip-act:hover { color: var(--cream); background: var(--plate-3); border-color: var(--rule-2); }
 .ip-act.on { color: var(--ochre-hi); border-color: var(--pin); }
@@ -708,7 +711,7 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .ip-flow dt.fl-from::before { background: var(--cream); border-color: var(--cream); }
 .ip-flow dt.fl-to::before, .ip-flow dt.fl-heading-to::before { background: var(--ochre); border-color: var(--ochre); }
 .ip-flow dd { margin: 0; display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
-.fchip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; min-height: 26px; padding: 2px 7px 2px 4px; background: var(--plate-2); border: 1px solid var(--rule-2); border-radius: var(--r); color: var(--cream); font: 500 var(--t-sm)/1.2 var(--f-text); text-align: left; }
+.fchip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; min-height: 32px; padding: 3px 8px 3px 5px; background: var(--plate-2); border: 1px solid var(--rule-2); border-radius: var(--r); color: var(--cream); font: 500 var(--t-sm)/1.2 var(--f-text); text-align: left; }
 button.fchip:hover { background: var(--plate-3); border-color: var(--pin); }
 .fchip.still { background: none; border-style: dashed; color: var(--cream-2); }
 .fchip svg { width: 16px; height: 16px; flex: none; }
@@ -737,4 +740,4 @@ button.fchip:hover { background: var(--plate-3); border-color: var(--pin); }
 @media (prefers-reduced-motion: reduce) { .ip-more summary::before { transition: none; } }
 
 .ip-sig { margin-top: 4px; }
-.ip-flowbtn { margin-top: 2px; }
+.ip-flowbtn { margin-top: 2px; min-height: 32px; }

@@ -36,7 +36,7 @@ export function seasonLine(t: number, day: number): string {
 }
 
 /** What each season means for the harvest, in a word or two, for the panels. */
-const SEASON_WORD: Record<string, Record<Season, string>> = {
+export const SEASON_WORD: Record<string, Record<Season, string>> = {
   farm: { spring: "sowing", summer: "growing", autumn: "harvest", winter: "fallow" },
   loggingcamp: { spring: "thaw", summer: "soft ground", autumn: "felling", winter: "peak felling" },
 };

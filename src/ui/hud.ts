@@ -215,6 +215,7 @@ export class Hud {
   private sfx = new Sfx();
 
   constructor(private app: App, parent: HTMLElement) {
+    this.holdPanel();
     parent.appendChild(this.root);
     this.build();
   }
@@ -1231,8 +1232,14 @@ export class Hud {
   /** Set the panel's HTML only when it changed (keeps focus and hover steady under the live refresh). */
   private setPanel(html: string): boolean {
     if (html === this.lastPanel) return false;
+    // a button held down in the panel keeps it as it is until let go (a vehicle's numbers change four times a
+    // second: replacing the button between press and release would lose the click)
+    if (this.panelHeld) { this.panelHeld = 2; return false; }
+    // keyboard focus on a control stays on the same control in the new panel
+    const was = document.activeElement instanceof HTMLElement && this.panel.contains(document.activeElement) ? focusKey(document.activeElement) : null;
     this.lastPanel = html;
     this.panel.innerHTML = `<button class="close" aria-label="Close">${ICON.close}</button>${html}`;
+    if (was) (this.panel.querySelector<HTMLElement>(was) ?? null)?.focus({ preventScroll: true });
     (this.panel.querySelector(".close") as HTMLButtonElement).onclick = () => { this.sfx.play("click"); this.closeSelection(); };
     const more = this.panel.querySelector<HTMLDetailsElement>(".ip-more");
     if (more) more.ontoggle = () => { setMoreOpen(more.dataset.k!, more.open); };
@@ -1244,6 +1251,21 @@ export class Hud {
       if (at && !this.app.onScreen(at)) this.app.glideTo(at, this.app.view.halfH, 1);
     };
     return true;
+  }
+
+  /** 1: a pointer is down in the panel; 2: and a refresh waited for it */
+  private panelHeld = 0;
+  private holdPanel() {
+    this.panel.addEventListener("pointerdown", () => { this.panelHeld = 1; });
+    const up = () => {
+      if (!this.panelHeld) return;
+      const late = this.panelHeld === 2;
+      this.panelHeld = 0;
+      // (after the click has run: then catch up on what changed meanwhile)
+      if (late) setTimeout(() => { if (this.sel) this.fillSel(); }, 0);
+    };
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   }
 
   /** Select something on the map and open its panel (the one selection: whatever was open gives way). */
@@ -1291,9 +1313,11 @@ export class Hud {
     const st = m.status;
     const keys = m.keys.length ? `<div class="ip-keys" style="--n:${m.keys.length}">${m.keys.map((k) => `<div class="ip-key"${k.title ? ` title="${escapeHtml(k.title)}"` : ""}><b class="${k.tone ?? ""}">${escapeHtml(k.value)}${k.unit ? `<small>${escapeHtml(k.unit)}</small>` : ""}</b><span>${escapeHtml(k.label)}</span></div>`).join("")}</div>` : "";
     const chip = (c: FlowChip) => {
-      const icon = c.town ? ICON.town : c.kind ? (isPlantKind(c.kind) ? placedIcon(c.kind) : buildingIcon(c.kind as BuildingKind, "")) : c.product ? productIcon(c.product) : "";
+      // (a product with no picture of its own would show the plain diamond the status line uses: left out)
+      const pIcon = c.product && productIcon(c.product) !== NO_PRODUCT_ICON ? productIcon(c.product) : "";
+      const icon = c.town ? ICON.town : c.kind ? (isPlantKind(c.kind) ? placedIcon(c.kind) : buildingIcon(c.kind as BuildingKind, "")) : pIcon;
       // (a place shows its cargo as a small product mark beside its own icon)
-      const prod = c.product && (c.kind || c.town) ? `<span class="fc-p">${productIcon(c.product)}</span>` : "";
+      const prod = pIcon && (c.kind || c.town) ? `<span class="fc-p">${pIcon}</span>` : "";
       const body = `${icon}${prod}<span class="fc-t">${escapeHtml(c.text)}</span>${c.note ? `<em class="${c.tone ?? ""}">${escapeHtml(c.note)}</em>` : ""}`;
       return c.ref
         ? `<button class="fchip" data-k="${c.ref.k}" data-id="${c.ref.id}" title="Select ${escapeHtml(c.text)} and light it up on the map">${body}</button>`
@@ -1303,7 +1327,7 @@ export class Hud {
     const lv = m.level ? `<div class="ip-lvl"><span class="ip-lvl-k">${escapeHtml(m.level.label)}</span><span class="bar" role="img" aria-label="${Math.round(m.level.pct * 100)}% of the way"><i style="width:${Math.max(2, m.level.pct * 100)}%"></i></span><span class="ip-lvl-t ${m.level.tone ?? ""}">${escapeHtml(m.level.line)}</span></div>` : "";
     const open = moreOpen(o.kind);
     const details = o.details ? `<details class="ip-more" data-k="${o.kind}"${open ? " open" : ""}><summary>Details</summary><div class="ip-more-body">${o.details}</div></details>` : "";
-    return `<header class="ip-head"><span class="svc-tag">${iconFor(m.icon)}</span><span class="ip-t"><span class="ip-tn">${escapeHtml(m.title)}</span>${m.sub ? `<small class="ip-ts">${escapeHtml(m.sub)}</small>` : ""}</span>${m.badge ? `<span class="lv-badge" title="Site level">${m.badge}</span>` : ""}${o.actions ?? ""}</header>
+    return `<header class="ip-head"><span class="svc-tag${/^(junction|roundabout|road:)/.test(m.icon) ? " lit" : ""}">${iconFor(m.icon)}</span><span class="ip-t"><span class="ip-tn">${escapeHtml(m.title)}</span>${m.sub ? `<small class="ip-ts">${escapeHtml(m.sub)}</small>` : ""}</span>${m.badge ? `<span class="lv-badge" title="Site level">${m.badge}</span>` : ""}${o.actions ?? ""}</header>
       <p class="ip-st ${st.tone}"${st.tag ? "" : ""}><i aria-hidden="true"></i><span class="ip-st-t">${escapeHtml(st.text)}</span>${st.tag ? `<span class="ip-tag">${escapeHtml(st.tag)}</span>` : ""}</p>
       ${st.fix ? `<p class="ip-fix">${escapeHtml(st.fix)}</p>` : ""}
       ${keys}${flow}${lv}${o.body ?? ""}${details}`;
@@ -1358,7 +1382,7 @@ export class Hud {
     if (on) rows.push(["On", `${ROAD_TYPES[on.type].name} · ${Math.round(ROAD_TYPES[on.type].speed * 3.6)} km/h`]);
     const details = `<dl class="facts">${rows.map(([k, x]) => `<dt>${k}</dt><dd>${x}</dd>`).join("")}</dl><p class="small muted">The dashed line on the map is the way it will take; its start and end are outlined.</p>`;
     const following = this.app.following === v.id;
-    const html = this.anatomy(m, { kind: "vehicle", details, actions: this.actionBtn("follow", ICON.follow, following ? "Stop following" : "Follow it with the camera", following) });
+    const html = this.anatomy(m, { kind: "vehicle", details, actions: this.actionBtn("follow", ICON.follow, "Follow with the camera", following) });
     if (!this.setPanel(html)) return;
     const f = this.panel.querySelector<HTMLButtonElement>(".ip-act.follow");
     if (f) f.onclick = () => { this.sfx.play("click"); this.app.followVehicle(this.app.following === v.id ? null : v.id); this.lastPanel = ""; this.fillSel(); };
@@ -2069,6 +2093,17 @@ function setMoreOpen(kind: string, open: boolean) {
 }
 
 /** The header icon of a panel model's kind. */
+/** A selector that finds the same control again after the panel is redrawn (by class and data keys). */
+function focusKey(el: HTMLElement): string | null {
+  const cls = [...el.classList].filter((c) => c !== "on" && c !== "armed").map((c) => `.${CSS.escape(c)}`).join("");
+  if (!cls && !el.tagName) return null;
+  const data = Object.entries(el.dataset).map(([k, v]) => `[data-${k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase())}="${CSS.escape(v ?? "")}"]`).join("");
+  return `${el.tagName.toLowerCase()}${cls}${data}`;
+}
+
+/** What productIcon draws for a product without a picture of its own. */
+const NO_PRODUCT_ICON = productIcon("");
+
 function iconFor(k: string): string {
   if (k === "town") return ICON.town;
   if (k === "truck" || k === "convoy") return ICON.truck;
