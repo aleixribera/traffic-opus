@@ -1,6 +1,7 @@
 name: Deploy to GitHub Pages
 
 # Every push to main type-checks, builds the game with Vite and publishes dist/ to
+# (the tests run in their own job alongside, without holding the deploy back)
 # https://aleixribera.github.io/traffic-opus/
 on:
   push:
@@ -26,12 +27,25 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx vitest run
+      - run: npx tsc --noEmit
       - run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
+
+  # The tests run beside the deploy, not before it, so a push is live in a minute or two;
+  # a failing test shows red here a few minutes after.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx vitest run
 
   deploy:
     needs: build
