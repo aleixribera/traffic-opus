@@ -254,9 +254,15 @@ function play() {
 
   // (the hub: halfway along the road from the ore to the coal, so both hauls are short)
   const hub = (k: PlantKind) => {
-    const mines = g.buildings.list.filter((b) => b.kind === "ironmine" || b.kind === "coalmine").map((b) => b.c);
+    // (by the mines, and by the roads to its own other inputs: once the mine roads are lined with sites, a cement
+    // works still finds room along the quarry's road)
+    // (only inputs with a road of their own count; anything else picks spots exactly as by the mines alone)
+    const ins = (Object.keys(PLANTS[k].inputs) as Product[]).filter((p) => p !== "ore" && p !== "coal" && paths[p]);
+    const more = ins.length ? 12 : 6;
+    const srcKinds = new Set<string>(["ironmine", "coalmine", ...ins.map((p) => MAKER[p]).filter((x): x is PlantKind => !!x)]);
+    const mines = g.buildings.list.filter((b) => srcKinds.has(b.kind)).map((b) => b.c);
     const opts: { r: [V2, V2]; t: number; d: number }[] = [];
-    for (const r of [...(paths.ore ?? []), ...(paths.coal ?? [])]) for (let t = 0; t <= 1; t += 0.05) {
+    for (const r of [...(paths.ore ?? []), ...(paths.coal ?? []), ...ins.flatMap((p) => paths[p] ?? [])]) for (let t = 0; t <= 1; t += 0.05) {
       const q = v2(r[0].x + (r[1].x - r[0].x) * t, r[0].y + (r[1].y - r[0].y) * t);
       opts.push({ r, t, d: mines.reduce((s, m) => s + dist(m, q), 0) });
     }
@@ -264,13 +270,18 @@ function play() {
     // (the best few spots, apart: a big site beside the road may not fit by a river)
     const tried: V2[] = [];
     for (const o of opts) {
-      if (tried.length >= 6) break;
+      if (tried.length >= more) break;
       const q = v2(o.r[0].x + (o.r[1].x - o.r[0].x) * o.t, o.r[0].y + (o.r[1].y - o.r[0].y) * o.t);
       if (tried.some((p) => dist(p, q) < 300)) continue;
       tried.push(q);
       const x = place(k, ...o.r, Math.max(0, o.t - 0.1), Math.min(1, o.t + 0.15));
       if (x) return x;
     }
+    // (why not, at the best spot: a missing hub plant stalls its whole chain, so the log says so)
+    if (opts.length && PLANTS[k].cost <= g.money - RESERVE) {
+      const o = opts[0], q = v2(o.r[0].x + (o.r[1].x - o.r[0].x) * o.t, o.r[0].y + (o.r[1].y - o.r[0].y) * o.t);
+      say(`no spot for a ${k} by the mines (${tried.length} tried): ${g.placedPlan(k, q)?.reason ?? "no plan"} · land slots ${g.tileSlotsLeft}`);
+    } else if (!opts.length) say(`no spot for a ${k}: no road to the mines yet`);
     return null;
   };
   const roads: Record<string, [V2, V2]> = {};
