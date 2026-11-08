@@ -14,8 +14,8 @@ import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, type LotTemplate }
 import { Progress, tilePrice, type Feature, type Milestone, type ProgressView } from "./progression";
 import { DAY, HOUR, Society } from "./society";
 import { PLACED, SHORE_REACH, type PlacedKind } from "./placed";
-import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, isPlantKind, type Product } from "./industry";
-import { TRUCK_CLASSES, type TruckClass } from "./trucks";
+import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, TRUCK_COST, isPlantKind, type Product } from "./industry";
+import { TRUCK_CLASS_ORDER, type TruckClass } from "./trucks";
 import { PARTS_FOR, TownSystem } from "./settlements";
 import { BLOCK, demandPerDay, gridPt, isHall, needsOf } from "./towns";
 import { F } from "../world/gen";
@@ -148,6 +148,7 @@ export class Game {
       spend: (v, what) => { this.money -= v; this.budgetNow.expense[what] += v; },
       bays: () => this.progress.unlocked.bays,
       load: () => this.progress.unlocked.load,
+      truckClass: () => this.bestTruck(),
       power: (b) => this.utilities.supplyOf(b),
       wanted: (b) => this.utilities.wanted(b),
       made: (p, n) => this.progress.onMade(p, n),
@@ -234,30 +235,20 @@ export class Game {
     if (!b?.plant) return "Not a plant";
     const why = this.industry.canBuyTruck(b, this.money);
     if (why) return why;
-    const price = Industry.truckPrice(b);
     b.plant.trucks++;
     b.plant.bought = (b.plant.bought ?? 0) + 1;
-    this.charge(price);
+    this.charge(TRUCK_COST);
     return null;
   }
 
   /** Truck classes the company may run now. */
   truckUnlocked(c: TruckClass): boolean { return this.progress.unlocked.trucks.has(c); }
 
-  /**
-   * Run another class of truck at a building (free: the bigger class costs more upkeep per truck instead). Trucks
-   * already out finish their run as they are; every truck it sends from now on is of the new class. Null when
-   * switched, else why not.
-   */
-  setTruckClass(id: number, cls: TruckClass): string | null {
-    const b = this.buildings.byId.get(id);
-    if (!b?.plant) return "Not a plant";
-    if (!(cls in TRUCK_CLASSES)) return "No such truck";
-    if (b.plant.trucks <= 0) return "It runs no trucks";
-    if (!this.truckUnlocked(cls)) return "Not unlocked yet";
-    Industry.setClass(b, cls);
-    this.emit({ t: "money" });
-    return null;
+  /** The class every fleet runs: the best one unlocked (trucks already out finish their run as they are). */
+  bestTruck(): TruckClass {
+    let best: TruckClass = "light";
+    for (const c of TRUCK_CLASS_ORDER) if (this.truckUnlocked(c)) best = c;
+    return best;
   }
 
   /**

@@ -229,8 +229,6 @@ export interface PlantState {
   upAt: number;
   /** what keeps it from growing now (null: it is growing, or at the top level) */
   why?: string | null;
-  /** the class of truck it runs (light when not set) */
-  cls?: TruckClass;
   /** a warehouse: the products it takes (all when not set), and those it is a feeder for (sent to it first) */
   takes?: Product[];
   feeds?: Product[];
@@ -283,6 +281,8 @@ export interface IndustryHost {
   bays?(): number;
   /** loads one truck carries */
   load?(): number;
+  /** the best class of truck unlocked (every fleet runs it) */
+  truckClass?(): TruckClass;
   /** share of the power a building needs that it gets (0..1) */
   power?(b: Building): number;
   /** a power plant has buildings within reach that want its power (it only burns coal then) */
@@ -346,24 +346,21 @@ export class Industry {
     const P = b.plant;
     if (!P || P.trucks <= 0) return "It runs no trucks";
     if ((P.bought ?? 0) >= MAX_BOUGHT) return `It has all the trucks it can load (${MAX_BOUGHT} bought)`;
-    if (money < Industry.truckPrice(b)) return "Not enough money";
+    if (money < TRUCK_COST) return "Not enough money";
     return null;
   }
 
-  /** What another truck for a building costs: one of the class it runs. */
-  static truckPrice(b: Building): number {
-    return classOf(b.plant?.cls).price;
+  /**
+   * The class of truck the company's fleets run: the best one unlocked, for every building at once (no picking per
+   * building). A trip keeps the class it set off with, so trucks out on the road finish their run as they are.
+   */
+  fleetClass(): TruckClass {
+    return this.h.truckClass?.() ?? "light";
   }
 
   /** Loads one of a building's trucks carries: its class's payload times the company's load per truck. */
-  capOf(b: Building): number {
-    return classOf(b.plant?.cls).payload * Math.max(1, this.h.load?.() ?? 1);
-  }
-
-  /** Run another class of truck: trucks out on the road finish their run, and each is replaced as it comes home. */
-  static setClass(b: Building, cls: TruckClass) {
-    if (!b.plant) return;
-    if (cls === "light") delete b.plant.cls; else b.plant.cls = cls;
+  capOf(_b?: Building): number {
+    return classOf(this.fleetClass()).payload * Math.max(1, this.h.load?.() ?? 1);
   }
 
   /** A logistics building's kind, if it is one. */
@@ -671,7 +668,7 @@ export class Industry {
           break;
         }
         const n = Math.max(1, Math.min(load, Math.floor(src[p]!), c.room));
-        if (P.cls && n < Math.min(Math.ceil(load / 2), c.room, Math.floor(yard / 2))) break;
+        if (this.fleetClass() !== "light" && n < Math.min(Math.ceil(load / 2), c.room, Math.floor(yard / 2))) break;
         this.send(b, c.b, p, n);
         src[p]! -= n;
         free--;
@@ -711,14 +708,14 @@ export class Industry {
   }
 
   private send(from: Building, to: Building, product: Product, n: number) {
-    const cls = from.plant!.cls;
+    const cls = this.fleetClass();
     const fuel = this.fuelFor(from, to, classOf(cls).fuel);
     this.h.spend(fuel, "fuel");
     from.plant!.now.spent += fuel;
     from.plant!.now.sent += n;
     this.h.request({
       from: from.access!, fromSide: from.side, to: to.access!, toSide: to.side, truck: true, tries: 0, wait: 0, ...Industry.body(cls),
-      trip: { kind: "cargo", from: from.id, to: to.id, resident: -1, cargo: product, startT: this.h.time, freeFlow: 0, haul: { plant: from.id, leg: "out", product, n, dest: to.id, ...(cls ? { cls } : {}) } },
+      trip: { kind: "cargo", from: from.id, to: to.id, resident: -1, cargo: product, startT: this.h.time, freeFlow: 0, haul: { plant: from.id, leg: "out", product, n, dest: to.id, ...(cls !== "light" ? { cls } : {}) } },
     });
   }
 
@@ -832,9 +829,7 @@ export class Industry {
     for (const b of this.plants()) {
       const P = b.plant!;
       if (!P.site) {
-        // (a heavier class of truck costs more to run, every truck the building has)
-        const wages = this.h.workersAt(b.id) * WAGE, up = PLANTS[b.kind as PlantKind].upkeep * levelMult(P.level) + (P.bought ?? 0) * TRUCK_UPKEEP
-          + this.trucksOf(b) * classOf(P.cls).upkeep;
+        const wages = this.h.workersAt(b.id) * WAGE, up = PLANTS[b.kind as PlantKind].upkeep * levelMult(P.level) + (P.bought ?? 0) * TRUCK_UPKEEP;
         this.h.spend(wages, "wages");
         this.h.spend(up, "upkeep");
         P.now.spent += wages + up;

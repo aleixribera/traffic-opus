@@ -1,8 +1,8 @@
-// Truck classes (docs/design.md, "Freight"): every company building runs one class of truck, picked in its panel
-// once the class is unlocked. A bigger class carries more per trip and costs more to run, and it takes more road:
-// it is longer, slower to pull away and slower on the open road, so it holds a junction longer. Late on, when a
-// road is full of trucks, fewer bigger ones are the answer to throughput; the price is paid in junction time.
-// The body (tipper, tanker, flatbed, box) still comes from what it carries.
+// Truck classes (docs/design.md, "Freight"): the company's fleets all run the best class unlocked by milestones,
+// with nothing to buy or pick per building. A bigger class carries more per trip, so the same flow needs fewer
+// trucks on the road, but each one takes more road: it is longer, slower to pull away and slower on the open road,
+// so it holds a junction longer. The price is paid in junction time, not money. The body (tipper, tanker,
+// flatbed, box) still comes from what it carries.
 
 import type { Unit } from "../sim/traffic";
 
@@ -19,10 +19,6 @@ export interface TruckClassDef {
   speed: number;
   /** share of a car's acceleration */
   accel: number;
-  /** price of a truck bought for a building */
-  price: number;
-  /** running cost per truck per hour, on top of a light truck's */
-  upkeep: number;
   /** fuel per km, against a light truck's */
   fuel: number;
   /** rigid pieces drawn along the path (a road train: tractor and two trailers) */
@@ -47,16 +43,16 @@ export const HEAVY_UNITS: Unit[] = [{ at: 0, len: 12, pivot: 2.0, axle: 10.0 }];
 
 export const TRUCK_CLASSES: Record<TruckClass, TruckClassDef> = {
   light: {
-    id: "light", name: "Light truck", payload: 1, len: 8.5, speed: 0.85, accel: 1, price: 4000, upkeep: 0, fuel: 1,
+    id: "light", name: "Light truck", payload: 1, len: 8.5, speed: 0.85, accel: 1, fuel: 1,
     blurb: "A rigid two-axle truck: quick away from a junction and short in a queue.",
   },
   heavy: {
-    id: "heavy", name: "Heavy truck", payload: 2, len: 12, speed: 0.82, accel: 0.8, price: 9000, upkeep: 8, fuel: 1.5,
+    id: "heavy", name: "Heavy truck", payload: 2, len: 12, speed: 0.82, accel: 0.8, fuel: 1.5,
     units: HEAVY_UNITS,
     blurb: "A four-axle rigid: twice the load for half as much fuel again, a little slower off the line.",
   },
   roadtrain: {
-    id: "roadtrain", name: "Road train", payload: 4, len: 22, speed: 0.75, accel: 0.6, price: 20000, upkeep: 24, fuel: 2.6,
+    id: "roadtrain", name: "Road train", payload: 4, len: 22, speed: 0.75, accel: 0.6, fuel: 2.6,
     units: ROAD_TRAIN_UNITS,
     blurb: "A tractor with two trailers: four times the load, but 22 m long and slow to clear a junction.",
   },
@@ -64,5 +60,5 @@ export const TRUCK_CLASSES: Record<TruckClass, TruckClassDef> = {
 
 export const TRUCK_CLASS_ORDER: TruckClass[] = ["light", "heavy", "roadtrain"];
 
-/** The class a building runs (old saves and new buildings: light trucks). */
+/** A class's numbers (a trip from before classes, or a light truck's: unset). */
 export const classOf = (c: TruckClass | undefined): TruckClassDef => TRUCK_CLASSES[c ?? "light"];

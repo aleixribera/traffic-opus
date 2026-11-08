@@ -4,8 +4,8 @@ import type { Building } from "../game/buildings";
 import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
 import { MILESTONES, unlockedBy, type Milestone, type Unlocks } from "../game/progression";
 import { ZONES } from "../game/zones";
-import { BUILD_TIME, DEPOT_REACH, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, TRUCK_UPKEEP, UNPOWERED, isPlantKind, powerPace, type Product } from "../game/industry";
-import { TRUCK_CLASSES, TRUCK_CLASS_ORDER, classOf, type TruckClass } from "../game/trucks";
+import { BUILD_TIME, DEPOT_REACH, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, TRUCK_COST, TRUCK_UPKEEP, UNPOWERED, isPlantKind, powerPace, type Product } from "../game/industry";
+import { TRUCK_CLASSES, TRUCK_CLASS_ORDER } from "../game/trucks";
 import { GROW_NEED, LEVEL_MULT, SITE_LEVELS } from "../game/sites";
 import { MARKET, TOWN_COST, TOWN_SPACING, type Town } from "../game/settlements";
 import { HALLS, TOWN_SIZES, demandPerDay, growthPerDay, needFrom, needsOf, nextNeed, sizeOf } from "../game/towns";
@@ -1278,17 +1278,11 @@ export class Hud {
       const L = P.last;
       const flare = b.built >= 1 ? Industry.flaring(b) : undefined;
       const logi = D.logistics;
-      // the class of truck it runs: one button per class, the locked ones saying what unlocks them
-      const C = classOf(P.cls), price = Industry.truckPrice(b);
-      const classPick = D.trucks ? `<h3 class="sub-h" id="cls-h-${b.id}">Truck class</h3>
-        <div class="seg cls-pick" role="group" aria-labelledby="cls-h-${b.id}">${TRUCK_CLASS_ORDER.map((c) => {
-          const K = TRUCK_CLASSES[c], on = (P.cls ?? "light") === c, open = g.truckUnlocked(c);
-          const by = open ? "" : unlockedBy((u) => u.trucks?.includes(c))?.name;
-          const tip = open ? `${K.name}: ${K.payload === 1 ? "1 load" : `${K.payload} loads`} a trip at your load per truck, ${K.len} m long, ${formatMoney(K.price)} a truck${K.upkeep ? `, +${formatMoney(K.upkeep)}/h each to run` : ""}` : `${K.name}: unlocks with “${by}”`;
-          return `<button class="seg-btn cls-btn${on ? " on" : ""}" data-cls="${c}" aria-pressed="${on}" ${open ? "" : `aria-disabled="true" data-lock="${escapeHtml(tip)}"`} title="${escapeHtml(tip)}">${K.name}</button>`;
-        }).join("")}</div>
-        <p class="small muted cls-note">${g.industry.capOf(b)} loads a trip · ${C.len} m on the road${C.upkeep ? ` · +${formatMoney(C.upkeep)}/h a truck` : ""}. ${C.blurb}${P.cls ? " Trucks already out finish their run first." : ""}</p>` : "";
-      const truckRow = D.trucks ? `<dt>Trucks out</dt><dd>${busy} of ${g.industry.trucksOf(b)}<button class="btn buy-truck" ${g.industry.canBuyTruck(b, g.money) ? "disabled" : ""} title="${escapeHtml(g.industry.canBuyTruck(b, g.money) ?? `Another ${C.name.toLowerCase()} for this building: ${formatMoney(price)}, then ${formatMoney(TRUCK_UPKEEP + C.upkeep)}/h`)}">+ Truck · ${formatMoney(price)}</button></dd>` : "";
+      // the class its trucks are: the company's best unlocked, the same for every fleet (read-only: nothing to pick)
+      const C = TRUCK_CLASSES[g.industry.fleetClass()];
+      const next = TRUCK_CLASS_ORDER.find((c) => !g.truckUnlocked(c));
+      const classTip = `${C.blurb}${next ? ` Every fleet moves up to ${TRUCK_CLASSES[next].name.toLowerCase()}s with the “${unlockedBy((u) => u.trucks?.includes(next))?.name}” milestone.` : ""}`;
+      const classRow = D.trucks ? `<dt>Trucks</dt><dd title="${escapeHtml(classTip)}">${C.name}s · ${plural(g.industry.capOf(b), "load")} a trip</dd>` : "";
       if (logi) {
         const held = Industry.stored(b);
         const body = logi === "warehouse" ? this.warehouseBody(b, store, held) : this.depotBody(b, store);
@@ -1296,8 +1290,7 @@ export class Hud {
           <p class="muted small">${chainText(b.kind)}</p>
           <p class="status ${statusCls}">${status}</p>
           ${body}
-          ${classPick}
-          <dl class="facts">${truckRow}</dl>
+          ${D.trucks ? `<dl class="facts">${classRow}<dt>Trucks out</dt><dd>${busy} of ${g.industry.trucksOf(b)}</dd></dl>` : ""}
           <button class="btn quiet danger demolish">Demolish</button>`;
         if (this.setPanel(html)) this.bindDemolish(b);
         return;
@@ -1309,10 +1302,10 @@ export class Hud {
         ${outs ? `<h3 class="sub-h">Ready to ship</h3><dl class="facts">${outs}</dl>` : ""}
         ${flare ? `<p class="small muted">Its yard is full of ${PRODUCTS[flare].name.toLowerCase()}: nothing of yours uses it until tier ${Industry.laterTier(flare)}, so it burns off the rest and keeps making ${(Object.keys(D.outputs) as Product[]).filter((p) => p !== flare).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ")}.</p>` : ""}
         ${siteLevel(b)}
-        ${classPick}
         <dl class="facts">
           ${plantRows}${powerRow}
-          ${truckRow}
+          ${classRow}
+          ${D.trucks ? `<dt>Trucks out</dt><dd>${busy} of ${g.industry.trucksOf(b)}<button class="btn buy-truck" ${g.industry.canBuyTruck(b, g.money) ? "disabled" : ""} title="${escapeHtml(g.industry.canBuyTruck(b, g.money) ?? `Another truck for this plant: ${formatMoney(TRUCK_COST)}, then ${formatMoney(TRUCK_UPKEEP)}/h`)}">+ Truck · ${formatMoney(TRUCK_COST)}</button></dd>` : ""}
           <dt>Staff</dt><dd>${g.people.workersAt(b.id)} / ${b.cap}</dd>
           ${D.deposit ? `<dt>${cap(D.deposit.name)}</dt><dd>${Math.round(P.yld * 100)}% of full yield</dd>` : ""}
         </dl>
@@ -1423,13 +1416,7 @@ export class Hud {
     const buy = this.panel.querySelector(".buy-truck") as HTMLButtonElement | null;
     if (buy) buy.onclick = () => {
       const why = g.buyTruck(b.id);
-      if (why) this.toast(why); else { this.sfx.play("place"); redraw(); }
-    };
-    for (const el of this.panel.querySelectorAll<HTMLButtonElement>(".cls-btn")) el.onclick = () => {
-      // (a locked class stays focusable and says what unlocks it)
-      if (el.dataset.lock) { this.toast(el.dataset.lock); return; }
-      const why = g.setTruckClass(b.id, el.dataset.cls as TruckClass);
-      if (why) this.toast(why); else { this.sfx.play("click"); redraw(); }
+      if (why) this.toast(why); else { this.sfx.play("place"); this.lastPanel = ""; this.fillBuilding(b); }
     };
     for (const el of this.panel.querySelectorAll<HTMLInputElement>(".wh-take, .wh-feed")) el.onchange = () => {
       const p = el.dataset.p as Product;
