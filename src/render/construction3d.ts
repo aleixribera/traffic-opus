@@ -40,8 +40,30 @@ const WOOD_BAY = 3, STEEL_BAY = 6, STOREY = 4;
 const DRIVE = 9;
 
 /** A truck's way in (from the street, round `via`, to its spot) or out; `back`: it backs out to there first. */
-interface Truck { model: ConModel; from: V; via: V; to: V; t0: number; out: boolean; back?: V }
+interface Truck { model: ConModel; from: V; via: V; to: V; t0: number; out: boolean; back?: V; away?: Away }
 interface V { x: number; z: number }
+/** A truck's drive off down the street once it has pulled out (world space: points, heights, distances along). */
+interface Away { pts: { x: number; y: number; h: number }[]; cum: number[] }
+/**
+ * The way on from a point on the street, heading `dir` (world, unit): the road's own line ahead of it, in the lane
+ * it is in, on through the junctions the straightest way (null: no road there).
+ */
+export type RoadOut = (p: { x: number; y: number }, dir: { x: number; y: number }, len: number) => { x: number; y: number; h: number }[] | null;
+
+/** How far a truck drives off down the street before it is gone (m), its top speed there and its pick-up (m/s, m/s²). */
+const AWAY = 240, AWAY_V = 11, AWAY_A = 1.6;
+/** Seconds it takes to fade out at the end of the drive (a car leaving the map does the same: vehicles3d fade). */
+const AWAY_FADE = 1.2;
+const awayTime = (L: number) => {
+  const ta = AWAY_V / AWAY_A, da = (AWAY_V * ta) / 2;
+  return L <= da ? Math.sqrt((2 * L) / AWAY_A) : ta + (L - da) / AWAY_V;
+};
+const awayDist = (t: number) => {
+  const ta = AWAY_V / AWAY_A;
+  return t <= ta ? (AWAY_A * t * t) / 2 : (AWAY_V * ta) / 2 + AWAY_V * (t - ta);
+};
+/** Seconds a leaving truck is still drawn after it starts pulling out. */
+const goneAfter = (t: Truck) => DRIVE + (t.away ? awayTime(t.away.cum[t.away.cum.length - 1]) : 0) + AWAY_FADE;
 
 const smooth = (u: number) => u * u * (3 - 2 * u);
 
@@ -58,7 +80,7 @@ export class Construction3D {
   /** the number of instances drawn each frame (trucks and crane jibs) after the static ones, per model */
   private fixed = new Map<ConModel, number>();
 
-  constructor(private models: ModelSet, private mat: THREE.Material) {}
+  constructor(private models: ModelSet, private mat: THREE.Material, private roadOut: RoadOut | null = null) {}
 
   private add(model: ConModel, m: THREE.Matrix4) {
     let a = this.list.get(model);
@@ -84,7 +106,7 @@ export class Construction3D {
     }
     // trucks of jobs that finished (or were pulled down) drive off
     for (const [id, t] of this.trucks) if (!seen.has(id)) { this.trucks.delete(id); this.depart(t, now); }
-    this.leaving = this.leaving.filter((t) => now - t.t0 < DRIVE);
+    this.leaving = this.leaving.filter((t) => now - t.t0 < goneAfter(t));
     for (const [model, a] of this.list) this.fixed.set(model, a.length);
     for (const model of this.meshes.keys()) if (!this.list.has(model)) this.fixed.set(model, 0);
     // (only the models whose pieces moved on are written and uploaded again)
@@ -97,15 +119,35 @@ export class Construction3D {
 
   private depart(t: Truck & { base: THREE.Matrix4 }, now: number) {
     const spot = t.to, dir = Math.sign(t.via.x - t.from.x) || 1;
+    let out: Truck & { base: THREE.Matrix4 };
     if (t.via.z === t.from.z) {
       // in nose-first beside the walls: it backs out into the street, then drives on the way it was going
       const road = t.via.z;
-      this.leaving.push({ ...t, from: spot, via: t.via, back: { x: t.via.x - 7 * dir, z: road }, to: { x: t.via.x + 18 * dir, z: road }, t0: now, out: true });
+      out = { ...t, from: spot, via: t.via, back: { x: t.via.x - 7 * dir, z: road }, to: { x: t.via.x + 18 * dir, z: road }, t0: now, out: true };
     } else {
       // parked along the front yard: it pulls forward and out
-      this.leaving.push({ ...t, from: spot, via: { x: 2 * spot.x - t.via.x, z: t.via.z }, to: { x: 2 * spot.x - t.from.x, z: t.from.z }, t0: now, out: true });
+      out = { ...t, from: spot, via: { x: 2 * spot.x - t.via.x, z: t.via.z }, to: { x: 2 * spot.x - t.from.x, z: t.from.z }, t0: now, out: true };
     }
+    // then on down the street, the way it pulled out, till it is well away (rather than gone on the spot)
+    if (this.roadOut) {
+      const e = this.world(out.base, out.to), w = this.world(out.base, { x: out.to.x + dir, z: out.to.z });
+      const d = { x: w.x - e.x, y: w.y - e.y }, l = Math.hypot(d.x, d.y) || 1;
+      const pts = this.roadOut(e, { x: d.x / l, y: d.y / l }, AWAY);
+      if (pts && pts.length >= 2) {
+        const cum = [0];
+        for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+        out.away = { pts, cum };
+      }
+    }
+    this.leaving.push(out);
   }
+
+  /** A point of a job's lot space in the world (x, y on the ground). */
+  private world(base: THREE.Matrix4, p: V): { x: number; y: number } {
+    const v = this.vec.set(p.x, 0, p.z).applyMatrix4(base);
+    return { x: v.x, y: v.z };
+  }
+  private vec = new THREE.Vector3();
 
   private job(j: ConJob, now: number) {
     const { stage, k } = j.stage;
@@ -279,6 +321,7 @@ export class Construction3D {
   frame(now: number) {
     const moving: [ConModel, THREE.Matrix4][] = [];
     const truck = (t: Truck & { base: THREE.Matrix4 }) => {
+      if (t.away && now - t.t0 > DRIVE) return away(t, t.away, now - t.t0 - DRIVE);
       let u = smooth(Math.min(1, Math.max(0, (now - t.t0) / DRIVE)));
       // backing out (the first part of the way): along a curve from the spot onto the street, tail first
       const B = 0.45, backing = !!t.back && u < B;
@@ -293,6 +336,18 @@ export class Construction3D {
       const s0 = Math.min(u, 0.995), q0 = at(s0), q1 = at(s0 + 0.005);
       const yaw = Math.atan2(q1.x - q0.x, q1.z - q0.z) + (backing ? Math.PI : 0);
       this.tmp.makeRotationY(yaw).setPosition(p.x, 0, p.z).premultiply(t.base);
+      moving.push([t.model, this.tmp.clone()]);
+    };
+    // off down the street: picking up speed from the kerb, along the road's line, fading out at the end
+    const away = (t: Truck, a: Away, dt: number) => {
+      const L = a.cum[a.cum.length - 1], T = awayTime(L);
+      const s = Math.min(L, awayDist(dt));
+      let i = 1;
+      while (i < a.cum.length - 1 && a.cum[i] < s) i++;
+      const p0 = a.pts[i - 1], p1 = a.pts[i], k = (s - a.cum[i - 1]) / Math.max(1e-6, a.cum[i] - a.cum[i - 1]);
+      const x = p0.x + (p1.x - p0.x) * k, z = p0.y + (p1.y - p0.y) * k, h = p0.h + (p1.h - p0.h) * k;
+      const f = dt > T ? Math.max(0.55, 1 - (0.45 * (dt - T)) / AWAY_FADE) : 1;
+      this.tmp.makeRotationY(Math.atan2(p1.x - p0.x, p1.y - p0.y)).setPosition(x, h, z).multiply(this.tmp2.makeScale(f, f, f));
       moving.push([t.model, this.tmp.clone()]);
     };
     for (const t of this.trucks.values()) truck(t);

@@ -449,6 +449,8 @@ export class App {
       gates: () => g.buildings.list.filter((b) => b.placed && b.plant).map((b) => ({ ...siteFrame(b.c, b.rot, b.side, b.hd), front: b.front })),
       // town streets keep their kerbs, pavements, lamps and trees; the roads out in the country don't
       townStreets: () => townStreets(g.net, g.towns.list, g.buildings.list),
+      // each town's Main Street through its old town, laid in brick
+      mainStreets: () => g.towns.mainStreets(),
     });
     this.roadsFar = new RoadsFar(g.net);
     this.labels.set([]);

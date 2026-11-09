@@ -246,6 +246,18 @@ describe("free placement and the gate", () => {
     expect(b.problem).not.toBe("No road to the gate");
   });
 
+  it("a first-tier works goes up over its crew time (a first farm: three game hours) before it makes anything", () => {
+    const g = openGame();
+    const b = g.place("farm", openSpot(g, "farm"))!;
+    expect(b.built).toBe(0);
+    run(g, 2.5);
+    expect(b.built).toBeGreaterThan(0.7);
+    expect(b.built).toBeLessThan(1);
+    expect(Industry.running(b)).toBe(false);
+    run(g, 0.75);
+    expect(b.built).toBe(1);
+  });
+
   it("turned freely by the player, it stands at the cursor and gets a street laid to its gate (one undo)", () => {
     const g = openGame();
     const p = openSpot(g, "foodplant");

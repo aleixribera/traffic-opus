@@ -96,6 +96,9 @@ export function needView(t: Town, p: Product): NeedView {
   let say: string;
   if (t.spawned && !served(t)) say = `No road reaches it yet. Lay one, then bring ${low}.`;
   else if (state === "plenty") say = `${name} is fine.`;
+  // (the need its proven supply runs out on, with the town stood still at what that supply carries: "Enough" holds
+  // it, a little more lets it grow again)
+  else if (state === "enough" && t.limit === p && t.trend < 0.5) say = `Just enough to hold steady. ${more} more ${loads(more)} a day and it grows again.`;
   else if (state === "enough") say = `Enough to grow. ${more} more ${loads(more)} a day fills every crate.`;
   else if (state === "low") say = `Bring ${more} more ${loads(more)} of ${low} a day.`;
   else if (got < 0.05) say = `No ${low} is coming. Bring ${more} ${loads(more)} a day.`;
@@ -132,7 +135,8 @@ export function growthOf(t: Town): { word: GrowthWord; tone: "good" | "bad" | ""
   const short = townNeeds(t).filter((v) => v.state === "low" || v.state === "none").map((v) => v.name.toLowerCase());
   const why = short.length ? `needs ${short.length > 1 ? `${short.slice(0, -1).join(", ")} and ${short[short.length - 1]}` : short[0]}` : "";
   if (t.trend <= -0.5) return { word: "Shrinking", tone: "bad", why };
-  if (t.trend < 0.5) return { word: "Not growing", tone: short.length ? "bad" : "", why };
+  // (stood still with every need at "Enough" or better: what its supply runs out on first, settlements.ts limit)
+  if (t.trend < 0.5) return { word: "Not growing", tone: short.length ? "bad" : "", why: why || (t.limit ? `needs more ${PRODUCTS[t.limit].name.toLowerCase()}` : "") };
   const best = growthPerDay(t.pop);
   const k = best > 0 ? t.trend / best : 1;
   if (k >= GROW_FAST) return { word: "Growing fast", tone: "good", why: "" };

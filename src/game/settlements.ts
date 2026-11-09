@@ -450,6 +450,29 @@ export class TownSystem {
   private plans = new Map<number, TownPlan>();
 
   /** A town's street plan (townplan.ts): where each street of its lattice runs. */
+  /**
+   * Each town's Main Street (the plan's line 0 along it), the stretch of it through the old town and on as far as
+   * its high street's shops reach: the roads laid in brick, the way a 1920s town paved its main street (roads3d).
+   */
+  mainStreets(): Set<number> {
+    const out = new Set<number>();
+    const net = this.g.net;
+    for (const t of this.list) {
+      const P = this.planOf(t);
+      P.index(t.reach / BLOCK + 1);
+      const R = Math.max(1.25, this.highReach.get(t.id) ?? 0) * BLOCK;
+      for (const id of net.segsNear(t.c.x - R, t.c.y - R, t.c.x + R, t.c.y + R)) {
+        const pts = net.segGeom.get(id)?.center.pts;
+        if (!pts || pts.length < 2) continue;
+        const a = pts[0], b = pts[pts.length - 1], m = pts[pts.length >> 1];
+        if (dist(m, t.c) > R || dist(a, b) < 1) continue;
+        const hit = P.edgeAt(m, norm(sub(b, a)), 6, 0.9);
+        if (hit && hit.e[1] === 0 && hit.e[3] === 0) out.add(id);
+      }
+    }
+    return out;
+  }
+
   planOf(t: Town): TownPlan {
     let P = this.plans.get(t.id);
     if (!P || P.c.x !== t.c.x || P.c.y !== t.c.y || P.ang !== t.ang || P.style !== t.layout) {

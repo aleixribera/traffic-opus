@@ -1131,7 +1131,12 @@ export class Game {
     b.placed = true;
     this.buildings.version++;
     if (link) this.buildings.reattach();
-    if (isPlantKind(kind)) this.industry.init(b, kind, pl.deposit ? Math.min(1, pl.deposit.share / 0.8) : 1);
+    if (isPlantKind(kind)) {
+      this.industry.init(b, kind, pl.deposit ? Math.min(1, pl.deposit.share / 0.8) : 1);
+      // (a works with no materials to wait for, a first-tier one, goes up at once over its crew time: construction.ts
+      // buildTime, a first farm two minutes at 1x; one that waits for materials starts once they are in)
+      if (!b.plant!.site && !b.plant!.landmark) b.built = 0;
+    }
     for (const c of this.lotCells(b)) c.lot = b.id;
     this.candVersion = -1;
     this.money -= pl.cost;

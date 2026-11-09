@@ -227,7 +227,9 @@ export class Vehicles3D {
       // (a heavy rigid or a road train doesn't fit a car bay: it drives straight up the drive to the yard)
       if (w.bays.length && v.len < TRAIN) {
         const bay = w.bays[v.id % w.bays.length];
-        legs.push(leg(w.kerb, w.into, bay.p, bay.dir));
+        // (a car park behind the building: up the alley beside it first)
+        if (w.via) legs.push(leg(w.kerb, w.into, w.via, w.into));
+        legs.push(w.via ? leg(w.via, w.into, bay.p, bay.dir) : leg(w.kerb, w.into, bay.p, bay.dir));
       } else if (dst(w.kerb, w.drive) > 2) legs.push(leg(w.kerb, w.into, add(w.drive, w.into, -1), w.into));
       const total = legs.reduce((n, l) => n + l.len, 0);
       const kind = Vehicles3D.kindOf(v);
@@ -254,11 +256,14 @@ export class Vehicles3D {
       if (w.bays.length && (p.len ?? 0) < TRAIN) {
         const bay = w.bays[(p.look ?? 0) % w.bays.length];
         const R = add(bay.p, bay.dir, -5.5);
-        const ex = { x: w.kerb.x - R.x, y: w.kerb.y - R.y }, el = Math.hypot(ex.x, ex.y) || 1;
+        // (from a car park behind the building, it heads for the alley beside it, then down it to the kerb)
+        const to = w.via ?? w.kerb;
+        const ex = { x: to.x - R.x, y: to.y - R.y }, el = Math.hypot(ex.x, ex.y) || 1;
         const exd = { x: ex.x / el, y: ex.y / el };
         // backed out along an arc till its nose points the way out, then forward to the kerb
         legs.push(leg(bay.p, { x: -bay.dir.x, y: -bay.dir.y }, R, { x: -exd.x, y: -exd.y }, true));
-        legs.push(leg(R, exd, w.kerb, out));
+        if (w.via) legs.push(leg(R, exd, w.via, out), leg(w.via, out, w.kerb, out));
+        else legs.push(leg(R, exd, w.kerb, out));
       } else {
         const E = dst(w.kerb, w.drive) > 2 ? add(w.drive, w.into, -1) : add(w.kerb, w.into, 4);
         legs.push(leg(E, out, w.kerb, out));
