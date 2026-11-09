@@ -94,9 +94,6 @@ const PLAN: Record<PlantKind, { core: string; mods: string[] }> = {
   exposition: { core: "mega_exposition", mods: ["site_office"] },
 };
 
-/** The model a kind's site is centred on (its core, by the gate). */
-export const coreModel = (k: PlantKind): string => PLAN[k].core;
-
 export interface SiteRoad { a: V2; b: V2; w: number }
 export interface SiteSlot {
   model: string;

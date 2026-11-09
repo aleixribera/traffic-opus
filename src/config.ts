@@ -55,8 +55,6 @@ export const ROAD_TYPES: Record<RoadTypeId, RoadType> = {
   one4: { id: "one4", name: "Highway 4", short: "4", fwd: 4, bwd: 0, speed: kmh(120), costPerM: 21, minRadius: 40, allowsAccess: false, rank: 4, hint: "Four-lane carriageway for the heaviest flows." },
 };
 
-export const ROAD_ORDER: RoadTypeId[] = ["dirt", "one1", "street", "streetM", "one2", "avenue", "avenueM", "hw1", "hw2", "one3", "boulevard", "boulevardM", "one4"];
-
 /** Motorway carriageways and ramps: one-way and closed to driveways. Drawn in darker asphalt with solid edge lines. */
 export const isHighway = (t: RoadType): boolean => t.bwd === 0 && !t.allowsAccess;
 
@@ -213,8 +211,6 @@ function civicTypes(): Record<CivicKind, BuildingType> {
   return out;
 }
 
-export const ZONE_LABEL: Record<Zone, string> = { res: "Residential", com: "Commercial", placed: "Company building" };
-
 // ---------- Simulation ----------
 
 export const SIM = {
@@ -224,7 +220,6 @@ export const SIM = {
   truckLen: 8.5,
   busLen: 12,
   laneChangeTime: 2.2,
-  junctionCheckTime: 4.5,
   yieldGap: 3.2,
   /** Sideways acceleration drivers take bends and turns at (m/s²): turn speed = sqrt(turnLat * radius). */
   turnLat: 3.6,
@@ -232,10 +227,4 @@ export const SIM = {
   ringLat: 3.2,
   /** The steady braking (m/s²) a car slows on towards a junction or bend's speed. */
   approachDecel: 2.0,
-  dwellMin: 25,
-  dwellMax: 55,
-  tripInterval: [70, 130] as [number, number],
-  shopTarget: 90,
-  workTarget: 150,
-  deliveryInterval: 55,
 };

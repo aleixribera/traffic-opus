@@ -17,7 +17,6 @@ import type { BigKind } from "./convoys";
 import type { PlantDef, Product } from "./industry";
 
 export type MegaKind = "hydrodam" | "skylinetower" | "exposition";
-export const MEGA_KINDS: MegaKind[] = ["hydrodam", "skylinetower", "exposition"];
 
 const HOUR = 40;
 

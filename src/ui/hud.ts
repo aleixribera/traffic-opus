@@ -49,8 +49,9 @@ export interface Chip {
 const OVERLAYS: { id: OverlayId; label: string; blurb: string }[] = [
   { id: "flow", label: "Traffic flow", blurb: "How fast each road moves compared with its speed limit" },
   { id: "resources", label: "Resources", blurb: "Where each extractor can work, tagged on the map. Click a kind below to fly to its nearest deposit" },
-  { id: "landvalue", label: "Land value", blurb: "Higher value lets buildings level up" },
-  { id: "level", label: "Building level", blurb: "Buildings grow from level 1 to 5" },
+  // (both drive how a town builds up, and the company moves them: a works beside homes, a town order filled)
+  { id: "landvalue", label: "Land value", blurb: "What a street is worth to live or shop on. Your works and power plants drag it down next door; shops close by and a town's civic buildings lift it" },
+  { id: "level", label: "Building level", blurb: "Homes and shops build up from level 1 to 5 where land value is high. Each level holds more people or more trade" },
   { id: "problems", label: "Problems", blurb: "Plants and buildings with something holding them up" },
   { id: "power", label: "Power", blurb: "Power plants in blue; buildings that draw power green with all they need, orange to red when short" },
 ];
@@ -1483,7 +1484,6 @@ export class Hud {
   }
 
   openTown(id: number) { this.openSel({ k: "town", id }); }
-  openStop(id: number) { this.openSel({ k: "stop", id }); }
   openBuilding(b: Building) { this.openSel({ k: "building", id: b.id }); }
   openSignal(node: number) {
     if (!(this.sel?.k === "node" && this.sel.id === node)) this.panelPhase = 0;

@@ -14,7 +14,6 @@ export const cross = (a: V2, b: V2): number => a.x * b.y - a.y * b.x;
 export const len = (a: V2): number => Math.hypot(a.x, a.y);
 export const dist = (a: V2, b: V2): number => Math.hypot(a.x - b.x, a.y - b.y);
 export const dist2 = (a: V2, b: V2): number => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
-export const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 export const lerpV = (a: V2, b: V2, t: number): V2 => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
 export const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v);
 export const norm = (a: V2): V2 => {
@@ -235,10 +234,6 @@ export function splitCubic(c: Cubic, t: number): [Cubic, Cubic] {
     { p0: c.p0, p1: p01, p2: p012, p3: m },
     { p0: m, p1: p123, p2: p23, p3: c.p3 },
   ];
-}
-
-export function reverseCubic(c: Cubic): Cubic {
-  return { p0: c.p3, p1: c.p2, p2: c.p1, p3: c.p0 };
 }
 
 // ---------- Polylines with arc-length ----------

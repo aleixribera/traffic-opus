@@ -11,7 +11,6 @@ import { Industry, PLANTS, type PlantKind } from "./industry";
 import { levelMult } from "./sites";
 
 export type UtilityId = "power";
-export const UNIT: Record<UtilityId, string> = { power: "MW" };
 
 export interface UtilityStats {
   /** made by the company's power plants */

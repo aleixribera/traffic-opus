@@ -3,7 +3,6 @@
 // what they take and make); the milestones (progression.ts) say when each unlocks. Placed buildings take workers
 // like any workplace (see Society.matchJobs).
 
-import type { BuildingKind } from "../config";
 import { PLANTS, type PlantKind } from "./industry";
 
 export type PlacedKind = PlantKind;
@@ -57,7 +56,6 @@ export const PLACED: Record<PlacedKind, PlacedDef> = {
   exposition: { ...plant("exposition"), unique: true },
 };
 
-export const isPlacedKind = (k: BuildingKind | string): k is PlacedKind => k in PLACED;
 
 /** Build-menu tabs of the Industry category. */
 export const PLACED_TABS: { id: string; label: string; kinds: PlacedKind[]; blurb: string }[] = [

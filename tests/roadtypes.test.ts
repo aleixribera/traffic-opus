@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ROAD_TYPES, ROAD_ORDER, isHighway } from "../src/config";
+import { ROAD_TYPES, isHighway, type RoadTypeId } from "../src/config";
 import { BASE } from "../src/game/progression";
 
 describe("Road types", () => {
@@ -13,8 +13,7 @@ describe("Road types", () => {
     expect(hw1.allowsAccess).toBe(false);
     expect(hw1.speed).toBeGreaterThan(one1.speed);
     // highways are the one-way carriageways; boulevards (no driveways, but two-way) are not
-    expect(ROAD_ORDER.filter((id) => isHighway(ROAD_TYPES[id]))).toEqual(["hw1", "hw2", "one3", "one4"]);
-    expect(ROAD_ORDER).toContain("hw1");
+    expect((Object.keys(ROAD_TYPES) as RoadTypeId[]).filter((id) => isHighway(ROAD_TYPES[id])).sort()).toEqual(["hw1", "hw2", "one3", "one4"]);
   });
 
   it("the one-lane highway is available from the start, like the motorway it links to", () => {

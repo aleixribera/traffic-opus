@@ -1,6 +1,6 @@
 import { loadCompany, makeCompany, type Company } from "./company";
 import {
-  BUILDING_TYPES, BULLDOZE_REFUND, DEMOLISH_PER_LEVEL, ROAD_TYPES, SIGNAL_COST, SIM, isHighway, roadWidth, takesGate, type RoadTypeId,
+  BUILDING_TYPES, DEMOLISH_PER_LEVEL, ROAD_TYPES, SIGNAL_COST, SIM, isHighway, roadWidth, takesGate, type RoadTypeId,
 } from "../config";
 import { add, dist, dist2, rectCorners, rectDistance, scale, sub, type V2 } from "../core/math";
 import { mulberry32 } from "../core/noise";
@@ -1648,13 +1648,6 @@ export class Game {
   // ---------------------------------------------------------------- network connectivity
 
   /** Whether two segs are joined by roads (ignoring one-way direction). */
-  /** The connected road network a seg belongs to (null: no such seg). */
-  compOf(seg: number): number | null {
-    if (this.compVersion !== this.net.version) this.rebuildComponents();
-    const s = this.net.segs.get(seg);
-    return s ? this.comp.get(s.a) ?? null : null;
-  }
-
   connected(a: number, b: number): boolean {
     if (this.compVersion !== this.net.version) this.rebuildComponents();
     const sa = this.net.segs.get(a), sb = this.net.segs.get(b);
@@ -2128,14 +2121,6 @@ export class Game {
 
   segCost(id: number) {
     return segCost(this.net, id, this.world);
-  }
-
-  refundOf(segs: number[]) {
-    return removalRefund(this.net, this.world, segs);
-  }
-
-  get bulldozeRate() {
-    return BULLDOZE_REFUND;
   }
 
   /** The average hour's books over the last day (or as many hours as have passed). */

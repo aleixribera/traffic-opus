@@ -74,8 +74,6 @@ export function compassWords(a: V2, b: V2): string {
 }
 /** Households a new town starts out wanting. */
 const START_HOUSEHOLDS = 24;
-// (hours of its own deliveries a town needs before its supply rolls on them, and the hours that stand for a full day)
-export { ROLL_MIN, ROLL_FULL } from "./supply";
 /** Households a day a settlement still filling its first streets grows by, supplied or not. */
 const SETTLE_RATE = 6;
 /**

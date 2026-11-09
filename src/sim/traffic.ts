@@ -1,5 +1,5 @@
 import { LANE_W, ROAD_TYPES, SIM, rightOnly } from "../config";
-import { clamp, dist, dot, norm, polyAt, polyClosest, polyDirSmooth, right, sub, type V2 } from "../core/math";
+import { clamp, dot, norm, polyAt, polyClosest, polyDirSmooth, right, sub, type V2 } from "../core/math";
 import type { ChangeSet, Connector, Edge, Lane, RoadNetwork, SignalPhase, SignalPlan } from "../roads/network";
 import { Router, dkey, dkDir, dkSeg, type Access } from "./router";
 import type { HaulRun } from "../game/industry";
@@ -2337,17 +2337,6 @@ export class Traffic {
     }
   }
 
-  clearAll() {
-    for (const v of [...this.vehicles]) this.remove(v);
-    this.pending = [];
-    this.roomClaim.clear();
-    this.ringClaim.clear();
-    this.courtesy.clear();
-    this.courtesyRest.clear();
-    this.breakHot.clear();
-    this.wishes.clear();
-  }
-
   // ---------------------------------------------------------------- render placement + stats
 
   /**
@@ -2546,23 +2535,6 @@ export class Traffic {
     // a few seconds lost to a turn-in or a car pulling out isn't congestion: only delay beyond that counts
     for (const t of this.trips) { a += t.ff; b += t.ff + Math.max(0, t.actual - t.ff - (4 + t.ff * 0.12)); }
     return a / b;
-  }
-
-  vehicleNear(p: V2, r: number): Vehicle | null {
-    let best: Vehicle | null = null, bd = r;
-    for (const v of this.vehicles) {
-      const d = dist(p, { x: v.x, y: v.y });
-      if (d < bd) { bd = d; best = v; }
-    }
-    return best;
-  }
-
-  dirOf(v: Vehicle): V2 {
-    return norm({ x: Math.cos(v.ang), y: Math.sin(v.ang) });
-  }
-
-  subPos(a: V2, b: V2) {
-    return sub(a, b);
   }
 }
 

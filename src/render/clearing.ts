@@ -215,5 +215,3 @@ export class Clearing {
 
 /** Mask value v -> distance past built ground: (1 - v) * CLEAR_K (0 beyond it: nothing near). */
 export const CLEAR_K = CLEAR_RANGE + 0.5;
-/** The distance past built ground a mask value says (what the terrain shader reads back). */
-export const maskDist = (v: number): number => (1 - v) * CLEAR_K;

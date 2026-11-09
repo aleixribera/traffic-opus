@@ -252,12 +252,6 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .panel[hidden] { display: none; }
 .panel > header { margin: 0 -14px 10px; padding: 8px 40px 7px 14px; display: flex; align-items: center; }
 .panel > .close { top: 4px; right: 5px; z-index: 1; }
-.head-sub { margin-left: 10px; font: 600 var(--t-xs)/1 var(--f-text); letter-spacing: 0.1em; color: var(--ochre-hi); }
-.zone-tag { display: inline-block; padding: 1px 6px; border-radius: 1px; color: var(--cream); font: 700 var(--t-xs)/16px var(--f-text); margin-right: 8px; letter-spacing: 0.04em; text-shadow: 0 0 2px rgba(0, 0, 0, 0.6); }
-.lvl-row { display: flex; align-items: center; gap: 8px; }
-.stars { display: flex; gap: 3px; }
-.stars i { width: 10px; height: 10px; background: var(--plate-3); transform: rotate(45deg) scale(0.85); }
-.stars i.on { background: var(--ochre); }
 .status { margin: 6px 0 0; font-weight: 600; font-size: var(--t-md); }
 .facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 8px 0; align-items: center; }
 .facts dt { color: var(--cream-2); }
@@ -511,7 +505,6 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .ov-power { background: linear-gradient(90deg, #e5484d 0 30%, #f0a33a 30% 55%, #3faa5a 55%); }
 /* the deposit colours the Resources view paints (palette.ts resFert, resForest, resOre, resCoal, resLime) */
 .ov-resources { background: linear-gradient(90deg, #e0c040 0 20%, #2f7a3a 20% 40%, #c0622e 40% 60%, #2b2b2f 60% 80%, #f2eee0 80%); }
-.lg-util { background: linear-gradient(90deg, #e5484d 0 33%, #f0a33a 33% 66%, #3faa5a 66%); }
 
 /* ------------------------------------------------------------ towns: the Towns window, a town panel, links to a town */
 .tw-next { margin: 0 0 4px; padding: 2px 0 2px 10px; border-left: 3px solid var(--ochre); color: var(--cream); font-variant-numeric: tabular-nums; line-height: 1.4; }
@@ -525,8 +518,6 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .tw-trend { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
 .link { background: none; border: 0; padding: 0; color: var(--ochre-hi); text-decoration: underline; text-underline-offset: 3px; font-weight: 600; }
 .link:hover { color: var(--cream); }
-.facts dd .bar.site-grow { width: 110px; }
-.facts dd .bar.site-grow i { background: var(--ochre); }
 
 /* a town's panel: its people over time, how far to its next size, its needs and what came */
 .tn-chart { display: block; width: 100%; height: auto; margin: 10px 0 2px; overflow: visible; }

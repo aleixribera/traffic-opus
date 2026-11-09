@@ -17,13 +17,12 @@
 
 import { mulberry32 } from "../core/noise";
 import { dist, type V2 } from "../core/math";
-import type { Building } from "./buildings";
 import type { Game, GameEvent } from "./city";
 import { CIVICS, CIVIC_KINDS, LV_REACH, isCivic, type CivicKind } from "./civics";
 import { PLANTS, PRODUCTS, isPlantKind, type Product } from "./industry";
 import { served, type Town } from "./settlements";
 import { DAY } from "./society";
-import { TOWN_SIZES, buys, demandPerDay, sizeOf } from "./towns";
+import { buys, demandPerDay, sizeOf } from "./towns";
 
 // ---- pacing (owner, 2026-11-09: "one every 5-10 days, maximum 1 active whole map")
 /** Most orders open at once on the whole map, and in one town. */
@@ -413,17 +412,6 @@ export class OrderSystem {
   /** A building went up or came down: the land value spots are found again. */
   invalidate() {
     this.lvSpots = null;
-  }
-
-  /** The order a building of a town's stands for (its civic building), if any. */
-  slotOf(b: Building): OrderSlot | undefined {
-    if (b.town === undefined || !isCivic(b.kind)) return undefined;
-    return this.sets.get(b.town)?.find((s) => s.kind === b.kind);
-  }
-
-  /** The size word for a civic kind's town size ("from Village"). */
-  static sizeWord(kind: CivicKind): string {
-    return TOWN_SIZES[CIVICS[kind].size].name;
   }
 
   toJSON(): OrdersJSON {

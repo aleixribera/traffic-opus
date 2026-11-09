@@ -2508,18 +2508,6 @@ export function removalRefund(net: RoadNetwork, world: BuildWorld, segs: Iterabl
   return r;
 }
 
-/** Segments whose centreline passes through the rectangle (axis aligned). */
-export function segsInRect(net: RoadNetwork, a: V2, b: V2, level: number | null): number[] {
-  const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
-  const out: number[] = [];
-  for (const id of net.segsNear(x0, y0, x1, y1)) {
-    const g = net.segGeom.get(id)!;
-    const hit = g.center.pts.some((p, i) => p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1 && (level === null || Math.abs(g.hs[i] - level * LEVEL_H) < 1));
-    if (hit) out.push(id);
-  }
-  return out;
-}
-
 /** Closest segment to p within the road surface (+pad), optionally at one level. */
 export function segAt(net: RoadNetwork, p: V2, pad: number, level: number | null = null): number | null {
   let best: number | null = null, bd = Infinity;

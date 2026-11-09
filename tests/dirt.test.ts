@@ -3,7 +3,7 @@
 // it has to cross water or a road, and it saves like any road.
 import { describe, it, expect } from "vitest";
 import { RoadNetwork } from "../src/roads/network";
-import { LEVEL_H, ROAD_ORDER, ROAD_TYPES, roadWidth, type RoadTypeId } from "../src/config";
+import { LEVEL_H, ROAD_TYPES, roadWidth, type RoadTypeId } from "../src/config";
 import { applyPave, commitStrokes, planAddLane, planRoad, upgradeCost, type BuildWorld, type Plan, type Snap } from "../src/roads/planner";
 import { BASE } from "../src/game/progression";
 import { Game } from "../src/game/city";
@@ -57,10 +57,9 @@ describe("the dirt road", () => {
     expect(street.cost / dirt.cost).toBeCloseTo(S.costPerM / D.costPerM, 3);
   });
 
-  it("is first in the road list and there from the start; it gives way to every paved road", () => {
-    expect(ROAD_ORDER[0]).toBe("dirt");
+  it("is there from the start, and gives way to every paved road", () => {
     expect(BASE.roads).toContain("dirt");
-    for (const id of ROAD_ORDER) if (id !== "dirt") expect(ROAD_TYPES[id].rank).toBeGreaterThan(ROAD_TYPES.dirt.rank);
+    for (const id of Object.keys(ROAD_TYPES) as RoadTypeId[]) if (id !== "dirt") expect(ROAD_TYPES[id].rank).toBeGreaterThan(ROAD_TYPES.dirt.rank);
   });
 
   it("takes driveways, and is as wide as a street (so paving it moves no lot)", () => {

@@ -64,8 +64,6 @@ export interface ConvoyHost {
   toast?(msg: string): void;
 }
 
-export interface BigRun { kind: BigKind }
-
 /** The convoys out on the road now, by where they are headed: the pieces on their way to each building. */
 function onTheWay(h: ConvoyHost) {
   const to = new Map<number, number>(), from = new Map<number, number>();

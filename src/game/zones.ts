@@ -44,7 +44,6 @@ export const ZONES: Record<ZoneId, ZoneDef> = {
   comHigh: { id: "comHigh", name: "Commercial high density", short: "High shops", group: "com", high: true, color: 0x2a6fcf },
   comTower: { id: "comTower", name: "Commercial towers", short: "Towers", group: "com", high: true, color: 0x1d55a8 },
 };
-export const ZONE_ORDER: ZoneId[] = ["resLow", "resRow", "resMed", "resHigh", "resTower", "comLow", "comMid", "comHigh", "comTower"];
 /** How dense a zone is within its group (a town only ever rezones its land denser). */
 export const ZONE_RANK: Record<ZoneId, number> = { resLow: 0, resRow: 1, resMed: 2, resHigh: 3, resTower: 4, comLow: 0, comMid: 1, comHigh: 2, comTower: 3 };
 

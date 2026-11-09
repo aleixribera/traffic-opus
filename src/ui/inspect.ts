@@ -192,16 +192,6 @@ const FIXES: [RegExp, string][] = [
 
 // ------------------------------------------------------------------------------------------- names
 
-/** A building's name for a chip: its kind, or its town for a town building ("Shop, Elton"). */
-export function placeName(g: Game, b: Building): string {
-  const T = BUILDING_TYPES[b.kind];
-  if (!b.plant && b.town !== undefined) {
-    const t = g.towns.byId.get(b.town);
-    if (t) return t.name;
-  }
-  return T.name;
-}
-
 /** The chip for a building: a town's building stands for its town; a site for itself, with its distance. */
 function placeChip(g: Game, b: Building, from?: Building): FlowChip {
   if (!b.plant && b.town !== undefined) {
@@ -602,11 +592,6 @@ function peopleOf(g: Game, b: Building, home: boolean, flow: FlowRow[], rel: Rel
 }
 
 // ------------------------------------------------------------------------------------------- vehicles
-
-/** Where a vehicle's remaining route runs: the directed road pieces still ahead, after the one it is on. */
-export function routeAhead(v: Vehicle): number[] {
-  return v.route.slice(v.ri + 1).map(dkSeg);
-}
 
 /** Metres left: the rest of the lane it is on, then the road pieces ahead (centreline lengths). */
 export function metresLeft(g: Game, v: Vehicle): number {

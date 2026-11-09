@@ -1,4 +1,4 @@
-import { LANE_W, ROAD_TYPES, SHOULDER, SIM, roadWidth, type RoadTypeId } from "../config";
+import { LANE_W, ROAD_TYPES, SIM, roadWidth, type RoadTypeId } from "../config";
 import {
   type Cubic, type Polyline, type V2,
   add, angleOf, clamp, cubicTangent, dist, dot, lineIntersect, makePolyline, minRadius, norm, offsetPolyline,
@@ -595,13 +595,6 @@ export class RoadNetwork {
     return ha + (hb - ha) * smoothstep(clamp(t, 0, 1));
   }
 
-  /** Height along a seg by centre arc-length. */
-  heightAtS(id: number, s: number): number {
-    const g = this.segGeom.get(id)!;
-    const seg = this.segs.get(id)!;
-    const ha = this.nodes.get(seg.a)!.h, hb = this.nodes.get(seg.b)!.h;
-    return ha + (hb - ha) * smoothstep(clamp(s / (g.center.length || 1), 0, 1));
-  }
 
   segsNear(x0: number, y0: number, x1: number, y1: number): Set<number> {
     const out = new Set<number>();
@@ -633,10 +626,6 @@ export class RoadNetwork {
   }
 
   // ---------------- rebuild derived data ----------------
-
-  get hasPending(): boolean {
-    return this.dirtyNodes.size > 0 || this.removedSegs.size > 0 || this.removedNodes.size > 0;
-  }
 
   rebuild(): ChangeSet {
     const dirtyNodes = new Set([...this.dirtyNodes].filter((id) => this.nodes.has(id)));
@@ -1599,13 +1588,6 @@ function invert(op: Op): Op {
     case "setPocket": return { t: "setPocket", id: op.id, end: op.end, from: op.to, to: op.from };
   }
 }
-
-/** Point + lateral position on a lane. */
-export function lanePoint(l: Edge, s: number): V2 {
-  return polyAt(l.pl, s);
-}
-
-export const SHOULDER_W = SHOULDER;
 
 /** Radius of the circle through a lane's first, middle and last points (a ring arc). */
 function ringR(pl: { pts: { x: number; y: number }[] }): number {
