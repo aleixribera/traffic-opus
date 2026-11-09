@@ -5688,6 +5688,18 @@ def new_collection(name):
     return c
 
 
+# Models from the city-builder era that the game no longer loads (src/render/models.ts lists what it does): the
+# service buildings and their vehicles, the utilities, the old landmarks, the first mine and works. Their builders
+# stay above, but they are not built, exported, previewed or listed any more.
+CUT = ("garbage", "firestation", "police", "clinic", "hospital", "school", "highschool", "university", "park",
+       "parklarge", "windturbine", "solarfarm", "waterpump", "sewageoutlet", "stadium", "obstower", "concerthall",
+       "skytower", "mine", "works", "garbagetruck", "firetruck", "ambulance", "policecar")
+for _n in CUT:
+    BUILDINGS.pop(_n, None)
+    VEHICLES.pop(_n, None)
+SERVICES = tuple(n for n in SERVICES if n not in CUT)
+
+
 def build_building(name):
     fn, w, d, nbays = BUILDINGS[name]
     coll = new_collection(name)
@@ -5933,9 +5945,6 @@ def write_readme(stats):
         "bay needs a 180° turn about the up axis relative to the node (or copy the node's transform and",
         "rotate the car by π).",
         "",
-        "Service buildings (garbage … university) follow the same lot rules. The parks (`park`,",
-        "`parklarge`) are all grass: no asphalt strip and no `park_N` nodes.",
-        "",
         "| model | footprint w × d (m) | height (m) | tris | park empties |",
         "|---|---|---|---|---|",
     ]
@@ -5951,10 +5960,6 @@ def write_readme(stats):
         "Front at glTF +Z (Blender -Y), origin at the ground centre, wheels on y = 0. Separate mesh nodes per",
         "material: `body` and `cargo` are pure white (#ffffff) for per-instance tinting, `glass` is",
         "#2b3440, `dark` (tyres, bumpers, chassis) is #30343a.",
-        "",
-        "Service vehicles (garbagetruck, firetruck, ambulance, policecar) have fixed colours and no `body`",
-        "or `cargo` node, so nothing on them is tinted: `paint` (main colour), `trim` (stripes, white parts),",
-        "`lights` (beacons / light bar), `ladder` (firetruck only), plus `glass` and `dark` as above.",
         "",
         "| model | W × L × H (m) | tris | nodes |",
         "|---|---|---|---|",
