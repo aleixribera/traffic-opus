@@ -15,6 +15,16 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.77", date: "2026-11-09", title: "Main Street",
+    notes: [
+      "Each town's Main Street through its old town is paved in brick.",
+      "Main street shops stand on the pavement, with their car park out back down a side alley.",
+      "Construction trucks drive off down the street when they're done instead of vanishing.",
+      "Your first farms and camps take a couple of minutes to build before they start producing.",
+      "A town that isn't growing tells you which delivery it needs more of.",
+    ],
+  },
+  {
     v: "v0.0.76", date: "2026-11-09", title: "Town orders",
     notes: [
       "Town orders: towns ask for freight and build a schoolhouse, church, fire hall and more when you deliver.",
