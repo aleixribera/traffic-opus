@@ -7,7 +7,7 @@ import { Game, type GameEvent } from "../src/game/city";
 import { obbOverlap } from "../src/game/buildings";
 import { dist, polyClosest } from "../src/core/math";
 import { CIVICS, CIVIC_KINDS, isCivic } from "../src/game/civics";
-import { MAP_CAP, ORDER_POP, RETRY_AFTER, dealSet, orderLine, sizeOrder, townCap, type Order } from "../src/game/orders";
+import { GAP_MAX, GAP_MIN, MAP_CAP, ORDER_POP, RETRY_AFTER, TOWN_CAP, dealSet, orderLine, sizeOrder, type Order } from "../src/game/orders";
 import { DAY, HOUR } from "../src/game/society";
 import { demandPerDay, sizeOf } from "../src/game/towns";
 import type { Product } from "../src/game/industry";
@@ -99,37 +99,41 @@ describe("Town orders", () => {
     expect(orderLine({ ...fair, town: 1, got: {}, opened: 0, until: fair.window } as Order, "Ridgefield")).toBe("Ridgefield's Fair: keep food at Plenty for 3 days");
   });
 
-  it("open at random gaps across the towns, never more than one a small town or the map can hold", () => {
-    const { g, ev, home } = started();
-    // four more towns, all served and grown
-    for (let k = 0; k < 4; k++) {
-      const s = g.towns.spawn();
-      expect(s).not.toBeNull();
-    }
+  it("come one at a time, five to ten days apart, the town asked last resting a turn", () => {
+    const { g, ev } = started();
+    // four more towns, all served and grown (a big one too: it still takes one at a time)
+    for (let k = 0; k < 4; k++) expect(g.towns.spawn()).not.toBeNull();
     for (const t of g.towns.list) feed(t, 700);
-    // a big one takes two at once
     feed(g.towns.list[4], 2400);
-    let most = 0;
-    const opened = new Set<number>();
+    const t0 = g.time;
+    const log: { at: number; phase: string; town: number }[] = [];
+    g.on((e) => { if (e.t === "order") log.push({ at: g.time, phase: e.phase, town: e.town }); });
+    // the player fills every other one a day in, and lets the rest go then
+    let k = 0;
     hours(g, 24 * 40, () => {
-      most = Math.max(most, g.orders.open.length);
       expect(g.orders.open.length).toBeLessThanOrEqual(MAP_CAP);
-      for (const t of g.towns.list) expect(g.orders.openIn(t.id).length).toBeLessThanOrEqual(townCap(t.size));
-      for (const o of g.orders.open) opened.add(o.town);
-      // fill half of them as they come, so the sets move on
-      for (const o of [...g.orders.open]) if ((o.opened / HOUR) % 2 < 1 && g.time - o.opened > DAY) g.orders.fill(o);
+      for (const t of g.towns.list) expect(g.orders.openIn(t.id).length).toBeLessThanOrEqual(TOWN_CAP);
+      for (const o of [...g.orders.open]) if (g.time - o.opened >= DAY) { if (k++ % 2 === 0) g.orders.fill(o); else g.orders.lapse(o); }
     });
-    expect(most).toBe(MAP_CAP);
-    // spread over the map, not queued in one town
-    expect(opened.size).toBe(g.towns.list.length);
-    const per = new Map<number, number>();
-    for (const e of orders(ev, "open")) per.set(e.town, (per.get(e.town) ?? 0) + 1);
-    expect(Math.max(...per.values())).toBeLessThan(orders(ev, "open").length * 0.5);
-    // at random gaps: never all at once
-    const times = orders(ev, "open").map((_, i) => i);
-    expect(times.length).toBeGreaterThan(8);
-    expect(home.id).toBe(g.towns.list[0].id);
-  });
+    const opens = log.filter((x) => x.phase === "open");
+    expect(opens.length).toBeGreaterThanOrEqual(4);
+    expect(opens.length).toBeLessThanOrEqual(8);
+    expect(MAP_CAP).toBe(1);
+    // the first five to ten days into the game; each next one five to ten days after the last closed
+    expect(opens[0].at - t0).toBeGreaterThanOrEqual(GAP_MIN);
+    expect(opens[0].at - t0).toBeLessThanOrEqual(GAP_MAX + HOUR);
+    for (let i = 1; i < opens.length; i++) {
+      const close = log.filter((x) => x.phase !== "open" && x.at <= opens[i].at).pop()!;
+      expect(close.at).toBeGreaterThanOrEqual(opens[i - 1].at);
+      expect(opens[i].at - close.at).toBeGreaterThanOrEqual(GAP_MIN);
+      expect(opens[i].at - close.at).toBeLessThanOrEqual(GAP_MAX + HOUR);
+      // never the same town twice running, while others could be asked
+      expect(opens[i].town).not.toBe(opens[i - 1].town);
+    }
+    // filled and missed both close it
+    expect(orders(ev, "done").length).toBeGreaterThan(0);
+    expect(orders(ev, "lapsed").length).toBeGreaterThan(0);
+  }, 60000);
 
   it("wait for a town to have a delivery, people enough and the size each building wants", () => {
     const g = new Game(7);
@@ -138,12 +142,13 @@ describe("Town orders", () => {
     t.today = {};
     t.yesterday = {};
     t.hist.days = [];
-    hours(g, 24 * 3);
+    // (past the first order's time: none, with no town to take it)
+    hours(g, 24 * 11);
     expect(g.orders.open).toHaveLength(0);
     // (asked for one in a town that can't take it: none, and no harm)
     expect(g.orders.openOne([t])).toBeNull();
     feed(t, ORDER_POP + 20);
-    hours(g, 24 * 3);
+    hours(g, 1);
     expect(g.orders.open.length).toBe(1);
     // a hamlet is only ever asked for a hamlet's buildings
     for (let k = 0; k < 30; k++) {
@@ -287,13 +292,20 @@ describe("Town orders", () => {
     expect(b).toBeTruthy();
     expect(h.lotCells(b).filter((c) => c.lot === b.id).length).toBeGreaterThan(0);
     expect(h.orders.boost(home.id)).toEqual(g.orders.boost(home.id));
+    // a save from the first, busier pacing: its open orders run on, the next is a full gap away
+    const busy = JSON.parse(JSON.stringify(json));
+    delete busy.orders.pace;
+    busy.orders.nextAt = 0;
+    const b2 = Game.load(busy);
+    expect(b2.orders.open).toHaveLength(h.orders.open.length);
+    expect(b2.orders.nextAt!).toBeGreaterThanOrEqual(b2.time + GAP_MIN);
     // a save from before the orders: none open, its towns dealt their sets, and they start to roll
     delete json.orders;
     const old = Game.load(json);
     expect(old.orders.open).toHaveLength(0);
     expect(old.orders.setOf(home.id)).toEqual(dealSet(old.seed, home.id));
     feed(old.towns.byId.get(home.id)!);
-    hours(old, 24 * 2);
+    hours(old, 24 * 10 + 1);
     expect(old.orders.open.length).toBe(1);
     expect(CIVIC_KINDS).toContain(old.orders.open[0].kind);
   }, 60000);

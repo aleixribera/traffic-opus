@@ -4,8 +4,8 @@
 // catalogue (civics.ts) and seeded from the town, so a save always deals the same set. Each has a fixed grade (its
 // difficulty) and opens only once the town has reached the size the building wants.
 //
-// From time to time, at random, one of them opens in a random town that can take it, so they spread over the map
-// rather than queueing in one town: at most one open per town (two from Town size) and MAP_CAP on the whole map. An
+// Now and then (every five to ten game days, one at a time on the whole map: see the pacing constants below), one of
+// them opens in a random town that can take it, the town asked last resting a turn so they spread over the map. An
 // order asks for freight, sized to the town as it is when it opens and to its grade: "Millbrook wants a schoolhouse:
 // 30 planks and 20 cement in 4 days", or, for a fair, that a need be kept in plenty for a few days ("Ridgefield's
 // Fair: keep food at Plenty for 3 days"). Filled in time, the town gets its building (a building site first, then
@@ -22,19 +22,26 @@ import type { Game, GameEvent } from "./city";
 import { CIVICS, CIVIC_KINDS, LV_REACH, isCivic, type CivicKind } from "./civics";
 import { PLANTS, PRODUCTS, isPlantKind, type Product } from "./industry";
 import { served, type Town } from "./settlements";
-import { DAY, HOUR } from "./society";
+import { DAY } from "./society";
 import { TOWN_SIZES, buys, demandPerDay, sizeOf } from "./towns";
 
-/** Most orders open at once on the whole map, and in one town (by its size: two from Town size). */
-export const MAP_CAP = 4;
-export const townCap = (size: number) => (size >= 2 ? 2 : 1);
+// ---- pacing (owner, 2026-11-09: "one every 5-10 days, maximum 1 active whole map")
+/** Most orders open at once on the whole map, and in one town. */
+export const MAP_CAP = 1;
+export const TOWN_CAP = 1;
+/**
+ * The gap before the next order, drawn evenly from GAP_MIN..GAP_MAX: counted from when the last one closed (filled
+ * or missed), and for the very first from the start of the game.
+ */
+export const GAP_MIN = DAY * 5, GAP_MAX = DAY * 10;
+/** The town whose order closed last isn't asked next while another town could be (it rests a turn). */
+export const REST_A_TURN = true;
 /** A town asks for orders once it has had a delivery and has this many people. */
 export const ORDER_POP = 40;
-/** The first order opens this long after a town can take one; the next ones at random gaps of NEXT_MIN..NEXT_MAX. */
-export const FIRST_AFTER = HOUR * 4;
-export const NEXT_MIN = DAY * 0.3, NEXT_MAX = DAY * 0.8;
-/** An order missed asks again after this long, or up to twice it. */
-export const RETRY_AFTER = DAY * 1.5;
+/** A missed building isn't asked for again (in that town) for this long, or up to twice it. */
+export const RETRY_AFTER = DAY * 6;
+/** Saves made before this pacing carry an old, near next-order time: it is drawn afresh when one loads. */
+const PACE = 2;
 /** A fair's crowds: the town eats and drinks this much more than its usual need while one is on. */
 export const FAIR = 1.25;
 /** How much more than its need a delivery order asks for over its days, by grade (1-3). */
@@ -78,7 +85,11 @@ export interface OrdersJSON {
   sets: { town: number; slots: OrderSlot[] }[];
   open: Order[];
   nextAt: number | null;
+  /** (from the second pacing on) the town whose order closed last */
+  lastTown?: number | null;
   draws: number;
+  /** the pacing the save was made under (none: the first, busier one) */
+  pace?: number;
 }
 
 /** A save's orders, or none for a save from before them (its towns are dealt their sets on load). */
@@ -190,8 +201,10 @@ export class OrderSystem {
   /** each town's set, by town id */
   sets = new Map<number, OrderSlot[]>();
   open: Order[] = [];
-  /** when the next order opens (null: no town can take one yet) */
+  /** when the next order may open (null: not drawn yet, at the start of a game) */
   nextAt: number | null = null;
+  /** the town whose order closed last (it rests a turn) */
+  lastTown: number | null = null;
   /** random draws made so far (each draw seeded from the game's seed and this, so a save carries on the same) */
   private draws = 0;
   /** the land value the finished buildings add round them: building centres and how much */
@@ -234,7 +247,7 @@ export class OrderSystem {
   /** Can a town take an order now: one that has had a delivery, with people enough, below its cap? */
   private takes(t: Town): OrderSlot[] {
     if (!this.canTake(t)) return [];
-    if (this.openIn(t.id).length >= townCap(t.size)) return [];
+    if (this.openIn(t.id).length >= TOWN_CAP) return [];
     const now = this.g.time;
     return this.setOf(t.id).filter((s) => s.state === "waiting" && CIVICS[s.kind].size <= t.size && (s.again ?? -Infinity) <= now);
   }
@@ -251,16 +264,22 @@ export class OrderSystem {
       }
       if (now >= o.until) this.lapse(o);
     }
-    // the next order, at a random time: in a random town that can take one
-    const ready = this.g.towns.list.filter((t) => this.takes(t).length > 0);
-    if (this.nextAt === null) {
-      if (ready.length) this.nextAt = now + FIRST_AFTER;
-      return;
-    }
-    if (now < this.nextAt) return;
-    this.nextAt = now + NEXT_MIN + this.rnd() * (NEXT_MAX - NEXT_MIN);
-    if (this.open.length >= MAP_CAP || !ready.length) return;
-    this.openOne(ready);
+    // the next order: five to ten days after the last one closed (the first, into the game), in a random town that
+    // can take one (none can: it waits for one, hour by hour)
+    if (this.nextAt === null) this.nextAt = now + this.gap();
+    if (this.open.length >= MAP_CAP || now < this.nextAt) return;
+    this.openOne();
+  }
+
+  /** A gap before the next order, drawn evenly from GAP_MIN..GAP_MAX. */
+  private gap(): number {
+    return GAP_MIN + this.rnd() * (GAP_MAX - GAP_MIN);
+  }
+
+  /** An order closed (filled or missed): the next comes a gap from now, and its town rests a turn. */
+  private closed(o: Order) {
+    this.lastTown = o.town;
+    if (this.open.length < MAP_CAP) this.nextAt = this.g.time + this.gap();
   }
 
   /**
@@ -270,6 +289,8 @@ export class OrderSystem {
   openOne(ready: Town[] = this.g.towns.list.filter((t) => this.takes(t).length > 0), kind?: CivicKind): Order | null {
     // (only towns that can take one now, of that building if one is named)
     ready = ready.filter((t) => this.takes(t).some((s) => !kind || s.kind === kind));
+    // (the town asked last rests a turn, while another could be asked)
+    if (REST_A_TURN && ready.length > 1) ready = ready.filter((t) => t.id !== this.lastTown);
     if (!ready.length || this.open.length >= MAP_CAP) return null;
     const now = this.g.time;
     const weight = (t: Town) => {
@@ -327,6 +348,7 @@ export class OrderSystem {
     const b = this.g.addCivic(o.town, o.kind);
     if (b) s.b = b.id;
     this.lvSpots = null;
+    this.closed(o);
     this.emit({ t: "order", phase: "done", town: o.town, kind: o.kind, b: b?.id, grant: o.grant });
     this.emit({ t: "money" });
   }
@@ -339,6 +361,7 @@ export class OrderSystem {
       s.state = "waiting";
       s.again = this.g.time + RETRY_AFTER * (1 + this.rnd());
     }
+    this.closed(o);
     this.emit({ t: "order", phase: "lapsed", town: o.town, kind: o.kind });
   }
 
@@ -408,7 +431,9 @@ export class OrderSystem {
       sets: [...this.sets].sort((a, b) => a[0] - b[0]).map(([town, slots]) => ({ town, slots: slots.map((s) => ({ ...s })) })),
       open: this.open.map((o) => ({ ...o, goods: { ...o.goods }, got: { ...o.got } })),
       nextAt: this.nextAt,
+      lastTown: this.lastTown,
       draws: this.draws,
+      pace: PACE,
     };
   }
 
@@ -417,12 +442,15 @@ export class OrderSystem {
     this.sets.clear();
     this.open = [];
     this.nextAt = null;
+    this.lastTown = null;
     this.draws = 0;
     this.lvSpots = null;
     if (!d) return;
     for (const x of d.sets) if (this.g.towns.byId.has(x.town)) this.sets.set(x.town, x.slots.filter((s) => isCivic(s.kind)).map((s) => ({ ...s })));
     this.open = d.open.filter((o) => this.g.towns.byId.has(o.town) && isCivic(o.kind));
-    this.nextAt = d.nextAt;
     this.draws = d.draws;
+    this.lastTown = d.lastTown ?? null;
+    // (a save from the first, busier pacing: its orders still open run on, and the next one is a full gap away)
+    this.nextAt = d.pace === PACE ? d.nextAt : this.g.time + this.gap();
   }
 }

@@ -633,10 +633,11 @@ ui/orders.ts).
   map seed and the town, so a save always deals the same set. Every set holds at least two a hamlet can ask for.
   Each order has a fixed grade from 1 to 3, its difficulty, and opens only once the town is the size its building
   wants. Each building comes once per town. The town panel counts them: "Orders · 4 of 7 filled".
-- **They open at random, spread over the map.** About every 7 to 19 game hours (the first about 4 hours after a
-  town is ready), one opens in a town that can take it. A town is ready once it has had a delivery and has 40
-  people. Towns that have waited longest are likelier, so orders don't queue in one town. Caps: one open per town
-  (two from Town size) and four on the whole map.
+- **They are rare: one at a time, five to ten days apart** (owner, 2026-11-09: "one every 5-10 days, maximum 1
+  active whole map"). The first opens 5 to 10 game days into the game; each next one 5 to 10 days after the last
+  one closed, filled or missed (the gap drawn evenly). At most one is open on the whole map. It opens in a random
+  town that can take one: a town that has had a delivery and has 40 people. The town asked last rests a turn while
+  another could be asked, so orders spread over the map. The numbers are named at the top of orders.ts.
 - **What an order asks.** Either freight in a window ("Millbrook wants a schoolhouse: 30 planks and 20 cement in 4
   days") or, for a fair, a need kept at Plenty for some days ("Ridgefield's Fair: keep food at Plenty for 3
   days").
@@ -656,8 +657,9 @@ ui/orders.ts).
   - **Perk:** a small, lasting perk in words, which applies exactly once.
   - **The moment:** a banner ("Order filled · Millbrook builds its schoolhouse"), the camera gliding over, and a
     small fireworks show.
-- **Missed.** Nothing is lost. A toast says it ran out of time, and the town asks again after one and a half to
-  three days, sized afresh to the town as it is then.
+- **Missed.** Nothing is lost. A toast says it ran out of time. The town doesn't ask for that building again for
+  six to twelve days, and then sizes it afresh to the town as it is. A save from the first, busier pacing keeps
+  its open orders and draws a full gap before the next.
 - **On screen.**
   - A note under the toasts when an order opens. Orders opening together share one note, it can be put away,
     and a click opens the town.
