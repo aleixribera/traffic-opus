@@ -415,6 +415,15 @@ itself across modes; you build tracks, docks and the transfer points, never line
     it glides the camera there (a jump instead with reduced motion) and opens the town.
 - Every resident is simulated: a home in a town, a job at one of your buildings within reach, a commute in
   traffic. Buses carry workers to plants and take cars off the roads your trucks need.
+- **The day has a rhythm (2026-11-09: "make the game feel more real ... schedules").** Most jobs are a day shift
+  from 8:00 (shops 9:00, a third of them 11:00 to cover the evening); plants keep a smaller 15:00 shift and a
+  skeleton night shift at 23:00 (70/20/10, was 55/30/15 from 7:00). So the town leaves for work in one morning
+  rush, comes home in one evening rush around 17:00-19:00, and the small hours are quiet. About a third of day
+  workers go out to the shops at lunch and back to work after, and people without a job run most of their errands
+  around noon and late afternoon. In the showcase, cars on the road through a day went from a flat 17-37 (the peak
+  at 15:00, the old back shift) to ~14 at 2:00, ~50 at 8:00, ~30 over lunch and ~45 at 17:00-19:00. Trips last
+  1-3 game hours at this scale, so the rushes are broad, not spikes. Older saves move 7:00 shifts to 8:00 and
+  14:00 shop shifts to 11:00 on load.
 - **Needs** open with town size, and a town grows past each size only while that tier is supplied:
 
   | Size | Population | Needs |
