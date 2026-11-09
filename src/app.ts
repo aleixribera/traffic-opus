@@ -73,6 +73,7 @@ import { Terrain3D } from "./render/terrain3d";
 import { Clearing, clearShapes } from "./render/clearing";
 import { Vehicles3D } from "./render/vehicles3d";
 import { Lamps3D } from "./render/lamps3d";
+import { Signals3D } from "./render/signals3d";
 import { DayCycle } from "./render/daycycle";
 import { fieldLook } from "./game/calendar";
 import { Transit3D, legPoints } from "./render/transit3d";
@@ -183,6 +184,8 @@ export class App {
   /** The lamps, floodlights, lit windows and vehicle lights. */
   lamps!: Lamps3D;
   private lampSig = "";
+  signals!: Signals3D;
+  private signalsWere = -1;
   private fieldsWere = "";
   selected: Building | null = null;
   /** what the inspector has selected (the HUD sets it; one at a time) */
@@ -691,6 +694,8 @@ export class App {
     this.vehicles.lamps = this.lamps;
     this.buildings3d.seasonClock = () => this.dayCycle.lookTime(this.game.time);
     this.lampSig = "";
+    this.signals = new Signals3D(this.models.props.get("signal"));
+    this.signalsWere = -1;
     this.camera?.reset();
     // (the old game's selection would name something else, or nothing, in this one)
     this.hud?.closePanels();
@@ -698,7 +703,7 @@ export class App {
     this.highlight.set(null);
     this.highlight.hoverV = null;
     this.glide = null;
-    this.worldRoot.add(this.terrain3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.greens3d.group, this.lamps.group, this.fireworks.group);
+    this.worldRoot.add(this.terrain3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.greens3d.group, this.lamps.group, this.signals.group, this.fireworks.group);
     this.roads.rebuildAll();
     this.buildings3d.rebuild(g.buildings.list);
     { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }
@@ -2001,6 +2006,11 @@ export class App {
       this.lampSig = sig;
       this.lamps.setStatic([...this.roads.lamps, ...this.buildings3d.floods], this.buildings3d.windows);
     }
+    if (this.roads.signalVersion !== this.signalsWere) {
+      this.signalsWere = this.roads.signalVersion;
+      this.signals.setSpots(this.roads.signalSpots);
+    }
+    this.signals.update(g.traffic, this.view.mpp);
     this.lamps.showCars(!far);
     const lum = (c: readonly number[]) => c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
     this.lamps.update(L.lamps, this.dayCycle.hour, this.view.mpp, this.roads.signalHeads, lum(L.amb) + lum(L.sun));

@@ -853,6 +853,8 @@ export class Hud {
     if (!at) {
       let [x, y] = tries[0];
       if (x + w > r.width - 8) x = pos.x - w - 14;
+      // (a long row never runs off the screen's side: its first notes were cut off at the left edge)
+      x = Math.max(8, Math.min(x, r.width - 8 - w));
       for (let k = 0; k < 4; k++) {
         const hit = hits(x, y);
         if (!hit.length) break;

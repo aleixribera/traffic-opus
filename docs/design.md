@@ -914,31 +914,55 @@ Controls follow CS2's defaults. Trafficity's systems stay only where they are be
 height levels shown while drawing, and the instant upgrade preview.
 
 **Camera:**
-- W/A/S/D pan; edge scroll is optional.
-- Q/E turn the camera. A middle-mouse drag turns it (sideways) and tilts it (up and down).
-- Y/H tilt it from the keys: Y up toward the Map view, H down toward the horizon. (CS2's tilt keys T/G drive the
-  camera modes here.)
-- R/F and the mouse wheel zoom, about the ground under the cursor.
-- Right-drag pans the map (left-drag too while nothing is being drawn): the ground that was grabbed stays under
-  the cursor, at any tilt and turn.
+- W/A/S/D and the arrows pan, by the screen: up is up the screen at any turn, and the map moves at the same speed on
+  the screen in every direction (a diagonal is no faster; up the screen covers more ground at a tilt, which is
+  right). Edge scroll is optional.
+- Q/E turn the camera about the middle of the screen. R/F zoom. Y/H tilt: Y lifts the camera toward straight down,
+  H lowers it toward the horizon. (CS2's tilt keys T/G drive the camera modes here.)
+- **Keys ease.** Every camera key eases in and out (`KEY_EASE` in `src/app.ts`, about a tenth of a second), so a tap
+  nudges and a release coasts to a stop instead of the map starting and stopping dead. At once with reduced motion.
+  Ctrl or Cmd held: no camera key moves the map (Ctrl+S saves, it does not pan).
+- **A middle-mouse drag turns and tilts**, the way a hand moves a model on a table: drag right and the near ground
+  comes right with the hand (the same way as E), drag up and the camera lowers toward the horizon, drag down and it
+  lifts toward straight down. One drag does one thing unless it is clearly diagonal (`src/ui/orbit.ts`): a sideways
+  drag that wanders a little never moves the tilt, a drag up or down never turns the map.
+- The mouse wheel zooms about the ground under the cursor, eased over a few frames (a wheel notch is a glide, not a
+  jump; a touchpad's fine steps go straight through). Closest is 28 m of half height: closer than that the paving
+  and the models have no more detail to show.
+- Right-drag pans the map (left-drag too while nothing is being drawn, Space + drag with any tool in hand): the
+  ground that was grabbed stays under the cursor, at any tilt and turn.
 - A north arrow appears while the map is turned; clicking it turns the map back north-up.
 - **The Diorama (2026-11-09, docs/direction.md):** the game is filmed by a tilted orthographic camera
   (`src/render/view.ts`, the maths in `src/render/viewmath.ts`). `tilt` is the angle from straight down: 40° by
   default, free between 0° and 58°. It stays orthographic: no perspective, so sizes and road widths read the same
   all over the screen.
+  - **Far out it flattens into the map.** `View.pitch` is the tilt asked for (the player's, a shot's); `View.tilt`
+    is the tilt drawn. Up to 480 m of half height they are the same. From there the camera rises as it pulls back
+    and looks straight down from 2200 m on (`risenTilt`, `RISE_FROM`, `RISE_TO` in `src/render/viewmath.ts`): far
+    out a tilt shows no building's side, it only squashes the map and hides what lies behind the top edge.
+    Zooming back in gives the player's tilt back; nothing is remembered or changed by the rise. The tilt keys and
+    the drag say so there in one calm line ("Zoom in to tilt the camera. This far out it looks straight down").
   - **Map view (M):** straight down, the old view, and back to the Diorama at the tilt the player last had. Eased
     over 0.4 s; at once with reduced motion.
   - **The Camera setting** (pause menu, next to Nights and Scroll wheel; saved as `flowtown.camera`): Diorama (the
     default) or Map. It is the view a game opens in and the view the camera comes back to after a Tour or a
     Vehicle cam, and choosing it switches the view at once. **M flips this same setting**, so the menu always tells
-    the truth, and so does the camera block. Tilting by hand keeps it true too: pitched all the way to straight down
-    it becomes Map; pitched down out of the Map view by key (H) it becomes Diorama. In the Map view a middle drag
-    only turns the map (it never tilts it by accident), so with Map chosen the whole game plays without a tilt.
+    the truth, and so does the camera block. Tilting by hand keeps it true too, settled when the gesture ends (the
+    drag let go, the key released), never in the middle of it: left at straight down it becomes Map, and the
+    Diorama tilt remembered stays what it was before (going flat never overwrites it); tilted out of the Map view
+    it becomes Diorama. In the Map view a sideways middle drag only turns the map; a clear drag up (more up than
+    across, further than a tilt needs in the Diorama) tips it into the Diorama, so it never tilts by accident and
+    with Map chosen the whole game plays without a tilt. A drag down there, where there is nothing further to
+    lift to, shows "Drag up to tilt the camera, or press H" once.
   - **The camera block** (top-left bar, by the camera button): a small block drawn as the camera sees the map,
     turned and tilted with it, brick on its north side; from straight above it is a plain square. A click is M.
     Dragging it turns and tilts the camera: the way to do it on a touchpad with no middle button.
   - **Remembered:** the player's turn (`flowtown.cameraTurn`) and Diorama tilt (`flowtown.cameraTilt`, never less
     than 12°) are kept in localStorage with the setting, across games and reloads.
+  - **Where a game opens.** A new company opens close on its hamlet, near enough that it reads as a model (its
+    houses standing, the first road's start in view), not as a dot on a map. A save opens where the camera was
+    when it was made (`Saves.where` writes the middle and the zoom into the save's entry, `Saves.viewOf` gives
+    them back); an older save with no view opens on its biggest town.
   - **Pointing is by line of sight.** A click is a ray, not a ground point (`View.screenToGround(px, py, h)` and
     `View.worldToScreen(x, y, h)` are the one pair of helpers; `src/ui/pick.ts` picks along the ray). Ground tools
     meet the plane of the level being drawn (6 m a level), so a bridge end lands under the cursor at its own
@@ -954,7 +978,22 @@ height levels shown while drawing, and the instant upgrade preview.
   - **What is drawn:** the ground footprint of the tilted, turned screen (`View.bounds`), with room below the
     bottom edge for tall things that lean into view. The sun's shadow map is fitted to that footprint and to the
     long shadows of a low sun falling into it, snapped to texels, its bias in metres.
-  - **Save pictures** are always the Diorama, whichever view the player works in.
+  - **Save pictures** are always the Diorama, whichever view the player works in: from the Map view the camera
+    tips to the player's own Diorama tilt for that one frame (not to the default), and far out the picture is the
+    map, as the screen is.
+  - **Raised roads from the side** (`src/render/roads3d.ts`). A parapet is a closed wall that grows out of the ramp
+    (`parapetRise`: none on the ground, full height from about 1.8 m up) and stands a hair proud of the deck's side,
+    never in its plane. Where a level deck meets a ramp there is a pier under the joint and a Deco pylon either
+    side. The abutment stands at the ramp's foot, where the road comes down through 2.6 m (`FOOT_H`), facing down
+    the ramp; from there to the ground the ramp runs on a solid concrete approach (`approachGeo`), so no ramp is a
+    thin slab with daylight under it. None of it over water or over a road passing under.
+  - **Traffic signals stand** (`src/render/signals3d.ts`, model `signal`). Each arm of a junction with lights has
+    a pedestal signal on the pavement to the right of the traffic it holds, a step back from the stop line, facing
+    the cars coming; its lit lens (red on top, amber, green) shows what the arm's straight-on traffic may do. The
+    lit lens is drawn turned to the camera, a few pixels at the least, and does not show from behind the head. The
+    coloured dots on the lanes stay: they say it lane by lane (a left-turn arrow's own phase) and read from
+    straight above and from far out, where a post is a dot.
+  - **Park lawns take the season** like the ground round them (snow in winter).
 - Camera modes (the camera button in the top-left bar, or keys):
   - Follow (G, or a convoy's tag) rides with the truck nearest the middle of the screen, with a damped camera and a
     slight look-ahead. A "Following" chip names its cargo and destination. When it arrives the camera holds, then picks

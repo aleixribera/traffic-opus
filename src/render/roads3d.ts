@@ -10,6 +10,7 @@ import type { Traffic } from "../sim/traffic";
 import { PAL } from "./palette";
 import { MeshBatch } from "./batch";
 import { ENV, ENV_GLSL, seasonal } from "./envShader";
+import { signalPost, type SignalSpot } from "./signals3d";
 import type { MergedModel } from "./models";
 import type { LampSpot } from "./lamps3d";
 
@@ -644,6 +645,9 @@ export class Roads3D {
   // signal heads drawn as coloured dots at the stop line
   private lights: THREE.InstancedMesh;
   private lightRefs: { node: number; arm: number; turns: string[]; x: number; y: number; h: number }[] = [];
+  /** The signals to stand at the junctions' arms (render/signals3d.ts), and a count that moves when they change. */
+  signalSpots: SignalSpot[] = [];
+  signalVersion = 0;
   // turn arrows painted on the lanes coming into a junction
   private arrowMat = new THREE.MeshLambertMaterial({ color: PAL.lane, side: THREE.DoubleSide });
   // stop signs: a red octagon at the kerb (white rim)
@@ -1497,6 +1501,8 @@ export class Roads3D {
 
   private collectLights() {
     this.lightRefs = [];
+    this.signalSpots = [];
+    this.signalVersion++;
     for (const [id, n] of this.net.nodes) {
       if (!n.signal) continue;
       const ng = this.net.nodeGeom.get(id);
@@ -1505,6 +1511,10 @@ export class Roads3D {
         // one dot per incoming lane, at the stop line
         const g = this.net.segGeom.get(a.seg);
         if (!g) continue;
+        // (and one signal standing at the arm, for the lanes that come in on it)
+        const armTurns = new Set<string>();
+        for (const l of g.lanes) if (l.to === id) for (const c of l.outs.length ? l.outs : [{ turn: "S" }]) armTurns.add(c.turn as string);
+        if (armTurns.size) this.signalSpots.push({ node: id, arm: a.seg, turns: [...armTurns], h: n.h + LIFT, ...signalPost(n.p, a, n.h > 0.3) });
         for (const l of g.lanes) {
           if (l.to !== id) continue;
           const p = l.pl.pts[l.pl.pts.length - 1];
