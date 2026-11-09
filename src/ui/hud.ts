@@ -1,10 +1,12 @@
 import { BUILDING_TYPES, LEVEL_H, MAX_LEVEL, ROAD_TYPES, SIGNAL_COST, type BuildingKind, type RoadTypeId } from "../config";
 import { wireNights } from "./nightsSetting";
+import { WHEEL_MODES, saveWheelMode } from "./wheel";
 import { formatMoney, type V2 } from "../core/math";
 import type { Building } from "../game/buildings";
 import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
 import { MILESTONES, unlockedBy, type Milestone, type Unlocks } from "../game/progression";
-import { BUILD_TIME, DEPOT_REACH, HIST_HOURS, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, SUPPLY_STORE, UNPOWERED, isPlantKind, powerPace, type PlantKind, type Product } from "../game/industry";
+import { buildTime } from "../game/construction";
+import { DEPOT_REACH, HIST_HOURS, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, SUPPLY_STORE, UNPOWERED, isPlantKind, powerPace, type PlantKind, type Product } from "../game/industry";
 import { TRUCK_CLASSES, TRUCK_CLASS_ORDER, type TruckClass } from "../game/trucks";
 import { LEVEL_MULT, SITE_LEVELS, growNeed } from "../game/sites";
 import { MARKET, type Town } from "../game/settlements";
@@ -165,10 +167,12 @@ const SNAP_HELP = {
 
 const KEYS: [string, string][] = [
   ["Esc", "Back: close a panel, drop the tool, then the pause menu"],
-  ["Right click", "Undo the last click of a road; again to drop the tool"],
-  ["W A S D / drag", "Move the camera"],
+  ["Right click", "Undo the last click of a road; again to drop the tool (a touchpad: click with two fingers)"],
+  ["W A S D / drag", "Move the camera (drag with the right button, or with the left when nothing is in hand)"],
+  ["Space + drag", "Move the camera with any tool in hand"],
+  ["Two fingers", "Touchpad: scroll to move the camera, pinch to zoom, click for a right click (Scroll wheel setting in this menu)"],
   ["Q / E", "Rotate the camera"],
-  ["R / F, wheel", "Zoom in / out (placing a building: the wheel turns it, Shift + wheel by 1°, Ctrl + wheel zooms)"],
+  ["R / F, wheel", "Zoom in / out (placing a building: the mouse wheel turns it, Shift + wheel by 1°, Ctrl + wheel zooms)"],
   ["Tab", "Next road mode: curve, straight, upgrade"],
   ["Page Up / Down", "Raise or lower the road (bridges over water and motorways rise on their own)"],
   ["[ / ]", "Parallel road spacing"],
@@ -178,7 +182,7 @@ const KEYS: [string, string][] = [
   ["B", "Bulldozer"],
   ["L", "Add lane (Shift or right click removes)"],
   ["P / Z / C / X", "Progression / Economy / Towns / Transport"],
-  ["Space, 1 2 3", "Pause, game speed"],
+  ["Space, 1 2 3", "Pause (a tap of Space), game speed"],
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
   ["F5 / F9", "Quicksave / quickload"],
   ["`", "Hide the interface"],
@@ -1645,7 +1649,7 @@ export class Hud {
           const need = P.site!.need[p]!, got = Math.min(need, P.site!.got[p] ?? 0);
           return `<dt>${PRODUCTS[p].name}</dt><dd>${stockBar(got, need, PRODUCTS[p].color)}<span class="num">${Math.floor(got)} / ${need}</span></dd>`;
         }).join("");
-        const body = `<dl class="facts">${mats}</dl><p class="small muted">Once all are in it takes ${BUILD_TIME / HOUR} hours to build. No wages or upkeep until then.</p>`;
+        const body = `<dl class="facts">${mats}</dl><p class="small muted">Once all are in it takes ${buildTime(b.kind) / HOUR} hours to build. No wages or upkeep until then.</p>`;
         if (this.setPanel(this.anatomy(m, { kind: b.kind, actions: act, body: chain + body }))) this.bindDemolishBtn(demolish);
         return;
       }
@@ -1909,6 +1913,7 @@ export class Hud {
         <button class="pm keys">Controls</button>
         <button class="pm tips" role="switch" aria-label="Tips" aria-checked="${!this.tipPrefs.off}">Tips<span class="pm-v">${this.tipPrefs.off ? "Off" : "On"}</span></button>
         <button class="pm nights"></button>
+        <button class="pm wheel"></button>
         <button class="pm home">Main menu</button>
         <button class="pm new">New company</button>
       </div>`, "Pause menu");
@@ -1929,6 +1934,23 @@ export class Hud {
       this.renderTips();
     });
     wireNights(dlg.querySelector(".nights"), app.dayCycle, () => this.sfx.play("click"));
+    // the Scroll wheel setting: Auto (a mouse wheel zooms, a touchpad's two fingers move the map), Zoom, Pan
+    const wb = dlg.querySelector(".wheel") as HTMLButtonElement;
+    const showWheel = () => {
+      const m = WHEEL_MODES.find((x) => x.id === app.wheel.mode) ?? WHEEL_MODES[0];
+      wb.innerHTML = `Scroll wheel<span class="pm-v">${m.name}</span>`;
+      wb.title = `${m.blurb}. Click to change.`;
+      wb.setAttribute("aria-label", `Scroll wheel: ${m.name}. ${m.blurb}. Click to change.`);
+    };
+    wb.onclick = () => {
+      this.sfx.play("click");
+      const i = WHEEL_MODES.findIndex((x) => x.id === app.wheel.mode);
+      app.wheel.mode = WHEEL_MODES[(i + 1) % WHEEL_MODES.length].id;
+      app.wheel.reset();
+      saveWheelMode(app.wheel.mode);
+      showWheel();
+    };
+    showWheel();
     on(".pm.co", () => this.openCompany("pause"));
     on(".home", () => {
       if (app.mode === "play") app.saves.autosave(app.game);

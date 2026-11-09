@@ -44,13 +44,8 @@ describe("zone cells re-tested only near a road edit", () => {
     let checks = 0;
     for (let d = 0; d < 40 && sizeOf(t.pop) < 2; d++) {
       g.fastForward(t.id, 24);
-      // (every block and cell where it should be; whether a cell is usable may differ in a rare one or two: where an
-      // older block's cell that has since been trimmed away cut a younger block's cell, which one wins depends on the
-      // order the blocks were laid, and the town's own street re-plans (v0.0.69) make that order differ. A known
-      // gap in zones.ts, left for later: a cell or two zoned or not is invisible in play)
-      const dd = diff(g.zones, shadow);
-      expect(dd.filter((s) => !/ ok (true|false) vs /.test(s)).slice(0, 8), `day ${d}`).toEqual([]);
-      expect(dd.length, `day ${d}: ${dd.slice(0, 4).join(", ")}`).toBeLessThanOrEqual(3);
+      // (every cell usable or not alike too, whatever order the blocks were laid in: zones.ts revalidate)
+      expect(diff(g.zones, shadow).slice(0, 8), `day ${d}`).toEqual([]);
       checks++;
     }
     expect(sizeOf(t.pop)).toBeGreaterThanOrEqual(2);

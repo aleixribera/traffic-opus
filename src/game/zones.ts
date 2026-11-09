@@ -98,6 +98,13 @@ const REACH = CELL + 8;
 const BUCKET = 16;
 const bkey = (x: number, y: number) => ((Math.floor(x / BUCKET) + 32768) * 65536) + (Math.floor(y / BUCKET) + 32768);
 
+/**
+ * Which of two blocks owns the cells where they overlap: the older road's, then (pieces of one road split in two keep
+ * its age) the lower seg id, then the left side (-1) over the right.
+ */
+const outranks = (a: Block, b: Block): boolean =>
+  a.age !== b.age ? a.age < b.age : a.seg !== b.seg ? a.seg < b.seg : a.side < b.side;
+
 export class ZoneMap {
   blocks = new Map<string, Block>();
   private grid = new Map<number, Cell[]>();
@@ -412,8 +419,36 @@ export class ZoneMap {
     return out;
   }
 
-  /** Work out which cells of a block are usable: terrain, ownership, roads, older blocks, and depth from the road. */
+  /**
+   * Work out which cells of a block are usable: terrain, ownership, roads, older blocks, and depth from the road; then
+   * again for every younger block whose overlapping cells that changed, in turn (oldest first), so the map comes out
+   * the same whatever order the blocks were laid in: a cell is usable when nothing in the ground is in the way and no
+   * usable cell of an older block (as finally left, after its own trimming) overlaps it.
+   */
   private revalidate(b: Block) {
+    const queue = [b], queued = new Set<Block>([b]);
+    while (queue.length) {
+      let i = 0;
+      for (let j = 1; j < queue.length; j++) if (outranks(queue[j], queue[i])) i = j;
+      const x = queue.splice(i, 1)[0];
+      queued.delete(x);
+      if (this.blocks.get(x.key) !== x) continue;
+      const was = x === b ? null : x.cells.map((c) => c.ok);
+      this.validate(x);
+      for (let k = 0; k < x.cells.length; k++) {
+        const c = x.cells[k];
+        if (was && was[k] === c.ok) continue;
+        for (const o of this.near(c.c, CELL * 0.92)) {
+          if (o.block === x || queued.has(o.block) || !outranks(x, o.block)) continue;
+          queued.add(o.block);
+          queue.push(o.block);
+        }
+      }
+    }
+  }
+
+  /** One block's usable cells, against the ground and the older blocks as they stand. */
+  private validate(b: Block) {
     for (let k = 0; k < b.cols; k++) {
       let blocked = false;
       for (let r = 0; r < DEPTH; r++) {
@@ -429,18 +464,16 @@ export class ZoneMap {
       const prev = b.cells[(k - 1) * DEPTH + r];
       if (prev.ok && dist(prev.c, c.c) < CELL * 0.7) for (let rr = r; rr < DEPTH; rr++) b.cells[k * DEPTH + rr].ok = false;
     }
-    // older blocks win overlapping cells; this block wins over younger ones
-    const touched = new Set<Block>([b]);
+    // older blocks win overlapping cells (younger ones are worked out again after this one)
     for (const c of b.cells) {
       if (!c.ok) continue;
       for (const o of this.near(c.c, CELL * 0.92)) {
-        if (o.block === b || !o.ok) continue;
-        if (o.block.age < b.age || (o.block.age === b.age && o.block.side < b.side)) { this.cut(c); break; }
-        this.cut(o);
-        touched.add(o.block);
+        if (o.block === b || !o.ok || !outranks(o.block, b)) continue;
+        this.cut(c);
+        break;
       }
     }
-    for (const t of touched) this.trimUnusable(t);
+    this.trimUnusable(b);
   }
 
   /**

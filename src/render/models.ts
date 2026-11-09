@@ -3,6 +3,8 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { BuildingKind } from "../config";
 import { SITE_MODELS } from "../game/sites";
+import { CON_MODELS } from "./construction3d";
+import { PILE_MODELS } from "./stockpiles3d";
 
 /** A Blender model flattened into one vertex-coloured geometry (one draw call per instanced kind). */
 export interface MergedModel {
@@ -23,6 +25,11 @@ export const BUILDING_MODELS: BuildingKind[] = [
   "ironmine", "coalmine", "quarry", "smelter", "cementworks",
 ];
 /**
+ * Other looks of a kind (a street of homes shouldn't be one house stamped down): same lot, driveway and parking bay
+ * as the kind's own model, a different house on it (see Buildings3D.modelOf).
+ */
+export const HOME_VARIANTS: string[] = ["house_b", "house_c"];
+/**
  * What industry sites are built from besides the kinds' own models: the shared modules (halls, silos, heaps, the
  * truck yard...) and the plants of the later tiers, ready for their chains.
  */
@@ -40,6 +47,8 @@ export const SITE_PIECES: string[] = [
   "site_field_young", "site_field_cut", "site_field_bare", "farm_young", "farm_ripe", "farm_cut", "farm_bare",
   // industrial-park links: a belt or pipe segment, the transfer towers at its ends, and what moves along them
   "link_conveyor", "link_pipe", "link_tower", "link_load", "link_flow",
+  // what lies in the works' yards, as full as their stores (render/stockpiles3d.ts)
+  ...PILE_MODELS,
 ];
 export const VEHICLE_MODELS = [
   "car", "van", "truck", "tipper", "tanker", "flatbed", "bus",
@@ -56,7 +65,7 @@ export const VEHICLE_MODELS = [
   "carrier", "heavy_carrier", "rt_carrier_a", "rt_carrier_b", "motorcar",
 ] as const;
 /** Street furniture, drawn on its own (not a lot). */
-export const PROP_MODELS = ["busstop", "fence", "hedge", "picket", "bridge_pier", "bridge_abutment", "bridge_pylon", "bridge_truss", "streetlamp", "floodmast"] as const;
+export const PROP_MODELS = ["busstop", "fence", "hedge", "picket", "bridge_pier", "bridge_abutment", "bridge_pylon", "bridge_truss", "streetlamp", "floodmast", ...CON_MODELS] as const;
 export type VehicleKind = (typeof VEHICLE_MODELS)[number];
 
 export interface ModelSet {
@@ -71,7 +80,7 @@ const base = import.meta.env.BASE_URL + "models/";
 
 export async function loadModels(onProgress?: (k: number) => void): Promise<ModelSet> {
   const loader = new GLTFLoader();
-  const all = [...BUILDING_MODELS, ...VEHICLE_MODELS, ...PROP_MODELS, ...SITE_PIECES];
+  const all = [...BUILDING_MODELS, ...HOME_VARIANTS, ...VEHICLE_MODELS, ...PROP_MODELS, ...SITE_PIECES];
   let done = 0;
   const load = (n: string) => loader.loadAsync(base + n + ".glb").then((g) => g.scene);
   const scenes = await Promise.all(

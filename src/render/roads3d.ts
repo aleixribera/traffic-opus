@@ -1,9 +1,10 @@
 import * as THREE from "three";
 import { LANE_W, ROAD_TYPES, SHOULDER, SIDEWALK, STREET_TREES, isHighway, isUnpaved, roadGroup, roadWidth } from "../config";
 import { add, clamp, dist, dot, norm, polyAt, polyClosest, polyDir, right, scale, smoothstep, sub, type Polyline, type V2 } from "../core/math";
-import { pocketZones, type ChangeSet, type RoadNetwork } from "../roads/network";
+import { pocketZones, type ChangeSet, type RSeg, type RoadNetwork } from "../roads/network";
 import { ringsNear } from "../roads/planner";
 import { goreIslands } from "./gore";
+import { runsDiffer, townAt, type TownRuns } from "../game/rural";
 import { dkey } from "../sim/router";
 import type { Traffic } from "../sim/traffic";
 import { PAL } from "./palette";
@@ -39,6 +40,11 @@ export interface BridgeParts {
   drives?: () => [V2, V2][];
   /** Company sites' gates (and the way into each site): a street that ends just outside one runs into its yard. */
   gates?: () => { gate: V2; into: V2; front?: V2 }[];
+  /**
+   * The town streets (game/rural.ts): every other paved road is a country road, with a gravel shoulder and a verge
+   * instead of kerbs, pavements, lamps and street trees. Without it, every road is drawn as a town street.
+   */
+  townStreets?: () => Map<number, TownRuns>;
 }
 
 /** A site's yard concrete (Buildings3D's service roads), carried out of its gate to the street that reaches it. */
@@ -64,8 +70,8 @@ export function makeRoadMaterial(opts: { color?: number; opacity?: number; marki
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms, ENV);
     sh.vertexShader = sh.vertexShader
-      .replace("#include <common>", "#include <common>\nattribute vec4 aRoad;\nattribute vec2 aFlow;\nattribute vec3 aMed;\nattribute vec2 aClip;\nattribute vec4 aPock;\nvarying vec4 vRoad;\nvarying vec2 vFlow;\nvarying vec3 vMed;\nvarying vec2 vClip;\nvarying vec4 vPock;")
-      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRoad = aRoad;\nvFlow = aFlow;\nvMed = aMed;\nvClip = aClip;\nvPock = aPock;");
+      .replace("#include <common>", "#include <common>\nattribute vec4 aRoad;\nattribute vec2 aFlow;\nattribute vec3 aMed;\nattribute vec2 aClip;\nattribute vec4 aPock;\nattribute float aRur;\nvarying vec4 vRoad;\nvarying vec2 vFlow;\nvarying vec3 vMed;\nvarying vec2 vClip;\nvarying vec4 vPock;\nvarying float vRur;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRoad = aRoad;\nvFlow = aFlow;\nvMed = aMed;\nvClip = aClip;\nvPock = aPock;\nvRur = aRur;");
     sh.fragmentShader = sh.fragmentShader
       .replace(
         "#include <common>",
@@ -74,7 +80,7 @@ uniform vec3 uRoad; uniform vec3 uEdge; uniform vec3 uLane; uniform vec3 uCentre
 ${ENV_GLSL}
 uniform vec3 uGrass; uniform vec3 uTree; uniform vec3 uTreeLight;
 uniform float uFlowMode; uniform float uMarkings; uniform float uArrows; uniform float uHw;
-varying vec4 vRoad; varying vec2 vFlow; varying vec3 vMed; varying vec2 vClip; varying vec4 vPock;
+varying vec4 vRoad; varying vec2 vFlow; varying vec3 vMed; varying vec2 vClip; varying vec4 vPock; varying float vRur;
 float band(float x, float w) { float f = fwidth(x) * 0.8 + 1e-4; return 1.0 - smoothstep(w - f, w + f, abs(x)); }
 // a turn pocket's line: dashed while it opens out, solid where it's a lane of its own
 float pockLine(float x, float p, float dash) { return p < 0.01 ? 0.0 : band(x, 0.1) * (p > 0.98 ? 1.0 : dash); }
@@ -179,7 +185,15 @@ vec3 flowTint(float r) {
       }
       c = mix(c, mc, inMed);
     }
-    c = mix(uEdge, c, edge);
+    // a country road (vRur: 1 out in the country, 0 along a town street): no kerb; the asphalt runs out to a worn,
+    // paler edge that breaks up a little where it meets its gravel shoulder (drawn under it)
+    vec3 ce = mix(uEdge, c, edge);
+    if (vRur > 0.001) {
+      float sd = u > 0.0 ? 3.0 : 9.0;
+      float wn = envNoise(vec2(v * 0.3, sd)) * 0.65 + envNoise(vec2(v * 1.1, sd + 20.0)) * 0.35;
+      if (vRur > 0.5 && de < wn * 0.3 - 0.05) discard;
+      c = mix(ce, mix(c * 1.14 + 0.01, c, smoothstep(0.0, 0.4, de)), smoothstep(0.0, 1.0, vRur));
+    } else c = ce;
     // winter: the ploughs keep the lanes black; what they push aside lies in a grey-white bank along the kerbs
     if (envSnow > 0.001) {
       float bw = 0.35 + 0.75 * envNoise(vec2(v * 0.21, u > 0.0 ? 3.0 : 9.0)) * envSnow;
@@ -302,17 +316,93 @@ vec3 flowTint(float r) {
   return { mat, uniforms };
 }
 
+/** A country road's gravel shoulder: how far it reaches under the asphalt's broken edge, and out past it (m). */
+const GRAVEL_IN = 0.4, GRAVEL_W = 1.15;
+/** The mown verge beyond the gravel, fading into the field (m). */
+const VERGE_W = 1.4;
+/** The gravel and verge band across: from under the asphalt out into the field, aFr in metres from the edge. */
+const SHOULDER_BAND: readonly (readonly [number, number])[] = [[-GRAVEL_IN, -GRAVEL_IN], [GRAVEL_W + VERGE_W + 0.4, GRAVEL_W + VERGE_W + 0.4]];
+const DIRT_BAND: readonly (readonly [number, number])[] = [[0, 0], [DIRT_FRINGE, 1]];
+
 /**
- * A dirt road's worn edge: a band from a line (lateral offsets `off` from `pts`, or the line itself) out by
- * DIRT_FRINGE on one side, aFr running 0 -> 1 across it. null if too short.
+ * A country road's gravel shoulder and grass verge, outward from the asphalt's edge (aFr: metres out from it): grey-tan
+ * gravel with a ragged outer edge, then a band of short grass a shade fresher than the field, fading out into it.
+ * Procedural in world space like the dirt, so pieces, bends and corners run on into each other.
  */
-function fringeGeo(pts: V2[], hs: number[] | number, off: number[] | null, side: 1 | -1): THREE.BufferGeometry | null {
+function makeShoulderMaterial() {
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, depthWrite: false });
+  const uniforms = {
+    uGravel: { value: new THREE.Color(PAL.gravel) },
+    uGravelLight: { value: new THREE.Color(PAL.gravelLight) },
+    uGravelDark: { value: new THREE.Color(PAL.gravelDark) },
+    uVerge: { value: new THREE.Color(PAL.grass) },
+  };
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, uniforms, ENV);
+    sh.vertexShader = sh.vertexShader
+      .replace("#include <common>", `#include <common>
+attribute float aFr;
+varying float vFr;
+varying vec2 vDW;`)
+      .replace("#include <begin_vertex>", `#include <begin_vertex>
+vDW = (modelMatrix * vec4(transformed, 1.0)).xz;
+vFr = aFr;`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace("#include <common>", `#include <common>
+uniform vec3 uGravel; uniform vec3 uGravelLight; uniform vec3 uGravelDark; uniform vec3 uVerge;
+varying float vFr; varying vec2 vDW;
+${ENV_GLSL}`)
+      .replace(
+        "#include <color_fragment>",
+        `#include <color_fragment>
+{
+  float m = vFr;
+  float n1 = envNoise(vDW * 0.6), n2 = envNoise(vDW * 2.7 + 13.0);
+  // the gravel gives out raggedly, further in places
+  float gw = ${GRAVEL_W.toFixed(2)} + (n1 - 0.5) * 0.5 + (n2 - 0.5) * 0.3;
+  float aa = fwidth(m) * 0.8 + 0.02;
+  float gravel = 1.0 - smoothstep(gw - aa - 0.08, gw + aa, m);
+  // grey-tan chips in patches, a scatter of bigger stones, darker grit next to the asphalt
+  float gn = envNoise(vDW * 0.33) * 0.55 + envNoise(vDW * 1.6) * 0.3 + envNoise(vDW * 5.3) * 0.15;
+  vec3 gc = mix(uGravelDark, uGravelLight, smoothstep(0.22, 0.82, gn));
+  gc = mix(gc, uGravel, 0.35);
+  vec2 q = vDW * 3.2, cell = floor(q);
+  float h = envHash(cell);
+  float qa = fwidth(q.x) * 0.7 + 1e-4;
+  if (h > 0.66 || h < 0.08) {
+    vec2 o = vec2(envHash(cell + 17.0), envHash(cell + 41.0)) * 0.6 + 0.2;
+    float d = length(fract(q) - o), r = 0.1 + 0.08 * envHash(cell + 7.0);
+    float st = 1.0 - smoothstep(r - qa, r + qa, d);
+    gc = mix(gc, h > 0.5 ? uGravelLight * 1.08 : uGravelDark * 0.8, st * 0.55);
+  }
+  gc *= 0.86 + 0.14 * smoothstep(-0.1, 0.45, m);
+  // the verge: the field's grass kept short, a shade fresher, fading out into the field
+  vec3 vc = envGrass(uVerge) * vec3(0.96, 1.05, 0.9) * (0.97 + 0.08 * n2);
+  float vergeA = (1.0 - smoothstep(gw + 0.2, gw + ${VERGE_W.toFixed(2)} * (0.6 + 0.6 * n1), m)) * 0.45;
+  vec3 c = mix(vc, gc, gravel);
+  float a = max(gravel, vergeA);
+  if (a < 0.01) discard;
+  if (envSnow > 0.001) c = mix(c, envSnowCol(vDW * 3.0), envSnowAt(vDW, -0.15) * 0.9);
+  diffuseColor.rgb = envGrade(diffuseColor.rgb * c);
+  diffuseColor.a *= a;
+}`,
+      );
+  };
+  mat.customProgramCacheKey = () => "road-shoulder-v1";
+  return { mat, uniforms };
+}
+
+/**
+ * A worn edge (a dirt road's, or a country road's gravel shoulder): a band from a line (lateral offsets `off` from
+ * `pts`, or the line itself) out on one side, across `band`'s [distance out, aFr] stops. null if too short.
+ */
+function fringeGeo(pts: V2[], hs: number[] | number, off: number[] | null, side: 1 | -1, band = DIRT_BAND): THREE.BufferGeometry | null {
   if (pts.length < 2) return null;
   const pos: number[] = [], fr: number[] = [], idx: number[] = [];
   for (let i = 0; i < pts.length; i++) {
     const r = lateralAt(pts, i), o = off ? off[i] : 0, y = (typeof hs === "number" ? hs : hs[i]) + LIFT - FRINGE_DROP;
     const b = pos.length / 3;
-    for (const [d, k] of [[0, 0], [DIRT_FRINGE, 1]] as const) {
+    for (const [d, k] of band) {
       const u = o + side * d;
       pos.push(pts[i].x + r.x * u, y, pts[i].y + r.y * u);
       fr.push(k);
@@ -398,6 +488,10 @@ export class Roads3D {
   private hwPlain = makeRoadMaterial({ highway: true, markings: false });
   private dirt = makeDirtMaterial();
   private dirtFringe = makeDirtMaterial(true);
+  // country roads: a gravel shoulder and verge either side (their surface is the town streets', drawn without kerbs)
+  private shoulder = makeShoulderMaterial();
+  /** The town stretches of each road as last worked out (null: no one says, so every road is a town street). */
+  private towny: Map<number, TownRuns> | null = null;
   private edgeMat = new THREE.MeshLambertMaterial({ color: PAL.roadEdge });
   // (pavements: swept, so less snow on them than on the verges)
   private walkMat = seasonal(new THREE.MeshLambertMaterial({ vertexColors: true }), { shelter: 0.45 });
@@ -418,12 +512,27 @@ export class Roads3D {
   private hwEdgeMat = new THREE.MeshLambertMaterial({ color: PAL.hwEdge });
   /** Every marked surface material, so overlay modes reach all of them. */
   private get marked() { return [this.surface, this.ringSurface, this.hwSurface, this.hwRing, this.dirt]; }
-  /** Pavement width round a junction or bend: the narrowest of its paved roads', none if any road there has none
-   * (a dirt road has none of its own, but a street meeting it keeps its pavement round the corner). */
+  /** Is a road a town street at s along its centreline (every road is, with no one to say which are)? */
+  private townAt(sg: RSeg, s: number): boolean {
+    return !this.towny || sg.ring > 0 || townAt(this.towny.get(sg.id), s);
+  }
+  /** Is a paved road a country road where it meets this node (not a town street there, a roundabout's ring or dirt)? */
+  private country(sg: RSeg, node: number): boolean {
+    if (!this.towny || sg.ring || isUnpaved(ROAD_TYPES[sg.type])) return false;
+    const L = this.net.segGeom.get(sg.id)?.center.length ?? 0;
+    return !this.townAt(sg, sg.a === node ? 0 : L);
+  }
+  /** A road with no kerbs or pavement where it meets this node: a dirt road, or a country road there (not a highway:
+   * it has its own paved shoulders). */
+  private soft(sg: RSeg | undefined, node: number): boolean {
+    return !!sg && !sg.ring && (isUnpaved(ROAD_TYPES[sg.type]) || (this.country(sg, node) && !isHighway(ROAD_TYPES[sg.type])));
+  }
+  /** Pavement width round a junction or bend: the narrowest of its town streets', none if any road there has none
+   * (a dirt or country road has none of its own, but a town street meeting it keeps its pavement round the corner). */
   private nodeWalk(id: number): number {
     const at = this.net.segsAt(id);
     if (!at.length || at.some((sg) => sg.ring)) return 0;
-    const paved = at.filter((sg) => !isUnpaved(ROAD_TYPES[sg.type]));
+    const paved = at.filter((sg) => !this.soft(sg, id));
     if (!paved.length) return 0;
     return Math.min(...paved.map((sg) => SIDEWALK[roadGroup(ROAD_TYPES[sg.type])]));
   }
@@ -439,6 +548,58 @@ export class Roads3D {
     const m = new THREE.Mesh(g, this.dirtFringe.mat);
     m.receiveShadow = true;
     return m;
+  }
+  /** A country road's gravel shoulder and verge outward from its edge line (on the ground only, and where `on`), as
+   * meshes. */
+  private gravel(pts: V2[], hs: number[] | number, off: number[] | null, side: 1 | -1, on?: (i: number) => boolean): THREE.Mesh[] {
+    const out: THREE.Mesh[] = [];
+    // (each run of the line on the ground: none along a bridge's deck)
+    let i0 = -1;
+    const h = (i: number) => (typeof hs === "number" ? hs : hs[i]);
+    for (let i = 0; i <= pts.length; i++) {
+      const low = i < pts.length && h(i) < 0.3 && (!on || on(i));
+      if (low && i0 < 0) i0 = i;
+      if (!low && i0 >= 0) {
+        const g = fringeGeo(pts.slice(i0, i), typeof hs === "number" ? hs : hs.slice(i0, i), off ? off.slice(i0, i) : null, side, SHOULDER_BAND);
+        if (g) { const m = new THREE.Mesh(g, this.shoulder.mat); m.receiveShadow = true; out.push(m); }
+        i0 = -1;
+      }
+    }
+    return out;
+  }
+  /**
+   * Work out the town streets again (after roads or buildings change): the roads whose look flipped between town
+   * street and country road.
+   */
+  private reclassify(): number[] {
+    const prev = this.towny, next = this.parts?.townStreets?.() ?? null;
+    this.towny = next;
+    if (!prev || !next) return prev === next ? [] : [...this.net.segs.keys()];
+    const out: number[] = [];
+    for (const id of this.net.segs.keys()) if (runsDiffer(prev.get(id), next.get(id))) out.push(id);
+    return out;
+  }
+  /** Redraw the roads that flipped, and the junctions and bends at their ends (skipping those already redrawn). */
+  private redrawFlipped(flipped: number[], segsDone: Set<number>, nodesDone: Set<number>) {
+    for (const id of flipped) {
+      const s = this.net.segs.get(id);
+      if (!s) continue;
+      if (!segsDone.has(id)) { this.dropSeg(id); this.buildSeg(id); segsDone.add(id); }
+      for (const nid of [s.a, s.b]) {
+        if (nodesDone.has(nid)) continue;
+        nodesDone.add(nid);
+        this.dropNode(nid);
+        if (this.net.nodes.has(nid)) this.buildNode(nid);
+      }
+    }
+  }
+  /** After buildings change: redraw the roads that became town streets or country roads. */
+  refreshLook() {
+    const flipped = this.reclassify();
+    if (!flipped.length) return;
+    this.redrawFlipped(flipped, new Set(), new Set());
+    this.collectTrees();
+    this.batch.flush();
   }
   /** Is every road meeting this node a highway (so its junction or bend is drawn in highway asphalt)? */
   private hwNode(id: number): boolean {
@@ -627,6 +788,7 @@ export class Roads3D {
 
   rebuildAll() {
     this.gateList = null;
+    this.reclassify();
     for (const id of [...this.segs.keys()]) this.dropSeg(id);
     for (const id of [...this.nodes.keys()]) this.dropNode(id);
     for (const id of this.net.segs.keys()) this.buildSeg(id);
@@ -641,8 +803,10 @@ export class Roads3D {
     this.gateList = null;
     for (const id of cs.removedSegs) this.dropSeg(id);
     for (const id of cs.removedNodes) this.dropNode(id);
+    const flipped = this.reclassify();
     for (const id of cs.dirtySegs) { this.dropSeg(id); if (this.net.segs.has(id)) this.buildSeg(id); }
     for (const id of cs.dirtyNodes) { this.dropNode(id); if (this.net.nodes.has(id)) this.buildNode(id); }
+    this.redrawFlipped(flipped, new Set(cs.dirtySegs), new Set(cs.dirtyNodes));
     this.collectLights();
     this.collectTrees();
     this.buildIslands();
@@ -744,8 +908,11 @@ export class Roads3D {
     // (not at an all-dirt bend: its curve carries the ruts on at full strength)
     const polyEnd = (nid: number) => { const ng = this.net.nodeGeom.get(nid); return !!ng?.poly && !(ng.curve && this.dirtNode(nid)); };
     const pa = dirt && polyEnd(s.a), pb = dirt && polyEnd(s.b);
+    // where it runs out in the country (1) or along a town street (0), point by point (up on a ramp or a bridge it
+    // keeps its concrete edge)
+    const rural = ss.map((sc, i) => (dirt || s.ring || hs[i] >= 0.3 || this.townAt(s, sc) ? 0 : 1));
     const geo = ribbon(pts, hs, ss, halfW, LIFT, [T.fwd, T.bwd], edges, T.median ?? 0, medEnd,
-      ss.map((sc) => (dirt ? Math.min(pa ? sc - s0 : 1e4, pb ? s1 - sc : 1e4) : Math.min(sc - s0, s1 - sc))), pock, lat);
+      ss.map((sc) => (dirt ? Math.min(pa ? sc - s0 : 1e4, pb ? s1 - sc : 1e4) : Math.min(sc - s0, s1 - sc))), pock, lat, hw ? undefined : rural);
     const surface = new THREE.Mesh(geo, dirt ? this.dirt.mat : s.ring ? this.ringSurface.mat : hw ? this.hwSurface.mat : this.surface.mat);
     surface.receiveShadow = true;
     const extra: THREE.Object3D[] = [];
@@ -756,14 +923,21 @@ export class Roads3D {
         if (f) extra.push(f);
       }
     }
-    // town roads: pavements both sides on the ground (not on bridges or round roundabouts), trees on bigger roads
+    // out in the country: a gravel shoulder and a verge either side (a highway keeps its own paved shoulders and lamps,
+    // with the gravel past them; a town street's pavement takes over where it reaches town, one point overlapping)
+    if (rural.some((r) => r > 0)) {
+      const on = (i: number) => rural[i] > 0 || rural[i - 1] > 0 || rural[i + 1] > 0;
+      for (const side of [-1, 1] as const) extra.push(...this.gravel(pts, hs, edges ? (side > 0 ? edges.r : edges.l) : pts.map(() => halfW * side), side, on));
+    }
+    // town streets: pavements both sides on the ground (not on bridges or round roundabouts), trees on bigger roads;
+    // none of them out in the country
     const grp = roadGroup(T);
-    const walk = s.ring || dirt ? 0 : SIDEWALK[grp];
+    const walk = s.ring || dirt || rural.every((r) => r > 0) ? 0 : SIDEWALK[grp];
     if (walk > 0) {
       const inner = { l: edges ? edges.l : pts.map(() => -halfW), r: edges ? edges.r : pts.map(() => halfW) };
-      const ok = (i: number, side: 1 | -1) => hs[i] < 0.3 && Math.abs(side > 0 ? inner.r[i] : inner.l[i]) > halfW - 0.02;
+      const ok = (i: number, side: 1 | -1) => hs[i] < 0.3 && !rural[i] && Math.abs(side > 0 ? inner.r[i] : inner.l[i]) > halfW - 0.02;
       // (each road's pavement a hair apart in height, so two that meet or overlap never flicker)
-      const wg = sidewalkGeo(pts, hs, inner, walk, ok, (id % 4) * 0.0004, lat);
+      const wg = sidewalkGeo(pts, hs, inner, walk, ok, (id % 4) * 0.0004, lat, (i) => rural[i] > 0);
       if (wg) { const wm = new THREE.Mesh(wg, this.walkMat); wm.receiveShadow = true; extra.push(wm); }
       const tr = STREET_TREES[grp];
       if (tr) {
@@ -952,20 +1126,25 @@ export class Roads3D {
       const ss: number[] = [0];
       for (let i = 1; i < pts.length; i++) ss.push(ss[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
       const earth = this.dirtNode(id);
-      const geo = ribbon(pts, hs, ss, halfW, LIFT, lanes, undefined, ng.curve.median, undefined, earth ? pts.map(() => 1e4) : undefined);
+      // (a bend on a country road is country road too, and so is one where a town street runs out into the country:
+      // the town's pavement stops at the bend)
+      const hwBend = this.hwNode(id);
+      const rural = !earth && !hwBend && this.net.segsAt(id).some((sg) => this.country(sg, id));
+      const geo = ribbon(pts, hs, ss, halfW, LIFT, lanes, undefined, ng.curve.median, undefined, earth ? pts.map(() => 1e4) : undefined, undefined, undefined, rural ? pts.map(() => 1) : undefined);
       // no one-way chevrons on the curve: the straights either side already point the way, and they'd clip at the joins
-      const surface = new THREE.Mesh(geo, earth ? this.dirt.mat : this.hwNode(id) ? this.hwRing.mat : this.ringSurface.mat);
+      const surface = new THREE.Mesh(geo, earth ? this.dirt.mat : hwBend ? this.hwRing.mat : this.ringSurface.mat);
       surface.receiveShadow = true;
       out.push(surface);
-      if (earth) {
+      if (earth || rural) {
         // (the worn edge along the curve itself, not the overlap into the straights: they have their own)
         const ch = ng.curve.hs;
         for (const side of [-1, 1] as const) {
+          if (rural) { out.push(...this.gravel(c0, Array.from(ch), c0.map(() => halfW * side), side)); continue; }
           const f = this.fringe(c0, ch, c0.map(() => halfW * side), side);
           if (f) out.push(f);
         }
       }
-      const walk = this.nodeWalk(id);
+      const walk = rural ? 0 : this.nodeWalk(id);
       if (walk > 0) {
         const wg = sidewalkGeo(pts, hs, { l: pts.map(() => -halfW), r: pts.map(() => halfW) }, walk, (i) => hs[i] < 0.3);
         if (wg) { const wm = new THREE.Mesh(wg, this.walkMat); wm.receiveShadow = true; out.push(wm); }
@@ -989,12 +1168,17 @@ export class Roads3D {
     const earth = this.dirtNode(id);
     const m = new THREE.Mesh(plainPoly(ng.poly, y), earth ? this.dirt.mat : this.hwNode(id) ? this.hwPlain.mat : this.plain.mat);
     m.receiveShadow = true;
-    const dirtArm = (i: number) => {
+    // (and likewise between two country roads, or a country road and a dirt road: there the corner is gravel)
+    const armSeg = (i: number) => {
       const a = ng.arms[((i % ng.arms.length) + ng.arms.length) % ng.arms.length];
-      const sg = a && this.net.segs.get(a.seg);
-      return !!sg && isUnpaved(ROAD_TYPES[sg.type]);
+      return a ? this.net.segs.get(a.seg) : undefined;
     };
-    const bare = (ki: number) => earth || (ng.kind === "junction" && dirtArm(ki) && dirtArm(ki + 1));
+    const dirtArm = (i: number) => { const sg = armSeg(i); return !!sg && isUnpaved(ROAD_TYPES[sg.type]); };
+    const softArm = (i: number) => this.soft(armSeg(i), id);
+    const allSoft = ng.arms.length > 0 && ng.arms.every((_, i) => softArm(i));
+    const bare = (ki: number) => earth || (ng.kind === "junction" ? softArm(ki) && softArm(ki + 1) : allSoft);
+    // (a bare corner between two dirt roads wears to earth; with a paved country road on either side, to gravel)
+    const gravelly = (ki: number) => !earth && (ng.kind === "junction" ? !(dirtArm(ki) && dirtArm(ki + 1)) : !ng.arms.every((_, i) => dirtArm(i)));
     if (n.h > 0.3) {
       const deck = new THREE.Mesh(polyDeck(ng.poly, y), this.deckMat);
       deck.castShadow = true;
@@ -1039,6 +1223,7 @@ export class Roads3D {
         // the worn edge, outward from the corner
         const mi = k.length >> 1, lat = lateralAt(k, mi);
         const side = lat.x * (n.p.x - k[mi].x) + lat.y * (n.p.y - k[mi].y) > 0 ? -1 : 1;
+        if (gravelly(ki)) { out.push(...this.gravel(k, n.h, null, side)); return; }
         const f = this.fringe(k, n.h, null, side);
         if (f) out.push(f);
         return;
@@ -1058,7 +1243,7 @@ export class Roads3D {
   /** Does this arm of a signalled town junction have a zebra crossing (pavements, not a highway)? */
   private crossing(id: number, seg: number): boolean {
     const n = this.net.nodes.get(id), s = this.net.segs.get(seg);
-    return !!n?.signal && !!s && !s.ring && !isHighway(ROAD_TYPES[s.type]) && !isUnpaved(ROAD_TYPES[s.type]) && n.h < 0.3 && this.nodeWalk(id) > 0;
+    return !!n?.signal && !!s && !s.ring && !isHighway(ROAD_TYPES[s.type]) && !this.soft(s, id) && n.h < 0.3 && this.nodeWalk(id) > 0;
   }
 
   /**
@@ -1365,7 +1550,7 @@ type Lat = (V2 | undefined)[];
 const latAt = (pts: V2[], i: number, lat?: Lat): V2 => lat?.[i] ?? lateralAt(pts, i);
 
 /** Road ribbon with aRoad = (lateral u, arc length v, fwd lanes, bwd lanes). */
-export function ribbon(pts: V2[], hs: number[], ss: number[], halfW: number, lift: number, lanes: [number, number], edges?: { l: number[]; r: number[] }, median = 0, medEnd?: number[], treeEnd?: number[], pock?: number[][], lat?: Lat): THREE.BufferGeometry {
+export function ribbon(pts: V2[], hs: number[], ss: number[], halfW: number, lift: number, lanes: [number, number], edges?: { l: number[]; r: number[] }, median = 0, medEnd?: number[], treeEnd?: number[], pock?: number[][], lat?: Lat, rural?: number[]): THREE.BufferGeometry {
   const n = pts.length;
   const pos = new Float32Array(n * 2 * 3);
   const nor = new Float32Array(n * 2 * 3);
@@ -1405,6 +1590,10 @@ export function ribbon(pts: V2[], hs: number[], ss: number[], halfW: number, lif
   const pk = new Float32Array(n * 8);
   if (pock) for (let i = 0; i < n; i++) { pk.set(pock[i], i * 8); pk.set(pock[i], i * 8 + 4); }
   g.setAttribute("aPock", new THREE.BufferAttribute(pk, 4));
+  // out in the country (1: no kerb band) or along a town street (0)
+  const rur = new Float32Array(n * 2);
+  if (rural) for (let i = 0; i < n; i++) rur[i * 2] = rur[i * 2 + 1] = rural[i];
+  g.setAttribute("aRur", new THREE.BufferAttribute(rur, 1));
   g.setIndex(idx);
   fixUpWinding(g);
   g.computeBoundingSphere();
@@ -1619,26 +1808,58 @@ function seamGeo(
   return geo;
 }
 
-function sidewalkGeo(pts: V2[], hs: number[], edge: { l: number[]; r: number[] }, walk: number, ok: (i: number, side: 1 | -1) => boolean, lift = 0, lat?: Lat): THREE.BufferGeometry | null {
+/** How far a pavement that stops partway along a road rounds off (m), where `roundInto(i)` says the point it stops
+ * short of is out in the country (on a ramp, it just ends). */
+const WALK_END = 3.5;
+
+function sidewalkGeo(
+  pts: V2[], hs: number[], edge: { l: number[]; r: number[] }, walk: number, ok: (i: number, side: 1 | -1) => boolean,
+  lift = 0, lat?: Lat, roundInto?: (i: number) => boolean,
+): THREE.BufferGeometry | null {
   const pos: number[] = [], col: number[] = [], idx: number[] = [];
   const cw = new THREE.Color(PAL.sidewalk), ce = new THREE.Color(PAL.sidewalkEdge);
   const rim = Math.min(0.22, walk * 0.15);
+  // one row across at pts[i], moved `ahead` metres along the road and narrowed to `f` of the full width:
+  // road edge, rim start (twice, for a hard colour change), outer edge
+  const row = (i: number, side: 1 | -1, ahead = 0, dir: V2 | null = null, f = 1) => {
+    const r = latAt(pts, i, lat), y = hs[i] + LIFT - 0.005 + lift;
+    const e = side > 0 ? edge.r[i] : edge.l[i];
+    const o = dir ? { x: pts[i].x + dir.x * ahead, y: pts[i].y + dir.y * ahead } : pts[i];
+    const base = pos.length / 3;
+    const w = walk * f, rw = Math.min(rim, w);
+    for (const [d, c] of [[0, cw], [w - rw, cw], [w - rw, ce], [w, ce]] as const) {
+      const u = e + side * d;
+      pos.push(o.x + r.x * u, y, o.y + r.y * u);
+      col.push(c.r, c.g, c.b);
+    }
+    return base;
+  };
+  const join = (a0: number, b0: number) => {
+    for (const [a, b] of [[0, 1], [2, 3]]) idx.push(a0 + a, b0 + a, a0 + b, a0 + b, b0 + a, b0 + b);
+  };
+  // where a pavement stops partway along (the town ends there), it rounds off onto the verge instead of ending square
+  const cap = (i: number, side: 1 | -1, to: number, from: number) => {
+    const d = sub(pts[to], pts[i]), L = Math.hypot(d.x, d.y);
+    if (L < 1e-4) return;
+    const dir = { x: d.x / L, y: d.y / L };
+    let last = from;
+    for (const t of [0.3, 0.55, 0.75, 0.9, 1]) {
+      const next = row(i, side, t * WALK_END, dir, Math.sqrt(Math.max(0, 1 - t * t)));
+      join(last, next);
+      last = next;
+    }
+  };
   for (const side of [-1, 1] as const) {
     let prev = -1;
     for (let i = 0; i < pts.length; i++) {
-      if (!ok(i, side)) { prev = -1; continue; }
-      const r = latAt(pts, i, lat), y = hs[i] + LIFT - 0.005 + lift;
-      const e = side > 0 ? edge.r[i] : edge.l[i];
-      const base = pos.length / 3;
-      // four across: road edge, rim start (twice, for a hard colour change), outer edge
-      for (const [d, c] of [[0, cw], [walk - rim, cw], [walk - rim, ce], [walk, ce]] as const) {
-        const u = e + side * d;
-        pos.push(pts[i].x + r.x * u, y, pts[i].y + r.y * u);
-        col.push(c.r, c.g, c.b);
+      if (!ok(i, side)) {
+        if (roundInto?.(i) && prev >= 0) cap(i - 1, side, i, prev);
+        prev = -1;
+        continue;
       }
-      if (prev >= 0 && dist(pts[i], pts[i - 1]) > 1e-4) {
-        for (const [a, b] of [[0, 1], [2, 3]]) idx.push(prev + a, base + a, prev + b, prev + b, base + a, base + b);
-      }
+      const base = row(i, side);
+      if (prev < 0 && i > 0 && roundInto?.(i - 1)) cap(i, side, i - 1, base);
+      if (prev >= 0 && dist(pts[i], pts[i - 1]) > 1e-4) join(prev, base);
       prev = base;
     }
   }

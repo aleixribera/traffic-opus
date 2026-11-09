@@ -16,7 +16,8 @@ import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, type LotTemplate }
 import { Progress, levelBy, levelCap, type Feature, type Milestone, type ProgressView } from "./progression";
 import { DAY, HOUR, Society } from "./society";
 import { PLACED, SHORE_REACH, type PlacedKind } from "./placed";
-import { BUILD_TIME, Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, isPlantKind, type Delivery, type Product } from "./industry";
+import { buildStep } from "./construction";
+import { Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, isPlantKind, type Delivery, type Product } from "./industry";
 import { TRUCK_CLASS_ORDER, type TruckClass } from "./trucks";
 import { PARTS_FOR, SQUARE_INSET, TownSystem, type Spawned } from "./settlements";
 import { BLOCK, CARS_PER_LOAD, demandPerDay, gridPt, isHall, needsOf, smokeReach } from "./towns";
@@ -1340,7 +1341,7 @@ export class Game {
         // (every need met: the parts a town building site waits for come in at once)
         for (const b of this.buildings.list) {
           if (b.site) { delete b.site; b.problem = null; }
-          if (b.built < 1 && !b.plant?.site) b.built = Math.min(1, b.built + TICK / BUILD_TIME);
+          if (b.built < 1 && !b.plant?.site) b.built = Math.min(1, b.built + buildStep(b, TICK));
         }
         for (const b of this.shops) { b.stock = Math.max(b.stock, 4); b.badT = 0; }
         // every need met, `ample` times over (at 1, exactly what it uses: it grows, slowly, a step behind its own
@@ -1613,7 +1614,7 @@ export class Game {
       if (b.site) { b.problem = siteWaiting(b.site); continue; }
       if (b.built < 1 && !b.plant?.site) {
         if (b.zone && b.problem?.startsWith("Building site")) b.problem = null;
-        b.built = Math.min(1, b.built + span / BUILD_TIME);
+        b.built = Math.min(1, b.built + buildStep(b, span));
         if (b.built >= 1) changed = true;
       }
     }

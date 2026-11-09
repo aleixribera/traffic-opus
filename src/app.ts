@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { BUILDING_TYPES, LEVEL_H, MAX_LEVEL, ROAD_TYPES, SIM, roadWidth, type RoadTypeId } from "./config";
 import { cubicAt, cubicTangent, dist, dot, formatMoney, norm, rectCorners, right, sub, v2, wrapAngle, type V2 } from "./core/math";
+import { townStreets } from "./game/rural";
 import type { Building } from "./game/buildings";
 import { Game } from "./game/city";
 import {
@@ -56,6 +57,7 @@ import type { Hud, Chip } from "./ui/hud";
 import { CameraDirector } from "./ui/camera";
 import { followOn } from "./render/cinema";
 import { setYearStart } from "./game/calendar";
+import { WheelReader, dragStarted, loadWheelMode, wheelPan, wheelZoomFactor } from "./ui/wheel";
 
 export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "place" | "transit";
 /** The bus tool: put stops on the kerb, or click stops in order to make a line. */
@@ -87,7 +89,11 @@ export interface ToolState {
   transitMode: TransitMode;
 }
 
-interface PointerInfo { id: number; x: number; y: number; sx: number; sy: number; button: number; moved: boolean; t: number }
+/**
+ * A press on the map: where it is and began, which button, whether it became a drag, and what the drag did (moved
+ * the map; began a road where it went down).
+ */
+interface PointerInfo { id: number; x: number; y: number; sx: number; sy: number; button: number; moved: boolean; t: number; panned: boolean; drew: boolean; hand: boolean }
 
 export class App {
   game!: Game;
@@ -179,6 +185,13 @@ export class App {
   private pointers = new Map<number, PointerInfo>();
   /** (the rest of a wheel flick that ended a cinematic camera doesn't zoom the view it gave back, until then: ms) */
   private wheelQuiet = 0;
+  /** reads the wheel: a mouse notch zooms, two fingers on a touchpad move the map, a pinch zooms (ui/wheel.ts) */
+  readonly wheel = new WheelReader(loadWheelMode());
+  /** Safari's pinch (gesture events) under way: its ctrl-wheel twin, if any, is ignored */
+  private gesturing = false;
+  /** Space held (the hand: a drag moves the map with any tool); a tap of it pauses, on release, if nothing moved */
+  private spaceHeld = false;
+  private spacePanned = false;
   /** Bulldozer marquee, in screen pixels (the view may be turned). */
   private dragRect: { a: V2; b: V2 } | null = null;
   private pinch: { d: number; mid: V2; ang: number } | null = null;
@@ -426,14 +439,22 @@ export class App {
     this.roads = new Roads3D(g.net, {
       props: this.models.props, isWater: (p) => g.terrain.isWater(p),
       // each driveway as a line from where it leaves the road to the lot (a home's middle, a site's gate): no street
-      // tree or lamp stands on it, however wide the road it comes off (a boulevard's verge is far from its centreline)
-      drives: () => g.buildings.list.filter((b) => b.access).map((b): [V2, V2] => [b.front, b.plant && b.placed ? siteFrame(b.c, b.rot, b.side, b.hd).gate : b.c]),
+      // tree or lamp stands on it, however wide the road it comes off (a boulevard's verge is far from its centreline);
+      // a home's runs down the side of its lot, to its garage
+      drives: () => g.buildings.list.filter((b) => b.access).map((b): [V2, V2] => {
+        if (b.plant && b.placed) return [b.front, siteFrame(b.c, b.rot, b.side, b.hd).gate];
+        const f = this.buildings3d?.driveFront(b) ?? b.front;
+        return [f, { x: b.c.x + f.x - b.front.x, y: b.c.y + f.y - b.front.y }];
+      }),
       gates: () => g.buildings.list.filter((b) => b.placed && b.plant).map((b) => ({ ...siteFrame(b.c, b.rot, b.side, b.hd), front: b.front })),
+      // town streets keep their kerbs, pavements, lamps and trees; the roads out in the country don't
+      townStreets: () => townStreets(g.net, g.towns.list, g.buildings.list),
     });
     this.roadsFar = new RoadsFar(g.net);
     this.labels.set([]);
     this.labelKey = "";
     this.vehicles = new Vehicles3D(this.models);
+    this.buildings3d?.disposeExtras();
     this.buildings3d = new Buildings3D(this.models, () => this.game.time, g.net);
     this.vehicles.lotOf = (id) => { const b = g.buildings.byId.get(id); return b ? this.buildings3d.lotWay(b) : null; };
     this.transit3d = new Transit3D(this.models.props.get("busstop"));
@@ -463,7 +484,7 @@ export class App {
       if (e.t === "shipped") { if (this.mode !== "menu") this.pops.shipped(e.from, e.to, e.p, this.view); return; }
       if (e.t === "roads") { this.roads.apply(e.cs); this.clearing.invalidate(); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
       else if (e.t === "buildings") {
-        this.buildings3d.rebuild(g.buildings.list); this.roads.refreshGates(); this.clearing.invalidate(); this.applyTint(); this.dirtyPreview = true;
+        this.buildings3d.rebuild(g.buildings.list); this.roads.refreshGates(); this.roads.refreshLook(); this.clearing.invalidate(); this.applyTint(); this.dirtyPreview = true;
         { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }
         // (street trees make way for new driveways: at most twice a second while a town grows)
         if (!this.treesDue) this.treesDue = setTimeout(() => { this.treesDue = 0; this.roads.refreshTrees(); }, 500);
@@ -587,7 +608,11 @@ export class App {
   // ---------------------------------------------------------------- input
 
   bindInput(el: HTMLElement) {
-    el.addEventListener("contextmenu", (e) => e.preventDefault());
+    // (right click and a touchpad's two-finger click are the game's: no browser menu anywhere but in a text box)
+    document.addEventListener("contextmenu", (e) => {
+      const t = e.target as HTMLElement | null;
+      if (!t?.closest?.("input, textarea, [contenteditable='true']")) e.preventDefault();
+    });
     el.addEventListener("pointerdown", (e) => this.onDown(e));
     window.addEventListener("pointermove", (e) => this.onMove(e));
     window.addEventListener("pointerup", (e) => this.onUp(e));
@@ -596,10 +621,14 @@ export class App {
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
       if (this.mode === "menu") return;
-      if (this.camera.cinematic) { this.camera.exitCinema(); this.wheelQuiet = performance.now() + 300; return; }
+      if (this.camera.cinematic) { this.camera.exitCinema(); this.wheelQuiet = performance.now() + 300; this.wheel.reset(); return; }
+      // (read even while quiet, so the rest of a gesture keeps what it was)
+      const act = this.wheel.read(e);
       if (performance.now() < this.wheelQuiet) return;
-      // a building in hand turns with the wheel (Ctrl + wheel still zooms; so do R and F)
-      if (this.st.tool === "place" && !e.ctrlKey) {
+      if (act === "pinch" && this.gesturing) return;
+      // a building in hand turns with a mouse wheel, Shift + wheel by 1° (Ctrl + wheel and a pinch still zoom, as do
+      // R and F; two fingers on a touchpad still move the map, and , and . turn it)
+      if (this.st.tool === "place" && !e.ctrlKey && act !== "pinch" && (act === "zoom" || e.shiftKey)) {
         // (with Shift held the browser may scroll sideways instead: either way it is the wheel turning)
         const d = e.deltaY || (e.shiftKey ? e.deltaX : 0);
         if (!d) return;
@@ -619,18 +648,43 @@ export class App {
         return;
       }
       const r = el.getBoundingClientRect();
-      const k = Math.exp(Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY), 120) * 0.0022);
-      this.view.zoomAt(e.clientX - r.left, e.clientY - r.top, k);
+      const at = v2(e.clientX - r.left, e.clientY - r.top);
+      if (act === "pan") {
+        // two fingers on a touchpad: the map moves with them, 1:1 (the system's inertia arrives as more of these)
+        const d = wheelPan(e, this.view.h);
+        if (!d.dx && !d.dy) return;
+        // (moving the camera by hand lets a followed vehicle go; a zoom doesn't)
+        if (followOn("pan") === "end") this.camera.stopFollow();
+        this.glide = null;
+        this.view.pan(d.dx, d.dy);
+      } else this.view.zoomAt(at.x, at.y, wheelZoomFactor(e, act, this.view.h));
       this.clampView();
-      this.dirtyPreview = true;
+      this.updateCursor(at);
     };
     el.addEventListener("wheel", wheel, { passive: false });
     // (the place names sit over the map: the wheel over one zooms the map, as anywhere else)
     this.labels.el.addEventListener("wheel", wheel, { passive: false });
+    // Safari's pinch comes as gesture events (its scale since the gesture began): zoom on the cursor with the fingers
+    type Gesture = UIEvent & { scale: number; clientX: number; clientY: number };
+    let gScale = 1;
+    for (const t of [el, this.labels.el]) {
+      t.addEventListener("gesturestart", (e) => { e.preventDefault(); this.gesturing = true; gScale = 1; });
+      t.addEventListener("gesturechange", (ev) => {
+        const e = ev as Gesture;
+        e.preventDefault();
+        if (this.mode === "menu" || this.camera.cinematic || !(e.scale > 0)) return;
+        const r = el.getBoundingClientRect();
+        this.view.zoomAt(e.clientX - r.left, e.clientY - r.top, gScale / e.scale);
+        gScale = e.scale;
+        this.clampView();
+        this.dirtyPreview = true;
+      });
+      t.addEventListener("gestureend", (e) => { e.preventDefault(); this.gesturing = false; });
+    }
     window.addEventListener("keydown", (e) => this.onKey(e, true));
     window.addEventListener("keyup", (e) => this.onKey(e, false));
     window.addEventListener("resize", () => this.view.resize());
-    window.addEventListener("blur", () => this.keys.clear());
+    window.addEventListener("blur", () => { this.keys.clear(); this.setSpace(false); });
   }
 
   private local(e: PointerEvent): V2 {
@@ -643,17 +697,21 @@ export class App {
     // a click ends the cinematic camera (and does nothing else)
     if (this.camera.cinematic) { this.camera.exitCinema(); return; }
     const p = this.local(e);
+    // (a press while Space is held makes it the hand, not a tap that pauses)
+    if (this.spaceHeld) this.spacePanned = true;
     try { (e.target as HTMLElement).setPointerCapture?.(e.pointerId); } catch { /* pointer already gone */ }
-    this.pointers.set(e.pointerId, { id: e.pointerId, x: p.x, y: p.y, sx: p.x, sy: p.y, button: e.button, moved: false, t: performance.now() });
+    this.pointers.set(e.pointerId, { id: e.pointerId, x: p.x, y: p.y, sx: p.x, sy: p.y, button: e.button, moved: false, t: performance.now(), panned: false, drew: false, hand: this.spaceHeld });
     if (this.pointers.size === 2) {
       const [a, b] = [...this.pointers.values()];
       this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mid: v2((a.x + b.x) / 2, (a.y + b.y) / 2), ang: Math.atan2(b.y - a.y, b.x - a.x) };
+      // (both are drags now: the finger left down after the pinch carries on moving the map from where it is, no click)
+      a.moved = b.moved = true;
       this.dragRect = null;
       this.hud?.rect(null);
       return;
     }
     this.updateCursor(p);
-    if (e.button === 0 && e.pointerType !== "touch" && this.st.tool === "bulldoze") {
+    if (e.button === 0 && e.pointerType !== "touch" && this.st.tool === "bulldoze" && !this.spaceHeld) {
       // (a bulldoze rectangle is drawn on still ground: it lets a followed vehicle go)
       if (followOn("build") === "end") this.camera.stopFollow();
       this.dragRect = { a: p, b: p };
@@ -701,8 +759,20 @@ export class App {
       return;
     }
     if (pi) {
-      const dx = p.x - pi.x, dy = p.y - pi.y;
-      if (Math.hypot(p.x - pi.sx, p.y - pi.sy) > (e.pointerType === "touch" ? 10 : 5)) pi.moved = true;
+      let dx = p.x - pi.x, dy = p.y - pi.y;
+      // (a tap on a touchpad that wanders a few pixels as the finger lifts is still a click: ui/wheel.dragStarted)
+      if (!pi.moved && dragStarted(Math.hypot(p.x - pi.sx, p.y - pi.sy), performance.now() - pi.t, e.pointerType)) {
+        pi.moved = true;
+        // (the map catches up with the pointer: a pan stays 1:1 from where the press began)
+        dx = p.x - pi.sx; dy = p.y - pi.sy;
+        // a left drag with the road tool draws a road: from where the button went down to where it comes up
+        if (pi.button === 0 && this.pointers.size === 1 && !this.spaceHeld && e.pointerType !== "touch" && this.st.tool === "road" && this.st.mode !== "replace" && !this.anchor) {
+          if (followOn("build") === "end") this.camera.stopFollow();
+          this.updateCursor(v2(pi.sx, pi.sy));
+          this.onClick(false);
+          pi.drew = true;
+        }
+      }
       // CS2 mouse: right-drag moves the map, middle-drag turns it; left-drag also moves it outside of drawing
       if (pi.button === 1) {
         if (pi.moved) this.view.rotateAt(this.view.w / 2, this.view.h / 2, -dx * 0.006);
@@ -710,8 +780,10 @@ export class App {
         this.updateCursor(p);
         return;
       }
-      const panning = pi.button === 2 || (pi.button === 0 && !this.dragRect && (this.st.tool === "inspect" || e.pointerType === "touch" || this.keys.has(" ")));
+      const panning = pi.button === 2 || (pi.button === 0 && !this.dragRect && !pi.drew && (this.st.tool === "inspect" || e.pointerType === "touch" || this.spaceHeld));
       if (panning && pi.moved) {
+        pi.panned = true;
+        if (this.spaceHeld) { this.spacePanned = true; this.view.canvas.classList.add("grabbing"); }
         // (taking the camera by hand lets a followed vehicle go)
         this.camera.stopFollow();
         this.glide = null;
@@ -741,8 +813,20 @@ export class App {
     }
     this.dragRect = null;
     this.hud?.rect(null);
-    if (pi.moved) return;
-    this.updateCursor(p);
+    this.view.canvas.classList.remove("grabbing");
+    // (a press with Space held is the hand: it moves the map and never clicks)
+    if (pi.hand) return;
+    if (pi.moved) {
+      // a road dragged out (or dragged on from the point clicked before) ends where the button comes up
+      if (pi.button === 0 && !pi.panned && this.st.tool === "road" && this.st.mode !== "replace" && this.anchor) {
+        this.updateCursor(p);
+        if (followOn("build") === "end") this.camera.stopFollow();
+        this.onClick(e.shiftKey);
+      }
+      return;
+    }
+    // (a click lands where the button went down: a touchpad tap that wanders as the finger lifts clicks where it was put)
+    this.updateCursor(v2(pi.sx, pi.sy));
     if (pi.button === 2) {
       // add lane: right-click takes a turn lane away
       if (this.st.tool === "lane") {
@@ -762,6 +846,8 @@ export class App {
 
   private onKey(e: KeyboardEvent, down: boolean) {
     const tag = (e.target as HTMLElement)?.tagName;
+    // (Space let go in a text box, the title menu or a cinematic camera: the hand is put down, without a pause)
+    if (!down && e.key === " " && this.spaceHeld && (tag === "INPUT" || tag === "TEXTAREA" || this.mode === "menu" || this.camera.cinematic)) this.setSpace(false);
     if (tag === "INPUT" || tag === "TEXTAREA") return;
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     // the title menu: only Esc, to close a dialog opened from it
@@ -775,7 +861,13 @@ export class App {
     }
     if (k === "Shift") this.dirtyPreview = true; // the lane tool previews removal while it is held
     if (k === "Alt") { e.preventDefault(); this.dirtyPreview = true; } // held: no snapping (and no browser menu bar)
-    if (down) this.keys.add(k); else { this.keys.delete(k); return; }
+    if (down) this.keys.add(k);
+    else {
+      this.keys.delete(k);
+      // Space let go: a tap pauses (or unpauses); held to move the map with a drag, it doesn't
+      if (k === " ") { e.preventDefault(); if (this.spaceHeld && !this.spacePanned) this.togglePause(); this.setSpace(false); }
+      return;
+    }
     // AltGr arrives as Ctrl+Alt: leave it to the plain keys ([ and ] need it on many layouts)
     if ((e.ctrlKey || e.metaKey) && !e.altKey) {
       if (k === "z" && !e.shiftKey) { e.preventDefault(); this.undo(); }
@@ -786,7 +878,7 @@ export class App {
     // Esc steps back like CS2: popups, dialogs, panels, the tool, the asset menu, then the pause menu
     // (a followed vehicle stays followed: Esc clears the screen, only taking the camera lets it go, cinema.followOn)
     if (k === "Escape") { if (!this.hud?.back()) this.hud?.openPause(); }
-    else if (k === " ") { e.preventDefault(); if (!e.repeat) this.togglePause(); }
+    else if (k === " ") { e.preventDefault(); if (!e.repeat) this.setSpace(true); }
     else if (k === "1") this.setSpeed(1);
     else if (k === "2") this.setSpeed(2);
     else if (k === "3") this.setSpeed(4);
@@ -813,6 +905,14 @@ export class App {
     else if (k === "`" || e.code === "Backquote") this.toggleUi();
     else if (k === "F5") { e.preventDefault(); this.quickSave(); }
     else if (k === "F9") { e.preventDefault(); this.quickLoad(); }
+  }
+
+  /** Space down (the hand: a drag moves the map with any tool) or up. */
+  private setSpace(on: boolean) {
+    this.spaceHeld = on;
+    this.spacePanned = false;
+    this.view.canvas.classList.toggle("hand", on);
+    if (!on) this.view.canvas.classList.remove("grabbing");
   }
 
   /** Turn the building being placed by 15 degrees (, anticlockwise, . clockwise on screen), or by 1 degree (fine). */
@@ -1643,6 +1743,7 @@ export class App {
     }
     // (the clock counts every game minute; the rest of the bar every quarter second)
     this.hud?.clock();
+    this.buildings3d.frameConstruction();
     this.hudT += dt;
     if (this.hudT > 0.25) {
       this.hudT = 0;
