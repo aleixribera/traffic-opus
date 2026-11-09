@@ -50,6 +50,8 @@ export const PAL = {
   pillar: 0xb9b5a8,
   // a bridge's parapets: the cream of the Deco courses on its piers and pylons
   parapet: 0xe6dcc3,
+  // the solid approach under a ramp's foot: the concrete of the piers and abutments (build_models.py, br_concrete)
+  approach: 0xc7c0ae,
   driveway: 0x77787a,
   // dirt roads: packed tan earth, paler gravel on the crown, darker wheel ruts, fading out into the grass
   dirt: 0xb09467,
