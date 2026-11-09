@@ -70,3 +70,26 @@ describe("the moments' stings", () => {
     expect(played()).toBeLessThan(8);
   });
 });
+
+describe("the interface", () => {
+  it("a road being laid does not silence the desk: an undo, a knock or the next road half a second on is heard", () => {
+    const { audio, at, played } = started(["bed:gravel", "ui:roadEnd", "ui:undo", "ui:error"]);
+    at(10);
+    // (320 m: 1.2 s of gravel, and the thump as it stops)
+    audio.road(320);
+    expect(played()).toBe(2);
+    at(10.5);
+    audio.play("undo");
+    expect(played()).toBe(3);
+    at(10.9);
+    audio.road(40);
+    expect(played()).toBe(5);
+    // still never two within 40 ms
+    at(10.92);
+    audio.play("error");
+    expect(played()).toBe(5);
+    at(11);
+    audio.play("error");
+    expect(played()).toBe(6);
+  });
+});

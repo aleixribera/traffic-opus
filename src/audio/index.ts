@@ -160,7 +160,9 @@ export class GameAudio {
     const t = e.now;
     if (t - this.lastUi < 0.04) return;
     const d = Math.max(0.22, Math.min(1.5, 0.2 + len / 320));
-    this.lastUi = t + d;
+    // (the 40 ms rule, from when the gravel starts: not from when it ends, which left the desk mute while it ran,
+    // so an undo, a "can't do that" or the next stretch of road within a second and a half made no sound at all)
+    this.lastUi = t;
     e.shot("bed:gravel", e.ui, UI_GAIN * 1.5, { prio: 2, attack: 0.05, dur: d, release: 0.05, rate: 0.95 + 0.1 * e.rnd() });
     e.shot("ui:roadEnd", e.ui, UI_GAIN, { prio: 2, when: t + d + 0.02 });
   }
