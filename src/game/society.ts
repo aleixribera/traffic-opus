@@ -340,7 +340,7 @@ export class Society {
           return;
         }
         // a stop at the shops on the way home now and then
-        const shop = job && rng() < 0.25 ? this.pickShop(job) : undefined;
+        const shop = job && rng() < 0.15 ? this.pickShop(job) : undefined;
         if (job && shop) { this.travel(c, job, shop, "shop"); return; }
         this.goHome(c);
         return;
@@ -369,7 +369,7 @@ export class Society {
         if (job.access && job.built >= 1 && !job.abandoned) { this.travel(c, home, job, "work"); return; }
       }
       // an evening out on the way through the day
-      if (h >= 16 && h < 21 && rng() < 0.4) {
+      if (h >= 16 && h < 21 && rng() < 0.3) {
         const shop = this.pickShop(home);
         if (shop) { this.travel(c, home, shop, "leisure"); return; }
       }
@@ -377,8 +377,8 @@ export class Society {
       this.schedule(c, Math.min(this.leaveFor(c), this.now + HOUR * (1.5 + rng() * 2.5)));
       return;
     }
-    // no job: errands in the daytime, most of all around lunch and late afternoon
-    if (h >= 9 && h < 19 && rng() < 0.55 * errandWeight(h)) {
+    // no job: errands, mostly in the daytime (see errandWeight)
+    if (rng() < 0.55 * errandWeight(h)) {
       const senior = c.age === Age.Senior;
       const shop = this.pickShop(home);
       if (shop) { this.travel(c, home, shop, senior ? "leisure" : "shop"); return; }
@@ -386,12 +386,9 @@ export class Society {
     this.scheduleFree(c);
   }
 
-  /** Someone with no job to go to: out again later today if the day has hours left, else tomorrow. */
+  /** Someone with no job to go to: thinks about going out again in a while (errandWeight says how likely by hour). */
   private scheduleFree(c: Citizen) {
-    const rng = this.g.rng;
-    const t = this.now + HOUR * (1.5 + rng() * 3);
-    const h = this.hourOf(t);
-    this.schedule(c, h >= 9 && h < 19 ? t : this.nextAt(9 + rng() * 9, HOUR * 2));
+    this.schedule(c, this.now + HOUR * (1.5 + this.g.rng() * 3));
   }
 
   private goHome(c: Citizen) {
@@ -513,7 +510,8 @@ export class Society {
       // commuter leaves to be there a quarter of an hour before, and waits for the shift)
       let since = (((this.hourOf() - c.shift) % 24) + 24) % 24;
       if (since > 12) since -= 24;
-      const left = since < 10 ? SHIFT_LEN - since : SHIFT_LEN;
+      // (and some stay on a while after it: the evening rush is spread over a couple of hours)
+      const left = (since < 10 ? SHIFT_LEN - since : SHIFT_LEN) + g.rng() * OVERTIME;
       // a morning shift breaks for lunch about four hours in: some go out to the shops (the lunchtime bump)
       const lunchAt = 4 + g.rng() - since;
       if (!c.back && lunchesAtNoon(c.shift) && lunchAt > 0.5 && lunchAt < left - 1.5 && g.rng() < LUNCH_OUT) {
@@ -588,9 +586,8 @@ export class Society {
         if (job >= 0 && this.g.buildings.byId.has(job)) {
           c.job = job;
           this.staff.set(job, this.workersAt(job) + 1);
-          // (older saves: the 7:00 plant shift is now 8:00, the 14:00 shop shift 11:00)
-          if (shift === 7) c.shift = 8;
-          else if (shift === 14) c.shift = 11;
+          // (older saves: the 14:00 shop shift is now 11:00)
+          if (shift === 14) c.shift = 11;
         }
       }
       this.households.set(hh.id, hh);
@@ -634,27 +631,36 @@ export function estTime(a: V2, b: V2): number {
 
 /** Hours in a shift. */
 export const SHIFT_LEN = 8;
-/** Share of day-shift workers who go out to the shops for lunch (the noon bump on the roads). */
-export const LUNCH_OUT = 0.3;
+/** Up to this many hours someone stays on after their shift (evenly spread). */
+export const OVERTIME = 2;
+/** Share of day-shift workers who go out to the shops for lunch (a small noon bump on the roads). */
+export const LUNCH_OUT = 0.15;
 /** A shift that starts in the morning (and ends by the evening). */
 export const isDayShift = (shift: number) => shift >= 6 && shift <= 11;
 /** A shift with its lunch break around noon (8:00 and 9:00; the 11:00 shop shift eats before it comes in). */
 export const lunchesAtNoon = (shift: number) => shift >= 6 && shift <= 9;
 
 /**
- * Shift start for a new job. Most work is a day shift starting at 8 (shops at 9, some at 11 to cover the evening),
- * so the morning rush is one rush; plants keep a smaller late shift and a skeleton night shift, so nights are quiet.
+ * Shift start for a new job. Most work is a day shift starting between 7 and 9 (shops at 9, some at 11 to cover the
+ * evening), so there is a morning rush, spread over a few hours rather than one spike; plants keep a late shift and
+ * a night shift, so the roads never go dead.
  */
 export function shiftFor(group: string, r: number): number {
   if (group === "com") return r < 0.65 ? 9 : 11;
-  return r < 0.7 ? 8 : r < 0.9 ? 15 : 23;
+  if (r < 0.6) return 7 + Math.min(2, Math.floor(r / 0.2));
+  return r < 0.85 ? 15 : 23;
 }
 
-/** How likely someone without a job runs an errand at hour h (9..19): most around lunch and in the late afternoon. */
+/**
+ * How likely someone without a job runs an errand at hour h: mostly in the daytime, a little more around lunch and
+ * late afternoon, a few early or late, and now and then at night (the roads are quieter at night, never dead).
+ */
 export function errandWeight(h: number): number {
+  if (h < 6) return 0.3;
+  if (h < 9 || h >= 19) return 0.6;
   if (h >= 11 && h < 14) return 1.5;
   if (h >= 16 && h < 19) return 1.1;
-  return 0.8;
+  return 1.3;
 }
 
 function pickShift(rng: () => number) {

@@ -156,8 +156,6 @@ export class Game {
     // (towns grow on any land, never inside the fence of one of the company's sites)
     this.zones = new ZoneMap(this.net, { isWater: (p) => t.isWater(p), isMountain: (p) => t.isMountain(p), taken: (p) => this.inSite(p), landKey: () => this.buildings.sites.map((b) => b.id).join() });
     this.people = new Society(this);
-    // (roads remember how they flow hour by hour, and drivers plan round the rush-hour ones)
-    this.traffic.hourOf = () => this.people.hourOf();
     this.transit = new Transit(this);
     this.utilities = new Utilities(this);
     this.towns = new TownSystem(this);
@@ -1820,8 +1818,6 @@ export class Game {
       zones: [...this.zones.allCells()].filter((c) => c.zone).map((c) => [Math.round(c.c.x * 10) / 10, Math.round(c.c.y * 10) / 10, c.zone]),
       zoneAges: this.zones.agesJSON(),
       people: this.people.toJSON(),
-      // (how each road flows hour by hour: drivers plan round the rush-hour jams they know)
-      roadHours: this.traffic.usualJSON() as [number, number[]][] | undefined,
       transit: this.transit.toJSON(),
       money: this.money,
       progress: this.progress.toJSON(),
@@ -1892,7 +1888,6 @@ export class Game {
     // (saves from before shops kept daily books: a day's custom from how busy they were)
     for (const b of g.shops) if (b.custDay === undefined) b.custDay = Math.round(b.visits * 4);
     g.people.load(data.people);
-    g.traffic.loadUsual(data.roadHours);
     g.transit.load(data.transit);
     g.towns.load(data.towns);
     g.utilities.tick(0);

@@ -415,17 +415,16 @@ itself across modes; you build tracks, docks and the transfer points, never line
     it glides the camera there (a jump instead with reduced motion) and opens the town.
 - Every resident is simulated: a home in a town, a job at one of your buildings within reach, a commute in
   traffic. Buses carry workers to plants and take cars off the roads your trucks need.
-- **The day has a rhythm (2026-11-09: "make the game feel more real ... schedules").** Most jobs are a day shift
-  from 8:00 (shops 9:00, a third of them 11:00 to cover the evening); plants keep a smaller 15:00 shift and a
-  skeleton night shift at 23:00 (70/20/10, was 55/30/15 from 7:00). So the town leaves for work in one morning
-  rush, comes home in one evening rush around 16:00-19:00, and the small hours are quiet. Someone who gets to work
-  early waits for the shift and leaves at its end. About a third of the 8:00 and 9:00 shifts go out to the shops
-  at lunch, four to five hours in, and back to work after (a shop's own staff to another shop; the 11:00 shift has
-  eaten before it comes in), and people without a job run most of their errands
-  around noon and late afternoon. In the showcase, cars on the road through a day went from a flat 17-37 (the peak
-  at 15:00, the old back shift) to ~14 at 2:00, ~50 at 8:00, ~30 over lunch and ~45 at 17:00-19:00. Trips last
-  1-3 game hours at this scale, so the rushes are broad, not spikes. Older saves move 7:00 shifts to 8:00 and
-  14:00 shop shifts to 11:00 on load.
+- **A gentle daily rhythm (2026-11-09, owner: "realistic schedules might be too much, maybe make it a bit
+  noticeable").** Plant day shifts start at 7:00, 8:00 or 9:00 (60%, a third each), with a 15:00 shift (25%) and a
+  night shift at 23:00 (15%); shops open at 9:00 (65%) or 11:00 and close by 19:00. Someone who gets to work early
+  waits for the shift; people stay on up to two hours after it, evenly spread, so the evening rush is broad. About
+  one in seven of the early day shifts goes out to the shops at lunch and back after (a shop's own staff to another
+  shop), and people without a job run errands at any hour, most in the daytime. Trucks keep running round the
+  clock. In the showcase (three days, cars on the road by hour) the busiest hour is 1.58 times the quietest
+  (24 in the small hours, 35-38 over lunch and at 17:00-18:00); before, it was 2.16 with no daily shape at all
+  (peaks at 5:00, 15:00 and 23:00 from the shift changes, the trough mid-morning). Older saves move 14:00 shop
+  shifts to 11:00 on load.
 - **Needs** open with town size, and a town grows past each size only while that tier is supplied:
 
   | Size | Population | Needs |
@@ -829,17 +828,6 @@ and turning it back on brings every dismissed tip back. Both are kept per browse
   cruises at the same share of the limit: varying that by 4-6% made streams so lumpy that a crossing's left-turn
   arrow helped or didn't by luck, and took more go-aheads back at a busy four-way. Throughput on the junction bench
   is unchanged (3,489 cars through vs 3,482 over 12 runs; three more seeds +0.2%).
-- **Route choice like drivers (2026-11-09).** Every driver judges each road's time up to 10% either way, always the
-  same way (a resident's commute takes the same route every day), so two ways about as good as each other share
-  the traffic instead of all of it taking the one a second quicker and switching all at once when it slows. A way
-  more than ~22% longer is never taken for it. Roads remember how they flow at each hour of the day (mostly the
-  last day or two): where a road usually crawls at this hour or the next, drivers count it halfway to that speed
-  before it jams today, so the rush-hour bottleneck is planned round, and it is the player's roads that decide
-  where the queues are, the same way every day; a save keeps what the roads remember. Buses keep to the route their
-  line is drawn and timed on. Trucks count a town's own one-lane streets 1.6 times over unless
-  they start or end on one: they keep to the bigger roads where there is one. On two equal ways a fifth to a third
-  of drivers take each; on the late-game save 0.36 of truck time is on town streets (0.38 before; most of it is
-  deliveries into the towns).
 - **Picking the lane early for a stop just past a merge (2026-11-09).** A car whose destination is less than
   400 m along a road it joins without a junction (past an on-ramp's merge, a lane gain, a bend) gets into the lane
   that leads to the destination's side on the road before. Before, a car that had overtaken a truck on the inner

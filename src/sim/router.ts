@@ -55,25 +55,6 @@ class Heap {
   }
 }
 
-/** Who is asking for a route: drivers judge roads each their own way, and trucks keep off towns' small streets. */
-export interface Driver {
-  /** the same for the same driver (a resident's commute is the same way every day) */
-  salt: number;
-  truck: boolean;
-}
-
-/**
- * How far either way a driver misjudges each road's time (each road, each driver, always the same way). Routes that
- * are about as good as each other share the traffic instead of all of it taking the one that is a second quicker,
- * and all of it switching at once when that one slows.
- */
-export const ROUTE_NOISE = 0.1;
-/** A truck's time on a town's own one-lane street counts this many times over: it keeps to bigger roads when it can. */
-export const TRUCK_STREET = 1.6;
-
-/** -1..1 from a driver and a road. */
-const judge = (salt: number, k: number) => ((Math.imul((salt + 1) ^ Math.imul(k + 1, 0x9e3779b1), 0x85ebca6b) >>> 0) / 4294967296) * 2 - 1;
-
 export interface RouteResult {
   keys: number[];
   time: number; // estimated travel time
@@ -87,11 +68,9 @@ export interface RouteResult {
 export class Router {
   /** measured mean speed per directed seg (m/s); missing = speed limit */
   speeds = new Map<number, number>();
-  /** the speed a directed seg usually slows to about now (m/s; from previous days, see Traffic.usual); undefined = it doesn't */
-  usual: ((k: number) => number | undefined) | null = null;
   private succCache = new Map<number, { k: number; turn: string; signal: boolean; stop: boolean }[]>();
   /** each directed seg's length, speed limit and whether it has lanes (a search asks for them thousands of times) */
-  private keyCache = new Map<number, { len: number; lim: number; lanes: boolean; street: boolean }>();
+  private keyCache = new Map<number, { len: number; lim: number; lanes: boolean }>();
   private cacheVersion = -1;
 
   constructor(private net: RoadNetwork) {}
@@ -115,9 +94,7 @@ export class Router {
     let i = this.keyCache.get(k);
     if (!i) {
       const ls = this.lanesOf(k);
-      // (a town's own street, one lane each way: where people live)
-      const street = this.net.segs.get(dkSeg(k))?.town !== undefined && ls.filter((l) => !l.pocket).length <= 1;
-      i = { len: this.net.segGeom.get(dkSeg(k))?.center.length ?? 0, lim: ls.length ? ls[0].speed : 13, lanes: ls.length > 0, street };
+      i = { len: this.net.segGeom.get(dkSeg(k))?.center.length ?? 0, lim: ls.length ? ls[0].speed : 13, lanes: ls.length > 0 };
       this.keyCache.set(k, i);
     }
     return i;
@@ -149,25 +126,12 @@ export class Router {
     return this.info(k).lim;
   }
 
-  /**
-   * Expected time along (a share of) a directed seg: at its measured speed where it is slow now, and halfway to the
-   * speed it usually slows to at this time of day where that is slower still (drivers know the rush-hour roads).
-   * For a driver: as that driver judges it, and a truck counts a town's small street extra (not the one it starts
-   * or ends on, `ends`).
-   */
-  private cost(k: number, frac = 1, who?: Driver, ends?: { a: number; b: number }): number {
+  private cost(k: number, frac = 1): number {
     const L = this.segLen(k) * frac;
     const lim = this.limit(k);
     const meas = this.speeds.get(k);
-    let v = meas === undefined ? lim : Math.max(1.2, Math.min(lim, meas));
-    const u = this.usual?.(k);
-    if (u !== undefined && u < v) v = (v + Math.max(1.2, u)) / 2;
-    let t = L / v;
-    if (who) {
-      t *= 1 + ROUTE_NOISE * judge(who.salt, k);
-      if (who.truck && this.info(k).street && dkSeg(k) !== ends?.a && dkSeg(k) !== ends?.b) t *= TRUCK_STREET;
-    }
-    return t;
+    const v = meas === undefined ? lim : Math.max(1.2, Math.min(lim, meas));
+    return L / v;
   }
 
   hasLanes(seg: number, dir: 1 | -1): boolean {
@@ -180,7 +144,7 @@ export class Router {
     return dir === 1 ? s : L - s;
   }
 
-  route(from: Access, to: Access, startDir?: 1 | -1, maxExpand = 6000, who?: Driver): RouteResult | null {
+  route(from: Access, to: Access, startDir?: 1 | -1, maxExpand = 6000): RouteResult | null {
     if (!this.net.segs.has(from.seg) || !this.net.segs.has(to.seg)) return null;
     const goalP = to.p;
     const H = (k: number) => {
@@ -195,7 +159,6 @@ export class Router {
     const heap = new Heap();
     const goalKeys = new Map<number, number>(); // key -> remaining fraction cost
     const toSeg = this.net.segs.get(to.seg)!;
-    const ends = { a: from.seg, b: to.seg };
     const divided = rightOnly(ROAD_TYPES[toSeg.type]);
     for (const d of [1, -1] as const) {
       if (!this.hasLanes(to.seg, d)) continue;
@@ -211,10 +174,10 @@ export class Router {
       const done = this.along(from.seg, d, from.s);
       // same seg, destination ahead: direct
       if (from.seg === to.seg && goalKeys.has(k) && goalKeys.get(k)! > done + 2) {
-        const t = this.cost(k, (goalKeys.get(k)! - done) / L, who, ends);
+        const t = this.cost(k, (goalKeys.get(k)! - done) / L);
         return { keys: [k], time: t, freeFlow: (goalKeys.get(k)! - done) / this.limit(k) };
       }
-      const c0 = this.cost(k, Math.max(0, 1 - done / L), who, ends);
+      const c0 = this.cost(k, Math.max(0, 1 - done / L));
       g.set(k, c0);
       ff.set(k, ((L - done) / this.limit(k)));
       heap.push(k, c0 + H(k));
@@ -235,7 +198,7 @@ export class Router {
         const gl = goalKeys.get(nk);
         if (gl !== undefined) {
           const L = this.segLen(nk) || 1;
-          const c = gk + step + this.cost(nk, gl / L, who, ends);
+          const c = gk + step + this.cost(nk, gl / L);
           if (c < bestCost) {
             bestCost = c;
             bestGoal = nk;
@@ -243,7 +206,7 @@ export class Router {
             ff.set(-nk - 1, (ff.get(k) ?? 0) + gl / this.limit(nk));
           }
         }
-        step += this.cost(nk, 1, who, ends);
+        step += this.cost(nk);
         ffStep = this.segLen(nk) / this.limit(nk);
         const ng = gk + step;
         if (ng < (g.get(nk) ?? Infinity)) {
@@ -268,10 +231,10 @@ export class Router {
   }
 
   /** Route from the end of a directed seg (vehicle already on it, about to leave it) to a destination. */
-  routeFromKey(k: number, to: Access, who?: Driver): number[] | null {
+  routeFromKey(k: number, to: Access): number[] | null {
     const seg = dkSeg(k), d = dkDir(k);
     const L = this.segLen(k);
-    const r = this.route({ seg, s: d === 1 ? L - 0.1 : 0.1, p: { x: 0, y: 0 } }, to, d, undefined, who);
+    const r = this.route({ seg, s: d === 1 ? L - 0.1 : 0.1, p: { x: 0, y: 0 } }, to, d);
     if (!r) return null;
     if (r.keys[0] !== k) return null;
     return r.keys;
