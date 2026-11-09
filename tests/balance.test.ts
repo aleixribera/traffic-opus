@@ -44,7 +44,12 @@ const T5 = !!process.env.BALANCE_T5;
 const SHOWCASE = !!process.env.SHOWCASE;
 const SHOWCASE_POP = Number(process.env.SHOWCASE_POP ?? 3000);
 const T4 = !!process.env.BALANCE_T4 || T5 || SHOWCASE;
-const MAX_DAYS = Number(process.env.BALANCE_DAYS ?? (SHOWCASE ? 240 : T5 ? 170 : T4 ? 120 : 70));
+/**
+ * BALANCE_DAYS=n stops the run after n days: a quick smoke check that the scripted company's plan runs without throwing
+ * and stays solvent. The milestone expectations, which need the full run, are skipped.
+ */
+const DAYS_CAP = Number(process.env.BALANCE_DAYS) || 0;
+const MAX_DAYS = DAYS_CAP || (SHOWCASE ? 240 : T5 ? 170 : T4 ? 120 : 70);
 /**
  * BALANCE_T3=1 plays on past first cement through tier 3 to a supplied Town and checks that leg too. It runs an hour or
  * more (the towns grow to thousands of people, all driving), so the everyday suite stops at first cement.
@@ -571,6 +576,7 @@ describe("Balance: the game to Town size", () => {
     // solvent all the way
     expect(low).toBeGreaterThanOrEqual(0);
     expect(g.money).toBeGreaterThan(0);
+    if (DAYS_CAP) return;
     // first steel and first cement made, at a pace that keeps the early game moving (a day is 4 minutes at 4x)
     expect(steel).toBeGreaterThan(0);
     expect(cement).toBeGreaterThan(0);
