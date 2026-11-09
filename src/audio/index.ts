@@ -50,6 +50,13 @@ export function loadSettings(): AudioSettings {
   return s;
 }
 
+/**
+ * Stings for trouble that keeps happening are not played again within this long (s): a works on a road too slow for
+ * its milk lands every load spoiled, and the game asks for the sting at each one (as the ticker names a spoiled
+ * plant once an hour, not once a truck).
+ */
+const STING_GAP: Partial<Record<StingId, number>> = { spoil: 30 };
+
 export class GameAudio {
   settings: AudioSettings = loadSettings();
   /** the tune the wireless is playing ("" between tunes or when it is off) */
@@ -66,6 +73,8 @@ export class GameAudio {
   private acc = LOOK;
   private lastUi = -1;
   private stingFree = 0;
+  /** when each sting with a STING_GAP was last played (context time) */
+  private stingAt = new Map<StingId, number>();
   private game: Game | null = null;
   private quits = 0;
   private quitAt = -100;
@@ -166,6 +175,11 @@ export class GameAudio {
     if (!b) return;
     const t = e.now, at = Math.max(t, this.stingFree);
     if (at - t > 5) return;
+    const gap = STING_GAP[id];
+    if (gap !== undefined) {
+      if (at - (this.stingAt.get(id) ?? -Infinity) < gap) return;
+      this.stingAt.set(id, at);
+    }
     if (e.shot(`sting:${id}`, e.ui, STING_GAIN, { prio: 2, when: at })) this.stingFree = at + b.duration * 0.8;
   }
 
