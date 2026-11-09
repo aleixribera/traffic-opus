@@ -19,6 +19,8 @@ import { needView } from "../src/ui/needs";
 const TICK = HOUR / 8;
 /** a town nobody but the test runs: always wanting food, never about to dip (a nearer buyer to compete with) */
 const OTHER = 999;
+/** the start town's people in these tests */
+const HAMLET = 62;
 
 let g: Game, t: Town;
 
@@ -110,6 +112,17 @@ beforeEach(() => {
   t = g.towns.list[0];
   // (its households stay put: the test is about what it reads, not how it grows)
   t.fixed = true;
+  // (and it is a hamlet of a known size, whatever sizes of household the start drew: the single-truck run below has
+  // its loads land on 1/8 h ticks, and at some sizes, 65, 76 or 79 people, no trip time puts them just over the line)
+  const P = g.people;
+  let pop = [...P.households.values()].reduce((s, h) => s + h.members.length, 0);
+  while (pop > HAMLET) {
+    const fit = [...P.households.values()].filter((h) => h.members.length <= pop - HAMLET);
+    if (!fit.length) break;
+    const hh = fit.reduce((a, b) => (b.members.length > a.members.length ? b : a));
+    pop -= hh.members.length;
+    P.moveOut(hh);
+  }
   // the hours start on an hour's roll
   g.time = 0;
   g.towns.hourly();
