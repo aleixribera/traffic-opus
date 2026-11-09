@@ -39,14 +39,15 @@ function noise1(t: number, seed: number): number {
 
 /**
  * The wind at a sim time (game seconds) and a moment of the animation clock (real seconds while the game runs).
- * The direction swings round over hours, mostly out of the west (the prevailing wind), backing and veering either
- * side of it; the strength rises and falls over an hour or two; gusts come and go over seconds.
+ * The direction swings round over hours, mostly out of the west-south-west (the prevailing wind: on the map as it
+ * first opens, plumes lean away to the right and up the screen), backing and veering either side of it; the strength
+ * rises and falls over an hour or two; gusts come and go over seconds.
  */
 export function windAt(simTime: number, animTime = 0): Wind {
   const h = simTime / HOUR;
-  // the bearing the air moves toward: east-south-east on average, swinging up to about 70 degrees either side
+  // the bearing the air moves toward: east-north-east on average, swinging up to about 70 degrees either side
   const swing = (noise1(h / 5, 11) - 0.5) * 2 * 0.8 + (noise1(h / 1.7, 23) - 0.5) * 2 * 0.4;
-  const a = 0.35 + swing * 1.05;
+  const a = -0.4 + swing * 1.05;
   // (never dead calm for long, never a gale)
   const base = 0.2 + 0.6 * noise1(h / 2.3, 37) + 0.2 * noise1(h / 0.6, 41);
   const gust = Math.sin(animTime * 0.37) * 0.55 + Math.sin(animTime * 0.83 + 1.7) * 0.3 + Math.sin(animTime * 1.9 + 0.4) * 0.15;
@@ -63,9 +64,17 @@ export const WIND = { uWind: { value: new THREE.Vector4(1, 0, 0.4, 0) } };
 /** The wind last written to the shaders (what smoke and sound read this frame). */
 export const windNow: Wind = { x: 1, y: 0, strength: 0.4, gust: 0, speed: WIND_SPEED * 0.4 };
 
+/** The dev hook's wind (app.ts, `__env.wind`): held at one bearing and strength until let go. */
+let held: { a: number; strength: number } | null = null;
+/** Hold the wind at a bearing (degrees: 0 blows east, 90 south) and a strength (0..1), or let it go (no arguments). */
+export function holdWind(deg?: number, strength = 0.5) {
+  held = deg === undefined ? null : { a: (deg * Math.PI) / 180, strength: Math.min(1, Math.max(0, strength)) };
+}
+
 /** Once a frame: work the wind out and hand it to the shaders. */
 export function setWind(simTime: number, animTime: number): Wind {
   const w = windAt(simTime, animTime);
+  if (held) { w.x = Math.cos(held.a); w.y = Math.sin(held.a); w.strength = held.strength; w.speed = WIND_SPEED * held.strength; }
   Object.assign(windNow, w);
   WIND.uWind.value.set(w.x, w.y, w.strength, animTime % WIND_LOOP);
   return windNow;

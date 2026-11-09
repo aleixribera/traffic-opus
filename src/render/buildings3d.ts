@@ -12,6 +12,7 @@ import { isCivic } from "../game/civics";
 import { CAR_COLORS, PAL } from "./palette";
 import { HALL_TIER, squarePlan, type SquarePlan } from "./civic";
 import type { PlantedTree } from "./trees3d";
+import type { FxEmitter } from "./plumes";
 import { PLANTS } from "../game/industry";
 import { isMega, megaStage } from "../game/megaprojects";
 import { fieldLook, fieldModel } from "../game/calendar";
@@ -293,6 +294,8 @@ export class Buildings3D {
   floods: LampSpot[] = [];
   /** Counts up whenever the buildings are laid out again. */
   version = 0;
+  /** Where the buildings smoke, steam and raise dust (render/smoke.ts draws the plumes), laid out with them. */
+  emitters: FxEmitter[] = [];
   /** Each model's footprint above the ground floor's sill (model space; x0, x1, z0, z1, top), measured once. */
   private feet = new Map<string, [number, number, number, number, number] | null>();
 
@@ -406,6 +409,17 @@ export class Buildings3D {
     // the model stands near the street; deep lots keep the rest as a back yard
     const spare = Math.max(0, b.hd * 2 - this.depth(b));
     this.tmp2.makeScale(b.fit, b.fit * b.tall * grow, b.fit).setPosition(0, 0, spare / 2 - setbackOf(b, spare));
+    return out.multiply(this.tmp2);
+  }
+
+  /** A piece's matrix once it stands at its full height (whatever it is at now). */
+  private standMatrix(out: THREE.Matrix4, p: Piece): THREE.Matrix4 {
+    const b = p.b;
+    if (p.slot) return this.slotMatrix(out, siteFrame(b.c, b.rot, b.side, b.hd), p.slot, 1);
+    lotMatrix(out, b.c, b.rot, b.side);
+    if (!b.zone) return out;
+    const spare = Math.max(0, b.hd * 2 - this.depth(b));
+    this.tmp2.makeScale(b.fit, b.fit * b.tall, b.fit).setPosition(0, 0, spare / 2 - setbackOf(b, spare));
     return out.multiply(this.tmp2);
   }
 
@@ -527,12 +541,22 @@ export class Buildings3D {
     this.paving?.computeBoundingSphere();
     this.order.clear();
     this.building = [];
+    this.emitters = [];
     for (const b of list) {
       for (const p of this.piecesOf(b)) {
-        if (!this.geoOf(p.model)) continue;
+        const mm = this.geoOf(p.model);
+        if (!mm) continue;
         let a = this.order.get(p.model);
         if (!a) this.order.set(p.model, (a = []));
         a.push(p);
+        // its stacks and vents, where they will stand once it is up
+        if (!mm.fx.length || isMega(b.kind)) continue;
+        this.standMatrix(this.tmp, p);
+        const up = () => b.built >= 1 && this.rise(p) >= 1;
+        for (const f of mm.fx) {
+          const w = this.v3.set(f.x, f.y, f.z).applyMatrix4(this.tmp);
+          this.emitters.push({ b, kind: f.kind, x: w.x, y: w.z, h: w.y, size: f.size * (b.zone ? b.fit : 1), up });
+        }
       }
     }
     for (const [model, ps] of this.order) {

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import type { FxKind, FxSpot } from "./plumes";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { BuildingKind } from "../config";
 import { SITE_MODELS } from "../game/sites";
@@ -12,6 +13,8 @@ export interface MergedModel {
   geo: THREE.BufferGeometry;
   /** Parking bays (model space): car origin + yaw so the car's nose (+z) faces the bay direction. */
   bays: THREE.Matrix4[];
+  /** Where it smokes, steams or raises dust (the GLB's `stack_N`, `steam_N`... empties; model space). */
+  fx: FxSpot[];
 }
 
 /** A vehicle split by material: tinted parts get the per-vehicle colour; a "beacon" part (a convoy's amber lamps)
@@ -206,6 +209,7 @@ function meshColor(m: THREE.Mesh): THREE.Color {
 function mergeModel(sc: THREE.Object3D): MergedModel {
   const geos: THREE.BufferGeometry[] = [];
   const bays: THREE.Matrix4[] = [];
+  const fx: FxSpot[] = [];
   const flip = new THREE.Matrix4().makeRotationY(Math.PI);
   sc.traverse((o) => {
     const m = o as THREE.Mesh;
@@ -229,12 +233,20 @@ function mergeModel(sc: THREE.Object3D): MergedModel {
       const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
       o.matrixWorld.decompose(pos, q, sc);
       bays.push(new THREE.Matrix4().compose(pos, q, new THREE.Vector3(1, 1, 1)).multiply(flip));
+    } else {
+      // an emitter: its place is the plume's mouth, its scale the plume's width there
+      const k = /^(stack|steam|dust|haze|flare|chimney)_?\d+/i.exec(o.name);
+      if (k) {
+        const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+        o.matrixWorld.decompose(pos, q, sc);
+        fx.push({ kind: k[1].toLowerCase() as FxKind, x: pos.x, y: pos.y, z: pos.z, size: sc.x });
+      }
     }
   });
   const geo = mergeGeometries(geos, false)!;
   geo.computeBoundingBox();
   geo.computeBoundingSphere();
-  return { geo, bays };
+  return { geo, bays, fx };
 }
 
 function splitVehicle(sc: THREE.Object3D): VehicleModel {

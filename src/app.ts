@@ -47,7 +47,8 @@ import { Terrain3D } from "./render/terrain3d";
 import { clearShapes } from "./render/clearing";
 import { Forest } from "./render/forest";
 import { Trees3D } from "./render/trees3d";
-import { setWind } from "./render/wind";
+import { holdWind, setWind } from "./render/wind";
+import { Smoke } from "./render/smoke";
 import { Vehicles3D } from "./render/vehicles3d";
 import { Lamps3D } from "./render/lamps3d";
 import { DayCycle } from "./render/daycycle";
@@ -126,6 +127,10 @@ export class App {
   parks3d!: Parks3D;
   greens3d!: Greens3D;
   fireworks = new Fireworks();
+  /** smoke, steam and dust: every works that is running, the homes' chimneys in the cold, the dirt roads */
+  smoke = new Smoke();
+  /** which layout of the buildings the smoke's emitters were last taken from */
+  private smokeSig = -1;
   /** money and moments rising off the map, and the shelf-time rings over refrigerated trucks */
   pops = new Pops();
   /** Shift + wheel scrolling not yet turned into a whole degree (px) */
@@ -230,6 +235,8 @@ export class App {
       set: (o: Parameters<DayCycle["set"]>[0]) => dc.set(o),
       clear: () => dc.clear(),
       get: () => ({ hour: dc.hour, yday: dc.yday, mode: dc.mode, light: dc.light, look: dc.look }),
+      // (hold the wind: the bearing it blows toward in degrees, 0 east and 90 south, and its strength 0..1; no arguments lets it go)
+      wind: (deg?: number, strength?: number) => holdWind(deg, strength),
     };
     this.view.scene.add(this.preview.group);
   }
@@ -453,6 +460,8 @@ export class App {
     this.trees3d?.dispose();
     this.trees3d = new Trees3D(this.models.trees, this.forest);
     this.treeSig = "";
+    this.smoke.reset();
+    this.smokeSig = -1;
     this.roads = new Roads3D(g.net, {
       props: this.models.props, isWater: (p) => g.terrain.isWater(p),
       // each driveway as a line from where it leaves the road to the lot (a home's middle, a site's gate): no street
@@ -490,7 +499,7 @@ export class App {
     this.highlight.set(null);
     this.highlight.hoverV = null;
     this.glide = null;
-    this.worldRoot.add(this.terrain3d.group, this.trees3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.greens3d.group, this.lamps.group, this.fireworks.group);
+    this.worldRoot.add(this.terrain3d.group, this.trees3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.greens3d.group, this.lamps.group, this.fireworks.group, this.smoke.mesh);
     this.roads.rebuildAll();
     this.buildings3d.rebuild(g.buildings.list);
     { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }
@@ -1700,6 +1709,7 @@ export class App {
     const g = this.game;
     const L = this.dayCycle.update(g.time + g.alpha * SIM.dt, dt, this.mode === "menu", this.overlay !== "none");
     this.view.setLight(L.amb, L.sun, L.dir);
+    this.smoke.setLight(L.amb, L.sun, L.dir);
     // (no shadow map once the direct light is too faint to cast one)
     if (L.shade < 0.04) this.view.sun.castShadow = false;
     // the fields follow the season shown (the menu's and the dev hook's too)
@@ -1810,6 +1820,13 @@ export class App {
     this.trees3d.update(this.view.camera, this.view.mpp, this.terrain3d.shared.uOverlay.value > 0.5);
     this.terrain3d.shared.uPaint.value = this.trees3d.paint;
     this.terrain3d.crownsSoon = this.trees3d.handoverNear;
+    // the works smoke, the chimneys too in the cold, and the dirt roads raise dust (not on the data maps)
+    if (this.buildings3d.version !== this.smokeSig) {
+      this.smokeSig = this.buildings3d.version;
+      this.smoke.setEmitters(this.buildings3d.emitters);
+    }
+    this.smoke.mesh.visible = this.terrain3d.shared.uOverlay.value < 0.5;
+    this.smoke.update(this.view.camera, this.view.mpp, g.paused ? 0 : dt, g.time + g.alpha * SIM.dt, far ? null : g.traffic);
     this.terrain3d.update(this.view);
     this.roadsFar.update(this.view.mpp, this.view.w, this.view.h);
     this.labels.update(this.view);
