@@ -4,7 +4,7 @@
 // Pure: no AudioContext. tests/audio.sounds.test.ts checks every recipe (level, no DC, no click, loop seams).
 
 import {
-  Biquad, SR, TAU, type Rnd, brown, burst, center, clamp, drive, echo, fade, filt, level, loopify, mix, norm, partial, peak, pink,
+  Biquad, SR, TAU, type Rnd, band, burst, center, clamp, drive, echo, fade, filt, level, loopify, mix, norm, partial, peak, pink,
   scale, sec, shape, smooth, tone, white,
 } from "./dsp";
 
@@ -26,6 +26,8 @@ interface Eng {
   knock?: number;
   /** soft clipping (a growl) */
   drive?: number;
+  /** how long each puff of exhaust lasts (s): the shorter, the more of the engine's note is above its rumble */
+  pulse?: number;
   gain?: number;
 }
 
@@ -38,7 +40,7 @@ function engines(r: Rnd, D: number, list: Eng[]): Float32Array {
     const amp: number[] = [], off: number[] = [];
     for (let i = 0; i < cycles; i++) { amp.push(E.pat[i % E.pat.length] * (0.8 + 0.4 * r())); off.push((r() - 0.5) * (E.jit ?? 0.06) * per); }
     const exc = new Float32Array(N);
-    const pl = Math.max(8, Math.min(sec(0.006), Math.floor(per * 0.45)));
+    const pl = Math.max(8, Math.min(sec(E.pulse ?? 0.002), Math.floor(per * 0.45)));
     for (let i = 0; i * per < N; i++) {
       const k = i % cycles, at = Math.round(i * per + off[k]);
       for (let j = 0; j < pl; j++) {
@@ -63,16 +65,16 @@ function engines(r: Rnd, D: number, list: Eng[]): Float32Array {
     level(eng, 0.1, 2);
     mix(out, eng, 0, E.gain ?? 1);
   }
-  filt(out, "hp", 28, 0.7);
+  filt(out, "hp", 45, 0.7);
   return level(loopify(out, n), 0.1);
 }
 
-const CAR: Eng = { fire: 30, pat: [1, 0.7, 0.9, 0.6], res: [[95, 4, 1], [190, 3, 0.7], [420, 2, 0.35], [900, 1.5, 0.12]], lp: 1800 };
-const LIGHT: Eng = { fire: 42, pat: [1, 0.85, 0.95, 0.8, 0.9, 0.75], res: [[80, 3, 1], [165, 3, 0.9], [300, 2.5, 0.6], [620, 2, 0.3], [1200, 1.5, 0.15]], lp: 2400, drive: 2.2 };
-const HEAVY: Eng = { fire: 23, pat: [1, 0.8, 0.9, 0.7, 0.95, 0.75], res: [[52, 5, 1.2], [104, 4, 1], [158, 3, 0.6], [330, 2, 0.25]], lp: 1600, knock: 0.1 };
-const TRAIN: Eng = { fire: 17, pat: [1, 0.85, 0.9, 0.8], res: [[42, 6, 1.3], [84, 5, 1.1], [126, 4, 0.7], [250, 2, 0.3]], lp: 1300, knock: 0.08 };
-const IDLE: Eng = { fire: 12, pat: [1, 0.6, 0.85, 0.55], res: [[70, 4, 1], [140, 3, 0.6], [300, 2, 0.25]], lp: 900, jit: 0.12 };
-const TRACTOR: Eng = { fire: 9.5, pat: [1, 0.55], res: [[85, 5, 1], [170, 4, 0.8], [340, 3, 0.4], [700, 2, 0.15]], lp: 1500, jit: 0.1 };
+const CAR: Eng = { fire: 30, pat: [1, 0.7, 0.9, 0.6], res: [[95, 4, 0.8], [190, 3, 0.8], [420, 2, 0.6], [900, 1.5, 0.42], [1700, 1.2, 0.2]], lp: 2600, drive: 1.8, pulse: 0.0011 };
+const LIGHT: Eng = { fire: 42, pat: [1, 0.85, 0.95, 0.8, 0.9, 0.75], res: [[80, 3, 0.8], [165, 3, 0.9], [300, 2.5, 0.75], [620, 2, 0.5], [1200, 1.5, 0.3]], lp: 2600, drive: 2.2, pulse: 0.0011 };
+const HEAVY: Eng = { fire: 23, pat: [1, 0.8, 0.9, 0.7, 0.95, 0.75], res: [[58, 5, 0.9], [104, 4, 1], [158, 3, 0.8], [330, 2, 0.55], [700, 1.5, 0.3]], lp: 2000, knock: 0.22, drive: 2, pulse: 0.0014 };
+const TRAIN: Eng = { fire: 17, pat: [1, 0.85, 0.9, 0.8], res: [[55, 6, 0.9], [84, 5, 1.1], [126, 4, 0.9], [250, 2, 0.55], [560, 1.5, 0.3]], lp: 1700, knock: 0.18, drive: 2, pulse: 0.0016 };
+const IDLE: Eng = { fire: 12, pat: [1, 0.6, 0.85, 0.55], res: [[75, 4, 0.8], [140, 3, 0.8], [300, 2, 0.5], [640, 1.5, 0.28]], lp: 1400, jit: 0.12, drive: 1.6, pulse: 0.0014 };
+const TRACTOR: Eng = { fire: 9.5, pat: [1, 0.55], res: [[85, 5, 0.9], [170, 4, 0.9], [340, 3, 0.6], [700, 2, 0.4], [1300, 1.5, 0.16]], lp: 2000, jit: 0.1, drive: 1.8, pulse: 0.0012 };
 
 const vary = (E: Eng, k: number, gain = 1): Eng => ({ ...E, fire: E.fire * k, res: E.res.map(([f, q, g]) => [f * (0.94 + 0.12 * ((k * 7.3) % 1)), q, g] as [number, number, number]), gain });
 
@@ -114,7 +116,7 @@ type Recipe = (r: Rnd) => Float32Array;
 
 export const BEDS: Record<BedId, Recipe> = {
   /** the shared noise the wind, the tyres and the far hum are filtered from */
-  pink: (r) => level(loopify(pink(sec(6 + FADE), r), sec(6)), 0.2),
+  pink: (r) => level(loopify(filt(pink(sec(6 + FADE), r), "hp", 55, 0.7), sec(6)), 0.2),
 
   /** water lapping at a bank: slow swells of mid noise, and a few plips */
   water: (r) => {
@@ -201,7 +203,7 @@ export const BEDS: Record<BedId, Recipe> = {
     const D = 2.4, n = sec(D), N = n + sec(FADE), x = new Float32Array(N);
     for (let k = 0; k < 900; k++) mix(x, burst(r, 0.006, "bp", 1200 + r() * 2800, 1.5, 0.0012), r() * N, 0.2 + r() * 0.8);
     mix(x, filt(pink(N, r), "bp", 1700, 0.6), 0, 0.5);
-    mix(x, filt(brown(N, r), "lp", 160, 0.7), 0, 0.5);
+    mix(x, band(N, r, 70, 220), 0, 0.5);
     return level(loopify(x, n), 0.1);
   },
 
@@ -239,18 +241,18 @@ export const BEDS: Record<BedId, Recipe> = {
       const teeth = 0.55 + 0.45 * Math.sign(Math.sin(TAU * 86 * t));
       x[i] = whine * (0.1 + 0.24 * L) + rough[i] * L * teeth * 1.5;
     }
-    mix(x, filt(brown(N, r), "lp", 150, 0.7), 0, 0.5);
+    mix(x, band(N, r, 70, 240), 0, 0.5);
     return level(loopify(filt(x, "lp", 5200, 0.6), n), 0.1);
   },
 
   /** a blast furnace: a low roar with the flame's flutter in it */
   furnace: (r) => {
     const D = 7, n = sec(D), N = n + sec(FADE);
-    const x = filt(brown(N, r), "lp", 230, 0.6);
+    const x = scale(band(N, r, 70, 300), 2.2);
     const mid = filt(pink(N, r), "bp", 520, 0.6);
     const fl = filt(white(N, r), "lp", 6, 0.7);
     norm(fl, 1);
-    for (let i = 0; i < N; i++) x[i] = x[i] * (1 + 0.25 * fl[i]) + mid[i] * 0.35 * (1 + 0.5 * fl[i]) + 0.05 * Math.sin((TAU * 46 * i) / SR);
+    for (let i = 0; i < N; i++) x[i] = x[i] * (1 + 0.25 * fl[i]) + mid[i] * 0.35 * (1 + 0.5 * fl[i]) + 0.03 * Math.sin((TAU * 62 * i) / SR);
     return level(loopify(x, n), 0.1);
   },
 
@@ -261,7 +263,7 @@ export const BEDS: Record<BedId, Recipe> = {
       const at = r() * (D + FADE), jaw = 0.35 + 0.65 * Math.max(0, Math.sin(TAU * 2 * at)) ** 2;
       mix(x, burst(r, 0.05, "bp", 280 + r() * 700, 2 + r() * 3, 0.006 + r() * 0.012), at * SR, (0.2 + r() * 0.8) * jaw);
     }
-    mix(x, filt(brown(N, r), "lp", 120, 0.7), 0, 0.55);
+    mix(x, band(N, r, 60, 180), 0, 0.5);
     const rattle = filt(pink(N, r), "bp", 1500, 0.8);
     for (let i = 0; i < N; i++) x[i] += rattle[i] * 0.1 * (0.5 + 0.5 * Math.sin((TAU * 2 * i) / SR));
     return level(loopify(x, n), 0.1);
@@ -287,7 +289,7 @@ export const BEDS: Record<BedId, Recipe> = {
       const cr = new Float32Array(sec(0.5));
       tone(cr, 0, 0.5, (t) => 520 + 260 * t + 14 * Math.sin(TAU * 31 * t), (t) => 0.3 * Math.sin(Math.PI * t / 0.5) ** 2, [1, 0.5, 0.35, 0.2]);
       mix(x, cr, sec(t0 + 0.35), 1, true);
-      const wh = shape(filt(brown(sec(1.1), r), "lp", 110, 0.7), (t) => Math.sin(Math.PI * t / 1.1) ** 2);
+      const wh = shape(band(sec(1.1), r, 55, 170), (t) => Math.sin(Math.PI * t / 1.1) ** 2);
       mix(x, wh, sec(t0 + 1.9), 2.2, true);
       // the engine: it fires a few times, then coasts
       for (let k = 0; k < 13; k++) {
@@ -308,7 +310,7 @@ export const BEDS: Record<BedId, Recipe> = {
     const D = 7, n = sec(D), N = n + sec(FADE);
     const x = filt(white(N, r), "bp", 5200, 0.7);
     const sw = (t: number, a: number, len: number) => (t > a && t < a + len ? Math.sin(Math.PI * (t - a) / len) ** 2 : 0);
-    const low = filt(brown(N, r), "lp", 200, 0.7);
+    const low = band(N, r, 70, 260);
     const mid = filt(pink(N, r), "bp", 1100, 0.6);
     for (let i = 0; i < N; i++) {
       const t = i / SR;
@@ -332,8 +334,8 @@ export const BEDS: Record<BedId, Recipe> = {
   /** a cement works: the kiln's slow drone and the mill grinding */
   kiln: (r) => {
     const D = 8, n = sec(D), N = n + sec(FADE), x = new Float32Array(N);
-    tone(x, 0, D + FADE, () => 48, () => 0.5, [1, 0.6, 0.25]);
-    const roar = filt(brown(N, r), "lp", 180, 0.7), grit = filt(white(N, r), "bp", 520, 1.2), am = norm(filt(white(N, r), "lp", 25, 0.7), 1);
+    tone(x, 0, D + FADE, () => 55, () => 0.5, [0.6, 1, 0.5, 0.2]);
+    const roar = scale(band(N, r, 65, 240), 2), grit = filt(white(N, r), "bp", 520, 1.2), am = norm(filt(white(N, r), "lp", 25, 0.7), 1);
     for (let i = 0; i < N; i++) {
       const turn = 0.75 + 0.25 * Math.sin((TAU * 0.5 * i) / SR);
       x[i] = (x[i] * 0.4 + roar[i]) * turn + grit[i] * 0.6 * (0.5 + 0.5 * am[i]) * turn;
@@ -344,7 +346,7 @@ export const BEDS: Record<BedId, Recipe> = {
   /** a glassworks: a lighter furnace, the blowers, glass touching glass */
   glass: (r) => {
     const D = 7, n = sec(D), N = n + sec(FADE);
-    const x = filt(brown(N, r), "lp", 340, 0.6);
+    const x = scale(band(N, r, 90, 420), 2);
     const air = filt(pink(N, r), "bp", 850, 0.7);
     for (let i = 0; i < N; i++) x[i] = x[i] * 0.8 + air[i] * 0.5 * (0.7 + 0.3 * Math.sin((TAU * i) / SR / 2.3));
     const out = loopify(x, n);
@@ -548,8 +550,8 @@ export const SHOTS: Record<ShotId, Recipe> = {
   /** a shot fired in a quarry face, far off: a thump you feel more than hear */
   blast: (r) => {
     const d = 2.6, x = new Float32Array(sec(d));
-    tone(x, 0, 1.4, (t) => 34 + 50 * Math.exp(-t / 0.12), (t) => Math.min(1, t / 0.004) * Math.exp(-t / 0.4), [1, 0.4, 0.15]);
-    mix(x, shape(filt(brown(sec(d), r), "lp", 160, 0.7), (t) => smooth(0, 0.03, t) * Math.exp(-t / 0.7)), 0, 1.4);
+    tone(x, 0, 1.4, (t) => 52 + 60 * Math.exp(-t / 0.12), (t) => Math.min(1, t / 0.004) * Math.exp(-t / 0.4), [0.6, 0.5, 0.3, 0.15]);
+    mix(x, shape(scale(band(sec(d), r, 60, 320), 2), (t) => smooth(0, 0.03, t) * Math.exp(-t / 0.7)), 0, 2);
     mix(x, burst(r, 0.08, "bp", 700, 0.7, 0.02), 0, 0.5);
     // (and the rock coming down)
     for (let k = 0; k < 40; k++) mix(x, burst(r, 0.03, "bp", 300 + r() * 900, 2, 0.008), sec(0.25 + r() * 1.3), 0.12 * r());
@@ -596,7 +598,7 @@ export const SHOTS: Record<ShotId, Recipe> = {
   pop: (r) => {
     const x = new Float32Array(sec(1.5));
     mix(x, burst(r, 0.05, "bp", 1800 + r() * 1200, 0.6, 0.008, 0.0005), 0, 1);
-    mix(x, shape(filt(brown(sec(0.8), r), "lp", 130 + r() * 60, 0.7), (t) => Math.min(1, t / 0.004) * Math.exp(-t / 0.18)), 0, 2.2);
+    mix(x, shape(scale(band(sec(0.8), r, 55, 190 + r() * 80), 2), (t) => Math.min(1, t / 0.004) * Math.exp(-t / 0.18)), 0, 2.2);
     for (let k = 0; k < 60; k++) { const t = 0.15 + r() * 1.1; mix(x, burst(r, 0.004, "hp", 3000, 0.7, 0.0008), sec(t), 0.25 * (1 - t / 1.3) * r()); }
     return norm(fade(x, 0.0004, 0.2), 0.6);
   },

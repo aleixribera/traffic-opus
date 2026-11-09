@@ -19,7 +19,7 @@ const law = (x: number) => Math.max(0, Math.min(1, x)) ** 2;
 
 /** The compressor's settings, and what Chrome's built-in make-up gain comes to with them (measured; see the harness). */
 const COMP = { threshold: -16, knee: 12, ratio: 4, attack: 0.006, release: 0.22 };
-export const COMP_MAKEUP = 2.02;
+export const COMP_MAKEUP = 1.662;
 /** The soft clip: straight up to KNEE, then easing to CEIL. Nothing leaves the engine above CEIL. */
 const KNEE = 0.5, CEIL = 0.86;
 
@@ -136,7 +136,9 @@ export class Engine {
     this.world.connect(this.duck); this.duck.connect(this.faders.world);
     this.ui.connect(this.faders.ui);
     for (const f of Object.values(this.faders)) f.connect(sum);
-    sum.connect(comp); comp.connect(trim); trim.connect(clip); clip.connect(this.master); this.master.connect(ctx.destination);
+    // (nothing under 30 Hz: no speaker plays it, and it would only work the compressor)
+    const sub = ctx.createBiquadFilter(); sub.type = "highpass"; sub.frequency.value = 30; sub.Q.value = 0.7;
+    sum.connect(sub); sub.connect(comp); comp.connect(trim); trim.connect(clip); clip.connect(this.master); this.master.connect(ctx.destination);
     this.setLevels(this.levels, true);
   }
 

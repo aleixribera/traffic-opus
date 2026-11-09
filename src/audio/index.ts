@@ -70,8 +70,8 @@ export class GameAudio {
   private quits = 0;
   private quitAt = -100;
   private idleT = 0;
-  /** what update() costs: a running mean and the worst (ms), over `frames` frames */
-  cost = { ms: 0, max: 0, frames: 0 };
+  /** what update() costs: a running mean and the worst (ms), over `frames` frames; the worst look at the scene and the worst turn of the wireless */
+  cost = { ms: 0, max: 0, frames: 0, look: 0, radio: 0 };
 
   constructor(opts: { worker?: boolean } = { worker: true }) {
     this.bank = new Bank({ worker: opts.worker && typeof window !== "undefined" });
@@ -184,6 +184,7 @@ export class GameAudio {
     if (e.ctx.state === "running") {
       const host = this.host;
       this.acc += dt;
+      const looked = host !== null && this.acc >= LOOK;
       if (host && this.acc >= LOOK) {
         const g = host.game, day = host.dayCycle;
         const scene = this.reader.read(g, host.view, day.hour, Math.floor(day.yday / SEASON_DAYS) % 4, this.acc);
@@ -196,7 +197,11 @@ export class GameAudio {
           if (e.now - this.quitAt > 30) { this.quitAt = e.now; this.sting("gaveUp"); }
         }
       }
+      const t1 = performance.now();
+      if (looked && t1 - t0 > this.cost.look) this.cost.look = t1 - t0;
       this.radio!.update();
+      const t2 = performance.now() - t1;
+      if (t2 > this.cost.radio) this.cost.radio = t2;
     }
     // (no worker: make the bank a sound at a time while nothing else is going on)
     if ((this.idleT += dt) > 0.5) { this.idleT = 0; this.bank.bakeOne(); }
@@ -211,8 +216,8 @@ export class GameAudio {
     const e = this.eng;
     return {
       state: e?.ctx.state ?? "off", live: e?.live() ?? 0, peak: e?.peakLive ?? 0, held: e?.held ?? 0, played: e?.played ?? 0, refused: e?.refused ?? 0,
-      ready: this.bank.ready, total: this.bank.total, avgMs: +this.cost.ms.toFixed(4), maxMs: +this.cost.max.toFixed(3), frames: this.cost.frames, tune: this.tune,
-      loops: this.world?.loops ?? 0, scene: this.reader.scene, mix: this.mix,
+      ready: this.bank.ready, total: this.bank.total, avgMs: +this.cost.ms.toFixed(4), maxMs: +this.cost.max.toFixed(3), maxLookMs: +this.cost.look.toFixed(3), maxRadioMs: +this.cost.radio.toFixed(3), frames: this.cost.frames, tune: this.tune,
+      loops: this.world?.loops ?? 0, scene: this.reader.scene, where: this.reader.where, mix: this.mix,
     };
   }
 }

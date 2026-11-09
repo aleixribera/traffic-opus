@@ -7,6 +7,7 @@
 //   await __audiotest.run()                   every render, measured and checked: { ok, checks, renders }
 //   __audiotest.show("music", 8, 32)          a spectrogram of seconds 8..32 of a render over the page (hide(): away)
 //   __audiotest.live()                        the running game's sound: sources live, cost per frame
+//   await __audiotest.capture(30)             tape the running game's scene, for the "street" renders of the next run()
 
 import type { GameAudio } from "./index";
 import { Bank, DEFAULT_LEVELS, Engine, MAX_SOURCES, type Levels } from "./engine";
@@ -89,7 +90,7 @@ function measure(l: Float32Array, r: Float32Array, mono: Float32Array): Second[]
       num += f * p; den += p;
       for (let j = 0; j < bands.length; j++) if (f >= BANDS[j] && f < BANDS[j + 1]) bands[j] += p;
     }
-    out.push({ peak, rms, crest: rms > 1e-7 ? dB(peak / rms) : 0, dc: sum / SR, centroid: den > 1e-14 ? num / den : 0, bands: bands.map((p) => r1(dB(Math.sqrt(p * 2)))) });
+    out.push({ peak, rms, crest: rms > 1e-7 ? dB(peak / rms) : 0, dc: sum / SR, centroid: den > 1e-14 ? num / den : 0, bands: bands.map((p) => r1(dB(Math.sqrt(p / 2)))) });
   }
   return out;
 }
@@ -136,8 +137,8 @@ async function render(name: string, secs: number, drive: Drive, levels: Partial<
   rig.radio.seed = () => seed++;
   rig.radio.source = () => ({ towns: ["Alder Run", "Marlow", "Cobb's Ferry"], company: "Carver & Sons Haulage" });
   rig.radio.setOn(false);
-  for (let t = STEP; t < secs; t += STEP) {
-    const at = t;
+  for (let k = 1; k * STEP < secs - 1e-6; k++) {
+    const at = k * STEP;
     void ctx.suspend(at).then(() => { drive(rig, at, STEP); void ctx.resume(); });
   }
   drive(rig, 0, STEP);
@@ -180,7 +181,34 @@ function passing(w: Where, t: number, on = true) {
   }
 }
 
+// ------------------------------------------------------------------ the real game, taped
+
+interface Frame { t: number; scene: Scene; where: Where }
+/** What the running game's ear saw, ten times a second (capture()), to play back into an offline render ("street"). */
+let tape: Frame[] = [];
+
+/** Tape `secs` seconds of the running game's scene (sound must be on: click the page once). */
+function capture(secs = 30): Promise<{ frames: number; secs: number; first: Scene | null }> {
+  const a = (window as unknown as { app: { audio: GameAudio } }).app.audio, t0 = performance.now();
+  tape = [];
+  return new Promise((done) => {
+    const id = setInterval(() => {
+      const d = a.debug(), t = (performance.now() - t0) / 1000;
+      tape.push({ t, scene: structuredClone(d.scene), where: structuredClone(d.where) });
+      if (t >= secs) { clearInterval(id); done({ frames: tape.length, secs, first: tape[0]?.scene ?? null }); }
+    }, 100);
+  });
+}
+function frameAt(t: number): Frame {
+  let f = tape[0];
+  for (const x of tape) { if (x.t > t) break; f = x; }
+  return f;
+}
+
 const RENDERS: Record<string, { secs: number; levels?: Partial<Levels>; drive: Drive }> = {
+  // the running game as it was taped: the world alone, then (streetMix) with the wireless over it
+  street: { secs: 30, drive: (r, t, dt) => { const f = frameAt(t); r.scene = f.scene; r.where = f.where; world(r, dt); } },
+  streetMix: { secs: 30, drive: (r, t, dt) => { if (t === 0) r.radio.setOn(true); const f = frameAt(t); r.scene = f.scene; r.where = f.where; world(r, dt); r.radio.update(); } },
   // the master chain's own gain: a quiet noise through it should come out as loud as it went in
   unity: { secs: 3, levels: { master: 1, music: 1, world: 1, ui: 1 }, drive: (r, t) => { if (t === 0) r.eng.shot("bed:pink", r.eng.ui, 0.1, { prio: 2 }); } },
   // the air: a wood by a river at noon, the dawn chorus, a summer night, winter
@@ -203,6 +231,19 @@ const RENDERS: Record<string, { secs: number; levels?: Partial<Levels>; drive: D
       // (a jam builds in the last ten seconds: idling, and a horn or two)
       if (t >= 20) { r.scene.v = [1, 1, 1, 1]; r.scene.idle = 16; r.scene.jam = 14; r.where.jam = -0.4; }
       passing(r.where, t, t < 20);
+      world(r, dt);
+    },
+  },
+  // one vehicle at a time along an empty street, left to right, every five seconds
+  passby: {
+    secs: 20, drive: (r, t, dt) => {
+      street(r.scene);
+      r.scene.n = [1, 0, 0, 0]; r.scene.v = [9, 0, 0, 0]; r.scene.idle = 0; r.scene.works.fill(0); r.scene.gate = 0; r.scene.sites = 0;
+      r.scene.homes = 0; r.scene.shops = 0; r.scene.pop = 0; r.scene.hall = 0; r.scene.forest = 0; r.scene.halfH = 80;
+      const n = r.where.near[0], u = (t % 5) / 5, lap = Math.floor(t / 5);
+      n.id = 500 + lap; n.cls = lap % 4; n.v = 11; n.pan = u * 2.2 - 1.1;
+      n.w = Math.abs(n.pan) > 1.05 ? 0 : Math.max(0, 1 - Math.abs(n.pan) ** 1.5 * 0.8);
+      r.where.near[1].id = -1; r.where.near[2].id = -1;
       world(r, dt);
     },
   },
@@ -343,7 +384,9 @@ async function run(only?: string[]) {
   const t0 = performance.now();
   for (const [name, spec] of Object.entries(RENDERS)) {
     if (only && !only.includes(name)) continue;
-    done.set(name, await render(name, spec.secs, spec.drive, spec.levels));
+    const taped = name === "street" || name === "streetMix";
+    if (taped && !tape.length) continue;
+    done.set(name, await render(name, taped ? Math.max(2, Math.floor(tape[tape.length - 1].t)) : spec.secs, spec.drive, spec.levels));
   }
   const checks: Check[] = [];
   const check = (name: string, ok: boolean, value: string | number) => checks.push({ name, ok, value: String(value) });
@@ -355,7 +398,14 @@ async function run(only?: string[]) {
     check(`${name}: at most ${MAX_SOURCES} sources`, x.peakLive <= MAX_SOURCES, x.peakLive);
   }
   const unity = R("unity");
-  if (unity) { const g = rmsOf(unity, 0.5, 2.5) / 0.02; check("the master chain neither lifts nor cuts a quiet sound (gain 0.9 to 1.1)", g > 0.9 && g < 1.1, g.toFixed(3)); }
+  if (unity) {
+    // (what went in: the bank's own noise, seconds 0.5 to 2.5 of it, at a tenth)
+    const src = bank!.get("bed:pink")!.getChannelData(0), sr = bank!.get("bed:pink")!.sampleRate;
+    let sq = 0;
+    for (let i = Math.round(0.5 * sr); i < Math.round(2.5 * sr); i++) sq += src[i] * src[i];
+    const g = rmsOf(unity, 0.5, 2.5) / (0.1 * Math.sqrt(sq / (2 * sr)));
+    check("the master chain neither lifts nor cuts a quiet sound (gain 0.9 to 1.1)", g > 0.9 && g < 1.1, g.toFixed(3));
+  }
   // no silence where there should be sound
   for (const name of ["air", "far", "traffic", "works", "town", "music", "musicNight", "musicClean", "mix", "stress"]) {
     const x = R(name);
@@ -404,6 +454,22 @@ async function run(only?: string[]) {
     // zooming out: the engines' band (120 to 500 Hz) falls against the wind's (500 to 2000)
     const eng = (a: number, b: number) => 10 * Math.log10(bandOf(states, a, b, 1)), wind = (a: number, b: number) => 10 * Math.log10(bandOf(states, a, b, 2));
     check("zooming out trades engines for wind (the low band falls 6 dB or more against the mid)", (eng(2, 8) - wind(2, 8)) - (eng(19, 24) - wind(19, 24)) > 6, r1((eng(2, 8) - wind(2, 8)) - (eng(19, 24) - wind(19, 24))));
+  }
+  const pb = R("passby");
+  if (pb) {
+    // each pass: left before the middle, right after it, loudest in the middle
+    const e = (x: Float32Array, a: number, b: number) => { let q = 0; for (let i = Math.round(a * SR); i < Math.round(b * SR); i++) q += x[i] * x[i]; return Math.sqrt(q / ((b - a) * SR)); };
+    let pans = true, swells = true;
+    const bal: string[] = [];
+    for (let k = 0; k < 4; k++) {
+      const t = k * 5, inL = e(pb.l, t + 1, t + 2), inR = e(pb.r, t + 1, t + 2), outL = e(pb.l, t + 3, t + 4), outR = e(pb.r, t + 3, t + 4);
+      const mid = e(pb.mono, t + 2.2, t + 2.8), edge = e(pb.mono, t + 0.1, t + 0.6);
+      if (!(inL > inR * 1.25 && outR > outL * 1.25)) pans = false;
+      if (!(mid > edge * 1.6)) swells = false;
+      bal.push(`${r1(dB(inL / inR))}/${r1(dB(outL / outR))}`);
+    }
+    check("a vehicle passing crosses from the left ear to the right", pans, bal.join(", ") + " dB left over right, coming and going");
+    check("and is loudest as it passes the middle (4 dB or more over the edges)", swells, r1(dB(e(pb.mono, 2.2, 2.8) / e(pb.mono, 0.1, 0.6))));
   }
   if (far && traffic) check("far up is mostly wind: quieter than the street", dB(rmsOf(traffic, 2, 20) / rmsOf(far, 2, 20)) > 2, r1(dB(rmsOf(traffic, 2, 20) / rmsOf(far, 2, 20))));
   if (traffic) check("a jam idles lower than moving traffic, and is not silent", rmsOf(traffic, 23, 30) < rmsOf(traffic, 2, 20) && dB(rmsOf(traffic, 23, 30)) > -50, `${r1(dB(rmsOf(traffic, 23, 30)))} dB against ${r1(dB(rmsOf(traffic, 2, 20)))} dB`);
@@ -458,7 +524,7 @@ function show(name: string, t0 = 0, t1?: number, title?: string) {
   const g = c.getContext("2d")!;
   g.fillStyle = "#070d17"; g.fillRect(0, 0, W, H);
   const img = g.createImageData(w, h), re = new Float32Array(NF), im = new Float32Array(NF), ps = new Float32Array(NF / 2);
-  const fLo = 40, fHi = 12000, top = -28, floor = -96;
+  const fLo = 40, fHi = 12000, top = -34, floor = -96;
   for (let x = 0; x < w; x++) {
     const at = Math.round((t0 + ((t1 - t0) * x) / w) * SR) - NF / 2;
     spectrum(R.mono, Math.max(0, at), ps, re, im);
@@ -468,7 +534,8 @@ function show(name: string, t0 = 0, t1?: number, title?: string) {
       const k0 = Math.max(1, Math.floor((f2 * NF) / SR)), k1 = Math.max(k0, Math.ceil((f * NF) / SR));
       let p = 0;
       for (let k = k0; k <= k1; k++) if (ps[k] > p) p = ps[k];
-      const v = Math.max(0, Math.min(1, (10 * Math.log10(p + 1e-14) - floor) / (top - floor)));
+      // (tilted 3 dB an octave about 1 kHz, as analysers are: noise that sounds even looks even, low lines do not swamp the picture)
+      const v = Math.max(0, Math.min(1, (10 * Math.log10(p + 1e-14) + 3 * Math.log2(f / 1000) - floor) / (top - floor)));
       const [r, gg, b] = colour(v), o = (y * w + x) * 4;
       img.data[o] = r; img.data[o + 1] = gg; img.data[o + 2] = b; img.data[o + 3] = 255;
     }
@@ -503,4 +570,4 @@ function tune(seed = 1, mood: Mood = "day") {
 /** The running game's sound. */
 function live() { return (window as unknown as { app: { audio: GameAudio } }).app.audio.debug(); }
 
-(window as unknown as { __audiotest: unknown }).__audiotest = { run, show, hide, live, tune, renders: done, RENDERS };
+(window as unknown as { __audiotest: unknown }).__audiotest = { run, show, hide, live, tune, capture, renders: done, RENDERS };

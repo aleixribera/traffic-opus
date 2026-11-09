@@ -14,6 +14,8 @@ const same = (a: Chord, b: Chord) => a.root === b.root && a.q === b.q;
 const TUNES: Tune[] = [];
 for (let seed = 1; seed <= 40; seed++) for (const mood of MOODS) TUNES.push(compose(seed, mood, SRC));
 const of = (t: Tune, i: Note["i"]) => t.notes.filter((n) => n.i === i);
+/** A check made a hundred thousand times (once a note): plain, and worded only when it fails. */
+const must = (ok: boolean, why: () => string) => { if (!ok) throw new Error(why()); };
 
 describe("the wireless: composition", () => {
   it("is deterministic for a seed, and no two seeds write the same tune", () => {
@@ -96,32 +98,28 @@ describe("the wireless: composition", () => {
       for (const voice of ["lead", "piano"] as const) {
         const ns = melody(voice);
         ns.forEach((n, i) => {
-          const ch = chordAt(t.bars, n.t), why = `${t.name} (${t.seed} ${t.mood}) ${voice} t=${n.t} m=${n.m} ${n.role}`;
-          expect(n.m, why).toBeGreaterThanOrEqual(RANGE[voice][0]);
-          expect(n.m, why).toBeLessThanOrEqual(RANGE[voice][1]);
-          if (n.role === "root") expect(pc(n.m), why).toBe(ch.root);
-          else if (n.role === "tone") expect(isTone(ch, n.m), why).toBe(true);
-          else if (n.role === "scale") expect(inScale(ch, n.m), why).toBe(true);
-          else if (n.role === "blue") expect(BLUES, why).toContain(pc(n.m - t.key));
+          const ch = chordAt(t.bars, n.t), why = () => `${t.name} (${t.seed} ${t.mood}) ${voice} t=${n.t} m=${n.m} ${n.role}`;
+          must(n.m >= RANGE[voice][0] && n.m <= RANGE[voice][1], () => `out of range: ${why()}`);
+          if (n.role === "root") must(pc(n.m) === ch.root, why);
+          else if (n.role === "tone") must(isTone(ch, n.m), why);
+          else if (n.role === "scale") must(inScale(ch, n.m), why);
+          else if (n.role === "blue") must(BLUES.includes(pc(n.m - t.key)), why);
           else if (n.role === "approach") {
             // a semitone under the chord tone it leads to
             const next = ns[i + 1];
-            expect(next, why).toBeDefined();
-            expect(next.m - n.m, why).toBe(1);
-            expect(isTone(chordAt(t.bars, next.t), next.m), why).toBe(true);
-          } else throw new Error(`no role: ${why}`);
+            must(!!next && next.m - n.m === 1 && isTone(chordAt(t.bars, next.t), next.m), why);
+          } else throw new Error(`no role: ${why()}`);
         });
       }
       for (const n of of(t, "comp")) {
         const ch = n.ch!;
-        expect(ch, "a comping note names its chord").toBeDefined();
+        must(!!ch, () => "a comping note names its chord");
         const iv = pc(n.m - ch.root);
-        expect(isTone(ch, n.m) || EXT[ch.q].includes(iv), `${t.name} comp ${n.m} on ${ch.root}${ch.q}`).toBe(true);
-        expect(n.m).toBeGreaterThanOrEqual(RANGE.comp[0]);
-        expect(n.m).toBeLessThanOrEqual(RANGE.comp[1]);
+        must(isTone(ch, n.m) || EXT[ch.q].includes(iv), () => `${t.name} comp ${n.m} on ${ch.root}${ch.q}`);
+        must(n.m >= RANGE.comp[0] && n.m <= RANGE.comp[1], () => `${t.name} comp ${n.m} out of range`);
         // the chord it voices is the one sounding, or the one about to (a push)
         const now = chordAt(t.bars, n.t), soon = chordAt(t.bars, n.t + 0.5);
-        expect(same(ch, now) || same(ch, soon)).toBe(true);
+        must(same(ch, now) || same(ch, soon), () => `${t.name} comp at ${n.t} voices a chord that is not sounding`);
       }
     }
   });
@@ -262,16 +260,16 @@ describe("the wireless: composition", () => {
       expect(of(t, "bass").at(-1)!.d).toBe(4);
       expect(pc(of(t, "bass").at(-1)!.m)).toBe(t.key);
       // nothing sounds after the tune's stated length
-      for (const n of t.notes) expect(n.t + n.d).toBeLessThanOrEqual(t.beats + 1e-9);
+      for (const n of t.notes) must(n.t + n.d <= t.beats + 1e-9, () => `${t.name}: a note sounds past the end, at ${n.t}`);
       // the notes come in time order
-      for (let i = 1; i < t.notes.length; i++) expect(t.notes[i].t).toBeGreaterThanOrEqual(t.notes[i - 1].t);
+      for (let i = 1; i < t.notes.length; i++) must(t.notes[i].t >= t.notes[i - 1].t, () => `${t.name}: notes out of order at ${i}`);
     }
   });
 
   it("the rhythm section keeps time: hi-hat on two and four, a ride pattern at a swing tempo", () => {
     for (const t of TUNES) {
       const hats = of(t, "hat");
-      for (const n of hats) expect(n.t % 2).toBe(1);
+      expect(hats.every((n) => n.t % 2 === 1), t.name).toBe(true);
       expect(hats.length).toBe((t.bars.length - 1) * 2);
       const taps = of(t, "tap");
       if (t.mood === "day") {
@@ -279,7 +277,9 @@ describe("the wireless: composition", () => {
         const skip = taps.filter((n) => n.t % 2 === 1.5).length;
         expect(skip).toBeGreaterThanOrEqual((t.bars.length - 1) * 2);
       }
-      for (const n of t.notes) { expect(n.v).toBeGreaterThan(0); expect(n.v).toBeLessThanOrEqual(1); expect((n.t * 2) % 1).toBe(0); }
+      // (one check a tune, not three a note: a hundred thousand notes are looked at here)
+      const bad = t.notes.find((n) => !(n.v > 0 && n.v <= 1) || (n.t * 2) % 1 !== 0);
+      expect(bad, t.name).toBeUndefined();
     }
   });
 

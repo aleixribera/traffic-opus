@@ -168,13 +168,15 @@ export function mixFor(s: Scene, m: Mix = emptyMix()): Mix {
   let worksAll = 0;
   for (let i = 0; i < NW; i++) worksAll += s.works[i];
   m.hum = far ** 1.5 * (0.12 + 0.5 * sat(total / 60 + worksAll / 4));
-  const trees = clamp(s.forest * 1.6 + 0.3 * sat(s.homes / 40) + 0.06);
+  // (forest is the land's, as the map has it: where a town has been built over it, most of the trees are gone)
+  const woods = s.forest * (1 - 0.8 * sat((s.homes + s.shops) / 6));
+  const trees = clamp(woods * 1.6 + 0.3 * sat(s.homes / 40) + 0.06);
   m.birds = 16 * trees * BIRD_SEASON[s.season] * (day + 2.2 * dawn) * closeB;
   if (day + dawn < 0.02) m.birds = 0;
   m.birdGain = closeB * (0.55 + 0.45 * close);
   const rural = 1 - 0.7 * sat((s.homes + s.shops) / 40);
   m.crickets = CRICKET_SEASON[s.season] * night * rural * closeB;
-  m.owl = 0.6 * night * (winter ? 0.4 : 1) * clamp(s.forest * 3) * closeB;
+  m.owl = 0.6 * night * (winter ? 0.4 : 1) * clamp(woods * 3) * closeB;
   m.water = sat(s.water * 5) * within(s.halfH, 200, 1800);
 
   // ---- traffic

@@ -13,9 +13,12 @@ import { compose, swung, type Mood, type NameSource, type Note, type Tune } from
 
 const AHEAD = 0.35;
 /** Each part's level in the band. */
-const LEVEL = { piano: 0.5, comp: 0.26, bass: 0.62, lead: 0.2, tap: 0.3, swish: 0.22, hat: 0.2, kick: 0.3, cym: 0.3 };
+const LEVEL = { piano: 0.5, comp: 0.24, bass: 0.5, lead: 0.26, tap: 0.5, swish: 0.4, hat: 0.32, kick: 0.3, cym: 0.4 };
 /** The band's level into the set, and the set's crackle. */
-const BAND = 0.9, CRACKLE = 0.16;
+const BAND = 0.75, CRACKLE = 0.16;
+/** The band without the set, brought to the same loudness. */
+const CLEAN = 1.75;
+const namesOf = (s: NameSource) => s.company + "|" + s.towns.join("|");
 
 const nearest = (bases: number[], m: number) => { let b = bases[0]; for (const x of bases) if (Math.abs(x - m) < Math.abs(b - m)) b = x; return b; };
 
@@ -44,6 +47,9 @@ export class Wireless {
   private old = true;
   /** when the horn's last note ends (it is not re-tongued inside a slur) */
   private hornEnd = 0;
+  /** the next tune, written ahead while the browser had nothing to do (a tune takes a few ms to write) */
+  private ahead: { tune: Tune; mood: Mood; names: string } | null = null;
+  private asked = false;
 
   constructor(private e: Engine) {
     const ctx = e.ctx;
@@ -51,9 +57,11 @@ export class Wireless {
     this.band = g(BAND);
     // the set: a small speaker in a wooden box
     this.setIn = g(1);
-    const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 125; hp.Q.value = 0.7;
-    const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 3300; lp.Q.value = 0.8;
-    const box = ctx.createBiquadFilter(); box.type = "peaking"; box.frequency.value = 950; box.Q.value = 0.8; box.gain.value = 3.5;
+    // (no bottom at all: the bass is heard by its overtones, as on any small speaker, and stays out of the engines' way)
+    const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 165; hp.Q.value = 0.7;
+    const hp2 = ctx.createBiquadFilter(); hp2.type = "highpass"; hp2.frequency.value = 165; hp2.Q.value = 0.7;
+    const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 3600; lp.Q.value = 0.8;
+    const box = ctx.createBiquadFilter(); box.type = "peaking"; box.frequency.value = 1100; box.Q.value = 0.8; box.gain.value = 4;
     const valve = ctx.createWaveShaper();
     const N = 1025, curve = new Float32Array(N), d = 1.6;
     for (let i = 0; i < N; i++) { const x = (i / (N - 1)) * 2 - 1; curve[i] = Math.tanh(x * d) / Math.tanh(d); }
@@ -61,7 +69,7 @@ export class Wireless {
     this.setOut = g(1);
     this.clean = g(0);
     this.band.connect(this.setIn);
-    this.setIn.connect(hp); hp.connect(lp); lp.connect(box); box.connect(valve); valve.connect(this.setOut); this.setOut.connect(e.music);
+    this.setIn.connect(hp); hp.connect(hp2); hp2.connect(lp); lp.connect(box); box.connect(valve); valve.connect(this.setOut); this.setOut.connect(e.music);
     this.band.connect(this.clean); this.clean.connect(e.music);
     this.crackle = new Loop(e, "bed:crackle", this.setIn);
   }
@@ -74,7 +82,7 @@ export class Wireless {
     this.old = old;
     const t = this.e.now;
     this.setOut.gain.setTargetAtTime(old ? 1 : 0, t, 0.08);
-    this.clean.gain.setTargetAtTime(old ? 0 : 0.8, t, 0.08);
+    this.clean.gain.setTargetAtTime(old ? 0 : CLEAN, t, 0.08);
   }
 
   setOn(on: boolean) {
@@ -111,9 +119,26 @@ export class Wireless {
     return b.has("piano:60") && b.has("piano:48") && b.has("bass:40") && b.has("drum:tap") && b.has("drum:hat");
   }
 
+  /** Write the next tune in an idle moment, so that starting it costs the frame nothing. */
+  private prepare() {
+    if (this.ahead || this.asked) return;
+    const idle = (globalThis as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+    if (!idle) return;
+    this.asked = true;
+    idle(() => {
+      this.asked = false;
+      if (this.ahead) return;
+      const mood = this.mood(), src = this.source();
+      this.ahead = { mood, names: namesOf(src), tune: compose(this.seed(), mood, src, new Set(this.recent)) };
+    }, { timeout: 5000 });
+  }
+
   private begin() {
-    const e = this.e, avoid = new Set(this.recent);
-    const tune = compose(this.seed(), this.mood(), this.source(), avoid);
+    const e = this.e, avoid = new Set(this.recent), mood = this.mood(), src = this.source(), a = this.ahead;
+    this.ahead = null;
+    // (the one written ahead, unless the hour has turned since, or another save was loaded: a night tune is not
+    // played at noon, nor one named after a town that is not on this map)
+    const tune = a && a.mood === mood && a.names === namesOf(src) && !avoid.has(a.tune.name) ? a.tune : compose(this.seed(), mood, src, avoid);
     this.recent.push(tune.name);
     if (this.recent.length > 24) this.recent.shift();
     this.tune = tune;
@@ -161,6 +186,7 @@ export class Wireless {
       if (now >= this.startAt && this.ready()) this.begin();
       return;
     }
+    this.prepare();
     const T = this.tune, ns = T.notes, spb = this.spb, t0 = this.t0;
     // (a tab that slept, a frame that hung: skip what is past instead of playing it all at once)
     while (this.idx < ns.length) {

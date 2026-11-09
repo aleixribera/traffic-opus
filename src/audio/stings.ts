@@ -2,7 +2,7 @@
 // All in F major (mostly its five-note scale), which every tune the wireless plays sits well with (music/compose.ts
 // keeps to F, B flat, C, G and their minors). Each is written as a small score and rendered once into a buffer.
 
-import { type Rnd, fade, norm, rnd, sec, mix } from "./dsp";
+import { type Rnd, fade, level, rnd, sec, mix } from "./dsp";
 import { type Inst, air, note, register } from "./instruments";
 
 export type StingId =
@@ -12,7 +12,7 @@ export type StingId =
 /** [instrument, MIDI note, start (s), length (s), level] */
 type N = [Inst, number, number, number, number];
 
-interface Score { len: number; notes: N[]; reg?: number; extra?: (x: Float32Array, r: Rnd) => void }
+interface Score { len: number; notes: N[]; reg?: number; /** its loudness (RMS), when not the usual */ lvl?: number; extra?: (x: Float32Array, r: Rnd) => void }
 
 // F major: F3 53, A3 57, C4 60, D4 62, F4 65, G4 67, A4 69, C5 72, D5 74, F5 77, G5 79, A5 81, C6 84, D6 86, F6 89
 const chord = (inst: Inst, ms: number[], t: number, d: number, g: number): N[] => ms.map((m) => [inst, m, t, d, g] as N);
@@ -72,7 +72,7 @@ export const STINGS: Record<StingId, Score> = {
   // a town asks for something: two notes on the counter bell
   orderOpen: { len: 1.1, notes: [["glock", 84, 0, 0.5, 0.5], ["glock", 81, 0.15, 0.7, 0.45], ["bell", 77, 0, 0.6, 0.15]] },
   // a load spoiled on the road: a small falling figure
-  spoil: { len: 1.6, notes: [["clar", 72, 0, 0.19, 0.7], ["clar", 69, 0.22, 0.19, 0.6], ["clar", 65, 0.44, 0.19, 0.5], ["clar", 62, 0.66, 0.65, 0.45]] },
+  spoil: { len: 1.6, lvl: 0.1, notes: [["clar", 72, 0, 0.19, 0.7], ["clar", 69, 0.22, 0.19, 0.6], ["clar", 65, 0.44, 0.19, 0.5], ["clar", 62, 0.66, 0.65, 0.45]] },
   // a driver gives up in a jam: two muted notes sinking, and a sigh
   gaveUp: {
     len: 1.5,
@@ -92,5 +92,6 @@ export function renderSting(id: StingId): Float32Array {
   for (const [inst, m, t, d, g] of S.notes) note(x, inst, m, t, d, g);
   if (S.reg !== undefined) register(x, S.reg, 0.9, r);
   S.extra?.(x, r);
-  return norm(fade(x, 0.001, 0.25), 0.7);
+  // (one loudness for them all, however many notes: none louder than 0.7 at its peak)
+  return level(fade(x, 0.001, 0.25), S.lvl ?? 0.13, 0.7);
 }

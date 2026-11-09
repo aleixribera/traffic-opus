@@ -67,6 +67,14 @@ export function brown(n: number, r: Rnd): Float32Array {
   return x;
 }
 
+/**
+ * Noise between two frequencies (pink, cut below `lo` and above `hi`). What the low roars are made of: plain brown
+ * noise puts most of its power under 60 Hz, where a small speaker plays nothing and headphones only thud.
+ */
+export function band(n: number, r: Rnd, lo: number, hi: number): Float32Array {
+  return filt(filt(pink(n, r), "hp", lo, 0.7), "lp", hi, 0.7);
+}
+
 /** Filter in place; `f` may be a function of the sample index (coefficients are then refreshed every 32 samples). */
 export function filt(x: Float32Array, type: FilterType, f: number | ((i: number) => number), q = 0.707): Float32Array {
   const b = new Biquad();

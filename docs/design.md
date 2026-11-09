@@ -1109,3 +1109,61 @@ The game's setting is 1920s-40s American industry: steel, oil, highways, Deco.
   follow their roads: between two country roads the corner is gravel, between two town streets it is kerbed, and
   where they meet the town's pavement stops at the corner. Highways keep their own paved shoulders, with gravel
   past them. Only the roads that change are redrawn, when roads or buildings change.
+
+## Sound
+
+Everything heard is made in the page with the Web Audio API: no audio files, no samples, no libraries. The
+register is the game's own, 1920s-40s America: warm, mechanical, a little dusty, never sharp, modest at the default
+levels so three hours of it don't tire. Code in src/audio/; the measuring bench is `?audiotest`.
+
+- **What is on screen is what is heard.** The listener is the camera. Five times a second the scene on screen is
+  summed up (src/audio/scene.ts: vehicles by class and their speeds, idling queues, jams, works running and their
+  levels, building sites, homes, shops, town size, woods, water, hour, season, zoom), and a pure function
+  (src/audio/mixer.ts `mixFor`) turns that into levels and how often each small event should come. Nothing follows
+  one car unless the camera is down at street level.
+- **Air.** A wind bed, fuller and lower from far up, thinner and colder in winter. Birdsong by day near trees:
+  several species, most at dawn (the chorus), few in winter, none at night; a wood under a built-up town thins
+  out. Crickets and an owl on summer nights. Water laps near the shore.
+- **Traffic.** Engine beds per class (car, light and heavy truck, tractor, train) and tyre noise that rises with
+  speed; they swell as the camera comes down and give way to wind as it goes up. At street level the three nearest
+  vehicles pass by on their own voices: left to right with the camera's turn, louder at the middle, with a little
+  Doppler. A queue idles lower than moving traffic. In a jam a klaxon or a truck horn now and then, never a
+  chorus. Air brakes and a door at a works' gate.
+- **Works.** Each kind has its own bed, heard only while it runs and louder with its level: the saw at a sawmill
+  or furniture works, the furnace at a smelter, the crusher at a mine, quarry or pit, the power station's turbine,
+  the oil well's pump jack, steam and hiss at a refinery, chemical or rubber works, light machinery at a food
+  plant, creamery or electronics works, a tractor at a farm, dairy or logging camp, the cement kiln, the
+  glassworks, the assembly line at the motor and machine works. Their events over it: a blast at the quarry, a
+  clank, a steam release, an axe in the woods, a cow, a rooster at dawn, bottles clinking. A building site hammers
+  and saws by day. Warehouses, depots and landmarks are quiet.
+- **Towns.** A murmur that grows with the town, by day; a shop bell, a dog, children in mid-afternoon. The town
+  hall clock strikes the hour (three strokes at three). A church bell on every seventh game day.
+- **Moments** are short stings in one key (F), on the interface bus so the world never buries them: a milestone,
+  a new town, a town grown, each season, a convoy leaving and arriving, a landmark, a town order opened and done,
+  spoiled goods, a town giving up.
+- **The interface** is a desk: typewriter keys for clicks, a brass switch for tools and toggles, a ledger stamp
+  for placing, a cash drawer for money, a gravel crunch when a road is laid (longer for a longer road), a dull
+  double knock for "can't do that". Never two within 40 ms. Money pops over the map tick softly, panned to
+  where they are.
+- **The wireless.** A swing combo that never plays the same tune twice: piano, a walking upright bass, brushes and
+  a hi-hat, and one lead (trumpet or clarinet). The tune is composed, not looped
+  (src/audio/music/compose.ts, pure and seeded): a form (twelve-bar blues, a minor blues, a 32-bar song, a ballad), an
+  intro, a head, solos with call and response, an out-chorus and a tag. Its mood follows the game (day, night,
+  winter: slower and sparser at night, more clarinet in winter), and its name uses the save's own towns and company ("Market Day in Alder Run"). By
+  default it comes through an old set (narrow band, a little crackle) and sits under the world; the Sound dialog
+  can switch the old tone off. The wireless control by the clock turns it on and off, skips to the next tune, and
+  shows the name. It keeps playing while the game is paused.
+- **Speed and pause.** A pause ducks the world by about 11 dB and leaves the wireless alone. At 2x and 4x nothing
+  is pitched up: events only come a little denser.
+- **Settings** (pause menu, Sound): Master, Music, World and Interface sliders, Mute, and the old wireless tone,
+  saved on this computer (`flowtown.audio`). **N** mutes.
+- **Budget.** Every sound is a short buffer rendered once in a worker from page load (141 of them, 24 kHz), then
+  played and looped: beds glide with `setTargetAtTime`, nothing is made per frame. At most 48 sources sound at
+  once, with the least important refused first. The mix goes through a sub filter, a gentle compressor and a soft
+  ceiling. Sound starts on the first click or key, stops scheduling while the tab is hidden, and picks up again
+  after the browser suspends it.
+- **How it is checked** (src/audio/harness.ts, `await __audiotest.run()` on a `?audiotest` page). The same engine
+  renders each layer offline and is measured: no clipping, no clicks, no silence where sound belongs, the
+  wireless 3 to 14 dB under a busy street, the full mix modest, a pass-by crossing from left to right, the clock
+  striking three. `__audiotest.show("music", 2, 26)` draws a spectrogram; `capture(30)` tapes the running game's
+  scene for the "street" renders. The mixer and the composer have their own unit tests (tests/audio.*.test.ts).

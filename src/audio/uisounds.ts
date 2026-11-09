@@ -42,16 +42,17 @@ export const UI: Record<UiId, (r: Rnd) => Float32Array> = {
   /** placing a works: a solid thump, then the ledger stamp */
   place: (r) => {
     const x = buf(0.42);
-    partial(x, 0, 68, 1, 0.07, undefined, 0, 0.003); partial(x, 0, 136, 0.4, 0.04, undefined, 0, 0.003);
-    mix(x, burst(r, 0.08, "lp", 300, 0.8, 0.02), 0, 0.8);
+    // (the weight is in the low hundreds, not under them: a thump a small speaker can still play)
+    partial(x, 0, 92, 0.45, 0.06, undefined, 0, 0.003); partial(x, 0, 184, 0.5, 0.04, undefined, 0, 0.003);
+    mix(x, burst(r, 0.08, "bp", 330, 0.7, 0.02), 0, 1.3);
     const s = sec(0.13);
-    partial(x, s, 118, 0.7, 0.035); mix(x, burst(r, 0.05, "bp", 1500, 1, 0.01), s, 0.6); mix(x, burst(r, 0.04, "lp", 600, 0.8, 0.012), s, 0.6);
+    partial(x, s, 165, 0.6, 0.035); partial(x, s, 430, 0.3, 0.02); mix(x, burst(r, 0.05, "bp", 1500, 1, 0.01), s, 1.1); mix(x, burst(r, 0.04, "bp", 600, 0.8, 0.012), s, 0.9);
     return norm(fade(x, 0.001, 0.05), 0.7);
   },
   /** something built that is not a road: a mallet and a peg */
   build: (r) => {
     const x = buf(0.22);
-    partial(x, 0, 96, 0.8, 0.045, undefined, 0, 0.002); mix(x, burst(r, 0.05, "bp", 700, 1.5, 0.012), 0, 0.8);
+    partial(x, 0, 130, 0.55, 0.04, undefined, 0, 0.002); partial(x, 0, 262, 0.25, 0.025, undefined, 0, 0.002); mix(x, burst(r, 0.05, "bp", 700, 1.5, 0.012), 0, 1.3);
     partial(x, sec(0.075), 640, 0.35, 0.025); partial(x, sec(0.075), 1540, 0.2, 0.015); mix(x, tick(r, 1900), sec(0.075), 0.5);
     return norm(fade(x, 0.0008, 0.03), 0.6);
   },
@@ -65,17 +66,17 @@ export const UI: Record<UiId, (r: Rnd) => Float32Array> = {
   /** the bulldozer: a crunch, and bits coming down after it */
   remove: (r) => {
     const x = buf(0.5);
-    mix(x, shape(filt(white(sec(0.3), r), "lp", 520, 0.8), (t) => Math.min(1, t / 0.006) * Math.exp(-t / 0.07)), 0, 1.2);
-    partial(x, 0, 58, 0.7, 0.07, undefined, 0, 0.004);
-    for (let k = 0; k < 16; k++) mix(x, burst(r, 0.02, "bp", 500 + r() * 1600, 2, 0.005), sec(0.04 + r() * 0.3), 0.4 * r());
+    mix(x, shape(filt(white(sec(0.3), r), "bp", 380, 0.6), (t) => Math.min(1, t / 0.006) * Math.exp(-t / 0.07)), 0, 1.2);
+    partial(x, 0, 84, 0.25, 0.06, undefined, 0, 0.004);
+    for (let k = 0; k < 16; k++) mix(x, burst(r, 0.02, "bp", 500 + r() * 1600, 2, 0.005), sec(0.04 + r() * 0.3), 0.7 * r());
     return norm(fade(x, 0.001, 0.06), 0.6);
   },
   /** no: two soft, low knocks */
   error: (r) => {
     const x = buf(0.3);
-    for (const [at, f] of [[0, 155], [0.11, 124]] as const) {
-      partial(x, sec(at), f, 0.9, 0.05, undefined, 0, 0.006); partial(x, sec(at), f * 2, 0.25, 0.03, undefined, 0, 0.006);
-      mix(x, burst(r, 0.03, "lp", 300, 0.8, 0.008, 0.003), sec(at), 0.3);
+    for (const [at, f] of [[0, 196], [0.11, 156]] as const) {
+      partial(x, sec(at), f, 0.8, 0.05, undefined, 0, 0.006); partial(x, sec(at), f * 2, 0.4, 0.035, undefined, 0, 0.006); partial(x, sec(at), f * 3, 0.14, 0.025, undefined, 0, 0.006);
+      mix(x, burst(r, 0.03, "bp", 420, 0.8, 0.008, 0.003), sec(at), 0.4);
     }
     return norm(fade(x, 0.002, 0.05), 0.5);
   },
@@ -119,8 +120,8 @@ export const UI: Record<UiId, (r: Rnd) => Float32Array> = {
   /** the roller coming to rest at the end of a new road */
   roadEnd: (r) => {
     const x = buf(0.22);
-    partial(x, 0, 74, 0.9, 0.05, undefined, 0, 0.004); mix(x, burst(r, 0.07, "lp", 380, 0.8, 0.02, 0.002), 0, 0.9);
-    mix(x, burst(r, 0.03, "bp", 1800, 1, 0.006), sec(0.004), 0.25);
+    partial(x, 0, 125, 0.22, 0.04, undefined, 0, 0.004); mix(x, burst(r, 0.07, "bp", 300, 0.7, 0.02, 0.002), 0, 1.4);
+    mix(x, burst(r, 0.03, "bp", 1800, 1, 0.006), sec(0.004), 0.5);
     return norm(fade(x, 0.001, 0.04), 0.55);
   },
 };

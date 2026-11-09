@@ -10,9 +10,9 @@
 @media (max-width: 1340px) { .wl-name { display: none; } }
 
 /* the Sound dialog */
-.dialog.sound { width: min(380px, calc(100vw - 24px)); }
+.dialog.sound { width: min(400px, calc(100vw - 24px)); }
 .snd { display: flex; flex-direction: column; }
-.snd-row { display: grid; grid-template-columns: 132px 1fr 30px; align-items: center; gap: 12px; padding: 9px 2px; border-bottom: 1px solid var(--rule); }
+.snd-row { display: grid; grid-template-columns: 156px 1fr 30px; align-items: center; gap: 12px; padding: 9px 2px; border-bottom: 1px solid var(--rule); }
 .snd-n { display: flex; flex-direction: column; gap: 2px; font-size: 15px; font-weight: 600; color: var(--cream); line-height: 1.1; }
 .snd-n .muted { font: 400 var(--t-xs)/1.2 var(--f-text); color: var(--cream-3); }
 .snd-row output { text-align: right; color: var(--cream-2); font-size: var(--t-sm); }

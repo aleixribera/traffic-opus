@@ -11,15 +11,17 @@ import type { ShotId } from "./sounds";
 
 /** Each layer's level when the mixer says 1 (set by ear's stand-in: the measured renders, see audio/harness.ts). */
 export const TRIM = {
-  wind: 1.5, air: 0.5, hum: 2.2, tyres: 1.5, water: 0.55, crickets: 0.5, murmur: 0.75,
-  eng: 0.85, idle: 0.6, pass: 1.1, works: 0.85,
-  bird: 0.32, owl: 0.3, horn: 0.5, gate: 0.5, event: 0.55, town: 0.4, clock: 0.6, build: 0.7, pop: 0.8,
+  wind: 0.6, air: 0.4, hum: 0.8, tyres: 2.4, water: 0.55, crickets: 0.5, murmur: 1.0,
+  eng: 1.7, idle: 1.1, pass: 1.5, works: 2.1,
+  bird: 0.24, owl: 0.3, horn: 0.5, gate: 0.5, event: 0.55, town: 0.4, clock: 0.6, build: 0.7, pop: 0.8,
 };
 
 /** How many works beds sound at once (the loudest in view), and how many vehicles are heard one by one. */
 const WORKS_SLOTS = 4, PASS_SLOTS = 3;
 const PASS_KEYS = ["bed:car", "bed:light", "bed:heavy", "bed:train"];
 const PASS_GAIN = [0.8, 0.95, 1.1, 1.15];
+
+const clampPan = (p: number) => (p < -1 ? -1 : p > 1 ? 1 : p);
 
 const E = { bird: 0, owl: 1, horn: 2, gate: 3, clank: 4, steam: 5, blast: 6, axe: 7, rooster: 8, cow: 9, hornTest: 10, clink: 11, build: 12, shopbell: 13, dog: 14, children: 15 } as const;
 const NE = 16;
@@ -67,7 +69,7 @@ export class World {
     bus.connect(this.windF); this.windF.connect(this.windG); this.windG.connect(out);
     const airF = filter("highpass", 2600, 0.7); this.airG = gain();
     bus.connect(airF); airF.connect(this.airG); this.airG.connect(out);
-    const humF = filter("lowpass", 150, 0.7); this.humG = gain();
+    const humF = filter("bandpass", 140, 0.8); this.humG = gain();
     bus.connect(humF); humF.connect(this.humG); this.humG.connect(out);
     this.tyreF = filter("bandpass", 1000, 0.8); this.tyreG = gain();
     bus.connect(this.tyreF); this.tyreF.connect(this.tyreG); this.tyreG.connect(out);
@@ -228,11 +230,11 @@ export class World {
         let p = this.pass.find((x) => x.id === n.id);
         if (!p) {
           // a free voice: one whose vehicle has gone and whose sound has died away
-          p = this.pass.find((x) => !x.fresh && !x.loop.on && !w.near.some((y) => y.id === x.id));
+          p = this.pass.find((x) => !x.fresh && !x.loop.on && (x.id < 0 || !w.near.some((y) => y.id === x.id)));
           if (!p) continue;
           p.id = n.id; p.cls = n.cls; p.pan = n.pan;
           p.loop.retune(PASS_KEYS[n.cls]);
-          p.loop.pan?.pan.setValueAtTime(n.pan * 0.9, t);
+          p.loop.pan?.pan.setValueAtTime(clampPan(n.pan * 0.9), t);
         }
         p.fresh = true;
         // a touch of Doppler: higher coming in towards the middle, lower going away
@@ -242,7 +244,7 @@ export class World {
         // (loudest in the middle of the screen: it passes by)
         const g = m.street * TRIM.pass * PASS_GAIN[p.cls] * n.w ** 2 * (0.5 + 0.5 * Math.min(1, n.v / 10));
         p.loop.set(g, dt, (0.82 + 0.4 * Math.min(1, n.v / 20)) * (1 + dop), 0.22);
-        p.loop.pan?.pan.setTargetAtTime(n.pan * 0.9, t, 0.15);
+        p.loop.pan?.pan.setTargetAtTime(clampPan(n.pan * 0.9), t, 0.15);
       }
     }
     for (const p of this.pass) if (!p.fresh) { p.loop.set(0, dt, 1, 0.2); if (!p.loop.on) p.id = -1; }
