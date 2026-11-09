@@ -416,15 +416,18 @@ itself across modes; you build tracks, docks and the transfer points, never line
 - Every resident is simulated: a home in a town, a job at one of your buildings within reach, a commute in
   traffic. Buses carry workers to plants and take cars off the roads your trucks need.
 - **A gentle daily rhythm (2026-11-09, owner: "realistic schedules might be too much, maybe make it a bit
-  noticeable").** Plant day shifts start at 7:00, 8:00 or 9:00 (60%, a third each), with a 15:00 shift (25%) and a
-  night shift at 23:00 (15%); shops open at 9:00 (65%) or 11:00 and close by 19:00. Someone who gets to work early
-  waits for the shift; people stay on up to two hours after it, evenly spread, so the evening rush is broad. About
-  one in seven of the early day shifts goes out to the shops at lunch and back after (a shop's own staff to another
-  shop), and people without a job run errands at any hour, most in the daytime. Trucks keep running round the
-  clock. In the showcase (three days, cars on the road by hour) the busiest hour is 1.58 times the quietest
-  (24 in the small hours, 35-38 over lunch and at 17:00-18:00); before, it was 2.16 with no daily shape at all
-  (peaks at 5:00, 15:00 and 23:00 from the shift changes, the trough mid-morning). Older saves move 14:00 shop
-  shifts to 11:00 on load.
+  noticeable"; reshaped the same day so the rushes, not lunch and midnight, are the busiest).** Plant day shifts start
+  at 8:00, 9:00 or 10:00 (42%, a third each); plants also run an early shift from 4:00-6:00 (18%), a late one from
+  12:00, 14:00 or 17:00 (32%) and a skeleton night shift from 23:00 (8%); shops open at 9:00, 10:00 or 11:00 and close
+  by 19:00. A commute takes a game hour or two at this time scale, so people are at work 7 hours from the shift's
+  start and stay on up to 1.5 more, evenly spread. Someone who gets to work early waits for the shift. A quarter of
+  the 8:00 and 9:00 shifts go out to the shops at lunch and back after (a shop's own staff to another shop), and
+  people without a job run errands at any hour, most from 9:00 to 16:00. Trucks keep running round the clock. In
+  the showcase (cars on the road by hour, twelve three-day runs averaged) the morning rush peaks at 7:00-8:00 (40) and
+  the evening one at 18:00 (40), lunch is a bump at 13:00 (34), and 0:00-5:00 are the quietest (24-26): the busiest
+  hour is 1.7 times the quietest. Before, it was 2.16 with no daily shape (peaks from the shift changes at 5:00,
+  15:00 and 23:00); the first soft version was 1.58 but busiest at 13:00 and midnight. A save from before the new
+  shifts moves everyone to one of them on load (the same one each time, by who they are).
 - **Needs** open with town size, and a town grows past each size only while that tier is supplied:
 
   | Size | Population | Needs |

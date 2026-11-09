@@ -340,7 +340,7 @@ export class Society {
           return;
         }
         // a stop at the shops on the way home now and then
-        const shop = job && rng() < 0.15 ? this.pickShop(job) : undefined;
+        const shop = job && h < 21 && rng() < 0.1 ? this.pickShop(job) : undefined;
         if (job && shop) { this.travel(c, job, shop, "shop"); return; }
         this.goHome(c);
         return;
@@ -369,7 +369,7 @@ export class Society {
         if (job.access && job.built >= 1 && !job.abandoned) { this.travel(c, home, job, "work"); return; }
       }
       // an evening out on the way through the day
-      if (h >= 16 && h < 21 && rng() < 0.3) {
+      if (h >= 16 && h < 21 && rng() < 0.15) {
         const shop = this.pickShop(home);
         if (shop) { this.travel(c, home, shop, "leisure"); return; }
       }
@@ -571,7 +571,8 @@ export class Society {
       id: h.id, home: h.home, since: h.since,
       m: h.members.map((c) => [c.id, c.age, c.job, c.shift]),
     }));
-    return { hhs, nextC: this.nextC, nextH: this.nextH };
+    // (shifts: which mix of shifts the save's come from, see SHIFTS)
+    return { hhs, nextC: this.nextC, nextH: this.nextH, shifts: SHIFTS as number | undefined };
   }
 
   load(d: ReturnType<Society["toJSON"]>) {
@@ -586,8 +587,11 @@ export class Society {
         if (job >= 0 && this.g.buildings.byId.has(job)) {
           c.job = job;
           this.staff.set(job, this.workersAt(job) + 1);
-          // (older saves: the 14:00 shop shift is now 11:00)
-          if (shift === 14) c.shift = 11;
+          // (older saves: everyone moves to a shift of today's mix, the same one for the same person every load)
+          if (d.shifts !== SHIFTS) {
+            const b = this.g.buildings.byId.get(job)!;
+            c.shift = shiftFor(b.zone ? ZONE_GROUP[b.zone] : "plant", (Math.imul(id + 13, 2654435761) >>> 0) / 4294967296);
+          }
         }
       }
       this.households.set(hh.id, hh);
@@ -629,38 +633,46 @@ export function estTime(a: V2, b: V2): number {
   return 12 + (dist(a, b) * 1.35) / 11;
 }
 
-/** Hours in a shift. */
-export const SHIFT_LEN = 8;
-/** Up to this many hours someone stays on after their shift (evenly spread). */
-export const OVERTIME = 2;
-/** Share of day-shift workers who go out to the shops for lunch (a small noon bump on the roads). */
-export const LUNCH_OUT = 0.15;
-/** A shift that starts in the morning (and ends by the evening). */
-export const isDayShift = (shift: number) => shift >= 6 && shift <= 11;
-/** A shift with its lunch break around noon (8:00 and 9:00; the 11:00 shop shift eats before it comes in). */
-export const lunchesAtNoon = (shift: number) => shift >= 6 && shift <= 9;
+/**
+ * Hours someone is at work from the start of their shift (a commute here is a game hour or two each way at this
+ * time scale, so a working day door to door is about eleven).
+ */
+export const SHIFT_LEN = 7;
+/** Up to this many hours someone stays on after their shift (evenly spread: the evening rush is spread out). */
+export const OVERTIME = 1.5;
+/** Share of the 8:00 and 9:00 shifts who go out to the shops for lunch (the noon bump on the roads). */
+export const LUNCH_OUT = 0.25;
+/** A shift that starts in the morning and ends by the evening (most jobs: they make the two rushes). */
+export const isDayShift = (shift: number) => shift >= 7 && shift <= 11;
+/** A shift with its lunch break around noon (8:00 and 9:00; the later ones eat before they come in). */
+export const lunchesAtNoon = (shift: number) => shift >= 7 && shift <= 9;
+
+/** The mix of shifts shiftFor gives (a save from another mix moves its people to this one on load). */
+export const SHIFTS = 2;
 
 /**
- * Shift start for a new job. Most work is a day shift starting between 7 and 9 (shops at 9, some at 11 to cover the
- * evening), so there is a morning rush, spread over a few hours rather than one spike; plants keep a late shift and
- * a night shift, so the roads never go dead.
+ * Shift start for a new job. Most work is a day shift from 8, 9 or 10 (shops from 9, 10 or 11, closing by 19:00); with
+ * the commute, the morning rush is on the roads around 7:00-9:00 and the evening one around 17:00-19:00. Plants also
+ * run an early shift from 4, 5 or 6 (on the roads in the small hours, home after lunch), a late shift from 12, 14 or
+ * 17 (in over the middle of the day, home in the evening or after midnight) and a skeleton night shift from 23:00, so
+ * the roads are never dead but quietest in the small hours: the busiest hour is about 1.7 times the quietest.
  */
 export function shiftFor(group: string, r: number): number {
-  if (group === "com") return r < 0.65 ? 9 : 11;
-  if (r < 0.6) return 7 + Math.min(2, Math.floor(r / 0.2));
-  return r < 0.85 ? 15 : 23;
+  if (group === "com") return r < 0.35 ? 9 : r < 0.7 ? 10 : 11;
+  if (r < 0.18) return 4 + Math.floor(r / 0.06);
+  if (r < 0.6) return 8 + Math.floor((r - 0.18) / 0.14);
+  if (r < 0.92) return r < 0.66 ? 12 : r < 0.82 ? 14 : 17;
+  return 23;
 }
 
 /**
- * How likely someone without a job runs an errand at hour h: mostly in the daytime, a little more around lunch and
- * late afternoon, a few early or late, and now and then at night (the roads are quieter at night, never dead).
+ * How likely someone without a job runs an errand at hour h: mostly in the daytime, a few early or late, and now and
+ * then at night (the roads are quieter at night, never dead).
  */
 export function errandWeight(h: number): number {
-  if (h < 6) return 0.3;
-  if (h < 9 || h >= 19) return 0.6;
-  if (h >= 11 && h < 14) return 1.5;
-  if (h >= 16 && h < 19) return 1.1;
-  return 1.3;
+  if (h < 6) return 0.4;
+  if (h < 9 || h >= 16) return 0.6;
+  return 1.6;
 }
 
 function pickShift(rng: () => number) {
