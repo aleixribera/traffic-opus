@@ -50,6 +50,13 @@ export function loadSettings(): AudioSettings {
   return s;
 }
 
+/**
+ * Stings for trouble that keeps happening are not played again within this long (s): a works on a road too slow for
+ * its milk lands every load spoiled, and the game asks for the sting at each one (as the ticker names a spoiled
+ * plant once an hour, not once a truck).
+ */
+const STING_GAP: Partial<Record<StingId, number>> = { spoil: 30 };
+
 export class GameAudio {
   settings: AudioSettings = loadSettings();
   /** the tune the wireless is playing ("" between tunes or when it is off) */
@@ -66,10 +73,13 @@ export class GameAudio {
   private acc = LOOK;
   private lastUi = -1;
   private stingFree = 0;
+  /** when each sting with a STING_GAP was last played (context time) */
+  private stingAt = new Map<StingId, number>();
   private game: Game | null = null;
   private quits = 0;
   private quitAt = -100;
   private idleT = 0;
+  private faults = 0;
   /** what update() costs: a running mean and the worst (ms), over `frames` frames; the worst look at the scene and the worst turn of the wireless */
   cost = { ms: 0, max: 0, frames: 0, look: 0, radio: 0 };
 
@@ -151,7 +161,9 @@ export class GameAudio {
     const t = e.now;
     if (t - this.lastUi < 0.04) return;
     const d = Math.max(0.22, Math.min(1.5, 0.2 + len / 320));
-    this.lastUi = t + d;
+    // (the 40 ms rule, from when the gravel starts: not from when it ends, which left the desk mute while it ran,
+    // so an undo, a "can't do that" or the next stretch of road within a second and a half made no sound at all)
+    this.lastUi = t;
     e.shot("bed:gravel", e.ui, UI_GAIN * 1.5, { prio: 2, attack: 0.05, dur: d, release: 0.05, rate: 0.95 + 0.1 * e.rnd() });
     e.shot("ui:roadEnd", e.ui, UI_GAIN, { prio: 2, when: t + d + 0.02 });
   }
@@ -166,6 +178,11 @@ export class GameAudio {
     if (!b) return;
     const t = e.now, at = Math.max(t, this.stingFree);
     if (at - t > 5) return;
+    const gap = STING_GAP[id];
+    if (gap !== undefined) {
+      if (at - (this.stingAt.get(id) ?? -Infinity) < gap) return;
+      this.stingAt.set(id, at);
+    }
     if (e.shot(`sting:${id}`, e.ui, STING_GAIN, { prio: 2, when: at })) this.stingFree = at + b.duration * 0.8;
   }
 
@@ -177,7 +194,24 @@ export class GameAudio {
 
   // ---- every frame
 
+  /**
+   * Once a frame. The game's frame loop must never stop for the sound: a fault in here is caught, and after three
+   * frames of them in a row the sound switches itself off (and says so on the console) rather than throw every frame.
+   */
   update(dt: number) {
+    if (!this.eng) return;
+    try {
+      this.step(dt);
+      this.faults = 0;
+    } catch (err) {
+      if (++this.faults < 3) return;
+      console.error("Sound stopped after an error", err);
+      try { void (this.eng.ctx as AudioContext).suspend?.(); } catch { /* already gone */ }
+      this.eng = null;
+    }
+  }
+
+  private step(dt: number) {
     const e = this.eng;
     if (!e) return;
     const t0 = performance.now();

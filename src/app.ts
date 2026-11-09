@@ -586,6 +586,8 @@ export class App {
     this.forest = new Forest(g.terrain);
     this.forest.setShapes(clearShapes(g.net, g.buildings.list));
     this.forestDue = false;
+    // (the old game's ground and trees hand back what they hold on the GPU: a chunk's textures are freed by nothing else)
+    this.terrain3d?.dispose();
     this.terrain3d = new Terrain3D(g.terrain, this.forest, small);
     this.trees3d?.dispose();
     this.trees3d = new Trees3D(this.models.trees, this.forest);

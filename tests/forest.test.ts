@@ -8,7 +8,7 @@ import { Game } from "../src/game/city";
 import { planRoad, snap, type Snap } from "../src/roads/planner";
 import { F, MOUNTAIN_STEPS } from "../src/world/gen";
 import { Terrain } from "../src/world/terrain";
-import { CLEAR_RANGE, clearShapes, crownCleared } from "../src/render/clearing";
+import { CLEAR_RANGE, clearShapes, crownCleared, type ClearShape } from "../src/render/clearing";
 import {
   CANOPY, EVERGREEN, FOREST_R, Forest, H, SCRUB, TILE_CELLS, TILE_M, TREE_CELL, TREE_MODELS, crownRadius, scrubDensity, thash, thashf, treeModel,
   type TreeTile,
@@ -215,5 +215,51 @@ describe("trees make way for what is built", () => {
     expect(back.alive.reduce((n, a) => n + a, 0)).toBe(before);
     // nothing changed: nothing to look at again
     expect(forest.setShapes(clearShapes(g.net, g.buildings.list))).toEqual([]);
+  });
+
+  it("tells what changed from the shapes alone: the same ones again are nothing new; one moved a few centimetres, cleared harder, or turned from an outline into a line is", () => {
+    const f = new Forest(new Terrain(7));
+    const pts = (x: number): V2[] => [{ x, y: 0 }, { x: x + 10, y: 0 }, { x: x + 10, y: 10 }, { x, y: 10 }];
+    const sq = (x: number, hard = 2): ClearShape => ({ poly: pts(x), hard });
+    expect(f.setShapes([sq(0), sq(100)])!.length).toBe(2);
+    // (new objects every time, as clearShapes makes them: only what they are counts)
+    expect(f.setShapes([sq(0), sq(100)])).toEqual([]);
+    expect(f.setShapes([sq(100), sq(0)])).toEqual([]);
+    // each change: the old shape's ground and the new one's
+    expect(f.setShapes([sq(0), sq(100.04)])!.length).toBe(2);
+    expect(f.setShapes([sq(0), sq(100.04, 2.5)])!.length).toBe(2);
+    expect(f.setShapes([sq(0), { line: pts(100.04), hard: 2.5 }])!.length).toBe(2);
+    expect(f.setShapes([sq(0), { line: pts(100.04).reverse(), hard: 2.5 }])!.length).toBe(2);
+    expect(f.setShapes([sq(0), { line: pts(100.04).reverse().slice(1), hard: 2.5 }])!.length).toBe(2);
+    expect(f.setShapes([sq(0)])!.length).toBe(1);
+    expect(f.setShapes([sq(0)])).toEqual([]);
+    // and the trees still find it: a crown over the square is cleared, one well away is not
+    expect(f.cleared(5, 5, 1)).toBe(true);
+    expect(f.cleared(60, 5, 1)).toBe(false);
+  });
+
+  it("a tile dropped from memory and worked out again is never taken for the one that was kept: its version is new", () => {
+    // (the 3D trees keep a tile's instances by its version, render/trees3d.ts wildTile, and they keep them longer
+    // than the forest keeps the tile: a version that started again from nothing would bring the old trees back)
+    const g = game();
+    const { wood } = findTiles(new Forest(g.terrain));
+    const forest = new Forest(g.terrain, 8);
+    const x0 = wood.ti * TILE_M, y0 = wood.tj * TILE_M;
+    lay(g, { x: x0 + 8, y: y0 + 20 }, { x: x0 + TILE_M - 8, y: y0 + TILE_M - 30 });
+    forest.setShapes(clearShapes(g.net, g.buildings.list));
+    const kept = forest.tile(wood.ti, wood.tj);
+    const v1 = kept.version, alive1 = Array.from(kept.alive);
+    // the view goes elsewhere, over more ground than the forest keeps: the tile is dropped
+    for (let i = 1; i <= 9; i++) forest.tile(wood.ti + 100 + i, wood.tj);
+    // a second road through the same wood meanwhile
+    lay(g, { x: x0 + 60, y: y0 + 8 }, { x: x0 + TILE_M - 8, y: y0 + 50 });
+    forest.setShapes(clearShapes(g.net, g.buildings.list));
+    const again = forest.tile(wood.ti, wood.tj);
+    expect(again).not.toBe(kept);
+    expect(Array.from(again.alive)).not.toEqual(alive1);
+    expect(again.version).not.toBe(v1);
+    // and a tile that only came back as it was is still a new version (worked out again, never an old one's number)
+    for (let i = 1; i <= 9; i++) forest.tile(wood.ti + 200 + i, wood.tj);
+    expect(forest.tile(wood.ti, wood.tj).version).toBeGreaterThan(again.version);
   });
 });

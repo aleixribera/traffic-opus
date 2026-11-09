@@ -15,6 +15,16 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.85", date: "2026-11-10", title: "Second look",
+    notes: [
+      "The spoiled-goods sound plays once, not for every late truck on a slow route.",
+      "Laying a road no longer silences undo and the other desk sounds for a second.",
+      "Trees far from the first town no longer flutter when the wind turns, least of all at high speed.",
+      "A wood cleared for a road stays cleared after a long session.",
+      "Building is smoother on a big map, and loading a save no longer piles up memory.",
+    ],
+  },
+  {
     v: "v0.0.84", date: "2026-11-09", title: "A world that moves",
     notes: [
       "Trees are real trees now: forests, parks, squares, street trees and front gardens stand up and sway in the wind.",
