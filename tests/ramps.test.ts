@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { RoadNetwork, type Connector, type RSeg } from "../src/roads/network";
-import { Traffic, type Trip } from "../src/sim/traffic";
+import { DRIVERS, Traffic, type Trip } from "../src/sim/traffic";
 import { hermiteCubic, minRadius, norm, polyAt, polyClosest, rampCurve, sampleCubic, straightCubic, v2, type V2 } from "../src/core/math";
 import type { RoadTypeId } from "../src/config";
 import type { Access } from "../src/sim/router";
@@ -39,6 +39,43 @@ function motorway() {
   net.commit();
   net.rebuild();
   return { net, A, D, M, B, s1, s2, s3, off, on };
+}
+
+/**
+ * The slip-road traffic: `n` cars (one every `every` s) along the main line, off at the off-ramp and on from the
+ * on-ramp; or, `through`, nobody off and three in four along the main line to a stop just past the merge. Also how
+ * long a car stood still at most in the inner lane of the main line before the merge.
+ */
+function slipTraffic(n = 24, every = 1.6, secs = 240, through = false) {
+  const { net, s1, s2, s3, off, on } = motorway();
+  const acc = (seg: number, frac: number): { a: Access; side: 1 | -1 } => {
+    const g = net.segGeom.get(seg)!;
+    const s = g.center.length * frac;
+    return { a: { seg, s, p: polyAt(g.center, s) }, side: 1 };
+  };
+  let arrived = 0, failed = 0;
+  const tr = new Traffic(net, { arrive: () => { arrived++; }, fail: () => { failed++; } });
+  const trip = (): Trip => ({ kind: "shop", from: 0, to: 0, resident: -1, startT: 0, freeFlow: 0 });
+  const reqs: [ReturnType<typeof acc>, ReturnType<typeof acc>][] = [];
+  for (let i = 0; i < n; i++) reqs.push(through ? (i % 4 === 1 ? [acc(on, 0.03), acc(s3, 0.9)] : [acc(s1, 0.1), acc(s3, 0.9)]) : i % 3 === 0 ? [acc(s1, 0.1), acc(off, 0.97)] : i % 3 === 1 ? [acc(on, 0.03), acc(s3, 0.9)] : [acc(s1, 0.1), acc(s3, 0.9)]);
+  let i = 0;
+  const still = new Map<number, number>();
+  let stood = 0;
+  for (let t = 0; t < secs; t += 1 / 30) {
+    if (i < reqs.length && t > i * every) {
+      const [f, to] = reqs[i++];
+      tr.request({ from: f.a, fromSide: f.side, to: to.a, toSide: to.side, trip: trip(), truck: i % 5 === 0, tries: 0, wait: 0 });
+    }
+    tr.step(1 / 30);
+    for (const v of tr.vehicles) {
+      const e = v.edge as { seg?: number; idx?: number; kind: string };
+      if (e.kind !== "lane" || e.seg !== s2 || e.idx !== 1 || v.v > 0.5) { still.delete(v.id); continue; }
+      const w = (still.get(v.id) ?? 0) + 1 / 30;
+      still.set(v.id, w);
+      stood = Math.max(stood, w);
+    }
+  }
+  return { arrived, failed, stood };
 }
 
 describe("Slip roads", () => {
@@ -82,27 +119,34 @@ describe("Slip roads", () => {
   });
 
   it("drives cars off and onto the motorway without stalls", () => {
-    const { net, s1, s3, off, on } = motorway();
-    const acc = (seg: number, frac: number): { a: Access; side: 1 | -1 } => {
-      const g = net.segGeom.get(seg)!;
-      const s = g.center.length * frac;
-      return { a: { seg, s, p: polyAt(g.center, s) }, side: 1 };
-    };
-    let arrived = 0, failed = 0;
-    const tr = new Traffic(net, { arrive: () => { arrived++; }, fail: () => { failed++; } });
-    const trip = (): Trip => ({ kind: "shop", from: 0, to: 0, resident: -1, startT: 0, freeFlow: 0 });
-    const reqs: [ReturnType<typeof acc>, ReturnType<typeof acc>][] = [];
-    for (let i = 0; i < 24; i++) reqs.push(i % 3 === 0 ? [acc(s1, 0.1), acc(off, 0.97)] : i % 3 === 1 ? [acc(on, 0.03), acc(s3, 0.9)] : [acc(s1, 0.1), acc(s3, 0.9)]);
-    let i = 0;
-    for (let t = 0; t < 240; t += 1 / 30) {
-      if (i < reqs.length && t > i * 1.6) {
-        const [f, to] = reqs[i++];
-        tr.request({ from: f.a, fromSide: f.side, to: to.a, toSide: to.side, trip: trip(), truck: i % 5 === 0, tries: 0, wait: 0 });
-      }
-      tr.step(1 / 30);
-    }
+    const { arrived, failed } = slipTraffic();
     expect(failed).toBe(0);
     expect(arrived).toBe(24);
+  });
+
+  it("gets into the near lane in good time for a destination just past an on-ramp, whatever the drivers", () => {
+    // (cars from the main line for a lot 360 m past the merge: one that had overtaken a truck on the inner lane found
+    // no gap in the near lane, where the on-ramp traffic comes in, before its driveway, and missed it)
+    const saved = { ...DRIVERS };
+    try {
+      for (const launch of [0.08, -0.08, 0.12]) for (const gap of [0.1, -0.1]) {
+        Object.assign(DRIVERS, { launch, gap });
+        const { arrived, failed } = slipTraffic();
+        expect(failed, `launch ${launch} gap ${gap}`).toBe(0);
+        expect(arrived).toBe(24);
+      }
+    } finally {
+      Object.assign(DRIVERS, saved);
+    }
+  });
+
+  it("never stops a car in the inner lane to get over early, even with the near lane full all the time", () => {
+    // (a car that only wants the near lane early, for a stop past the merge, still has a lane that leads on: with
+    // no gap it keeps going and tries again past the merge. Asking to be let in, it stood in the inner lane of the
+    // motorway for over a minute)
+    const { arrived, stood } = slipTraffic(120, 1.3, 300, true);
+    expect(arrived).toBeGreaterThan(100);
+    expect(stood).toBeLessThan(1);
   });
 
   it("adds an auxiliary lane with tapers when a stretch is widened", () => {

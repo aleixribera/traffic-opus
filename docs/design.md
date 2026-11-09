@@ -415,6 +415,16 @@ itself across modes; you build tracks, docks and the transfer points, never line
     it glides the camera there (a jump instead with reduced motion) and opens the town.
 - Every resident is simulated: a home in a town, a job at one of your buildings within reach, a commute in
   traffic. Buses carry workers to plants and take cars off the roads your trucks need.
+- **A gentle daily rhythm (2026-11-09, owner: "realistic schedules might be too much, maybe make it a bit
+  noticeable").** Plant day shifts start at 7:00, 8:00 or 9:00 (60%, a third each), with a 15:00 shift (25%) and a
+  night shift at 23:00 (15%); shops open at 9:00 (65%) or 11:00 and close by 19:00. Someone who gets to work early
+  waits for the shift; people stay on up to two hours after it, evenly spread, so the evening rush is broad. About
+  one in seven of the early day shifts goes out to the shops at lunch and back after (a shop's own staff to another
+  shop), and people without a job run errands at any hour, most in the daytime. Trucks keep running round the
+  clock. In the showcase (three days, cars on the road by hour) the busiest hour is 1.58 times the quietest
+  (24 in the small hours, 35-38 over lunch and at 17:00-18:00); before, it was 2.16 with no daily shape at all
+  (peaks at 5:00, 15:00 and 23:00 from the shift changes, the trough mid-morning). Older saves move 14:00 shop
+  shifts to 11:00 on load.
 - **Needs** open with town size, and a town grows past each size only while that tier is supplied:
 
   | Size | Population | Needs |
@@ -879,6 +889,21 @@ and turning it back on brings every dismissed tip back. Both are kept per browse
   through a car in its way), and for a minute after that the next ones there go after 15 s. If it is still frozen
   at 4 minutes, the car at the front fades off the road and its trip fails. In a grown 5,000-person town it fires a
   handful of times in hours of play.
+- **Drivers differ (2026-11-09: "make the game feel more real ... traffic intelligence").** Each car's driver is
+  brisk or calm, fixed by the vehicle (most near the middle): the gap it keeps behind the car ahead is 0.9-1.1 s
+  (was 1.0 s for everyone), it pulls away 8% harder or softer, and the gap it takes at a give-way is 12% shorter or
+  longer. Cars behind a slow truck string out at 12.7-15.1 m apart instead of exactly 14.0 m each. Everyone still
+  cruises at the same share of the limit: varying that by 4-6% made streams so lumpy that a crossing's left-turn
+  arrow helped or didn't by luck, and took more go-aheads back at a busy four-way. Throughput on the junction bench
+  is unchanged (3,489 cars through vs 3,482 over 12 runs; three more seeds +0.2%).
+- **Picking the lane early for a stop just past a merge (2026-11-09).** A car whose destination is less than
+  400 m along a road it joins without a junction (past an on-ramp's merge, a lane gain, a bend) gets into the lane
+  that leads to the destination's side on the road before. Before, a car that had overtaken a truck on the inner
+  lane could find no gap in the near lane, where the on-ramp traffic comes in, and missed its turn. At a real
+  junction drivers still keep to both lanes and get over after it (doing it there too halved the near lane's
+  share of a green). The early pick never stops a car: its lane still leads on, so with no gap it keeps going and
+  gets over on the last road (asking to be let in, cars stood in the motorway's inner lane for over a minute
+  with the near lane full).
 
 ## Controls and road building (owner, 2026-11-07: "exactly like Cities: Skylines 2")
 

@@ -33,6 +33,10 @@ export interface Citizen {
   commute: number; // EWMA seconds, -1 = unknown
   tStart: number; // sim time the current trip started
   jobless: number; // sim time they became unemployed (adults)
+  /** out to lunch from this job (they go back to it after) */
+  lunch?: number;
+  /** on the way back to work from lunch (the trip is no commute) */
+  back?: boolean;
 }
 
 export interface Household {
@@ -270,9 +274,7 @@ export class Society {
     c.job = b.id;
     this.staff.set(b.id, this.workersAt(b.id) + 1);
     // industry (and the company's own buildings) runs shifts round the clock; shops open late
-    const grp = b.zone ? ZONE_GROUP[b.zone] : "plant";
-    const r = this.g.rng();
-    c.shift = grp === "com" ? (r < 0.6 ? 9 : 14) : r < 0.55 ? 7 : r < 0.85 ? 15 : 23;
+    c.shift = shiftFor(b.zone ? ZONE_GROUP[b.zone] : "plant", this.g.rng());
     if (c.st === St.Home) this.schedule(c, Math.min(c.next, this.leaveFor(c)));
   }
 
@@ -307,10 +309,38 @@ export class Society {
     const rng = g.rng;
     if (c.st === St.Away) {
       // at work until the shift ends; shoppers browse a while, then maybe one more stop
+      // back from lunch to finish the shift
+      if (c.lunch !== undefined && c.lunch >= 0) {
+        const job = c.lunch === c.job ? g.buildings.byId.get(c.job) : undefined;
+        const from = g.buildings.byId.get(c.at);
+        c.lunch = undefined;
+        if (job && from && from.id !== job.id && job.access && job.built >= 1 && !job.abandoned) {
+          c.back = true;
+          if (this.travel(c, from, job, "work")) return;
+          c.back = false;
+        }
+        this.goHome(c);
+        return;
+      }
       if (c.kind === "work" && c.job >= 0 && c.at === c.job) {
-        // a stop at the shops on the way home now and then
         const job = g.buildings.byId.get(c.job);
-        const shop = job && rng() < 0.25 ? this.pickShop(job) : undefined;
+        // the lunch break of a day shift (arrive() set it): out to the shops (the noon bump), back to work after
+        if (c.lunch === -1) {
+          c.lunch = undefined;
+          const since = (((h - c.shift) % 24) + 24) % 24;
+          const rest = Math.max(0.5, SHIFT_LEN - since) * HOUR;
+          // (a shop's own staff go to another one: the next street's café, not their own counter)
+          const shop = job && this.pickShop(job, job);
+          if (job && shop && shop.id !== job.id) {
+            c.lunch = job.id;
+            if (this.travel(c, job, shop, "shop")) return;
+            c.lunch = undefined; // no way there: they eat at work
+          }
+          this.schedule(c, this.now + rest);
+          return;
+        }
+        // a stop at the shops on the way home now and then
+        const shop = job && rng() < 0.15 ? this.pickShop(job) : undefined;
         if (job && shop) { this.travel(c, job, shop, "shop"); return; }
         this.goHome(c);
         return;
@@ -339,7 +369,7 @@ export class Society {
         if (job.access && job.built >= 1 && !job.abandoned) { this.travel(c, home, job, "work"); return; }
       }
       // an evening out on the way through the day
-      if (h >= 16 && h < 21 && rng() < 0.4) {
+      if (h >= 16 && h < 21 && rng() < 0.3) {
         const shop = this.pickShop(home);
         if (shop) { this.travel(c, home, shop, "leisure"); return; }
       }
@@ -347,8 +377,8 @@ export class Society {
       this.schedule(c, Math.min(this.leaveFor(c), this.now + HOUR * (1.5 + rng() * 2.5)));
       return;
     }
-    // no job: errands in the daytime
-    if (h >= 9 && h < 19 && rng() < 0.55) {
+    // no job: errands, mostly in the daytime (see errandWeight)
+    if (rng() < 0.55 * errandWeight(h)) {
       const senior = c.age === Age.Senior;
       const shop = this.pickShop(home);
       if (shop) { this.travel(c, home, shop, senior ? "leisure" : "shop"); return; }
@@ -356,12 +386,9 @@ export class Society {
     this.scheduleFree(c);
   }
 
-  /** Someone with no job to go to: out again later today if the day has hours left, else tomorrow. */
+  /** Someone with no job to go to: thinks about going out again in a while (errandWeight says how likely by hour). */
   private scheduleFree(c: Citizen) {
-    const rng = this.g.rng;
-    const t = this.now + HOUR * (1.5 + rng() * 3);
-    const h = this.hourOf(t);
-    this.schedule(c, h >= 9 && h < 19 ? t : this.nextAt(9 + rng() * 9, HOUR * 2));
+    this.schedule(c, this.now + HOUR * (1.5 + this.g.rng() * 3));
   }
 
   private goHome(c: Citizen) {
@@ -373,8 +400,8 @@ export class Society {
     this.travel(c, from, home, "home");
   }
 
-  /** Commercial nearby, weighted to the closest few (bigger shops pull from further). */
-  pickShop(near: Building): Building | undefined {
+  /** Commercial nearby, weighted to the closest few (bigger shops pull from further); never `not`. */
+  pickShop(near: Building, not?: Building): Building | undefined {
     const g = this.g;
     const shops = g.shops;
     if (!shops.length) return undefined;
@@ -382,7 +409,7 @@ export class Society {
     let best: Building | undefined, bs = Infinity;
     for (let k = 0; k < Math.min(shops.length, 24); k++) {
       const b = shops.length <= 24 ? shops[k] : shops[(rng() * shops.length) | 0];
-      if (!b.access || b.built < 1 || b.abandoned) continue;
+      if (!b.access || b.built < 1 || b.abandoned || b === not) continue;
       if (near.access && !g.connected(near.access.seg, b.access.seg)) continue;
       const pull = b.zone === "comHigh" || b.zone === "comTower" ? 1.8 : 1;
       const s = (dist(b.c, near.c) / pull) * (0.6 + rng() * 0.8);
@@ -393,8 +420,8 @@ export class Society {
 
   // ------------------------------------------------------------------ trips
 
-  /** Start a trip. */
-  private travel(c: Citizen, from: Building, to: Building, kind: TripKind) {
+  /** Start a trip (false: no way there, and they try again later). */
+  private travel(c: Citizen, from: Building, to: Building, kind: TripKind): boolean {
     const g = this.g;
     const a = from.access;
     const b = to.access;
@@ -403,7 +430,7 @@ export class Society {
       c.st = from.id === c.home ? St.Home : St.Away;
       this.schedule(c, this.now + HOUR * (1 + g.rng()));
       g.noRoute(to);
-      return;
+      return false;
     }
     c.st = St.Travel;
     c.kind = kind;
@@ -425,7 +452,7 @@ export class Society {
         this.busTrips++;
         g.transit.wait(c.id, bus);
         c.next = Infinity;
-        return;
+        return true;
       }
     }
     const real = !walk && g.rng() < carOdds(g.tripScale, motor);
@@ -443,6 +470,7 @@ export class Society {
     } else {
       this.schedule(c, this.now + estTime(fromP, toP));
     }
+    return true;
   }
 
   /** A bus rider got off (or gave up on the bus): they get where they were going `dt` from now. */
@@ -476,11 +504,27 @@ export class Society {
     if (!to) { this.goHome(c); return; }
     c.st = St.Away;
     if (kind === "work") {
-      c.commute = c.commute < 0 ? dur : c.commute + (dur - c.commute) * 0.3;
-      // stay until 8 hours after the shift started
-      const sinceStart = (((this.hourOf() - c.shift) % 24) + 24) % 24;
-      const left = sinceStart < 10 ? 8 - sinceStart : 8;
-      this.schedule(c, this.now + Math.max(0.5, left) * HOUR);
+      if (!c.back) c.commute = c.commute < 0 ? dur : c.commute + (dur - c.commute) * 0.3;
+      c.lunch = undefined;
+      // stay until 8 hours after the shift started (hours since it started: below 0 for the usual early arrival, as a
+      // commuter leaves to be there a quarter of an hour before, and waits for the shift)
+      let since = (((this.hourOf() - c.shift) % 24) + 24) % 24;
+      if (since > 12) since -= 24;
+      // (and some stay on a while after it: the evening rush is spread over a couple of hours)
+      const left = (since < 10 ? SHIFT_LEN - since : SHIFT_LEN) + g.rng() * OVERTIME;
+      // a morning shift breaks for lunch about four hours in: some go out to the shops (the lunchtime bump)
+      const lunchAt = 4 + g.rng() - since;
+      if (!c.back && lunchesAtNoon(c.shift) && lunchAt > 0.5 && lunchAt < left - 1.5 && g.rng() < LUNCH_OUT) {
+        c.lunch = -1;
+        this.schedule(c, this.now + lunchAt * HOUR);
+      } else this.schedule(c, this.now + Math.max(0.5, left) * HOUR);
+      c.back = false;
+    } else if (c.lunch !== undefined && c.lunch >= 0) {
+      // a quick lunch, then back to work
+      to.visits += 1;
+      to.custToday = (to.custToday ?? 0) + 1;
+      if (!to.placed) g.sale(to);
+      this.schedule(c, this.now + HOUR * (0.4 + g.rng() * 0.4));
     } else {
       to.visits += 1;
       to.custToday = (to.custToday ?? 0) + 1;
@@ -493,6 +537,8 @@ export class Society {
     c.st = St.Home;
     c.at = c.home;
     c.kind = "home";
+    c.lunch = undefined;
+    c.back = false;
     if (c.job >= 0) this.schedule(c, Math.min(this.leaveFor(c), this.now + HOUR * (0.5 + this.g.rng() * 2)));
     else if (c.age !== Age.Child) this.scheduleFree(c);
   }
@@ -537,7 +583,12 @@ export class Society {
         const c: Citizen = { id, hh: h.id, home: h.home, age: age as Age, job: -1, shift, st: St.Home, at: h.home, kind: "home", next: Infinity, commute: -1, tStart: 0, jobless: 0 };
         this.citizens.set(id, c);
         hh.members.push(c);
-        if (job >= 0 && this.g.buildings.byId.has(job)) { c.job = job; this.staff.set(job, this.workersAt(job) + 1); }
+        if (job >= 0 && this.g.buildings.byId.has(job)) {
+          c.job = job;
+          this.staff.set(job, this.workersAt(job) + 1);
+          // (older saves: the 14:00 shop shift is now 11:00)
+          if (shift === 14) c.shift = 11;
+        }
       }
       this.households.set(hh.id, hh);
       let L = this.hhAt.get(hh.home);
@@ -576,6 +627,40 @@ export const carOdds = (tripScale: number, motor: number) => Math.min(1, (1 + Ma
 /** Rough door-to-door time for a trip that isn't simulated as a car. */
 export function estTime(a: V2, b: V2): number {
   return 12 + (dist(a, b) * 1.35) / 11;
+}
+
+/** Hours in a shift. */
+export const SHIFT_LEN = 8;
+/** Up to this many hours someone stays on after their shift (evenly spread). */
+export const OVERTIME = 2;
+/** Share of day-shift workers who go out to the shops for lunch (a small noon bump on the roads). */
+export const LUNCH_OUT = 0.15;
+/** A shift that starts in the morning (and ends by the evening). */
+export const isDayShift = (shift: number) => shift >= 6 && shift <= 11;
+/** A shift with its lunch break around noon (8:00 and 9:00; the 11:00 shop shift eats before it comes in). */
+export const lunchesAtNoon = (shift: number) => shift >= 6 && shift <= 9;
+
+/**
+ * Shift start for a new job. Most work is a day shift starting between 7 and 9 (shops at 9, some at 11 to cover the
+ * evening), so there is a morning rush, spread over a few hours rather than one spike; plants keep a late shift and
+ * a night shift, so the roads never go dead.
+ */
+export function shiftFor(group: string, r: number): number {
+  if (group === "com") return r < 0.65 ? 9 : 11;
+  if (r < 0.6) return 7 + Math.min(2, Math.floor(r / 0.2));
+  return r < 0.85 ? 15 : 23;
+}
+
+/**
+ * How likely someone without a job runs an errand at hour h: mostly in the daytime, a little more around lunch and
+ * late afternoon, a few early or late, and now and then at night (the roads are quieter at night, never dead).
+ */
+export function errandWeight(h: number): number {
+  if (h < 6) return 0.3;
+  if (h < 9 || h >= 19) return 0.6;
+  if (h >= 11 && h < 14) return 1.5;
+  if (h >= 16 && h < 19) return 1.1;
+  return 1.3;
 }
 
 function pickShift(rng: () => number) {
