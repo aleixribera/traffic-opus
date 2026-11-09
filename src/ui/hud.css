@@ -69,6 +69,20 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .tl-sep { width: 1px; height: 24px; background: var(--rule-2); margin: 0 4px; }
 .compass { width: 36px; height: 36px; padding: 0; justify-content: center; border-color: transparent; background: transparent; }
 .compass[hidden] { display: none; }
+/* the camera control: a small block seen as the camera sees the map. From straight above it is a plain square;
+   tilted, its sides show; it turns with the map, brick on its north side */
+.viewgiz { touch-action: none; cursor: grab; }
+.viewgiz.dragging { cursor: grabbing; background: var(--plate-3); }
+.vg { position: relative; display: block; width: 24px; height: 24px; pointer-events: none; }
+.vg-cube { position: absolute; left: 6px; top: 6px; width: 12px; height: 12px; transform-style: preserve-3d; }
+.vg-cube i { position: absolute; inset: 0; box-sizing: border-box; border: 1px solid var(--plate); backface-visibility: hidden; }
+.vg-top { transform: translateZ(6px); background: var(--cream-2); }
+.vg-top::after { content: ""; position: absolute; left: 2px; right: 2px; top: 0; height: 3px; background: var(--brick); }
+.vg-n { transform: rotateX(90deg) translateZ(6px); background: var(--brick); }
+.vg-s { transform: rotateX(-90deg) translateZ(6px); background: #857c69; }
+.vg-e { transform: rotateY(90deg) translateZ(6px); background: var(--cream-3); }
+.vg-w { transform: rotateY(-90deg) translateZ(6px); background: #6f6858; }
+.viewgiz:hover .vg-top, .viewgiz.dragging .vg-top { background: var(--cream); }
 /* the company: a button by the menu (opens its dialog), dressed as a works nameplate: herald + name in display caps */
 .company { display: flex; align-items: center; gap: 8px; height: 36px; max-width: 250px; padding: 0 10px 0 4px; background: transparent; border: 1px solid transparent; border-radius: var(--r); color: var(--cream); }
 .company:hover { background: var(--plate-2); border-color: var(--rule-2); }

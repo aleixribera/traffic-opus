@@ -3,6 +3,8 @@ import type { View } from "../render/view";
 
 export interface MapLabel {
   p: V2;
+  /** how high over the ground it stands (m): a town's name over its hall's roof */
+  h?: number;
   name: string;
   sub?: string;
   /** Only shown when the view is at least this zoomed out (half-height in metres). */
@@ -72,7 +74,7 @@ export class MapLabels {
 
   update(view: View) {
     for (const { l, el, icons } of this.items) {
-      const s = view.toScreen(l.p);
+      const s = view.worldToScreen(l.p.x, l.p.y, l.h ?? 0);
       const on = view.halfH >= (l.minHalfH ?? 0) && s.x > -100 && s.y > -40 && s.x < view.w + 100 && s.y < view.h + 40;
       el.style.display = on ? "" : "none";
       if (on && icons) icons.classList.toggle("far", view.halfH > (l.compactHalfH ?? Infinity));

@@ -226,6 +226,8 @@ export const ICON = {
   /** the Towns window (control glyph): a church spire between two houses */
   townGlyph: svg(18, 18, `<path d="M1.5 16.5 V10 L4.5 7.4 L7.5 10 V16.5 Z M6.5 16.5 V6.6 L9 2 L11.5 6.6 V16.5 Z M10.5 16.5 V10 L13.5 7.4 L16.5 10 V16.5 Z" fill="currentColor"/>`),
   camera: svg(18, 18, `<circle cx="4.6" cy="4.3" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="4.3" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="1.5" y="8" width="10.5" height="7.5" rx="0.8" fill="currentColor"/><path d="M12 10.4 L16.6 8.2 V15.3 L12 13.1 Z" fill="currentColor"/>`),
+  // (the Map view: a sheet seen from straight above, a road across it)
+  camMap: svg(18, 18, `<rect x="2.5" y="2.5" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M2.5 11.5 L8 8.5 L10.5 10.5 L15.5 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>`),
   camFollow: svg(18, 18, `<path d="M2 6 V2 H6 M12 2 H16 V6 M16 12 V16 H12 M6 16 H2 V12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"/><rect x="5" y="6.6" width="5.6" height="4.8" fill="currentColor"/><path d="M10.6 8 H12.3 L13.4 9.6 V11.4 H10.6 Z" fill="currentColor"/>`),
   camRide: svg(18, 18, `<path d="M2 6 V2 H6 M12 2 H16 V6 M16 12 V16 H12 M6 16 H2 V12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"/><path d="M9 4.6 L13 12.4 L9 10.6 L5 12.4 Z" fill="currentColor"/>`),
 };

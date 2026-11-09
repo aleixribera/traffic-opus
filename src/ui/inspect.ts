@@ -690,28 +690,29 @@ export function vehicleModel(g: Game, v: Vehicle): PanelModel {
 
 /**
  * A vehicle's route as a line to draw, from where it started (`driven`: the directed road pieces behind it, by
- * default those still in its plan) through where it is now to its destination: x, y pairs, and `cut`, the pair it
- * is at (the line before it is the leg it drove).
+ * default those still in its plan) through where it is now to its destination: x, y pairs, `cut`, the pair it
+ * is at (the line before it is the leg it drove), and `hs`, how high the road stands at each pair (over a bridge).
  */
-export function routeLine(g: Game, v: Vehicle, driven: readonly number[] = v.route.slice(0, Math.max(0, v.ri))): { pts: number[]; cut: number } {
-  const pts: number[] = [];
+export function routeLine(g: Game, v: Vehicle, driven: readonly number[] = v.route.slice(0, Math.max(0, v.ri))): { pts: number[]; cut: number; hs: number[] } {
+  const pts: number[] = [], hs: number[] = [];
   const piece = (k: number) => {
-    const P = g.net.segGeom.get(dkSeg(k))?.center.pts;
-    if (!P) return;
-    if (dkDir(k) === 1) for (const p of P) pts.push(p.x, p.y);
-    else for (let j = P.length - 1; j >= 0; j--) pts.push(P[j].x, P[j].y);
+    const geo = g.net.segGeom.get(dkSeg(k)), P = geo?.center.pts;
+    if (!geo || !P) return;
+    if (dkDir(k) === 1) for (let j = 0; j < P.length; j++) { pts.push(P[j].x, P[j].y); hs.push(geo.hs[j] ?? 0); }
+    else for (let j = P.length - 1; j >= 0; j--) { pts.push(P[j].x, P[j].y); hs.push(geo.hs[j] ?? 0); }
   };
   for (const k of driven) piece(k);
   const pl = v.edge.pl;
   // in a junction, the piece it came off is behind it; on a lane, the part of it up to here
   if (v.edge.kind === "conn") { if (v.ri >= 0 && driven[driven.length - 1] !== v.route[v.ri]) piece(v.route[v.ri]); }
-  else for (let i = 0; i < pl.pts.length && pl.cum[i] < v.s; i++) pts.push(pl.pts[i].x, pl.pts[i].y);
+  else for (let i = 0; i < pl.pts.length && pl.cum[i] < v.s; i++) { pts.push(pl.pts[i].x, pl.pts[i].y); hs.push(v.edge.hs[i] ?? v.h); }
   const q = poseOf(v, 1);
   const cut = pts.length / 2;
   pts.push(q.x, q.y);
-  for (let i = 0; i < pl.pts.length; i++) if (pl.cum[i] > v.s) pts.push(pl.pts[i].x, pl.pts[i].y);
+  hs.push(v.h);
+  for (let i = 0; i < pl.pts.length; i++) if (pl.cum[i] > v.s) { pts.push(pl.pts[i].x, pl.pts[i].y); hs.push(v.edge.hs[i] ?? v.h); }
   for (let i = v.ri + 1; i < v.route.length; i++) piece(v.route[i]);
-  return { pts, cut };
+  return { pts, cut, hs };
 }
 
 // ------------------------------------------------------------------------------------------- roads and junctions

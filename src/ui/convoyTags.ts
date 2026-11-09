@@ -8,6 +8,9 @@ import type { Building } from "../game/buildings";
 import type { Vehicle } from "../sim/traffic";
 import type { View } from "../render/view";
 
+/** How high a convoy's load stands over the road (m): its tag hangs over that. */
+const LOAD_TOP = 4.5;
+
 export class ConvoyTags {
   readonly el = document.createElement("div");
   private tags = new Map<number, { el: HTMLButtonElement; v: Vehicle }>();
@@ -78,14 +81,16 @@ export class ConvoyTags {
    */
   update(view: View, alpha: number) {
     for (const { el, v } of this.tags.values()) {
-      const c = view.toScreen(ConvoyTags.centre(v, alpha));
+      // (measured to the top of its load, at the height of the road it is on)
+      const p = ConvoyTags.centre(v, alpha), h = v.ph + (v.h - v.ph) * alpha + LOAD_TOP;
+      const c = view.worldToScreen(p.x, p.y, h);
       let top = c.y;
       const U = v.uPose, P = v.puPose ?? U, units = v.units;
       if (U && P && units && units.length * 4 === U.length) {
         for (let i = 0; i < units.length; i++) {
           const o = i * 4, k = units[i].len / 2;
           const x = P[o] + (U[o] - P[o]) * alpha, y = P[o + 1] + (U[o + 1] - P[o + 1]) * alpha, a = U[o + 3];
-          for (const s of [-1, 1]) top = Math.min(top, view.toScreen({ x: x + Math.cos(a) * k * s, y: y + Math.sin(a) * k * s }).y);
+          for (const s of [-1, 1]) top = Math.min(top, view.worldToScreen(x + Math.cos(a) * k * s, y + Math.sin(a) * k * s, h).y);
         }
       }
       const y = top - 12;

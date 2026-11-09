@@ -52,7 +52,7 @@ export class CameraDirector {
   private setH = 0;
   private chipKey = "";
   // ---- cinematic
-  private saved: { cx: number; cy: number; h: number; rot: number; overlay: OverlayId; tool: ToolId; paused: boolean } | null = null;
+  private saved: { cx: number; cy: number; h: number; rot: number; tilt: number; overlay: OverlayId; tool: ToolId; paused: boolean } | null = null;
   private shot: Shot | null = null;
   private shotT = 0;
   private intro = 0;
@@ -60,7 +60,7 @@ export class CameraDirector {
   private lost = false;
   private hist = new ShotHistory();
   private rideRecent: number[] = [];
-  private pose: Pose = { x: 0, y: 0, h: 100, rot: 0 };
+  private pose: Pose = { x: 0, y: 0, h: 100, rot: 0, tilt: 0 };
   private rideCam = new FollowCam();
   private grid = new ActivityGrid(100);
   private black = 0;
@@ -292,7 +292,9 @@ export class CameraDirector {
     if (app.mode === "menu" || !app.game) return;
     if (this.mode === "follow") this.stopFollow();
     if (!this.saved) {
-      this.saved = { cx: view.cx, cy: view.cy, h: view.halfH, rot: view.rot, overlay: app.overlay, tool: app.st.tool, paused: app.game.paused };
+      // (the cinematic cameras always film the Diorama; the player's own view, the Map view too, is what they give back)
+      app.finishTilt();
+      this.saved = { cx: view.cx, cy: view.cy, h: view.halfH, rot: view.rot, tilt: view.tilt, overlay: app.overlay, tool: app.st.tool, paused: app.game.paused };
       app.enterCinema();
     }
     this.mode = kind;
@@ -323,12 +325,17 @@ export class CameraDirector {
     this.shot = null;
     this.hintEl.hidden = true;
     if (s && restore) {
-      view.cx = s.cx; view.cy = s.cy; view.halfH = s.h; view.rot = s.rot;
+      view.cx = s.cx; view.cy = s.cy; view.halfH = s.h; view.rot = s.rot; view.tilt = s.tilt;
       app.leaveCinema(s.overlay, s.tool, s.paused);
     } else app.leaveCinema("none", "inspect", false);
     this.saved = null;
     this.outro = OUTRO;
     this.black = 1;
+  }
+
+  /** The pitch the view goes back to when the cinematic mode ends (the Camera setting was changed meanwhile). */
+  returnTilt(t: number) {
+    if (this.saved) this.saved.tilt = t;
   }
 
   /** Drop every mode at once, with nothing restored (a new game, the title menu). */
@@ -432,12 +439,14 @@ export class CameraDirector {
       view.cx = this.rideCam.x;
       view.cy = this.rideCam.y;
       view.halfH = this.pose.h;
+      view.tilt = this.pose.tilt;
       if (s.chase && !this.lost) view.rot = easeAngle(view.rot, chaseRot(this.vang), 1 - Math.exp(-dt * 0.9));
     } else {
       view.cx = this.pose.x;
       view.cy = this.pose.y;
       view.halfH = this.pose.h;
       view.rot = this.pose.rot;
+      view.tilt = this.pose.tilt;
     }
     this.black = fadeAt(this.shotT, s.dur);
   }

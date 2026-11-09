@@ -1,11 +1,11 @@
 import * as THREE from "three";
 import { BUILDING_TYPES, LEVEL_H, MAX_LEVEL, ROAD_TYPES, SIM, roadWidth, type RoadTypeId } from "./config";
-import { cubicAt, cubicTangent, dist, dot, formatMoney, norm, rectCorners, right, sub, v2, wrapAngle, type V2 } from "./core/math";
+import { clamp, cubicAt, cubicTangent, dist, dot, formatMoney, norm, rectCorners, right, sub, v2, wrapAngle, type V2 } from "./core/math";
 import { townStreets } from "./game/rural";
 import type { Building } from "./game/buildings";
 import { Game } from "./game/city";
 import {
-  parallelSpacing, planAddLane, planRoad, planRoundabout, removalRefund, segAt, snap,
+  parallelSpacing, planAddLane, planRoad, planRoundabout, removalRefund, snap,
   type CurveMode, type Plan, type RoundaboutSize, type Snap, type SnapOpts,
 } from "./roads/planner";
 import { toolSnap, type ToolSnap } from "./roads/snapping";
@@ -16,6 +16,11 @@ import { Greens3D } from "./render/greens3d";
 import { Fireworks } from "./render/fx3d";
 import { ConvoyTags } from "./ui/convoyTags";
 import { GATE_GAP, siteFrame, siteToWorld } from "./game/sites";
+
+/** The title menu's backdrop: its tilt, and how far (radians) and how slowly (s a sweep and back) it sways. */
+const MENU_TILT = (50 * Math.PI) / 180;
+const MENU_SWAY = (16 * Math.PI) / 180;
+const MENU_SWAY_S = 110;
 
 /** How far outside a waiting site's gate the road tool snaps a road's end (m): clear of the fence, well in reach. */
 const GATE_SNAP = 7;
@@ -35,7 +40,9 @@ import { served } from "./game/settlements";
 import type { ModelSet } from "./render/models";
 import { Preview3D } from "./render/preview3d";
 import { Highlight3D } from "./render/highlight3d";
-import { junctionAt, pickAt } from "./ui/pick";
+import { buildingOn, deckOn, heightsOn, junctionOn, pickOn, straightDown } from "./ui/pick";
+import { rayAt, TILT_MAP, TILT_MAX, type GroundRay } from "./render/viewmath";
+import { TILT_MIN, loadCameraView, loadTilt, loadTurn, saveCameraView, saveTilt, saveTurn, type CameraView } from "./ui/cameraSetting";
 import { groundAt, isMined } from "./ui/inspect";
 import type { Sel } from "./ui/inspect";
 import { Roads3D } from "./render/roads3d";
@@ -167,9 +174,25 @@ export class App {
   readonly highlight = new Highlight3D();
   /** an ordinary vehicle the camera follows (convoys use their tags' follow) */
   private worldRoot = new THREE.Group();
+  /**
+   * The cursor: its pixel, the line of sight through it (the view is tilted: render/viewmath.ts), and where that
+   * meets the world for the tool in hand (cursorAt).
+   */
   private cursor: V2 = v2(0, 0);
   private cursorPx: V2 = v2(0, 0);
+  private cursorRay: GroundRay = { x: 0, y: 0, kx: 0, ky: 0 };
   private hasCursor = false;
+  /** The Camera setting (ui/cameraSetting.ts): the view a game opens in and the camera comes back to. M flips it. */
+  camView: CameraView = loadCameraView();
+  /** The Diorama's pitch as the player left it (what M and the setting come back to). */
+  private dioTilt = loadTilt();
+  /** The view easing between the Diorama and the Map view. */
+  private tiltAnim: { from: number; to: number; t: number } | null = null;
+  /** The view last frame (anything that moves it moves what is under the cursor) and as last saved. */
+  private viewKey = "";
+  private viewSaved = "";
+  /** The title menu's backdrop: the place its camera sways round, and for how long it has (ui/menu.ts). */
+  menuCam: { c: V2; rot: number; halfH: number; t: number } | null = null;
   // road tool state
   private anchor: Snap | null = null;
   private startTangent: V2 | undefined;
@@ -229,6 +252,13 @@ export class App {
   }
 
   setMode(m: App["mode"]) {
+    // out of the title menu (whose backdrop is always the Diorama): the player's own view
+    if (this.mode === "menu" && m !== "menu") {
+      this.menuCam = null;
+      this.tiltAnim = null;
+      this.view.tilt = this.camView === "map" ? 0 : this.dioTilt;
+      if (m === "play") this.view.rot = loadTurn();
+    }
     this.mode = m;
     document.body.classList.toggle("in-menu", m === "menu");
     document.body.classList.toggle("exploring", m === "explore");
@@ -321,7 +351,7 @@ export class App {
 
   /** Which way b lies from a on screen: radians clockwise from screen up (the camera may be turned). */
   screenBearing(a: V2, b: V2): number {
-    const p = this.view.toScreen(a), q = this.view.toScreen(b);
+    const p = this.view.worldToScreen(a.x, a.y), q = this.view.worldToScreen(b.x, b.y);
     return Math.atan2(q.x - p.x, -(q.y - p.y));
   }
 
@@ -339,13 +369,89 @@ export class App {
 
   /** Whether a place is well inside the screen (not under the panels at its edges). */
   onScreen(p: V2): boolean {
-    const s = this.view.toScreen(p);
+    const s = this.view.worldToScreen(p.x, p.y);
     return s.x > 80 && s.x < this.view.w - 360 && s.y > 80 && s.y < this.view.h - 80;
   }
 
-  /** What the inspect tool would select at p (ui/pick.ts: vehicle, bus stop, building, junction, road). */
+  /** What the inspect tool would select along a line of sight (ui/pick.ts: vehicle, bus stop, building, junction, road). */
+  private pickOn(ray: GroundRay): Sel | null {
+    return pickOn(this.game, ray, this.view.pickMpp, this.view.halfH <= 1800, this.buildings3d.solidsOf);
+  }
+
+  /** What the inspect tool would select at the ground point p, as the camera sees it now. */
   pickAt(p: V2): Sel | null {
-    return pickAt(this.game, p, this.view.mpp, this.view.halfH <= 1800);
+    const s = this.view.worldToScreen(p.x, p.y);
+    return this.pickOn(this.view.ray(s.x, s.y));
+  }
+
+  // ---------------------------------------------------------------- the Diorama and the Map view
+
+  /**
+   * Choose the view (the Camera setting, M): the Diorama's tilt or the Map view's straight down. It is saved, and the
+   * camera eases over to it (a jump with reduced motion asked for, or with `ease` off).
+   */
+  setCameraView(v: CameraView, ease = true) {
+    this.camView = v;
+    saveCameraView(v);
+    const to = v === "map" ? 0 : this.dioTilt;
+    // (a cinematic camera, and the title menu's, keep their own tilt: they come back to this one)
+    if (this.mode === "menu") this.tiltAnim = null;
+    else if (this.camera.cinematic) this.camera.returnTilt(to);
+    else if (!ease || reducedMotion() || Math.abs(this.view.tilt - to) < 1e-4) { this.tiltAnim = null; this.view.tilt = to; }
+    else this.tiltAnim = { from: this.view.tilt, to, t: 0 };
+    this.dirtyPreview = true;
+    this.hud?.refresh();
+  }
+
+  /** End the easing between the two views at once, where it was going. */
+  finishTilt() {
+    if (this.tiltAnim) { this.view.tilt = this.tiltAnim.to; this.tiltAnim = null; }
+  }
+
+  /** M: the Map view, or back to the Diorama. */
+  toggleMapView() {
+    this.setCameraView(this.camView === "map" ? "diorama" : "map");
+  }
+
+  /**
+   * Pitch the camera by hand, by `d` radians (down toward the horizon when positive). A middle-drag never tilts the
+   * Map view (it only turns it: a map stays a map until the player asks for the tilt with a key or the control).
+   */
+  pitchBy(d: number, how: "drag" | "ask" = "ask") {
+    if (this.camera.cinematic || this.mode === "menu" || !d) return;
+    if (how === "drag" && this.camView === "map") return;
+    this.tiltAnim = null;
+    // (asked down out of the Map view: past its catch at once, or a slow key would never get out of it)
+    const from = how === "ask" && d > 0 && this.view.tilt + d <= TILT_MAP ? TILT_MAP : this.view.tilt;
+    this.view.tilt = clamp(from + d, 0, TILT_MAX);
+    if (how === "ask") this.settleView();
+    this.dirtyPreview = true;
+  }
+
+  /**
+   * After a pitch by hand, the setting follows what is on screen, so it always tells the truth: straight down is the
+   * Map view, anything else the Diorama (whose pitch is remembered).
+   */
+  settleView() {
+    const flat = this.view.tilt <= TILT_MAP;
+    if (flat) this.view.tilt = 0;
+    else this.dioTilt = Math.max(this.view.tilt, TILT_MIN);
+    const v: CameraView = flat ? "map" : "diorama";
+    if (v === this.camView) return;
+    this.camView = v;
+    saveCameraView(v);
+    this.hud?.refresh();
+  }
+
+  /**
+   * Turn and tilt the camera by a drag of (dx, dy) pixels: sideways turns it about the middle of the screen, up and
+   * down tilts it (the middle button, and the camera control for a touchpad with none).
+   */
+  orbitBy(dx: number, dy: number) {
+    if (this.camera.cinematic || this.mode === "menu") return;
+    if (dx) this.view.rotateAt(this.view.w / 2, this.view.h / 2, -dx * 0.006);
+    this.pitchBy(-dy * 0.005, "drag");
+    this.dirtyPreview = true;
   }
 
   // ---------------------------------------------------------------- camera modes (ui/camera.ts)
@@ -428,8 +534,11 @@ export class App {
   private setGame(g: Game) {
     this.game = g;
     setYearStart(g.calStart);
-    this.view.rot = 0;
-    this.hud?.compassAngle(0);
+    // the view as the player left it: the turn, and the Diorama or the Map view (the Camera setting)
+    this.view.rot = loadTurn();
+    this.tiltAnim = null;
+    this.view.tilt = this.camView === "map" ? 0 : this.dioTilt;
+    this.hud?.cameraPose(this.view.rot, this.view.tilt);
     this.hud?.clearBanners();
     for (const c of [...this.worldRoot.children]) this.worldRoot.remove(c);
     const small = Math.min(window.innerWidth, window.innerHeight) < 700;
@@ -483,6 +592,9 @@ export class App {
     this.groundOverlay();
     this.pops.clear();
     this.icons.boostOf = (b) => g.industry.boosts(b);
+    // what is pinned over a building stands over its roof; a jam's pin on its road's deck
+    this.icons.topOf = this.pops.topOf = (b) => this.buildings3d.topOf(b);
+    this.stuckAlerts.heightAt = (p) => deckOn(g.net, straightDown(p), 8)?.h ?? 0;
     g.on((e) => {
       // (a delivery or a by-product leaving only pops over the map: nothing else on screen changes)
       if (e.t === "delivery") { this.camera.note(e.d.to.c.x, e.d.to.c.y); if (this.mode !== "menu") this.pops.delivery(e.d, this.view); return; }
@@ -789,9 +901,12 @@ export class App {
           pi.drew = true;
         }
       }
-      // CS2 mouse: right-drag moves the map, middle-drag turns it; left-drag also moves it outside of drawing
+      // CS2 mouse: right-drag moves the map, middle-drag turns it (sideways) and tilts it (up and down); left-drag
+      // also moves it outside of drawing
       if (pi.button === 1) {
-        if (pi.moved) this.view.rotateAt(this.view.w / 2, this.view.h / 2, -dx * 0.006);
+        if (pi.moved) {
+          this.orbitBy(dx, dy);
+        }
         pi.x = p.x; pi.y = p.y;
         this.updateCursor(p);
         return;
@@ -830,6 +945,8 @@ export class App {
     this.dragRect = null;
     this.hud?.rect(null);
     this.view.canvas.classList.remove("grabbing");
+    // (a middle-drag that tilted the view all the way up to straight down has made it the Map view)
+    if (pi.button === 1 && pi.moved) { this.settleView(); return; }
     // (a press with Space held is the hand: it moves the map and never clicks)
     if (pi.hand) return;
     if (pi.moved) {
@@ -912,9 +1029,10 @@ export class App {
     else if (k === "z") this.hud?.toggleWin("economy");
     else if (k === "c") this.hud?.toggleWin("city");
     else if (k === "x") this.hud?.toggleWin("transport");
-    // the camera: T a tour, Shift+T the vehicle cam, G follow the truck nearest the middle (CS2's T / G tilt, which a
-    // top-down map doesn't have)
+    // the camera: T a tour, Shift+T the vehicle cam, G follow the truck nearest the middle (so the tilt, CS2's T / G,
+    // is on the keys beside them: Y and H, read every frame), M the Map view and back
     else if (k === "t" && !e.repeat) this.camera.startCinema(e.shiftKey ? "ride" : "tour");
+    else if (k === "m" && !e.repeat) { this.toggleMapView(); this.hud?.sound("click"); }
     else if (k === "g" && !e.repeat) this.camera.toggleFollowNearest();
     else if (k === "[" || k === "]") this.nudgeParallel(k === "]" ? 1 : -1);
     else if ((e.code === "Comma" || e.code === "Period") && this.st.tool === "place") this.turnPlaced(e.code === "Period" ? 1 : -1, e.shiftKey);
@@ -954,8 +1072,9 @@ export class App {
     return Math.max(min, this.st.parOffset ?? parallelSpacing(this.st.roadType));
   }
 
-  /** Turn the map back north-up (the north arrow). */
+  /** Turn the map back north-up (the north arrow), about the middle of the screen. */
   resetNorth() {
+    this.view.rotateAt(this.view.w / 2, this.view.h / 2, -this.view.rot);
     this.view.rot = 0;
     if (this.hasCursor) this.updateCursor(this.cursorPx);
     this.dirtyPreview = true;
@@ -1006,14 +1125,33 @@ export class App {
 
   private updateCursor(px: V2) {
     this.cursorPx = px;
-    this.cursor = this.view.toWorld(px.x, px.y);
     this.hasCursor = true;
     this.dirtyPreview = true;
+    this.aimCursor();
+  }
+
+  /**
+   * Where the cursor's line of sight meets the world for the tool in hand. Drawing a road (or a roundabout), on the
+   * plane of the level being drawn: a bridge's deck is drawn where it will stand, under the cursor. With the tools
+   * that work on a road (lanes, junctions, bus stops, replace), on the deck of the road under the cursor. Else on the
+   * ground.
+   */
+  private aimCursor() {
+    const ray = this.cursorRay = this.view.ray(this.cursorPx.x, this.cursorPx.y);
+    const t = this.st.tool;
+    if ((t === "road" && this.st.mode !== "replace") || t === "roundabout") this.cursor = rayAt(ray, this.st.level * LEVEL_H);
+    else if (t === "lane" || t === "junction" || t === "transit" || t === "road") this.cursor = deckOn(this.game.net, ray, this.pickPad())?.p ?? rayAt(ray, 0);
+    else this.cursor = rayAt(ray, 0);
+  }
+
+  /** How near a road's edge the cursor counts as on it (m: a few pixels). */
+  private pickPad(): number {
+    return Math.max(2, 6 * this.view.pickMpp);
   }
 
   private snapOpts(from?: Snap): SnapOpts {
     return {
-      mpp: this.view.mpp, level: this.st.level, type: this.st.roadType,
+      mpp: this.view.pickMpp, level: this.st.level, type: this.st.roadType,
       from: from ? { p: from.p, tangent: this.startTangent ?? from.tangent, on: from } : undefined,
       angleStep: this.st.angleLock !== this.keys.has("Shift"),
       off: this.st.snapOff,
@@ -1036,9 +1174,33 @@ export class App {
 
   /** The road tool's snap at the cursor (guides, hysteresis; Alt held: none). */
   private roadSnap(from?: Snap): ToolSnap {
-    return toolSnap(this.game.net, this.cursor, {
-      ...this.snapOpts(from), prev: this.lastSnap, free: this.keys.has("Alt"), curve: !!from && this.st.mode === "curve",
-    });
+    const o = { ...this.snapOpts(from), prev: this.lastSnap, free: this.keys.has("Alt"), curve: !!from && this.st.mode === "curve" };
+    if (o.free) return toolSnap(this.game.net, this.cursor, o);
+    return this.snapPlanes((p) => toolSnap(this.game.net, p, o));
+  }
+
+  /**
+   * Snap along the cursor's line of sight. Seen at a tilt, a junction on a bridge is not over the ground it is drawn
+   * on: so the snap is tried on each height the line passes a road or a junction at, from the top down (what is in
+   * front first), and the first that catches something standing at that height wins. The plane of the level being
+   * drawn takes its turn among them, and is what is left when nothing is caught. Seen from straight above every
+   * plane is the same point, and this is one snap.
+   */
+  private snapPlanes<T extends Snap>(snapAt: (p: V2) => T): T {
+    const ray = this.cursorRay, base = this.st.level * LEVEL_H;
+    const caught = (s: Snap) => s.node !== undefined || s.seg !== undefined;
+    let free: T | null = null;
+    if (ray.kx || ray.ky) {
+      const hs = heightsOn(this.game.net, ray, clamp(14 * this.view.pickMpp, 3, 40) + 6).filter((h) => Math.abs(h - base) > 0.4);
+      hs.push(base);
+      hs.sort((a, b) => b - a);
+      for (const h of hs) {
+        const s = snapAt(rayAt(ray, h));
+        if (h === base) { if (caught(s)) return s; free = s; }
+        else if (caught(s) && Math.abs(s.h - h) < 0.75) return s;
+      }
+    }
+    return free ?? snapAt(rayAt(ray, base));
   }
 
   /**
@@ -1186,7 +1348,7 @@ export class App {
     }
     if (t === "inspect") {
       // anything on the map opens its panel; empty ground clears the selection
-      let s = this.pickAt(c);
+      let s = this.pickOn(this.cursorRay);
       // open ground: a mined deposit always opens; soil, forest, water and hills (which are most of the map) only
       // when nothing else is selected, ground is, or the Resources view is on; otherwise a click there clears
       if (!s) {
@@ -1202,7 +1364,7 @@ export class App {
       return;
     }
     if (t === "road" && this.st.mode === "replace") {
-      const id = segAt(g.net, c, 2, null);
+      const id = this.roadUnder(null);
       if (id === null) return;
       if (this.st.reverse || shift) {
         if (!g.flip(id)) this.reject("Only one-way roads can be reversed");
@@ -1272,11 +1434,10 @@ export class App {
       return;
     }
     if (t === "bulldoze") {
-      const sid = this.stopAt(c, 6);
-      if (sid !== null) { g.transit.removeStop(sid); this.hud?.sound("remove"); this.hud?.toast(`Removed bus stop, refunded ${formatMoney(STOP_COST / 2)}`); return; }
-      const b = g.buildings.at(c);
-      if (b) { g.bulldoze([], [b.id]); this.hud?.sound("remove"); return; }
-      const id = segAt(g.net, c, 2, this.st.bdzLevel);
+      const hit = this.bulldozeAt();
+      if (hit.stop !== undefined) { g.transit.removeStop(hit.stop); this.hud?.sound("remove"); this.hud?.toast(`Removed bus stop, refunded ${formatMoney(STOP_COST / 2)}`); return; }
+      if (hit.b) { g.bulldoze([], [hit.b.id]); this.hud?.sound("remove"); return; }
+      const id = hit.seg ?? null;
       if (id !== null) {
         const refund = g.bulldoze([id], []);
         this.hud?.sound("remove");
@@ -1285,7 +1446,7 @@ export class App {
       return;
     }
     if (t === "junction") {
-      const n = this.nodeAt(c);
+      const n = this.nodeUnder();
       if (n === null) { this.reject("Click a junction"); return; }
       this.hud?.openSignal(n);
       return;
@@ -1306,13 +1467,34 @@ export class App {
     if (segs.length) this.hud?.toast(`Removed ${segs.length} road${segs.length > 1 ? "s" : ""}, refunded ${formatMoney(refund)}`);
   }
 
-  /** World box around a screen rectangle (for spatial queries), and a test for "on screen inside it". */
+  /**
+   * World box around a screen rectangle (for spatial queries: what its corners see on the ground and on the highest
+   * road deck), and a test for "drawn inside it" for a point at a height.
+   */
   private screenRect(a: V2, b: V2) {
     const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
-    const cs = [this.view.toWorld(x0, y0), this.view.toWorld(x1, y0), this.view.toWorld(x1, y1), this.view.toWorld(x0, y1)];
+    const v = this.view, top = (MAX_LEVEL + 1) * LEVEL_H;
+    const cs = [0, top].flatMap((h) => [v.screenToGround(x0, y0, h), v.screenToGround(x1, y0, h), v.screenToGround(x1, y1, h), v.screenToGround(x0, y1, h)]);
     const box = { x0: Math.min(...cs.map((q) => q.x)), y0: Math.min(...cs.map((q) => q.y)), x1: Math.max(...cs.map((q) => q.x)), y1: Math.max(...cs.map((q) => q.y)) };
-    const inside = (p: V2) => { const s = this.view.toScreen(p); return s.x >= x0 && s.x <= x1 && s.y >= y0 && s.y <= y1; };
+    const inside = (p: V2, h = 0) => { const s = v.worldToScreen(p.x, p.y, h); return s.x >= x0 && s.x <= x1 && s.y >= y0 && s.y <= y1; };
     return { box, inside };
+  }
+
+  /** The road under the cursor (the deck its line of sight lands on); `level`: only roads on that level. */
+  private roadUnder(level: number | null): number | null {
+    return deckOn(this.game.net, this.cursorRay, 2, level)?.id ?? null;
+  }
+
+  /** What the bulldozer's click would take: a bus stop, else the building or the road the cursor is on, whichever is in front. */
+  private bulldozeAt(): { stop?: number; b?: Building; seg?: number } {
+    const g = this.game, ray = this.cursorRay;
+    const hit = buildingOn(g, ray, this.buildings3d.solidsOf);
+    const deck = deckOn(g.net, ray, 2, this.st.bdzLevel);
+    const front = Math.max(hit?.h ?? 0, deck?.h ?? 0);
+    const sid = front < 4 ? this.stopAt(this.cursor, 6) : null;
+    if (sid !== null) return { stop: sid };
+    if (hit && !(deck && deck.h > 1.5 && deck.h - 0.5 > hit.h)) return { b: hit.b };
+    return deck ? { seg: deck.id } : {};
   }
 
   private segsInScreenRect(a: V2, b: V2): number[] {
@@ -1321,7 +1503,7 @@ export class App {
     const out: number[] = [];
     for (const id of g.net.segsNear(box.x0, box.y0, box.x1, box.y1)) {
       const sg = g.net.segGeom.get(id)!;
-      if (sg.center.pts.some((p, i) => inside(p) && (lvl === null || Math.abs(sg.hs[i] - lvl * LEVEL_H) < 1))) out.push(id);
+      if (sg.center.pts.some((p, i) => inside(p, sg.hs[i]) && (lvl === null || Math.abs(sg.hs[i] - lvl * LEVEL_H) < 1))) out.push(id);
     }
     return out;
   }
@@ -1332,14 +1514,15 @@ export class App {
     this.shake = 1;
   }
 
-  private nodeAt(p: V2): number | null {
-    return junctionAt(this.game, p, this.view.mpp);
+  /** The junction under the cursor. */
+  private nodeUnder(): number | null {
+    return junctionOn(this.game, this.cursorRay, this.view.pickMpp);
   }
 
   /** Buildings whose centre is inside a screen rectangle. */
   private buildingsInRect(a: V2, b: V2): Building[] {
     const { inside } = this.screenRect(a, b);
-    return this.game.buildings.list.filter((o) => inside(o.c));
+    return this.game.buildings.list.filter((o) => inside(o.c, 0));
   }
 
   // ---------------------------------------------------------------- plans
@@ -1374,7 +1557,7 @@ export class App {
 
   private computeRoundabout(): Plan | null {
     const g = this.game;
-    const s = snap(g.net, this.cursor, { ...this.snapOpts(), from: undefined, sites: undefined });
+    const s = this.snapPlanes((p) => snap(g.net, p, { ...this.snapOpts(), from: undefined, sites: undefined }));
     const c = s.node !== undefined ? s.p : this.cursor;
     const h = s.node !== undefined ? g.net.nodes.get(s.node)!.h : this.st.level * LEVEL_H;
     return planRoundabout(g.net, g.world, c, this.st.rbSize, Math.round(h / LEVEL_H));
@@ -1445,6 +1628,7 @@ export class App {
     this.dirtyPreview = false;
     const pv = this.preview;
     pv.clear();
+    if (this.hasCursor) this.aimCursor();
     const t0 = this.st.tool;
     if (t0 !== "inspect" || !this.hasCursor) { this.highlight.hoverV = null; this.view.canvas.style.cursor = ""; }
     if (!this.hasCursor) { if (pv.ghost) pv.ghost.visible = false; this.hud?.chips(null); return; }
@@ -1454,7 +1638,7 @@ export class App {
     const chips: Chip[] = [];
     if (pv.ghost) pv.ghost.visible = false;
     if (t === "road" && this.st.mode === "replace") {
-      const id = segAt(g.net, c, 2, null);
+      const id = this.roadUnder(null);
       if (id !== null) {
         const s = g.net.segs.get(id)!;
         if (this.st.reverse) {
@@ -1488,7 +1672,7 @@ export class App {
         const s = this.roadSnap();
         this.lastSnap = s;
         pv.marker(s.p, s.h);
-        pv.refs(s.refs);
+        pv.refs(s.refs, s.h);
         pv.target(g.net, s);
         chips.push({ text: `${T.name}: ${this.st.mode === "straight" ? "straight" : "curve"}`, kind: "info" });
         const joins = s.site ? s.label : s.node !== undefined ? (g.net.segsAt(s.node).length === 1 ? "Carries on the road" : "From the junction") : s.seg !== undefined ? `From the ${ROAD_TYPES[g.net.segs.get(s.seg)!.type].name.toLowerCase()}` : s.label;
@@ -1501,7 +1685,7 @@ export class App {
         if (plan) {
           const end = (plan as Plan & { snapEnd?: ToolSnap }).snapEnd!;
           pv.plan(plan, this.st.level, g.net);
-          pv.refs(end.refs);
+          pv.refs(end.refs, end.h);
           pv.marker(this.anchor!.p, this.anchor!.h);
           pv.marker(end.p, end.h);
           if (!plan.errors.length) pv.target(g.net, end);
@@ -1511,7 +1695,7 @@ export class App {
             const e = plan.errors[0];
             chips.push({ text: e.msg, kind: "error" });
             // say it at the spot too
-            pv.dot(e.p, 0xef8a6c, Math.max(2.5, this.view.mpp * 7));
+            pv.dot(e.p, 0xef8a6c, Math.max(2.5, this.view.mpp * 7), this.st.level * LEVEL_H);
             for (const er of plan.errors) for (const id of er.buildings ?? []) {
               const b = g.buildings.byId.get(id);
               if (b) pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
@@ -1563,21 +1747,17 @@ export class App {
         for (const b of bs) pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
         chips.push({ text: `${formatMoney(removalRefund(g.net, g.world, segs))} refund`, kind: "cost" });
       } else {
-        const b = g.buildings.at(c);
-        const sid = this.stopAt(c, 6);
-        if (sid !== null) {
-          pv.dot(g.transit.stops.get(sid)!.p, 0xe5484d);
+        const hit = this.bulldozeAt(), b = hit.b;
+        if (hit.stop !== undefined) {
+          pv.dot(g.transit.stops.get(hit.stop)!.p, 0xe5484d);
           chips.push({ text: "Remove bus stop", kind: "info" });
           chips.push({ text: `${formatMoney(STOP_COST / 2)} refund`, kind: "cost" });
         } else if (b) {
           pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
           chips.push({ text: `Demolish ${b.zone ? ZONES[b.zone].short.toLowerCase() : BUILDING_TYPES[b.kind].name}`, kind: "info" });
-        } else {
-          const id = segAt(g.net, c, 2, this.st.bdzLevel);
-          if (id !== null) {
-            pv.removal(g.net, [id]);
-            chips.push({ text: `${formatMoney(removalRefund(g.net, g.world, [id]))} refund`, kind: "cost" });
-          }
+        } else if (hit.seg !== undefined) {
+          pv.removal(g.net, [hit.seg]);
+          chips.push({ text: `${formatMoney(removalRefund(g.net, g.world, [hit.seg]))} refund`, kind: "cost" });
         }
       }
     } else if (t === "lane") {
@@ -1601,7 +1781,7 @@ export class App {
         }
       } else chips.push({ text: "Click a road just before a junction", kind: "info" });
     } else if (t === "junction") {
-      const n = this.nodeAt(c);
+      const n = this.nodeUnder();
       if (n !== null) {
         const node = g.net.nodes.get(n)!;
         pv.marker(node.p, node.h);
@@ -1649,20 +1829,21 @@ export class App {
       }
     } else if (t === "inspect") {
       // what a click would select: a thin cream outline and a pointer (the selection itself is lit by Highlight3D)
-      const h = this.pickAt(c);
+      const h = this.pickOn(this.cursorRay);
       this.highlight.hoverV = h?.k === "vehicle" ? h.id : null;
+      // (the building it is: a town's hall or civic building selects the town)
+      const hb = h?.k === "building" ? g.buildings.byId.get(h.id) ?? null : h?.k === "town" ? buildingOn(g, this.cursorRay, this.buildings3d.solidsOf)?.b ?? null : null;
       const gr = h ? null : groundAt(g, c);
       this.view.canvas.style.cursor = h || (gr && isMined(gr.id)) ? "pointer" : "";
       const w = Math.max(0.8, 1.6 * this.view.mpp), cream = 0xf3ead6;
       if (h && (h.k === "building" || h.k === "town") && !(this.sel && this.sel.k === h.k && this.sel.id === h.id)) {
-        const b = h.k === "building" ? g.buildings.byId.get(h.id) : g.buildings.at(c);
-        if (b) { const k = rectCorners(b.c, b.hw + 1, b.hd + 1, b.rot); pv.path([...k, k[0]], cream, w); }
+        if (hb) { const k = rectCorners(hb.c, hb.hw + 1, hb.hd + 1, hb.rot); pv.path([...k, k[0]], cream, w); }
       } else if (h?.k === "seg" && !(this.sel?.k === "seg" && this.sel.id === h.id)) pv.highlight(g.net, [h.id]);
       else if (h?.k === "node") {
         const n = g.net.nodes.get(h.id), r = (g.net.nodeGeom.get(h.id)?.radius ?? 8) + 2;
-        if (n) pv.path(Array.from({ length: 33 }, (_, i) => ({ x: n.p.x + Math.cos(i / 16 * Math.PI) * r, y: n.p.y + Math.sin(i / 16 * Math.PI) * r })), cream, w);
+        if (n) pv.path(Array.from({ length: 33 }, (_, i) => ({ x: n.p.x + Math.cos(i / 16 * Math.PI) * r, y: n.p.y + Math.sin(i / 16 * Math.PI) * r })), cream, w, n.h);
       }
-      const b = h?.k === "building" || h?.k === "town" ? g.buildings.at(c) : null;
+      const b = hb;
       if (b) chips.push({ text: b.zone ? `${ZONES[b.zone].short} · ${b.town !== undefined ? g.towns.byId.get(b.town)?.name ?? "" : "level " + b.level}` : BUILDING_TYPES[b.kind].name, kind: "info" });
     }
     this.hud?.chips(chips.length ? this.cursorPx : null, chips);
@@ -1727,11 +1908,31 @@ export class App {
       this.view.cx += (mx * c - my * s) * pan;
       this.view.cy += (mx * s + my * c) * pan;
     }
+    // Y/H tilt it: Y up toward the Map view, H down toward the horizon (not with Ctrl held: Ctrl+Y is redo)
+    const pitch = this.keys.has("Control") || this.keys.has("Meta") ? 0 : (this.keys.has("h") ? 1 : 0) - (this.keys.has("y") ? 1 : 0);
     if (turn && !this.camera.cinematic) this.view.rotateAt(this.view.w / 2, this.view.h / 2, turn * 1.5 * dt);
     if (zoom && !this.camera.cinematic) this.view.zoomAt(this.view.w / 2, this.view.h / 2, Math.exp(zoom * 2.2 * dt));
-    if (mx || my || turn || zoom) {
-      this.clampView();
-      if (this.hasCursor) this.updateCursor(this.cursorPx);
+    if (pitch) this.pitchBy(pitch * 0.9 * dt);
+    if (mx || my || turn || zoom) this.clampView();
+    // easing between the Diorama and the Map view (M, the Camera setting): 0.4 s
+    if (this.tiltAnim) {
+      const A = this.tiltAnim;
+      A.t += dt;
+      const k = Math.min(1, A.t / 0.4), e = k * k * (3 - 2 * k);
+      this.view.tilt = A.from + (A.to - A.from) * e;
+      if (k >= 1) this.tiltAnim = null;
+    }
+    // the title menu's backdrop: the Diorama, swaying slowly round the town (still, with reduced motion asked for)
+    if (this.mode === "menu" && this.menuCam) {
+      const M = this.menuCam, v = this.view;
+      if (!reducedMotion()) M.t += dt;
+      v.tilt = MENU_TILT;
+      v.halfH = M.halfH;
+      v.rot = M.rot + MENU_SWAY * Math.sin((M.t * 2 * Math.PI) / MENU_SWAY_S);
+      // (the town a little right of the middle, clear of the menu card, whichever way the camera has swung)
+      const W = v.halfH * 2 * (v.w / Math.max(1, v.h));
+      v.cx = M.c.x - Math.cos(v.rot) * W * 0.14;
+      v.cy = M.c.y - Math.sin(v.rot) * W * 0.14;
     }
     g.update(dt);
     this.vehicles.update(g.traffic, g.alpha);
@@ -1748,6 +1949,12 @@ export class App {
     }
     // following a vehicle, a cinematic shot, the fade between shots
     this.camera.update(dt);
+    // whatever moved the view moved what is under the cursor; and the player's own turn and tilt are remembered
+    const vk = `${this.view.cx.toFixed(2)},${this.view.cy.toFixed(2)},${this.view.halfH.toFixed(2)},${this.view.rot.toFixed(4)},${this.view.tilt.toFixed(4)}`;
+    if (vk !== this.viewKey) {
+      this.viewKey = vk;
+      if (this.hasCursor && !this.camera.cinematic) { this.aimCursor(); this.dirtyPreview = true; }
+    }
     this.transit3d.update(g.transit, g.net, this.st.tool === "transit" || !!this.hud?.linesShown, this.view.mpp, this.view.rot);
     this.flowT += dt;
     const flowOn = this.overlay === "flow";
@@ -1763,6 +1970,7 @@ export class App {
     this.hudT += dt;
     if (this.hudT > 0.25) {
       this.hudT = 0;
+      this.rememberView();
       this.hud?.tick();
       if (this.buildings3d.updateConstruction()) { this.buildings3d.rebuild(this.game.buildings.list); this.applyTint(); }
       if ((this.overlay !== "none" && this.overlay !== "flow") || this.st.tool === "place") this.applyTint();
@@ -1802,10 +2010,20 @@ export class App {
     }
     else this.icons.update(this.view);
     this.pops.update(this.view, this.bare || far ? null : g.traffic, g.alpha);
-    this.hud?.compassAngle(this.view.rot);
+    this.hud?.cameraPose(this.view.rot, this.view.tilt);
     this.view.render();
     requestAnimationFrame(this.frame);
   };
+
+  /** Keep the player's own turn and Diorama pitch (not a cinematic camera's, nor the title menu's) for next time. */
+  private rememberView() {
+    if (this.mode !== "play" || this.camera.cinematic || this.tiltAnim) return;
+    const key = `${this.view.rot.toFixed(3)},${this.dioTilt.toFixed(3)}`;
+    if (key === this.viewSaved) return;
+    this.viewSaved = key;
+    saveTurn(this.view.rot);
+    saveTilt(this.dioTilt);
+  }
 
   /**
    * The towns' names on the map, with their size and, under them, the needs that want seeing to: each need's picture
@@ -1832,8 +2050,10 @@ export class App {
         const none = ln.needs.filter((n) => n.state === "none").map((n) => n.p), low = ln.needs.filter((n) => n.state === "low").map((n) => n.p);
         say = `${none.length ? `, no ${words(none)} coming` : ""}${low.length ? `, running low on ${words(low)}` : ""}`;
       }
+      // (the name stands over its hall's roof)
+      const hall = g.towns.hallOf(t);
       return {
-        p: t.c, name: t.name, sub: `${size} · ${pop}`, minHalfH: 160,
+        p: t.c, h: hall ? this.buildings3d.topOf(hall) + 4 : 0, name: t.name, sub: `${size} · ${pop}`, minHalfH: 160,
         title: `${t.name}, ${size} of ${pop} people${say}${ord(t.id) ? `, with an order open: ${ord(t.id)}` : ""}. Open the town`,
         order: ord(t.id) || undefined,
         icons: ln.kind === "calm" ? undefined

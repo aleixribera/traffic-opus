@@ -915,11 +915,46 @@ height levels shown while drawing, and the instant upgrade preview.
 
 **Camera:**
 - W/A/S/D pan; edge scroll is optional.
-- Q/E rotate; middle-mouse drag rotates.
-- R/F and the mouse wheel zoom.
-- Right-drag pans the map (left-drag too while nothing is being drawn).
-- The view is 2D top-down, so there's no tilt; CS2's tilt keys T/G drive the camera modes instead. A north arrow
-  appears while the map is turned; clicking it turns the map back north-up.
+- Q/E turn the camera. A middle-mouse drag turns it (sideways) and tilts it (up and down).
+- Y/H tilt it from the keys: Y up toward the Map view, H down toward the horizon. (CS2's tilt keys T/G drive the
+  camera modes here.)
+- R/F and the mouse wheel zoom, about the ground under the cursor.
+- Right-drag pans the map (left-drag too while nothing is being drawn): the ground that was grabbed stays under
+  the cursor, at any tilt and turn.
+- A north arrow appears while the map is turned; clicking it turns the map back north-up.
+- **The Diorama (2026-11-09, docs/direction.md):** the game is filmed by a tilted orthographic camera
+  (`src/render/view.ts`, the maths in `src/render/viewmath.ts`). `tilt` is the angle from straight down: 40° by
+  default, free between 0° and 58°. It stays orthographic: no perspective, so sizes and road widths read the same
+  all over the screen.
+  - **Map view (M):** straight down, the old view, and back to the Diorama at the tilt the player last had. Eased
+    over 0.4 s; at once with reduced motion.
+  - **The Camera setting** (pause menu, next to Nights and Scroll wheel; saved as `flowtown.camera`): Diorama (the
+    default) or Map. It is the view a game opens in and the view the camera comes back to after a Tour or a
+    Vehicle cam, and choosing it switches the view at once. **M flips this same setting**, so the menu always tells
+    the truth, and so does the camera block. Tilting by hand keeps it true too: pitched all the way to straight down
+    it becomes Map; pitched down out of the Map view by key (H) it becomes Diorama. In the Map view a middle drag
+    only turns the map (it never tilts it by accident), so with Map chosen the whole game plays without a tilt.
+  - **The camera block** (top-left bar, by the camera button): a small block drawn as the camera sees the map,
+    turned and tilted with it, brick on its north side; from straight above it is a plain square. A click is M.
+    Dragging it turns and tilts the camera: the way to do it on a touchpad with no middle button.
+  - **Remembered:** the player's turn (`flowtown.cameraTurn`) and Diorama tilt (`flowtown.cameraTilt`, never less
+    than 12°) are kept in localStorage with the setting, across games and reloads.
+  - **Pointing is by line of sight.** A click is a ray, not a ground point (`View.screenToGround(px, py, h)` and
+    `View.worldToScreen(x, y, h)` are the one pair of helpers; `src/ui/pick.ts` picks along the ray). Ground tools
+    meet the plane of the level being drawn (6 m a level), so a bridge end lands under the cursor at its own
+    height; the road tool tries its snapping on the height of every road the ray passes (`heightsOn`), so pointing
+    at a bridge's end snaps to it up there. Inspecting picks what is seen: a building by its walls and roof (the
+    boxes of its model, `Buildings3D.solidsOf`), a raised road by its deck, a vehicle at its own height, and what
+    stands in front hides what is behind. Snap and pick radii are in ground metres per pixel averaged over the two
+    screen axes (`View.pickMpp`).
+  - **Overlays stand at real heights.** Town names sit over the hall's roof, a home's or shop's icon over its roof,
+    a works' over its gate, convoy tags over the load, pops over the roof or the truck. Tool previews and the
+    Inspector's highlights are drawn over the scene at the height of what they mark (a route climbs its bridge),
+    not on one flat layer above everything.
+  - **What is drawn:** the ground footprint of the tilted, turned screen (`View.bounds`), with room below the
+    bottom edge for tall things that lean into view. The sun's shadow map is fitted to that footprint and to the
+    long shadows of a low sun falling into it, snapped to texels, its bias in metres.
+  - **Save pictures** are always the Diorama, whichever view the player works in.
 - Camera modes (the camera button in the top-left bar, or keys):
   - Follow (G, or a convoy's tag) rides with the truck nearest the middle of the screen, with a damped camera and a
     slight look-ahead. A "Following" chip names its cargo and destination. When it arrives the camera holds, then picks
@@ -927,11 +962,16 @@ height levels shown while drawing, and the instant upgrade preview.
     on another vehicle rides with that one instead); only panning, a build tool's click or the chip's Stop let go.
   - Tour (T) is a Cities: Skylines-style automatic camera. Slow 8–14 s pans and zooms over the busiest junctions, towns,
     works, bridges, convoys and recent events, weighted by live activity, never the same place twice in a row, fading
-    through black between shots.
+    through black between shots. Each shot has its own tilt and turn, drifting slowly: low sweeping angles on a
+    works, a convoy or a bridge, higher over a junction or a whole town (`SHOT_TILT` in `src/render/cinema.ts`).
   - Vehicle cam (Shift+T) rides with one interesting vehicle after another (convoys, road trains, heavy trucks) for
-    10–15 s each, sometimes turned to its heading.
+    10–15 s each, low (40–58°), sometimes turned to its heading so the camera looks along the road from behind.
   - Both cinematic modes hide the whole interface (an "Esc to exit" hint shows for 2 s), keep the game running, and
     any key or click gives back the interface and the view as it was.
+  - **Which views tilt:** Follow keeps the player's own view (Diorama or Map; M works while following). Tour,
+    Vehicle cam and the title menu's backdrop always film the Diorama, whatever the Camera setting says, and give
+    the player's view back when they end. The title backdrop is tilted 50° and sways slowly round the town (still,
+    with reduced motion).
 - Touch: one-finger drag pans, two-finger pinch zooms and twists to rotate.
 
 **Tools:**
@@ -1024,6 +1064,9 @@ with what to do:
 - Ramps are one-way roads that join a carriageway with a merge, not a stop.
 
 ## Look
+
+Since 2026-11-09 the map is seen as a diorama, at a tilt (see "Camera" above); the straight-down view below stays
+as the Map view, and the ground, roads and markings are still drawn for it.
 
 Realistic top-down, straight down, the owner's chosen direction (2026-11-07): dry olive grassland with large soft
 patches and fine specks, scattered round trees and shrubs with soft shadows cast down-right, dark charcoal

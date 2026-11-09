@@ -30,7 +30,10 @@ function gateOf(b: Building): V2 {
   return { x: f.gate.x + f.into.x * 14, y: f.gate.y + f.into.y * 14 };
 }
 
-interface Pop { at: V2; el: HTMLElement; t0: number }
+interface Pop { at: V2; h: number; el: HTMLElement; t0: number }
+
+/** How high over the road a fresh load's ring floats (m): over the truck's roof. */
+const TRUCK_TOP = 3.6;
 
 /**
  * The money and moments that rise off the map as they happen (TF2's income pops): a load sold pops its price over
@@ -50,21 +53,25 @@ export class Pops {
     document.body.appendChild(this.el);
   }
 
-  private add(at: V2, cls: string, html: string, view: View) {
+  /** How high a building stands (m): a pop rises from over the roof of the shop it came from, a works' from over its gate. */
+  topOf: ((b: Building) => number) | null = null;
+
+  private add(b: Building, cls: string, html: string, view: View) {
     if (view.halfH > NEAR) return;
-    const s = view.toScreen(at);
+    const at = gateOf(b), h = b.placed ? 5 : this.topOf?.(b) ?? 0;
+    const s = view.worldToScreen(at.x, at.y, h);
     if (s.x < -60 || s.y < -60 || s.x > view.w + 60 || s.y > view.h + 60) return;
     const el = document.createElement("div");
     el.className = `pop ${cls}`;
     el.innerHTML = html;
     this.el.appendChild(el);
-    this.pops.push({ at, el, t0: performance.now() });
+    this.pops.push({ at, h, el, t0: performance.now() });
     while (this.pops.length > MAX_POPS) this.pops.shift()!.el.remove();
   }
 
   /** A load handed over: its price, and what is special about it. */
   delivery(d: Delivery, view: View) {
-    const at = gateOf(d.to);
+    const at = d.to;
     const icon = productIcon(d.product);
     if (d.product === "cars" && d.pay > 0) {
       this.add(at, "cars", `<i>${icon}</i><b>${d.n * CARS_PER_LOAD} new cars</b><em>+${money(d.pay)}</em>`, view);
@@ -81,7 +88,7 @@ export class Pops {
   /** A by-product left for another plant: it goes out as cargo of its own, named, from the gate. */
   shipped(from: Building, to: Building, p: Product, view: View) {
     const name = PRODUCTS[p].name;
-    this.add(gateOf(from), "byproduct", `<i>${productIcon(p)}</i><b>${name}</b><span>by-product, to the ${BUILDING_TYPES[to.kind].name.toLowerCase()}</span>`, view);
+    this.add(from, "byproduct", `<i>${productIcon(p)}</i><b>${name}</b><span>by-product, to the ${BUILDING_TYPES[to.kind].name.toLowerCase()}</span>`, view);
   }
 
   /** Every frame: the pops rise and fade, the rings follow their trucks. */
@@ -91,7 +98,7 @@ export class Pops {
     this.pops = this.pops.filter((p) => {
       const f = (now - p.t0) / 1000 / LIFE;
       if (f >= 1) { p.el.remove(); return false; }
-      const s = view.toScreen(p.at);
+      const s = view.worldToScreen(p.at.x, p.at.y, p.h);
       const rise = calm ? 24 : 14 + 34 * (1 - (1 - f) * (1 - f));
       p.el.style.transform = `translate(${s.x.toFixed(1)}px, ${(s.y - rise).toFixed(1)}px) translate(-50%, -100%)`;
       p.el.style.opacity = f < 0.05 ? (f / 0.05).toFixed(2) : f > 0.72 ? ((1 - f) / 0.28).toFixed(2) : "1";
@@ -115,7 +122,7 @@ export class Pops {
           x = v.puPose[o] + (v.uPose[o] - v.puPose[o]) * alpha;
           y = v.puPose[o + 1] + (v.uPose[o + 1] - v.puPose[o + 1]) * alpha;
         }
-        const s = view.toScreen({ x, y });
+        const s = view.worldToScreen(x, y, v.ph + (v.h - v.ph) * alpha + TRUCK_TOP);
         if (s.x < -30 || s.y < -30 || s.x > view.w + 30 || s.y > view.h + 30) continue;
         list.push({ x: s.x, y: s.y, d: Math.hypot(s.x - cx, s.y - cy), p, age: traffic.time - v.trip.startT });
       }

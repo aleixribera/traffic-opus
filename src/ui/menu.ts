@@ -97,7 +97,10 @@ export class MainMenu {
     window.setTimeout(() => { if (this.curtain.classList.contains("out")) this.curtain.hidden = true; }, 360);
   }
 
-  /** Still camera on the showcase: the town centre a little right of the middle (clear of the menu card), its main street level with the screen. */
+  /**
+   * The camera on the showcase: the town centre a little right of the middle (clear of the menu card), its main
+   * street level with the screen. The app tilts it into the Diorama and sways it slowly from there (App.menuCam).
+   */
   private frame() {
     const g = this.app.game, v = this.app.view;
     const bs = g.buildings.list;
@@ -122,12 +125,15 @@ export class MainMenu {
       const k = ROAD_TYPES[s.type].fwd + ROAD_TYPES[s.type].bwd - r.d / 100;
       if (k > best) { best = k; d = norm(cubicTangent(s.c, r.t)); }
     }
-    v.halfH = 300;
+    // (close enough that the town fills the screen beside the card and its buildings read as models: tilted, the
+    // screen holds half as much ground again up and down)
+    v.halfH = 205;
     v.rot = Math.atan2(d.y, d.x);
     const W = v.halfH * 2 * (v.w / Math.max(1, v.h));
     const p = sub(c, scale(d, W * 0.14));
     v.cx = p.x;
     v.cy = p.y;
+    this.app.menuCam = { c, rot: v.rot, halfH: v.halfH, t: 0 };
   }
 
   private render() {

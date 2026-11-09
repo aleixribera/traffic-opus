@@ -5,9 +5,9 @@ import { View } from "../src/render/view";
 const ev = (deltaY: number, o: Partial<WheelSample> = {}): WheelSample => ({ deltaX: 0, deltaY, deltaMode: 0, ctrlKey: false, timeStamp: 0, ...o });
 
 /** A View without a renderer: just its camera numbers (the pan and zoom maths need nothing else). */
-function view(cx = 1000, cy = 2000, halfH = 160, rot = 0): View {
+function view(cx = 1000, cy = 2000, halfH = 160, rot = 0, tilt = 0): View {
   const v = Object.create(View.prototype) as View;
-  Object.assign(v, { cx, cy, halfH, rot, w: 1920, h: 1080, minHalfH: 28, maxHalfH: 30000 });
+  Object.assign(v, { cx, cy, halfH, rot, tilt, w: 1920, h: 1080, minHalfH: 28, maxHalfH: 30000 });
   return v;
 }
 
@@ -125,15 +125,28 @@ describe("how far it zooms and pans", () => {
     }
   });
 
-  it("a zoom stays anchored on the cursor (mouse and pinch, turned or not)", () => {
+  it("at a tilt a pan still drags the ground with the pointer, pixel for pixel", () => {
+    for (const tilt of [0.3, 0.7, 1.0]) {
+      for (const rot of [0, 0.7]) {
+        const v = view(1000, 2000, 160, rot, tilt);
+        const g = v.screenToGround(700, 400);
+        v.pan(10, 30);
+        const s = v.worldToScreen(g.x, g.y);
+        expect(s.x).toBeCloseTo(710, 6);
+        expect(s.y).toBeCloseTo(430, 6);
+      }
+    }
+  });
+
+  it("a zoom stays anchored on the cursor (mouse and pinch, turned or not, tilted or not)", () => {
     for (const [e, act] of [[ev(100), "zoom"], [ev(-100), "zoom"], [ev(-7.5, { ctrlKey: true }), "pinch"], [ev(4, { ctrlKey: true }), "pinch"]] as const) {
-      for (const rot of [0, -1.1]) {
-        const v = view(1000, 2000, 300, rot);
+      for (const [rot, tilt] of [[0, 0], [-1.1, 0], [0, 0.7], [-1.1, 1.0]]) {
+        const v = view(1000, 2000, 300, rot, tilt);
         const px = 1500, py = 210;
-        const before = v.toWorld(px, py);
+        const before = v.screenToGround(px, py);
         const h0 = v.halfH;
         v.zoomAt(px, py, wheelZoomFactor(e, act));
-        const after = v.toWorld(px, py);
+        const after = v.screenToGround(px, py);
         expect(after.x).toBeCloseTo(before.x, 6);
         expect(after.y).toBeCloseTo(before.y, 6);
         expect(v.halfH).not.toBeCloseTo(h0, 3);

@@ -17,6 +17,8 @@ function iconFor(p: string): { key: string; svg: string; urgent: boolean } {
 
 /** A company site with no road to its gate yet: its icon stands on the gate, where the road has to come. */
 const GATE_PROBLEM = "No road to the gate";
+/** How high over a works' gate its icons float (m): clear of the fence and the trucks waiting there. */
+const GATE_H = 5;
 // (enamel roundels, docs/ui-style.md "Map labels": the disc carries the meaning by colour and shape, the CSS adds the
 // cream rim and the tail; navy = the gate, ochre = cargo or a warning, brick = cut off from the roads)
 const GATE = `<svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14" r="13" fill="#1a2c47"/><path d="M7.5 7.5 V20.5 M20.5 7.5 V20.5" stroke="#f3ead6" stroke-width="2.6"/><path d="M14 8 V18.5 M10.4 15 L14 18.8 L17.6 15" stroke="#f0c25a" stroke-width="2.4" fill="none" stroke-linecap="square" stroke-linejoin="miter"/></svg>`;
@@ -31,13 +33,15 @@ const ROAD = `<svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14
 export class MapIcons {
   readonly el = document.createElement("div");
   private pool: HTMLElement[] = [];
-  private shown: { at: V2; el: HTMLElement; dx?: number }[] = [];
+  private shown: { at: V2; h: number; el: HTMLElement; dx?: number }[] = [];
   private badges: HTMLElement[] = [];
   /**
    * The supplies boosting a company site and by how much (docs/design.md "Supplies"): a badge by its gate shows the
    * site working past its level-2 pace on fertilizer, explosives or machinery (set by the app).
    */
   boostOf: ((b: Building) => { p: Product; pct: number }[]) | null = null;
+  /** How high a building stands (m): a home's or a shop's icon floats over its roof, not over its doorstep. */
+  topOf: ((b: Building) => number) | null = null;
 
   constructor() {
     this.el.className = "map-icons";
@@ -59,7 +63,8 @@ export class MapIcons {
         // (a company site's trouble shows by its gate, where its plant and truck yard are, not out in its fields)
         const f = b.placed ? siteFrame(b.c, b.rot, b.side, b.hd) : null;
         const at = !f ? b.c : b.problem === GATE_PROBLEM ? f.gate : { x: f.gate.x + f.into.x * 30, y: f.gate.y + f.into.y * 30 };
-        const s = view.toScreen(at);
+        const h = f ? GATE_H : (this.topOf?.(b) ?? 0) + 1;
+        const s = view.worldToScreen(at.x, at.y, h);
         if (s.x < -pad || s.y < -pad || s.x > view.w + pad || s.y > view.h + pad) continue;
         const ic = iconFor(b.problem);
         let el = this.pool[n];
@@ -70,7 +75,7 @@ export class MapIcons {
           el.innerHTML = ic.svg;
         }
         el.style.display = "";
-        this.shown.push({ at, el });
+        this.shown.push({ at, h, el });
         if (++n >= 300) break;
       }
       // the supply badges: a green chevron, what is in store and the % it adds, beside the gate (right of any warning)
@@ -80,7 +85,7 @@ export class MapIcons {
         if (!bs.length) continue;
         const f = siteFrame(b.c, b.rot, b.side, b.hd);
         const at = { x: f.gate.x + f.into.x * 30, y: f.gate.y + f.into.y * 30 };
-        const s = view.toScreen(at);
+        const s = view.worldToScreen(at.x, at.y, GATE_H);
         if (s.x < -60 || s.y < -40 || s.x > view.w + 60 || s.y > view.h + 40) continue;
         let el = this.badges[nb];
         if (!el) { el = document.createElement("div"); el.className = "map-boost"; this.el.appendChild(el); this.badges.push(el); }
@@ -91,7 +96,7 @@ export class MapIcons {
           el.innerHTML = `<i class="up">${UP}</i>${bs.map((x) => `<i>${productIcon(x.p)}</i>`).join("")}<b>+${total}%</b>`;
         }
         el.style.display = "";
-        this.shown.push({ at, el, dx: b.problem && !b.abandoned ? 16 : 0 });
+        this.shown.push({ at, h: GATE_H, el, dx: b.problem && !b.abandoned ? 16 : 0 });
         nb++;
       }
     }
@@ -103,8 +108,8 @@ export class MapIcons {
   /** Follow the camera (every frame). */
   update(view: View) {
     const lift = Math.min(28, 9 / Math.max(0.12, view.mpp));
-    for (const { at, el, dx } of this.shown) {
-      const s = view.toScreen(at);
+    for (const { at, h, el, dx } of this.shown) {
+      const s = view.worldToScreen(at.x, at.y, h);
       // (a badge stands just right of the gate, clear of a warning icon there)
       if (dx !== undefined) el.style.transform = `translate(${(s.x + dx).toFixed(1)}px, ${(s.y - lift).toFixed(1)}px) translate(0, -100%)`;
       else el.style.transform = `translate(${s.x.toFixed(1)}px, ${(s.y - lift).toFixed(1)}px) translate(-50%, -100%)`;

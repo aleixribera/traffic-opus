@@ -68,7 +68,8 @@ export class DepositMarks {
   /** The deposits round the view centre (gathered again once the view has moved a good way or zoomed out). */
   private gather(view: View) {
     const c = { x: view.cx, y: view.cy };
-    const reach = Math.max(view.halfH * (view.w / Math.max(1, view.h)), view.halfH) * 1.5;
+    // (as far as the view reaches over the ground: further up the screen at a tilt)
+    const reach = Math.max(view.halfH * (view.w / Math.max(1, view.h)), view.halfH / Math.cos(view.tilt)) * 1.5;
     if (this.at && Math.hypot(c.x - this.at.x, c.y - this.at.y) < Math.max(400, reach * 0.3)) return;
     this.at = c;
     const gen = this.gen();
@@ -121,7 +122,7 @@ export class DepositMarks {
     // (tags only once the deposits read as patches, not from right on top of one, where the ground says it all)
     const tagsOn = view.halfH > 160;
     for (const m of this.marks.values()) {
-      const s = view.toScreen(m.c);
+      const s = view.worldToScreen(m.c.x, m.c.y);
       const on = tagsOn && s.x > -60 && s.y > -30 && s.x < W + 60 && s.y < H + 30;
       m.tag.style.display = on ? "" : "none";
       if (on) m.tag.style.transform = `translate(${s.x.toFixed(1)}px, ${s.y.toFixed(1)}px) translate(-50%, -50%)`;
@@ -129,11 +130,11 @@ export class DepositMarks {
     // pointers: the nearest of the focused kind that are off screen, POINTERS at most (none once one is in view)
     const L = 24, R = W - 24, T = 84, B = H - 128;
     const cx = W / 2, cy = (T + B) / 2;
-    const anyOn = this.edges.some((e) => { const s = view.toScreen(e.c); return s.x > 0 && s.y > 0 && s.x < W && s.y < H; });
+    const anyOn = this.edges.some((e) => { const s = view.worldToScreen(e.c.x, e.c.y); return s.x > 0 && s.y > 0 && s.x < W && s.y < H; });
     let shown = 0;
     const order = [...this.edges].sort((a, b) => Math.hypot(a.c.x - view.cx, a.c.y - view.cy) - Math.hypot(b.c.x - view.cx, b.c.y - view.cy));
     for (const e of order) {
-      const s = view.toScreen(e.c);
+      const s = view.worldToScreen(e.c.x, e.c.y);
       const off = !(s.x > 0 && s.y > 0 && s.x < W && s.y < H);
       const show = off && !anyOn && shown < POINTERS;
       e.el.style.display = show ? "" : "none";

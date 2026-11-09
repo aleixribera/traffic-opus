@@ -10,7 +10,14 @@ import { LEVEL_TINT } from "./palette";
 
 const OK_ALPHA = 0.88;
 
-/** Everything drawn while a tool is active: road ghosts, guides, snap markers, removal highlights. */
+/** How far over the ground or a deck the flat marks float (m): clear of the road's paint, still on it at a tilt. */
+const LIFT = 0.5;
+
+/**
+ * Everything drawn while a tool is active: road ghosts, guides, snap markers, removal highlights. All of it is drawn
+ * over the scene (no depth test), each mark at the real height of what it marks: the camera is tilted, and a guide
+ * floating "above everything" would slide off the ground it measures.
+ */
 export class Preview3D {
   readonly group = new THREE.Group();
   private items: THREE.Object3D[] = [];
@@ -88,7 +95,8 @@ export class Preview3D {
   }
 
   /** Reference guides: the ones it snapped to in ochre, the others faint; each fades away from the cursor. */
-  refs(gs: ToolGuide[]) {
+  refs(gs: ToolGuide[], h = 0) {
+    const y = h + LIFT;
     for (const g of gs) {
       const mats = g.on ? this.refOn : this.refOff;
       const dx = g.b.x - g.a.x, dy = g.b.y - g.a.y, L = Math.hypot(dx, dy);
@@ -104,7 +112,7 @@ export class Preview3D {
           if ((side > 0 && a0 >= L) || (side < 0 && a0 <= 0)) break;
           const lo = Math.max(0, Math.min(a0, a1)), hi = Math.min(L, Math.max(a0, a1));
           if (hi - lo > 0.3) {
-            const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(g.a.x + ux * lo, 40, g.a.y + uy * lo), new THREE.Vector3(g.a.x + ux * hi, 40, g.a.y + uy * hi)]);
+            const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(g.a.x + ux * lo, y, g.a.y + uy * lo), new THREE.Vector3(g.a.x + ux * hi, y, g.a.y + uy * hi)]);
             const l = new THREE.Line(geo, mats[k]);
             l.computeLineDistances();
             this.add(l, g.on ? 10 : 9);
@@ -147,9 +155,9 @@ export class Preview3D {
     }
   }
 
-  guides(gs: Guide[]) {
+  guides(gs: Guide[], h = 0) {
     for (const g of gs) {
-      const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(g.a.x, 40, g.a.y), new THREE.Vector3(g.b.x, 40, g.b.y)]);
+      const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(g.a.x, h + LIFT, g.a.y), new THREE.Vector3(g.b.x, h + LIFT, g.b.y)]);
       const l = new THREE.Line(geo, this.guideMat);
       l.computeLineDistances();
       this.add(l, 9);
@@ -176,19 +184,19 @@ export class Preview3D {
       const g = net.segGeom.get(id);
       if (!g) continue;
       const pts = g.center.pts;
-      const hs = Array.from(g.hs);
-      const m = new THREE.Mesh(strip(pts, Math.max(...hs) + 1.2, g.width + 1), mat);
+      // (it climbs the ramp with the road: one flat sheet at the top's height would hang off the low end)
+      const m = new THREE.Mesh(strip(pts, Array.from(g.hs, (h) => h + 1.2), g.width + 1), mat);
       this.add(m, 8);
     }
   }
 
-  /** Flat footprint outline (buildings to be bulldozed or blocking). */
+  /** Flat footprint on the ground (buildings to be bulldozed or blocking): the lot, seen through what stands on it. */
   footprint(corners: V2[], color: number, under = false) {
     const shape = new THREE.Shape(corners.map((p) => new THREE.Vector2(p.x, p.y)));
     const geo = new THREE.ShapeGeometry(shape).rotateX(Math.PI / 2);
     const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: under ? 0.3 : 0.5, depthTest: false, side: THREE.DoubleSide }));
     // under a ghost model the footprint is a ground decal drawn first, so the model stays visible on top
-    m.position.y = under ? 0.15 : 20;
+    m.position.y = under ? 0.15 : LIFT;
     this.add(m, under ? 5 : 9);
   }
 
@@ -201,21 +209,22 @@ export class Preview3D {
     this.add(mesh, 6);
   }
 
-  /** A coloured route line (a bus line being drawn). */
-  path(pts: V2[], color: number, w = 2.6) {
+  /** A coloured line (a bus line being drawn, an outline, a reach) at a height, or at one per point. */
+  path(pts: V2[], color: number, w = 2.6, h: number | number[] = 0) {
     if (pts.length < 2) return;
-    const m = new THREE.Mesh(strip(pts, 31, w), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthTest: false }));
+    const y = typeof h === "number" ? h + LIFT : h.map((v) => v + LIFT);
+    const m = new THREE.Mesh(strip(pts, y, w), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthTest: false }));
     this.add(m, 12);
   }
 
   /** A ring marker in a colour (bus stops on the line being drawn). */
-  dot(p: V2, color: number, r = 3.2) {
+  dot(p: V2, color: number, r = 3.2, h = 0) {
     const geo = new THREE.CircleGeometry(r, 20).rotateX(-Math.PI / 2);
     const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, depthTest: false }));
-    m.position.set(p.x, 32, p.y);
+    m.position.set(p.x, h + LIFT + 0.1, p.y);
     this.add(m, 13);
     const o = new THREE.Mesh(new THREE.RingGeometry(r, r + 0.9, 20).rotateX(-Math.PI / 2), this.markerMat);
-    o.position.set(p.x, 32.1, p.y);
+    o.position.set(p.x, h + LIFT + 0.2, p.y);
     this.add(o, 13);
   }
 

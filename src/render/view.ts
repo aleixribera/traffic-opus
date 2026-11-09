@@ -1,10 +1,16 @@
 import * as THREE from "three";
 import { clamp, type V2 } from "../core/math";
+import { cameraRig, groundBounds, groundRay, screenToGround, shadowFit, worldToScreen, TILT_DEFAULT, TILT_MAX, type GroundRay } from "./viewmath";
 
 /**
- * Top-down orthographic view. World (x, y) maps to three (x, z); height is three y.
- * The view can turn about the vertical: at rot = 0 screen up is north (-y); positive rot turns the map anticlockwise on screen
- * by that many radians (screen right = (cos rot, sin rot) in world). The sun stays put in the world.
+ * The Diorama camera: an orthographic view of the ground, turned and pitched. World (x, y) maps to three (x, z);
+ * height is three y. The view can turn about the vertical: at rot = 0 screen up is north (-y); positive rot turns the
+ * map anticlockwise on screen by that many radians (screen right = (cos rot, sin rot) in world). `tilt` pitches it
+ * from straight down (0: the Map view) toward the horizon. The sun stays put in the world.
+ *
+ * A pixel is a line of sight, not a ground point, so everything that goes between pixels and the world uses the two
+ * helpers here: screenToGround (where the pixel's line of sight meets a height) and worldToScreen. The geometry
+ * itself is in viewmath.ts.
  */
 export class View {
   readonly renderer: THREE.WebGLRenderer;
@@ -17,6 +23,8 @@ export class View {
   cy = 1200;
   halfH = 160;
   rot = 0;
+  /** The pitch from straight down, radians (0: the Map view; TILT_MAX: as low as it goes). */
+  tilt = TILT_DEFAULT;
   minHalfH = 28;
   maxHalfH = 30000;
   w = 1;
@@ -31,7 +39,6 @@ export class View {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.NoToneMapping;
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 2000);
-    this.camera.up.set(0, 0, -1);
     // lighting: flat top faces read at their true palette colour, shadowed ones at ~64%
     const A = 0.64, D = (1 - A) / this.sunDir.y;
     this.ambient = new THREE.HemisphereLight(0xffffff, 0xffffff, A * Math.PI);
@@ -40,7 +47,6 @@ export class View {
     this.sun.castShadow = true;
     const small = Math.min(window.innerWidth, window.innerHeight) < 700;
     this.sun.shadow.mapSize.set(small ? 2048 : 4096, small ? 2048 : 4096);
-    this.sun.shadow.bias = -0.0004;
     this.sun.shadow.normalBias = 0.04;
     this.sun.shadow.radius = 3;
     this.scene.add(this.sun, this.sun.target);
@@ -60,82 +66,102 @@ export class View {
     return (this.halfH * 2) / this.h;
   }
 
+  /**
+   * Metres per pixel for "how near is near" on the ground (snapping, pick radii): at a tilt a pixel covers more
+   * ground up the screen than across it, and this is the mean of the two.
+   */
+  get pickMpp() {
+    return this.mpp / Math.sqrt(Math.cos(this.tilt));
+  }
+
   updateCamera() {
+    this.tilt = clamp(this.tilt, 0, TILT_MAX);
     const halfW = this.halfH * (this.w / this.h);
     const c = this.camera;
     c.left = -halfW;
     c.right = halfW;
     c.top = this.halfH;
     c.bottom = -this.halfH;
-    c.position.set(this.cx, 900, this.cy);
-    c.up.set(Math.sin(this.rot), 0, -Math.cos(this.rot));
+    const rig = cameraRig(this);
+    c.near = rig.near;
+    c.far = rig.far;
+    c.position.set(rig.pos[0], rig.pos[1], rig.pos[2]);
+    c.up.set(rig.up[0], rig.up[1], rig.up[2]);
     c.lookAt(this.cx, 0, this.cy);
     c.updateProjectionMatrix();
     c.updateMatrixWorld();
-    // fit the shadow frustum to what is on screen (+ room for long shadows from off-screen casters)
-    const ext = Math.hypot(halfW, this.halfH) * 1.1 + 30;
-    const sc = this.sun.shadow.camera;
-    sc.left = -ext;
-    sc.right = ext;
-    sc.top = ext;
-    sc.bottom = -ext;
-    sc.near = 10;
-    sc.far = 1400;
-    sc.updateProjectionMatrix();
+    // fit the shadow frustum to the ground on screen (and to the long shadows of a low sun falling into it), and
     // snap the light to shadow texels so shadows don't shimmer while panning
-    const texel = (ext * 2) / this.sun.shadow.mapSize.x;
-    const tx = Math.round(this.cx / texel) * texel, tz = Math.round(this.cy / texel) * texel;
-    this.sun.target.position.set(tx, 0, tz);
-    this.sun.position.set(tx + this.sunDir.x * 600, this.sunDir.y * 600, tz + this.sunDir.z * 600);
+    const fit = shadowFit(this, [this.sunDir.x, this.sunDir.y, this.sunDir.z], this.sun.shadow.mapSize.x);
+    const sc = this.sun.shadow.camera;
+    sc.left = -fit.ext;
+    sc.right = fit.ext;
+    sc.top = fit.ext;
+    sc.bottom = -fit.ext;
+    sc.near = fit.near;
+    sc.far = fit.far;
+    sc.updateProjectionMatrix();
+    // (the depth bias, in metres: a texel or two along the light, more for a low sun whose texels stretch out; a
+    // fixed bias would lift every shadow off its wall's foot when zoomed in, which shows at a tilt)
+    const slope = this.sunDir.y / Math.max(0.05, Math.hypot(this.sunDir.x, this.sunDir.z));
+    const biasM = clamp(fit.texel * (1 + 1 / Math.max(0.2, slope)), 0.06, 0.7);
+    this.sun.shadow.bias = -biasM / (fit.far - fit.near);
+    this.sun.target.position.set(fit.target[0], fit.target[1], fit.target[2]);
+    this.sun.position.set(fit.pos[0], fit.pos[1], fit.pos[2]);
     this.sun.target.updateMatrixWorld();
   }
 
-  /** CSS pixel -> world metres. */
-  toWorld(px: number, py: number): V2 {
-    const m = this.mpp, c = Math.cos(this.rot), s = Math.sin(this.rot);
-    const dx = (px - this.w / 2) * m, dy = (py - this.h / 2) * m;
-    return { x: this.cx + dx * c - dy * s, y: this.cy + dx * s + dy * c };
+  /** CSS pixel -> the ground point seen there, on the plane at height h (0: the ground itself). */
+  screenToGround(px: number, py: number, h = 0): V2 {
+    return screenToGround(this, px, py, h);
   }
 
-  toScreen(p: V2): V2 {
-    const m = this.mpp, c = Math.cos(this.rot), s = Math.sin(this.rot);
-    const dx = p.x - this.cx, dy = p.y - this.cy;
-    return { x: (dx * c + dy * s) / m + this.w / 2, y: (-dx * s + dy * c) / m + this.h / 2 };
+  /** A world point (x, y on the ground, h above it) -> CSS pixel. */
+  worldToScreen(x: number, y: number, h = 0): V2 {
+    return worldToScreen(this, x, y, h);
   }
 
-  /** A screen-space offset in CSS pixels as a world vector (metres). */
+  /** The line of sight through a CSS pixel (see viewmath.ts). */
+  ray(px: number, py: number): GroundRay {
+    return groundRay(this, px, py);
+  }
+
+  /** A screen-space offset in CSS pixels as a vector along the ground (metres). */
   screenVec(dx: number, dy: number): V2 {
     const m = this.mpp, c = Math.cos(this.rot), s = Math.sin(this.rot);
-    return { x: (dx * c - dy * s) * m, y: (dx * s + dy * c) * m };
+    const v = (dy * m) / Math.cos(this.tilt);
+    return { x: dx * m * c - v * s, y: dx * m * s + v * c };
   }
 
-  /** Move the map with the pointer: drag by (dx, dy) CSS pixels. */
+  /** Move the map with the pointer: drag by (dx, dy) CSS pixels, and the ground follows the pointer. */
   pan(dx: number, dy: number) {
     const v = this.screenVec(dx, dy);
     this.cx -= v.x;
     this.cy -= v.y;
   }
 
-  /** Turn the view by da radians, keeping the world point under pixel (px, py) in place. */
+  /** Turn the view by da radians, keeping the ground point under pixel (px, py) in place. */
   rotateAt(px: number, py: number, da: number) {
-    const before = this.toWorld(px, py);
+    const before = this.screenToGround(px, py);
     this.rot = Math.atan2(Math.sin(this.rot + da), Math.cos(this.rot + da));
-    const after = this.toWorld(px, py);
+    const after = this.screenToGround(px, py);
     this.cx += before.x - after.x;
     this.cy += before.y - after.y;
   }
 
-  /** Half extents of the world-axis box around what is on screen. */
-  extents(): { ex: number; ey: number } {
-    const halfW = this.halfH * (this.w / this.h);
-    const c = Math.abs(Math.cos(this.rot)), s = Math.abs(Math.sin(this.rot));
-    return { ex: c * halfW + s * this.halfH, ey: s * halfW + c * this.halfH };
+  /**
+   * The world-axis box round the ground on screen (plus `pad` metres): what to draw, cull and load by. With `hMax`
+   * it also holds whatever stands below the screen's bottom edge and is tall enough (up to hMax) to lean into view.
+   */
+  bounds(hMax = 0, pad = 0): { x0: number; y0: number; x1: number; y1: number } {
+    return groundBounds(this, hMax, pad);
   }
 
+  /** Zoom by `factor`, keeping the ground point under pixel (px, py) in place. */
   zoomAt(px: number, py: number, factor: number) {
-    const before = this.toWorld(px, py);
+    const before = this.screenToGround(px, py);
     this.halfH = clamp(this.halfH * factor, this.minHalfH, this.maxHalfH);
-    const after = this.toWorld(px, py);
+    const after = this.screenToGround(px, py);
     this.cx += before.x - after.x;
     this.cy += before.y - after.y;
   }
