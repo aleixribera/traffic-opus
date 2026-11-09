@@ -181,7 +181,7 @@ const KEYS: [string, string][] = [
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
   ["F5 / F9", "Quicksave / quickload"],
   ["`", "Hide the interface"],
-  ["G", "Follow the truck nearest the middle of the screen (again, or Esc, lets go)"],
+  ["G", "Follow the truck nearest the middle of the screen (again, or moving the map, lets go)"],
   ["T / Shift+T", "Tour camera / Vehicle cam (any key or click comes back)"],
 ];
 
@@ -1071,7 +1071,7 @@ export class Hud {
     const opt = (id: string, icon: string, name: string, key: string, blurb: string, on = false) =>
       `<button class="cam-opt${on ? " on" : ""}" data-cam="${id}" aria-pressed="${on}"><span class="cam-ic">${icon}</span><span class="cam-txt"><b>${name}</b><span class="small muted">${blurb}</span></span><span class="cam-key">${key}</span></button>`;
     const html = `<div class="cam-list">${
-      opt("follow", ICON.camFollow, following ? "Stop following" : "Follow a truck", "<kbd>G</kbd>", following ? "Let go of the vehicle the camera is riding with." : "The camera rides with the truck nearest the middle of the screen. Zoom as you like; pan, click the map or Esc lets go.", following)
+      opt("follow", ICON.camFollow, following ? "Stop following" : "Follow a truck", "<kbd>G</kbd>", following ? "Let go of the vehicle the camera is riding with." : "The camera rides with the truck nearest the middle of the screen. Zoom, click and Esc as you like; moving the map lets go.", following)
     }${
       opt("tour", ICON.camera, "Tour", "<kbd>T</kbd>", "An automatic camera drifts over your busiest junctions, towns, works and bridges, fading from one to the next. The interface hides; the game runs on.")
     }${
@@ -1094,7 +1094,7 @@ export class Hud {
     // only the words are read out)
     const el = this.followEl;
     if (!el.firstChild) {
-      el.innerHTML = `<i class="fc-lamp" aria-hidden="true"></i><span class="fc-text" role="status"><span class="fc-k">Following</span><b class="fc-what"></b><span class="fc-sub"></span></span><button class="fc-stop" type="button" aria-label="Stop following (Esc)">Stop<kbd>Esc</kbd></button>`;
+      el.innerHTML = `<i class="fc-lamp" aria-hidden="true"></i><span class="fc-text" role="status"><span class="fc-k">Following</span><b class="fc-what"></b><span class="fc-sub"></span></span><button class="fc-stop" type="button" aria-label="Stop following (G)">Stop<kbd>G</kbd></button>`;
       (el.querySelector(".fc-stop") as HTMLButtonElement).onclick = () => { this.sfx.play("click"); this.app.stopFollow(); };
     }
     if (info) {

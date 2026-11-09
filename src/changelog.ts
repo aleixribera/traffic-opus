@@ -15,6 +15,18 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.70", date: "2026-11-09", title: "A bigger hamlet, late spring, and a clock that ticks every minute",
+    notes: [
+      "Your first hamlet starts with about 70 people, enough hands for a first farm, sawmill and food plant.",
+      "A new game starts in late spring, on day 11, with green fields and summer a few days off.",
+      "The clock counts every minute, and a truck's arrival time is shown to the minute too.",
+      "Level bars name both ends, Level 1 to Level 2, and a fully grown site reads Level 4 · top level.",
+      "Following a truck: Esc clears panels and keeps the camera riding along. Only moving the camera, the chip's Stop, or clicking another vehicle ends it.",
+      "A works' gate can open onto a boulevard, right in and right out, and cars no longer turn across a boulevard's six lanes into a driveway.",
+      "No more street trees standing in driveways or a works' gate drive. The Towns button lights up while the Towns list is open, and the road tool's hints stay clear of the panels.",
+    ],
+  },
+  {
     v: "v0.0.69", date: "2026-11-08", title: "Day and night, seasons, and a road anyone can afford",
     notes: [
       "Day turns to night: street lamps, floodlit works and lit windows come on at dusk, and headlights sweep the roads. The Nights setting in the pause menu softens them or turns them off.",
