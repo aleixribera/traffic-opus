@@ -66,6 +66,8 @@ export interface LotWay {
   into: V2; // unit, from the road into the lot
   h: number;
   bays: { p: V2; dir: V2 }[]; // empty parking bays: centre, and where a parked car's nose points
+  /** a car park behind the building: the end of the alley down the side of it, where cars turn in to the bays */
+  via?: V2;
 }
 
 /** A bay a static parked car fills (the rest are free for cars that come and go). */
@@ -73,6 +75,13 @@ const bayTaken = (b: Building, k: number) => (((b.id * 73856093) ^ (k * 19349663
 
 /** Front yard depth (m) for a lot with this much depth to spare around its model. */
 const setback = (spare: number) => Math.min(spare * 0.68, 5);
+/**
+ * Main street shops stand on the pavement (owner, 2026-11-09: no strip-mall car parks in front), their car park behind
+ * them down an alley beside them: the alley's end there (model x, z; tools/blender main_lot, MAIN_ALLEY/MAIN_BACK).
+ */
+const REAR_PARK: Partial<Record<string, [number, number]>> = { shop: [7.0, -1.6], highstreet: [7.0, -1.6] };
+/** A zoned building's front yard: none for a main street shop. */
+const setbackOf = (b: Building, spare: number) => (REAR_PARK[b.kind] ? 0 : setback(spare));
 
 const SITE = 0xb59d6a; // construction site: bare earth
 /** A building getting its roof on: raw timber, brick and concrete before the paint. */
@@ -80,7 +89,7 @@ const RAW = 0xd6c6a4;
 /** Other houses a home may be (tools/blender: same lot, driveway and bay as the kind's own model). */
 const VARIANTS: Partial<Record<string, string[]>> = { house: ["house_b", "house_c"] };
 /** A lot's driveway off its middle (model x, m): a home's runs down the side to its garage. */
-const DRIVE_X: Partial<Record<string, number>> = { house: -4.0 };
+const DRIVE_X: Partial<Record<string, number>> = { house: -4.0, shop: REAR_PARK.shop![0], highstreet: REAR_PARK.highstreet![0] };
 /** Where a home's own walls start (model x, z): what stands left of or behind that is its garage and shed. */
 const HOME_FOOT: Partial<Record<string, [number, number]>> = { house: [-1.9, -4.9], house_b: [-1.9, -4.9], house_c: [-1.9, -4.9] };
 /** Homes, shops and the small halls go up on a timber frame; blocks, towers and big halls on a steel skeleton. */
@@ -227,7 +236,7 @@ export class Buildings3D {
    * strips run out to.
    */
   constructor(private models: ModelSet, private clock: () => number = () => 0, private net: RoadNetwork | null = null) {
-    this.con = new Construction3D(models, this.mat);
+    this.con = new Construction3D(models, this.mat, (p, dir, len) => this.roadOut(p, dir, len));
     this.group.add(this.con.group);
     this.piles = new Stockpiles3D(models, this.mat);
     this.group.add(this.piles.group);
@@ -393,7 +402,7 @@ export class Buildings3D {
     }
     // the model stands near the street; deep lots keep the rest as a back yard
     const spare = Math.max(0, b.hd * 2 - this.depth(b));
-    this.tmp2.makeScale(b.fit, b.fit * b.tall * grow, b.fit).setPosition(0, 0, spare / 2 - setback(spare));
+    this.tmp2.makeScale(b.fit, b.fit * b.tall * grow, b.fit).setPosition(0, 0, spare / 2 - setbackOf(b, spare));
     return out.multiply(this.tmp2);
   }
 
@@ -431,7 +440,7 @@ export class Buildings3D {
    */
   private reachOf(b: Building): number {
     if (!b.zone) return isHall(b.kind) ? this.halfDepth(b) : b.hd;
-    return b.hd - setback(Math.max(0, b.hd * 2 - this.depth(b))) + (DRIVE_X[b.kind] !== undefined ? -0.3 : 0.5);
+    return b.hd - setbackOf(b, Math.max(0, b.hd * 2 - this.depth(b))) + (DRIVE_X[b.kind] !== undefined ? -0.3 : 0.5);
   }
 
   /** The pieces a building is drawn with: one model, or a site's buildings up to its level. */
@@ -816,6 +825,7 @@ export class Buildings3D {
     const kerb = { x: b.front.x + al.x, y: b.front.y + al.y };
     const bays: LotWay["bays"] = [];
     const mm = this.geoOf(b.kind);
+    let via: V2 | undefined;
     if (mm?.bays.length && b.built >= 1 && !b.abandoned) {
       const M = this.matrix(new THREE.Matrix4(), { b, model: b.kind, slot: null });
       const s = b.zone ? b.fit : 1;
@@ -827,8 +837,13 @@ export class Buildings3D {
         const L = Math.hypot(e[8], e[10]) || 1;
         bays.push({ p: { x: e[12], y: e[14] }, dir: { x: e[8] / L, y: e[10] / L } });
       });
+      const rear = REAR_PARK[b.kind];
+      if (rear) {
+        const v = this.v3.set(rear[0], 0, rear[1]).applyMatrix4(M);
+        via = { x: v.x, y: v.z };
+      }
     }
-    return { kerb, drive, into, h: 0, bays };
+    return { kerb, drive, into, h: 0, bays, via };
   }
 
   private siteWay(b: Building): LotWay {
@@ -1067,6 +1082,86 @@ export class Buildings3D {
   }
   private sideCache = new Map<number, { v: number; key: string; e: [number, number] }>();
 
+  /**
+   * The way on down the road from p (a point in a lane), heading dir: the centreline ahead, kept at p's distance from
+   * it, on through each junction by the road that turns least (a dead end or a sharp turn stops it), out to len m.
+   * The way a contractor's truck drives off (construction3d).
+   */
+  private roadOut(p: V2, dir: V2, len: number): { x: number; y: number; h: number }[] | null {
+    const net = this.net;
+    if (!net) return null;
+    let seg = -1, k = 0, t = 0, d2 = 30 * 30;
+    for (const id of net.segsNear(p.x - 30, p.y - 30, p.x + 30, p.y + 30)) {
+      const g = net.segGeom.get(id);
+      if (!g) continue;
+      const pts = g.center.pts;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const q = pointSegDist2(p, pts[i], pts[i + 1]);
+        if (q.d2 < d2) { d2 = q.d2; seg = id; k = i; t = q.t; }
+      }
+    }
+    if (seg < 0) return null;
+    // the centreline from the nearest point on, the way it is heading
+    const line: { x: number; y: number; h: number }[] = [];
+    const g0 = net.segGeom.get(seg)!, c0 = g0.center.pts;
+    const fwd = dot({ x: c0[k + 1].x - c0[k].x, y: c0[k + 1].y - c0[k].y }, dir) >= 0;
+    line.push({ x: c0[k].x + (c0[k + 1].x - c0[k].x) * t, y: c0[k].y + (c0[k + 1].y - c0[k].y) * t, h: g0.hs[k] + (g0.hs[k + 1] - g0.hs[k]) * t });
+    const run = (id: number, ahead: boolean, from: number) => {
+      const g = net.segGeom.get(id)!, c = g.center.pts;
+      if (ahead) for (let i = from; i < c.length; i++) line.push({ x: c[i].x, y: c[i].y, h: g.hs[i] });
+      else for (let i = from; i >= 0; i--) line.push({ x: c[i].x, y: c[i].y, h: g.hs[i] });
+    };
+    run(seg, fwd, fwd ? k + 1 : k);
+    let at = fwd ? net.segs.get(seg)!.b : net.segs.get(seg)!.a, cur = seg, L = 0;
+    const length = () => {
+      L = 0;
+      for (let i = 1; i < line.length; i++) L += Math.hypot(line[i].x - line[i - 1].x, line[i].y - line[i - 1].y);
+      return L;
+    };
+    for (let hops = 0; hops < 12 && length() < len; hops++) {
+      const n = line.length, hd = { x: line[n - 1].x - line[n - 2].x, y: line[n - 1].y - line[n - 2].y };
+      const hl = Math.hypot(hd.x, hd.y) || 1;
+      let best = -1, bestDot = Math.cos(Math.PI / 3), ahead = true;
+      for (const s of net.segsAt(at)) {
+        if (s.id === cur) continue;
+        const c = net.segGeom.get(s.id)?.center.pts;
+        if (!c || c.length < 2) continue;
+        const out = s.a === at;
+        const q0 = out ? c[0] : c[c.length - 1], q1 = out ? c[1] : c[c.length - 2];
+        const ql = Math.hypot(q1.x - q0.x, q1.y - q0.y) || 1;
+        const cs = ((q1.x - q0.x) * hd.x + (q1.y - q0.y) * hd.y) / (ql * hl);
+        if (cs > bestDot) { bestDot = cs; best = s.id; ahead = out; }
+      }
+      if (best < 0) break;
+      const c = net.segGeom.get(best)!.center.pts;
+      run(best, ahead, ahead ? 0 : c.length - 1);
+      const s = net.segs.get(best)!;
+      at = ahead ? s.b : s.a;
+      cur = best;
+    }
+    // over to p's side, as far out as p is: the lane it is driving in
+    const h0 = { x: line[1].x - line[0].x, y: line[1].y - line[0].y }, h0l = Math.hypot(h0.x, h0.y) || 1;
+    const off = (h0.x * (p.y - line[0].y) - h0.y * (p.x - line[0].x)) / h0l;
+    const out: { x: number; y: number; h: number }[] = [];
+    for (let i = 0; i < line.length; i++) {
+      const a = line[Math.max(0, i - 1)], b = line[Math.min(line.length - 1, i + 1)];
+      const tx = b.x - a.x, ty = b.y - a.y, tl = Math.hypot(tx, ty);
+      if (tl < 1e-6) continue;
+      const q = { x: line[i].x - (ty / tl) * off, y: line[i].y + (tx / tl) * off, h: line[i].h };
+      const last = out[out.length - 1];
+      if (!last || Math.hypot(q.x - last.x, q.y - last.y) > 0.05) out.push(q);
+    }
+    // (starting where the truck is, and cut at len)
+    out[0] = { x: p.x, y: p.y, h: out[0]?.h ?? 0 };
+    let acc = 0;
+    for (let i = 1; i < out.length; i++) {
+      const d = Math.hypot(out[i].x - out[i - 1].x, out[i].y - out[i - 1].y);
+      if (acc + d >= len) { const u = (len - acc) / d; out[i] = { x: out[i - 1].x + (out[i].x - out[i - 1].x) * u, y: out[i - 1].y + (out[i].y - out[i - 1].y) * u, h: out[i].h }; out.length = i + 1; break; }
+      acc += d;
+    }
+    return out.length >= 2 ? out : null;
+  }
+
   /** The pavement's width beside a road (none for a road without one). */
   private paveOf(seg: number): number {
     const s = this.net?.segs.get(seg);
@@ -1134,7 +1229,7 @@ export class Buildings3D {
       lotMatrix(base, b.c, b.rot, b.side);
       room = { x0: -b.hw, x1: b.hw, z0: -b.hd, z1: b.hd };
       if (b.zone) {
-        const spare = Math.max(0, b.hd * 2 - this.depth(b)), dz = spare / 2 - setback(spare), s = b.fit;
+        const spare = Math.max(0, b.hd * 2 - this.depth(b)), dz = spare / 2 - setbackOf(b, spare), s = b.fit;
         x0 *= s; x1 *= s; z0 = z0 * s + dz; z1 = z1 * s + dz; top *= s * b.tall;
       }
     }

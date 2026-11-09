@@ -45,6 +45,8 @@ export interface BridgeParts {
    * instead of kerbs, pavements, lamps and street trees. Without it, every road is drawn as a town street.
    */
   townStreets?: () => Map<number, TownRuns>;
+  /** Each town's Main Street through its old town (seg ids): its town stretch is laid in brick. */
+  mainStreets?: () => Set<number>;
 }
 
 /** A site's yard concrete (Buildings3D's service roads), carried out of its gate to the street that reaches it. */
@@ -60,6 +62,7 @@ export function makeRoadMaterial(opts: { color?: number; opacity?: number; marki
     uLane: { value: new THREE.Color(hw ? PAL.hwLane : PAL.lane) },
     uHw: { value: hw ? 1 : 0 },
     uCentre: { value: new THREE.Color(PAL.centre) },
+    uBrick: { value: new THREE.Color(PAL.brickStreet) },
     uGrass: { value: new THREE.Color(PAL.grass) },
     uTree: { value: new THREE.Color(PAL.tree) },
     uTreeLight: { value: new THREE.Color(PAL.treeLight) },
@@ -76,12 +79,25 @@ export function makeRoadMaterial(opts: { color?: number; opacity?: number; marki
       .replace(
         "#include <common>",
         `#include <common>
-uniform vec3 uRoad; uniform vec3 uEdge; uniform vec3 uLane; uniform vec3 uCentre;
+uniform vec3 uRoad; uniform vec3 uEdge; uniform vec3 uLane; uniform vec3 uCentre; uniform vec3 uBrick;
 ${ENV_GLSL}
 uniform vec3 uGrass; uniform vec3 uTree; uniform vec3 uTreeLight;
 uniform float uFlowMode; uniform float uMarkings; uniform float uArrows; uniform float uHw;
 varying vec4 vRoad; varying vec2 vFlow; varying vec3 vMed; varying vec2 vClip; varying vec4 vPock; varying float vRur;
 float band(float x, float w) { float f = fwidth(x) * 0.8 + 1e-4; return 1.0 - smoothstep(w - f, w + f, abs(x)); }
+// a brick street (u across, v along, m): bricks laid across it in running bond, each its own shade; the joints and
+// the shading fade out as a brick shrinks under a few pixels, so a far-off main street is a plain warm red-brown
+vec3 brickAt(float u, float v) {
+  vec2 q = vec2(u / 0.42, v / 0.2);
+  q.x += mod(floor(q.y), 2.0) * 0.5;
+  vec2 f = fract(q), w = max(fwidth(q), vec2(1e-4));
+  vec2 e = min(f, 1.0 - f) / w;
+  float near = 1.0 - smoothstep(0.18, 0.45, max(w.x, w.y));
+  float joint = 1.0 - smoothstep(0.35, 1.1, min(e.x, e.y));
+  float h = fract(sin(dot(floor(q), vec2(12.9898, 78.233))) * 43758.5453);
+  vec3 b = uBrick * mix(1.0, 0.9 + 0.2 * h, near);
+  return mix(b, uBrick * 0.6, joint * near * 0.75);
+}
 // a turn pocket's line: dashed while it opens out, solid where it's a lane of its own
 float pockLine(float x, float p, float dash) { return p < 0.01 ? 0.0 : band(x, 0.1) * (p > 0.98 ? 1.0 : dash); }
 vec3 flowTint(float r) {
@@ -96,6 +112,8 @@ vec3 flowTint(float r) {
 {
   float u = vRoad.x, v = vRoad.y, f = vRoad.z, b = vRoad.w;
   vec3 c = uRoad;
+  // (vRur below 0: a town's Main Street, in brick)
+  if (vRur < -0.5) c = brickAt(u, v);
   if (f >= 0.0 && uMarkings > 0.5) {
     float LW = ${LANE_W.toFixed(2)};
     float med = vMed.x * 0.5; // half the median: both directions start this far out
@@ -492,6 +510,8 @@ export class Roads3D {
   private shoulder = makeShoulderMaterial();
   /** The town stretches of each road as last worked out (null: no one says, so every road is a town street). */
   private towny: Map<number, TownRuns> | null = null;
+  /** Each town's Main Street as last worked out (brick). */
+  private mains: Set<number> | null = null;
   private edgeMat = new THREE.MeshLambertMaterial({ color: PAL.roadEdge });
   // (pavements: swept, so less snow on them than on the verges)
   private walkMat = seasonal(new THREE.MeshLambertMaterial({ vertexColors: true }), { shelter: 0.45 });
@@ -574,9 +594,11 @@ export class Roads3D {
   private reclassify(): number[] {
     const prev = this.towny, next = this.parts?.townStreets?.() ?? null;
     this.towny = next;
+    const pm = this.mains, nm = this.parts?.mainStreets?.() ?? null;
+    this.mains = nm;
     if (!prev || !next) return prev === next ? [] : [...this.net.segs.keys()];
     const out: number[] = [];
-    for (const id of this.net.segs.keys()) if (runsDiffer(prev.get(id), next.get(id))) out.push(id);
+    for (const id of this.net.segs.keys()) if (runsDiffer(prev.get(id), next.get(id)) || !!pm?.has(id) !== !!nm?.has(id)) out.push(id);
     return out;
   }
   /** Redraw the roads that flipped, and the junctions and bends at their ends (skipping those already redrawn). */
@@ -910,7 +932,9 @@ export class Roads3D {
     const pa = dirt && polyEnd(s.a), pb = dirt && polyEnd(s.b);
     // where it runs out in the country (1) or along a town street (0), point by point (up on a ramp or a bridge it
     // keeps its concrete edge)
-    const rural = ss.map((sc, i) => (dirt || s.ring || hs[i] >= 0.3 || this.townAt(s, sc) ? 0 : 1));
+    // (-1: a town's Main Street, its town stretch laid in brick)
+    const brick = !dirt && !s.ring && !hw && !!this.mains?.has(s.id);
+    const rural = ss.map((sc, i) => (dirt || s.ring || hs[i] >= 0.3 ? 0 : this.townAt(s, sc) ? (brick ? -1 : 0) : 1));
     const geo = ribbon(pts, hs, ss, halfW, LIFT, [T.fwd, T.bwd], edges, T.median ?? 0, medEnd,
       ss.map((sc) => (dirt ? Math.min(pa ? sc - s0 : 1e4, pb ? s1 - sc : 1e4) : Math.min(sc - s0, s1 - sc))), pock, lat, hw ? undefined : rural);
     const surface = new THREE.Mesh(geo, dirt ? this.dirt.mat : s.ring ? this.ringSurface.mat : hw ? this.hwSurface.mat : this.surface.mat);
@@ -935,7 +959,7 @@ export class Roads3D {
     const walk = s.ring || dirt || rural.every((r) => r > 0) ? 0 : SIDEWALK[grp];
     if (walk > 0) {
       const inner = { l: edges ? edges.l : pts.map(() => -halfW), r: edges ? edges.r : pts.map(() => halfW) };
-      const ok = (i: number, side: 1 | -1) => hs[i] < 0.3 && !rural[i] && Math.abs(side > 0 ? inner.r[i] : inner.l[i]) > halfW - 0.02;
+      const ok = (i: number, side: 1 | -1) => hs[i] < 0.3 && !(rural[i] > 0) && Math.abs(side > 0 ? inner.r[i] : inner.l[i]) > halfW - 0.02;
       // (each road's pavement a hair apart in height, so two that meet or overlap never flicker)
       const wg = sidewalkGeo(pts, hs, inner, walk, ok, (id % 4) * 0.0004, lat, (i) => rural[i] > 0);
       if (wg) { const wm = new THREE.Mesh(wg, this.walkMat); wm.receiveShadow = true; extra.push(wm); }

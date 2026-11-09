@@ -531,22 +531,64 @@ def b_apartments(M, P):
     return L
 
 
+# a main street shop's lot: the shop stands on the pavement, its side alley runs past it to a car park behind
+MAIN_ALLEY = (5.2, 8.8)     # the alley across the lot (x); the game drives cars in along it (buildings3d DRIVE_X)
+MAIN_FRONT = -9.0           # the shopfront (y), the paving before it carries on the town's pavement
+MAIN_BACK = 0.0             # the back wall of the shop (y): the car park from there to the back of the lot
+REAR_PARK = {"shop", "highstreet"}   # the models parking behind the building
+
+
+def main_lot(M, P, w, d, nbays):
+    """A main street shop's lot (w x d): paving at the front out to the shopfront, an asphalt alley down the +x side
+    and a car park behind the shop with a row of bays along the back (cars nose in toward the back fence), a board
+    fence round the back, a dumpster by the back door. Returns Lot."""
+    L = Lot(w, d)
+    yf, yb = -d / 2, d / 2
+    a0, a1 = MAIN_ALLEY
+    box(M, -w / 2, a0, yf, MAIN_FRONT, 0, PAD_H, P["lm_paving"])
+    box(M, -w / 2, a0, MAIN_FRONT, MAIN_BACK, 0, PAD_H, P["pad"])
+    box(M, a0, w / 2, yf, MAIN_BACK, 0, PAD_H, P["asphalt"])
+    box(M, -w / 2, w / 2, MAIN_BACK, yb, 0, PAD_H, P["asphalt"])
+    # the bays along the back, from the left
+    x0 = -w / 2 + 0.6
+    bays = [x0 + BAY_W / 2 + i * BAY_W for i in range(nbays)]
+    by0, by1 = yb - 0.6 - BAY_L, yb - 0.6
+    for lx in sorted({round(bx + k * BAY_W / 2, 3) for bx in bays for k in (-1, 1)}):
+        box(M, lx - 0.06, lx + 0.06, by0, by1, PAD_H, PAD_H + 0.012, P["line"])
+    L.bays = [(bx, (by0 + by1) / 2) for bx in bays]
+    # a board fence round the back of the car park, and the dumpster by the back door
+    fence = P["fence_w"]
+    box(M, -w / 2, w / 2, yb - 0.12, yb, 0, 1.6, fence)
+    box(M, -w / 2, -w / 2 + 0.12, MAIN_BACK, yb, 0, 1.6, fence)
+    box(M, w / 2 - 3.2, w / 2 - 1.4, MAIN_BACK + 0.3, MAIN_BACK + 1.4, 0, 1.3, P["hs_awning"], bevel=0.04)
+    return L
+
+
 def b_shop(M, P):
-    L = lot(M, P, 18, 20, bay_row(4))
-    wall, roof = P["com_wall"], P["com_roof"]
-    x0, x1, y0, y1, h = -7.6, 7.6, L.y0 + 0.5, L.y1 - 0.4, 4.2
+    """A 1930s small-town store on the main street: a brick front with a stepped parapet and a sign band, wide
+    display windows either side of a recessed door, a canvas awning over the pavement; a car park behind it,
+    reached down the alley beside it."""
+    L = main_lot(M, P, 18, 20, 4)
+    wall, trim = P["hs_wall2"], P["res_trim"]
+    x0, x1, y0, y1, h = -9.0, MAIN_ALLEY[0] - 0.2, MAIN_FRONT, MAIN_BACK, 5.0
     box(M, x0, x1, y0, y1, 0, h, wall)
-    # sawtooth roof: teeth repeat along X, ridges along Y, glazed vertical faces
-    n = 4
-    tw = (x1 - x0) / n
-    for i in range(n):
-        a, b = x0 + i * tw, x0 + (i + 1) * tw
-        extrude_profile(M, [(a, h), (b, h), (b, h + 1.45)], "y", y0 - 0.2, y1 + 0.2, roof, bevel=0.04)
-        if i < n - 1:
-            box(M, b, b + 0.05, y0 + 0.4, y1 - 0.4, h + 0.15, h + 1.25, P["com_glass"])
-    # storefront and canopy
-    box(M, x0 + 1.0, x1 - 1.0, y0 - 0.06, y0, 0.3, 2.6, P["com_glass"])
-    box(M, x0 - 0.2, x1 + 0.2, y0 - 1.3, y0, 2.8, 3.1, P["com_canopy"], bevel=0.05)
+    box(M, x0 + 0.2, x1 - 0.2, y0 + 0.2, y1 - 0.2, h, h + 0.12, P["com_roof"])
+    # the parapet: stepped up in the middle over the sign, a cream coping all round
+    box(M, x0, x1, y0, y0 + 0.3, h, h + 0.9, wall)
+    cx = (x0 + x1) / 2
+    box(M, cx - 2.6, cx + 2.6, y0, y0 + 0.3, h + 0.9, h + 1.6, wall)
+    box(M, x0 - 0.05, x1 + 0.05, y0 - 0.08, y0 + 0.35, h + 0.9, h + 1.0, trim)
+    box(M, cx - 2.7, cx + 2.7, y0 - 0.08, y0 + 0.35, h + 1.6, h + 1.7, trim)
+    # the sign band, the display windows and the recessed door between them
+    box(M, x0 + 0.5, x1 - 0.5, y0 - 0.1, y0, 3.2, 4.2, trim)
+    box(M, cx - 3.4, cx + 3.4, y0 - 0.14, y0 - 0.1, 3.4, 4.0, P["hs_awning2"])
+    box(M, x0 + 0.6, cx - 1.0, y0 - 0.06, y0, 0.5, 2.9, P["lm_glass"])
+    box(M, cx + 1.0, x1 - 0.6, y0 - 0.06, y0, 0.5, 2.9, P["lm_glass"])
+    box(M, cx - 0.8, cx + 0.8, y0 + 0.4, y0 + 0.46, 0, 2.6, P["lm_glass"])
+    _awning(M, x0 + 0.4, x1 - 0.4, y0, 3.1, 1.0, P["hs_awning2"])
+    # the back door onto the car park, and a vent on the roof
+    box(M, x1 - 3.0, x1 - 2.0, y1, y1 + 0.06, 0, 2.2, trim)
+    ac_unit(M, x0 + 3.0, y1 - 2.5, h + 0.12, P)
     return L
 
 
@@ -3235,11 +3277,12 @@ def _awning(M, x0, x1, y, z, depth, m):
 
 
 def b_highstreet(M, P):
-    """Old high street: three narrow attached shop-houses, each its own colour and height, a shopfront and
-    an awning on the ground floor, flats above under pitched roofs, chimneys on the party walls."""
-    L = lot(M, P, 18, 20, bay_row(3))
-    y0, y1 = L.y0 + 0.6, L.y1 - 0.4
-    xs = [-8.0, -2.4, 2.8, 8.0]
+    """Old main street: three narrow attached shop-houses on the pavement, each its own colour and height, a
+    shopfront and an awning on the ground floor, flats above under pitched roofs, chimneys on the party walls; a car
+    park behind them, reached down the alley beside them."""
+    L = main_lot(M, P, 18, 20, 3)
+    y0, y1 = MAIN_FRONT, MAIN_BACK
+    xs = [-9.0, -4.2, 0.6, MAIN_ALLEY[0] - 0.2]
     spec = [("hs_wall1", "res_roof", 8.6, "hs_awning"), ("hs_wall2", "res_roof2", 9.8, "hs_awning2"),
             ("hs_wall3", "res_roof", 8.0, "hs_awning")]
     for i, (wm, rm, ze, am) in enumerate(spec):
@@ -3247,7 +3290,7 @@ def b_highstreet(M, P):
         box(M, x0, x1, y0, y1, 0, ze, P[wm])
         box(M, x0 + 0.4, x1 - 0.4, y0 - 0.06, y0, 0.3, 3.0, P["lm_glass"])
         box(M, x0, x1, y0 - 0.12, y0, 3.0, 3.35, P["res_trim"])
-        _awning(M, x0 + 0.3, x1 - 0.3, y0, 3.25, 1.4, P[am])
+        _awning(M, x0 + 0.3, x1 - 0.3, y0, 3.25, 1.0, P[am])
         for fl in range(1, 3 if ze < 9 else 3):
             z = 3.0 + (fl - 1) * 2.9
             for k in range(2):
@@ -3258,6 +3301,8 @@ def b_highstreet(M, P):
               oh_u=(0.35, 0.35) if i != 1 else (0.0, 0.0), oh_a=(0.0, 0.0) if i != 1 else (0.3, 0.3))
         if i < 2:
             box(M, x1 - 0.35, x1 + 0.35, y1 - 2.6, y1 - 1.8, ze, ze + 3.2, P["res_trim"], bevel=0.04)
+        # each shop's back door onto the car park
+        box(M, x0 + 1.2, x0 + 2.1, y1, y1 + 0.06, 0, 2.2, P["res_trim"])
     return L
 
 
@@ -5838,7 +5883,8 @@ def verify(names):
             for e in empties:
                 p = e.matrix_world.translation
                 fwd = e.matrix_world.to_3x3() @ Vector((0, 1, 0))
-                if abs(p.z - PAD_H) > 1e-3 or p.y > 0 or fwd.y < 0.99:
+                # (bays at the front of the lot, but for a main street shop's car park behind it)
+                if abs(p.z - PAD_H) > 1e-3 or (p.y > 0 and name not in REAR_PARK) or fwd.y < 0.99:
                     st["issues"].append(f"{e.name} at {tuple(round(v, 2) for v in p)} fwd {tuple(round(v, 2) for v in fwd)}")
             st["park_y"] = round(empties[0].matrix_world.translation.y, 2) if empties else None
             cap = 14000 if name.startswith("mega_") else 2500   # (a landmark is one of a kind, and there are three)

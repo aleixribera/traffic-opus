@@ -838,7 +838,8 @@ export class Industry {
       b.problem = left.length ? `Building site: waiting for ${list}` : null;
       return;
     }
-    if (b.built < 1) { b.problem = null; return; }
+    // (going up: nothing to make yet, but a gate with no road to it is worth saying while the crews work)
+    if (b.built < 1) { b.problem = !b.access ? "No road to the gate" : null; return; }
     if (d.logistics) { this.logistic(b, out); return; }
     // (a finished landmark makes nothing and never grows: megaprojects.ts says what it does)
     if (d.mega) { b.problem = !b.access ? "No road to the gate" : null; P.why = null; P.grow = 0; return; }

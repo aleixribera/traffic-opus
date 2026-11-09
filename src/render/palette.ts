@@ -34,6 +34,8 @@ export const PAL = {
   soilCopper: 0x7d9686,
   locked: 0x2a2a28,
   road: 0x3a3d43,
+  /** a town's Main Street, paved in brick: a muted, weathered red-brown */
+  brickStreet: 0x6f4b3e,
   roadEdge: 0xc9c3ad,
   lane: 0xeeeee8,
   centre: 0xe6b42c,
