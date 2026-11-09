@@ -15,6 +15,12 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.73", date: "2026-11-09", title: "Deliveries that land on time",
+    notes: [
+      "Deliveries to towns: your plants send loads early enough to land before a town runs low, and a short gap of a couple of minutes no longer shows as a shortfall.",
+    ],
+  },
+  {
     v: "v0.0.72", date: "2026-11-09", title: "Season title cards",
     notes: [
       "A title card for each new season, with what it means for your farms and camps; hover the clock for the same.",
