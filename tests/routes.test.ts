@@ -79,15 +79,21 @@ describe("route choice", () => {
     slow(false);
     for (const s of w.north) for (const k of [s * 2, s * 2 + 1]) { flow.delete(k); tr.router.speeds.delete(k); }
     (tr as any).stats();
-    const n = (h: number) => {
+    const n = (h: number, t = tr) => {
       hour = h;
-      (tr as any).stats();
+      (t as any).stats();
       let north = 0;
-      for (let salt = 0; salt < 100; salt++) if (way(tr.router.route(w.from, w.to, 1, undefined, { salt, truck: false })!.keys, w) === "north") north++;
+      for (let salt = 0; salt < 100; salt++) if (way(t.router.route(w.from, w.to, 1, undefined, { salt, truck: false })!.keys, w) === "north") north++;
       return north;
     };
     expect(n(8)).toBeLessThan(10);
     // at midday the north way is as good as ever
     expect(n(13)).toBeGreaterThan(20);
+    // and a save keeps what the roads remember
+    const back = new Traffic(w.net, { arrive: () => {}, fail: () => {} });
+    back.hourOf = () => hour;
+    back.loadUsual(JSON.parse(JSON.stringify(tr.usualJSON())));
+    expect(n(8, back)).toBeLessThan(10);
+    expect(n(13, back)).toBeGreaterThan(20);
   });
 });

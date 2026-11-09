@@ -329,7 +329,8 @@ export class Society {
           c.lunch = undefined;
           const since = (((h - c.shift) % 24) + 24) % 24;
           const rest = Math.max(0.5, SHIFT_LEN - since) * HOUR;
-          const shop = job && this.pickShop(job);
+          // (a shop's own staff go to another one: the next street's café, not their own counter)
+          const shop = job && this.pickShop(job, job);
           if (job && shop && shop.id !== job.id) {
             c.lunch = job.id;
             if (this.travel(c, job, shop, "shop")) return;
@@ -402,8 +403,8 @@ export class Society {
     this.travel(c, from, home, "home");
   }
 
-  /** Commercial nearby, weighted to the closest few (bigger shops pull from further). */
-  pickShop(near: Building): Building | undefined {
+  /** Commercial nearby, weighted to the closest few (bigger shops pull from further); never `not`. */
+  pickShop(near: Building, not?: Building): Building | undefined {
     const g = this.g;
     const shops = g.shops;
     if (!shops.length) return undefined;
@@ -411,7 +412,7 @@ export class Society {
     let best: Building | undefined, bs = Infinity;
     for (let k = 0; k < Math.min(shops.length, 24); k++) {
       const b = shops.length <= 24 ? shops[k] : shops[(rng() * shops.length) | 0];
-      if (!b.access || b.built < 1 || b.abandoned) continue;
+      if (!b.access || b.built < 1 || b.abandoned || b === not) continue;
       if (near.access && !g.connected(near.access.seg, b.access.seg)) continue;
       const pull = b.zone === "comHigh" || b.zone === "comTower" ? 1.8 : 1;
       const s = (dist(b.c, near.c) / pull) * (0.6 + rng() * 0.8);
@@ -508,12 +509,14 @@ export class Society {
     if (kind === "work") {
       if (!c.back) c.commute = c.commute < 0 ? dur : c.commute + (dur - c.commute) * 0.3;
       c.lunch = undefined;
-      // stay until 8 hours after the shift started
-      const sinceStart = (((this.hourOf() - c.shift) % 24) + 24) % 24;
-      const left = sinceStart < 10 ? SHIFT_LEN - sinceStart : SHIFT_LEN;
-      // a day shift breaks for lunch about four hours in: some go out to the shops (the lunchtime bump)
-      const lunchAt = 4 + g.rng() - sinceStart;
-      if (!c.back && isDayShift(c.shift) && lunchAt > 0.5 && lunchAt < left - 1.5 && g.rng() < LUNCH_OUT) {
+      // stay until 8 hours after the shift started (hours since it started: below 0 for the usual early arrival, as a
+      // commuter leaves to be there a quarter of an hour before, and waits for the shift)
+      let since = (((this.hourOf() - c.shift) % 24) + 24) % 24;
+      if (since > 12) since -= 24;
+      const left = since < 10 ? SHIFT_LEN - since : SHIFT_LEN;
+      // a morning shift breaks for lunch about four hours in: some go out to the shops (the lunchtime bump)
+      const lunchAt = 4 + g.rng() - since;
+      if (!c.back && lunchesAtNoon(c.shift) && lunchAt > 0.5 && lunchAt < left - 1.5 && g.rng() < LUNCH_OUT) {
         c.lunch = -1;
         this.schedule(c, this.now + lunchAt * HOUR);
       } else this.schedule(c, this.now + Math.max(0.5, left) * HOUR);
@@ -633,8 +636,10 @@ export function estTime(a: V2, b: V2): number {
 export const SHIFT_LEN = 8;
 /** Share of day-shift workers who go out to the shops for lunch (the noon bump on the roads). */
 export const LUNCH_OUT = 0.3;
-/** A shift that starts in the morning (and so has its lunch break around noon). */
+/** A shift that starts in the morning (and ends by the evening). */
 export const isDayShift = (shift: number) => shift >= 6 && shift <= 11;
+/** A shift with its lunch break around noon (8:00 and 9:00; the 11:00 shop shift eats before it comes in). */
+export const lunchesAtNoon = (shift: number) => shift >= 6 && shift <= 9;
 
 /**
  * Shift start for a new job. Most work is a day shift starting at 8 (shops at 9, some at 11 to cover the evening),

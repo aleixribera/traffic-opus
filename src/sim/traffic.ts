@@ -50,8 +50,9 @@ export interface Vehicle {
    * other way. See DRIVERS.
    */
   drv: number;
-  /** who it routes as (see Router.cost): its driver's way of judging roads, and whether it is a truck */
-  who: Driver;
+  /** who it routes as (see Router.cost): its driver's way of judging roads, and whether it is a truck (none: a bus
+   *  keeps to its line's drawn route) */
+  who: Driver | undefined;
   /** a speed it never goes above, whatever the limit (m/s): an escorted oversized load */
   vmax?: number;
   /** never changes lane to overtake (only when its route needs it): an escorted convoy holds its lane */
@@ -337,6 +338,17 @@ export class Traffic {
     };
   }
 
+  /** The roads' memory of how they flow hour by hour, for a save: [directed seg, 24 shares of the limit]. */
+  usualJSON(): [number, number[]][] {
+    return [...this.usual].map(([k, u]) => [k, Array.from(u, (x) => Math.round(x * 100) / 100)]);
+  }
+
+  /** Back from a save (none in saves from before roads remembered: they learn it again over a day or two). */
+  loadUsual(d: [number, number[]][] | undefined) {
+    this.usual.clear();
+    for (const [k, u] of d ?? []) if (this.net.segs.has(dkSeg(k)) && u.length === 24) this.usual.set(k, Float32Array.from(u));
+  }
+
   // ---------------------------------------------------------------- spawning
 
   request(p: PendingSpawn) {
@@ -345,8 +357,12 @@ export class Traffic {
     this.pending.push(p);
   }
 
-  /** Who a trip routes as: a resident the same way every time (their habits), anyone else by its look. */
-  private whoOf(p: PendingSpawn): Driver {
+  /**
+   * Who a trip routes as: a resident the same way every time (their habits), anyone else by its look. A bus has no
+   * driver's judgement: it drives the route its line is drawn and timed on (see Transit).
+   */
+  private whoOf(p: PendingSpawn): Driver | undefined {
+    if (p.trip.kind === "bus") return undefined;
     return { salt: p.trip.resident >= 0 ? p.trip.resident * 7 + 3 : p.look ?? 0, truck: p.truck };
   }
 
@@ -2000,9 +2016,13 @@ export class Traffic {
     const good = (l: Lane) => (final ? l.idx === this.turnIdx(v, l) : (strict ? ahead(l) : reach(l)) && (!prep || prep(l)));
     let target: Lane | null = null;
     let mandatory = false;
+    // (only the early pick wants another lane: this one still leads on, so without a gap the car keeps going and
+    // tries again on the next road, never stopping for one)
+    let early = false;
     v.wish = undefined;
     v.pocketAhead = undefined;
     if (!good(lane)) {
+      early = !!prep && (final ? false : strict ? ahead(lane) : reach(lane));
       const goods = all.filter(good);
       if (!goods.length) return;
       goods.sort((a, b) => Math.abs(a.idx - lane.idx) - Math.abs(b.idx - lane.idx));
@@ -2054,7 +2074,7 @@ export class Traffic {
     const noGap = besideTail || (lead && lead.s - lead.len - ts < Math.max(2.5, v.v * 0.6 * k, (SIM.idm.s0 + Math.max(0, v.v * v.v - lead.v * lead.v) / (2 * (mandatory ? 3.2 : 2.2))) * k)) || (follow && ts - v.len - follow.s < Math.max(squeeze, follow.v * 0.9 * k + (follow.v - v.v) * 0.8));
     if (noGap) {
       // must get over soon and there's no gap: say so. We line up behind a car there, and the one behind it lets us in.
-      if (mandatory && toEnd < Math.max(160, v.v * 7)) v.wish = { lane: target, t: this.time };
+      if (mandatory && !early && toEnd < Math.max(160, v.v * 7)) v.wish = { lane: target, t: this.time };
       return;
     }
     // commit

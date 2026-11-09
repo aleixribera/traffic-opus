@@ -418,8 +418,10 @@ itself across modes; you build tracks, docks and the transfer points, never line
 - **The day has a rhythm (2026-11-09: "make the game feel more real ... schedules").** Most jobs are a day shift
   from 8:00 (shops 9:00, a third of them 11:00 to cover the evening); plants keep a smaller 15:00 shift and a
   skeleton night shift at 23:00 (70/20/10, was 55/30/15 from 7:00). So the town leaves for work in one morning
-  rush, comes home in one evening rush around 17:00-19:00, and the small hours are quiet. About a third of day
-  workers go out to the shops at lunch and back to work after, and people without a job run most of their errands
+  rush, comes home in one evening rush around 16:00-19:00, and the small hours are quiet. Someone who gets to work
+  early waits for the shift and leaves at its end. About a third of the 8:00 and 9:00 shifts go out to the shops
+  at lunch, four to five hours in, and back to work after (a shop's own staff to another shop; the 11:00 shift has
+  eaten before it comes in), and people without a job run most of their errands
   around noon and late afternoon. In the showcase, cars on the road through a day went from a flat 17-37 (the peak
   at 15:00, the old back shift) to ~14 at 2:00, ~50 at 8:00, ~30 over lunch and ~45 at 17:00-19:00. Trips last
   1-3 game hours at this scale, so the rushes are broad, not spikes. Older saves move 7:00 shifts to 8:00 and
@@ -815,7 +817,8 @@ and turning it back on brings every dismissed tip back. Both are kept per browse
   more than ~22% longer is never taken for it. Roads remember how they flow at each hour of the day (mostly the
   last day or two): where a road usually crawls at this hour or the next, drivers count it halfway to that speed
   before it jams today, so the rush-hour bottleneck is planned round, and it is the player's roads that decide
-  where the queues are, the same way every day. Trucks count a town's own one-lane streets 1.6 times over unless
+  where the queues are, the same way every day; a save keeps what the roads remember. Buses keep to the route their
+  line is drawn and timed on. Trucks count a town's own one-lane streets 1.6 times over unless
   they start or end on one: they keep to the bigger roads where there is one. On two equal ways a fifth to a third
   of drivers take each; on the late-game save 0.36 of truck time is on town streets (0.38 before; most of it is
   deliveries into the towns).
@@ -824,7 +827,9 @@ and turning it back on brings every dismissed tip back. Both are kept per browse
   that leads to the destination's side on the road before. Before, a car that had overtaken a truck on the inner
   lane could find no gap in the near lane, where the on-ramp traffic comes in, and missed its turn. At a real
   junction drivers still keep to both lanes and get over after it (doing it there too halved the near lane's
-  share of a green).
+  share of a green). The early pick never stops a car: its lane still leads on, so with no gap it keeps going and
+  gets over on the last road (asking to be let in, cars stood in the motorway's inner lane for over a minute
+  with the near lane full).
 
 ## Controls and road building (owner, 2026-11-07: "exactly like Cities: Skylines 2")
 
