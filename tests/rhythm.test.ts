@@ -1,5 +1,4 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
 import { Game } from "../src/game/city";
 import { HOUR, SHIFT_LEN, errandWeight, isDayShift, shiftFor, type Citizen } from "../src/game/society";
 
@@ -17,8 +16,10 @@ describe("the daily rhythm", () => {
     expect(errandWeight(17)).toBeGreaterThan(errandWeight(15));
   });
 
-  it("a town is busy at the rushes and over lunch and quiet at night", () => {
-    const g = Game.load(JSON.parse(readFileSync("public/showcase.json", "utf8")));
+  it("a town is busy at the rushes and over lunch and quiet at night", async () => {
+    // (node's fs, loaded by name: the tests are typed for the browser)
+    const fs = await import(/* @vite-ignore */ ["node", "fs"].join(":"));
+    const g = Game.load(JSON.parse(fs.readFileSync("public/showcase.json", "utf8")));
     const people = g.people as any;
     // count the trips people set off on, by hour of day and kind
     const starts: Record<string, number[]> = { work: Array(24).fill(0), home: Array(24).fill(0), shop: Array(24).fill(0), lunch: Array(24).fill(0) };
