@@ -802,6 +802,19 @@ and turning it back on brings every dismissed tip back. Both are kept per browse
   through a car in its way), and for a minute after that the next ones there go after 15 s. If it is still frozen
   at 4 minutes, the car at the front fades off the road and its trip fails. In a grown 5,000-person town it fires a
   handful of times in hours of play.
+- **Drivers differ (2026-11-09: "make the game feel more real ... traffic intelligence").** Each car's driver is
+  brisk or calm, fixed by the vehicle (most near the middle): the gap it keeps behind the car ahead is 0.9-1.1 s
+  (was 1.0 s for everyone), it pulls away 8% harder or softer, and the gap it takes at a give-way is 12% shorter or
+  longer. Cars behind a slow truck string out at 12.7-15.1 m apart instead of exactly 14.0 m each. Everyone still
+  cruises at the same share of the limit: varying that by 4-6% made streams so lumpy that a crossing's left-turn
+  arrow helped or didn't by luck, and took more go-aheads back at a busy four-way. Throughput on the junction bench
+  is unchanged (3,489 cars through vs 3,482 over 12 runs; three more seeds +0.2%).
+- **Picking the lane early for a stop just past a merge (2026-11-09).** A car whose destination is less than
+  400 m along a road it joins without a junction (past an on-ramp's merge, a lane gain, a bend) gets into the lane
+  that leads to the destination's side on the road before. Before, a car that had overtaken a truck on the inner
+  lane could find no gap in the near lane, where the on-ramp traffic comes in, and missed its turn. At a real
+  junction drivers still keep to both lanes and get over after it (doing it there too halved the near lane's
+  share of a green).
 
 ## Controls and road building (owner, 2026-11-07: "exactly like Cities: Skylines 2")
 

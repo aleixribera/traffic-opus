@@ -44,6 +44,12 @@ export interface Vehicle {
   vf?: number;
   /** share of a car's acceleration (a heavy truck pulls away slower) */
   af?: number;
+  /**
+   * The driver, -1..1 (from the vehicle id, so the same car drives the same way): a brisk one (towards 1) keeps a
+   * slightly shorter gap, pulls away a little harder and takes a slightly shorter gap at a give-way; a calm one the
+   * other way. See DRIVERS.
+   */
+  drv: number;
   /** a speed it never goes above, whatever the limit (m/s): an escorted oversized load */
   vmax?: number;
   /** never changes lane to overtake (only when its route needs it): an escorted convoy holds its lane */
@@ -219,6 +225,24 @@ const RING_FULL = 0.6;
 const CROSS_SWEEP = 10;
 /** Edges kept in a vehicle's history (a road train spans a lane, a junction and the lane before it). */
 const HIST = 8;
+/** A destination this close (m) past the start of its road: a car picks its lane for it on the road before. */
+const PREP_AHEAD = 400;
+/**
+ * How much drivers differ, at the ends of the range (Vehicle.drv -1..1, most near the middle): the gap they keep
+ * +-10% of SIM.idm.T, how hard they pull away +-8%, the gap they take at a give-way +-12%. Enough that a queue moves
+ * off unevenly and a stream of cars isn't evenly spaced, as real ones aren't; the averages are unchanged. (Cruising
+ * speed stays the same for everyone: +-4-6% of it made the oncoming stream at a crossing so lumpy that whether a
+ * left-turn arrow helps came down to luck, and drew more go-aheads back at a busy four-way.)
+ */
+export const DRIVERS = { gap: 0.1, accept: 0.12, launch: 0.08 };
+
+/** A vehicle's driver, -1..1 from its id: the sum of two hashes, so most drivers are near the middle. */
+export function driver(id: number): number {
+  const u1 = (Math.imul(id + 1, 2654435761) >>> 0) / 4294967296;
+  const u2 = (Math.imul(id + 7919, 2246822519) >>> 0) / 4294967296;
+  return u1 + u2 - 1;
+}
+
 /** A car's paint from its look. */
 export const carColor = (look: number) => CAR_COLORS[look % CAR_COLORS.length];
 // real traffic: mostly white, silver, grey and black, with some red, blue, beige and green
@@ -387,7 +411,7 @@ export class Traffic {
       lat: 0, lcCool: 2, wait: 0, stuck: 0, dest: to, destSide: p.toSide, destS: -1,
       trip: { ...p.trip, freeFlow: best.freeFlow },
       x: 0, y: 0, h: 0, ang: 0, px: 0, py: 0, ph: 0, pang: 0, fade: 0, leaving: 0,
-      ideal: 0, born: this.time, v0e: 1, constrained: false,
+      ideal: 0, born: this.time, v0e: 1, constrained: false, drv: driver(this.nextId - 1),
     };
     if (p.vf !== undefined) v.vf = p.vf;
     if (p.af !== undefined) v.af = p.af;
@@ -1212,7 +1236,7 @@ export class Traffic {
           const patience = v.wait > 20 ? 0.45 : v.wait > 8 ? 0.7 : 1;
           // the gap it needs is counted from when we get to the line, not from now
           const tLine = toEnd / Math.max((v.v + Math.min(v.v, c.speed)) / 2, 1);
-          if (tArr < tLine + SIM.yieldGap * patience && (w.v > 1 || d < 6)) {
+          if (tArr < tLine + SIM.yieldGap * patience * (1 - v.drv * DRIVERS.accept) && (w.v > 1 || d < 6)) {
             if (!(w.next === null && w.v < 0.5 && d > 3)) { v.block = "yield"; v.blockTo = o.to; return false; }
           }
         }
@@ -1853,7 +1877,7 @@ export class Traffic {
     v.v0e = v0;
     // free road (IIDM: above the desired speed, ease down to it at no more than comfortable braking)
     const vf = Math.max(v0, 0.1);
-    const pa = P.a * (v.af ?? 1);
+    const pa = P.a * (v.af ?? 1) * (1 + v.drv * DRIVERS.launch);
     const aFree = v.v <= vf ? pa * (1 - Math.pow(v.v / vf, 4)) : -P.b * (1 - Math.pow(vf / v.v, (pa * 4) / P.b));
     let a = aFree;
     for (let k = 0; k < G.length; k++) a = Math.min(a, this.follow(v, vf, aFree, G[k], L[k]));
@@ -1872,8 +1896,8 @@ export class Traffic {
   private follow(v: Vehicle, v0: number, aFree: number, gap: number, lv: number): number {
     const P = SIM.idm;
     const g = Math.max(gap, 0.1);
-    const pa = P.a * (v.af ?? 1);
-    const sStar = P.s0 + Math.max(0, v.v * P.T + (v.v * (v.v - lv)) / (2 * Math.sqrt(pa * P.b)));
+    const pa = P.a * (v.af ?? 1) * (1 + v.drv * DRIVERS.launch);
+    const sStar = P.s0 + Math.max(0, v.v * P.T * (1 - v.drv * DRIVERS.gap) + (v.v * (v.v - lv)) / (2 * Math.sqrt(pa * P.b)));
     const z = sStar / g;
     let aI: number;
     if (v.v <= v0) aI = z >= 1 ? pa * (1 - z * z) : aFree * (1 - Math.pow(z, (2 * pa) / Math.max(aFree, 0.01)));
@@ -1931,7 +1955,22 @@ export class Traffic {
     const needQueued = needLanes.length > 0 && needLanes.every(queuedBack);
     const ahead = (l: Lane) => l.outs.some((c) => dkey(c.to.seg, c.to.dir) === nk && (nn === undefined || serves(c.to) || (c.to.pl.length > 160 && !needQueued)));
     const strict = !final && all.some(ahead);
-    const good = (l: Lane) => (final ? l.idx === this.turnIdx(v, l) : strict ? ahead(l) : reach(l));
+    // the last road but one, running straight on into the last (a merge, a lane gain, a bend: no junction to pick
+    // a lane at), with the destination soon after the start of the last: get into the lane that leads into the
+    // destination's lane now. (On a carriageway with the on-ramp's traffic coming into the near lane there can be no
+    // gap to get over in the few hundred metres left, and the car missed its turn. At a junction drivers keep to
+    // both lanes and get over after it, or the near lane's queue would be twice as long.)
+    let prep: ((l: Lane) => boolean) | null = null;
+    if (!final && nn === undefined && nk !== undefined && dkSeg(nk) === v.dest.seg && this.net.nodeGeom.get(lane.to)?.kind !== "junction") {
+      const nl = this.lanesOf(nk);
+      if (nl.length > 1) {
+        const need = this.turnIdx(v, nl[0]);
+        const into = dkDir(nk) === 1 ? v.dest.s : this.router.segLen(nk) - v.dest.s;
+        const leads = (l: Lane) => l.outs.some((c) => dkey(c.to.seg, c.to.dir) === nk && c.to.idx === need);
+        if (into < PREP_AHEAD && all.some(leads)) prep = leads;
+      }
+    }
+    const good = (l: Lane) => (final ? l.idx === this.turnIdx(v, l) : (strict ? ahead(l) : reach(l)) && (!prep || prep(l)));
     let target: Lane | null = null;
     let mandatory = false;
     v.wish = undefined;
