@@ -565,7 +565,8 @@ an external road, but don't overdo it, this is the player's job."
   from v0.0.69 keep their rings-and-spokes plan, and older ones their square grid.
 - **Less crowded, spreading outward.** About one block in ten is kept as a green: a lawn inside its pavements with
   a row of trees round it and clumps within. There are more greens among the inner streets, and always the town
-  green across the main street from the hall's square. The green shows once three of the block's streets are laid. A
+  green across the main street from the hall's square. The green shows once three of the block's streets are laid (on today's plan: every street round it, two at
+  least, or a loop drive's eight; one whose streets can't be laid goes to homes instead of lying bare). A
   sixth of the house and terrace fronts are left as gardens (26 m gaps between homes). Lots keep 12 m clear of
   the streets still to come. The town's radius for its people grows faster (200 + 12·√people m, up to 2.2 km;
   was 150 + 9·√people, up to 1.6 km), so it spreads instead of packing in. On seed 7, with every need well served
