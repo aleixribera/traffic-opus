@@ -15,6 +15,12 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.72", date: "2026-11-09", title: "Season title cards",
+    notes: [
+      "A title card for each new season, with what it means for your farms and camps; hover the clock for the same.",
+    ],
+  },
+  {
     v: "v0.0.71", date: "2026-11-09", title: "Fixes: boulevard gates, old saves' seasons",
     notes: [
       "A works' gate on a boulevard is turned into from either side, so trucks no longer go the long way round. Divided roads stay right-in, right-out.",
