@@ -38,6 +38,8 @@ const HOURS: Partial<Record<BuildingKind, number>> = {
 const PLANT_HOURS = [0, 3, 6, 8, 10, 12];
 
 export function buildTime(kind: BuildingKind): number {
+  // (a landmark has waited on its materials and its convoys: once they are in, it rises over a working day)
+  if (isPlantKind(kind) && PLANTS[kind].mega) return HOUR * 6;
   if (isPlantKind(kind)) return HOUR * (PLANT_HOURS[PLANTS[kind].tier] ?? 8);
   return HOUR * (HOURS[kind] ?? 4);
 }

@@ -960,7 +960,8 @@ The game's setting is 1920s-40s American industry: steel, oil, highways, Deco.
   way over 8 game hours (the new level works from the start). Construction is slower, the one thing the owner
   wanted slower: a house takes 3 game hours, a terrace 4, apartment blocks, stores and offices 6, modern flats,
   malls and the office tower 9, the apartment and glass towers and the city hall 12; a first-tier works 3 (a
-  first farm opens two minutes after it is placed, at 1x), tier 2 works 6, deeper ones 8 to 12.
+  first farm opens two minutes after it is placed, at 1x), tier 2 works 6, deeper ones 8 to 12; a landmark 6, once
+  its last convoy is in.
 - **Lived-in home lots** (tools/blender/build_models.py `home_lot`, src/render/buildings3d.ts `VARIANTS`,
   `DRIVE_X`). A street of homes is no longer one house stamped down: three 1920s homes share one lot plan, picked
   per building (a cross-gable clapboard house with a vegetable patch, a brick bungalow under a hipped slate roof
