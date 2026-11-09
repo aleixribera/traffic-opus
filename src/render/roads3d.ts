@@ -1899,14 +1899,16 @@ function sidewalkGeo(
 }
 
 /** Flat strip of width w along a polyline (kerbs, guides). */
-export function strip(pts: V2[], y: number, w: number, off = 0, lat?: Lat): THREE.BufferGeometry {
+export function strip(pts: V2[], y: number | ArrayLike<number>, w: number, off = 0, lat?: Lat): THREE.BufferGeometry {
   const pos: number[] = [];
   const idx: number[] = [];
   const n = pts.length;
   for (let i = 0; i < n; i++) {
     const r = latAt(pts, i, lat);
     const p = { x: pts[i].x + r.x * off, y: pts[i].y + r.y * off };
-    pos.push(p.x - r.x * w / 2, y, p.y - r.y * w / 2, p.x + r.x * w / 2, y, p.y + r.y * w / 2);
+    // (one height for the lot, or one per point: a strip that climbs a ramp with its road)
+    const h = typeof y === "number" ? y : y[Math.min(i, y.length - 1)];
+    pos.push(p.x - r.x * w / 2, h, p.y - r.y * w / 2, p.x + r.x * w / 2, h, p.y + r.y * w / 2);
   }
   for (let i = 0; i < n - 1; i++) {
     if (dist(pts[i], pts[i + 1]) < 1e-4) continue;

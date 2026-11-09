@@ -3,8 +3,12 @@
 // moves the view with them. Nothing here allocates per frame: the per-shot work (gathering spots, picking the next)
 // runs once every ten seconds or so.
 
-/** Where the camera is: centre (world m), half the visible height (m) and turn (radians, as View.rot). */
-export interface Pose { x: number; y: number; h: number; rot: number }
+/** Where the camera is: centre (world m), half the visible height (m), turn and pitch (radians, as View.rot and View.tilt). */
+export interface Pose { x: number; y: number; h: number; rot: number; tilt: number }
+
+const DEG = Math.PI / 180;
+/** The lowest a shot pitches the camera (render/viewmath.ts TILT_MAX, which this file does not import: it stays pure). */
+const SHOT_TILT_MAX = 58 * DEG;
 
 // ------------------------------------------------------------------------------------------- follow damping
 
@@ -361,6 +365,15 @@ export const RIDE_LEN: [number, number] = [10, 15];
 const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
 
 /**
+ * How the Tour pitches the camera over each kind of place (degrees from straight down, from and to): low, sweeping
+ * angles over a works and along a bridge, where the buildings and the deck stand up; higher over a junction and a
+ * busy stretch, where the lanes and the queues have to read.
+ */
+const SHOT_TILT: Record<SpotKind, [number, number]> = {
+  site: [48, 58], bridge: [46, 58], convoy: [44, 56], town: [40, 52], event: [40, 54], busy: [30, 44], junction: [24, 38],
+};
+
+/**
  * Plan a shot of a spot, starting from turn `rot`. The zoom is varied against the last shot's (`prevH`): a close
  * shot after a wide one and the other way round, so cuts read. `still`: no movement (reduced motion).
  */
@@ -375,8 +388,12 @@ export function planShot(spot: Spot, rot: number, prevH: number, rand: () => num
     for (const s of scales) { const d = Math.abs(Math.log((spot.h * s) / prevH)); if (d > bd) { bd = d; sc = s; } }
   }
   const h = spot.h * sc;
-  const r0 = rot + (rand() - 0.5) * 0.5;
-  const base: Pose = { x: spot.x, y: spot.y, h, rot: r0 };
+  // the Diorama: each place from its own side (within a quarter turn of the player's view, so the map stays
+  // readable) and at its own pitch, low and sweeping over a works, higher over a junction where the lanes must read
+  const r0 = rot + (rand() - 0.5) * 1.5;
+  const [t0, t1] = SHOT_TILT[spot.kind] ?? SHOT_TILT.town;
+  const tilt = lerp(t0, t1, rand()) * DEG;
+  const base: Pose = { x: spot.x, y: spot.y, h, rot: r0, tilt };
   if (still) return { move: "pan", from: base, to: { ...base }, dur, spot };
   const roll = rand();
   const move: ShotMove = roll < 0.3 ? "push" : roll < 0.55 ? "pull" : roll < 0.85 ? "pan" : "orbit";
@@ -388,7 +405,13 @@ export function planShot(spot: Spot, rot: number, prevH: number, rand: () => num
   if (move === "push") { from.h = h * 1.3; to.h = h * 0.8; }
   else if (move === "pull") { from.h = h * 0.8; to.h = h * 1.3; }
   else if (move === "pan") { from.h = h; to.h = h * 1.05; }
-  else { from.rot = r0 - 0.16; to.rot = r0 + 0.16; from.h = h * 1.05; to.h = h * 0.95; }
+  else { from.h = h * 1.05; to.h = h * 0.95; }
+  // every shot turns a little and rises or sinks a little as it goes; an orbit swings well round its place
+  const turn = (move === "orbit" ? 0.3 : lerp(0.03, 0.09, rand())) * (rand() < 0.5 ? -1 : 1);
+  from.rot = r0 - turn; to.rot = r0 + turn;
+  const dip = (rand() - 0.5) * 8 * DEG;
+  from.tilt = Math.max(0, Math.min(SHOT_TILT_MAX, tilt - dip));
+  to.tilt = Math.max(0, Math.min(SHOT_TILT_MAX, tilt + dip));
   return { move, from, to, dur, spot };
 }
 
@@ -400,9 +423,12 @@ export function planRide(vehicle: number, prevH: number, rand: () => number, sti
   if (prevH > 0 && rand() < 0.7) close = prevH > 100;
   const h = close ? lerp(42, 62, rand()) : lerp(95, 140, rand());
   const z = still ? 1 : rand() < 0.5 ? 0.85 : 1.15;
+  // riding close, the camera sits low behind and above it; further out, higher (and it sinks or rises a touch)
+  const tilt = (close ? lerp(50, 58, rand()) : lerp(40, 50, rand())) * DEG;
+  const dip = still ? 0 : (rand() - 0.5) * 6 * DEG;
   return {
-    move: "track", vehicle, chase: !still && rand() < 0.4, dur, spot,
-    from: { x: 0, y: 0, h, rot: 0 }, to: { x: 0, y: 0, h: h * z, rot: 0 },
+    move: "track", vehicle, chase: !still && rand() < 0.55, dur, spot,
+    from: { x: 0, y: 0, h, rot: 0, tilt: Math.min(SHOT_TILT_MAX, tilt - dip) }, to: { x: 0, y: 0, h: h * z, rot: 0, tilt: Math.min(SHOT_TILT_MAX, tilt + dip) },
   };
 }
 
@@ -419,6 +445,7 @@ export function evalShot(s: Shot, t: number, out: Pose): Pose {
   out.y = s.from.y + (s.to.y - s.from.y) * e;
   out.h = s.from.h * Math.pow(s.to.h / s.from.h, e);
   out.rot = s.from.rot + (s.to.rot - s.from.rot) * e;
+  out.tilt = s.from.tilt + (s.to.tilt - s.from.tilt) * e;
   return out;
 }
 

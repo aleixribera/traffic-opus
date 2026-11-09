@@ -17,6 +17,7 @@ import { isMega, megaStage } from "../game/megaprojects";
 import { fieldLook, fieldModel } from "../game/calendar";
 import { seasonal } from "./envShader";
 import type { LampSpot, WindowSpot } from "./lamps3d";
+import type { Solid } from "../ui/pick";
 import type { WindowKind } from "./daylight";
 import { stageAt, stageOf, type StageInfo } from "../game/construction";
 import { Construction3D, type ConJob } from "./construction3d";
@@ -290,6 +291,18 @@ export class Buildings3D {
   floods: LampSpot[] = [];
   /** Counts up whenever the buildings are laid out again. */
   version = 0;
+  /** The boxes each building's models fill (walls and roof), by building id: what a click through the tilted view hits. */
+  private solids = new Map<number, Solid[]>();
+
+  /** The boxes a building's models fill, as it stands now (none while it is a bare building site). */
+  solidsOf = (b: Building): readonly Solid[] | undefined => this.solids.get(b.id);
+
+  /** How high a building stands (m): its tallest model's roof; 0 for bare ground. For what is pinned over it. */
+  topOf(b: Building): number {
+    let top = 0;
+    for (const s of this.solids.get(b.id) ?? []) if (s.tall > top) top = s.tall;
+    return top;
+  }
   /** Each model's footprint above the ground floor's sill (model space; x0, x1, z0, z1, top), measured once. */
   private feet = new Map<string, [number, number, number, number, number] | null>();
 
@@ -633,22 +646,25 @@ export class Buildings3D {
     this.windows = [];
     this.floods = [];
     const c = new THREE.Vector3(), ax = new THREE.Vector3(), ay = new THREE.Vector3(), az = new THREE.Vector3();
+    this.solids.clear();
     for (const [model, ps] of this.order) {
+      const f = this.footOf(model);
+      if (!f) continue;
       for (const p of ps) {
         const b = p.b;
-        if (p.slot || b.built < 1 || b.abandoned) continue;
-        const kind = windowKind(b);
-        if (!kind) continue;
-        const f = this.footOf(model);
-        if (!f) continue;
         const M = this.matrix(this.tmp, p);
         M.extractBasis(ax, ay, az);
+        const sx = ax.length(), sz = az.length(), tall = f[4] * ay.length();
+        if (!(sx > 0 && sz > 0 && tall > 0.5)) continue;
         c.set((f[0] + f[1]) / 2, 0, (f[2] + f[3]) / 2).applyMatrix4(M);
-        const sx = ax.length(), sz = az.length();
-        this.windows.push({
-          x: c.x, y: c.z, ux: ax.x / sx, uy: ax.z / sx,
-          hx: ((f[1] - f[0]) / 2) * sx, hz: ((f[3] - f[2]) / 2) * sz, tall: f[4] * ay.length(), kind, seed: b.id,
-        });
+        const box = { x: c.x, y: c.z, ux: ax.x / sx, uy: ax.z / sx, hx: ((f[1] - f[0]) / 2) * sx, hz: ((f[3] - f[2]) / 2) * sz, tall };
+        // (what it fills, for clicks and for whatever is pinned over its roof)
+        const list = this.solids.get(b.id);
+        if (list) list.push(box);
+        else this.solids.set(b.id, [box]);
+        if (p.slot || b.built < 1 || b.abandoned) continue;
+        const kind = windowKind(b);
+        if (kind) this.windows.push({ ...box, kind, seed: b.id });
       }
     }
     for (const b of list) {

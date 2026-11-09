@@ -18,7 +18,7 @@ const SPOT = 90;
 /** A car that has stood still a while: where it is, and for how long (s). */
 export interface StuckCar { p: V2; t: number }
 
-interface Alert { id: number; c: V2; worst: number; cars: number; since: number; seen: number; pin: HTMLButtonElement }
+interface Alert { id: number; c: V2; h: number; worst: number; cars: number; since: number; seen: number; pin: HTMLButtonElement }
 
 /** Spots where cars stand: the cars within SPOT of each other gathered, the longest-standing first. */
 export function stuckSpots(cars: readonly StuckCar[]): { c: V2; worst: number; cars: number }[] {
@@ -45,6 +45,9 @@ export class StuckAlerts {
   private nextId = 1;
   /** the alert the chip flew to last (the next click goes on to the next one) */
   private turn = 0;
+
+  /** How high the road is at a place (m): a jam on a bridge is pinned to its deck. */
+  heightAt: ((p: V2) => number) | null = null;
 
   constructor(private fly: (c: V2, id?: number) => void) {
     this.el.className = "stuck-alerts";
@@ -83,7 +86,7 @@ export class StuckAlerts {
       pin.innerHTML = `<i class="sa-sign" aria-hidden="true"></i>`;
       pin.title = "Traffic stuck here: see what is held up";
       pin.setAttribute("aria-label", pin.title);
-      const a: Alert = { id: this.nextId++, c: s.c, worst: s.worst, cars: s.cars, since: now - s.worst, seen: now, pin };
+      const a: Alert = { id: this.nextId++, c: s.c, h: this.heightAt?.(s.c) ?? 0, worst: s.worst, cars: s.cars, since: now - s.worst, seen: now, pin };
       pin.onclick = () => this.fly(a.c, a.id);
       this.el.append(pin);
       this.alerts.push(a);
@@ -114,7 +117,7 @@ export class StuckAlerts {
   /** Where each diamond goes this frame. */
   update(view: View) {
     for (const a of this.alerts) {
-      const s = view.toScreen(a.c);
+      const s = view.worldToScreen(a.c.x, a.c.y, a.h);
       const on = s.x > -20 && s.y > -20 && s.x < view.w + 20 && s.y < view.h + 20;
       a.pin.style.display = on ? "" : "none";
       if (on) a.pin.style.transform = `translate(${s.x.toFixed(1)}px, ${s.y.toFixed(1)}px) translate(-50%, -100%)`;

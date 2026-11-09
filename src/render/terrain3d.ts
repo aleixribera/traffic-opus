@@ -41,7 +41,8 @@ export class Terrain3D {
   readonly shared = {
     uOverlay: { value: 0 }, // 0 none, 1 resources
     uFocus: { value: -1 }, // the one deposit field shown at full strength (an extractor being placed); -1 all of them
-    uRot: { value: new THREE.Vector2(1, 0) },
+    // the view's turn (cos, sin) and the cosine of its tilt: screen-space slopes are turned back into the world's
+    uRot: { value: new THREE.Vector3(1, 0, 1) },
     // where scenery is cleared (see clearing.ts): a mask round the view, its world origin and size
     uClear: { value: blankMask() as THREE.Texture },
     uClearO: { value: new THREE.Vector2(0, 0) },
@@ -68,9 +69,9 @@ export class Terrain3D {
     // node spacing should stay above ~2 screen pixels
     let L = 0;
     while (L < LODS - 1 && RES * 4 ** L < mpp * 2.2) L++;
-    const { ex, ey } = view.extents();
-    const x0 = view.cx - ex, x1 = view.cx + ex, y0 = view.cy - ey, y1 = view.cy + ey;
-    this.shared.uRot.value.set(Math.cos(view.rot), Math.sin(view.rot));
+    // (the ground the tilted, turned view covers)
+    const { x0, y0, x1, y1 } = view.bounds();
+    this.shared.uRot.value.set(Math.cos(view.rot), Math.sin(view.rot), Math.cos(view.tilt));
     this.queue.length = 0;
     // the wanted level, plus the next coarser one underneath while the fine chunks are still being made
     for (const lod of [L, Math.min(LODS - 1, L + 1)]) {
@@ -180,7 +181,7 @@ const c3 = (c: number) => {
 const GROUND_GLSL = /* glsl */ `
 varying vec2 vWorld;
 uniform sampler2D uF0; uniform sampler2D uF1; uniform sampler2D uF2;
-uniform vec2 uOrigin; uniform float uRes; uniform float uOverlay; uniform float uFocus; uniform vec2 uRot;
+uniform vec2 uOrigin; uniform float uRes; uniform float uOverlay; uniform float uFocus; uniform vec3 uRot;
 uniform sampler2D uClear; uniform vec2 uClearO; uniform float uClearS;
 // would a crown (centre, radius in metres) reach built ground: a road, its pavement or verge, a site, a plot?
 bool cleared(vec2 c, float r) {
@@ -350,8 +351,10 @@ vec3 groundColor(vec2 p) {
   vec2 gm = vec2(dFdx(m), dFdy(m));
   float gl = length(gm);
   if (gl > 1e-6) {
-    // screen gradient -> world: screen right is (cos, sin) in world, screen up (gl y) is (sin, -cos)
-    vec2 gw = vec2(gm.x * uRot.x + gm.y * uRot.y, gm.x * uRot.y - gm.y * uRot.x);
+    // screen gradient -> world: screen right is (cos, sin) in world, screen up (gl y) is (sin, -cos), and a
+    // pixel up the screen is 1/cos(tilt) as far over the ground as a pixel across it
+    float gy = gm.y * uRot.z;
+    vec2 gw = vec2(gm.x * uRot.x + gy * uRot.y, gm.x * uRot.y - gy * uRot.x);
     float facing = dot(normalize(-gw), uSun);
     for (int k = 0; k < 4; k++) {
       float d = (m - steps[k]) / max(gl, 1e-6); // pixels from the edge, inside > 0

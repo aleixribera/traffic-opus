@@ -71,7 +71,7 @@ export class TownPings {
     // (the pointer keeps inside the corners' panels and the bottom bar)
     const L = 24, R = W - 24, T = 84, B = H - 128;
     for (const p of this.pings.values()) {
-      const s = view.toScreen(p.t.c);
+      const s = view.worldToScreen(p.t.c.x, p.t.c.y);
       const onScreen = s.x > 0 && s.y > 0 && s.x < W && s.y < H;
       // close enough to see the town, not just its dot from the clouds
       if (onScreen && view.halfH < 6000) p.seen = true;

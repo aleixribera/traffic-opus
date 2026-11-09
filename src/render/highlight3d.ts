@@ -17,24 +17,30 @@ import type { Vehicle } from "../sim/traffic";
 
 const OCHRE = 0xf0c25a, CREAM = 0xf3ead6, NAVY = 0x0c1524, AMBER = 0xe0a833, BRICK = 0xd4573d, GREEN = 0x6fae5c;
 const MAX_RINGS = 160;
-/** drawn over everything (the map is seen from straight above) */
-const Y = 34;
+/**
+ * How far over the ground, or over the road it marks, a line floats (m). All of it is drawn over the scene (no depth
+ * test, layered by render order), each line at the real height of what it marks: the camera is tilted, so a line
+ * floating "above everything" would slide off the road or the plot it belongs to.
+ */
+const Y = 0.5;
 /** dashes: one every this many screen pixels, moving at this many pixels a second (calm, never busy) */
 const DASH_PX = 26, DASH_SPEED_PX = 16;
 
-type Seg4 = [number, number, number, number];
+/** a piece of a line, a to b, and how high each end stands (0: on the ground) */
+type Seg4 = [ax: number, ay: number, bx: number, by: number, ha?: number, hb?: number];
 
 /** One mesh of flat quads, one per segment, each w wide and stretched past its ends by w/2 (so corners close). */
 function quads(segs: Seg4[], w: number, y: number, ext = true): THREE.BufferGeometry {
   const pos = new Float32Array(segs.length * 18);
   let o = 0;
-  for (const [ax, ay, bx, by] of segs) {
+  for (const [ax, ay, bx, by, ha = 0, hb = 0] of segs) {
     const L = Math.hypot(bx - ax, by - ay) || 1;
     const ux = (bx - ax) / L, uy = (by - ay) / L, nx = -uy * w * 0.5, ny = ux * w * 0.5;
     const e = ext ? w * 0.5 : 0;
     const x0 = ax - ux * e, y0 = ay - uy * e, x1 = bx + ux * e, y1 = by + uy * e;
     const P = [x0 + nx, y0 + ny, x0 - nx, y0 - ny, x1 - nx, y1 - ny, x0 + nx, y0 + ny, x1 - nx, y1 - ny, x1 + nx, y1 + ny];
-    for (let i = 0; i < 6; i++) { pos[o++] = P[i * 2]; pos[o++] = y; pos[o++] = P[i * 2 + 1]; }
+    // (corners 0, 1 and 3 are at a, the others at b)
+    for (let i = 0; i < 6; i++) { pos[o++] = P[i * 2]; pos[o++] = y + (i < 2 || i === 3 ? ha : hb); pos[o++] = P[i * 2 + 1]; }
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
@@ -99,15 +105,16 @@ class LineBuf {
 
   /**
    * A polyline (x, y pairs) w wide at height y, mitred at its bends. `d0`: the distance along it its first point
-   * stands at (dash phase); `dashed`: marching dashes.
+   * stands at (dash phase); `dashed`: marching dashes; `H`: how high over y each point stands (a route over a bridge).
    */
-  line(P: ArrayLike<number>, w: number, y: number, col: number, al: number, dashed = false, d0 = 0) {
+  line(P: ArrayLike<number>, w: number, y: number, col: number, al: number, dashed = false, d0 = 0, H?: ArrayLike<number>) {
     // (repeated points would have no direction)
-    const Q: number[] = [];
+    const Q: number[] = [], QH: number[] = [];
     for (let j = 0; j < P.length; j += 2) {
       const n = Q.length;
       if (n && Math.abs(Q[n - 2] - P[j]) < 0.05 && Math.abs(Q[n - 1] - P[j + 1]) < 0.05) continue;
       Q.push(P[j], P[j + 1]);
+      QH.push(H ? H[j / 2] ?? 0 : 0);
     }
     const m = Q.length / 2;
     if (m < 2) return;
@@ -127,8 +134,8 @@ class LineBuf {
       nx /= nl; nz /= nl;
       const s = h / Math.max(0.4, nx * -az + nz * ax);
       if (j > 0) dist += la;
-      const v0 = this.vert(x + nx * s, y, z + nz * s, col, al, dist, kk);
-      this.vert(x - nx * s, y, z - nz * s, col, al, dist, kk);
+      const v0 = this.vert(x + nx * s, y + QH[j], z + nz * s, col, al, dist, kk);
+      this.vert(x - nx * s, y + QH[j], z - nz * s, col, al, dist, kk);
       if (prev >= 0) this.i.push(prev, prev + 1, v0, prev + 1, v0 + 1, v0);
       prev = v0;
     }
@@ -298,9 +305,10 @@ export class Highlight3D {
     // the selected vehicle's ring, sized to its body and never under ~11 px
     if (v) {
       const c = this.centre(v, alpha), r = Math.max(v.len * 0.62 + 2, 11 * mpp);
-      this.ring.position.set(c.x, Y + 1, c.y);
+      const vh = v.ph + (v.h - v.ph) * alpha + Y;
+      this.ring.position.set(c.x, vh, c.y);
       this.ring.scale.setScalar(r);
-      this.ringBack.position.set(c.x, Y + 0.9, c.y);
+      this.ringBack.position.set(c.x, vh, c.y);
       this.ringBack.scale.setScalar(r);
     }
     this.ring.visible = this.ringBack.visible = !!v;
@@ -312,7 +320,7 @@ export class Highlight3D {
       for (const o of g.traffic.vehicles) {
         if (n >= MAX_RINGS || !want.has(o.id) || o.id === rel.route) continue;
         const c = this.centre(o, alpha);
-        this.p.set(c.x, Y + 0.5, c.y);
+        this.p.set(c.x, o.ph + (o.h - o.ph) * alpha + Y, c.y);
         this.s.setScalar(Math.max(rr, o.len * 0.55 + 1.5));
         this.m.compose(this.p, this.q, this.s);
         this.small.setMatrixAt(n++, this.m);
@@ -325,7 +333,7 @@ export class Highlight3D {
     if (this.hoverV !== null && this.hoverV !== rel?.route) for (const x of g.traffic.vehicles) if (x.id === this.hoverV) { h = x; break; }
     if (h) {
       const c = this.centre(h, alpha);
-      this.hover.position.set(c.x, Y + 0.7, c.y);
+      this.hover.position.set(c.x, h.ph + (h.h - h.ph) * alpha + Y, c.y);
       this.hover.scale.setScalar(Math.max(h.len * 0.62 + 2, 10 * mpp));
     }
     this.hover.visible = !!h;
@@ -378,10 +386,10 @@ export class Highlight3D {
         const pt = (u: number, v: number): [number, number] => [b.c.x + u * cs - v * sn, b.c.y + u * sn + v * cs];
         const cn = [pt(-hw, -hd), pt(hw, -hd), pt(hw, hd), pt(-hw, hd)];
         for (let i = 0; i < 4; i++) segs.push([cn[i][0], cn[i][1], cn[(i + 1) % 4][0], cn[(i + 1) % 4][1]]);
-        if (fill) this.add(this.statics, rectFill(b.c, hw, hd, b.rot, Y - 2), fill, 12);
+        if (fill) this.add(this.statics, rectFill(b.c, hw, hd, b.rot, Y), fill, 12);
       }
       if (!segs.length) return;
-      this.add(this.statics, quads(segs, w(px + 2.5, 2.4), Y - 1), this.underMat, 13);
+      this.add(this.statics, quads(segs, w(px + 2.5, 2.4), Y), this.underMat, 13);
       this.add(this.statics, quads(segs, w(px, 1.4), Y), m, 14);
     };
     const self = new Set(rel.self);
@@ -403,18 +411,19 @@ export class Highlight3D {
         const P = geo.center.pts, off = geo.width / 2 + lw / 2 + 0.4;
         for (const side of [1, -1]) {
           let px = 0, py = 0;
+          // (each edge line climbs with its road)
           for (let i = 0; i < P.length; i++) {
             // the normal at a vertex: the average of its two pieces' (corners stay the road's width out)
             const a = P[Math.max(0, i - 1)], c = P[Math.min(P.length - 1, i + 1)];
             const L = Math.hypot(c.x - a.x, c.y - a.y) || 1;
             const x = P[i].x - ((c.y - a.y) / L) * off * side, y = P[i].y + ((c.x - a.x) / L) * off * side;
-            if (i > 0) segs.push([px, py, x, y]);
+            if (i > 0) segs.push([px, py, x, y, geo.hs[i - 1], geo.hs[i]]);
             px = x; py = y;
           }
         }
       }
       for (const [m, segs] of by) {
-        this.add(this.statics, quads(segs, lw + w(2.5, 1.6), Y - 1), this.underMat, 13);
+        this.add(this.statics, quads(segs, lw + w(2.5, 1.6), Y), this.underMat, 13);
         this.add(this.statics, quads(segs, lw, Y), m, 14);
       }
     }
@@ -442,11 +451,11 @@ export class Highlight3D {
       let len = 0;
       for (let j = 2; j < body.length; j += 2) len += Math.hypot(body[j] - body[j - 2], body[j + 1] - body[j - 1]);
       const bx = tx - dx * al, by = ty - dy * al;
-      under.line(body, w + Math.max(1.4, 2.6 * mpp), Y + 1, NAVY, 0.5);
+      under.line(body, w + Math.max(1.4, 2.6 * mpp), Y, NAVY, 0.5);
       const ua = aw + 1.6 * mpp, ul = al + 2 * mpp;
-      under.tri(tx + dx * 1.6 * mpp, ty + dy * 1.6 * mpp, tx - dx * ul - dy * ua, ty - dy * ul + dx * ua, tx - dx * ul + dy * ua, ty - dy * ul - dx * ua, Y + 1, NAVY, 0.5);
-      top.line(body, w, Y + 1.5, f.color, 0.95, true, -len);
-      top.tri(tx, ty, bx - dy * aw, by + dx * aw, bx + dy * aw, by - dx * aw, Y + 1.5, f.color, 1);
+      under.tri(tx + dx * 1.6 * mpp, ty + dy * 1.6 * mpp, tx - dx * ul - dy * ua, ty - dy * ul + dx * ua, tx - dx * ul + dy * ua, ty - dy * ul - dx * ua, Y, NAVY, 0.5);
+      top.line(body, w, Y, f.color, 0.95, true, -len);
+      top.tri(tx, ty, bx - dy * aw, by + dx * aw, bx + dy * aw, by - dx * aw, Y, f.color, 1);
     }
     this.addLines(this.statics, under, 15);
     this.addLines(this.statics, top, 16);
@@ -459,17 +468,17 @@ export class Highlight3D {
       if (r.tone === "here") {
         // where you clicked: a small ochre ring with a dot
         const R = 9 * mpp;
-        under.line(circle(r.c.x, r.c.y, R, 32), 5 * mpp, Y - 3, NAVY, 0.6);
-        top.line(circle(r.c.x, r.c.y, R, 32), 2.4 * mpp, Y - 2.5, OCHRE, 1);
-        fill.disc(r.c.x, r.c.y, 2.6 * mpp, Y - 2.5, OCHRE, 1, 16);
+        under.line(circle(r.c.x, r.c.y, R, 32), 5 * mpp, Y, NAVY, 0.6);
+        top.line(circle(r.c.x, r.c.y, R, 32), 2.4 * mpp, Y, OCHRE, 1);
+        fill.disc(r.c.x, r.c.y, 2.6 * mpp, Y, OCHRE, 1, 16);
         continue;
       }
       const col = r.tone === "reach" ? OCHRE : r.tone === "spot" ? BRICK : CREAM;
-      if (r.tone === "reach") fill.disc(r.c.x, r.c.y, r.r, Y - 4, OCHRE, 0.07);
+      if (r.tone === "reach") fill.disc(r.c.x, r.c.y, r.r, Y, OCHRE, 0.07);
       const P = circle(r.c.x, r.c.y, r.r, r.r > 1500 ? 160 : 96);
       const w = Math.max(1, 2.4 * mpp);
-      under.line(P, w + Math.max(1.4, 2.6 * mpp), Y - 3, NAVY, 0.5);
-      top.line(P, w, Y - 2.5, col, 0.95, r.tone === "deposit");
+      under.line(P, w + Math.max(1.4, 2.6 * mpp), Y, NAVY, 0.5);
+      top.line(P, w, Y, col, 0.95, r.tone === "deposit");
     }
     this.addLines(this.statics, fill, 10);
     this.addLines(this.statics, under, 11);
@@ -508,8 +517,8 @@ export class Highlight3D {
       for (const p of lane.pl.pts) P.push(p.x, p.y);
       const w = Math.max(0.8, (1.8 + 3.6 * Math.sqrt(c / most)) * mpp);
       const share = (fr.get(k) ?? 0) / c;
-      under.line(P, w + Math.max(1.2, 2.2 * mpp), Y - 1.8, NAVY, 0.45);
-      top.line(P, w, Y - 1.2, share >= 0.5 ? AMBER : CREAM, 0.9, true);
+      under.line(P, w + Math.max(1.2, 2.2 * mpp), Y, NAVY, 0.45, false, 0, lane.hs);
+      top.line(P, w, Y, share >= 0.5 ? AMBER : CREAM, 0.9, true, 0, lane.hs);
     }
     this.addLines(this.tripMeshes, under, 12);
     this.addLines(this.tripMeshes, top, 13);
@@ -517,20 +526,21 @@ export class Highlight3D {
 
   /** The selected vehicle's route: the way it came, faded; the way ahead, dashes marching to where it is going. */
   private drawRoute(g: Game, v: Vehicle, mpp: number) {
-    const { pts, cut } = routeLine(g, v, this.trailV === v.id ? this.trail : undefined);
+    const { pts, cut, hs } = routeLine(g, v, this.trailV === v.id ? this.trail : undefined);
     const w = Math.max(1.6, 3 * mpp);
     const behind = pts.slice(0, cut * 2 + 2), ahead = pts.slice(cut * 2);
+    const hBehind = hs.slice(0, cut + 1), hAhead = hs.slice(cut);
     const under = new LineBuf(), top = new LineBuf();
-    if (behind.length >= 4) top.line(behind, w * 0.8, Y - 0.6, CREAM, 0.4);
+    if (behind.length >= 4) top.line(behind, w * 0.8, Y, CREAM, 0.4, false, 0, hBehind);
     if (ahead.length >= 4) {
       // (the dash pattern counts back from the destination, so the dashes don't jump as the route shortens)
       let len = 0;
       for (let j = 2; j < ahead.length; j += 2) len += Math.hypot(ahead[j] - ahead[j - 2], ahead[j + 1] - ahead[j - 1]);
-      under.line(ahead, w + Math.max(1.6, 3 * mpp), Y - 1.5, NAVY, 0.5);
-      top.line(ahead, w, Y - 0.5, CREAM, 0.95, true, -len);
+      under.line(ahead, w + Math.max(1.6, 3 * mpp), Y, NAVY, 0.5, false, 0, hAhead);
+      top.line(ahead, w, Y, CREAM, 0.95, true, -len, hAhead);
       // its destination: a small cream square at the route's end
       const ex = ahead[ahead.length - 2], ey = ahead[ahead.length - 1], s = 5 * mpp;
-      top.line([ex - s, ey, ex + s, ey], s * 2, Y - 0.4, CREAM, 1);
+      top.line([ex - s, ey, ex + s, ey], s * 2, Y + hAhead[hAhead.length - 1], CREAM, 1);
     }
     this.addLines(this.routeMeshes, under, 13);
     this.addLines(this.routeMeshes, top, 14);
