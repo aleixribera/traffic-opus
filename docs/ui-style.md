@@ -179,6 +179,16 @@ and Another name / Another badge / Done. The herald also signs the milestone ban
 header (`.pm-co`) and each save (`.save-co`, ochre lettering). The explore strip at the top centre keeps clear of the
 bar (`left: max(50%, 790px)`).
 
+## Season card
+
+`.season-card` (`season.css`, `seasonCard.ts`): a newsreel title card in the banner's slot, top centre, 440px. The
+landmark banner's double gilt frame with a pinstripe inside; a Deco sunburst in the season's colour (`--sc`: the clock
+glyph's spring green, summer gold, autumn rust, winter ice) with the glyph at its hub; "YEAR n" between double rules;
+the season in Big Shoulders 800 at 84px, tracked 0.14em (it tracks in from 0.5em as the card arrives); the line under
+it in the season's colour between ochre diamonds; then a ledger: kind, a dotted leader, the pace with ▲ / ▼ / ≈ and
+its sign (never colour alone), and a hint after an ochre diamond. `pointer-events: none`; 5.4 s from fade-in to
+fade-out; reduced motion keeps only the fade. The clock's popover (`.season-pop`) is the same ledger on a `.card`.
+
 ## Bulletins and readouts added with the industry chains
 
 - **What's new** (`.dialog.news`): one release per block, version in `--ochre-hi` for the latest, date in small caps,

@@ -15,6 +15,34 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.75", date: "2026-11-09", title: "Towns that grow like towns, and buildings that go up",
+    notes: [
+      "Towns grow like real American towns: a main street, uneven growth along the roads, mostly T-junctions.",
+      "Buildings go up in stages with construction crews.",
+      "Lived-in home lots.",
+      "Stockpiles you can watch rise and fall.",
+      "Country roads with gravel shoulders instead of kerbs.",
+    ],
+  },
+  {
+    v: "v0.0.74", date: "2026-11-09", title: "Touchpad play",
+    notes: [
+      "Touchpad: two-finger scroll pans, pinch zooms, two-finger click cancels; Space+drag pans with any tool; a Scroll wheel setting in the pause menu.",
+    ],
+  },
+  {
+    v: "v0.0.73", date: "2026-11-09", title: "Deliveries that land on time",
+    notes: [
+      "Deliveries to towns: your plants send loads early enough to land before a town runs low, and a short gap of a couple of minutes no longer shows as a shortfall.",
+    ],
+  },
+  {
+    v: "v0.0.72", date: "2026-11-09", title: "Season title cards",
+    notes: [
+      "A title card for each new season, with what it means for your farms and camps; hover the clock for the same.",
+    ],
+  },
+  {
     v: "v0.0.71", date: "2026-11-09", title: "Fixes: boulevard gates, old saves' seasons",
     notes: [
       "A works' gate on a boulevard is turned into from either side, so trucks no longer go the long way round. Divided roads stay right-in, right-out.",

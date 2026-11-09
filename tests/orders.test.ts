@@ -4,6 +4,8 @@
 
 import { describe, expect, it } from "vitest";
 import { Game, type GameEvent } from "../src/game/city";
+import { obbOverlap } from "../src/game/buildings";
+import { dist, polyClosest } from "../src/core/math";
 import { CIVICS, CIVIC_KINDS, isCivic } from "../src/game/civics";
 import { MAP_CAP, ORDER_POP, RETRY_AFTER, dealSet, orderLine, sizeOrder, townCap, type Order } from "../src/game/orders";
 import { DAY, HOUR } from "../src/game/society";
@@ -214,7 +216,11 @@ describe("Town orders", () => {
     (g as unknown as { restoreBuilding(x: typeof ghost): void }).restoreBuilding(ghost);
     expect(g.buildings.byId.has(99999)).toBe(false);
     expect(g.lotCells(b).some((c) => c.lot === b.id)).toBe(true);
+    // (a crew's working day at most: the bigger the building, the longer it takes)
     for (let k = 0; k < 8 * 3; k++) g.step(HOUR / 8);
+    expect(b.built).toBeGreaterThan(0);
+    expect(b.built).toBeLessThan(1);
+    for (let k = 0; k < 8 * 8; k++) g.step(HOUR / 8);
     expect(b.built).toBe(1);
   }, 60000);
 
@@ -291,4 +297,32 @@ describe("Town orders", () => {
     expect(old.orders.open.length).toBe(1);
     expect(CIVIC_KINDS).toContain(old.orders.open[0].kind);
   }, 60000);
+
+  it("a civic building takes its own land in a grown town: clear of every home, shop, hall and road", () => {
+    const g = new Game(7);
+    g.start();
+    const t = g.towns.list[0];
+    for (let d = 0; d < 6; d++) g.fastForward(t.id, 24);
+    const placed: string[] = [];
+    for (const kind of CIVIC_KINDS) {
+      const b = g.addCivic(t.id, kind);
+      if (!b) continue;
+      placed.push(kind);
+      // its land is its own: no other building on it (the half metre two neighbouring lots on a bend may share)
+      for (const o of g.buildings.list) {
+        if (o.id === b.id || dist(o.c, b.c) > b.hw + b.hd + o.hw + o.hd) continue;
+        expect(obbOverlap(b.c, b.hw - 0.5, b.hd - 0.5, b.rot, o.c, o.hw - 0.5, o.hd - 0.5, o.rot), `${kind} on ${o.kind} ${o.id}`).toBe(false);
+      }
+      // and it stands back from every road's edge, its kerb and verge (no corner of it out in a street)
+      const u = { x: Math.cos(b.rot), y: Math.sin(b.rot) }, v = { x: -u.y, y: u.x };
+      const pts = [];
+      for (const a of [-1, -0.5, 0, 0.5, 1]) for (const e of [-1, -0.5, 0, 0.5, 1]) pts.push({ x: b.c.x + u.x * a * (b.hw - 0.3) + v.x * e * (b.hd - 0.3), y: b.c.y + u.y * a * (b.hw - 0.3) + v.y * e * (b.hd - 0.3) });
+      for (const id of g.net.segsNear(b.c.x - 60, b.c.y - 60, b.c.x + 60, b.c.y + 60)) {
+        const sg = g.net.segGeom.get(id)!;
+        for (const p of pts) expect(polyClosest(sg.center, p).d, `${kind} in road ${id}`).toBeGreaterThan(sg.width / 2 + 1.5);
+      }
+    }
+    // (a six-day town has room for most of them on its own streets)
+    expect(placed.length).toBeGreaterThanOrEqual(6);
+  }, 300_000);
 });

@@ -373,7 +373,8 @@ describe("Convoys and landmarks in the game", () => {
     // it rises, and when it stands the company hears of it and the town gets its reward
     let banner = 0;
     g.on((e) => { if (e.t === "landmark" && e.b === ex.id) banner++; });
-    run(g, 2);
+    // (it rises over a working day once the last piece is in: construction.buildTime)
+    run(g, 6.5);
     expect(ex.built).toBe(1);
     expect(banner).toBe(1);
     expect(ex.plant!.landmark!.done).toBeGreaterThan(0);

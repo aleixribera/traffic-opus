@@ -320,6 +320,15 @@ the first harvest comes in on the game's day 23.
     adds the year and how long until the next season.
   - A farm's or logging camp's panel shows its season pace now ("Autumn harvest · x1.54") and the next
     season's average.
+  - **The season's title card** (owner, 2026-11-09: "a cool visual text when changing seasons, and show a bit which
+    building bonuses/debuffs that means"). The moment the calendar crosses into a new season, a newsreel title card
+    drops in at the top centre: the season's name in tall poster capitals, a line under it ("The harvest rush is
+    on"), then what the season does to the seasonal kinds the player runs ("Farms ▲ +60%", "Logging camps ≈ steady"),
+    each the kind's mid-season value in `SEASONAL` against the year's average, and one practical hint ("Warehouses
+    bank the surplus for winter"). With none of them, one line gives the general effect. It holds about 4.5 s and
+    fades; it never takes a click, waits behind a milestone banner and gives way to one, and never shows for a new
+    game or a loaded save (ui/seasonCard.ts).
+  - Hovering or clicking the clock's season line shows the same lines, with the day and the next season.
 - Pure functions of the sim clock: nothing to save. A save from the four-day year keeps its clock and lands in
   whichever season that day falls in now.
 
@@ -383,7 +392,7 @@ itself across modes; you build tracks, docks and the transfer points, never line
 
 ## Towns (like Transport Fever 2)
 
-- A town lays out its own streets, growing outward in a rough circle, and joins them to your roads where they
+- A town lays out its own streets, growing out unevenly along its roads, and joins them to your roads where they
   meet. Houses and shops build themselves along its streets.
 - **Towns spring up; the player never founds one (owner, 2026-11-08).** The company starts with one hamlet. Fresh
   hamlets (level 0) appear as milestones are reached, and the milestones that bring them are about the towns
@@ -447,6 +456,24 @@ itself across modes; you build tracks, docks and the transfer points, never line
     people a day (633 to 551 over four days; before, 624 to 433 by day 14, much of it at once).
   - The town panel shows the same two-day average in its needs ("X a day (2-day average) of Y needed"), what its
     supply supports ("supplies support N"), and what holds it back and how many more loads a day would grow it.
+- **Loads that land in time (owner, 2026-11-09: "deliveries to towns seem to always be late"; "add an invisible
+  margin: the factories receive the alert before the player sees the need and supply automatically"; "give a minute
+  or two of grace after the town needs it").** A town has only what has landed: a load on the road never counts
+  toward its needs or supply.
+  - *Send ahead.* The plants see a town's need about to read below "Enough" before its people do: a town whose
+    landed supply would fall below the line sooner than a truck sent now could land (the trip as the plant's last
+    trucks there took, or by distance; a quarter of it again and two game hours spare for loading and the yard)
+    goes first among the towns, and its truck leaves without waiting at the dock for a full load (so does one in its
+    grace, below). A town already showing short goes on the daily shortfall as before: putting it first too set the
+    first Village back five minutes (day 2.32 against 2.00 on seed 7); as built it comes on day 1.95. Loads already on
+    their way count for this only while they are on time (up to half their trip late), so a jammed truck doesn't
+    hold the next one back. It is an invisible line above "Enough", sized by what the town uses over the lead
+    time, so a far town is seen to earlier than one next door. The player never sees it.
+  - *Grace.* A need whose landed supply falls below "Enough" still reads as it did for GRACE, 3 game hours (two
+    real minutes at 1x), and its growth, shrinking and the goals go on as if it were met at the line. A load that
+    puts it back in that time and nothing was ever shown or counted; when the grace runs out the drop shows and
+    counts from then on, never backdated. Only a load landing brings a grace back, so a supply that has dried up
+    shows within three hours. A jammed road still lets a town run low.
 - Deliveries go to the town's shops, filling stations and building sites, so trucks drive into town streets.
 - **Towns grow away from the works (owner, 2026-11-08: "avoid pollution/noise").** A dirty plant's smoke reaches
   its pollution radius ×1.6 past its fence (further in a park) and its noise 60 m beyond that; building sites count
@@ -552,19 +579,22 @@ houses." "Let villages fully control themselves apart from just growing, let the
 cool layout aswell, not just squared, let them eventually build an outwards road that ends up connecting to maybe
 an external road, but don't overdo it, this is the player's job."
 
-- **A plan of its own (townplan.ts).** Every town still grows a street at a time on a lattice of 96 m blocks, but
-  the lattice is bent into a plan seeded from the town, the same every time it is loaded. Each town has its own
-  character, somewhere between long straight American blocks and rings and spokes round the centre. Its main street runs
-  straight through the hall's crossroads. The side streets curve with low-frequency noise and the outer ones
-  swirl a little round the centre. Junctions that would fall in water or on a mountain are drawn back toward the
-  centre by up to half a block, so the street along a shore follows it, or they are left out. From the second
-  ring out, 10 to 20% of the streets are left out (more at the edge), which gives bigger, uneven blocks,
-  T-junctions and closes. The crossroads and the four blocks round it stay square, so the hall's square is the
-  same in every town. Bent streets are laid as arcs with the road tool's own curve mode. Towns from saves
-  before this keep their square grid.
+- **A plan of its own (townplan.ts).** Every town still grows a street at a time on a lattice of 96 m blocks, laid
+  out as a small American town that grew over time (PLAN_TOWN, 2026-11-09), seeded from the town and the same every
+  time it is loaded. The main street runs along the road the town began on, straight through the hall's crossroads
+  and bending gently once past the old town; the crossroads and the four blocks round it stay square, so the hall's
+  square is the same in every town. Every fourth line is a through street. The land between them is a quarter laid
+  out by its own builder: long blocks along the main street (or across it) with staggered cross streets, a loose
+  grid, a spine with short closes off it, or a loop drive (sometimes round a green). Through streets meet them
+  mostly in T-junctions; blocks differ in size, quarters bow, cross roads sometimes run at an angle, and side
+  streets curve with low-frequency noise. The town leans as it grows: it reaches further along the main street and
+  the cross road, toward the player's roads and other towns within 2.5 km, and less toward water, mountains,
+  steep ground, forest and the company's sites. Junctions near water are drawn back as before, or left out. Towns
+  from v0.0.69 keep their rings-and-spokes plan, and older ones their square grid.
 - **Less crowded, spreading outward.** About one block in ten is kept as a green: a lawn inside its pavements with
   a row of trees round it and clumps within. There are more greens among the inner streets, and always the town
-  green across the main street from the hall's square. The green shows once three of the block's streets are laid. A
+  green across the main street from the hall's square. The green shows once three of the block's streets are laid (on today's plan: every street round it, two at
+  least, or a loop drive's eight; one whose streets can't be laid goes to homes instead of lying bare). A
   sixth of the house and terrace fronts are left as gardens (26 m gaps between homes). Lots keep 12 m clear of
   the streets still to come. The town's radius for its people grows faster (200 + 12·√people m, up to 2.2 km;
   was 150 + 9·√people, up to 1.6 km), so it spreads instead of packing in. On seed 7, with every need well served
@@ -1010,3 +1040,45 @@ The game's setting is 1920s-40s American industry: steel, oil, highways, Deco.
   (top left, by the menu) and the pause menu's Company item reopen it. Name and herald show in the HUD, on the
   pause menu, in the saves list and on milestone banners, and are saved (older saves get one from their seed).
   Not on the trucks: the camera looks straight down, so cab doors never show, and a roof badge is a few pixels.
+
+### Look: how things are built (owner, 2026-11-09: "make the game feel more real: from the way buildings are built, layouts, roads...")
+
+- **Construction in stages** (src/game/construction.ts, src/render/construction3d.ts). Every home, shop, block,
+  tower, hall and works building goes up in steps, each a Blender model: the plot dug over and set out with
+  stakes and a builder's line (and its material piles growing load by load while a town block or a works waits
+  for planks, cement or parts), the slab poured with a 1930s mixer truck parked by it, a timber frame (homes,
+  shops, small halls, first-tier works) or a riveted steel skeleton (blocks, towers, big halls, the rest of the
+  works) raised bay by bay and floor by floor while a stake-side lumber truck unloads, the walls closing in behind
+  a tube-and-plank scaffold with the floors decked over, then the roof on as the raw timber and brick take their
+  paint, the scaffold coming down last. Big steel jobs get a lattice tower crane that slews over them; big lots a
+  site hut. Trucks drive in off the street and away again. A site's new buildings after it grows go up the same
+  way over 8 game hours (the new level works from the start). Construction is slower, the one thing the owner
+  wanted slower: a house takes 3 game hours, a terrace 4, apartment blocks, stores and offices 6, modern flats,
+  malls and the office tower 9, the apartment and glass towers and the city hall 12; a first-tier works 3 (a
+  first farm opens two minutes after it is placed, at 1x), tier 2 works 6, deeper ones 8 to 12; a landmark 6, once
+  its last convoy is in.
+- **Lived-in home lots** (tools/blender/build_models.py `home_lot`, src/render/buildings3d.ts `VARIANTS`,
+  `DRIVE_X`). A street of homes is no longer one house stamped down: three 1920s homes share one lot plan, picked
+  per building (a cross-gable clapboard house with a vegetable patch, a brick bungalow under a hipped slate roof
+  with a shed and a washing line, a white Dutch colonial with a gambrel roof, a birdbath and a bench). Each has a
+  concrete driveway down its left side to a detached garage at the back, the family car on it, a path to the
+  door, and a picket fence round the back yard; no paved pad, the town's lawn runs up to the walls. The street's
+  driveway strip, the gap in the front hedge and the way cars drive in all follow the driveway to the side.
+- **Stockpiles** (src/game/stockpiles.ts, src/render/stockpiles3d.ts, tools/blender `pile_*`). A works' yards show
+  what it holds: an ore, coal, limestone, sand or copper bay's two heaps grow taller and wider as the store fills
+  and shrink as trucks haul it off, down to the scrapings; a log yard's five stacks come in stack by stack and layer
+  by layer (logs don't squash). What lies in a yard is the works' store of that product plus its output waiting
+  for a truck, over one store; the piles of every yard of a product fill one after another, so a half-full store
+  is full heaps and empty bays rather than every heap half height. A bay of a product the works doesn't handle is
+  dressed as 60% full. An empty bay keeps a spill of its material along the back wall, so it still says what it is.
+- **Town streets and country roads** (src/game/rural.ts, src/render/roads3d.ts). Out in the country a paved road
+  has no kerbs, pavements, street lamps or street trees: its asphalt runs out to a worn, slightly broken edge onto
+  a grey-tan gravel shoulder (about 1.2 m, ragged on the outside), then a strip of short grass fading into the
+  field. A town's streets keep all of them. Which stretch is which comes from the map, along each road and not
+  saved: a road is a town street where it runs through a town's land, where a town laid it on its own land (half
+  a block past its edge, so a town's road out stops being a street soon after the last houses), and in front of
+  homes, shops and town halls that face it. A company's works never make a road a street. The pavement rounds off
+  where the town ends, so the road a hamlet starts on runs on out of it as a country road. Junctions and bends
+  follow their roads: between two country roads the corner is gravel, between two town streets it is kerbed, and
+  where they meet the town's pavement stops at the corner. Highways keep their own paved shoulders, with gravel
+  past them. Only the roads that change are redrawn, when roads or buildings change.
