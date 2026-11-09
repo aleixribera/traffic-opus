@@ -92,7 +92,7 @@ export interface ToolState {
  * A press on the map: where it is and began, which button, whether it became a drag, and what the drag did (moved
  * the map; began a road where it went down).
  */
-interface PointerInfo { id: number; x: number; y: number; sx: number; sy: number; button: number; moved: boolean; t: number; panned: boolean; drew: boolean }
+interface PointerInfo { id: number; x: number; y: number; sx: number; sy: number; button: number; moved: boolean; t: number; panned: boolean; drew: boolean; hand: boolean }
 
 export class App {
   game!: Game;
@@ -658,18 +658,20 @@ export class App {
     // Safari's pinch comes as gesture events (its scale since the gesture began): zoom on the cursor with the fingers
     type Gesture = UIEvent & { scale: number; clientX: number; clientY: number };
     let gScale = 1;
-    el.addEventListener("gesturestart", (e) => { e.preventDefault(); this.gesturing = true; gScale = 1; });
-    el.addEventListener("gesturechange", (ev) => {
-      const e = ev as Gesture;
-      e.preventDefault();
-      if (this.mode === "menu" || this.camera.cinematic || !(e.scale > 0)) return;
-      const r = el.getBoundingClientRect();
-      this.view.zoomAt(e.clientX - r.left, e.clientY - r.top, gScale / e.scale);
-      gScale = e.scale;
-      this.clampView();
-      this.dirtyPreview = true;
-    });
-    el.addEventListener("gestureend", (e) => { e.preventDefault(); this.gesturing = false; });
+    for (const t of [el, this.labels.el]) {
+      t.addEventListener("gesturestart", (e) => { e.preventDefault(); this.gesturing = true; gScale = 1; });
+      t.addEventListener("gesturechange", (ev) => {
+        const e = ev as Gesture;
+        e.preventDefault();
+        if (this.mode === "menu" || this.camera.cinematic || !(e.scale > 0)) return;
+        const r = el.getBoundingClientRect();
+        this.view.zoomAt(e.clientX - r.left, e.clientY - r.top, gScale / e.scale);
+        gScale = e.scale;
+        this.clampView();
+        this.dirtyPreview = true;
+      });
+      t.addEventListener("gestureend", (e) => { e.preventDefault(); this.gesturing = false; });
+    }
     window.addEventListener("keydown", (e) => this.onKey(e, true));
     window.addEventListener("keyup", (e) => this.onKey(e, false));
     window.addEventListener("resize", () => this.view.resize());
@@ -689,10 +691,12 @@ export class App {
     // (a press while Space is held makes it the hand, not a tap that pauses)
     if (this.spaceHeld) this.spacePanned = true;
     try { (e.target as HTMLElement).setPointerCapture?.(e.pointerId); } catch { /* pointer already gone */ }
-    this.pointers.set(e.pointerId, { id: e.pointerId, x: p.x, y: p.y, sx: p.x, sy: p.y, button: e.button, moved: false, t: performance.now(), panned: false, drew: false });
+    this.pointers.set(e.pointerId, { id: e.pointerId, x: p.x, y: p.y, sx: p.x, sy: p.y, button: e.button, moved: false, t: performance.now(), panned: false, drew: false, hand: this.spaceHeld });
     if (this.pointers.size === 2) {
       const [a, b] = [...this.pointers.values()];
       this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mid: v2((a.x + b.x) / 2, (a.y + b.y) / 2), ang: Math.atan2(b.y - a.y, b.x - a.x) };
+      // (both are drags now: the finger left down after the pinch carries on moving the map from where it is, no click)
+      a.moved = b.moved = true;
       this.dragRect = null;
       this.hud?.rect(null);
       return;
@@ -801,6 +805,8 @@ export class App {
     this.dragRect = null;
     this.hud?.rect(null);
     this.view.canvas.classList.remove("grabbing");
+    // (a press with Space held is the hand: it moves the map and never clicks)
+    if (pi.hand) return;
     if (pi.moved) {
       // a road dragged out (or dragged on from the point clicked before) ends where the button comes up
       if (pi.button === 0 && !pi.panned && this.st.tool === "road" && this.st.mode !== "replace" && this.anchor) {
@@ -831,6 +837,8 @@ export class App {
 
   private onKey(e: KeyboardEvent, down: boolean) {
     const tag = (e.target as HTMLElement)?.tagName;
+    // (Space let go in a text box, the title menu or a cinematic camera: the hand is put down, without a pause)
+    if (!down && e.key === " " && this.spaceHeld && (tag === "INPUT" || tag === "TEXTAREA" || this.mode === "menu" || this.camera.cinematic)) this.setSpace(false);
     if (tag === "INPUT" || tag === "TEXTAREA") return;
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     // the title menu: only Esc, to close a dialog opened from it

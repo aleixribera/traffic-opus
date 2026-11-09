@@ -64,8 +64,10 @@ const whole = (v: number) => Math.abs(v - Math.round(v)) < 1e-3;
 export function wheelDevice(e: WheelSample): WheelDevice {
   // (Edge's percent-based scrolling can make a notch fractional, ~100 px or more: a step that big is a notch too; a
   // touchpad's gesture starts with small steps, and the first event decides the gesture: WheelReader)
+  // (deltaMode read first: Firefox then reports a mouse wheel in lines)
+  const lines = e.deltaMode !== 0;
   const ay = Math.abs(e.deltaY);
-  const notch = e.deltaMode !== 0 || (e.deltaX === 0 && ((ay >= NOTCH_MIN && whole(e.deltaY)) || ay >= NOTCH_BIG));
+  const notch = lines ||(e.deltaX === 0 && ((ay >= NOTCH_MIN && whole(e.deltaY)) || ay >= NOTCH_BIG));
   if (e.ctrlKey) return notch ? "mouse" : "pinch";
   // (Shift + mouse wheel arrives sideways in Chrome: a whole notch of deltaX with no deltaY is still a notch)
   if (!notch && e.shiftKey && e.deltaY === 0 && e.deltaMode === 0 && Math.abs(e.deltaX) >= NOTCH_MIN && whole(e.deltaX)) return "mouse";
