@@ -1630,6 +1630,7 @@ export class App {
       // (a preview that can't be drawn must never stop the game)
       try { this.refreshPreview(); } catch (e) { this.dirtyPreview = false; console.error(e); }
     }
+    this.buildings3d.frameConstruction();
     this.hudT += dt;
     if (this.hudT > 0.25) {
       this.hudT = 0;

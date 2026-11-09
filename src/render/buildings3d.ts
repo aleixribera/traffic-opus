@@ -17,6 +17,8 @@ import { fieldLook, fieldModel } from "../game/calendar";
 import { seasonal } from "./envShader";
 import type { LampSpot, WindowSpot } from "./lamps3d";
 import type { WindowKind } from "./daylight";
+import { stageAt, stageOf, type StageInfo } from "../game/construction";
+import { Construction3D, type ConJob } from "./construction3d";
 
 /**
  * The model a site's slot is drawn with now: a landmark's core by how far its building has got (foundations, the
@@ -70,6 +72,10 @@ const bayTaken = (b: Building, k: number) => (((b.id * 73856093) ^ (k * 19349663
 const setback = (spare: number) => Math.min(spare * 0.68, 5);
 
 const SITE = 0xb59d6a; // construction site: bare earth
+/** A building getting its roof on: raw timber, brick and concrete before the paint. */
+const RAW = 0xd6c6a4;
+/** Homes, shops and the small halls go up on a timber frame; blocks, towers and big halls on a steel skeleton. */
+const TIMBER = new Set<string>(["house", "terrace", "highstreet", "shop", "fuelstation", "hamlethall", "villagehall"]);
 /** Tints multiplied over a model's own colours, picked per building. */
 const VARY = [0xffffff, 0xffffff, 0xf2ebe4, 0xe2dcd8, 0xfbf3e6, 0xdcdcdc, 0xf5f0f0];
 /** Ground of a grown lot: lawn for homes, paving for business. */
@@ -211,7 +217,12 @@ export class Buildings3D {
    * `clock` gives the sim time (a site's new buildings rise for a while after it grows); `net`, the roads the front
    * strips run out to.
    */
-  constructor(private models: ModelSet, private clock: () => number = () => 0, private net: RoadNetwork | null = null) {}
+  constructor(private models: ModelSet, private clock: () => number = () => 0, private net: RoadNetwork | null = null) {
+    this.con = new Construction3D(models, this.mat);
+    this.group.add(this.con.group);
+  }
+  /** The stakes, slabs, frames, walls, scaffolds, piles, cranes and trucks of everything going up. */
+  private con: Construction3D;
 
   /** The time whose season the fields show (the day cycle's: the title menu and the dev hook can show another). */
   seasonClock: (() => number) | null = null;
@@ -278,22 +289,43 @@ export class Buildings3D {
   }
 
   private slotMatrix(out: THREE.Matrix4, f: SiteFrame, s: SiteSlot, rise: number, y = 0): THREE.Matrix4 {
+    // (nothing of the model shows till its roof goes on: the construction pieces stand in for it)
+    if (rise <= 0) return out.makeScale(0, 0, 0);
     faceMatrix(out, siteToWorld(f, s.x, s.y), siteDir(f, s.fx, s.fy), y);
     if (rise < 1) out.multiply(this.tmp2.makeScale(1, rise, 1));
     return out;
   }
 
-  /** How far a piece has gone up (1: standing). */
-  private rise(p: Piece): number {
+  /** How far a piece's building has got (0..1; 1: standing): its own build, or a site's newest level going up. */
+  private progressOf(p: Piece): number {
     const b = p.b;
     // (a landmark is drawn by its stage models instead: its site stands at full height from the start)
     if (isMega(b.kind)) return 1;
-    if (b.built < 1) return 0.08 + 0.92 * b.built;
+    if (b.built < 1) return b.built;
     const P = b.plant;
     if (!p.slot || !P || p.slot.level !== P.level || P.level <= 1) return 1;
-    const t = (this.clock() - P.upAt) / GROW_ANIM;
-    if (t >= 1) return 1;
-    const k = Math.max(0, t);
+    return Math.min(1, Math.max(0, (this.clock() - P.upAt) / GROW_ANIM));
+  }
+
+  /** The construction step a piece is at (see game/construction.ts). */
+  private stageOfPiece(p: Piece): StageInfo {
+    const b = p.b;
+    if (b.built < 1 && !isMega(b.kind)) return stageOf(b);
+    return stageAt(this.progressOf(p));
+  }
+
+  /**
+   * How far a piece's model has gone up (1: standing). A building is drawn by its construction pieces till the roof
+   * goes on (0: hidden); a flat piece of a site (its truck yard) comes up out of the bare earth as before.
+   */
+  private rise(p: Piece): number {
+    const prog = this.progressOf(p);
+    if (prog >= 1) return 1;
+    if (this.footOf(p.model)) {
+      const st = this.stageOfPiece(p);
+      return st.stage === "roof" ? 0.9 + 0.1 * st.k : st.stage === "done" ? 1 : 0;
+    }
+    const k = Math.max(0, prog);
     return 0.06 + 0.94 * k * k * (3 - 2 * k);
   }
 
@@ -301,22 +333,22 @@ export class Buildings3D {
   private matrix(out: THREE.Matrix4, p: Piece): THREE.Matrix4 {
     const b = p.b;
     if (p.slot) return this.slotMatrix(out, siteFrame(b.c, b.rot, b.side, b.hd), p.slot, this.rise(p));
+    const grow = this.rise(p);
+    if (grow <= 0) return out.makeScale(0, 0, 0);
     lotMatrix(out, b.c, b.rot, b.side);
     if (!b.zone) {
-      // a town hall rises from its building site like the town's other buildings
-      if (b.built < 1 && isHall(b.kind)) out.multiply(this.tmp2.makeScale(1, 0.08 + 0.92 * b.built, 1));
+      // a town hall goes up from its building site like the town's other buildings
+      if (grow < 1) out.multiply(this.tmp2.makeScale(1, grow, 1));
       return out;
     }
     // the model stands near the street; deep lots keep the rest as a back yard
     const spare = Math.max(0, b.hd * 2 - this.depth(b));
-    const grow = b.built >= 1 ? 1 : 0.08 + 0.92 * b.built;
     this.tmp2.makeScale(b.fit, b.fit * b.tall * grow, b.fit).setPosition(0, 0, spare / 2 - setback(spare));
     return out.multiply(this.tmp2);
   }
 
   private baseColor(b: Building): number | null {
     if (b.abandoned) return ABANDONED;
-    if (b.built < 1 && !isMega(b.kind)) return SITE;
     // a street of the same model shouldn't look stamped: weathering and paint vary a little from one to the next
     return VARY[(Math.imul(b.id, 2654435761) >>> 28) % VARY.length];
   }
@@ -657,6 +689,12 @@ export class Buildings3D {
    * finished rising: its pad and parked cars need a rebuild.
    */
   updateConstruction(): boolean {
+    const jobs: ConJob[] = [];
+    for (const it of this.building) {
+      const j = this.jobOf(it.p);
+      if (j) jobs.push(j);
+    }
+    this.con.update(jobs, this.clock());
     if (!this.building.length) return false;
     let done = false;
     const touched = new Set<THREE.InstancedMesh>();
@@ -665,10 +703,8 @@ export class Buildings3D {
       const mesh = this.meshes.get(it.p.model);
       if (!mesh) continue;
       mesh.setMatrixAt(it.i, this.matrix(this.tmp, it.p));
-      if (it.p.slot) {
-        mesh.setColorAt(it.i, this.colorOf(it.p));
-        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      }
+      mesh.setColorAt(it.i, this.colorOf(it.p));
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       touched.add(mesh);
       // (zoned buildings stay on the list till the next rebuild: they finish with a change of colour)
       if (it.p.b.built < 1 || this.rise(it.p) < 1 || !it.p.slot) still.push(it);
@@ -977,17 +1013,51 @@ export class Buildings3D {
     return best;
   }
 
-  /** A piece's colour: its building's tint, going from bare earth to its own colours as a site's new building rises. */
+  /**
+   * A piece's colour: its building's tint. A building getting its roof on is still raw timber, brick and concrete,
+   * its paint going on as the roof does; a flat piece of a site comes up from the bare earth.
+   */
   private colorOf(p: Piece): THREE.Color {
     const c = this.tintFn?.(p.b) ?? this.baseColor(p.b);
     const out = c === null ? this.col.set(1, 1, 1) : this.col.setHex(c);
-    if (p.slot && p.b.built >= 1) {
-      const r = this.rise(p);
-      if (r < 1) out.lerp(this.site, 1 - r);
+    const prog = this.progressOf(p);
+    if (prog < 1) {
+      if (this.footOf(p.model)) out.lerp(this.raw, 0.55 * (1 - this.stageOfPiece(p).k));
+      else out.lerp(this.site, 1 - this.rise(p));
     }
     return out;
   }
   private site = new THREE.Color(SITE);
+  private raw = new THREE.Color(RAW);
+
+  /** A piece going up, for the construction pieces (null: a flat piece, or one that is up). */
+  private jobOf(p: Piece): ConJob | null {
+    const f = this.footOf(p.model);
+    if (!f) return null;
+    const stage = this.stageOfPiece(p);
+    if (stage.stage === "done") return null;
+    const b = p.b;
+    const base = new THREE.Matrix4();
+    let [x0, x1, z0, z1, top] = f;
+    let room: ConJob["room"] = null;
+    if (p.slot) this.slotMatrix(base, siteFrame(b.c, b.rot, b.side, b.hd), p.slot, 1);
+    else {
+      lotMatrix(base, b.c, b.rot, b.side);
+      room = { x0: -b.hw, x1: b.hw, z0: -b.hd, z1: b.hd };
+      if (b.zone) {
+        const spare = Math.max(0, b.hd * 2 - this.depth(b)), dz = spare / 2 - setback(spare), s = b.fit;
+        x0 *= s; x1 *= s; z0 = z0 * s + dz; z1 = z1 * s + dz; top *= s * b.tall;
+      }
+    }
+    const timber = p.slot ? (PLANTS[b.kind as PlantKind]?.tier ?? 2) <= 1 && top < 12 : TIMBER.has(b.kind);
+    const id = p.slot ? `${b.id}:${p.slot.x.toFixed(1)},${p.slot.y.toFixed(1)}` : `${b.id}`;
+    return { id, base, x0, x1, z0, z1, top, heavy: !timber, stage, seed: (Math.imul(b.id + 1, 2654435761) >>> 20) / 4096 + (p.slot ? p.slot.x * 0.13 : 0), room };
+  }
+
+  /** The construction pieces' moving parts (trucks, cranes), every frame. */
+  frameConstruction() {
+    this.con.frame(this.clock());
+  }
 
   private applyColors() {
     for (const [model, ps] of this.order) {

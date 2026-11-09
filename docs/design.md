@@ -945,3 +945,19 @@ The game's setting is 1920s-40s American industry: steel, oil, highways, Deco.
   (top left, by the menu) and the pause menu's Company item reopen it. Name and herald show in the HUD, on the
   pause menu, in the saves list and on milestone banners, and are saved (older saves get one from their seed).
   Not on the trucks: the camera looks straight down, so cab doors never show, and a roof badge is a few pixels.
+
+### Look: how things are built (owner, 2026-11-09: "make the game feel more real: from the way buildings are built, layouts, roads...")
+
+- **Construction in stages** (src/game/construction.ts, src/render/construction3d.ts). Every home, shop, block,
+  tower, hall and works building goes up in steps, each a Blender model: the plot dug over and set out with
+  stakes and a builder's line (and its material piles growing load by load while a town block or a works waits
+  for planks, cement or parts), the slab poured with a 1930s mixer truck parked by it, a timber frame (homes,
+  shops, small halls, first-tier works) or a riveted steel skeleton (blocks, towers, big halls, the rest of the
+  works) raised bay by bay and floor by floor while a stake-side lumber truck unloads, the walls closing in behind
+  a tube-and-plank scaffold with the floors decked over, then the roof on as the raw timber and brick take their
+  paint, the scaffold coming down last. Big steel jobs get a lattice tower crane that slews over them; big lots a
+  site hut. Trucks drive in off the street and away again. A site's new buildings after it grows go up the same
+  way over 8 game hours (the new level works from the start). Construction is slower, the one thing the owner
+  wanted slower: a house takes 3 game hours, a terrace 4, apartment blocks, stores and offices 6, modern flats,
+  malls and the office tower 9, the apartment and glass towers and the city hall 12; a first-tier works 3 (a
+  first farm opens two minutes after it is placed, at 1x), tier 2 works 6, deeper ones 8 to 12.

@@ -3,6 +3,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { BuildingKind } from "../config";
 import { SITE_MODELS } from "../game/sites";
+import { CON_MODELS } from "./construction3d";
 
 /** A Blender model flattened into one vertex-coloured geometry (one draw call per instanced kind). */
 export interface MergedModel {
@@ -56,7 +57,7 @@ export const VEHICLE_MODELS = [
   "carrier", "heavy_carrier", "rt_carrier_a", "rt_carrier_b", "motorcar",
 ] as const;
 /** Street furniture, drawn on its own (not a lot). */
-export const PROP_MODELS = ["busstop", "fence", "hedge", "picket", "bridge_pier", "bridge_abutment", "bridge_pylon", "bridge_truss", "streetlamp", "floodmast"] as const;
+export const PROP_MODELS = ["busstop", "fence", "hedge", "picket", "bridge_pier", "bridge_abutment", "bridge_pylon", "bridge_truss", "streetlamp", "floodmast", ...CON_MODELS] as const;
 export type VehicleKind = (typeof VEHICLE_MODELS)[number];
 
 export interface ModelSet {

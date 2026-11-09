@@ -4,7 +4,8 @@ import { formatMoney, type V2 } from "../core/math";
 import type { Building } from "../game/buildings";
 import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
 import { MILESTONES, unlockedBy, type Milestone, type Unlocks } from "../game/progression";
-import { BUILD_TIME, DEPOT_REACH, HIST_HOURS, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, SUPPLY_STORE, UNPOWERED, isPlantKind, powerPace, type PlantKind, type Product } from "../game/industry";
+import { buildTime } from "../game/construction";
+import { DEPOT_REACH, HIST_HOURS, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, SUPPLY_STORE, UNPOWERED, isPlantKind, powerPace, type PlantKind, type Product } from "../game/industry";
 import { TRUCK_CLASSES, TRUCK_CLASS_ORDER, type TruckClass } from "../game/trucks";
 import { LEVEL_MULT, SITE_LEVELS, growNeed } from "../game/sites";
 import { MARKET, type Town } from "../game/settlements";
@@ -1598,7 +1599,7 @@ export class Hud {
           const need = P.site!.need[p]!, got = Math.min(need, P.site!.got[p] ?? 0);
           return `<dt>${PRODUCTS[p].name}</dt><dd>${stockBar(got, need, PRODUCTS[p].color)}<span class="num">${Math.floor(got)} / ${need}</span></dd>`;
         }).join("");
-        const body = `<dl class="facts">${mats}</dl><p class="small muted">Once all are in it takes ${BUILD_TIME / HOUR} hours to build. No wages or upkeep until then.</p>`;
+        const body = `<dl class="facts">${mats}</dl><p class="small muted">Once all are in it takes ${buildTime(b.kind) / HOUR} hours to build. No wages or upkeep until then.</p>`;
         if (this.setPanel(this.anatomy(m, { kind: b.kind, actions: act, body: chain + body }))) this.bindDemolishBtn(demolish);
         return;
       }
