@@ -8,7 +8,7 @@ import { Game } from "../src/game/city";
 import { planRoad, snap, type Snap } from "../src/roads/planner";
 import { F, MOUNTAIN_STEPS } from "../src/world/gen";
 import { Terrain } from "../src/world/terrain";
-import { CLEAR_RANGE, clearShapes, crownCleared } from "../src/render/clearing";
+import { CLEAR_RANGE, clearShapes, crownCleared, type ClearShape } from "../src/render/clearing";
 import {
   CANOPY, EVERGREEN, FOREST_R, Forest, H, SCRUB, TILE_CELLS, TILE_M, TREE_CELL, TREE_MODELS, crownRadius, scrubDensity, thash, thashf, treeModel,
   type TreeTile,
@@ -215,6 +215,27 @@ describe("trees make way for what is built", () => {
     expect(back.alive.reduce((n, a) => n + a, 0)).toBe(before);
     // nothing changed: nothing to look at again
     expect(forest.setShapes(clearShapes(g.net, g.buildings.list))).toEqual([]);
+  });
+
+  it("tells what changed from the shapes alone: the same ones again are nothing new; one moved a few centimetres, cleared harder, or turned from an outline into a line is", () => {
+    const f = new Forest(new Terrain(7));
+    const pts = (x: number): V2[] => [{ x, y: 0 }, { x: x + 10, y: 0 }, { x: x + 10, y: 10 }, { x, y: 10 }];
+    const sq = (x: number, hard = 2): ClearShape => ({ poly: pts(x), hard });
+    expect(f.setShapes([sq(0), sq(100)])!.length).toBe(2);
+    // (new objects every time, as clearShapes makes them: only what they are counts)
+    expect(f.setShapes([sq(0), sq(100)])).toEqual([]);
+    expect(f.setShapes([sq(100), sq(0)])).toEqual([]);
+    // each change: the old shape's ground and the new one's
+    expect(f.setShapes([sq(0), sq(100.04)])!.length).toBe(2);
+    expect(f.setShapes([sq(0), sq(100.04, 2.5)])!.length).toBe(2);
+    expect(f.setShapes([sq(0), { line: pts(100.04), hard: 2.5 }])!.length).toBe(2);
+    expect(f.setShapes([sq(0), { line: pts(100.04).reverse(), hard: 2.5 }])!.length).toBe(2);
+    expect(f.setShapes([sq(0), { line: pts(100.04).reverse().slice(1), hard: 2.5 }])!.length).toBe(2);
+    expect(f.setShapes([sq(0)])!.length).toBe(1);
+    expect(f.setShapes([sq(0)])).toEqual([]);
+    // and the trees still find it: a crown over the square is cleared, one well away is not
+    expect(f.cleared(5, 5, 1)).toBe(true);
+    expect(f.cleared(60, 5, 1)).toBe(false);
   });
 
   it("a tile dropped from memory and worked out again is never taken for the one that was kept: its version is new", () => {

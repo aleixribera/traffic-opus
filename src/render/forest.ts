@@ -113,7 +113,7 @@ export class Forest {
   private tiles = new Map<number, TreeTile>();
   private shapes: ClearShape[] = [];
   private buckets = new Map<number, number[]>();
-  private keys = new Map<string, Rect>();
+  private keys = new Map<number, Rect>();
   private at = { x: 0, y: 0 };
   /** the last version handed out: one count for every tile, so a tile dropped and grown again is never an old number */
   private versions = 0;
@@ -126,25 +126,41 @@ export class Forest {
    * every shape that came or went, or null when so much changed that everything should be looked at again.
    */
   setShapes(shapes: ClearShape[]): Rect[] | null {
-    const keys = new Map<string, Rect>();
+    const keys = new Map<number, Rect>();
     const dirty: Rect[] = [];
     const m = CLEAR_RANGE + 0.5;
     this.buckets.clear();
     shapes.forEach((sh, idx) => {
-      const pts = "line" in sh ? sh.line : sh.poly;
-      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, k = `${"line" in sh ? "l" : "p"}${sh.hard.toFixed(2)}`;
+      const line = "line" in sh, pts = line ? sh.line : sh.poly;
+      // the shape's key: what it is, how hard it clears and every point to 2 cm, as two 32-bit hashes in one number
+      // (53 bits of them. This runs over the whole map, tens of thousands of points, each time anything is built:
+      // spelling the key out as text cost more than the rest of the frame)
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      let ka = line ? 0x9e3779b1 | 0 : 0x85ebca77 | 0, kb = Math.round(sh.hard * 100) | 0;
       for (const p of pts) {
-        x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y);
-        k += `,${Math.round(p.x * 50)},${Math.round(p.y * 50)}`;
+        if (p.x < x0) x0 = p.x;
+        if (p.y < y0) y0 = p.y;
+        if (p.x > x1) x1 = p.x;
+        if (p.y > y1) y1 = p.y;
+        const qx = Math.round(p.x * 50) | 0, qy = Math.round(p.y * 50) | 0;
+        ka = Math.imul(ka ^ qx, 0x2c1b3c6d); ka ^= ka >>> 15; ka = Math.imul(ka ^ qy, 0x297a2d39); ka ^= ka >>> 13;
+        kb = Math.imul(kb + qx, 0x85ebca6b) ^ (kb >>> 16); kb = Math.imul(kb + qy, 0xc2b2ae35) ^ (kb >>> 13);
       }
+      const k = (ka >>> 0) * 2097152 + (kb >>> 11);
       const box = { x0: x0 - sh.hard - m, y0: y0 - sh.hard - m, x1: x1 + sh.hard + m, y1: y1 + sh.hard + m };
       keys.set(k, box);
       if (!this.keys.has(k)) dirty.push(box);
-      // (a long road is filed piece by piece, so it is not looked at by every tree in its bounding box)
+      // (a long road is filed piece by piece, so it is not looked at by every tree in its bounding box; most pieces
+      // lie in the buckets the one before did, and are not filed twice)
+      const e = sh.hard + m;
+      let pi0 = NaN, pi1 = NaN, pj0 = NaN, pj1 = NaN;
       const file = (ax: number, ay: number, bx: number, by: number) => {
-        const e = sh.hard + m;
-        for (let j = Math.floor((Math.min(ay, by) - e) / BUCKET); j <= Math.floor((Math.max(ay, by) + e) / BUCKET); j++) {
-          for (let i = Math.floor((Math.min(ax, bx) - e) / BUCKET); i <= Math.floor((Math.max(ax, bx) + e) / BUCKET); i++) {
+        const i0 = Math.floor((Math.min(ax, bx) - e) / BUCKET), i1 = Math.floor((Math.max(ax, bx) + e) / BUCKET);
+        const j0 = Math.floor((Math.min(ay, by) - e) / BUCKET), j1 = Math.floor((Math.max(ay, by) + e) / BUCKET);
+        if (i0 === pi0 && i1 === pi1 && j0 === pj0 && j1 === pj1) return;
+        pi0 = i0; pi1 = i1; pj0 = j0; pj1 = j1;
+        for (let j = j0; j <= j1; j++) {
+          for (let i = i0; i <= i1; i++) {
             const bk = tkey(i, j);
             const list = this.buckets.get(bk);
             if (!list) this.buckets.set(bk, [idx]);
@@ -152,7 +168,7 @@ export class Forest {
           }
         }
       };
-      if ("line" in sh && pts.length > 1) for (let i = 0; i < pts.length - 1; i++) file(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
+      if (line && pts.length > 1) for (let i = 0; i < pts.length - 1; i++) file(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
       else file(x0, y0, x1, y1);
     });
     for (const [k, box] of this.keys) if (!keys.has(k)) dirty.push(box);
