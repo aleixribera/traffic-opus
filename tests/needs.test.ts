@@ -198,3 +198,55 @@ describe("a town's needs, read out", () => {
     expect(townModel(g, t).keys[1]).toMatchObject({ value: "1", unit: "/1", tone: "good" });
   });
 });
+
+describe("the need word holds still (display hysteresis)", () => {
+  // its own town, so the word it showed last is not left over from the tests above
+  let h: Town;
+  const want = () => demandPerDay("food", h.pop);
+  const at = (share: number) => {
+    h.hours = Array.from({ length: 24 }, () => ({ food: (share * want()) / 24 }));
+    h.hourNow = {};
+    delete h.grace;
+    return needView(h, "food");
+  };
+  beforeAll(() => {
+    const game = new Game(7);
+    game.start();
+    h = game.towns.list[0];
+    // settled (its map label speaks up) and food its only need
+    h.pop = 80;
+    h.spawned = false;
+  });
+
+  it("a town fed about right does not flip between Plenty and Enough each hour", () => {
+    expect(at(0.9).word).toBe("Enough");
+    expect(at(0.99).word).toBe("Enough"); // not earned until the full day's need
+    expect(at(1).word).toBe("Plenty");
+    for (const s of [0.97, 1.02, 0.96, 1, 0.95]) {
+      const v = at(s);
+      expect(v.word).toBe("Plenty");
+      // the crates agree with the word, and the figure under it is the real one
+      expect(v.crates.full).toBe(v.crates.n);
+      expect(v.more).toBe(0);
+      expect(v.got).toBeCloseTo(s * want());
+    }
+    expect(at(0.94).word).toBe("Enough");
+    expect(at(0.99).word).toBe("Enough");
+    expect(at(1.01).word).toBe("Plenty");
+  });
+
+  it("the same at the Enough line, and the town's map label follows the shown word", () => {
+    expect(at(0.7).word).toBe("Running low");
+    expect(at(0.79).word).toBe("Running low"); // not earned until the line
+    expect(at(ENOUGH + 0.01).word).toBe("Enough");
+    expect(at(0.76).word).toBe("Enough");
+    expect(labelNeeds(h).kind).toBe("calm");
+    expect(at(0.74).word).toBe("Running low");
+    expect(labelNeeds(h).kind).toBe("needs");
+    // a fall straight from Plenty lands on the word it falls to
+    at(1);
+    expect(at(0.77).word).toBe("Enough");
+    at(1);
+    expect(at(0.5).word).toBe("Running low");
+  });
+});

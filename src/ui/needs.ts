@@ -29,6 +29,26 @@ export function needState(share: number, crate: number): NeedState {
   return "low";
 }
 
+/**
+ * How far under its line a need may slip and keep its word: "Plenty" holds down to 95% of the day's need, "Enough"
+ * down to 75%. A word is only earned at the line itself (100%, 80%). Why: what has landed lately moves with every
+ * hourly reading, so a town fed just about right read "Plenty", then "Enough", then "Plenty" again each game hour
+ * (coordinator, 2026-11-09: "reads as flicker"). This is for the eye only. Growth still counts the real figure against
+ * ENOUGH (settlements.ts hourly).
+ */
+export const HOLD_BAND = 0.05;
+
+// the word each town's need showed last, so the next reading can hold it (display only: not in the save, gone with the town)
+const shownLast = new WeakMap<Town, Partial<Record<Product, NeedState>>>();
+
+/** The state to show, given the one shown last: a slip of less than HOLD_BAND under a word's line keeps that word. */
+export function heldState(share: number, crate: number, last: NeedState | undefined): NeedState {
+  const now = needState(share, crate);
+  if (last === "plenty" && now !== "plenty" && share >= 1 - HOLD_BAND - 1e-9) return "plenty";
+  if ((last === "plenty" || last === "enough") && (now === "low" || now === "none") && share >= ENOUGH - HOLD_BAND - 1e-9) return "enough";
+  return now;
+}
+
 /** Loads one crate stands for, a round number, so a need of any size fits in MAX_CRATES: 1, 2, 3, 4, 5, 6, 8, 10, 20... */
 export function loadsPerCrate(want: number): number {
   const need = want / MAX_CRATES;
@@ -66,7 +86,11 @@ export function needView(t: Town, p: Product): NeedView {
   const want = demandPerDay(p, t.pop), got = loadsLately(t, p);
   const share = want > 0 ? got / want : 1;
   const per = loadsPerCrate(want), n = Math.max(1, Math.ceil(want / per - 1e-6));
-  const state = needState(share, per / want);
+  // (held for the eye: HOLD_BAND. The crates follow the word, so a held "Plenty" still fills every crate)
+  const last = shownLast.get(t) ?? {};
+  const state = heldState(share, per / want, last[p]);
+  last[p] = state;
+  shownLast.set(t, last);
   const full = state === "plenty" ? n : Math.min(n, Math.floor(got / per + 1e-6));
   const more = state === "plenty" ? 0 : Math.max(1, Math.ceil(want - got - 1e-6));
   const name = PRODUCTS[p].name, low = name.toLowerCase();
