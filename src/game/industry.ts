@@ -318,8 +318,6 @@ export const DEPOT_REACH = 1500;
 export const DEPOT_KM = 400;
 /** Pace of a building that needs power and has none (it scales up to 1 with the share of power it gets). */
 export const UNPOWERED = 0.4;
-/** Time to put a building up once its site has every material (and a tier 1 building, from the start). */
-export const BUILD_TIME = HOUR * 1.5;
 /** Pace from the share of power a building gets. */
 export const powerPace = (share: number) => UNPOWERED + (1 - UNPOWERED) * Math.max(0, Math.min(1, share));
 

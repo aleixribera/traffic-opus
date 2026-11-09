@@ -270,8 +270,9 @@ export const GROW_NEED_FIRST = 960 * 0.8;
 export const growNeed = (level: number): number => (level <= 1 ? GROW_NEED_FIRST : GROW_NEED);
 /** Idle time counts against it at this share (a site that stops for a while loses some of its progress). */
 export const GROW_DECAY = 0.5;
-/** How long the new buildings take to go up after a site grows (s): the construction animation. */
-export const GROW_ANIM = 40;
+/** How long the new buildings take to go up after a site grows (s): eight game hours, slab to roof (see
+ * game/construction.ts; the new level works from the start, the crews only catch the buildings up). */
+export const GROW_ANIM = 8 * 40;
 
 /** Multiplier of output, jobs and trucks at a level. */
 export const levelMult = (level: number): number => LEVEL_MULT[Math.max(1, Math.min(SITE_LEVELS, level)) - 1];

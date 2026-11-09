@@ -1643,6 +1643,7 @@ export class App {
     }
     // (the clock counts every game minute; the rest of the bar every quarter second)
     this.hud?.clock();
+    this.buildings3d.frameConstruction();
     this.hudT += dt;
     if (this.hudT > 0.25) {
       this.hudT = 0;
