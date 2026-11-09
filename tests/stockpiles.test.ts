@@ -57,5 +57,10 @@ describe("stockpiles", () => {
     const f = pileFills(works("sawmill", { logs: 4 }), ["site_logyard", "site_hall_l", "sawmill", "site_logyard"], 8);
     expect(f[0]).toEqual([1, 1, 1, 1, 1]);
     expect(f[3]).toEqual([0, 0, 0, 0, 0]);
+    // emptied: no more than a single layer of logs left, however many yards it has
+    const e = pileFills(works("sawmill", {}), ["site_logyard", "site_logyard", "site_logyard"], 8).flatMap((x) => x ?? []);
+    expect(e[0]).toBeGreaterThan(0);
+    expect(e[0]).toBeLessThan(0.34);
+    expect(e.slice(1).every((u) => u === 0)).toBe(true);
   });
 });

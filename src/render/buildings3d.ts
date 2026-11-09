@@ -76,11 +76,13 @@ const setback = (spare: number) => Math.min(spare * 0.68, 5);
 const SITE = 0xb59d6a; // construction site: bare earth
 /** A building getting its roof on: raw timber, brick and concrete before the paint. */
 const RAW = 0xd6c6a4;
-/** Homes, shops and the small halls go up on a timber frame; blocks, towers and big halls on a steel skeleton. */
 /** Other houses a home may be (tools/blender: same lot, driveway and bay as the kind's own model). */
 const VARIANTS: Partial<Record<string, string[]>> = { house: ["house_b", "house_c"] };
 /** A lot's driveway off its middle (model x, m): a home's runs down the side to its garage. */
 const DRIVE_X: Partial<Record<string, number>> = { house: -4.0 };
+/** Where a home's own walls start (model x, z): what stands left of or behind that is its garage and shed. */
+const HOME_FOOT: Partial<Record<string, [number, number]>> = { house: [-1.9, -4.9], house_b: [-1.9, -4.9], house_c: [-1.9, -4.9] };
+/** Homes, shops and the small halls go up on a timber frame; blocks, towers and big halls on a steel skeleton. */
 const TIMBER = new Set<string>(["house", "terrace", "highstreet", "shop", "fuelstation", "hamlethall", "villagehall"]);
 /** Tints multiplied over a model's own colours, picked per building. */
 const VARY = [0xffffff, 0xffffff, 0xf2ebe4, 0xe2dcd8, 0xfbf3e6, 0xdcdcdc, 0xf5f0f0];
@@ -234,31 +236,41 @@ export class Buildings3D {
   /** The heaps and log stacks in the works' yards, and the works that have yards (set on rebuild). */
   private piles: Stockpiles3D;
   private yardSites: Building[] = [];
-  /** the yards' fills as last drawn (quantized), to redraw them only when a store has moved on */
-  private yardKey = "";
+  /** each works' yards as last drawn: its fills (quantized) and their piles, to redo only a works whose stores moved on */
+  private yardCache = new Map<number, { key: string; jobs: YardJob[] }>();
+  private yardTick = 0;
 
   /** Every yard's piles, as full as its works' stores; null when none has moved on since they were last drawn. */
   private yardJobs(force: boolean): YardJob[] | null {
+    // (stores move on a load at a time: once a second is plenty)
+    if (!force && this.yardTick++ % 4) return null;
+    if (force) this.yardCache.clear();
+    let moved = force;
     const jobs: YardJob[] = [];
-    const key: number[] = [];
+    const live = new Set<number>();
     for (const b of this.yardSites) {
+      live.add(b.id);
       const level = b.plant?.level ?? 1;
       const slots = this.layoutOf(b).slots.filter((s) => s.level <= level);
       const fills = pileFills(b, slots.map((s) => s.model));
-      const f = siteFrame(b.c, b.rot, b.side, b.hd);
-      slots.forEach((s, i) => {
-        const fl = fills[i];
-        // (a yard still going up has nothing in it yet)
-        if (!fl || this.riseOf(b, s) < 1) return;
-        const q = fl.map((u) => Math.round(u * 24) / 24);
-        key.push(b.id, ...q);
-        jobs.push({ model: s.model, base: this.slotMatrix(new THREE.Matrix4(), f, s, 1), fills: q, seed: b.id + i });
-      });
+      // (a yard still going up has nothing in it yet)
+      const q = slots.map((s, i) => (fills[i] && this.riseOf(b, s) >= 1 ? fills[i]!.map((u) => Math.round(u * 12) / 12) : null));
+      const key = q.map((f) => (f ? f.join(" ") : "-")).join("|");
+      let c = this.yardCache.get(b.id);
+      if (!c || c.key !== key) {
+        const f = siteFrame(b.c, b.rot, b.side, b.hd);
+        const js: YardJob[] = [];
+        slots.forEach((s, i) => {
+          const fl = q[i];
+          if (fl) js.push({ model: s.model, base: this.slotMatrix(new THREE.Matrix4(), f, s, 1), fills: fl, seed: b.id + i });
+        });
+        this.yardCache.set(b.id, (c = { key, jobs: js }));
+        moved = true;
+      }
+      jobs.push(...c.jobs);
     }
-    const k = key.join(",");
-    if (!force && k === this.yardKey) return null;
-    this.yardKey = k;
-    return jobs;
+    for (const id of this.yardCache.keys()) if (!live.has(id)) { this.yardCache.delete(id); moved = true; }
+    return moved ? jobs : null;
   }
 
   /** The time whose season the fields show (the day cycle's: the title menu and the dev hook can show another). */
@@ -401,6 +413,14 @@ export class Buildings3D {
   /** How far along the street (lot x, m) a lot's driveway runs from its middle (a home's down the side to its garage). */
   private driveX(b: Building): number {
     return (DRIVE_X[b.kind] ?? 0) * (b.zone ? b.fit : 1);
+  }
+
+  /** Where a lot's driveway meets the kerb (a home's off to the side, toward its garage): verge trees and lamps keep clear. */
+  driveFront(b: Building): V2 {
+    const dx = this.driveX(b);
+    if (!dx) return b.front;
+    const away = right(fromAngle(b.rot));
+    return { x: b.front.x - away.y * b.side * dx, y: b.front.y + away.x * b.side * dx };
   }
 
   /**
@@ -577,12 +597,15 @@ export class Buildings3D {
     if (this.feet.has(model)) return this.feet.get(model)!;
     const pos = this.geoOf(model)?.geo.getAttribute("position");
     let f: [number, number, number, number, number] | null = null;
+    // (a home's walls only: not its garage down the side, nor the shed in its back yard)
+    const clip = HOME_FOOT[model];
     if (pos) {
       let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, top = 0;
       for (let i = 0; i < pos.count; i++) {
         const y = pos.getY(i);
         if (y < 1.2) continue;
         const x = pos.getX(i), z = pos.getZ(i);
+        if (clip && (x < clip[0] || z < clip[1])) continue;
         if (x < x0) x0 = x;
         if (x > x1) x1 = x;
         if (z < z0) z0 = z;
@@ -1117,6 +1140,12 @@ export class Buildings3D {
     const timber = p.slot ? (PLANTS[b.kind as PlantKind]?.tier ?? 2) <= 1 && top < 12 : TIMBER.has(b.kind);
     const id = p.slot ? `${b.id}:${p.slot.x.toFixed(1)},${p.slot.y.toFixed(1)}` : `${b.id}`;
     return { id, base, x0, x1, z0, z1, top, heavy: !timber, stage, seed: (Math.imul(b.id + 1, 2654435761) >>> 20) / 4096 + (p.slot ? p.slot.x * 0.13 : 0), room };
+  }
+
+  /** Let go of the construction pieces' and the yards' instance buffers (a new world is loaded). */
+  disposeExtras() {
+    this.con.dispose();
+    this.piles.dispose();
   }
 
   /** The construction pieces' moving parts (trucks, cranes), every frame. */

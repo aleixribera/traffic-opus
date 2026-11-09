@@ -39,7 +39,8 @@ const WOOD_BAY = 3, STEEL_BAY = 6, STOREY = 4;
 /** Sim seconds a truck takes to pull in off the street or away again. */
 const DRIVE = 9;
 
-interface Truck { model: ConModel; from: V; via: V; to: V; t0: number; out: boolean }
+/** A truck's way in (from the street, round `via`, to its spot) or out; `back`: it backs out to there first. */
+interface Truck { model: ConModel; from: V; via: V; to: V; t0: number; out: boolean; back?: V }
 interface V { x: number; z: number }
 
 const smooth = (u: number) => u * u * (3 - 2 * u);
@@ -73,7 +74,8 @@ export class Construction3D {
 
   /** Lay out every job (call when the jobs' steps may have moved on: a few times a second). */
   update(jobs: ConJob[], now: number) {
-    this.list.clear();
+    const prev = this.list;
+    this.list = new Map();
     this.cranes = [];
     const seen = new Set<string>();
     for (const j of jobs) {
@@ -85,13 +87,24 @@ export class Construction3D {
     this.leaving = this.leaving.filter((t) => now - t.t0 < DRIVE);
     for (const [model, a] of this.list) this.fixed.set(model, a.length);
     for (const model of this.meshes.keys()) if (!this.list.has(model)) this.fixed.set(model, 0);
-    this.dirty = true;
+    // (only the models whose pieces moved on are written and uploaded again)
+    for (const model of new Set([...prev.keys(), ...this.list.keys()])) {
+      const a = this.list.get(model) ?? [], b = prev.get(model) ?? [];
+      if (a.length !== b.length || a.some((m, i) => !m.equals(b[i]))) this.dirty.add(model);
+    }
     this.frame(now);
   }
 
   private depart(t: Truck & { base: THREE.Matrix4 }, now: number) {
-    // (out the way it came in when it backed in nose-first; otherwise on along the street)
-    this.leaving.push({ ...t, from: t.to, via: t.via, to: t.from, t0: now, out: true });
+    const spot = t.to, dir = Math.sign(t.via.x - t.from.x) || 1;
+    if (t.via.z === t.from.z) {
+      // in nose-first beside the walls: it backs out into the street, then drives on the way it was going
+      const road = t.via.z;
+      this.leaving.push({ ...t, from: spot, via: t.via, back: { x: t.via.x - 7 * dir, z: road }, to: { x: t.via.x + 18 * dir, z: road }, t0: now, out: true });
+    } else {
+      // parked along the front yard: it pulls forward and out
+      this.leaving.push({ ...t, from: spot, via: { x: 2 * spot.x - t.via.x, z: t.via.z }, to: { x: 2 * spot.x - t.from.x, z: t.from.z }, t0: now, out: true });
+    }
   }
 
   private job(j: ConJob, now: number) {
@@ -266,16 +279,19 @@ export class Construction3D {
   frame(now: number) {
     const moving: [ConModel, THREE.Matrix4][] = [];
     const truck = (t: Truck & { base: THREE.Matrix4 }) => {
-      const u = smooth(Math.min(1, Math.max(0, (now - t.t0) / DRIVE)));
+      let u = smooth(Math.min(1, Math.max(0, (now - t.t0) / DRIVE)));
+      // backing out (the first part of the way): along a curve from the spot onto the street, tail first
+      const B = 0.45, backing = !!t.back && u < B;
+      const end = t.back && backing ? t.back : t.to;
+      if (t.back) u = backing ? u / B : (u - B) / (1 - B);
+      const from = t.back && !backing ? t.back : t.from, via = t.back && !backing ? t.back : t.via;
       const at = (s: number) => {
         const a = 1 - s;
-        return { x: a * a * t.from.x + 2 * a * s * t.via.x + s * s * t.to.x, z: a * a * t.from.z + 2 * a * s * t.via.z + s * s * t.to.z };
+        return { x: a * a * from.x + 2 * a * s * via.x + s * s * end.x, z: a * a * from.z + 2 * a * s * via.z + s * s * end.z };
       };
       const p = at(u);
       const s0 = Math.min(u, 0.995), q0 = at(s0), q1 = at(s0 + 0.005);
-      let yaw = Math.atan2(q1.x - q0.x, q1.z - q0.z);
-      // (a truck backing out of a side spot faces the way it came)
-      if (t.out && t.via.z === t.from.z && t.via.x === t.to.x) yaw += Math.PI;
+      const yaw = Math.atan2(q1.x - q0.x, q1.z - q0.z) + (backing ? Math.PI : 0);
       this.tmp.makeRotationY(yaw).setPosition(p.x, 0, p.z).premultiply(t.base);
       moving.push([t.model, this.tmp.clone()]);
     };
@@ -309,18 +325,18 @@ export class Construction3D {
         const a = this.list.get(model) ?? [];
         a.forEach((m, i) => mesh!.setMatrixAt(i, m));
         this.fixed.set(model, a.length);
+        this.upload.add(model);
       }
       if (!mesh) continue;
       mesh.count = n;
     }
     // static pieces were set on update; write them again only when the update changed them
-    if (this.dirty) {
-      for (const [model, a] of this.list) {
-        const mesh = this.meshes.get(model);
-        if (mesh) a.forEach((m, i) => mesh.setMatrixAt(i, m));
-      }
-      this.dirty = false;
+    for (const model of this.dirty) {
+      const mesh = this.meshes.get(model);
+      if (mesh) (this.list.get(model) ?? []).forEach((m, i) => mesh.setMatrixAt(i, m));
+      this.upload.add(model);
     }
+    this.dirty.clear();
     const at = new Map<ConModel, number>();
     for (const [model, m] of moving) {
       const mesh = this.meshes.get(model);
@@ -328,10 +344,17 @@ export class Construction3D {
       const i = (this.fixed.get(model) ?? 0) + (at.get(model) ?? 0);
       at.set(model, (at.get(model) ?? 0) + 1);
       mesh.setMatrixAt(i, m);
+      this.upload.add(model);
     }
-    for (const mesh of this.meshes.values()) mesh.instanceMatrix.needsUpdate = true;
+    for (const model of this.upload) {
+      const mesh = this.meshes.get(model);
+      if (mesh) mesh.instanceMatrix.needsUpdate = true;
+    }
+    this.upload.clear();
   }
-  private dirty = true;
+  /** models whose static pieces changed on the last update, and models to upload this frame */
+  private dirty = new Set<ConModel>();
+  private upload = new Set<ConModel>();
 
   dispose() {
     for (const m of this.meshes.values()) { this.group.remove(m); m.dispose(); }

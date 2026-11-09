@@ -28,6 +28,8 @@ export const YARDS: Record<string, YardDef> = {
 export const SCENERY_FILL = 0.6;
 /** A bay is never swept quite clean: the last scrapings stay (share of the yard's piles). */
 const SCRAPINGS = 0.05;
+/** ...but no more than a low heap, or a single layer of logs, however many yards the works has. */
+const SCRAPINGS_MAX = 0.3;
 
 /** The product a yard holds at this works, or null when it handles none of them. */
 export function yardProduct(kind: string, yard: string): Product | null {
@@ -64,8 +66,8 @@ export function pileFills(b: Building, slots: string[], store = Industry.storeOf
     const key = p ?? "scenery:" + s;
     const n = total.get(key)!;
     const f = p ? storeFill(b, p, store) : SCENERY_FILL;
-    // (in piles: how many the store fills, the scrapings left in every bay at least)
-    const full = Math.max(SCRAPINGS * n, f * n);
+    // (in piles: how many the store fills, or at least the scrapings in its first bay)
+    const full = Math.max(Math.min(SCRAPINGS * n, SCRAPINGS_MAX), f * n);
     const first = seen.get(key) ?? 0;
     seen.set(key, first + def.piles);
     return Array.from({ length: def.piles }, (_, i) => Math.min(1, Math.max(0, full - (first + i))));

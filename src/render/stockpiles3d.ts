@@ -32,7 +32,8 @@ export interface YardJob {
 
 export class Stockpiles3D {
   readonly group = new THREE.Group();
-  private meshes: THREE.InstancedMesh[] = [];
+  /** one mesh per pile model, kept from one update to the next (grown when it runs out of room) */
+  private meshes = new Map<string, THREE.InstancedMesh>();
   private tmp = new THREE.Matrix4();
   private tmp2 = new THREE.Matrix4();
 
@@ -40,8 +41,6 @@ export class Stockpiles3D {
 
   /** Lay out every yard's piles again (call when a works' stores have moved on, or its yards were rebuilt). */
   update(yards: YardJob[]) {
-    for (const m of this.meshes) { this.group.remove(m); m.dispose(); }
-    this.meshes = [];
     const list = new Map<string, THREE.Matrix4[]>();
     const put = (model: string, m: THREE.Matrix4) => {
       let a = list.get(model);
@@ -70,16 +69,31 @@ export class Stockpiles3D {
         put(HEAP_MODELS[y.model][i % 2], this.tmp.premultiply(y.base));
       });
     }
-    for (const [model, a] of list) {
-      const geo = this.models.sites.get(model)?.geo;
-      if (!geo) continue;
-      const mesh = new THREE.InstancedMesh(geo, this.mat, a.length);
-      a.forEach((m, i) => mesh.setMatrixAt(i, m));
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+    for (const model of PILE_MODELS) {
+      const a = list.get(model) ?? [];
+      let mesh = this.meshes.get(model);
+      if (!a.length && !mesh) continue;
+      if (!mesh || mesh.instanceMatrix.count < a.length) {
+        const geo = this.models.sites.get(model)?.geo;
+        if (!geo) continue;
+        if (mesh) { this.group.remove(mesh); mesh.dispose(); }
+        let cap = 16;
+        while (cap < a.length) cap *= 2;
+        mesh = new THREE.InstancedMesh(geo, this.mat, cap);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        this.meshes.set(model, mesh);
+        this.group.add(mesh);
+      }
+      a.forEach((m, i) => mesh!.setMatrixAt(i, m));
+      mesh.count = a.length;
+      mesh.instanceMatrix.needsUpdate = true;
       mesh.computeBoundingSphere();
-      this.meshes.push(mesh);
-      this.group.add(mesh);
     }
+  }
+
+  dispose() {
+    for (const m of this.meshes.values()) { this.group.remove(m); m.dispose(); }
+    this.meshes.clear();
   }
 }

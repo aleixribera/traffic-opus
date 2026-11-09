@@ -9,6 +9,7 @@
 import { add, fromAngle, right, scale, type V2 } from "../core/math";
 import { mulberry32 } from "../core/noise";
 import type { PlantKind } from "./industry";
+import { HOUR } from "./society";
 
 /** Levels a site grows through. */
 export const SITE_LEVELS = 4;
@@ -272,7 +273,7 @@ export const growNeed = (level: number): number => (level <= 1 ? GROW_NEED_FIRST
 export const GROW_DECAY = 0.5;
 /** How long the new buildings take to go up after a site grows (s): eight game hours, slab to roof (see
  * game/construction.ts; the new level works from the start, the crews only catch the buildings up). */
-export const GROW_ANIM = 8 * 40;
+export const GROW_ANIM = 8 * HOUR;
 
 /** Multiplier of output, jobs and trucks at a level. */
 export const levelMult = (level: number): number => LEVEL_MULT[Math.max(1, Math.min(SITE_LEVELS, level)) - 1];

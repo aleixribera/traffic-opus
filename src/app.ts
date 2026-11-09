@@ -422,13 +422,14 @@ export class App {
     sh.uClear.value = this.clearing.tex; sh.uClearO.value = this.clearing.origin; sh.uClearS.value = this.clearing.size;
     this.roads = new Roads3D(g.net, {
       props: this.models.props, isWater: (p) => g.terrain.isWater(p),
-      drives: () => g.buildings.list.filter((b) => b.access && !b.plant).map((b) => b.front),
+      drives: () => g.buildings.list.filter((b) => b.access && !b.plant).map((b) => this.buildings3d?.driveFront(b) ?? b.front),
       gates: () => g.buildings.list.filter((b) => b.placed && b.plant).map((b) => ({ ...siteFrame(b.c, b.rot, b.side, b.hd), front: b.front })),
     });
     this.roadsFar = new RoadsFar(g.net);
     this.labels.set([]);
     this.labelKey = "";
     this.vehicles = new Vehicles3D(this.models);
+    this.buildings3d?.disposeExtras();
     this.buildings3d = new Buildings3D(this.models, () => this.game.time, g.net);
     this.vehicles.lotOf = (id) => { const b = g.buildings.byId.get(id); return b ? this.buildings3d.lotWay(b) : null; };
     this.transit3d = new Transit3D(this.models.props.get("busstop"));
