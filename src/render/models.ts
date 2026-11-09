@@ -24,6 +24,11 @@ export const BUILDING_MODELS: BuildingKind[] = [
   "ironmine", "coalmine", "quarry", "smelter", "cementworks",
 ];
 /**
+ * Other looks of a kind (a street of homes shouldn't be one house stamped down): same lot, driveway and parking bay
+ * as the kind's own model, a different house on it (see Buildings3D.modelOf).
+ */
+export const HOME_VARIANTS: string[] = ["house_b", "house_c"];
+/**
  * What industry sites are built from besides the kinds' own models: the shared modules (halls, silos, heaps, the
  * truck yard...) and the plants of the later tiers, ready for their chains.
  */
@@ -72,7 +77,7 @@ const base = import.meta.env.BASE_URL + "models/";
 
 export async function loadModels(onProgress?: (k: number) => void): Promise<ModelSet> {
   const loader = new GLTFLoader();
-  const all = [...BUILDING_MODELS, ...VEHICLE_MODELS, ...PROP_MODELS, ...SITE_PIECES];
+  const all = [...BUILDING_MODELS, ...HOME_VARIANTS, ...VEHICLE_MODELS, ...PROP_MODELS, ...SITE_PIECES];
   let done = 0;
   const load = (n: string) => loader.loadAsync(base + n + ".glb").then((g) => g.scene);
   const scenes = await Promise.all(

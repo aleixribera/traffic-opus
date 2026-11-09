@@ -75,6 +75,10 @@ const SITE = 0xb59d6a; // construction site: bare earth
 /** A building getting its roof on: raw timber, brick and concrete before the paint. */
 const RAW = 0xd6c6a4;
 /** Homes, shops and the small halls go up on a timber frame; blocks, towers and big halls on a steel skeleton. */
+/** Other houses a home may be (tools/blender: same lot, driveway and bay as the kind's own model). */
+const VARIANTS: Partial<Record<string, string[]>> = { house: ["house_b", "house_c"] };
+/** A lot's driveway off its middle (model x, m): a home's runs down the side to its garage. */
+const DRIVE_X: Partial<Record<string, number>> = { house: -4.0 };
 const TIMBER = new Set<string>(["house", "terrace", "highstreet", "shop", "fuelstation", "hamlethall", "villagehall"]);
 /** Tints multiplied over a model's own colours, picked per building. */
 const VARY = [0xffffff, 0xffffff, 0xf2ebe4, 0xe2dcd8, 0xfbf3e6, 0xdcdcdc, 0xf5f0f0];
@@ -353,9 +357,32 @@ export class Buildings3D {
     return VARY[(Math.imul(b.id, 2654435761) >>> 28) % VARY.length];
   }
 
+  /** The model a zoned building is drawn with: its kind's, or for a home one of the kind's other houses. */
+  private modelOf(b: Building): string {
+    const v = VARIANTS[b.kind];
+    if (!v) return b.kind;
+    const pick = (Math.imul(b.id + 7, 2246822519) >>> 0) % (v.length + 1);
+    return pick === 0 || !this.geoOf(v[pick - 1]) ? b.kind : v[pick - 1];
+  }
+
+  /** How far along the street (lot x, m) a lot's driveway runs from its middle (a home's down the side to its garage). */
+  private driveX(b: Building): number {
+    return (DRIVE_X[b.kind] ?? 0) * (b.zone ? b.fit : 1);
+  }
+
+  /**
+   * How far toward the road from a lot's middle its driveway strip ends: placed buildings at the lot edge; zoned
+   * lots start at the kerb, so to the model's front (a home's own driveway runs from there, so a little into it); a
+   * town hall, across its square to its door.
+   */
+  private reachOf(b: Building): number {
+    if (!b.zone) return isHall(b.kind) ? this.halfDepth(b) : b.hd;
+    return b.hd - setback(Math.max(0, b.hd * 2 - this.depth(b))) + (DRIVE_X[b.kind] !== undefined ? -0.3 : 0.5);
+  }
+
   /** The pieces a building is drawn with: one model, or a site's buildings up to its level. */
   private piecesOf(b: Building): Piece[] {
-    if (!b.placed || !b.plant) return [{ b, model: b.kind, slot: null }];
+    if (!b.placed || !b.plant) return [{ b, model: this.modelOf(b), slot: null }];
     const level = b.plant.level ?? 1;
     const now = this.seasonClock?.() ?? this.clock();
     return this.layoutOf(b).slots.filter((s) => s.level <= level).map((s) => ({ b, model: slotModel(b, s.model, now), slot: s }));
@@ -721,11 +748,11 @@ export class Buildings3D {
     const u = fromAngle(b.rot);
     const away = right(u);
     const into = { x: away.x * b.side, y: away.y * b.side };
-    // placed buildings: from the kerb to the lot edge; zoned lots start at the kerb, so to the model's front; a
-    // town hall, across its square to its door
-    const reach = b.zone ? b.hd - setback(Math.max(0, b.hd * 2 - this.depth(b))) + 0.5 : isHall(b.kind) ? this.halfDepth(b) : b.hd;
-    const drive = { x: b.c.x - into.x * reach, y: b.c.y - into.y * reach };
-    const kerb = { ...b.front };
+    const reach = this.reachOf(b);
+    // (a home's driveway runs down the side of its lot: the way in shifts along the street with it)
+    const dx = this.driveX(b), al = { x: -into.y * dx, y: into.x * dx };
+    const drive = { x: b.c.x - into.x * reach + al.x, y: b.c.y - into.y * reach + al.y };
+    const kerb = { x: b.front.x + al.x, y: b.front.y + al.y };
     const bays: LotWay["bays"] = [];
     const mm = this.geoOf(b.kind);
     if (mm?.bays.length && b.built >= 1 && !b.abandoned) {
@@ -778,11 +805,11 @@ export class Buildings3D {
       if (isHall(b.kind)) continue; // a hall's path is its square's (rebuild)
       const u = fromAngle(b.rot);
       const away = right(u); // * side points away from the road
-      // placed buildings: from the kerb to the lot edge; zoned lots start at the kerb, so to the model's front; a
-      // town hall, across its square to its door
-      const reach = b.zone ? b.hd - setback(Math.max(0, b.hd * 2 - this.depth(b))) + 0.5 : isHall(b.kind) ? this.halfDepth(b) : b.hd;
-      const ex = { x: b.c.x - away.x * b.side * reach, y: b.c.y - away.y * b.side * reach };
-      const a = b.front;
+      const reach = this.reachOf(b);
+      // (a home's down the side of its lot, to its garage)
+      const dx = this.driveX(b), al = { x: -away.y * b.side * dx, y: away.x * b.side * dx };
+      const ex = { x: b.c.x - away.x * b.side * reach + al.x, y: b.c.y - away.y * b.side * reach + al.y };
+      const a = { x: b.front.x + al.x, y: b.front.y + al.y };
       if (Math.hypot(ex.x - a.x, ex.y - a.y) < 0.6) continue;
       const w = isHall(b.kind) ? 2.4 : b.zone && b.hw > 14 ? 2.6 : 1.7;
       q.strip(a, ex, w * 2, 0.08);
@@ -829,7 +856,8 @@ export class Buildings3D {
       const toward = scale(right(fromAngle(b.rot)), -b.side);
       const along = { x: toward.y, y: -toward.x };
       const rel = { x: b.front.x - b.c.x, y: b.front.y - b.c.y };
-      const kd = dot(rel, toward), xd = dot(rel, along);
+      // (xd: where the driveway crosses the strip, along the street from the lot's middle)
+      const kd = dot(rel, toward), xd = dot(rel, along) + this.driveX(b);
       const pave = this.paveOf(b.access.seg);
       if (isHall(b.kind)) { this.squareStrip(b, kd, toward, along, rect, lawns, paved); continue; }
       const grp = ZONE_GROUP[b.zone!];

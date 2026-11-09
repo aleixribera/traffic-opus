@@ -961,3 +961,10 @@ The game's setting is 1920s-40s American industry: steel, oil, highways, Deco.
   wanted slower: a house takes 3 game hours, a terrace 4, apartment blocks, stores and offices 6, modern flats,
   malls and the office tower 9, the apartment and glass towers and the city hall 12; a first-tier works 3 (a
   first farm opens two minutes after it is placed, at 1x), tier 2 works 6, deeper ones 8 to 12.
+- **Lived-in home lots** (tools/blender/build_models.py `home_lot`, src/render/buildings3d.ts `VARIANTS`,
+  `DRIVE_X`). A street of homes is no longer one house stamped down: three 1920s homes share one lot plan, picked
+  per building (a cross-gable clapboard house with a vegetable patch, a brick bungalow under a hipped slate roof
+  with a shed and a washing line, a white Dutch colonial with a gambrel roof, a birdbath and a bench). Each has a
+  concrete driveway down its left side to a detached garage at the back, the family car on it, a path to the
+  door, and a picket fence round the back yard; no paved pad, the town's lawn runs up to the walls. The street's
+  driveway strip, the gap in the front hedge and the way cars drive in all follow the driveway to the side.

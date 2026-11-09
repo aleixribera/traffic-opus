@@ -77,6 +77,9 @@ def palette():
         # residential
         "res_wall": "#e2d6bc", "res_roof": "#b0603f", "res_wall2": "#d6c8aa", "res_roof2": "#96503a",
         "res_trim": "#ece8dc",
+        # a home's lot and its variants
+        "drive": "#77787a", "fence_w": "#e9e5d9", "soil": "#7a6146", "crop": "#6f8a3e", "wash1": "#c9d6e2",
+        "wash2": "#d9b48a", "bench": "#7a5a3c", "brick_home": "#a35e44", "slate": "#6a7075", "shingle": "#6d5848",
         "apt_wall": "#cdc4b2", "apt_roof": "#8e8f8d", "apt_brace": "#a9a8a2", "apt_band": "#b3ab9b",
         # commercial
         "com_wall": "#d4d2ca", "com_roof": "#b6b8b8", "com_rib": "#cacccb", "com_canopy": "#8a4a36",
@@ -391,20 +394,92 @@ def bay_row(n, cx=0.0):
 
 # ------------------------------------------------------------------ buildings
 
+HOUSE_DRIVE_X = -4.0   # the driveway's centre line (the game runs its kerb crossing in line with it)
+
+
+def home_lot(M, P, garage_roof, yard="veg"):
+    """A family home's lot (12 x 15): no pad, the town's lawn shows through; a concrete driveway down the left side
+    to a detached garage at the back, the family car on it; a picket fence round the back yard and a vegetable
+    patch, or a shed and a washing line, in it."""
+    L = Lot(12, 15)
+    drive, fence = P["drive"], P["fence_w"]
+    x0, x1 = HOUSE_DRIVE_X - 1.4, HOUSE_DRIVE_X + 1.4
+    box(M, x0, x1, -7.5, 2.0, 0, 0.05, drive)
+    # (a concrete apron in front of the garage doors)
+    box(M, x0 - 0.2, x1 + 0.2, 1.2, 2.0, 0.05, 0.06, drive)
+    # the garage: clapboard walls, a gable roof with its ridge front to back, the doors
+    gx0, gx1, gy0, gy1 = -5.8, -2.2, 2.0, 6.6
+    box(M, gx0, gx1, gy0, gy1, 0, 2.5, P["res_wall2"])
+    gable(M, gx0, gx1, gy0, gy1, 2.5, 3.6, "y", garage_roof, P["res_wall2"], oh_u=(0.25, 0.25), oh_a=(0.3, 0.2))
+    box(M, gx0 + 0.4, gx1 - 0.4, gy0 - 0.04, gy0, 0.0, 2.1, P["res_trim"])
+    # the path from the driveway to the front door
+    box(M, x1, -0.6, -1.4, -0.7, 0, 0.04, drive)
+    # the back yard's fence: along the back and the right side, gated at the garage
+    box(M, -6.0, 6.0, 7.38, 7.5, 0, 1.1, fence)
+    box(M, 5.88, 6.0, 0.8, 7.38, 0, 1.1, fence)
+    box(M, -2.2, -0.2, 2.6, 2.72, 0, 1.1, fence)
+    if yard == "veg":
+        # a vegetable patch: turned beds with rows of green
+        box(M, 0.6, 5.2, 4.9, 7.0, 0, 0.05, P["soil"])
+        for i in range(5):
+            y = 5.15 + i * 0.4
+            box(M, 0.8, 5.0, y, y + 0.18, 0.05, 0.16, P["crop"])
+    elif yard == "shed":
+        box(M, 3.4, 5.6, 5.0, 7.0, 0, 2.1, P["res_wall2"])
+        gable(M, 3.4, 5.6, 5.0, 7.0, 2.1, 2.7, "x", garage_roof, P["res_wall2"], oh_u=(0.15, 0.15), oh_a=(0.15, 0.15))
+        for x in (-0.4, 2.6):
+            box(M, x - 0.05, x + 0.05, 5.9, 6.0, 0, 1.9, P["res_trim"])
+        bar(M, (-0.4, 5.95), (2.6, 5.95), 0.03, 1.85, 1.88, P["res_trim"])
+        for k, x in enumerate((0.0, 0.5, 1.0, 1.6, 2.1)):
+            box(M, x - 0.2, x + 0.2, 5.92, 5.98, 1.25, 1.85, (P["wash1"], P["wash2"], P["res_trim"])[k % 3])
+    else:
+        # a lawn with a birdbath and a bench
+        cyl(M, 2.8, 5.6, 0.35, 0, 0.9, P["res_trim"], n=8)
+        box(M, 0.6, 2.0, 6.6, 7.1, 0, 0.45, P["bench"])
+    L.bays = [(HOUSE_DRIVE_X, -3.0)]
+    return L
+
+
 def b_house(M, P):
-    L = lot(M, P, 12, 15, [-3.2], asphalt=(-5.5, -0.9))
+    """A 1920s cross-gable house: the main body with its ridge along the street, a front wing, the porch, a chimney."""
+    L = home_lot(M, P, P["res_roof2"], "veg")
     wall, roof = P["res_wall"], P["res_roof"]
-    # main body, ridge along X, at the back of the zone (zone y 0..6.5)
-    box(M, -4.6, 4.2, 2.2, 6.3, 0, 3.0, wall)
-    gable(M, -4.6, 4.2, 2.2, 6.3, 3.0, 5.0, "x", roof, wall)
-    # front cross wing, ridge along Y
-    box(M, 0.6, 4.2, 0.4, 3.0, 0, 3.0, wall)
-    gable(M, 0.6, 4.2, 0.4, 4.2, 3.0, 4.55, "y", roof, wall, oh_a=(0.4, 0.0))
-    # porch roof over the door, chimney
-    box(M, -2.8, -0.4, 1.3, 2.2, 2.35, 2.55, roof, bevel=0.04)
-    box(M, -3.4, -2.7, 4.6, 5.3, 2.5, 5.7, P["res_trim"], bevel=0.04)
-    # path from the parking bay to the door
-    box(M, -2.2, -1.0, L.yf + PARK_DEPTH, 1.3, PAD_H, PAD_H + 0.02, P["asphalt"])
+    box(M, -1.4, 5.4, -0.2, 4.6, 0, 3.0, wall)
+    gable(M, -1.4, 5.4, -0.2, 4.6, 3.0, 5.0, "x", roof, wall)
+    box(M, 2.4, 5.4, -2.4, -0.2, 0, 3.0, wall)
+    gable(M, 2.4, 5.4, -2.4, 0.2, 3.0, 4.5, "y", roof, wall, oh_a=(0.4, 0.0))
+    box(M, -0.8, 2.4, -1.3, -0.2, 2.35, 2.55, roof, bevel=0.04)
+    box(M, 0.2, 0.9, 3.0, 3.7, 2.5, 5.7, P["res_trim"], bevel=0.04)
+    return L
+
+
+def b_house_b(M, P):
+    """A brick bungalow: low walls under a hipped slate roof, a gabled porch on the front, a chimney at the side."""
+    L = home_lot(M, P, P["res_roof"], "shed")
+    wall, roof = P["brick_home"], P["slate"]
+    box(M, -1.4, 5.4, -1.8, 4.4, 0, 2.9, wall)
+    taper(M, (-1.8, 5.8, -2.2, 4.8), (0.6, 3.4, 1.28, 1.32), 2.9, 4.7, roof)
+    box(M, 0.6, 3.0, -3.0, -1.8, 0, 2.5, P["res_trim"])
+    gable(M, 0.6, 3.0, -3.0, -1.8, 2.5, 3.4, "y", roof, P["res_trim"], oh_u=(0.2, 0.2), oh_a=(0.25, 0.0))
+    box(M, 5.2, 5.9, 1.0, 1.8, 0, 5.2, wall, bevel=0.04)
+    return L
+
+
+def b_house_c(M, P):
+    """A white clapboard Dutch colonial: a gambrel roof with its ridge along the street, a shed dormer across the
+    front slope, a side porch."""
+    L = home_lot(M, P, P["res_roof2"], "lawn")
+    wall, roof = P["res_trim"], P["shingle"]
+    y0, y1 = -1.0, 4.4
+    box(M, -1.0, 5.4, y0, y1, 0, 2.8, wall)
+    ym = (y0 + y1) / 2
+    extrude_profile(M, [(y0 - 0.3, 2.8), (y0 + 0.5, 4.6), (ym, 5.6), (y1 - 0.5, 4.6), (y1 + 0.3, 2.8),
+                        (y1 + 0.3, 2.62), (ym, 5.42), (y0 - 0.3, 2.62)], "x", -1.2, 5.6, roof)
+    box(M, -0.2, 4.6, y0 + 0.35, y0 + 1.6, 2.8, 4.75, wall)
+    taper(M, (-0.35, 4.75, y0 + 0.2, y0 + 1.75), (-0.35, 4.75, y0 + 1.0, y0 + 1.75), 4.75, 5.05, roof)
+    box(M, -1.0, -0.2, y0, y0 + 2.6, 0, 2.4, wall)
+    box(M, -1.2, 0.0, y0 - 0.2, y0 + 2.8, 2.4, 2.6, roof, bevel=0.04)
+    box(M, 4.6, 5.2, 3.0, 3.6, 2.5, 6.0, P["brick_home"], bevel=0.04)
     return L
 
 
@@ -4717,6 +4792,8 @@ BUILDINGS = {
     "con_mixer": (b_con_mixer, 2.3, 7.86, 0),
     "con_lumbertruck": (b_con_lumbertruck, 2.3, 8.3, 0),
     "house": (b_house, 12, 15, 1),
+    "house_b": (b_house_b, 12, 15, 1),
+    "house_c": (b_house_c, 12, 15, 1),
     "terrace": (b_terrace, 24, 17, 3),
     "apartments": (b_apartments, 30, 30, 6),
     "shop": (b_shop, 18, 20, 4),
