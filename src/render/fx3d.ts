@@ -43,6 +43,9 @@ export class Fireworks {
     this.group.add(this.mesh);
   }
 
+  /** Called as each shell bursts, with where (the sound's crack lands with the sparks). */
+  onBurst: ((x: number, y: number) => void) | null = null;
+
   /** A show over a place: `bursts` shells over about six seconds, bursting at about `h` metres up. */
   launch(at: V2, h: number, bursts = 14, now = performance.now() / 1000) {
     this.shows.push({ at, h, t0: now, next: now, left: bursts });
@@ -51,6 +54,7 @@ export class Fireworks {
   private burst(at: V2, h: number, now: number) {
     const r = Math.random;
     const x = at.x + (r() - 0.5) * h * 0.9, y = at.y + (r() - 0.5) * h * 0.9, z = h * (0.7 + r() * 0.5);
+    this.onBurst?.(x, y);
     const c = COLORS[(r() * COLORS.length) | 0], n = 70 + ((r() * 40) | 0), sp = h * (0.5 + r() * 0.25);
     // (seen from above, a shell opens as a ring: its sparks fly out mostly level, on a sphere flattened top to bottom)
     for (let i = 0; i < n; i++) {

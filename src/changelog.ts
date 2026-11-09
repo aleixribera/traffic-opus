@@ -15,6 +15,16 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.83", date: "2026-11-09", title: "The game has a sound",
+    notes: [
+      "The map can be heard: engines and tyres on the street under you, each works at its own trade, towns that murmur by day and go quiet at night.",
+      "Birds, wind and crickets follow the hour and the season. The town clock strikes the hours.",
+      "A wireless set by the clock plays swing tunes made up as you go, named after your towns. Switch it off or skip a tune there.",
+      "Pause menu: Sound has sliders for everything, the music, the world and the interface. N mutes.",
+      "Milestones, new towns, orders and convoys each have their own short fanfare.",
+    ],
+  },
+  {
     v: "v0.0.82", date: "2026-11-09", title: "The camera turns the right way",
     notes: [
       "Dragging with the middle button turns the map the way your hand moves: drag right and the ground in front of you comes round to the right, the same way E turns it.",

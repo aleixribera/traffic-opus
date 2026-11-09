@@ -167,9 +167,9 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .cat.hint:not(.on) { color: var(--ochre-hi); }
 .cat.hint:not(.on)::before { content: ""; position: absolute; top: 5px; right: 8px; width: 8px; height: 8px; background: var(--ochre); transform: rotate(45deg); box-shadow: 0 0 0 2px var(--bar); }
 
-.cb-clock { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; line-height: 1; }
+.cb-clock { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; line-height: 1; flex: none; }
 .cb-clock b { font: 600 var(--t-big)/22px var(--f-text); padding: 0 8px; background: var(--ink); border: 1px solid var(--edge); box-shadow: inset 0 0 0 1px var(--rule), inset 0 1px 3px rgba(0, 0, 0, 0.6); border-radius: 1px; letter-spacing: 0.04em; }
-.cb-day { color: var(--cream-2); font-size: var(--t-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; }
+.cb-day { white-space: nowrap; color: var(--cream-2); font-size: var(--t-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; }
 .cb-clock.night b { color: var(--info); }
 .speed { display: flex; background: var(--ink); border: 1px solid var(--edge); border-radius: var(--r); box-shadow: inset 0 0 0 1px var(--rule); padding: 2px; gap: 2px; }
 .speed-btn { border: 0; background: transparent; width: 32px; height: 32px; display: grid; place-items: center; color: var(--cream-2); padding: 0; border-radius: 1px; }

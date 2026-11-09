@@ -50,6 +50,8 @@ async function boot() {
   loading.style.opacity = "0";
   setTimeout(() => loading.remove(), 320);
   (window as unknown as { app: App }).app = app;
+  // ?audiotest: the sound's measuring bench (audio/harness.ts), never loaded otherwise
+  if (q.has("audiotest")) void import("./audio/harness");
 }
 
 boot().catch((e) => {

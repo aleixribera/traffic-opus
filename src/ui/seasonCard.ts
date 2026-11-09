@@ -203,6 +203,8 @@ export class SeasonCard {
   private popPinned = false;
   private popHover = false;
   private popT = 0;
+  /** called as a season's card goes up (its sound) */
+  onShow: ((s: Season) => void) | null = null;
 
   constructor(private host: () => Host) {
     this.el = document.createElement("section");
@@ -257,6 +259,7 @@ export class SeasonCard {
     if (!g) return;
     const fx = seasonEffects(s, ownedSeasonal(g.buildings.sites));
     clearTimeout(this.timer);
+    this.onShow?.(s);
     this.el.className = `season-card s-${s}`;
     this.el.innerHTML = seasonCardHtml(s, yearOf(g.time), fx);
     this.el.hidden = false;

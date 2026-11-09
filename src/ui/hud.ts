@@ -18,6 +18,8 @@ import { F } from "../world/gen";
 import { DEPOSIT_KINDS } from "./depositMarks";
 import type { SignalPlan } from "../roads/network";
 import { GREEN, LEFT_GREEN, greenFor } from "../sim/traffic";
+import { SEASONS } from "../game/calendar";
+import type { GameAudio } from "../audio";
 import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId } from "../app";
 import { ROUNDABOUTS, type RoundaboutSize } from "../roads/planner";
 import { ICON, buildingIcon, placedIcon, productIcon, roadIcon } from "./icons";
@@ -28,7 +30,7 @@ import { CHANGELOG } from "../changelog";
 import { PLACED, PLACED_TABS, type PlacedKind } from "../game/placed";
 import { GATE_LINK_REACH, SAVE_V } from "../game/city";
 import { BUS_UPKEEP, STOP_COST } from "../game/transit";
-import { Sfx } from "./sfx";
+import { WirelessControl, soundHtml, soundSummary, wireSound } from "./soundPanel";
 import { heraldSvg } from "./herald";
 import { cleanName, COMPANY_NAME_MAX, randomHerald } from "../game/company";
 import { companyName } from "../game/names";
@@ -198,6 +200,7 @@ const KEYS: [string, string][] = [
   ["`", "Hide the interface"],
   ["G", "Follow the truck nearest the middle of the screen (again, or moving the map, lets go)"],
   ["T / Shift+T", "Tour camera / Vehicle cam (any key or click comes back)"],
+  ["N", "Sound on / off (volumes: Sound in this menu)"],
 ];
 
 export class Hud {
@@ -258,7 +261,9 @@ export class Hud {
   private lastWin = "";
   private lastAssets = "";
   private resumeOnClose = false;
-  private sfx = new Sfx();
+  /** everything heard goes through the app's audio (audio/index.ts) */
+  private get sfx() { return this.app.audio; }
+  private wireless!: WirelessControl;
 
   constructor(private app: App, parent: HTMLElement) {
     this.holdPanel();
@@ -356,7 +361,9 @@ export class Hud {
       b.onclick = fn;
       this.speed.appendChild(b);
     }
-    time.append(this.clockEl, this.speed);
+    this.wireless = new WirelessControl(app.audio, () => this.sfx.play("click"));
+    app.audio.onChange = () => this.wireless.paint();
+    time.append(this.wireless.el, this.clockEl, this.speed);
     this.bbar.append(city, this.cats, time);
     this.assets.hidden = true;
     this.toolOpts.hidden = true;
@@ -373,7 +380,10 @@ export class Hud {
     this.tut.hidden = true;
     this.seasons.wireClock(this.clockEl);
     this.root.append(tl, tr, bottom, this.chipBox, this.toastBox, this.banner, this.seasons.el, this.seasons.pop, this.rectEl, this.modal);
+    // (sound may only start on a click or a key: the browser's rule)
     document.addEventListener("pointerdown", () => this.sfx.unlock());
+    document.addEventListener("keydown", () => this.sfx.unlock());
+    this.seasons.onShow = (s) => this.sfx.season(SEASONS.indexOf(s));
   }
 
   // ---------------------------------------------------------------- categories
@@ -885,7 +895,7 @@ export class Hud {
     this.chipBox.style.marginLeft = k > 0 ? `${Math.sin(k * 40) * 4 * k}px` : "0";
   }
 
-  sound(k: "build" | "remove" | "place" | "error" | "level" | "click") {
+  sound(k: Parameters<GameAudio["play"]>[0]) {
     this.sfx.play(k);
   }
 
@@ -954,7 +964,7 @@ export class Hud {
     n.querySelector<HTMLButtonElement>(".on-x")!.onclick = () => this.orderNoteAway(0);
     n.classList.remove("out");
     if (one) n.title = `Open ${one.t.name}`;
-    this.sfx.play("place");
+    this.sfx.sting("orderOpen");
     this.orderNoteAway(14000);
   }
 
@@ -990,7 +1000,6 @@ export class Hud {
     this.bannerQ.push(x);
     if (this.banner.hidden) this.nextBanner();
     else this.bannerMore();
-    this.sfx.play("level");
     this.refresh();
   }
 
@@ -1004,6 +1013,9 @@ export class Hud {
     const civ = "order" in X && X.b !== undefined ? g.buildings.byId.get(X.b) : undefined;
     const lm = "landmark" in X ? g.buildings.byId.get(X.landmark) : undefined;
     if ("landmark" in X && (!lm || !isMega(lm.kind))) { this.nextBanner(); return; }
+    // the banner's moment, heard as it drops in
+    this.sfx.sting("m" in X ? "milestone" : "spawned" in X ? "newTown" : "landmark" in X ? "landmark" : "order" in X ? "orderDone" : "townGrew");
+    if ("order" in X && X.grant > 0) this.sfx.sting("money");
     this.banner.classList.toggle("lm", !!lm || "spawned" in X);
     this.banner.classList.toggle("nt", "spawned" in X);
     this.banner.classList.toggle("ord", "order" in X);
@@ -1189,6 +1201,7 @@ export class Hud {
 
   toggleWin(k: WinId) {
     if (this.winKind === k) { this.closeWin(); return; }
+    this.sfx.play("open");
     this.winKind = k;
     this.lastWin = "";
     this.win.hidden = false;
@@ -1199,6 +1212,7 @@ export class Hud {
 
   private closeWin() {
     if (this.winKind === "transport" && this.app.overlay === "flow") this.app.setOverlay("flow");
+    if (this.winKind) this.sfx.play("close");
     this.winKind = null;
     this.win.hidden = true;
     this.lastWin = "";
@@ -2077,6 +2091,7 @@ export class Hud {
         <button class="pm save">Save game</button>
         <button class="pm load">Load game</button>
         <button class="pm keys">Controls</button>
+        <button class="pm sound">Sound<span class="pm-v">${soundSummary(app.audio)}</span></button>
         <button class="pm tips" role="switch" aria-label="Tips" aria-checked="${!this.tipPrefs.off}">Tips<span class="pm-v">${this.tipPrefs.off ? "Off" : "On"}</span></button>
         <button class="pm camview"></button>
         <button class="pm nights"></button>
@@ -2090,6 +2105,7 @@ export class Hud {
     on(".save", () => this.openSaves(true));
     on(".load", () => this.openSaves(false));
     on(".keys", () => this.openKeys());
+    on(".sound", () => this.openSound());
     on(".tips", () => {
       // off, or back on with every dismissed tip back too
       const off = !this.tipPrefs.off;
@@ -2158,6 +2174,14 @@ export class Hud {
     const dlg = this.showModal(`<header>What's new</header><div class="cl-list" tabindex="0" aria-label="Updates, newest first">${rels}</div>`, "What's new");
     dlg.classList.add("news");
     if (back) this.backButton(dlg);
+  }
+
+  /** Sound: the four volumes, Mute, the wireless's tone (ui/soundPanel.ts). */
+  openSound() {
+    const dlg = this.showModal(`<header>Sound</header>${soundHtml(this.app.audio)}`, "Sound");
+    dlg.classList.add("sound");
+    this.backButton(dlg);
+    wireSound(dlg, this.app.audio, () => this.sfx.play("click"));
   }
 
   openKeys() {

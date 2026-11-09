@@ -14,6 +14,7 @@ import { Buildings3D } from "./render/buildings3d";
 import { Parks3D } from "./render/parks3d";
 import { Greens3D } from "./render/greens3d";
 import { Fireworks } from "./render/fx3d";
+import { GameAudio } from "./audio";
 import { ConvoyTags } from "./ui/convoyTags";
 import { GATE_GAP, siteFrame, siteToWorld } from "./game/sites";
 
@@ -136,6 +137,8 @@ export class App {
   parks3d!: Parks3D;
   greens3d!: Greens3D;
   fireworks = new Fireworks();
+  /** everything heard (audio/index.ts): the world through the camera, the interface, the moments, the wireless */
+  readonly audio = new GameAudio();
   /** money and moments rising off the map, and the shelf-time rings over refrigerated trucks */
   pops = new Pops();
   /** Shift + wheel scrolling not yet turned into a whole degree (px) */
@@ -241,6 +244,12 @@ export class App {
     this.camera = new CameraDirector(this);
     this.view.scene.add(this.worldRoot);
     this.view.scene.add(this.highlight.group);
+    this.audio.bind(this);
+    // (a firework's crack comes from where its sparks open on screen)
+    this.fireworks.onBurst = (x, y) => {
+      const v = this.view, dx = x - v.cx, dy = y - v.cy;
+      this.audio.pop((dx * Math.cos(v.rot) + dy * Math.sin(v.rot)) / (v.halfH * (v.w / Math.max(1, v.h))));
+    };
     // the dev hook for the day and the seasons (render/daycycle.ts says how to use it)
     const dc = this.dayCycle;
     (window as unknown as { __env: unknown }).__env = {
@@ -606,7 +615,7 @@ export class App {
     this.stuckAlerts.heightAt = (p) => deckOn(g.net, straightDown(p), 8)?.h ?? 0;
     g.on((e) => {
       // (a delivery or a by-product leaving only pops over the map: nothing else on screen changes)
-      if (e.t === "delivery") { this.camera.note(e.d.to.c.x, e.d.to.c.y); if (this.mode !== "menu") this.pops.delivery(e.d, this.view); return; }
+      if (e.t === "delivery") { this.camera.note(e.d.to.c.x, e.d.to.c.y); if (this.mode !== "menu") this.pops.delivery(e.d, this.view); if (e.d.lost > 0 && this.mode === "play") this.audio.sting("spoil"); return; }
       if (e.t === "shipped") { if (this.mode !== "menu") this.pops.shipped(e.from, e.to, e.p, this.view); return; }
       if (e.t === "roads") { this.roads.apply(e.cs); this.clearing.invalidate(); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
       else if (e.t === "buildings") {
@@ -624,6 +633,7 @@ export class App {
         if (t) this.camera.note(t.c.x, t.c.y);
         if (this.mode === "play") this.hud?.townGrew(e.town, e.size);
       }
+      else if (e.t === "convoy") { if (this.mode === "play") this.audio.sting(e.phase === "out" ? "convoyOut" : "convoyIn"); }
       else if (e.t === "landmark") { if (this.mode === "play") { this.hud?.landmarkDone(e.b); this.celebrate(e.b); } }
       else if (e.t === "order") {
         // a town's order (game/orders.ts): a note when one opens, its building's moment when one is filled
@@ -649,6 +659,7 @@ export class App {
     const prev = this.st.tool, prevMode = this.st.mode;
     Object.assign(this.st, p);
     if ((p.tool && p.tool !== prev) || (p.mode && p.mode !== prevMode) || p.transitMode) this.cancelStroke();
+    if (p.tool && p.tool !== prev && this.mode === "play") this.audio.play("tool");
     if (this.st.tool === "transit" && !this.game.featureUnlocked("transit")) this.st.tool = "inspect";
     // locked road types can't be picked (keyboard, saved state)
     if (!this.game.roadsUnlocked.has(this.st.roadType)) this.st.roadType = "street";
@@ -1043,6 +1054,7 @@ export class App {
     else if (k === "t" && !e.repeat) this.camera.startCinema(e.shiftKey ? "ride" : "tour");
     else if (k === "m" && !e.repeat) { this.toggleMapView(); this.hud?.sound("click"); }
     else if (k === "g" && !e.repeat) this.camera.toggleFollowNearest();
+    else if (k === "n" && !e.repeat) this.hud?.toast(this.audio.toggleMute() ? "Sound off" : "Sound on");
     else if (k === "[" || k === "]") this.nudgeParallel(k === "]" ? 1 : -1);
     else if ((e.code === "Comma" || e.code === "Period") && this.st.tool === "place") this.turnPlaced(e.code === "Period" ? 1 : -1, e.shiftKey);
     else if (k === "`" || e.code === "Backquote") this.toggleUi();
@@ -1115,17 +1127,19 @@ export class App {
 
   togglePause() {
     this.game.paused = !this.game.paused;
+    this.audio.play(this.game.paused ? "pause" : "resume");
     this.hud?.refresh();
   }
 
   setSpeed(s: number) {
+    this.audio.play(this.game.paused ? "resume" : "speed");
     this.game.speed = s;
     this.game.paused = false;
     this.hud?.refresh();
   }
 
-  undo() { this.game.undo(); this.cancelStroke(); }
-  redo() { this.game.redo(); this.cancelStroke(); }
+  undo() { this.game.undo(); this.cancelStroke(); this.audio.play("undo"); }
+  redo() { this.game.redo(); this.cancelStroke(); this.audio.play("redo"); }
 
   private clampView() {
     const m = 120000;
@@ -1350,7 +1364,7 @@ export class App {
       if (!pl.ok) { this.reject(pl.reason ?? "Can't build here"); return; }
       const b = g.place(k, c, this.placeOpts());
       if (!b) { this.reject("Can't build here"); return; }
-      this.hud?.sound("build");
+      this.hud?.sound("place");
       this.hud?.toast(`${BUILDING_TYPES[k].name} built for ${formatMoney(pl.cost)}`);
       this.dirtyPreview = true;
       return;
@@ -1384,7 +1398,7 @@ export class App {
       if (s.type === this.st.roadType) { this.reject("Already this road type"); return; }
       const u = g.upgradePlan(id, this.st.roadType);
       if (u.errors.length) { this.reject(u.errors[0].msg); return; }
-      if (g.upgrade(id, this.st.roadType)) this.hud?.sound("build");
+      if (g.upgrade(id, this.st.roadType)) this.hud?.sound("upgrade");
       return;
     }
     if (t === "road") {
@@ -1418,7 +1432,7 @@ export class App {
       const endP = plan.continueAt?.p ?? (lead.chain.length ? lead.chain[lead.chain.length - 1].p3 : c);
       const endH = plan.continueAt?.h ?? lead.h1;
       if (g.build(plan)) {
-        this.hud?.sound("build");
+        this.audio.road(Math.hypot(endP.x - this.anchor.p.x, endP.y - this.anchor.p.y));
         if (plan.bridges?.length) this.hud?.toast(plan.bridges.length === 1 ? `Bridge built: ${Math.round(plan.bridges[0].length)} m span` : `${plan.bridges.length} bridges built`);
         // keep drawing from where this road ended
         const s = snap(g.net, endP, { ...this.snapOpts(), mpp: 0.05, off: undefined, lengthStep: 0 });
@@ -1944,6 +1958,7 @@ export class App {
       v.cy = M.c.y - Math.sin(v.rot) * W * 0.14;
     }
     g.update(dt);
+    this.audio.update(dt);
     this.vehicles.update(g.traffic, g.alpha);
     this.parks3d.update(g.parks.links, g.time + g.alpha * SIM.dt);
     this.fireworks.update(this.view.camera);
