@@ -43,6 +43,27 @@ const MARGIN = 34; // metres round the ground in view: a tall tree whose foot is
 
 const tkey = (i: number, j: number) => (i + 32768) * 65536 + (j + 32768);
 
+/** How tightly the gust fronts are packed along the wind, and how their line wanders across it (radians a metre). */
+export const GUST_K = 0.045, GUST_ACROSS = 0.021;
+/** How fast a gust front passes a tree (radians a second): 11 turns of the wind's clock (wind.ts WIND_LOOP). */
+export const GUST_RATE = (11 * 2 * Math.PI) / 64;
+const wrapTurn = (a: number) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
+
+/**
+ * The gusts run over the trees as waves along the wind, their phase a tree's place along it; and the wind turns
+ * through the day. Left at that, the waves swing round the map's origin as it turns: beside the origin nothing is
+ * seen of it, but kilometres out the fronts race past (several times faster than the gusts travel, and at 4x the
+ * trees flutter). So the phases are carried with the view: when the wind turns from (ox, oy) to (nx, ny), the two
+ * phases (fx.z along the wind, fx.w across it: uTreeFx) change by just what leaves them as they were at the middle
+ * of the view (cx, cy). A steady wind carries nothing, so moving the view never shifts a wave.
+ */
+export function gustCarry(fx: { z: number; w: number }, cx: number, cy: number, ox: number, oy: number, nx: number, ny: number) {
+  const dx = nx - ox, dy = ny - oy;
+  if (dx === 0 && dy === 0) return;
+  fx.z = wrapTurn(fx.z - GUST_K * (cx * dx + cy * dy));
+  fx.w = wrapTurn(fx.w - GUST_ACROSS * (cy * dx - cx * dy));
+}
+
 /** The GLSL that places a tree's vertex: shared by the lit material and the one the shadow map is drawn with. */
 const TREE_VERTEX_GLSL = /* glsl */ `
 attribute vec4 aInst;  // x, ground height, z, scale (its crown's radius, m)
@@ -51,7 +72,8 @@ attribute vec4 aClump; // the middle of this vertex's clump (model space), the c
 attribute float aPart; // 0 trunk, 1 leaves, 2 bare limbs, 3 needles, 4 a shrub's foliage
 attribute vec3 aTwig;  // where this vertex of a leaf clump goes when the leaves fall: its face becomes a twig
 uniform vec4 uWind;    // xy the way the air moves, z how hard, w the wind's clock (wraps at 64 s)
-uniform vec4 uTreeFx;  // x how flat the wild trees lie (handing over to the painted crowns), y how far they have faded
+uniform vec4 uTreeFx;  // x how flat the wild trees lie (handing over to the painted crowns), y how far they have faded,
+                       // z, w the gust fronts' phases carried with the view (gustCarry)
 vec3 treeRot(vec3 v) {
   float c = cos(aTree.z), s = sin(aTree.z);
   return vec3(c * v.x + s * v.z, v.y, c * v.z - s * v.x);
@@ -80,7 +102,7 @@ vec3 treeVertex(vec3 pos) {
   float t = uWind.w, k = uWind.z * (1.0 - 0.55 * envBare) * (1.0 - wild * uTreeFx.x);
   vec2 at = aInst.xz;
   float ph = h * 6.2832 + aTree.x * 4.0;
-  float gust = 0.5 + 0.5 * sin(dot(at, uWind.xy) * 0.045 + sin(dot(at, vec2(-uWind.y, uWind.x)) * 0.021) * 1.8 - t * TREE_W(11));
+  float gust = 0.5 + 0.5 * sin(dot(at, uWind.xy) * ${GUST_K} + uTreeFx.z + sin(dot(at, vec2(-uWind.y, uWind.x)) * ${GUST_ACROSS} + uTreeFx.w) * 1.8 - t * TREE_W(11));
   float up = p.y * tall;
   float bend = up * up * aInst.w * 0.021 * k;
   float rock = sin(t * TREE_W(29) + ph) * 0.55 + sin(t * TREE_W(47) + ph * 1.7) * 0.3;
@@ -144,6 +166,8 @@ export class Trees3D {
   /** Trees drawn last frame (for the performance read-outs). */
   count = 0;
   private fx = { value: new THREE.Vector4(0, 0, 0, 0) };
+  /** the wind's direction when the gusts' phases were last carried (gustCarry); NaN before the first frame */
+  private blew = { x: NaN, y: NaN };
   private mat: THREE.MeshLambertMaterial;
   private depth: THREE.MeshDepthMaterial;
   private batches: Batch[] = [];
@@ -280,13 +304,18 @@ export class Trees3D {
         x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.z); y1 = Math.max(y1, p.z);
       }
     }
+    // the wind has turned since last frame: the gust fronts keep their place at the middle of the view
+    const W = WIND.uWind.value, B = this.blew;
+    if (down && B.x === B.x) gustCarry(this.fx.value, (P[0].x + P[1].x + P[2].x + P[3].x) / 4, (P[0].z + P[1].z + P[2].z + P[3].z) / 4, B.x, B.y, W.x, W.y);
+    B.x = W.x; B.y = W.y;
     // the screen's two edges on the ground, to tell which tiles of the box round it are really in view
     const ux = P[1].x - P[0].x, uy = P[1].z - P[0].z, vx = P[3].x - P[0].x, vy = P[3].z - P[0].z;
     const lu = Math.hypot(ux, uy) || 1, lv = Math.hypot(vx, vy) || 1;
     const area = Math.abs(ux * vy - uy * vx);
     // how far the wild trees have handed over to the painted crowns
     const t = !down || flat ? 1 : Math.max(THREE.MathUtils.smoothstep(area, AREA0, AREA1), THREE.MathUtils.smoothstep(mpp, MPP1 * 0.82, MPP1));
-    this.fx.value.set(THREE.MathUtils.smoothstep(t, 0, 0.7), THREE.MathUtils.smoothstep(t, 0.7, 1), 0, 0);
+    this.fx.value.x = THREE.MathUtils.smoothstep(t, 0, 0.7);
+    this.fx.value.y = THREE.MathUtils.smoothstep(t, 0.7, 1);
     this.paint = flat ? 1 : THREE.MathUtils.smoothstep(t, 0.5, 0.95);
     this.handoverNear = t > 0 || area > AREA0 * 0.5 || mpp > MPP1 * 0.6;
     const wildOn = t < 1;
