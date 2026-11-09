@@ -4,7 +4,8 @@
 // Pure over the town, so tests check every word against the sim (towns.ts growthPerDay, settlements.ts hourly).
 
 import { PRODUCTS, type Product } from "../game/industry";
-import { ROLL_FULL, ROLL_MIN, served, type Town } from "../game/settlements";
+import { served, type Town } from "../game/settlements";
+import { ENOUGH, deliveredLately } from "../game/supply";
 import { SETTLING, demandPerDay, growthPerDay, needFrom, needsOf, nextNeed } from "../game/towns";
 
 export type NeedState = "plenty" | "enough" | "low" | "none";
@@ -12,8 +13,8 @@ export type NeedState = "plenty" | "enough" | "low" | "none";
 /** The one word for each state (never colour alone: the word says it too). */
 export const NEED_WORD: Record<NeedState, string> = { plenty: "Plenty", enough: "Enough", low: "Running low", none: "None!" };
 
-/** A need supplied this well lets the town grow (towns.ts growthPerDay: 80% of a day's needs and up). */
-export const ENOUGH = 0.8;
+// (a need supplied this well lets the town grow: supply.ts ENOUGH, 80% of a day's needs and up)
+export { ENOUGH };
 /** Most crates drawn in a row; past that each crate stands for several loads (a round number of them). */
 export const MAX_CRATES = 10;
 
@@ -35,21 +36,11 @@ export function loadsPerCrate(want: number): number {
 }
 
 /**
- * Loads of a product a town is getting a day at the moment: the last day of hours its supply rolls on (settlements.ts
- * hourly), or, when it is more, that day with the hour under way in place of the oldest hour, so a load shows the
- * moment it lands. A town with fewer than a few hours behind it goes on yesterday and today.
+ * Loads of a product a town is getting a day at the moment, as its people see it: what has landed lately (supply.ts
+ * deliveredLately), or, while a need that has just fallen below "Enough" is in its grace, what it read before.
  */
 export function loadsLately(t: Town, p: Product): number {
-  const hours = t.hours ?? [];
-  if (hours.length < ROLL_MIN) return (t.yesterday[p] ?? 0) + (t.today[p] ?? 0);
-  // (fewer than a day of hours: they stand for the day, as in the sim)
-  const day = (hs: Partial<Record<Product, number>>[], extra: number) => {
-    let n = extra;
-    for (const h of hs) n += h[p] ?? 0;
-    return n * (24 / Math.max(hs.length + (extra ? 1 : 0), ROLL_FULL));
-  };
-  const now = t.hourNow?.[p] ?? 0;
-  return Math.max(day(hours, 0), now ? day(hours.slice(-23), now) : 0);
+  return t.grace?.[p]?.got ?? deliveredLately(t, p);
 }
 
 export interface NeedView {

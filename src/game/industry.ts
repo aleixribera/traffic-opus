@@ -142,6 +142,19 @@ const HOUR = 40;
 const DAY_S = 24 * HOUR;
 /** The longest a docked truck waits for a fuller load before it goes with what there is (sim s: a game hour). */
 export const HOLD = HOUR;
+/**
+ * The send-ahead line (owner, 2026-11-09: "the factories receive the alert before the player sees the need and supply
+ * automatically"). A town's load goes first, and without waiting for a full truck, once what has landed there would
+ * read below "Enough" sooner than a truck sent now could land, with a spare: an invisible line above "Enough" set by
+ * what the town gets through over the trip and the loading, so a town 10 km out is seen to earlier than one next door.
+ * The spare: a share of the trip (traffic varies) and a couple of hours (loading, pulling out of the yard).
+ */
+export const SEND_SPARE = 0.25, SEND_PAD = 2 * HOUR;
+/** What a town about to dip is worth over another customer of the same product (about 100 km of extra driving). */
+const SEND_FIRST = 800;
+/** A load on its way still counts for the send-ahead line (never for what the town shows) until this share of its
+ *  trip past when it was due: a truck stuck in a jam well past that is no longer counted on. */
+const DUE_GRACE = 0.5;
 
 export const PLANTS: Record<PlantKind, PlantDef> = {
   farm: {
@@ -429,6 +442,8 @@ export interface HaulRun {
   big?: BigKind;
   /** the leg ended (arrived or failed): traffic can report a trip twice */
   done?: boolean;
+  /** sim time it is due to land (out), from the trips its plant has made there before or the distance */
+  eta?: number;
 }
 
 /** What the industry needs from the game. */
@@ -447,6 +462,11 @@ export interface IndustryHost {
   want(town: number, p: Product): number;
   /** loads a town still needs today to grow (its shops buy more than that; this part comes first), 0 if none */
   short?(town: number, p: Product): number;
+  /**
+   * sim s until what has landed of a need in a town would read below "Enough" with only the loads `arriving` (sim time
+   * each lands) still to come: 0 when it does already, Infinity when not soon or not a need (settlements.ts dipIn)
+   */
+  dipIn?(town: number, p: Product, arriving: readonly { at: number; n: number }[]): number;
   /** a load reached one of a town's shops */
   sold(town: number, p: Product, n: number): void;
   /**
@@ -487,7 +507,11 @@ export interface IndustryHost {
   canMake?(p: Product): boolean;
 }
 
-export interface Customer { b: Building; value: number; /** loads it can take */ room: number }
+export interface Customer {
+  b: Building; value: number; /** loads it can take */ room: number;
+  /** a town about to dip below "Enough": its load goes without waiting at the dock for a full truck */
+  urgent?: boolean;
+}
 
 export class Industry {
   constructor(private h: IndustryHost) {}
@@ -735,6 +759,7 @@ export class Industry {
     const busy = new Map<number, number>(), busyBy = new Map<number, Partial<FleetMix>>(), coming = new Map<number, Map<Product, number>>();
     const held = this.h.held?.();
     this.jam.clear();
+    this.due.clear();
     for (const t of this.h.trips()) {
       const r = t.haul;
       // (a convoy with an oversized piece is not one of its works' trucks: convoys.ts keeps its own count)
@@ -757,8 +782,41 @@ export class Industry {
       let m = coming.get(r.dest);
       if (!m) coming.set(r.dest, (m = new Map()));
       m.set(r.product, (m.get(r.product) ?? 0) + r.n);
+      this.expect(r.dest, r.product, r.n, t.startT, r.eta);
     }
     return { busy, busyBy, coming };
+  }
+
+  /**
+   * Loads on their way to each town, by product, and when each is due (for the send-ahead line only: a town has what
+   * has landed). Counted fresh with the trips each tick.
+   */
+  private due = new Map<number, Map<Product, { at: number; n: number }[]>>();
+  /** Average trip time from a plant to a town (sim s, keyed "plant>town"), from the trucks that got there (not saved). */
+  private tripTime = new Map<string, number>();
+
+  /** A load set off at `start` for `dest`, due at `eta`: counted on for its town while it is on time. */
+  private expect(dest: number, p: Product, n: number, start: number, eta: number | undefined) {
+    const o = this.h.buildings.byId.get(dest);
+    const town = o && !o.plant ? this.h.townOf(o) : null;
+    if (town === null || eta === undefined) return;
+    // (a truck stuck in a jam well past when it was due isn't counted on any more: the town may be sent another)
+    if (this.h.time > eta + (eta - start) * DUE_GRACE) return;
+    let m = this.due.get(town);
+    if (!m) this.due.set(town, (m = new Map()));
+    let l = m.get(p);
+    if (!l) m.set(p, (l = []));
+    l.push({ at: Math.max(eta, this.h.time), n });
+  }
+
+  /** How long a truck takes from a plant to a building (sim s): as its last trips there took, or by the distance. */
+  tripTo(from: Building, to: Building, cls?: TruckClass): number {
+    const town = to.plant ? null : this.h.townOf(to);
+    const seen = town === null ? undefined : this.tripTime.get(`${from.id}>${town}`);
+    if (seen !== undefined) return seen;
+    // (roads wind: a third more than the straight line, at a truck's pace on streets, and a minute out of the yard)
+    const d = Math.hypot(to.c.x - from.c.x, to.c.y - from.c.y);
+    return (d * 1.35) / (ROAD_TYPES.street.speed * classOf(cls).speed) + 30;
   }
 
   tick(span: number) {
@@ -1019,6 +1077,8 @@ export class Industry {
         left.set(t, (left.get(t) ?? this.h.want(t, product)) - on(o.id));
         shortLeft.set(t, (shortLeft.get(t) ?? (this.h.short?.(t, product) ?? 0)) - on(o.id));
       }
+      // (how soon each town would read below "Enough" on what has landed there, with the loads on time to it)
+      const dip = new Map<number, number>();
       for (const o of shops) {
         if (!o.access || o.abandoned || o.built < 1 || !this.h.connected(seg, o.access.seg)) continue;
         const t = this.h.townOf(o);
@@ -1027,7 +1087,19 @@ export class Industry {
         // a town still short of what it needs to grow comes first (within ~50 km of extra driving), then nearest
         // first; a town further short, and a shop with emptier shelves, a little ahead
         const short = t === null ? 0 : (shortLeft.get(t) ?? 0);
-        out.push({ b: o, value: price - km(o) * FUEL_PER_KM * 2 + (short >= 1 ? 400 : 0) + Math.min(3, l) * 15 - (product === "food" ? o.stock * 15 : 0), room: Math.ceil(l) });
+        // and ahead of those, a town that would dip below "Enough" before a truck sent now could land, with a spare
+        // (the send-ahead line); one about to, still above it, isn't kept waiting at the dock for a full truck
+        let soon = Infinity;
+        if (t !== null && this.h.dipIn) {
+          if (!dip.has(t)) dip.set(t, this.h.dipIn(t, product, this.due.get(t)?.get(product) ?? []));
+          soon = dip.get(t)!;
+        }
+        const trip = soon < Infinity ? this.tripTo(from, o) : 0;
+        const ahead = soon <= trip * (1 + SEND_SPARE) + SEND_PAD;
+        out.push({
+          b: o, value: price - km(o) * FUEL_PER_KM * 2 + (short >= 1 ? 400 : 0) + (ahead ? SEND_FIRST : 0) + Math.min(3, l) * 15 - (product === "food" ? o.stock * 15 : 0),
+          room: Math.ceil(l), ...(ahead && soon > 0 ? { urgent: true } : {}),
+        });
       }
     }
     out.sort((a, b) => b.value - a.value);
@@ -1077,12 +1149,13 @@ export class Industry {
         if (!cls) { free = 0; break; }
         const load = this.capOf(b, cls);
         const n = Math.max(1, Math.min(load, Math.floor(src[p]!), c.room));
-        if (n < Math.min(load, c.room, Math.max(1, Math.floor(yard / 2)))) {
-          // (not full yet: it waits at the dock, up to HOLD)
+        // (not full yet: it waits at the dock, up to HOLD; but not for a town about to dip, which it would reach late)
+        if (n < Math.min(load, c.room, Math.max(1, Math.floor(yard / 2))) && !c.urgent) {
           hold[p] ??= this.h.time;
           if (this.h.time - hold[p]! < HOLD) break;
         }
-        this.send(b, c.b, p, n, cls);
+        const r = this.send(b, c.b, p, n, cls);
+        this.expect(c.b.id, p, n, this.h.time, r.eta);
         delete hold[p];
         src[p]! -= n;
         free--;
@@ -1129,16 +1202,18 @@ export class Industry {
     return `Nobody your roads reach buys ${name}`;
   }
 
-  private send(from: Building, to: Building, product: Product, n: number, cls: TruckClass = this.fleetClass()) {
+  private send(from: Building, to: Building, product: Product, n: number, cls: TruckClass = this.fleetClass()): HaulRun {
     const fuel = this.fuelFor(from, to, classOf(cls).fuel);
     this.h.spend(fuel, "fuel");
     from.plant!.now.spent += fuel;
     from.plant!.now.sent += n;
     if (product === PLANTS[from.kind as PlantKind]?.byproduct) this.h.shipped?.(from, to, product, n);
+    const haul: HaulRun = { plant: from.id, leg: "out", product, n, dest: to.id, ...(cls !== "light" ? { cls } : {}), eta: this.h.time + this.tripTo(from, to, cls) };
     this.h.request({
       from: from.access!, fromSide: from.side, to: to.access!, toSide: to.side, truck: true, tries: 0, wait: 0, ...Industry.body(cls),
-      trip: { kind: "cargo", from: from.id, to: to.id, resident: -1, cargo: product, startT: this.h.time, freeFlow: 0, haul: { plant: from.id, leg: "out", product, n, dest: to.id, ...(cls !== "light" ? { cls } : {}) } },
+      trip: { kind: "cargo", from: from.id, to: to.id, resident: -1, cargo: product, startT: this.h.time, freeFlow: 0, haul },
     });
+    return haul;
   }
 
   /** How a class of truck drives (length, pace, the pieces it is drawn in), for the traffic sim. */
@@ -1190,6 +1265,12 @@ export class Industry {
     if (r.leg === "back") return;
     const to = this.h.buildings.byId.get(r.dest);
     const home = this.h.buildings.byId.get(r.plant);
+    // (how long the run to a town took, out of the yard and through whatever traffic: the next one is sent ahead on it)
+    const town = to && !to.plant ? this.h.townOf(to) : null;
+    if (town !== null) {
+      const k = `${r.plant}>${town}`, took = this.h.time - v.trip.startT, was = this.tripTime.get(k);
+      this.tripTime.set(k, was === undefined ? took : was * 0.6 + took * 0.4);
+    }
     // (a perishable load is worth what is left of it after its time on the road, from setting off: see freshness)
     if (to) this.deliver(to, r.product, r.n, home, this.h.time - v.trip.startT);
     // (the buyer was pulled down while the truck was on its way: the load goes back to the yard, to be sold elsewhere)

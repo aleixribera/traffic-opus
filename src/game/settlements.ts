@@ -19,7 +19,8 @@ import { ZONE_GROUP, ZONE_LOTS } from "./growables";
 import type { Product } from "./industry";
 import { townBoost } from "./megaprojects";
 import { PARK_SMOKE } from "./parks";
-import { DAY } from "./society";
+import { DAY, HOUR } from "./society";
+import { deliveredLately, dipIn, landedGrace, rollGrace, type Grace } from "./supply";
 import {
   BLOCK, CAR_SCRAP, HALLS, HIGH_STREET, NOISE, NUISANCE_HOMES, NUISANCE_SHOPS, NUISANCE_STREET, REDEV_SHARE, SEED_EDGES, TOWN_SIZES, buys, comfortOf,
   demandPerDay, edgeKey, gridPt, growthPerDay, highLine, highStreetReach, motoring, needsOf, nextEdge, nuisanceAt, redevPerDay, ringZone, sizeOf,
@@ -73,8 +74,8 @@ export function compassWords(a: V2, b: V2): string {
 }
 /** Households a new town starts out wanting. */
 const START_HOUSEHOLDS = 24;
-/** Hours of its own deliveries a town needs before its supply rolls on them, and the hours that stand for a full day. */
-export const ROLL_MIN = 4, ROLL_FULL = 8;
+// (hours of its own deliveries a town needs before its supply rolls on them, and the hours that stand for a full day)
+export { ROLL_MIN, ROLL_FULL } from "./supply";
 /** Households a day a settlement still filling its first streets grows by, supplied or not. */
 const SETTLE_RATE = 6;
 /**
@@ -181,6 +182,8 @@ export interface Town {
   hourNow?: Partial<Record<Product, number>>;
   /** hours in a row its supply has fallen well short of its households (it shrinks after SHRINK_AFTER of them) */
   lack?: number;
+  /** needs just fallen below "Enough" that it doesn't show or count yet (supply.ts GRACE) */
+  grace?: Partial<Record<Product, Grace>>;
   // (worked out every hour from `hours`; not saved)
   /** loads a day of each product delivered, averaged over the last two days (averageSupply): what its growth goes on */
   rate?: Partial<Record<Product, number>>;
@@ -265,6 +268,8 @@ export class TownSystem {
     if (!t) return;
     t.today[p] = (t.today[p] ?? 0) + n;
     (t.hourNow ??= {})[p] = (t.hourNow[p] ?? 0) + n;
+    // (a need in its grace that this load puts back at the line: nothing was ever shown or counted)
+    landedGrace(t, p);
     // (every car it buys stays on its streets: more of its people's trips are driven, docs/design.md "Motor Works")
     if (p === "cars") t.cars = (t.cars ?? 0) + n;
   }
@@ -1268,13 +1273,33 @@ export class TownSystem {
       H.households.push(t.households);
       if (H.pop.length > HIST_HOURS) { H.pop.splice(0, H.pop.length - HIST_HOURS); H.households.splice(0, H.households.length - HIST_HOURS); }
       const hours = (t.hours ??= []);
+      // (what each need read, and its averages, just before the roll: a need that falls below "Enough" with this hour
+      // starts its grace from them)
+      const before = Object.fromEntries(needsOf(t.pop).map((p) => [p, deliveredLately(t, p)]));
+      const was = { rate: t.rate ?? {}, day: averageSupply(hours.slice(-24)) };
       hours.push(t.hourNow ?? {});
       t.hourNow = {};
       if (hours.length > SUPPLY_HOURS) hours.splice(0, hours.length - SUPPLY_HOURS);
       t.rate = averageSupply(hours);
+      const lastDay = averageSupply(hours.slice(-24));
+      rollGrace(t, this.g.time, before, was, t.rate, lastDay);
       t.supply = supplyShare(t.rate, t.pop);
-      this.grow(t, 1 / 24, averageSupply(hours.slice(-24)));
+      this.grow(t, 1 / 24, lastDay);
     }
+    this.rolledAt = this.g.time;
+  }
+
+  /** sim time the hour last rolled over (not saved: a loaded game is at most an hour out on it) */
+  private rolledAt = 0;
+
+  /**
+   * Sim seconds until what a town has landed of a need would read below "Enough", with only the loads `arriving`
+   * still to come (supply.ts dipIn): what the company's plants send ahead on.
+   */
+  dipIn(id: number, p: Product, arriving: readonly { at: number; n: number }[]): number {
+    const t = this.byId.get(id);
+    if (!t) return Infinity;
+    return dipIn(t, p, this.g.time, Math.min(1, Math.max(0, (this.g.time - this.rolledAt) / HOUR)), arriving);
   }
 
   /**
@@ -1347,7 +1372,7 @@ export class TownSystem {
         size: t.size, hall: t.hall, sq: t.sq, hist: t.hist, redevToday: t.redevToday, ...(t.cars ? { cars: t.cars } : {}),
         ...(t.spawned ? { spawned: true } : {}), hours: t.hours ?? [], hourNow: t.hourNow ?? {}, layout: t.layout,
         ...(t.widened ? { widened: t.widened } : {}), ...(t.outward !== undefined ? { outward: t.outward } : {}),
-        ...(t.lack ? { lack: t.lack } : {}),
+        ...(t.lack ? { lack: t.lack } : {}), ...(t.grace ? { grace: t.grace } : {}),
       })),
       nextId: this.nextId,
     };

@@ -447,6 +447,22 @@ itself across modes; you build tracks, docks and the transfer points, never line
     people a day (633 to 551 over four days; before, 624 to 433 by day 14, much of it at once).
   - The town panel shows the same two-day average in its needs ("X a day (2-day average) of Y needed"), what its
     supply supports ("supplies support N"), and what holds it back and how many more loads a day would grow it.
+- **Loads that land in time (owner, 2026-11-09: "deliveries to towns seem to always be late"; "add an invisible
+  margin: the factories receive the alert before the player sees the need and supply automatically"; "give a minute
+  or two of grace after the town needs it").** A town has only what has landed: a load on the road never counts
+  toward its needs or supply.
+  - *Send ahead.* The plants see a town's need about to read below "Enough" before its people do: a town whose
+    landed supply would fall below the line sooner than a truck sent now could land (the trip as the plant's last
+    trucks there took, or by distance; a quarter of it again and two game hours spare for loading and the yard)
+    goes first among the towns, and its truck leaves without waiting at the dock for a full load. Loads already on
+    their way count for this only while they are on time (up to half their trip late), so a jammed truck doesn't
+    hold the next one back. It is an invisible line above "Enough", sized by what the town uses over the lead
+    time, so a far town is seen to earlier than one next door. The player never sees it.
+  - *Grace.* A need whose landed supply falls below "Enough" still reads as it did for GRACE, 3 game hours (two
+    real minutes at 1x), and its growth, shrinking and the goals go on as if it were met at the line. A load that
+    puts it back in that time and nothing was ever shown or counted; when the grace runs out the drop shows and
+    counts from then on, never backdated. Only a load landing brings a grace back, so a supply that has dried up
+    shows within three hours. A jammed road still lets a town run low.
 - Deliveries go to the town's shops, filling stations and building sites, so trucks drive into town streets.
 - **Towns grow away from the works (owner, 2026-11-08: "avoid pollution/noise").** A dirty plant's smoke reaches
   its pollution radius ×1.6 past its fence (further in a park) and its noise 60 m beyond that; building sites count
