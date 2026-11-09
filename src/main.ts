@@ -3,6 +3,8 @@ import { App } from "./app";
 import { loadModels } from "./render/models";
 import { Hud } from "./ui/hud";
 import { MainMenu } from "./ui/menu";
+import { TILT_DEFAULT } from "./render/viewmath";
+import { TILT_MIN } from "./ui/cameraSetting";
 
 async function boot() {
   const canvas = document.getElementById("game") as HTMLCanvasElement;
@@ -13,8 +15,11 @@ async function boot() {
   const hud = new Hud(app, document.body);
   app.attachHud(hud);
   app.saves.thumb = () => {
-    app.view.render();
-    const src = app.view.renderer.domElement;
+    // (a save's picture is always the Diorama: from the Map view the camera tips over for this one frame)
+    const v = app.view, tilt = v.tilt, tip = tilt < TILT_MIN;
+    if (tip) { v.tilt = TILT_DEFAULT; app.terrain3d.update(v); }
+    v.render();
+    const src = v.renderer.domElement;
     const c = document.createElement("canvas");
     c.width = 192;
     c.height = 120;
@@ -22,6 +27,8 @@ async function boot() {
     const s = Math.max(c.width / src.width, c.height / src.height);
     const w = src.width * s, h = src.height * s;
     g.drawImage(src, (c.width - w) / 2, (c.height - h) / 2, w, h);
+    // (and back, drawn again, so the tipped frame never reaches the screen)
+    if (tip) { v.tilt = tilt; app.terrain3d.update(v); v.render(); }
     return c.toDataURL("image/jpeg", 0.7);
   };
   const menu = new MainMenu(app, hud);

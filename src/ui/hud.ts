@@ -1,5 +1,6 @@
 import { BUILDING_TYPES, LEVEL_H, MAX_LEVEL, ROAD_TYPES, SIGNAL_COST, type BuildingKind, type RoadTypeId } from "../config";
 import { wireNights } from "./nightsSetting";
+import { wireCamera } from "./cameraSetting";
 import { WHEEL_MODES, saveWheelMode } from "./wheel";
 import { formatMoney, type V2 } from "../core/math";
 import type { Building } from "../game/buildings";
@@ -175,7 +176,11 @@ const KEYS: [string, string][] = [
   ["W A S D / drag", "Move the camera (drag with the right button, or with the left when nothing is in hand)"],
   ["Space + drag", "Move the camera with any tool in hand"],
   ["Two fingers", "Touchpad: scroll to move the camera, pinch to zoom, click for a right click (Scroll wheel setting in this menu)"],
-  ["Q / E", "Rotate the camera"],
+  ["Q / E", "Turn the camera"],
+  ["Middle drag", "Turn the camera (sideways) and tilt it (up and down)"],
+  ["Y / H", "Tilt the camera: up toward the Map view, down toward the horizon"],
+  ["M", "Map view (straight down) and back to the Diorama. The same as Camera in the pause menu"],
+  ["Camera block", "Top left: drag it to turn and tilt (for a touchpad), click it for the Map view"],
   ["R / F, wheel", "Zoom in / out (placing a building: the mouse wheel turns it, Shift + wheel by 1°, Ctrl + wheel zooms)"],
   ["Tab", "Next road mode: curve, straight, upgrade"],
   ["Page Up / Down", "Raise or lower the road (bridges over water and motorways rise on their own)"],
@@ -225,6 +230,11 @@ export class Hud {
   private companyKey = "";
   private compass = h("button", "btn icon-btn compass");
   private compassRot = NaN;
+  /** the camera control: a small block seen as the camera sees the map (turned, tilted); click for the Map view, drag to turn and tilt */
+  private viewBtn = h("button", "tlb viewgiz");
+  private viewKey = "";
+  /** the pause menu's Camera button, while it is open: M and the control flip the same setting */
+  private camShow: (() => void) | null = null;
   private undoBtn = h("button", "cat hist");
   private redoBtn = h("button", "cat hist");
   private catBtns = new Map<string, HTMLButtonElement>();
@@ -279,6 +289,7 @@ export class Hud {
     tlb("city", ICON.townGlyph, "Towns (C)", () => this.toggleWin("city"));
     tlb("transport", ICON.car, "Transportation overview (X)", () => this.toggleWin("transport"));
     tlb("camera", ICON.camera, "Camera: follow a truck, Tour, Vehicle cam (G, T, Shift+T)", () => this.toggleWin("camera"));
+    this.buildViewBtn(row);
     this.compass.innerHTML = ICON.north;
     this.compass.title = "North up (the map is turned: Q / E or middle-drag)";
     this.compass.setAttribute("aria-label", "Turn the map north up");
@@ -540,7 +551,11 @@ export class Hud {
     this.renderAssets();
     this.renderToolOpts();
     this.tick(true);
+    // (the view was flipped: the pause menu's button and the camera menu say which is on)
+    if (this.camShow && !this.modal.hidden && this.modal.querySelector(".camview")) this.camShow();
+    if (this.winKind === "camera" && this.camShown !== app.camView) this.fillCamera();
   }
+  private camShown = "";
 
   // ---------------------------------------------------------------- tool options
 
@@ -647,6 +662,69 @@ export class Hud {
     el.hidden = false;
     el.append(h("header", "to-head", "Tool options"), ...items);
     if (focusKey) [...el.querySelectorAll<HTMLElement>("[aria-label]")].find((e) => e.getAttribute("aria-label") === focusKey)?.focus();
+  }
+
+  /**
+   * The camera control by the top-left buttons: a small block seen exactly as the camera sees the map (it turns
+   * with it, and shows its sides as the camera tilts; from straight above it is a plain square), brick on its north
+   * side, so the view reads at a glance. A click is M (the Map view and back); dragging it turns and tilts the
+   * camera, for a touchpad with no middle button.
+   */
+  private buildViewBtn(row: HTMLElement) {
+    const app = this.app, b = this.viewBtn;
+    b.type = "button";
+    b.innerHTML = `<span class="vg" aria-hidden="true"><span class="vg-cube"><i class="vg-top"></i><i class="vg-n"></i><i class="vg-s"></i><i class="vg-e"></i><i class="vg-w"></i></span></span>`;
+    let drag: { x: number; y: number; moved: boolean } | null = null;
+    let dragged = false;
+    b.onpointerdown = (e) => {
+      if (e.button !== 0) return;
+      drag = { x: e.clientX, y: e.clientY, moved: false };
+      dragged = false;
+      b.setPointerCapture(e.pointerId);
+    };
+    b.onpointermove = (e) => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+      drag.moved = dragged = true;
+      drag.x = e.clientX; drag.y = e.clientY;
+      b.classList.add("dragging");
+      app.orbitBy(dx, dy);
+    };
+    const end = (e: PointerEvent) => {
+      if (!drag) return;
+      if (drag.moved) app.settleView();
+      drag = null;
+      b.classList.remove("dragging");
+      if (b.hasPointerCapture(e.pointerId)) b.releasePointerCapture(e.pointerId);
+    };
+    b.onpointerup = end;
+    b.onpointercancel = end;
+    b.onclick = () => {
+      // (the click that ends a drag is not a press)
+      if (dragged) { dragged = false; return; }
+      this.sfx.play("click");
+      app.toggleMapView();
+    };
+    row.appendChild(b);
+    this.cameraPose(app.view.rot, app.view.tilt);
+  }
+
+  /** Every frame: the camera control and the north arrow follow the camera (they write only when it has moved). */
+  cameraPose(rot: number, tilt: number) {
+    this.compassAngle(rot);
+    const map = this.app.camView === "map";
+    const key = `${rot.toFixed(2)}|${tilt.toFixed(2)}|${map}`;
+    if (key === this.viewKey) return;
+    this.viewKey = key;
+    const b = this.viewBtn;
+    (b.querySelector(".vg-cube") as HTMLElement).style.transform = `rotateX(${tilt.toFixed(3)}rad) rotateZ(${(-rot).toFixed(3)}rad)`;
+    b.classList.toggle("map", map);
+    b.setAttribute("aria-pressed", String(map));
+    b.setAttribute("aria-label", "Map view");
+    b.title = map
+      ? "Camera: Map view. Click for the Diorama (M). Drag to turn the map."
+      : "Camera: Diorama. Click for the Map view, straight down (M). Drag to turn and tilt (or the middle button, Q / E, Y / H).";
   }
 
   compassAngle(rot: number) {
@@ -1166,17 +1244,23 @@ export class Hud {
     const app = this.app, following = app.camera.following !== null;
     const opt = (id: string, icon: string, name: string, key: string, blurb: string, on = false) =>
       `<button class="cam-opt${on ? " on" : ""}" data-cam="${id}" aria-pressed="${on}"><span class="cam-ic">${icon}</span><span class="cam-txt"><b>${name}</b><span class="small muted">${blurb}</span></span><span class="cam-key">${key}</span></button>`;
+    const map = app.camView === "map";
     const html = `<div class="cam-list">${
+      opt("view", ICON.camMap, "Map view", "<kbd>M</kbd>", map ? "Looking straight down. Again for the Diorama, the tilted view." : "Look straight down, like a map. To turn and tilt the Diorama: drag with the middle button, or drag the small block by the buttons above; Q / E and Y / H do it from the keys.", map)
+    }${
       opt("follow", ICON.camFollow, following ? "Stop following" : "Follow a truck", "<kbd>G</kbd>", following ? "Let go of the vehicle the camera is riding with." : "The camera rides with the truck nearest the middle of the screen. Zoom, click and Esc as you like; moving the map lets go.", following)
     }${
       opt("tour", ICON.camera, "Tour", "<kbd>T</kbd>", "An automatic camera drifts over your busiest junctions, towns, works and bridges, fading from one to the next. The interface hides; the game runs on.")
     }${
       opt("ride", ICON.camRide, "Vehicle cam", "<kbd>Shift</kbd><kbd>T</kbd>", "Rides along with one heavy truck, road train or convoy after another, a few seconds each.")
     }</div><p class="cam-foot small muted">Any key or a click leaves the Tour and the Vehicle cam.</p>`;
+    this.camShown = app.camView;
     if (!this.setWin("Camera", html)) return;
     for (const b of this.win.querySelectorAll<HTMLButtonElement>(".cam-opt")) b.onclick = () => {
       const k = b.dataset.cam;
       this.sfx.play("click");
+      // (the view flips in front of the open menu: it shows which one is on)
+      if (k === "view") { app.toggleMapView(); return; }
       this.closeWin();
       if (k === "follow") app.camera.toggleFollowNearest();
       else if (k === "tour") app.startTour();
@@ -1994,6 +2078,7 @@ export class Hud {
         <button class="pm load">Load game</button>
         <button class="pm keys">Controls</button>
         <button class="pm tips" role="switch" aria-label="Tips" aria-checked="${!this.tipPrefs.off}">Tips<span class="pm-v">${this.tipPrefs.off ? "Off" : "On"}</span></button>
+        <button class="pm camview"></button>
         <button class="pm nights"></button>
         <button class="pm wheel"></button>
         <button class="pm home">Main menu</button>
@@ -2015,6 +2100,8 @@ export class Hud {
       b.querySelector(".pm-v")!.textContent = off ? "Off" : "On";
       this.renderTips();
     });
+    // the Camera setting: the Diorama (tilted) or the Map view (straight down). M flips this same setting.
+    this.camShow = wireCamera(dlg.querySelector(".camview"), () => app.camView, (v) => app.setCameraView(v), () => this.sfx.play("click"));
     wireNights(dlg.querySelector(".nights"), app.dayCycle, () => this.sfx.play("click"));
     // the Scroll wheel setting: Auto (a mouse wheel zooms, a touchpad's two fingers move the map), Zoom, Pan
     const wb = dlg.querySelector(".wheel") as HTMLButtonElement;

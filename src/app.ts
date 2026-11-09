@@ -421,7 +421,9 @@ export class App {
     if (this.camera.cinematic || this.mode === "menu" || !d) return;
     if (how === "drag" && this.camView === "map") return;
     this.tiltAnim = null;
-    this.view.tilt = clamp(this.view.tilt + d, 0, TILT_MAX);
+    // (asked down out of the Map view: past its catch at once, or a slow key would never get out of it)
+    const from = how === "ask" && d > 0 && this.view.tilt + d <= TILT_MAP ? TILT_MAP : this.view.tilt;
+    this.view.tilt = clamp(from + d, 0, TILT_MAX);
     if (how === "ask") this.settleView();
     this.dirtyPreview = true;
   }
@@ -441,9 +443,15 @@ export class App {
     this.hud?.refresh();
   }
 
-  /** The pitch of the camera, 0 (the Map view) to 1 (as low as it goes): for the camera control. */
-  get pitch(): number {
-    return this.view.tilt / TILT_MAX;
+  /**
+   * Turn and tilt the camera by a drag of (dx, dy) pixels: sideways turns it about the middle of the screen, up and
+   * down tilts it (the middle button, and the camera control for a touchpad with none).
+   */
+  orbitBy(dx: number, dy: number) {
+    if (this.camera.cinematic || this.mode === "menu") return;
+    if (dx) this.view.rotateAt(this.view.w / 2, this.view.h / 2, -dx * 0.006);
+    this.pitchBy(-dy * 0.005, "drag");
+    this.dirtyPreview = true;
   }
 
   // ---------------------------------------------------------------- camera modes (ui/camera.ts)
@@ -530,7 +538,7 @@ export class App {
     this.view.rot = loadTurn();
     this.tiltAnim = null;
     this.view.tilt = this.camView === "map" ? 0 : this.dioTilt;
-    this.hud?.compassAngle(this.view.rot);
+    this.hud?.cameraPose(this.view.rot, this.view.tilt);
     this.hud?.clearBanners();
     for (const c of [...this.worldRoot.children]) this.worldRoot.remove(c);
     const small = Math.min(window.innerWidth, window.innerHeight) < 700;
@@ -897,8 +905,7 @@ export class App {
       // also moves it outside of drawing
       if (pi.button === 1) {
         if (pi.moved) {
-          this.view.rotateAt(this.view.w / 2, this.view.h / 2, -dx * 0.006);
-          this.pitchBy(-dy * 0.005, "drag");
+          this.orbitBy(dx, dy);
         }
         pi.x = p.x; pi.y = p.y;
         this.updateCursor(p);
@@ -2003,7 +2010,7 @@ export class App {
     }
     else this.icons.update(this.view);
     this.pops.update(this.view, this.bare || far ? null : g.traffic, g.alpha);
-    this.hud?.compassAngle(this.view.rot);
+    this.hud?.cameraPose(this.view.rot, this.view.tilt);
     this.view.render();
     requestAnimationFrame(this.frame);
   };
