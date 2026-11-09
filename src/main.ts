@@ -31,6 +31,7 @@ async function boot() {
     if (tip) { v.pitch = pitch; app.terrain3d.update(v); v.render(); }
     return c.toDataURL("image/jpeg", 0.7);
   };
+  app.saves.where = () => app.savedView();
   const menu = new MainMenu(app, hud);
   app.openMenu = () => void menu.open();
   const q = new URLSearchParams(location.search);
@@ -40,7 +41,7 @@ async function boot() {
     const last = app.saves.latest();
     const data = last && !q.has("new") ? app.saves.load(last.id) : null;
     if (data) {
-      try { app.loadGame(data); } catch { app.newGame(); }
+      try { app.loadGame(data, app.saves.viewOf(last!.id)); } catch { app.newGame(); }
     } else app.newGame(Number(q.get("seed")) || 7);
     app.setMode("play");
   }

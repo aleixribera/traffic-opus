@@ -90,6 +90,37 @@ export function groundRay(v: ViewPose, px: number, py: number): GroundRay {
 }
 
 /**
+ * Frame a set of world points (x, y on the ground, h above it): the closest view, at this turn and pitch, that
+ * holds them all inside the screen less `inset` (CSS pixels kept clear at each edge: the bars and panels), and the
+ * centre that puts them in the middle of what is left. The zoom is kept between `minH` and `maxH` (half heights): a
+ * place too big for maxH is shown centred, with its edges off screen.
+ */
+export function frameFit(
+  pts: readonly { x: number; y: number; h?: number }[], rot: number, tilt: number, w: number, h: number,
+  inset: { l: number; t: number; r: number; b: number }, minH: number, maxH: number,
+): { cx: number; cy: number; halfH: number } {
+  const c = Math.cos(rot), s = Math.sin(rot), ct = Math.cos(tilt), st = Math.sin(tilt);
+  // each point across the screen (u, m) and down it (v, m of screen, the ground foreshortened and heights lifted)
+  let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+  for (const p of pts) {
+    const u = p.x * c + p.y * s, v = (-p.x * s + p.y * c) * ct - (p.h ?? 0) * st;
+    if (u < u0) u0 = u;
+    if (u > u1) u1 = u;
+    if (v < v0) v0 = v;
+    if (v > v1) v1 = v;
+  }
+  if (!pts.length) u0 = u1 = v0 = v1 = 0;
+  const sw = Math.max(1, w - inset.l - inset.r), sh = Math.max(1, h - inset.t - inset.b);
+  const mpp = Math.max((u1 - u0) / sw, (v1 - v0) / sh);
+  const halfH = Math.min(maxH, Math.max(minH, (mpp * h) / 2));
+  // the middle of the points sits at the middle of the clear part of the screen
+  const m = (halfH * 2) / h;
+  const u = (u0 + u1) / 2 - ((inset.l - inset.r) / 2) * m, v = (v0 + v1) / 2 - ((inset.t - inset.b) / 2) * m;
+  const d = v / ct;
+  return { cx: u * c - d * s, cy: u * s + d * c, halfH };
+}
+
+/**
  * The ground the screen shows, as a quad (top-left, top-right, bottom-right, bottom-left of the screen). With
  * `hMax`, the quad reaches toward the camera far enough to hold whatever stands just below the screen's bottom edge
  * and is tall enough (up to hMax) to lean into view.

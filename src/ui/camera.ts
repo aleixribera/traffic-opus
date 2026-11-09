@@ -333,6 +333,12 @@ export class CameraDirector {
     this.black = 1;
   }
 
+  /** Where the player's own camera is: the view itself, or the one a cinematic mode will give back. */
+  playerView(): { cx: number; cy: number; halfH: number } {
+    const s = this.saved, v = this.app.view;
+    return this.cinematic && s ? { cx: s.cx, cy: s.cy, halfH: s.h } : { cx: v.cx, cy: v.cy, halfH: v.halfH };
+  }
+
   /** The pitch the view goes back to when the cinematic mode ends (the Camera setting was changed meanwhile). */
   returnTilt(t: number) {
     if (this.saved) this.saved.tilt = t;

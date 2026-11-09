@@ -2194,7 +2194,7 @@ export class Hud {
       if (load) load.onclick = () => {
         const d = app.saves.load(li.dataset.id!);
         if (!d) { this.toast("That save is unreadable", true); return; }
-        try { app.loadGame(d); } catch { this.toast("That save is from an older version", true); return; }
+        try { app.loadGame(d, app.saves.viewOf(li.dataset.id!)); } catch { this.toast("That save is from an older version", true); return; }
         app.setMode("play");
         this.resumeOnClose = false;
         this.closeModal();

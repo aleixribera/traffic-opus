@@ -28,6 +28,14 @@ const MENU_SWAY_S = 110;
 const ORBIT_TURN = 0.005;
 const ORBIT_TILT = 0.003;
 
+/**
+ * How a new company opens (App.frameStart): the half height it may open at (m: close enough for the hamlet's houses
+ * to read as models, never so close that a part of it is cut off for nothing), and the screen kept clear at each
+ * edge (CSS px: the top bar, the goals panel on the right, the bottom bar, and a little air).
+ */
+const START_HALF_H: [number, number] = [110, 175];
+const START_INSET = { l: 40, t: 84, r: 330, b: 96 };
+
 /** How far outside a waiting site's gate the road tool snaps a road's end (m): clear of the fence, well in reach. */
 const GATE_SNAP = 7;
 /** How far one pixel of scrolling turns the building being placed (a wheel notch of ~100 px: ~10°). */
@@ -47,7 +55,7 @@ import type { ModelSet } from "./render/models";
 import { Preview3D } from "./render/preview3d";
 import { Highlight3D } from "./render/highlight3d";
 import { buildingOn, deckOn, heightsOn, junctionOn, pickOn, straightDown } from "./ui/pick";
-import { rayAt, riseShare, TILT_MAP, TILT_MAX, type GroundRay } from "./render/viewmath";
+import { frameFit, rayAt, riseShare, TILT_MAP, TILT_MAX, type GroundRay } from "./render/viewmath";
 import { newOrbit, orbitStep, type OrbitDrag } from "./ui/orbit";
 import { TILT_MIN, loadCameraView, loadTilt, loadTurn, saveCameraView, saveTilt, saveTurn, type CameraView } from "./ui/cameraSetting";
 import { groundAt, isMined } from "./ui/inspect";
@@ -66,7 +74,7 @@ import { fieldLook } from "./game/calendar";
 import { Transit3D, legPoints } from "./render/transit3d";
 import { STOP_COST } from "./game/transit";
 import { View } from "./render/view";
-import { Saves } from "./game/saves";
+import { Saves, type SavedView } from "./game/saves";
 import { PLACED, type PlacedKind } from "./game/placed";
 import type { Hud, Chip } from "./ui/hud";
 import { CameraDirector } from "./ui/camera";
@@ -304,15 +312,52 @@ export class App {
     const g = new Game(seed);
     g.start();
     this.setGame(g);
-    // open on the starting hamlet
-    const t = g.towns.list[0];
-    this.view.cx = t?.c.x ?? 0;
-    this.view.cy = t?.c.y ?? 0;
-    this.view.halfH = 260;
+    this.zoomEase = null;
+    this.frameStart();
   }
 
-  loadGame(data: ReturnType<Game["serialize"]>) {
+  /**
+   * A new company opens on its hamlet, close enough that its houses stand up as models: every building of it inside
+   * the part of the screen the bars and the goals panel leave clear, at the player's own turn and pitch.
+   */
+  private frameStart() {
+    const g = this.game, v = this.view, t = g.towns.list[0];
+    v.resize();
+    const pts: { x: number; y: number; h: number }[] = [];
+    for (const b of g.buildings.list) {
+      if (t && b.town !== t.id && Math.hypot(b.c.x - t.c.x, b.c.y - t.c.y) > t.reach * 2) continue;
+      const top = this.buildings3d.topOf(b);
+      for (const c of rectCorners(b.c, b.hw, b.hd, b.rot)) pts.push({ x: c.x, y: c.y, h: 0 }, { x: c.x, y: c.y, h: top });
+    }
+    if (!pts.length) pts.push({ x: t?.c.x ?? 0, y: t?.c.y ?? 0, h: 0 });
+    const f = frameFit(pts, v.rot, clamp(v.pitch, 0, TILT_MAX), v.w, v.h, START_INSET, START_HALF_H[0], START_HALF_H[1]);
+    v.cx = f.cx;
+    v.cy = f.cy;
+    v.halfH = f.halfH;
+  }
+
+  /**
+   * Open a saved game, with the camera where it was when it was saved (`at`: Saves.viewOf). A save that does not
+   * say (an older one, the showcase) opens on its biggest town, never on wherever the last game's camera was.
+   */
+  loadGame(data: ReturnType<Game["serialize"]>, at?: SavedView | null) {
     this.setGame(Game.load(data));
+    const v = this.view;
+    this.zoomEase = null;
+    if (at) { v.cx = at.cx; v.cy = at.cy; v.halfH = clamp(at.halfH, v.minHalfH, v.maxHalfH); this.clampView(); return; }
+    let big = this.game.towns.list[0];
+    for (const t of this.game.towns.list) if (t.pop > big.pop) big = t;
+    if (!big) return;
+    v.cx = big.c.x;
+    v.cy = big.c.y;
+    v.halfH = clamp(Math.max(220, big.reach * 1.1), v.minHalfH, 420);
+  }
+
+  /** Where the player's own camera is (what a save opens on): not a cinematic shot, nor the title menu's backdrop. */
+  savedView(): SavedView | undefined {
+    if (this.mode !== "play") return undefined;
+    const p = this.camera.playerView();
+    return { cx: Math.round(p.cx * 10) / 10, cy: Math.round(p.cy * 10) / 10, halfH: Math.round(p.halfH * 10) / 10 };
   }
 
   /**
@@ -1170,7 +1215,7 @@ export class App {
   quickLoad() {
     const d = this.saves.load("quick");
     if (!d) { this.reject("No quicksave yet (F5 saves)"); return; }
-    try { this.loadGame(d); } catch (e) { this.reject(String(e).includes("older version") ? "That quicksave is from an older version" : "Couldn't load the quicksave"); return; }
+    try { this.loadGame(d, this.saves.viewOf("quick")); } catch (e) { this.reject(String(e).includes("older version") ? "That quicksave is from an older version" : "Couldn't load the quicksave"); return; }
     this.hud?.toast("Quickload");
   }
 
