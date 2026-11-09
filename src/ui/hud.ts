@@ -178,10 +178,10 @@ const KEYS: [string, string][] = [
   ["Space + drag", "Move the camera with any tool in hand"],
   ["Two fingers", "Touchpad: scroll to move the camera, pinch to zoom, click for a right click (Scroll wheel setting in this menu)"],
   ["Q / E", "Turn the camera"],
-  ["Middle drag", "Turn the camera (sideways) and tilt it (up and down)"],
-  ["Y / H", "Tilt the camera: up toward the Map view, down toward the horizon"],
+  ["Middle drag", "Sideways turns the camera. Up lowers it toward the horizon, down lifts it toward straight down"],
+  ["Y / H", "Tilt the camera. Y lifts it toward straight down, H lowers it toward the horizon. Zoomed far out it looks straight down by itself"],
   ["M", "Map view (straight down) and back to the Diorama. The same as Camera in the pause menu"],
-  ["Camera block", "Top left: drag it to turn and tilt (for a touchpad), click it for the Map view"],
+  ["Camera block", "Top left: drag it like the middle button (for a touchpad), click it for the Map view"],
   ["R / F, wheel", "Zoom in / out (placing a building: the mouse wheel turns it, Shift + wheel by 1°, Ctrl + wheel zooms)"],
   ["Tab", "Next road mode: curve, straight, upgrade"],
   ["Page Up / Down", "Raise or lower the road (bridges over water and motorways rise on their own)"],
@@ -724,7 +724,7 @@ export class Hud {
     b.setAttribute("aria-pressed", String(map));
     b.setAttribute("aria-label", "Map view");
     b.title = map
-      ? "Camera: Map view. Click for the Diorama (M). Drag to turn the map."
+      ? "Camera: Map view. Click for the Diorama (M). Drag sideways to turn the map, up to tilt it."
       : "Camera: Diorama. Click for the Map view, straight down (M). Drag to turn and tilt (or the middle button, Q / E, Y / H).";
   }
 

@@ -27,6 +27,10 @@ const MENU_SWAY_S = 110;
  */
 const ORBIT_TURN = 0.005;
 const ORBIT_TILT = 0.003;
+/** The tilt keys: radians a second (the whole range in a second and a bit). */
+const KEY_TILT = 0.8;
+/** How quickly the keys' pull on the camera comes on and lets go (1/s: most of it within a tenth of a second). */
+const KEY_EASE = 16;
 
 /**
  * How a new company opens (App.frameStart): the half height it may open at (m: close enough for the hamlet's houses
@@ -203,6 +207,8 @@ export class App {
   private dioTilt = loadTilt();
   /** The view easing between the Diorama and the Map view. */
   private tiltAnim: { from: number; to: number; t: number } | null = null;
+  /** The keys' pull on the camera, eased: across and down the screen, the turn, the zoom (each -1 to 1). */
+  private keyCam = { x: 0, y: 0, turn: 0, zoom: 0 };
   /** A tilt key is held (the view settles when it is let go). */
   private pitching = false;
   /** A wheel zoom easing in: the pixel whose ground it holds still, and the zoom it is going to. */
@@ -2006,31 +2012,34 @@ export class App {
     this.last = now;
     const g = this.game;
     this.syncRise();
-    // keyboard panning
-    const pan = 520 * dt * (this.view.halfH / 170) ** 0.85;
-    let mx = 0, my = 0;
-    if (this.keys.has("w") || this.keys.has("ArrowUp")) my -= 1;
-    if (this.keys.has("s") || this.keys.has("ArrowDown")) my += 1;
-    if (this.keys.has("a") || this.keys.has("ArrowLeft")) mx -= 1;
-    if (this.keys.has("d") || this.keys.has("ArrowRight")) mx += 1;
-    // Q/E turn the view, R/F zoom (CS2)
-    const turn = (this.keys.has("e") ? 1 : 0) - (this.keys.has("q") ? 1 : 0);
-    const zoom = (this.keys.has("f") ? 1 : 0) - (this.keys.has("r") ? 1 : 0);
-    // (keys held from before a cinematic camera started don't steer it)
-    if (this.camera.cinematic) { mx = 0; my = 0; }
+    // The camera from the keys: W A S D or the arrows move it along the screen's own axes, Q/E turn it, R/F zoom
+    // (CS2), Y/H tilt it. Not with Ctrl held (Ctrl+S saves, Ctrl+Y is redo), nor while a cinematic camera films.
+    const held = (...ks: string[]) => ks.some((k) => this.keys.has(k));
+    const free = !this.camera.cinematic && !held("Control", "Meta");
+    let mx = free ? (held("d", "ArrowRight") ? 1 : 0) - (held("a", "ArrowLeft") ? 1 : 0) : 0;
+    let my = free ? (held("s", "ArrowDown") ? 1 : 0) - (held("w", "ArrowUp") ? 1 : 0) : 0;
+    const turn = free ? (held("e") ? 1 : 0) - (held("q") ? 1 : 0) : 0;
+    const zoom = free ? (held("f") ? 1 : 0) - (held("r") ? 1 : 0) : 0;
+    // Y up toward the Map view, H down toward the horizon
+    const pitch = free ? (held("h") ? 1 : 0) - (held("y") ? 1 : 0) : 0;
     if ((mx || my) && (this.camera.following !== null || this.glide)) { this.camera.stopFollow(); this.glide = null; }
-    if (mx || my) {
-      // (along the screen's own axes, at the same speed on screen whichever way: at a tilt the ground up the screen
-      // is foreshortened, so the camera covers more of it; a diagonal is no faster than a straight run)
-      const k = pan / this.view.mpp / Math.hypot(mx, my);
-      const v = this.view.screenVec(mx * k, my * k);
+    // (a diagonal is no faster than a straight run)
+    if (mx && my) { mx *= Math.SQRT1_2; my *= Math.SQRT1_2; }
+    // each eases in and out over a few frames, so the camera starts and stops softly instead of at full speed
+    const K = this.keyCam, ease = reducedMotion() ? 1 : 1 - Math.exp(-dt * KEY_EASE);
+    const toward = (v: number, to: number) => { const n = v + (to - v) * ease; return Math.abs(n - to) < 0.01 ? to : n; };
+    K.x = toward(K.x, mx); K.y = toward(K.y, my); K.turn = toward(K.turn, turn); K.zoom = toward(K.zoom, zoom);
+    if (this.camera.cinematic || this.mode === "menu") K.x = K.y = K.turn = K.zoom = 0;
+    if (K.x || K.y) {
+      // (at the same speed on screen whichever way: at a tilt the ground up the screen is foreshortened, so the
+      // camera covers more of it going up or down than going across)
+      const px = (520 * dt * (this.view.halfH / 170) ** 0.85) / this.view.mpp;
+      const v = this.view.screenVec(K.x * px, K.y * px);
       this.view.cx += v.x;
       this.view.cy += v.y;
     }
-    // Y/H tilt it: Y up toward the Map view, H down toward the horizon (not with Ctrl held: Ctrl+Y is redo)
-    const pitch = this.keys.has("Control") || this.keys.has("Meta") ? 0 : (this.keys.has("h") ? 1 : 0) - (this.keys.has("y") ? 1 : 0);
-    if (turn && !this.camera.cinematic) this.view.rotateAt(this.view.w / 2, this.view.h / 2, turn * 1.5 * dt);
-    if (zoom && !this.camera.cinematic) { this.zoomEase = null; this.view.zoomAt(this.view.w / 2, this.view.h / 2, Math.exp(zoom * 2.2 * dt)); }
+    if (K.turn) this.view.rotateAt(this.view.w / 2, this.view.h / 2, K.turn * 1.5 * dt);
+    if (K.zoom) { this.zoomEase = null; this.view.zoomAt(this.view.w / 2, this.view.h / 2, Math.exp(K.zoom * 2.2 * dt)); }
     // a wheel notch easing in (most of it within a tenth of a second)
     if (this.zoomEase) {
       const Z = this.zoomEase, v = this.view;
@@ -2042,9 +2051,9 @@ export class App {
         if (last) this.zoomEase = null;
       }
     }
-    if (pitch) { this.pitchBy(pitch * 0.9 * dt); this.pitching = true; }
+    if (pitch) { this.pitchBy(pitch * KEY_TILT * dt); this.pitching = true; }
     else if (this.pitching) { this.pitching = false; this.settleView(); }
-    if (mx || my || turn || zoom) this.clampView();
+    if (K.x || K.y || K.turn || K.zoom) this.clampView();
     // easing between the Diorama and the Map view (M, the Camera setting): 0.4 s
     if (this.tiltAnim) {
       const A = this.tiltAnim;
