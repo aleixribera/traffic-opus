@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { BUILDING_TYPES, LEVEL_H, MAX_LEVEL, ROAD_TYPES, SIM, roadWidth, type RoadTypeId } from "./config";
 import { cubicAt, cubicTangent, dist, dot, formatMoney, norm, rectCorners, right, sub, v2, wrapAngle, type V2 } from "./core/math";
+import { townStreets } from "./game/rural";
 import type { Building } from "./game/buildings";
 import { Game } from "./game/city";
 import {
@@ -429,6 +430,8 @@ export class App {
       // tree or lamp stands on it, however wide the road it comes off (a boulevard's verge is far from its centreline)
       drives: () => g.buildings.list.filter((b) => b.access).map((b): [V2, V2] => [b.front, b.plant && b.placed ? siteFrame(b.c, b.rot, b.side, b.hd).gate : b.c]),
       gates: () => g.buildings.list.filter((b) => b.placed && b.plant).map((b) => ({ ...siteFrame(b.c, b.rot, b.side, b.hd), front: b.front })),
+      // town streets keep their kerbs, pavements, lamps and trees; the roads out in the country don't
+      townStreets: () => townStreets(g.net, g.towns.list, g.buildings.list),
     });
     this.roadsFar = new RoadsFar(g.net);
     this.labels.set([]);
@@ -463,7 +466,7 @@ export class App {
       if (e.t === "shipped") { if (this.mode !== "menu") this.pops.shipped(e.from, e.to, e.p, this.view); return; }
       if (e.t === "roads") { this.roads.apply(e.cs); this.clearing.invalidate(); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
       else if (e.t === "buildings") {
-        this.buildings3d.rebuild(g.buildings.list); this.roads.refreshGates(); this.clearing.invalidate(); this.applyTint(); this.dirtyPreview = true;
+        this.buildings3d.rebuild(g.buildings.list); this.roads.refreshGates(); this.roads.refreshLook(); this.clearing.invalidate(); this.applyTint(); this.dirtyPreview = true;
         { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }
         // (street trees make way for new driveways: at most twice a second while a town grows)
         if (!this.treesDue) this.treesDue = setTimeout(() => { this.treesDue = 0; this.roads.refreshTrees(); }, 500);
