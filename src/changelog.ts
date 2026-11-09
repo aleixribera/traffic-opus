@@ -15,6 +15,13 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.79", date: "2026-11-09", title: "Rarer town orders",
+    notes: [
+      "Town orders are rare now: one at a time on the whole map, five to ten days apart.",
+      "The first order comes five to ten days into the game, and the town asked last waits its turn.",
+    ],
+  },
+  {
     v: "v0.0.78", date: "2026-11-09", title: "A town's day",
     notes: [
       "Towns keep a gentle daily rhythm: busier mornings and evenings, quieter nights; drivers vary a little.",
