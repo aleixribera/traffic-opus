@@ -59,8 +59,10 @@ describe("steady growth on a proven supply", () => {
     for (let i = 1; i < h.length; i++) expect(h[i], `sample ${i}`).toBeGreaterThanOrEqual(h[i - 1]);
     const last = h[h.length - 1];
     expect(Math.max(...h)).toBe(last);
-    // (levelled off: the last three days add next to nothing)
-    expect(last - h[at(days - 3)]).toBeLessThanOrEqual(Math.max(2, last * 0.01));
+    // (levelled off: the last three days add next to nothing. Houses rebuilt as terraces change the people a
+    // household has, and with it the households the same supply carries, by a household or two at a time: on the
+    // PLAN_TOWN start town, 257 -> 262 over days 7 to 10 while its people held at 600-607)
+    expect(last - h[at(days - 3)]).toBeLessThanOrEqual(Math.max(2, last * 0.025));
     // (and it got somewhere: past Village size on this supply)
     expect(steady.t.pop).toBeGreaterThan(300);
     // the panel's figure is the two-day average of the loads that came in
