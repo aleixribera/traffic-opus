@@ -95,7 +95,7 @@ export class Terrain3D {
       for (const c of map.values()) if (c.used !== this.frame) c.mesh.visible = false;
       if (map.size > MAX_PER_LOD) {
         const old = [...map.entries()].filter(([, c]) => c.used !== this.frame).sort((a, b) => a[1].used - b[1].used);
-        for (const [k, c] of old.slice(0, map.size - MAX_PER_LOD)) this.dispose(c), map.delete(k);
+        for (const [k, c] of old.slice(0, map.size - MAX_PER_LOD)) this.drop(c), map.delete(k);
       }
     }
     // coarse first (fills the screen fast), then nearest-first; ~7 ms a frame
@@ -188,7 +188,25 @@ export class Terrain3D {
     this.lods[lod].set(`${ci},${cj}`, { mesh, tex, used: this.frame, ci, cj, trees, treeO, baked: false });
   }
 
-  private dispose(c: Chunk) {
+  /**
+   * This ground is done with (a new game, a loaded save): everything it holds on the GPU is handed back. Nothing
+   * else frees a chunk's textures: without this every load leaves them all behind.
+   */
+  dispose() {
+    for (const map of this.lods) {
+      for (const c of map.values()) this.drop(c);
+      map.clear();
+    }
+    this.queue.length = 0;
+    for (const m of [...this.group.children] as THREE.Mesh[]) {
+      this.group.remove(m);
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    }
+    this.plane.dispose();
+  }
+
+  private drop(c: Chunk) {
     this.group.remove(c.mesh);
     (c.mesh.material as THREE.Material).dispose();
     for (const t of c.tex) t.dispose();
