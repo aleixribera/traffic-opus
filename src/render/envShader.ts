@@ -50,11 +50,15 @@ export const v3 = (hex: number) => {
 export const SNOW = 0xe6eaee;
 const SNOW_SHADE = 0xc9d3e0;
 
+/** A bare tree's wood: the grey-brown of limbs and twigs. */
+export const WOOD = 0x6d5f52;
+
 /**
- * The shared GLSL: the uniforms, a small noise, and the seasons' colour functions. Every name is prefixed `env` so
- * it can sit beside a material's own helpers.
+ * The part of the shared GLSL a vertex shader can use too (no screen derivatives): the uniforms, a small noise, and
+ * the seasons' colours for grass and for a tree's leaves, needles and wood. Every name is prefixed `env` so it can
+ * sit beside a material's own helpers.
  */
-export const ENV_GLSL = /* glsl */ `
+export const ENV_CORE_GLSL = /* glsl */ `
 uniform vec4 uSeasonA; uniform vec4 uSeasonB; uniform vec2 uSeasonC;
 uniform vec2 uSun; uniform vec2 uShade; uniform vec2 uNight; uniform vec2 uGrade;
 #define envFresh uSeasonA.x
@@ -91,6 +95,42 @@ vec3 envGrass(vec3 c) {
   float w = envBare * (1.0 - envFresh) * 0.55;
   return mix(c, dot(c, vec3(0.2126, 0.7152, 0.0722)) * vec3(1.08, 1.0, 0.86), w);
 }
+/* A broadleaf's leaves through the year, while it has them. summer: their colour as drawn now; tone: 0..1 per tree;
+   h: another hash per tree (whether it blossoms, which colour it turns, when); lit: its lit side 0..1; m: how much of
+   this spot is blossom on a tree that flowers (0..1: mottled clusters). The painted crowns and the 3D trees both
+   colour their leaves with this, so a tree keeps its colour when one stands in for the other. */
+vec3 envFoliage(vec3 summer, float tone, float h, float lit, float m) {
+  vec3 c = summer;
+  // spring: a brighter, yellower new green; blossom on about a third
+  c = mix(c, c * vec3(1.02, 1.16, 0.72), envFresh);
+  c = mix(c, c * vec3(0.86, 0.98, 0.84), envLush);
+  float hb = fract(h * 7.31);
+  if (hb < 0.38 && envBlossom > 0.0) {
+    vec3 bl = hb < 0.2 ? vec3(0.96, 0.78, 0.83) : vec3(0.97, 0.95, 0.93);
+    c = mix(c, bl * (0.8 + 0.25 * lit), m * envBlossom);
+  }
+  // autumn: each tree its own colour, orange, red, gold or russet, with a few holding on to their green
+  float ha = fract(h * 13.7 + tone * 0.3);
+  vec3 au = ha < 0.3 ? ${v3(0xd0762c)} : ha < 0.52 ? ${v3(0xb2412b)} : ha < 0.78 ? ${v3(0xd8aa3a)} : ha < 0.92 ? ${v3(0x93602f)} : summer * vec3(0.95, 0.9, 0.6);
+  au *= 0.72 + 0.4 * lit;
+  float turn = envFall * smoothstep(0.0, 1.0, envFall * 1.3 - fract(h * 3.3) * 0.3);
+  return mix(c, au, turn);
+}
+/* How bare a broadleaf stands (0 in leaf .. 1 bare): each tree drops its leaves a little before or after the rest. */
+float envBareOf(float h) { return clamp(envBare * 1.15 - fract(h * 5.9) * 0.15, 0.0, 1.0); }
+/* A bare tree's wood; sn: how much snow lies along it here (0..1). */
+vec3 envWood(float lit, float sn) {
+  return mix(${v3(WOOD)} * (0.75 + 0.35 * lit), ${v3(SNOW)} * (0.85 + 0.15 * lit), envSnow * sn * 0.8);
+}
+/* A conifer: dark all year; sn: how much snow lies on it here (0..1). */
+vec3 envConifer(vec3 summer, float lit, float sn) {
+  return mix(summer * vec3(0.72, 0.86, 0.8), ${v3(SNOW)} * (0.82 + 0.18 * lit), envSnow * sn * 0.85);
+}
+`;
+
+/** The shared GLSL for a fragment shader: the above, the snow lying on the ground, and a painted crown. */
+export const ENV_GLSL = /* glsl */ `
+${ENV_CORE_GLSL}
 /* How much snow lies at a ground point (0..1): drifts and bare patches at a few scales, more of it the deeper the
    winter; 'shelter' > 0 keeps it thinner (under eaves, on warm ground). */
 float envSnowAt(vec2 p, float shelter) {
@@ -113,37 +153,21 @@ float envSnowAt(vec2 p, float shelter) {
 vec3 envSnowCol(vec2 p) {
   return mix(${v3(SNOW_SHADE)}, ${v3(SNOW)}, 0.55 + 0.45 * envNoise(p / 2.1));
 }
-/* A tree crown's colour through the year. summer: its colour as drawn now; tone: 0..1 per tree; h: another hash per
-   tree (which trees are evergreen, blossom, which colour they turn); q: the point in the crown (-1..1); lit: its lit
-   side 0..1. Returns rgb and a coverage (bare branches let the ground through). */
+/* A painted tree crown's colour through the year. summer: its colour as drawn now; tone: 0..1 per tree; h: another
+   hash per tree (which trees are evergreen, blossom, which colour they turn); q: the point in the crown (-1..1); lit:
+   its lit side 0..1. Returns rgb and a coverage (bare branches let the ground through). */
 vec4 envLeaf(vec3 summer, float tone, float h, vec2 q, float lit, float evergreenShare) {
   float d = length(q);
   // (one return at the end: early returns make Direct3D's compiler warn)
   vec4 res;
   if (h < evergreenShare) {
     // conifers: dark all year, snow lying on their lit side in winter
-    vec3 cv = summer * vec3(0.72, 0.86, 0.8);
-    float sn = envSnow * smoothstep(0.35, 0.75, lit + envNoise(q * 4.0 + h * 40.0) * 0.5 - 0.2);
-    res = vec4(mix(cv, ${v3(SNOW)} * (0.82 + 0.18 * lit), sn * 0.85), 1.0);
+    res = vec4(envConifer(summer, lit, smoothstep(0.35, 0.75, lit + envNoise(q * 4.0 + h * 40.0) * 0.5 - 0.2)), 1.0);
   } else {
-  vec3 c = summer;
-  // spring: a brighter, yellower new green; blossom on about a third, in mottled clusters
-  c = mix(c, c * vec3(1.02, 1.16, 0.72), envFresh);
-  c = mix(c, c * vec3(0.86, 0.98, 0.84), envLush);
-  float hb = fract(h * 7.31);
-  if (hb < 0.38 && envBlossom > 0.0) {
-    float m = smoothstep(0.42, 0.62, envNoise(q * 5.0 + h * 31.0)) * envBlossom;
-    vec3 bl = hb < 0.2 ? vec3(0.96, 0.78, 0.83) : vec3(0.97, 0.95, 0.93);
-    c = mix(c, bl * (0.8 + 0.25 * lit), m);
-  }
-  // autumn: each tree its own colour, orange, red, gold or russet, with a few holding on to their green
-  float ha = fract(h * 13.7 + tone * 0.3);
-  vec3 au = ha < 0.3 ? ${v3(0xd0762c)} : ha < 0.52 ? ${v3(0xb2412b)} : ha < 0.78 ? ${v3(0xd8aa3a)} : ha < 0.92 ? ${v3(0x93602f)} : summer * vec3(0.95, 0.9, 0.6);
-  au *= 0.72 + 0.4 * lit;
-  float turn = envFall * smoothstep(0.0, 1.0, envFall * 1.3 - fract(h * 3.3) * 0.3);
-  c = mix(c, au, turn);
+  // (blossom in mottled clusters)
+  vec3 c = envFoliage(summer, tone, h, lit, smoothstep(0.42, 0.62, envNoise(q * 5.0 + h * 31.0)));
   // bare: grey-brown branches from the trunk out, fine twigs between, the ground showing through; snow along them
-  float bare = clamp(envBare * 1.15 - fract(h * 5.9) * 0.15, 0.0, 1.0);
+  float bare = envBareOf(h);
   if (bare > 0.0) {
     float a = atan(q.y, q.x);
     float k = 7.0 + floor(fract(h * 9.1) * 4.0);
@@ -154,8 +178,7 @@ vec4 envLeaf(vec3 summer, float tone, float h, vec2 q, float lit, float evergree
     float twig = smoothstep(0.5, 0.72, envNoise(q * 11.0 + h * 17.0)) * 0.75;
     float cov = max(line, twig) * (1.0 - smoothstep(0.75, 1.0, d)) + (1.0 - smoothstep(0.0, 0.18, d));
     cov = clamp(cov, 0.0, 1.0);
-    vec3 wood = ${v3(0x6d5f52)} * (0.75 + 0.35 * lit);
-    wood = mix(wood, ${v3(SNOW)} * (0.85 + 0.15 * lit), envSnow * smoothstep(0.3, 0.8, lit + twig * 0.4) * 0.8);
+    vec3 wood = envWood(lit, smoothstep(0.3, 0.8, lit + twig * 0.4));
     // the last leaves hanging on as it goes bare
     vec3 leaves = mix(c, wood, smoothstep(0.2, 1.0, bare));
     res = vec4(mix(c, leaves, smoothstep(0.0, 0.5, bare)), mix(1.0, cov * 0.92, smoothstep(0.35, 1.0, bare)));
@@ -205,7 +228,8 @@ export function seasonal(mat: THREE.MeshLambertMaterial, opts: { roofs?: boolean
     // (higher up, green is a tree's leaves: they turn and fall with the rest)
     if (vEnvW.y > 0.8 && green > 0.0) {
       vec2 tc = floor(vEnvW.xz / 5.0);
-      vec4 lf = envLeaf(dc, envHash(tc + 1.7), envHash(tc + 8.3), vec2(0.0, 0.6), 0.6, 0.3);
+      // (a blue-green one is a pine: evergreen, whatever the others do)
+      vec4 lf = envLeaf(dc, envHash(tc + 1.7), envHash(tc + 8.3), vec2(0.0, 0.6), 0.6, dc.b > dc.r ? 1.01 : 0.3);
       dc = mix(dc, lf.rgb, green);
     }
     if (envSnow > 0.001) {

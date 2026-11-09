@@ -10,6 +10,9 @@ Outputs
     tools/blender/previews/_overview_*.png  all models side by side, same scale
     public/models/README.md           manifest written from re-importing every GLB
 
+Emitters: empties `stack_N`, `steam_N`, `dust_N`, `haze_N`, `flare_N`, `chimney_N` mark where a model smokes (see
+emitter() below; the game's plumes rise from them, src/render/smoke.ts). Their uniform scale is the plume's width (m).
+
 Conventions (1 unit = 1 m, Blender Z up)
     Buildings: origin at the ground centre of the lot, lot = the whole w (X) x d (Y) footprint, road-facing
     front at -Y. Front strip = asphalt parking. Empties park_0.. sit at each bay centre (z = 0.06) with their
@@ -189,6 +192,7 @@ class Mesh:
     def __init__(self):
         self.bm = bmesh.new()
         self.mats = []
+        self.fx = []
 
     def mi(self, m):
         if m not in self.mats:
@@ -243,6 +247,12 @@ class Mesh:
 
 
 # ------------------------------------------------------------------ primitives
+
+def emitter(M, kind, x, y, z, size=1.0):
+    """Where the game hangs smoke, steam or dust on this model: exported as an empty `<kind>_<n>` at the mouth, its
+    scale the plume's width there (m). Kinds: stack (smoke), steam, dust, haze (sawdust), flare, chimney (a home's)."""
+    M.fx.append((kind, x, y, z, size))
+
 
 def rect(x0, x1, y0, y1, z):
     return [(x0, y0, z), (x1, y0, z), (x1, y1, z), (x0, y1, z)]
@@ -450,6 +460,7 @@ def b_house(M, P):
     gable(M, 2.4, 5.4, -2.4, 0.2, 3.0, 4.5, "y", roof, wall, oh_a=(0.4, 0.0))
     box(M, -0.8, 2.4, -1.3, -0.2, 2.35, 2.55, roof, bevel=0.04)
     box(M, 0.2, 0.9, 3.0, 3.7, 2.5, 5.7, P["res_trim"], bevel=0.04)
+    emitter(M, "chimney", 0.55, 3.35, 5.7, 0.6)
     return L
 
 
@@ -462,6 +473,7 @@ def b_house_b(M, P):
     box(M, 0.6, 3.0, -3.0, -1.8, 0, 2.5, P["res_trim"])
     gable(M, 0.6, 3.0, -3.0, -1.8, 2.5, 3.4, "y", roof, P["res_trim"], oh_u=(0.2, 0.2), oh_a=(0.25, 0.0))
     box(M, 5.2, 5.9, 1.0, 1.8, 0, 5.2, wall, bevel=0.04)
+    emitter(M, "chimney", 5.55, 1.4, 5.2, 0.6)
     return L
 
 
@@ -480,6 +492,7 @@ def b_house_c(M, P):
     box(M, -1.0, -0.2, y0, y0 + 2.6, 0, 2.4, wall)
     box(M, -1.2, 0.0, y0 - 0.2, y0 + 2.8, 2.4, 2.6, roof, bevel=0.04)
     box(M, 4.6, 5.2, 3.0, 3.6, 2.5, 6.0, P["brick_home"], bevel=0.04)
+    emitter(M, "chimney", 4.9, 3.3, 6.0, 0.6)
     return L
 
 
@@ -506,6 +519,7 @@ def b_terrace(M, P):
         # chimney on the party wall
         if i < 2:
             box(M, x1 - 0.35, x1 + 0.35, y1 - 1.6, y1 - 0.9, ze, ze + 2.9, P["res_trim"], bevel=0.04)
+            emitter(M, "chimney", x1, y1 - 1.25, ze + 2.9, 0.6)
     return L
 
 
@@ -820,6 +834,7 @@ def b_works(M, P):
         cyl(M, cx, cy, 1.05, ftop, ch, P["ind_steel"], n=12)
         cyl(M, cx, cy, 1.15, ch - 2.6, ch - 1.6, copper, n=12)
         cyl(M, cx, cy, 1.12, ch, ch + 0.2, dark, n=12)
+        emitter(M, "stack", cx, cy, ch + 0.2, 2.1)
     # pipe bridge between the buildings
     box(M, x1 - 0.2, fx0 + 0.2, 4.0, 5.2, 6.5, 7.4, copper)
     return L
@@ -844,6 +859,13 @@ def b_foodplant(M, P):
     box(M, x1 - 0.2, 10.4, L.y0 + 4.4, L.y0 + 5.2, 5.0, 5.7, P["ind_steel"])
     cyl(M, 10.4, L.y1 - 3.0, 2.4, 0, 4.5, P["ind_steel"], n=14)
     cyl(M, 10.4, L.y1 - 3.0, 2.45, 4.5, 4.9, yellow, n=14)
+    # the boiler's stack on the roof, a yellow collar near its top
+    bx, by = 0.6, y1 - 3.2
+    box(M, bx - 0.9, bx + 0.9, by - 0.9, by + 0.9, top, top + 0.9, dark, bevel=0.05)
+    cyl(M, bx, by, 0.5, top + 0.9, top + 7.0, P["ind_steel"], n=8)
+    cyl(M, bx, by, 0.56, top + 5.6, top + 6.1, yellow, n=8)
+    cyl(M, bx, by, 0.38, top + 7.0, top + 7.05, P["coal"], n=8)
+    emitter(M, "stack", bx, by, top + 7.05, 1.0)
     return L
 
 
@@ -1704,6 +1726,7 @@ def b_coalplant(M, P):
     for za, zb, m in ((1.2, 50.0, white), (50.0, 54.0, red), (54.0, 58.0, white), (58.0, 62.0, red)):
         revolve(M, cx, cy, [(rad(za), za), (rad(zb), zb)], m, n=14)
     cyl(M, cx, cy, rad(62.0) - 0.35, 62.0, 62.08, P["coal"], n=12)
+    emitter(M, "stack", cx, cy, 62.08, 3.1)
     # coal yard at the back left: concrete bunker walls round a dark pile, a conveyor up to the boiler house
     kx0, kx1, ky0, ky1 = -30.5, -15.0, by1 + 0.8, L.y1 + 0.5
     box(M, kx0, kx1, ky0, ky1, PAD_H, PAD_H + 0.04, P["concrete"])
@@ -1716,6 +1739,7 @@ def b_coalplant(M, P):
     tx, ty = 19.0, L.y1 - 11.5
     revolve(M, tx, ty, [(10.6, 0.0), (9.6, 4.0), (8.0, 12.0), (7.1, 19.0), (7.0, 22.0), (7.4, 26.0)], P["cp_tower"], n=24)
     cyl(M, tx, ty, 6.9, 26.0, 26.08, P["cp_inside"], n=24)
+    emitter(M, "steam", tx, ty, 26.08, 13.0)
     cyl(M, tx, ty, 10.7, 0, 0.9, P["concrete"], n=24)
     pipe_x(M, ty - 3.0, 1.2, 0.8, -6.0, tx - 9.6, P["ind_steel"])
     # switchyard at the front right: gravel, transformers and two gantries
@@ -2182,6 +2206,9 @@ def b_sawmill(M, P):
     cyl(M, -6.0, 9.4, 0.65, 0, 14.0, P["ind_steel"], n=8)
     cyl(M, -6.0, 9.4, 0.72, 11.6, 12.4, P["sm_roof"], n=8)
     cyl(M, -6.0, 9.4, 0.5, 14.0, 14.06, P["coal"], n=8)
+    emitter(M, "stack", -6.0, 9.4, 14.06, 1.3)
+    emitter(M, "haze", 6.0, 3.8, 11.5, 2.0)
+    emitter(M, "haze", hx0 - 1.0, cy, 4.0, 2.6)
     return L
 
 
@@ -2254,6 +2281,7 @@ def b_ironmine(M, P):
     taper(M, (bx - 0.8, bx + 0.8, by - 0.8, by + 0.8), (bx - 2.6, bx + 2.6, by - 2.2, by + 2.2), 4.5, 7.5, rust, bevel=0.05)
     box(M, bx - 2.65, bx + 2.65, by - 2.25, by + 2.25, 7.5, 9.0, rust, bevel=0.05)
     taper(M, (bx - 2.0, bx + 2.0, by - 1.6, by + 1.6), (bx - 0.7, bx + 0.7, by - 0.5, by + 0.5), 9.0, 9.6, P["ore_pile"])
+    emitter(M, "dust", bx, by, 9.6, 3.2)
     conveyor(M, P, (3.0, hy0 + 4.5, 7.0), (bx, by + 2.0, 9.4), wd=1.2)
     # ore heaps along the back, a front-end loader working one
     pile(M, -12.0, 13.2, 6.0, 3.6, 4.2, P["ore_pile"])
@@ -2283,9 +2311,11 @@ def b_coalmine(M, P):
     # headframe at the back right, a belt from it up into the washery
     headframe(M, P, 10.0, 10.5, 16.0, P["ind_steel"])
     conveyor(M, P, (8.0, 9.0, 6.0), (wx1 + 0.2, wy1 - 3.0, 13.0), wd=1.2)
+    emitter(M, "dust", wx1 + 0.2, wy1 - 3.0, 13.6, 2.6)
     # coal stockpile at the back left, a stacker boom over it
     pile(M, -9.0, 14.2, 9.0, 3.0, 4.6, P["coal"])
     bar(M, (-1.5, 12.0), (-12.0, 15.0), 0.7, 5.6, 6.1, P["ind_steel"])
+    emitter(M, "dust", -12.0, 15.0, 5.6, 3.0)
     box(M, -2.1, -0.9, 11.4, 12.6, 0, 5.6, dark)
     # loadout silo on legs over the truck lane, front right
     sx, sy = 11.5, -4.5
@@ -2324,6 +2354,9 @@ def b_quarry(M, P):
     taper(M, (kx0 + 1.0, kx1 - 1.0, ky1 - 3.0, ky1 - 0.6), (kx0 + 0.2, kx1 - 0.2, ky1 - 3.6, ky1 + 0.4), 7.2, 9.0,
           P["ind_orange"])
     conveyor(M, P, (17.5, ky0 - 0.2, 6.0), (16.5, yp + 4.0, 7.4), wd=1.0, legs=(0.5,))
+    emitter(M, "dust", (kx0 + kx1) / 2, ky1 - 1.6, 9.0, 4.0)
+    emitter(M, "dust", 16.5, yp + 4.0, 7.4, 2.4)
+    emitter(M, "dust", ex - 4.2, ey + 1.6, 2.6, 3.0)
     cone_pile(M, 16.5, yp + 3.4, 3.4, 6.4, P["lime"])
     cone_pile(M, 9.5, yp + 2.6, 2.4, 4.4, P["lime2"])
     return L
@@ -2367,10 +2400,13 @@ def b_smelter(M, P):
     cyl(M, 5.0, y1 - 2.0, 1.8, 0, 38.0, P["concrete"], n=12)
     cyl(M, 5.0, y1 - 2.0, 1.9, 33.0, 35.0, P["rust2"], n=12)
     cyl(M, 5.0, y1 - 2.0, 1.4, 38.0, 38.06, P["coal"], n=10)
+    emitter(M, "stack", 5.0, y1 - 2.0, 38.06, 2.8)
+    emitter(M, "steam", fx, fy, 33.6, 3.0)
     box(M, 10.0, 25.5, y0, y0 + 5.0, PAD_H, PAD_H + 0.03, P["gravel"])
     for x in (13.0, 18.0, 23.0):
         revolve(M, x, y0 + 2.5, [(1.0, PAD_H), (1.6, 2.2), (1.7, 2.4), (0.0, 2.4)], P["furnace"], n=10)
         cyl(M, x, y0 + 2.5, 1.2, 2.4, 2.45, P["glow"], n=8)
+    emitter(M, "steam", 18.0, y0 + 2.5, 2.45, 1.6)
     return L
 
 
@@ -2424,6 +2460,9 @@ def b_cementworks(M, P):
     cyl(M, 22.0, y1 - 4.0, 1.4, 0, 30.0, P["concrete"], n=10)
     cyl(M, 22.0, y1 - 4.0, 1.5, 26.0, 27.4, P["cp_red"], n=10)
     cyl(M, 22.0, y1 - 4.0, 1.0, 30.0, 30.06, P["coal"], n=8)
+    emitter(M, "stack", 22.0, y1 - 4.0, 30.06, 2.0)
+    emitter(M, "steam", (px0 + px1) / 2, (py0 + py1) / 2, 35.4, 3.2)
+    emitter(M, "dust", -20.0, 3.25, 7.2, 3.4)
     return L
 
 # ------------------------------------------------------------------ tier 3 industry
@@ -2495,6 +2534,7 @@ def b_sandpit(M, P):
     M.loft([(x, y, z - 0.7) for x, y, z in lo], lo, P["ind_steel"])
     taper(M, (px0 + 1.5, px1 - 1.5, py0 + 0.5, py0 + 3.0), (px0 + 0.8, px1 - 0.8, py0 - 0.2, py0 + 3.6), 7.6, 9.4,
           P["ind_yellow"])
+    emitter(M, "dust", (px0 + px1) / 2, py0 + 1.6, 9.4, 2.4)
     # belts out to the heaps near the front
     for (hx, hy, r, h, m) in ((15.8, yp + 4.2, 3.6, 6.4, P["sand_pile"]), (9.0, yp + 3.6, 3.0, 5.2, P["sand_pile2"])):
         conveyor(M, P, ((px0 + px1) / 2, py0 + 0.2, 5.0), (hx, hy + 0.4, h + 0.8), wd=0.9, legs=(0.5,))
@@ -2535,10 +2575,13 @@ def b_refinery(M, P):
         cyl(M, x, (hy0 + hy1) / 2, 0.9, 9.3, 22.0, steel, n=10)
         cyl(M, x, (hy0 + hy1) / 2, 0.95, 19.0, 20.0, P["cp_red"], n=10)
         cyl(M, x, (hy0 + hy1) / 2, 0.6, 22.0, 22.06, P["coal"], n=8)
+        emitter(M, "stack", x, (hy0 + hy1) / 2, 22.06, 1.3)
     fx, fy = 25.0, -6.0
     cyl(M, fx, fy, 0.5, 0, 34.0, steel, n=8)
     box(M, fx - 1.4, fx + 1.4, fy - 1.4, fy + 1.4, 0, 0.8, P["concrete"])
     revolve(M, fx, fy, [(0.55, 34.0), (0.9, 35.4), (0.0, 37.2)], P["flame"], n=8)
+    emitter(M, "flare", fx, fy, 36.4, 1.8)
+    emitter(M, "steam", -14.0, -4.0, 31.2, 1.6)
     flat_block(M, -26.5, -19.0, y0, y0 + 6.0, 4.0, P["ind_wall"], P["ind_roof"])
     return L
 
@@ -2565,6 +2608,7 @@ def b_glassworks(M, P):
         cyl(M, cx, cy, 1.2, ftop, ch, P["concrete"], n=12)
         cyl(M, cx, cy, 1.25, ch - 3.0, ch - 2.0, P["cp_red"], n=12)
         cyl(M, cx, cy, 0.8, ch, ch + 0.06, P["coal"], n=10)
+        emitter(M, "stack", cx, cy, ch + 0.06, 1.7)
     # batch silos behind the hall
     for i in range(3):
         sx = 4.0 + i * 4.8
@@ -2620,6 +2664,7 @@ def b_furniture(M, P):
         ribs(M, sx0 + 1.2, sx1 - 1.2, yy, yy + 3.4, 1.6 + 0.4 * (i % 2), P["stick"], 3, along="y", wd=0.2, h=0.1)
     # dust extraction cyclone beside the hall
     revolve(M, 9.5, y0 + 0.8, [(0.2, 2.5), (1.4, 5.5), (1.4, 8.5), (0.0, 9.0)], P["ind_steel"], n=10)
+    emitter(M, "haze", 9.5, y0 + 0.8, 9.0, 1.8)
     for dx in (-1.0, 1.0):
         box(M, 9.5 + dx - 0.12, 9.5 + dx + 0.12, y0 + 0.7, y0 + 0.9, 0, 5.5, dark)
     bar(M, (hx1, y0 + 4.0), (9.5, y0 + 0.8), 0.6, 7.6, 8.1, P["ind_steel"])
@@ -2642,6 +2687,7 @@ def b_constructionplant(M, P):
     bx0, bx1, by0, by1 = 13.0, 18.0, y0 + 1.0, y0 + 7.0
     top = flat_block(M, bx0, bx1, by0, by1, 16.0, P["cement"], roof)
     band(M, bx0, bx1, by0, by1, 13.0, 13.8, P["ind_yellow"], o=0.05)
+    emitter(M, "dust", (bx0 + bx1) / 2, (by0 + by1) / 2, top + 0.3, 3.0)
     for sx in (20.5,):
         for sy in (by0 + 1.2, by1 - 1.2):
             revolve(M, sx, sy, [(0.4, 3.5), (1.6, 5.5), (1.6, 17.5), (0.0, 18.3)], P["cement"], n=12)
@@ -2712,6 +2758,8 @@ def b_coppermine(M, P):
     taper(M, (kx0 + 1.0, kx1 - 1.0, ky1 - 3.0, ky1 - 0.5), (kx0 + 0.2, kx1 - 0.2, ky1 - 3.6, ky1 + 0.5), 8.2, 10.0,
           P["ind_copper"])
     conveyor(M, P, (18.0, ky0 - 0.2, 7.0), (17.0, yp + 4.8, 8.0), wd=1.1, legs=(0.5,))
+    emitter(M, "dust", (kx0 + kx1) / 2, ky1 - 1.5, 10.0, 4.0)
+    emitter(M, "dust", cx, cy, 0.6, 4.6)
     pile(M, 15.0, yp + 4.2, 6.0, 3.7, 6.4, P["cu_ore"])
     return L
 
@@ -2737,11 +2785,13 @@ def b_coppersmelter(M, P):
     cyl(M, sx, sy, 2.2, 0, 46.0, P["concrete"], n=14)
     cyl(M, sx, sy, 2.3, 40.0, 42.5, P["cp_red"], n=14)
     cyl(M, sx, sy, 1.8, 46.0, 46.06, P["coal"], n=12)
+    emitter(M, "stack", sx, sy, 46.06, 3.6)
     # acid plant: white tanks and a scrubber tower
     for (tx, ty, r, h) in ((2.0, y1 - 5.0, 3.4, 9.0), (10.0, y1 - 5.0, 3.4, 9.0), (18.5, y1 - 4.0, 2.6, 7.0)):
         tank(M, P, tx, ty, r, h, P["ind_tank"])
     cyl(M, 5.5, 4.0, 1.6, 0, 20.0, P["column_steel"], n=12)
     revolve(M, 5.5, 4.0, [(1.6, 20.0), (0.0, 21.2)], P["column_steel"], n=12)
+    emitter(M, "steam", 5.5, 4.0, 21.2, 2.0)
     cyl(M, 5.5, 4.0, 2.1, 12.0, 12.4, P["ind_yellow"], n=12)
     pipe_x(M, 4.0, 10.0, 0.6, hx1, 5.5 - 1.6, P["ind_steel"])
     # anode casting shed and the anode stacks
@@ -2772,6 +2822,8 @@ def b_electronics(M, P):
             box(M, ax - 2.6, ax + 2.6, ay - 1.6, ay + 1.6, top, top + 1.6, P["ac_box"])
             for j in range(3):
                 cyl(M, ax - 1.7 + j * 1.7, ay, 0.62, top + 1.6, top + 1.7, P["ac_fan"], n=8)
+            if (i, k) in ((0, 2), (3, 0)):
+                emitter(M, "steam", ax, ay, top + 1.7, 2.2)
     # glazed office wing at the front left
     ox0, ox1, oy0, oy1 = -20.5, -6.0, y0, fy0 + 0.5
     otop = flat_block(M, ox0, ox1, oy0, oy1, 7.5, P["el_glass"], P["el_wall"])
@@ -2816,6 +2868,12 @@ def b_machineworks(M, P):
             M.loft(lo, [(x, y, z + 0.1) for x, y, z in lo], P["saw_glass"])
     for x in (-20.0, -12.0, -4.0):
         box(M, x - 2.6, x + 2.6, hy0 - 0.06, hy0, 0, 8.0, dark)
+    # the forge's stack, up through the roof near the back corner, a band near its top
+    kx, ky = hx0 + 3.5, hy1 - 6.0
+    cyl(M, kx, ky, 0.8, 12.0, 25.0, P["ind_steel"], n=10)
+    cyl(M, kx, ky, 0.88, 22.2, 23.0, P["mw_band"], n=10)
+    cyl(M, kx, ky, 0.6, 25.0, 25.06, P["coal"], n=8)
+    emitter(M, "stack", kx, ky, 25.06, 1.7)
     # crane runway out of the hall's side over the yard
     for y in (hy0 + 6.0, hy1 - 2.0):
         box(M, hx1, 22.0, y - 0.4, y + 0.4, 9.0, 9.8, yellow)
@@ -3301,6 +3359,7 @@ def b_highstreet(M, P):
               oh_u=(0.35, 0.35) if i != 1 else (0.0, 0.0), oh_a=(0.0, 0.0) if i != 1 else (0.3, 0.3))
         if i < 2:
             box(M, x1 - 0.35, x1 + 0.35, y1 - 2.6, y1 - 1.8, ze, ze + 3.2, P["res_trim"], bevel=0.04)
+            emitter(M, "chimney", x1, y1 - 2.2, ze + 3.2, 0.6)
         # each shop's back door onto the car park
         box(M, x0 + 1.2, x0 + 2.1, y1, y1 + 0.06, 0, 2.2, P["res_trim"])
     return L
@@ -4147,6 +4206,7 @@ def b_chemworks(M, P):
         box(M, x - 2.0, x + 2.0, sy0 - 0.06, sy0, 0, 5.0, dark)
     taper(M, (-9.0, -6.0, y1 - 6.0, y1 - 3.0), (-8.2, -6.8, y1 - 5.2, y1 - 3.8), 0, 30.0, P["ch_brick"])
     box(M, -8.4, -6.6, y1 - 5.4, y1 - 3.6, 26.0, 27.0, P["concrete"])
+    emitter(M, "stack", -7.5, y1 - 4.5, 30.0, 1.5)
     # the kiln: a long rotary drum on three piers, running out of the shed's side
     ky = sy0 + 3.0
     for x in (-1.0, 3.5, 8.0):
@@ -4158,6 +4218,7 @@ def b_chemworks(M, P):
     cx, cy = 2.5, y1 - 5.0
     cyl(M, cx, cy, 2.0, 0, 22.0, P["column_steel"], n=12)
     revolve(M, cx, cy, [(2.0, 22.0), (1.2, 23.4), (0.0, 23.8)], P["column_steel"], n=12)
+    emitter(M, "steam", cx, cy, 23.8, 1.8)
     for z in (8.0, 15.0):
         cyl(M, cx, cy, 2.7, z, z + 0.3, P["ind_yellow"], n=12)
     pipe_x(M, cy, 12.0, 0.35, sx1, cx - 2.0, steel, n=6)
@@ -4281,6 +4342,7 @@ def b_creamery(M, P):
     ctop = flat_block(M, cx0, cx1, cy0, cy1, 6.0, wall, roof)
     for x in (8.0, 13.0):
         ac_unit(M, x, (cy0 + cy1) / 2, ctop, P)
+    emitter(M, "steam", 8.0, (cy0 + cy1) / 2, ctop + 1.0, 1.6)
     for x in (8.0, 13.5):
         box(M, x - 1.6, x + 1.6, cy0 - 0.3, cy0, 0.9, 4.2, P["ind_dark"])
     box(M, cx0, cx1, cy0 - 1.2, cy0, 0, 0.9, P["concrete"])
@@ -4306,9 +4368,11 @@ def b_rubberplant(M, P):
         box(M, x - 2.0, x + 2.0, hy0 - 0.06, hy0, 0, 4.8, dark)
     cyl(M, -2.0, hy1 - 3.0, 0.9, 9.0, 24.0, P["ch_brick"], n=10)
     cyl(M, -2.0, hy1 - 3.0, 0.95, 21.5, 22.3, P["concrete"], n=10)
+    emitter(M, "stack", -2.0, hy1 - 3.0, 24.0, 1.8)
     # reactor yard: tower, three vessels, a pipe bridge to the hall
     cyl(M, 9.0, y1 - 5.0, 1.6, 0, 20.0, P["column_steel"], n=12)
     revolve(M, 9.0, y1 - 5.0, [(1.6, 20.0), (0.9, 21.0), (0.0, 21.3)], P["column_steel"], n=12)
+    emitter(M, "steam", 9.0, y1 - 5.0, 21.3, 1.5)
     cyl(M, 9.0, y1 - 5.0, 2.2, 12.0, 12.3, P["ind_yellow"], n=12)
     for i, x in enumerate((13.5, 17.0, 20.5)):
         revolve(M, x, y1 - 4.0, [(0.0, 1.8), (1.3, 2.4), (1.3, 7.5 + 0.5 * i), (0.0, 8.4 + 0.5 * i)], P["ind_tank"], n=10)
@@ -4380,6 +4444,7 @@ def b_motorworks(M, P):
     flat_block(M, px0, px1, hy0 + 4.0, hy1, 11.0, P["ind_wall"], P["ind_roof"])
     for y in (hy0 + 8.0, hy1 - 4.0):
         cyl(M, px1 - 2.5, y, 0.7, 11.0, 20.0, P["ind_steel"], n=8)
+        emitter(M, "stack", px1 - 2.5, y, 20.0, 1.4)
     # finished cars in rows on the lot to the right, nose to the gate
     cols = (P["car_red"], P["car_blue"], P["car_green"], P["car_cream"])
     box(M, px1 + 1.0, 31.4, y0, hy1, PAD_H, PAD_H + 0.01, P["asphalt"])
@@ -5715,6 +5780,17 @@ def build_building(name):
         e.location = (x, y, PAD_H)
         coll.objects.link(e)
         objs.append(e)
+    count = {}
+    for kind, x, y, z, size in M.fx:
+        i = count.get(kind, 0)
+        count[kind] = i + 1
+        e = bpy.data.objects.new(f"{kind}_{i}", None)
+        e.empty_display_type = "SPHERE"
+        e.empty_display_size = 0.5
+        e.location = (x, y, z)
+        e.scale = (size, size, size)
+        coll.objects.link(e)
+        objs.append(e)
     return objs
 
 
@@ -5882,6 +5958,7 @@ def verify(names):
         tris = sum(len(p.vertices) - 2 for o in meshes for p in o.data.polygons)
         st = {"size": [round(v, 3) for v in size], "min": [round(v, 3) for v in lo], "tris": tris,
               "meshes": sorted(o.name for o in meshes), "parks": len(empties),
+              "fx": sorted(o.name for o in objs if o.type == "EMPTY" and not o.name.startswith("park_")),
               "materials": sorted({m.name for o in meshes for m in o.data.materials if m}), "issues": []}
         if name in BUILDINGS:
             _, w, d, nb = BUILDINGS[name]

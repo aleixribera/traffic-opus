@@ -58,7 +58,12 @@ import { MapLabels } from "./ui/labels";
 import { MapIcons } from "./ui/mapIcons";
 import { Pops } from "./ui/pops";
 import { Terrain3D } from "./render/terrain3d";
-import { Clearing, clearShapes } from "./render/clearing";
+import { clearShapes } from "./render/clearing";
+import { Forest } from "./render/forest";
+import { Trees3D } from "./render/trees3d";
+import { holdWind, setWind } from "./render/wind";
+import { Smoke } from "./render/smoke";
+import { Birds } from "./render/birds";
 import { Vehicles3D } from "./render/vehicles3d";
 import { Lamps3D } from "./render/lamps3d";
 import { DayCycle } from "./render/daycycle";
@@ -139,6 +144,12 @@ export class App {
   fireworks = new Fireworks();
   /** everything heard (audio/index.ts): the world through the camera, the interface, the moments, the wireless */
   readonly audio = new GameAudio();
+  /** smoke, steam and dust: every works that is running, the homes' chimneys in the cold, the dirt roads */
+  smoke = new Smoke();
+  /** which layout of the buildings the smoke's emitters were last taken from */
+  private smokeSig = -1;
+  /** a few birds wheeling over the woods and the fields by day */
+  birds = new Birds();
   /** money and moments rising off the map, and the shelf-time rings over refrigerated trucks */
   pops = new Pops();
   /** Shift + wheel scrolling not yet turned into a whole degree (px) */
@@ -149,7 +160,16 @@ export class App {
   vehicles!: Vehicles3D;
   buildings3d!: Buildings3D;
   terrain3d!: Terrain3D;
-  private clearing!: Clearing;
+  /** where the wild trees stand (one list for the 3D trees and the ground's painted crowns) */
+  private forest!: Forest;
+  private trees3d!: Trees3D;
+  /** something was built or removed: the trees round it are due a look (at most a few times a second) */
+  private forestDue = false;
+  private forestAt = 0;
+  /** the wind's clock: real seconds while the game runs (it stands still on pause, like everything else) */
+  private windClock = 0;
+  /** which lists of planted trees the 3D trees were last given */
+  private treeSig = "";
   preview = new Preview3D();
   saves = new Saves();
   hud!: Hud;
@@ -256,6 +276,8 @@ export class App {
       set: (o: Parameters<DayCycle["set"]>[0]) => dc.set(o),
       clear: () => dc.clear(),
       get: () => ({ hour: dc.hour, yday: dc.yday, mode: dc.mode, light: dc.light, look: dc.look }),
+      // (hold the wind: the bearing it blows toward in degrees, 0 east and 90 south, and its strength 0..1; no arguments lets it go)
+      wind: (deg?: number, strength?: number) => holdWind(deg, strength),
     };
     this.view.scene.add(this.preview.group);
   }
@@ -560,12 +582,17 @@ export class App {
     this.hud?.clearBanners();
     for (const c of [...this.worldRoot.children]) this.worldRoot.remove(c);
     const small = Math.min(window.innerWidth, window.innerHeight) < 700;
-    this.terrain3d = new Terrain3D(g.terrain, small);
-    // (no trees on roads, their verges, sites or plots: the ground's crowns give way round whatever is built)
-    this.clearing?.dispose();
-    this.clearing = new Clearing(() => clearShapes(g.net, g.buildings.list));
-    const sh = this.terrain3d.shared;
-    sh.uClear.value = this.clearing.tex; sh.uClearO.value = this.clearing.origin; sh.uClearS.value = this.clearing.size;
+    // (no trees on roads, their verges, sites or plots: they give way round whatever is built)
+    this.forest = new Forest(g.terrain);
+    this.forest.setShapes(clearShapes(g.net, g.buildings.list));
+    this.forestDue = false;
+    this.terrain3d = new Terrain3D(g.terrain, this.forest, small);
+    this.trees3d?.dispose();
+    this.trees3d = new Trees3D(this.models.trees, this.forest);
+    this.treeSig = "";
+    this.smoke.reset();
+    this.smokeSig = -1;
+    this.birds.setWorld((x, y) => g.terrain.gen.at(x, y));
     this.roads = new Roads3D(g.net, {
       props: this.models.props, isWater: (p) => g.terrain.isWater(p),
       // each driveway as a line from where it leaves the road to the lot (a home's middle, a site's gate): no street
@@ -603,7 +630,7 @@ export class App {
     this.highlight.set(null);
     this.highlight.hoverV = null;
     this.glide = null;
-    this.worldRoot.add(this.terrain3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.greens3d.group, this.lamps.group, this.fireworks.group);
+    this.worldRoot.add(this.terrain3d.group, this.trees3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.greens3d.group, this.lamps.group, this.fireworks.group, this.birds.mesh, this.smoke.mesh);
     this.roads.rebuildAll();
     this.buildings3d.rebuild(g.buildings.list);
     { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }
@@ -617,9 +644,9 @@ export class App {
       // (a delivery or a by-product leaving only pops over the map: nothing else on screen changes)
       if (e.t === "delivery") { this.camera.note(e.d.to.c.x, e.d.to.c.y); if (this.mode !== "menu") this.pops.delivery(e.d, this.view); if (e.d.lost > 0 && this.mode === "play") this.audio.sting("spoil"); return; }
       if (e.t === "shipped") { if (this.mode !== "menu") this.pops.shipped(e.from, e.to, e.p, this.view); return; }
-      if (e.t === "roads") { this.roads.apply(e.cs); this.clearing.invalidate(); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
+      if (e.t === "roads") { this.roads.apply(e.cs); this.forestDue = true; this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
       else if (e.t === "buildings") {
-        this.buildings3d.rebuild(g.buildings.list); this.roads.refreshGates(); this.roads.refreshLook(); this.clearing.invalidate(); this.applyTint(); this.dirtyPreview = true;
+        this.buildings3d.rebuild(g.buildings.list); this.roads.refreshGates(); this.roads.refreshLook(); this.forestDue = true; this.applyTint(); this.dirtyPreview = true;
         { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }
         // (street trees make way for new driveways: at most twice a second while a town grows)
         if (!this.treesDue) this.treesDue = setTimeout(() => { this.treesDue = 0; this.roads.refreshTrees(); }, 500);
@@ -1890,6 +1917,8 @@ export class App {
     const g = this.game;
     const L = this.dayCycle.update(g.time + g.alpha * SIM.dt, dt, this.mode === "menu", this.overlay !== "none");
     this.view.setLight(L.amb, L.sun, L.dir);
+    this.smoke.setLight(L.amb, L.sun, L.dir);
+    this.birds.setLight(L.amb, L.sun, L.dir);
     // (no shadow map once the direct light is too faint to cast one)
     if (L.shade < 0.04) this.view.sun.castShadow = false;
     // the fields follow the season shown (the menu's and the dev hook's too)
@@ -2009,8 +2038,35 @@ export class App {
     const far = this.view.halfH > 1800;
     this.vehicles.group.visible = !far;
     this.view.sun.castShadow = this.view.halfH < 2400;
-    this.clearing.update(this.view.renderer, this.view.cx, this.view.cy);
+    // the trees make way for what was just built (and come back where it was removed)
+    if (this.forestDue && now - this.forestAt > 250) {
+      this.forestDue = false;
+      this.forestAt = now;
+      this.terrain3d.invalidateTrees(this.forest.setShapes(clearShapes(g.net, g.buildings.list)));
+    }
     this.dayFrame(dt, far);
+    if (!g.paused) this.windClock += dt;
+    setWind(g.time + g.alpha * SIM.dt, this.windClock);
+    // the trees stand in 3D near in; farther out the ground paints their crowns. The planted ones (streets, greens,
+    // squares, front gardens) are handed over whenever their lists change
+    const tv = `${this.roads.treeVersion}:${this.greens3d.treeVersion}:${this.buildings3d.treeVersion}`;
+    if (tv !== this.treeSig) {
+      this.treeSig = tv;
+      this.trees3d.setPlanted([...this.roads.streetTrees, ...this.greens3d.trees, ...this.buildings3d.squareTrees, ...this.buildings3d.stripTrees]);
+    }
+    this.trees3d.update(this.view.camera, this.view.mpp, this.terrain3d.shared.uOverlay.value > 0.5);
+    this.terrain3d.shared.uPaint.value = this.trees3d.paint;
+    this.terrain3d.crownsSoon = this.trees3d.handoverNear;
+    // the works smoke, the chimneys too in the cold, and the dirt roads raise dust (not on the data maps)
+    if (this.buildings3d.version !== this.smokeSig) {
+      this.smokeSig = this.buildings3d.version;
+      this.smoke.setEmitters(this.buildings3d.emitters);
+    }
+    this.smoke.mesh.visible = this.terrain3d.shared.uOverlay.value < 0.5;
+    this.smoke.update(this.view.camera, this.view.mpp, g.paused ? 0 : dt, g.time + g.alpha * SIM.dt, far ? null : g.traffic);
+    // and over the woods and the fields a few birds wheel
+    this.birds.update(this.view.camera, this.view.mpp, g.paused ? 0 : dt);
+    if (this.terrain3d.shared.uOverlay.value >= 0.5) this.birds.mesh.visible = false;
     this.terrain3d.update(this.view);
     this.roadsFar.update(this.view.mpp, this.view.w, this.view.h);
     this.labels.update(this.view);

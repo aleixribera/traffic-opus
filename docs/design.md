@@ -375,6 +375,58 @@ visuals." Time to enjoy the scenery: the light moves through the day, and the ma
   40 })` lets it run, `__env.set({ mode: "soft" })` tries a setting, `__env.clear()` goes back to the sim's clock.
 - Pure functions of the sim clock: nothing to save.
 
+### A world that moves (2026-11-09)
+
+The map stands up and moves: trees are trees, every running works shows it from across the map, and the open
+country is never quite still. All of it is looks only: nothing here touches the sim or a save.
+
+- **Trees stand** (render/trees3d.ts, render/forest.ts, tools/blender/build_trees.py). Near in, every tree is an
+  instanced Blender model (three broadleaves, a pine, a spruce, two shrubs, each with a far model of a couple of
+  dozen triangles) with a soft shadow. Farther out the ground paints their crowns as flat discs, as it always did.
+  - One rule set for both: which cell holds a tree, how big and what kind is worked out once on the CPU
+    (forest.ts) and baked into a texture the ground shader reads, so the tree that stands near in is the very
+    disc painted from far off, and what was cleared for a road or a site is cleared in both.
+  - The handover is by zoom and by how much ground is in view: the wild trees sink flat on to their discs and
+    thin out pixel by pixel as the painted crowns come up. Nothing pops.
+  - The planted ones stand at every zoom: street trees (one kind along a block or two), median trees, the greens'
+    and the hall squares' trees, the trees in front gardens. A park's lawn takes the season and the night like
+    every other lawn.
+  - The seasons are the same shared uniforms the painted crowns use: blossom, the turn one tree at a time, bare
+    limbs (modelled inside each crown: the leaves fall off them), snow on the evergreens. A works' own pines stay green.
+- **The wind** (render/wind.ts) is one direction and one strength for the whole map, drifting through the day,
+  with gusts on top; a pure function of the clock. It blows mostly out of the west-south-west, so on the map as
+  it first opens plumes lean away to the right and up the screen. Trees lean and shimmer with it, smoke runs
+  downwind, and the soundscape can read it. Dev hook: `__env.wind(deg, strength)` holds it (0 blows east, 90
+  south), `__env.wind()` lets it go.
+- **Smoke, steam and dust** (render/plumes.ts the rules, render/smoke.ts the drawing).
+  - Every works' model says where it smokes: named empties in its GLB (`stack_N`, `steam_N`, `dust_N`, `haze_N`,
+    `flare_N`, and `chimney_N` on the homes), placed in Blender by tools/blender/build_models.py `emitter()`, the
+    empty's scale the plume's width. Nothing is placed by eye in TypeScript.
+  - Stacks smoke (each works its own colour: the smelter's brown, the rubber plant's black, the food plant's
+    pale wisp, the chemical works' yellow), cooling towers and boilers steam, crushers and pit faces raise dust
+    in the colour of what they dig, the sawmill hangs in a haze of sawdust, the refinery's flare burns.
+  - **A works smokes as hard as it is working.** The pace is read off its batch progress between the plants'
+    steps: a starved, full, unstaffed or cut-off works' stack dies away over about half a minute, one without
+    power smokes thinly, and a bigger site smokes more (level 4 about twice level 1, not four and a half times).
+  - A puff rises fast and slows, is bent over by the wind, spreads and thins; it is lit by the hour (warm at
+    dusk, dim blue-grey at night, the works' floodlights catching the foot of the plume) and has a lit and a
+    shaded side from where the sun stands. The plumes cast soft shadows on the ground.
+  - From far off a plume is drawn bigger than life (up to about three times), as a map draws what matters, so a
+    running works still reads at 1,500 m of zoom.
+  - **Homes' chimneys** give a thin wisp all winter and on cold spring and autumn nights (never in summer), on a
+    steady share of the homes, seen only near in.
+  - **Dirt roads** raise a short pale trail behind anything doing more than a crawl, more behind a truck; none
+    in snow.
+  - One instanced draw for the puffs and one for their shadows over a fixed pool of 8,192. A puff is written
+    once, when it is born, and the vertex shader flies it; nothing is allocated per frame. Only what is in view
+    (or just outside it) is emitted, a plume is there in full the moment it comes into view, and if the works in
+    view ever ask for more than the pool every plume is thinned alike.
+- **Birds** (render/birds.ts): a few white birds wheel over the woods and the fields by day, each with its shadow
+  sliding over the ground. More over woodland than farmland, a few over open ground, none over water; fewer in
+  winter; gone at night, from far off and on the data maps. Where the flocks are follows the map's own fields,
+  the same for the same map. One draw call, at most 160 birds, flown by the vertex shader.
+- Paused, the plumes and the birds hang where they are.
+
 ## Transport modes
 
 Every mode makes roads matter more: it crosses them, feeds them, or forces new junctions. Freight still routes

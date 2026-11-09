@@ -15,6 +15,16 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.84", date: "2026-11-09", title: "A world that moves",
+    notes: [
+      "Trees are real trees now: forests, parks, squares, street trees and front gardens stand up and sway in the wind.",
+      "Every works smokes as hard as it is working. A starved plant's stack dies away, and a bigger site smokes more.",
+      "Steam, quarry dust, a flare at the refinery, chimney smoke on cold days and a dust trail behind a truck on a dirt road.",
+      "A few birds wheel over the woods and fields by day.",
+      "Park lawns now follow the season and the hour, and the sawmill's pines stay green in autumn.",
+    ],
+  },
+  {
     v: "v0.0.83", date: "2026-11-09", title: "The game has a sound",
     notes: [
       "The map can be heard: engines and tyres on the street under you, each works at its own trade, towns that murmur by day and go quiet at night.",

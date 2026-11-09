@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import type { FxKind, FxSpot } from "./plumes";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { BuildingKind } from "../config";
 import { SITE_MODELS } from "../game/sites";
@@ -12,6 +13,8 @@ export interface MergedModel {
   geo: THREE.BufferGeometry;
   /** Parking bays (model space): car origin + yaw so the car's nose (+z) faces the bay direction. */
   bays: THREE.Matrix4[];
+  /** Where it smokes, steams or raises dust (the GLB's `stack_N`, `steam_N`... empties; model space). */
+  fx: FxSpot[];
 }
 
 /** A vehicle split by material: tinted parts get the per-vehicle colour; a "beacon" part (a convoy's amber lamps)
@@ -71,7 +74,20 @@ export const VEHICLE_MODELS = [
 export const PROP_MODELS = ["busstop", "fence", "hedge", "picket", "bridge_pier", "bridge_abutment", "bridge_pylon", "bridge_truss", "streetlamp", "floodmast", ...CON_MODELS] as const;
 export type VehicleKind = (typeof VEHICLE_MODELS)[number];
 
+/**
+ * A tree (tools/blender/build_trees.py), every part merged into one geometry: the full model and the one drawn when
+ * it is a few pixels tall. Besides position and normal, each vertex carries `aPart` (0 trunk, 1 leaves, 2 bare limbs,
+ * 3 needles, 4 a shrub's foliage) and `aClump` (the middle of the clump of foliage it belongs to, and the clump's own
+ * random number) and `aTwig` (where the vertex goes when the leaves fall: each facet of a clump thins to a twig), which the tree shader sways, colours and sheds by (render/trees3d.ts).
+ */
+export interface TreeShape {
+  full: THREE.BufferGeometry;
+  lod: THREE.BufferGeometry;
+}
+
 export interface ModelSet {
+  /** The trees and shrubs, by name (render/forest.ts TREE_MODELS). */
+  trees: Map<string, TreeShape>;
   buildings: Map<BuildingKind, MergedModel>;
   vehicles: Map<VehicleKind, VehicleModel>;
   props: Map<string, MergedModel>;
@@ -86,6 +102,7 @@ export async function loadModels(onProgress?: (k: number) => void): Promise<Mode
   const all = [...BUILDING_MODELS, ...HOME_VARIANTS, ...VEHICLE_MODELS, ...PROP_MODELS, ...SITE_PIECES];
   let done = 0;
   const load = (n: string) => loader.loadAsync(base + n + ".glb").then((g) => g.scene);
+  const treesDue = load("trees");
   const scenes = await Promise.all(
     all.map((n) =>
       load(n).then((s) => {
@@ -107,7 +124,66 @@ export async function loadModels(onProgress?: (k: number) => void): Promise<Mode
     else if (SITE_PIECES.includes(n)) sites.set(n, mergeModel(sc));
     else buildings.set(n as BuildingKind, mergeModel(sc));
   });
-  return { buildings, vehicles, props, sites };
+  const treeScene = await treesDue;
+  treeScene.updateMatrixWorld(true);
+  return { buildings, vehicles, props, sites, trees: splitTrees(treeScene) };
+}
+
+const TREE_PARTS: Record<string, number> = { trunk: 0, leaf: 1, bare: 2, needle: 3, bush: 4 };
+
+/** The trees' GLB: one mesh per part, named <tree>__<part> (lod_<part> for the far model). */
+function splitTrees(sc: THREE.Object3D): Map<string, TreeShape> {
+  const by = new Map<string, { full: THREE.BufferGeometry[]; lod: THREE.BufferGeometry[] }>();
+  sc.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    const [tree, part] = m.name.split("__");
+    if (!part) return;
+    const lod = part.startsWith("lod_");
+    const bit = /^(?:lod_)?([a-z]+)(\d*)$/.exec(part);
+    if (!bit || !(bit[1] in TREE_PARTS)) return;
+    const code = TREE_PARTS[bit[1]];
+    let g = m.geometry.clone();
+    g.applyMatrix4(m.matrixWorld);
+    for (const k of Object.keys(g.attributes)) if (k !== "position") g.deleteAttribute(k);
+    if (g.index) g = g.toNonIndexed();
+    // (flat faces, like the buildings)
+    g.computeVertexNormals();
+    const pos = g.getAttribute("position"), n = pos.count;
+    // the clump's middle: a trunk's and the limbs' is their foot on the tree's axis, foliage's the mean of its points
+    let cx = 0, cy = 0, cz = 0, lo = Infinity;
+    for (let i = 0; i < n; i++) { cx += pos.getX(i); cy += pos.getY(i); cz += pos.getZ(i); lo = Math.min(lo, pos.getY(i)); }
+    if (code === 0 || code === 2) { cx = 0; cy = lo; cz = 0; } else { cx /= n; cy /= n; cz /= n; }
+    const rnd = ((Number(bit[2] || 0) + 1) * 0.618034 + tree.length * 0.137) % 1;
+    const clump = new Float32Array(n * 4), kind = new Float32Array(n);
+    for (let i = 0; i < n; i++) { clump.set([cx, cy, cz, rnd], i * 4); kind[i] = code; }
+    // a leaf clump in winter: each facet thins to a twig running out from the clump's middle to one of its corners
+    const twig = new Float32Array(pos.array as Float32Array);
+    if (code === 1) {
+      const C = new THREE.Vector3(cx, cy, cz), tip = new THREE.Vector3(), side = new THREE.Vector3(), foot = new THREE.Vector3();
+      for (let f = 0; f < n / 3; f++) {
+        const k = f % 3, h = ((f + 1) * 0.754877 + rnd) % 1;
+        tip.fromBufferAttribute(pos, f * 3 + k).sub(C);
+        side.set(tip.z, 0, -tip.x);
+        if (side.lengthSq() < 1e-6) side.set(1, 0, 0);
+        side.normalize().multiplyScalar(0.035);
+        foot.copy(C).addScaledVector(tip, 0.1);
+        tip.multiplyScalar(0.78 + 0.34 * h).add(C);
+        tip.toArray(twig, (f * 3 + k) * 3);
+        foot.clone().add(side).toArray(twig, (f * 3 + (k + 1) % 3) * 3);
+        foot.clone().sub(side).toArray(twig, (f * 3 + (k + 2) % 3) * 3);
+      }
+    }
+    g.setAttribute("aTwig", new THREE.BufferAttribute(twig, 3));
+    g.setAttribute("aClump", new THREE.BufferAttribute(clump, 4));
+    g.setAttribute("aPart", new THREE.BufferAttribute(kind, 1));
+    let e = by.get(tree);
+    if (!e) by.set(tree, (e = { full: [], lod: [] }));
+    (lod ? e.lod : e.full).push(g);
+  });
+  const out = new Map<string, TreeShape>();
+  for (const [name, e] of by) out.set(name, { full: mergeGeometries(e.full, false)!, lod: mergeGeometries(e.lod, false)! });
+  return out;
 }
 
 function prepGeometry(m: THREE.Mesh, color: THREE.Color | null): THREE.BufferGeometry {
@@ -133,6 +209,7 @@ function meshColor(m: THREE.Mesh): THREE.Color {
 function mergeModel(sc: THREE.Object3D): MergedModel {
   const geos: THREE.BufferGeometry[] = [];
   const bays: THREE.Matrix4[] = [];
+  const fx: FxSpot[] = [];
   const flip = new THREE.Matrix4().makeRotationY(Math.PI);
   sc.traverse((o) => {
     const m = o as THREE.Mesh;
@@ -156,12 +233,20 @@ function mergeModel(sc: THREE.Object3D): MergedModel {
       const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
       o.matrixWorld.decompose(pos, q, sc);
       bays.push(new THREE.Matrix4().compose(pos, q, new THREE.Vector3(1, 1, 1)).multiply(flip));
+    } else {
+      // an emitter: its place is the plume's mouth, its scale the plume's width there
+      const k = /^(stack|steam|dust|haze|flare|chimney)_?\d+/i.exec(o.name);
+      if (k) {
+        const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+        o.matrixWorld.decompose(pos, q, sc);
+        fx.push({ kind: k[1].toLowerCase() as FxKind, x: pos.x, y: pos.y, z: pos.z, size: sc.x });
+      }
     }
   });
   const geo = mergeGeometries(geos, false)!;
   geo.computeBoundingBox();
   geo.computeBoundingSphere();
-  return { geo, bays };
+  return { geo, bays, fx };
 }
 
 function splitVehicle(sc: THREE.Object3D): VehicleModel {

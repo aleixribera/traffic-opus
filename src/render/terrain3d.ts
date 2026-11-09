@@ -2,8 +2,8 @@ import * as THREE from "three";
 import { F, NF, RIVER_K, RIVER_S } from "../world/gen";
 import { CH, RES, type Terrain } from "../world/terrain";
 import { PAL } from "./palette";
-import { CLEAR_K } from "./clearing";
 import { ENV, ENV_GLSL } from "./envShader";
+import { CANOPY, EVERGREEN, FOREST_R, TREE_CELL, TREE_HASH_GLSL, type Forest, type Rect } from "./forest";
 import type { View } from "./view";
 
 export const MOUNTAIN_STEP_H = 7;
@@ -13,17 +13,19 @@ const MAX_PER_LOD = 220;
 
 const col = (c: number) => new THREE.Color(c);
 
-/** Nothing cleared (till the clearing mask is first drawn). */
-function blankMask(): THREE.Texture {
-  const t = new THREE.DataTexture(new Uint8Array(4), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
-  t.needsUpdate = true;
-  return t;
-}
+/** No trees (a chunk whose crowns are not worked out yet, or never drawn: the coarse levels). */
+const NO_TREES = new THREE.DataTexture(new Uint8Array(4), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+NO_TREES.needsUpdate = true;
 
 interface Chunk {
   mesh: THREE.Mesh;
   tex: THREE.DataTexture[];
   used: number;
+  ci: number; cj: number;
+  /** its painted crowns: which cells hold a tree (render/forest.ts bake), from which cell on, and whether it is current */
+  trees: { value: THREE.Texture };
+  treeO: { value: THREE.Vector2 };
+  baked: boolean;
 }
 
 /**
@@ -43,13 +45,14 @@ export class Terrain3D {
     uFocus: { value: -1 }, // the one deposit field shown at full strength (an extractor being placed); -1 all of them
     // the view's turn (cos, sin) and the cosine of its tilt: screen-space slopes are turned back into the world's
     uRot: { value: new THREE.Vector3(1, 0, 1) },
-    // where scenery is cleared (see clearing.ts): a mask round the view, its world origin and size
-    uClear: { value: blankMask() as THREE.Texture },
-    uClearO: { value: new THREE.Vector2(0, 0) },
-    uClearS: { value: 1 },
+    // how much of the painted crowns and their shadows shows (0 while the 3D trees stand in their place, trees3d.ts)
+    uPaint: { value: 1 },
   };
+  /** The painted crowns will be wanted soon (the view is nearing the zoom they take over at): work them out now. */
+  crownsSoon = false;
+  private crownsDue = false;
 
-  constructor(private terrain: Terrain, _small: boolean) {
+  constructor(private terrain: Terrain, private forest: Forest, _small: boolean) {
     // far background under everything (the endless map never shows it, but the first frame might)
     const bg = new THREE.Mesh(new THREE.PlaneGeometry(1e6, 1e6).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: PAL.ground }));
     bg.position.y = -2;
@@ -102,11 +105,51 @@ export class Terrain3D {
       this.build(q.lod, q.ci, q.cj);
       if (performance.now() - t0 > 7) break;
     }
+    // the painted crowns of the chunks in view (only at the zooms that show them), nearest first, a few ms a frame
+    this.crownsDue = false;
+    if (L === 0 && mpp < 2.1 && (this.shared.uPaint.value > 0 || this.crownsSoon)) {
+      const S = CH * RES;
+      const d = (c: Chunk) => Math.hypot((c.ci + 0.5) * S - view.cx, (c.cj + 0.5) * S - view.cy);
+      const todo = [...this.lods[0].values()].filter((c) => c.used === this.frame && !c.baked).sort((a, b) => d(a) - d(b));
+      let done = 0;
+      for (const c of todo) {
+        this.bake(c);
+        done++;
+        if (performance.now() - t0 > 9) break;
+      }
+      this.crownsDue = done < todo.length;
+    }
+  }
+
+  /** Which cells of a chunk hold a tree, as the texture its shader paints the crowns from. */
+  private bake(c: Chunk) {
+    const S = CH * RES, x0 = c.ci * S, y0 = c.cj * S;
+    const cell2 = TREE_CELL * 2;
+    // (from the scrub cell before the chunk's first to the one after its last: a crown reaches into its neighbours)
+    const c0i = 2 * (Math.floor(x0 / cell2) - 1), c0j = 2 * (Math.floor(y0 / cell2) - 1);
+    const n = Math.max(2 * (Math.floor((x0 + S) / cell2) + 1) + 2 - c0i, 2 * (Math.floor((y0 + S) / cell2) + 1) + 2 - c0j);
+    const data = this.forest.bake(c0i, c0j, n);
+    if (c.trees.value !== NO_TREES) c.trees.value.dispose();
+    const t = new THREE.DataTexture(data, n, n, THREE.RGBAFormat, THREE.UnsignedByteType);
+    t.needsUpdate = true;
+    c.trees.value = t;
+    c.treeO.value.set(c0i, c0j);
+    c.baked = true;
+  }
+
+  /** Trees came or went on this ground (something was built or removed; null: anywhere): paint its crowns again. */
+  invalidateTrees(rects: Rect[] | null) {
+    const S = CH * RES;
+    for (const c of this.lods[0].values()) {
+      if (!c.baked) continue;
+      const x0 = c.ci * S - 16, y0 = c.cj * S - 16, x1 = x0 + S + 32, y1 = y0 + S + 32;
+      if (!rects || rects.some((r) => r.x1 > x0 && r.x0 < x1 && r.y1 > y0 && r.y0 < y1)) c.baked = false;
+    }
   }
 
   /** Whether everything in view is built at the wanted detail (tests / screenshots wait on this). */
   get settled() {
-    return this.queue.length === 0;
+    return this.queue.length === 0 && !this.crownsDue;
   }
 
   private build(lod: number, ci: number, cj: number) {
@@ -132,7 +175,8 @@ export class Terrain3D {
       tx.needsUpdate = true;
       return tx;
     });
-    const mat = this.material(tex, i0 * res, j0 * res, res);
+    const trees = { value: NO_TREES as THREE.Texture }, treeO = { value: new THREE.Vector2(0, 0) };
+    const mat = this.material(tex, i0 * res, j0 * res, res, trees, treeO);
     const S = CH * res;
     const mesh = new THREE.Mesh(this.plane, mat);
     mesh.scale.set(S, 1, S);
@@ -141,16 +185,17 @@ export class Terrain3D {
     mesh.frustumCulled = false;
     mesh.matrixAutoUpdate = true;
     this.group.add(mesh);
-    this.lods[lod].set(`${ci},${cj}`, { mesh, tex, used: this.frame });
+    this.lods[lod].set(`${ci},${cj}`, { mesh, tex, used: this.frame, ci, cj, trees, treeO, baked: false });
   }
 
   private dispose(c: Chunk) {
     this.group.remove(c.mesh);
     (c.mesh.material as THREE.Material).dispose();
     for (const t of c.tex) t.dispose();
+    if (c.trees.value !== NO_TREES) c.trees.value.dispose();
   }
 
-  private material(tex: THREE.DataTexture[], ox: number, oy: number, res: number): THREE.Material {
+  private material(tex: THREE.DataTexture[], ox: number, oy: number, res: number, trees: { value: THREE.Texture }, treeO: { value: THREE.Vector2 }): THREE.Material {
     const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
     const local = {
       uF0: { value: tex[0] },
@@ -158,6 +203,8 @@ export class Terrain3D {
       uF2: { value: tex[2] },
       uOrigin: { value: new THREE.Vector2(ox, oy) },
       uRes: { value: res },
+      uTrees: trees,
+      uTreeO: treeO,
     };
     mat.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, local, this.shared, ENV);
@@ -168,7 +215,7 @@ export class Terrain3D {
         .replace("#include <common>", `#include <common>\n${ENV_GLSL}\n${GROUND_GLSL}`)
         .replace("#include <color_fragment>", "#include <color_fragment>\ndiffuseColor.rgb = envGrade(groundColor(vWorld));");
     };
-    mat.customProgramCacheKey = () => "ground-v4";
+    mat.customProgramCacheKey = () => "ground-v5";
     return mat;
   }
 }
@@ -182,13 +229,9 @@ const GROUND_GLSL = /* glsl */ `
 varying vec2 vWorld;
 uniform sampler2D uF0; uniform sampler2D uF1; uniform sampler2D uF2;
 uniform vec2 uOrigin; uniform float uRes; uniform float uOverlay; uniform float uFocus; uniform vec3 uRot;
-uniform sampler2D uClear; uniform vec2 uClearO; uniform float uClearS;
-// would a crown (centre, radius in metres) reach built ground: a road, its pavement or verge, a site, a plot?
-bool cleared(vec2 c, float r) {
-  vec2 u = (c - uClearO) / uClearS;
-  if (any(lessThan(u, vec2(0.0))) || any(greaterThan(u, vec2(1.0)))) return false;
-  return (1.0 - textureLod(uClear, u, 0.0).r) * ${CLEAR_K.toFixed(4)} < r;
-}
+// which cells hold a tree (render/forest.ts: the same list the 3D trees are instanced from), from cell uTreeO on
+uniform sampler2D uTrees; uniform vec2 uTreeO; uniform float uPaint;
+${TREE_HASH_GLSL}
 
 vec4 bsw(float t) {
   float t2 = t * t, t3 = t2 * t;
@@ -274,53 +317,62 @@ vec3 groundColor(vec2 p) {
     vec3 sc = mix(${c3(PAL.speck)}, lc, step(0.3, hl + envLitter * 0.6) * envLitter);
     c = mix(c, sc, step(0.55 - envLitter * 0.25, h) * (1.0 - smoothstep(r - aa, r + aa, d)) * 0.7 * fineK);
   }
-  // shrubs and trees: round crowns, lit from the sun's side, each with a soft shadow down-right.
-  // Scrub is scattered in loose clumps; in a forest they close up into canopy.
+  // shrubs and trees: round crowns, lit from the sun's side, each with a soft shadow down-right. Scrub is scattered
+  // in loose clumps; in a forest they close up into canopy. Which cells hold one is worked out on the CPU
+  // (render/forest.ts) and read here from a texture, so these are the very trees that stand in 3D nearer in
+  // (render/trees3d.ts); while those stand, uPaint is 0 and nothing of them is painted.
   float fo = cov(forest);
   float crownK = 1.0 - smoothstep(1.0, 2.0, mpp);
-  float clump = smoothstep(0.42, 0.75, vnoise(p / 90.0 + 4.4) * 0.7 + n3 * 0.3);
-  float density = mix(0.1 + 0.42 * clump, 0.85, fo);
-  float cell = mix(15.0, 7.5, fo);
+  float density = mix(scrubDensity(p), ${CANOPY.toFixed(2)}, fo);
   vec3 under = mix(c, envGrass(${c3(PAL.forestFloor)}), fo * 0.85);
   // snow on the open ground, thinner on the forest floor
   under = mix(under, envSnowCol(p), envSnowAt(p, fo * 0.35));
   // the share of evergreens among the trees: most in the forests
-  float everK = mix(0.28, 0.55, fo);
-  if (crownK > 0.0) {
-    vec2 g = p / cell, gi = floor(g);
+  float everK = mix(${EVERGREEN.scrub.toFixed(2)}, ${EVERGREEN.forest.toFixed(2)}, fo);
+  vec3 near = under;
+  if (crownK > 0.0 && uPaint > 0.0) {
     vec2 sh = -uSun * 0.55 * uShade.y;
-    float hT = 0.0;
+    float hT = 0.0, foT = 0.0;
     vec2 qT = vec2(0.0);
     float crown = 0.0, shade = 0.0, lit = 0.0, tone = 0.0;
-    for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
-      vec2 cl = gi + vec2(x, y);
-      if (hash12(cl + 2.9) > density) continue;
-      vec2 ctr = cl + 0.5 + (vec2(hash12(cl + 17.1), hash12(cl + 41.7)) - 0.5) * 0.55;
-      float r = (mix(1.1, 2.4, hash12(cl)) + fo * 1.4) / cell;
-      if (cleared(ctr * cell, r * cell)) continue;
-      vec2 q = g - ctr;
-      float wob = 1.0 + 0.09 * sin(atan(q.y, q.x) * 5.0 + hash12(cl + 8.0) * 6.28);
-      float d = length(q) / wob;
-      float aa = fwidth(d) + 1e-4;
-      float cr = 1.0 - smoothstep(r - aa, r + aa, d);
-      float ds = length(q - sh * r * 1.5);
-      shade = max(shade, 1.0 - smoothstep(r * 0.7, r * 1.2, ds));
-      if (cr > crown) {
-        crown = cr;
-        tone = hash12(cl + 5.3);
-        hT = hash12(cl + 23.1);
-        qT = q / r;
-        lit = 1.0 - smoothstep(0.0, r * 1.35, length(q + sh * r * 0.6 / max(uShade.y, 0.5)));
+    ivec2 tmax = textureSize(uTrees, 0) - 1;
+    // the forest's cells, then the scrub's (twice the size)
+    for (int g = 0; g < 2; g++) {
+      float cell = g == 0 ? ${TREE_CELL.toFixed(1)} : ${(TREE_CELL * 2).toFixed(1)};
+      uint ko = uint(g) * 16u;
+      vec2 gp = p / cell;
+      ivec2 gi = ivec2(floor(gp));
+      float aa = mpp / cell + 1e-4;
+      for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+        ivec2 cl = gi + ivec2(x, y);
+        vec4 tt = texelFetch(uTrees, clamp((g == 0 ? cl : cl * 2) - ivec2(uTreeO), ivec2(0), tmax), 0);
+        if ((g == 0 ? tt.r : tt.g) < 0.5) continue;
+        vec2 ctr = vec2(cl) + 0.5 + (vec2(thashf(cl, 1u + ko), thashf(cl, 2u + ko)) - 0.5) * 0.55;
+        float r = (mix(1.1, 2.4, thashf(cl, ko)) + (g == 0 ? ${FOREST_R.toFixed(2)} : 0.0)) / cell;
+        vec2 q = gp - ctr;
+        float wob = 1.0 + 0.09 * sin(atan(q.y, q.x) * 5.0 + thashf(cl, 6u + ko) * 6.28);
+        float d = length(q) / wob;
+        float cr = 1.0 - smoothstep(r - aa, r + aa, d);
+        float ds = length(q - sh * r * 1.5);
+        shade = max(shade, 1.0 - smoothstep(r * 0.7, r * 1.2, ds));
+        if (cr > crown) {
+          crown = cr;
+          tone = thashf(cl, 4u + ko);
+          hT = thashf(cl, 5u + ko);
+          qT = q / r;
+          foT = g == 0 ? 1.0 : 0.0;
+          lit = 1.0 - smoothstep(0.0, r * 1.35, length(q + sh * r * 0.6 / max(uShade.y, 0.5)));
+        }
       }
     }
-    vec3 leaf = mix(${c3(PAL.shrub)}, ${c3(PAL.tree)}, fo * 0.8 + tone * 0.25);
-    leaf = mix(leaf * 0.78, mix(${c3(PAL.shrubLight)}, ${c3(PAL.treeLight)}, fo), lit * 0.85);
+    vec3 leaf = mix(${c3(PAL.shrub)}, ${c3(PAL.tree)}, foT * 0.8 + tone * 0.25);
+    leaf = mix(leaf * 0.78, mix(${c3(PAL.shrubLight)}, ${c3(PAL.treeLight)}, foT), lit * 0.85);
     // the season's crown: new green and blossom, autumn colour, bare branches with snow on them, snowy conifers
-    vec4 lf = envLeaf(leaf, tone, hT, qT, lit, everK);
+    vec4 lf = envLeaf(leaf, tone, hT, qT, lit, mix(${EVERGREEN.scrub.toFixed(2)}, ${EVERGREEN.forest.toFixed(2)}, foT));
     // (bare trees throw thinner shadows; the light sets how strong and how long they are)
-    vec3 near = under * (1.0 - shade * 0.5 * uShade.x * (1.0 - 0.6 * envBare * (1.0 - everK)));
-    near = mix(near, lf.rgb, crown * lf.a);
-    under = mix(under, near, crownK);
+    vec3 nr = under * (1.0 - shade * 0.5 * uShade.x * (1.0 - 0.6 * envBare * (1.0 - everK)));
+    nr = mix(nr, lf.rgb, crown * lf.a);
+    near = mix(under, nr, uPaint);
   }
   // far out, scrub and forest read as a tint (the season's: an average of its evergreens and the rest)
   vec3 farLeaf = mix(${c3(PAL.shrub)}, ${c3(PAL.tree)}, fo) * 0.9;
@@ -328,7 +380,7 @@ vec3 groundColor(vec2 p) {
   vec4 farE = envLeaf(farLeaf, 0.5, 0.0, vec2(0.0, 0.5), 0.5, 1.0);
   farLeaf = mix(mix(under, farD.rgb, farD.a * 0.8 + 0.2), farE.rgb, everK);
   vec3 farTone = mix(under, farLeaf, density * mix(0.14, 0.85, fo));
-  c = mix(farTone, under, crownK);
+  c = mix(farTone, near, crownK);
   // mineral deposits show through the grass as patches of their own soil or rock, mottled so they read as ground
   float mott = 0.55 + 0.45 * smoothstep(0.3, 0.7, n3 * 0.6 + n4 * 0.4 * fineK + 0.2);
   c = mix(c, ${c3(PAL.soilOre)}, cov(ore) * 0.42 * mott);
@@ -351,8 +403,7 @@ vec3 groundColor(vec2 p) {
   vec2 gm = vec2(dFdx(m), dFdy(m));
   float gl = length(gm);
   if (gl > 1e-6) {
-    // screen gradient -> world: screen right is (cos, sin) in world, screen up (gl y) is (sin, -cos), and a
-    // pixel up the screen is 1/cos(tilt) as far over the ground as a pixel across it
+    // screen gradient -> world: screen right is (cos, sin) in world, screen up (gl y) is (sin, -cos)
     float gy = gm.y * uRot.z;
     vec2 gw = vec2(gm.x * uRot.x + gy * uRot.y, gm.x * uRot.y - gy * uRot.x);
     float facing = dot(normalize(-gw), uSun);

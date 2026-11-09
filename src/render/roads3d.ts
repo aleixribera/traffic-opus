@@ -6,6 +6,7 @@ import { ringsNear } from "../roads/planner";
 import { goreIslands } from "./gore";
 import { runsDiffer, townAt, type TownRuns } from "../game/rural";
 import { dkey } from "../sim/router";
+import type { PlantedTree } from "./trees3d";
 import type { Traffic } from "../sim/traffic";
 import { PAL } from "./palette";
 import { MeshBatch } from "./batch";
@@ -64,8 +65,6 @@ export function makeRoadMaterial(opts: { color?: number; opacity?: number; marki
     uCentre: { value: new THREE.Color(PAL.centre) },
     uBrick: { value: new THREE.Color(PAL.brickStreet) },
     uGrass: { value: new THREE.Color(PAL.grass) },
-    uTree: { value: new THREE.Color(PAL.tree) },
-    uTreeLight: { value: new THREE.Color(PAL.treeLight) },
     uFlowMode: { value: 0 },
     uMarkings: { value: opts.markings === false ? 0 : 1 },
     uArrows: { value: opts.arrows === false ? 0 : 1 },
@@ -81,7 +80,7 @@ export function makeRoadMaterial(opts: { color?: number; opacity?: number; marki
         `#include <common>
 uniform vec3 uRoad; uniform vec3 uEdge; uniform vec3 uLane; uniform vec3 uCentre; uniform vec3 uBrick;
 ${ENV_GLSL}
-uniform vec3 uGrass; uniform vec3 uTree; uniform vec3 uTreeLight;
+uniform vec3 uGrass;
 uniform float uFlowMode; uniform float uMarkings; uniform float uArrows; uniform float uHw;
 varying vec4 vRoad; varying vec2 vFlow; varying vec3 vMed; varying vec2 vClip; varying vec4 vPock; varying float vRur;
 float band(float x, float w) { float f = fwidth(x) * 0.8 + 1e-4; return 1.0 - smoothstep(w - f, w + f, abs(x)); }
@@ -185,22 +184,12 @@ vec3 flowTint(float r) {
       c = mix(c, t * 0.82, (1.0 - smoothstep(0.97, 1.0, min(t.g, t.b))) * 0.8);
     }
     if (med > 0.0) {
-      // planted median: a kerb either side, grass between, and a row of trees when it is wide enough
+      // planted median: a kerb either side, grass between (its row of trees stands in 3D: medSpots below)
       float au = abs(u), fw = fwidth(u) + 1e-4;
       float inMed = 1.0 - smoothstep(mh - fw, mh, au);
       // (the grass in the season's colour, under snow in winter)
       vec3 gr = mix(envGrass(uGrass), envSnowCol(vec2(u, v)), envSnowAt(vec2(u * 3.0, v), -0.3));
       vec3 mc = mix(uEdge, gr, 1.0 - smoothstep(mh - 0.32 - fw, mh - 0.32, au));
-      // trees keep clear of the piece ends (vMed.z) so a crown is never cut in half at a join
-      if (med > 1.4 && dn > med + 2.0 && vMed.z > 2.6) {
-        float y = mod(v, 12.0) - 6.0;
-        float rr = min(med - 0.25, 2.4);
-        float d = length(vec2(u, y));
-        float crown = 1.0 - smoothstep(rr - fwidth(d) - 0.04, rr, d);
-        float lit = 1.0 - smoothstep(0.0, rr * 1.3, length(vec2(u + rr * 0.35, y + rr * 0.35)));
-        vec4 lf = envLeaf(mix(uTree, uTreeLight, lit), fract(floor(v / 12.0) * 0.618), fract(floor(v / 12.0) * 0.377 + 0.25), vec2(u, y) / rr, lit, 0.0);
-        mc = mix(mc, lf.rgb, crown * lf.a);
-      }
       c = mix(c, mc, inMed);
     }
     // a country road (vRur: 1 out in the country, 0 along a town street): no kerb; the asphalt runs out to a worn,
@@ -443,54 +432,6 @@ interface SegMeshes {
   extra: THREE.Object3D[];
 }
 
-/**
- * Trees as seen from above: flat round crowns, a darker rim and a lit side, each throwing a soft shadow; one instanced
- * quad (twice the crown across) per tree, scaled to its crown. Street trees, and the trees on town squares.
- */
-export function makeTreeMesh(n: number): THREE.InstancedMesh {
-  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, depthWrite: false });
-  const uni = { uTree: { value: new THREE.Color(PAL.tree) }, uTreeLight: { value: new THREE.Color(PAL.treeLight) } };
-  mat.onBeforeCompile = (sh) => {
-    Object.assign(sh.uniforms, uni, ENV);
-    sh.vertexShader = sh.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec2 vTq; varying vec2 vTseed;")
-      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvTq = position.xz * 2.0;\nvTseed = instanceMatrix[3].xz;");
-    sh.fragmentShader = sh.fragmentShader
-      .replace("#include <common>", `#include <common>\n${ENV_GLSL}\nuniform vec3 uTree; uniform vec3 uTreeLight;\nvarying vec2 vTq; varying vec2 vTseed;`)
-      .replace(
-        "#include <color_fragment>",
-        `#include <color_fragment>
-{
-  // a round crown lit from the sun's side, and its soft shadow thrown away from the sun on the ground (as long and
-  // as strong as the light makes it, render/daylight.ts)
-  float d = length(vTq);
-  float aa = fwidth(d) + 1e-4;
-  float crown = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, d);
-  float tone = envHash(vTseed * 0.71 + 3.1), h = envHash(vTseed * 0.37 + 9.2);
-  float thin = 1.0 - 0.6 * envBare * step(0.2, h);
-  float shadow = (1.0 - smoothstep(0.7, 1.15, length(vTq + uSun * 0.85 * uShade.y))) * 0.45 * uShade.x * thin;
-  if (crown <= 0.0 && shadow <= 0.01) discard;
-  float lit = 1.0 - smoothstep(0.0, 1.3, length(vTq - uSun * 0.5));
-  vec3 c = mix(uTree * 0.8, uTreeLight, lit);
-  c *= mix(1.0, 0.82, smoothstep(0.78, 0.98, d));
-  // the season's crown (street trees: a fifth of them evergreen)
-  vec4 lf = envLeaf(c, tone, h, vTq, lit, 0.2);
-  float ac = crown * lf.a;
-  float a = ac + shadow * (1.0 - ac);
-  diffuseColor.rgb = envGrade(diffuseColor.rgb * lf.rgb * ac / max(a, 1e-3));
-  diffuseColor.a = a;
-}`,
-      );
-  };
-  mat.customProgramCacheKey = () => "tree-v2";
-  // twice the crown's size, so the shadow beside it fits on the same quad
-  const m = new THREE.InstancedMesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2), mat, Math.max(1, n));
-  m.count = 0;
-  m.frustumCulled = false; // spread over the whole map; bounds would go stale
-  m.receiveShadow = true;
-  return m;
-}
-
 export class Roads3D {
   readonly group = new THREE.Group();
   private segs = new Map<number, SegMeshes>();
@@ -522,8 +463,12 @@ export class Roads3D {
   private seamHw = seamMaterial(PAL.hwRoad, PAL.hwLane);
   private seamTown = seamMaterial(PAL.road, PAL.lane);
   // street trees: flat round crowns, darker rim and a lit side, one instanced mesh for the whole map
-  private trees: THREE.InstancedMesh;
+  /** The street trees standing now (the 3D trees draw them, render/trees3d.ts), and a count of how often they changed. */
+  streetTrees: PlantedTree[] = [];
+  treeVersion = 0;
   private treeSpots = new Map<number, { x: number; y: number; h: number; r: number }[]>();
+  /** the rows of trees down the wide medians, seg by seg */
+  private medSpots = new Map<number, { x: number; y: number; h: number; r: number }[]>();
   /** Street lamps by seg (before the driveway check), and all of them as the lamps layer takes them. */
   private lampSpots = new Map<number, LampSpot[]>();
   lamps: LampSpot[] = [];
@@ -654,8 +599,7 @@ export class Roads3D {
     this.lights.count = 0;
     this.lights.renderOrder = 3;
     this.lights.frustumCulled = false; // instances move around the whole map; bounds would go stale
-    this.trees = makeTreeMesh(0);
-    this.group.add(this.lights, this.islands, this.trees, this.batch.group);
+    this.group.add(this.lights, this.islands, this.batch.group);
   }
 
   private show(os: THREE.Object3D[]) {
@@ -679,18 +623,8 @@ export class Roads3D {
     return true;
   }
 
-  /** Gather every seg's street trees into the one instanced mesh. */
+  /** Gather every seg's street trees that have room to stand. */
   private collectTrees() {
-    let n = 0;
-    for (const t of this.treeSpots.values()) n += t.length;
-    if (n > this.trees.instanceMatrix.count) {
-      this.group.remove(this.trees);
-      this.trees.geometry.dispose();
-      (this.trees.material as THREE.Material).dispose();
-      this.trees.dispose();
-      this.trees = makeTreeMesh(Math.ceil(n * 1.5) + 64);
-      this.group.add(this.trees);
-    }
     const drives = new Map<number, V2[]>();
     // (each driveway as points 2 m apart over its first 40 m: a tree's crown clear of every one is clear of the drive)
     for (const [a, b] of this.parts?.drives?.() ?? []) {
@@ -703,17 +637,12 @@ export class Roads3D {
         if (list) list.push(d); else drives.set(key, [d]);
       }
     }
-    let i = 0;
+    this.streetTrees = [];
     for (const [sid, spots] of this.treeSpots) {
-      for (const t of spots) {
-        if (!this.treeClear(sid, t, drives)) continue;
-        // (a hair apart in height so crowns that touch never flicker)
-        this.tmpM.makeScale(t.r * 2, 1, t.r * 2).setPosition(t.x, t.h + LIFT + 0.03 + (i % 8) * 0.0005, t.y);
-        this.trees.setMatrixAt(i++, this.tmpM);
-      }
+      for (const t of spots) if (this.treeClear(sid, t, drives)) this.streetTrees.push({ x: t.x, y: t.y, h: t.h + LIFT, r: t.r, style: "street" });
     }
-    this.trees.count = i;
-    this.trees.instanceMatrix.needsUpdate = true;
+    for (const spots of this.medSpots.values()) for (const t of spots) this.streetTrees.push({ x: t.x, y: t.y, h: t.h + LIFT, r: t.r, style: "street" });
+    this.treeVersion++;
     // the lamps: clear of driveways and of other roads, like the trees
     this.lamps = [];
     for (const [sid, spots] of this.lampSpots) {
@@ -843,6 +772,7 @@ export class Roads3D {
     for (const o of m.extra) { this.batch.remove(o as THREE.Mesh); if ((o as THREE.Mesh).geometry && !o.userData.shared) (o as THREE.Mesh).geometry.dispose(); }
     this.segs.delete(id);
     this.treeSpots.delete(id);
+    this.medSpots.delete(id);
     this.lampSpots.delete(id);
   }
 
@@ -923,6 +853,20 @@ export class Roads3D {
       };
       const na = nose(s.a), nb = nose(s.b);
       medEnd = ss.map((sc) => Math.min(na ? sc - s0 : 1e4, nb ? s1 - sc : 1e4));
+      // a row of trees down a median wide enough for them: on a fixed rhythm along the road (so pieces of one road
+      // line up), clear of the noses and of the piece's own ends
+      const half = T.median / 2;
+      if (half > 1.4) {
+        const spots: { x: number; y: number; h: number; r: number }[] = [];
+        for (let sc = Math.ceil((s0 + 2.6 - 6) / 12) * 12 + 6; sc < s1 - 2.6; sc += 12) {
+          if (Math.min(na ? sc - s0 : 1e4, nb ? s1 - sc : 1e4) - 2.2 <= half + 2) continue;
+          let i = 0;
+          while (i < ss.length - 2 && ss[i + 1] < sc) i++;
+          const f = clamp((sc - ss[i]) / (ss[i + 1] - ss[i] || 1), 0, 1);
+          spots.push({ x: pts[i].x + (pts[i + 1].x - pts[i].x) * f, y: pts[i].y + (pts[i + 1].y - pts[i].y) * f, h: hs[i] + (hs[i + 1] - hs[i]) * f, r: Math.min(half - 0.25, 2.4) });
+        }
+        if (spots.length) this.medSpots.set(id, spots);
+      }
     }
     const hw = isHighway(T);
     const dirt = isUnpaved(T) && !s.ring;

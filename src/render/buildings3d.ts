@@ -11,7 +11,8 @@ import { isHall } from "../game/towns";
 import { isCivic } from "../game/civics";
 import { CAR_COLORS, PAL } from "./palette";
 import { HALL_TIER, squarePlan, type SquarePlan } from "./civic";
-import { makeTreeMesh } from "./roads3d";
+import type { PlantedTree } from "./trees3d";
+import type { FxEmitter } from "./plumes";
 import { PLANTS } from "../game/industry";
 import { isMega, megaStage } from "../game/megaprojects";
 import { fieldLook, fieldModel } from "../game/calendar";
@@ -208,12 +209,15 @@ export class Buildings3D {
   /** Town hall squares: their paving, and their trees. */
   private paving: THREE.InstancedMesh | null = null;
   private paveMat = seasonal(pavingMaterial(), { shelter: 0.3 });
-  private squareTrees: THREE.InstancedMesh | null = null;
+  /** The trees on the halls' squares and in front gardens (the 3D trees draw them, render/trees3d.ts), and a count of
+   * how often either list changed. */
+  squareTrees: PlantedTree[] = [];
+  stripTrees: PlantedTree[] = [];
+  treeVersion = 0;
   private yardGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
   private drives: THREE.Mesh | null = null;
   /** The front strips' lawns, aprons, hedges, fences and trees (rebuilt with the driveways, on any road edit). */
   private strips: THREE.Object3D[] = [];
-  private stripTrees: THREE.InstancedMesh | null = null;
   private siteParts: THREE.Object3D[] = [];
   /** Every model, under the season (snow on its roofs, its lawns and trees in the season's colours). */
   private mat = seasonal(new THREE.MeshLambertMaterial({ vertexColors: true }), { roofs: true });
@@ -303,6 +307,8 @@ export class Buildings3D {
     for (const s of this.solids.get(b.id) ?? []) if (s.tall > top) top = s.tall;
     return top;
   }
+  /** Where the buildings smoke, steam and raise dust (render/smoke.ts draws the plumes), laid out with them. */
+  emitters: FxEmitter[] = [];
   /** Each model's footprint above the ground floor's sill (model space; x0, x1, z0, z1, top), measured once. */
   private feet = new Map<string, [number, number, number, number, number] | null>();
 
@@ -419,6 +425,17 @@ export class Buildings3D {
     return out.multiply(this.tmp2);
   }
 
+  /** A piece's matrix once it stands at its full height (whatever it is at now). */
+  private standMatrix(out: THREE.Matrix4, p: Piece): THREE.Matrix4 {
+    const b = p.b;
+    if (p.slot) return this.slotMatrix(out, siteFrame(b.c, b.rot, b.side, b.hd), p.slot, 1);
+    lotMatrix(out, b.c, b.rot, b.side);
+    if (!b.zone) return out;
+    const spare = Math.max(0, b.hd * 2 - this.depth(b));
+    this.tmp2.makeScale(b.fit, b.fit * b.tall, b.fit).setPosition(0, 0, spare / 2 - setbackOf(b, spare));
+    return out.multiply(this.tmp2);
+  }
+
   private baseColor(b: Building): number | null {
     if (b.abandoned) return ABANDONED;
     // a street of the same model shouldn't look stamped: weathering and paint vary a little from one to the next
@@ -471,22 +488,16 @@ export class Buildings3D {
     this.parked = [];
     if (this.yards) { this.group.remove(this.yards); this.yards.dispose(); this.yards = null; }
     if (this.paving) { this.group.remove(this.paving); this.paving.geometry.dispose(); this.paving.dispose(); this.paving = null; }
-    if (this.squareTrees) {
-      this.group.remove(this.squareTrees);
-      this.squareTrees.geometry.dispose();
-      (this.squareTrees.material as THREE.Material).dispose();
-      this.squareTrees.dispose();
-      this.squareTrees = null;
-    }
+    this.squareTrees = [];
+    this.treeVersion++;
     const live = new Set(list.map((b) => b.id));
     for (const id of this.layouts.keys()) if (!live.has(id)) this.layouts.delete(id);
     const lots = list.filter((b) => b.zone);
     const squares = list.filter((b) => isHall(b.kind)).map((b) => ({ b, plan: this.squareOf(b) }));
-    // lawns (and the lots' yards) in one instanced mesh, paving in another, the squares' trees in a third
-    let nLawn = lots.length, nPave = 0, nTree = 0;
+    // lawns (and the lots' yards) in one instanced mesh, paving in another
+    let nLawn = lots.length, nPave = 0;
     for (const { plan } of squares) {
       for (const r of [{ kind: plan.base }, ...plan.rects]) if (r.kind === "lawn") nLawn++; else nPave++;
-      nTree += plan.trees.length;
     }
     const sc = new THREE.Matrix4(), rt = new THREE.Matrix4();
     if (nLawn) {
@@ -510,13 +521,9 @@ export class Buildings3D {
       this.paving = pm;
       this.group.add(pm);
     }
-    if (nTree) {
-      this.squareTrees = makeTreeMesh(nTree);
-      this.group.add(this.squareTrees);
-    }
     // a hall's square: lawn and paving to the pavements, its path to the hall's door, its trees (bare earth, and no
     // trees yet, while the hall is being built)
-    let iy = lots.length, ip = 0, it = 0;
+    let iy = lots.length, ip = 0;
     const pat = this.paving?.geometry.getAttribute("aPat") as THREE.InstancedBufferAttribute | undefined;
     for (const { b, plan } of squares) {
       const site = b.built < 1;
@@ -540,22 +547,29 @@ export class Buildings3D {
       lotMatrix(this.tmp, b.c, b.rot, b.side, 0);
       for (const t of plan.trees) {
         const w = this.v3.set(t.x, 0, t.z).applyMatrix4(this.tmp);
-        // (a hair apart in height so crowns that touch never flicker)
-        this.squareTrees!.setMatrixAt(it, sc.makeScale(t.r * 2, 1, t.r * 2).setPosition(w.x, 0.12 + (it % 8) * 0.0005, w.z));
-        it++;
+        this.squareTrees.push({ x: w.x, y: w.z, r: t.r, style: "park" });
       }
     }
-    if (this.squareTrees) { this.squareTrees.count = it; this.squareTrees.instanceMatrix.needsUpdate = true; }
     this.yards?.computeBoundingSphere();
     this.paving?.computeBoundingSphere();
     this.order.clear();
     this.building = [];
+    this.emitters = [];
     for (const b of list) {
       for (const p of this.piecesOf(b)) {
-        if (!this.geoOf(p.model)) continue;
+        const mm = this.geoOf(p.model);
+        if (!mm) continue;
         let a = this.order.get(p.model);
         if (!a) this.order.set(p.model, (a = []));
         a.push(p);
+        // its stacks and vents, where they will stand once it is up
+        if (!mm.fx.length || isMega(b.kind)) continue;
+        this.standMatrix(this.tmp, p);
+        const up = () => b.built >= 1 && this.rise(p) >= 1;
+        for (const f of mm.fx) {
+          const w = this.v3.set(f.x, f.y, f.z).applyMatrix4(this.tmp);
+          this.emitters.push({ b, kind: f.kind, x: w.x, y: w.z, h: w.y, size: f.size * (b.zone ? b.fit : 1), up });
+        }
       }
     }
     for (const [model, ps] of this.order) {
@@ -927,16 +941,16 @@ export class Buildings3D {
     for (const o of this.strips) {
       this.group.remove(o);
       if (!(o instanceof THREE.InstancedMesh)) continue;
-      if (o === this.stripTrees) (o.material as THREE.Material).dispose();
       if (o.geometry !== this.yardGeo) o.geometry.dispose();
       o.dispose();
     }
     this.strips = [];
-    this.stripTrees = null;
+    this.stripTrees = [];
+    this.treeVersion++;
     const lawns: { m: THREE.Matrix4; c: number }[] = [];
     const paved: { m: THREE.Matrix4; c: number; pat: number[] }[] = [];
     const props: Record<"hedge" | "picket", THREE.Matrix4[]> = { hedge: [], picket: [] };
-    const trees: THREE.Matrix4[] = [];
+    const trees = this.stripTrees;
     const L = new THREE.Matrix4(), T = new THREE.Matrix4(), S = new THREE.Matrix4();
     /** A rect in a lot's frame (x along the road, z toward it), at height y (turned rot about its centre). */
     const rect = (b: Building, x0: number, x1: number, z0: number, z1: number, y: number, rot = 0) =>
@@ -995,7 +1009,7 @@ export class Buildings3D {
       const x = Math.abs(xd - off) <= Math.abs(xd + off) ? xd - off : xd + off;
       if (lawn >= 3.6 && ((h >>> 8) % 10) < 4 && Math.abs(x) <= H - r * 0.5) {
         const w = this.v3.set(x, 0, b.hd + lawn / 2 - 0.3).applyMatrix4(lotMatrix(L, b.c, b.rot, b.side, 0));
-        trees.push(new THREE.Matrix4().makeScale(r * 2, 1, r * 2).setPosition(w.x, 0.12 + (trees.length % 8) * 0.0005, w.z));
+        trees.push({ x: w.x, y: w.z, r, style: "park" });
       }
     }
     if (this.sideCache.size > list.length + 64) {
@@ -1028,13 +1042,6 @@ export class Buildings3D {
       m.castShadow = true;
       m.receiveShadow = true;
       m.computeBoundingSphere();
-      this.strips.push(m);
-    }
-    if (trees.length) {
-      const m = makeTreeMesh(trees.length);
-      trees.forEach((x, i) => m.setMatrixAt(i, x));
-      m.count = trees.length;
-      this.stripTrees = m;
       this.strips.push(m);
     }
     for (const o of this.strips) this.group.add(o);
