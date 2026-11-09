@@ -963,3 +963,14 @@ The game's setting is 1920s-40s American industry: steel, oil, highways, Deco.
   wanted slower: a house takes 3 game hours, a terrace 4, apartment blocks, stores and offices 6, modern flats,
   malls and the office tower 9, the apartment and glass towers and the city hall 12; a first-tier works 3 (a
   first farm opens two minutes after it is placed, at 1x), tier 2 works 6, deeper ones 8 to 12.
+- **Town streets and country roads** (src/game/rural.ts, src/render/roads3d.ts). Out in the country a paved road
+  has no kerbs, pavements, street lamps or street trees: its asphalt runs out to a worn, slightly broken edge onto
+  a grey-tan gravel shoulder (about 1.2 m, ragged on the outside), then a strip of short grass fading into the
+  field. A town's streets keep all of them. Which stretch is which comes from the map, along each road and not
+  saved: a road is a town street where it runs through a town's land, where a town laid it on its own land (half
+  a block past its edge, so a town's road out stops being a street soon after the last houses), and in front of
+  homes, shops and town halls that face it. A company's works never make a road a street. The pavement rounds off
+  where the town ends, so the road a hamlet starts on runs on out of it as a country road. Junctions and bends
+  follow their roads: between two country roads the corner is gravel, between two town streets it is kerbed, and
+  where they meet the town's pavement stops at the corner. Highways keep their own paved shoulders, with gravel
+  past them. Only the roads that change are redrawn, when roads or buildings change.
