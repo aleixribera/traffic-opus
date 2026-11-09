@@ -15,6 +15,12 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.77", date: "2026-11-09", title: "A town's day",
+    notes: [
+      "Towns keep a gentle daily rhythm: busier mornings and evenings, quieter nights; drivers vary a little.",
+    ],
+  },
+  {
     v: "v0.0.76", date: "2026-11-09", title: "Town orders",
     notes: [
       "Town orders: towns ask for freight and build a schoolhouse, church, fire hall and more when you deliver.",
