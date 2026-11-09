@@ -138,6 +138,8 @@ describe("Town orders", () => {
     t.hist.days = [];
     hours(g, 24 * 3);
     expect(g.orders.open).toHaveLength(0);
+    // (asked for one in a town that can't take it: none, and no harm)
+    expect(g.orders.openOne([t])).toBeNull();
     feed(t, ORDER_POP + 20);
     hours(g, 24 * 3);
     expect(g.orders.open.length).toBe(1);
@@ -206,6 +208,12 @@ describe("Town orders", () => {
     // the town's building: it can't be bulldozed, and it rises
     g.bulldoze([], [b.id]);
     expect(g.buildings.byId.has(b.id)).toBe(true);
+    // an undo can't put a home back on the land it took (a home bulldozed there before it was built)
+    const home2 = g.buildings.list.find((x) => x.zone && x.town === home.id)!;
+    const ghost = { ...home2, id: 99999, c: { ...b.c }, rot: b.rot };
+    (g as unknown as { restoreBuilding(x: typeof ghost): void }).restoreBuilding(ghost);
+    expect(g.buildings.byId.has(99999)).toBe(false);
+    expect(g.lotCells(b).some((c) => c.lot === b.id)).toBe(true);
     for (let k = 0; k < 8 * 3; k++) g.step(HOUR / 8);
     expect(b.built).toBe(1);
   }, 60000);

@@ -268,7 +268,8 @@ export class OrderSystem {
    * for tests and the debug hook).
    */
   openOne(ready: Town[] = this.g.towns.list.filter((t) => this.takes(t).length > 0), kind?: CivicKind): Order | null {
-    if (kind) ready = ready.filter((t) => this.takes(t).some((s) => s.kind === kind));
+    // (only towns that can take one now, of that building if one is named)
+    ready = ready.filter((t) => this.takes(t).some((s) => !kind || s.kind === kind));
     if (!ready.length || this.open.length >= MAP_CAP) return null;
     const now = this.g.time;
     const weight = (t: Town) => {
@@ -343,7 +344,11 @@ export class OrderSystem {
 
   /** Every day: buildings of filled orders that found no room yet try again (a town grows new streets). */
   daily() {
-    for (const [town, slots] of this.sets) {
+    // (town by town in the towns' order, not the order their sets were first looked at: a panel opened mustn't change
+    // which building takes which id)
+    for (const t of this.g.towns.list) {
+      const town = t.id, slots = this.sets.get(town);
+      if (!slots) continue;
       for (const s of slots) {
         if (s.state !== "done" || (s.b && this.g.buildings.byId.has(s.b))) continue;
         const b = this.g.addCivic(town, s.kind);
@@ -400,7 +405,7 @@ export class OrderSystem {
 
   toJSON(): OrdersJSON {
     return {
-      sets: [...this.sets].map(([town, slots]) => ({ town, slots: slots.map((s) => ({ ...s })) })),
+      sets: [...this.sets].sort((a, b) => a[0] - b[0]).map(([town, slots]) => ({ town, slots: slots.map((s) => ({ ...s })) })),
       open: this.open.map((o) => ({ ...o, goods: { ...o.goods }, got: { ...o.got } })),
       nextAt: this.nextAt,
       draws: this.draws,

@@ -1159,6 +1159,11 @@ export class Game {
 
   private restoreBuilding(b: Building) {
     if (this.buildings.byId.has(b.id)) return;
+    // (the town has since built a hall or a civic building on its land: that stays, and this isn't put back)
+    for (const c of this.lotCells(b)) {
+      const o = c.lot && c.lot !== b.id ? this.buildings.byId.get(c.lot) : undefined;
+      if (o && (isHall(o.kind) || isCivic(o.kind))) return;
+    }
     this.buildings.insert(b);
     for (const c of this.lotCells(b)) c.lot = b.id;
     this.buildings.reattach();
@@ -1389,6 +1394,9 @@ export class Game {
       this.zones.version++;
       this.candVersion = -1;
       this.shopCache = null;
+      // (the town built on land the redo history may still mean to put a site on: that history is gone)
+      this.redoStack = [];
+      this.orders.invalidate();
       this.emit({ t: "zones" });
       if (this.ticking) this.grew = true; else this.emit({ t: "buildings" });
       return b;

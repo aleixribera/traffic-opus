@@ -846,8 +846,10 @@ export class Hud {
       n.setAttribute("role", "status");
       this.orderNoted = [];
       this.toastBox.prepend(n);
-      n.addEventListener("mouseenter", () => clearTimeout(this.orderNoteT));
-      n.addEventListener("mouseleave", () => this.orderNoteAway(6000));
+      const note = n;
+      // (only while it is still the note showing: one fading out leaves the next one's timer alone)
+      n.addEventListener("mouseenter", () => { if (this.orderNote === note) clearTimeout(this.orderNoteT); });
+      n.addEventListener("mouseleave", () => { if (this.orderNote === note) this.orderNoteAway(6000); });
     }
     this.orderNoted = this.orderNoted.filter((x) => x.town !== town || x.kind !== kind).concat({ town, kind });
     const list = this.orderNoted.map((x) => ({ x, o: g.orders.open.find((o) => o.town === x.town && o.kind === x.kind), t: g.towns.byId.get(x.town) }))
@@ -871,7 +873,8 @@ export class Hud {
     this.orderNoteT = window.setTimeout(() => {
       const n = this.orderNote;
       if (!n) return;
-      if (ms && n.matches(":hover, :focus-within")) return;
+      // (being read, or holding the keyboard: it waits a little longer)
+      if (ms && n.matches(":hover, :focus-within")) { this.orderNoteAway(4000); return; }
       n.classList.add("out");
       this.orderNote = null;
       setTimeout(() => n.remove(), 300);
