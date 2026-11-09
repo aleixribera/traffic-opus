@@ -454,7 +454,9 @@ itself across modes; you build tracks, docks and the transfer points, never line
   - *Send ahead.* The plants see a town's need about to read below "Enough" before its people do: a town whose
     landed supply would fall below the line sooner than a truck sent now could land (the trip as the plant's last
     trucks there took, or by distance; a quarter of it again and two game hours spare for loading and the yard)
-    goes first among the towns, and its truck leaves without waiting at the dock for a full load. Loads already on
+    goes first among the towns, and its truck leaves without waiting at the dock for a full load (so does one in its
+    grace, below). A town already showing short goes on the daily shortfall as before: putting it first too set the
+    first Village back five minutes (day 2.32 against 2.00 on seed 7); as built it comes on day 1.95. Loads already on
     their way count for this only while they are on time (up to half their trip late), so a jammed truck doesn't
     hold the next one back. It is an invisible line above "Enough", sized by what the town uses over the lead
     time, so a far town is seen to earlier than one next door. The player never sees it.

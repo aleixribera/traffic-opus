@@ -1089,8 +1089,10 @@ export class Industry {
         // a town still short of what it needs to grow comes first (within ~50 km of extra driving), then nearest
         // first; a town further short, and a shop with emptier shelves, a little ahead
         const short = t === null ? 0 : (shortLeft.get(t) ?? 0);
-        // and ahead of those, a town that would dip below "Enough" before a truck sent now could land, with a spare
-        // (the send-ahead line); one about to, still above it, isn't kept waiting at the dock for a full truck
+        // and ahead of those, a town that would dip below "Enough" (or, in its grace, show it) before a truck sent now
+        // could land, with a spare: the send-ahead line. Its truck isn't kept waiting at the dock for a full load. (One
+        // already showing short goes on the shortfall above: sending every truck there half empty, and the nearer
+        // towns' loads after it, set the first Village back five minutes, measured 2026-11-09.)
         let soon = Infinity;
         if (t !== null && this.h.dipIn) {
           if (!dip.has(t)) dip.set(t, this.h.dipIn(t, product, this.due.get(t)?.get(product) ?? []));
@@ -1098,10 +1100,10 @@ export class Industry {
         }
         // (on its slowest trucks, till one has made the run)
         const trip = soon < Infinity ? this.tripTo(from, o, slowest()) : 0;
-        const ahead = soon <= trip * (1 + SEND_SPARE) + SEND_PAD;
+        const ahead = soon > 0 && soon <= trip * (1 + SEND_SPARE) + SEND_PAD;
         out.push({
           b: o, value: price - km(o) * FUEL_PER_KM * 2 + (short >= 1 ? 400 : 0) + (ahead ? SEND_FIRST : 0) + Math.min(3, l) * 15 - (product === "food" ? o.stock * 15 : 0),
-          room: Math.ceil(l), ...(ahead && soon > 0 ? { urgent: true } : {}),
+          room: Math.ceil(l), ...(ahead ? { urgent: true } : {}),
         });
       }
     }
