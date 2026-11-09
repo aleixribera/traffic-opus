@@ -228,7 +228,8 @@ export function seasonal(mat: THREE.MeshLambertMaterial, opts: { roofs?: boolean
     // (higher up, green is a tree's leaves: they turn and fall with the rest)
     if (vEnvW.y > 0.8 && green > 0.0) {
       vec2 tc = floor(vEnvW.xz / 5.0);
-      vec4 lf = envLeaf(dc, envHash(tc + 1.7), envHash(tc + 8.3), vec2(0.0, 0.6), 0.6, 0.3);
+      // (a blue-green one is a pine: evergreen, whatever the others do)
+      vec4 lf = envLeaf(dc, envHash(tc + 1.7), envHash(tc + 8.3), vec2(0.0, 0.6), 0.6, dc.b > dc.r ? 1.01 : 0.3);
       dc = mix(dc, lf.rgb, green);
     }
     if (envSnow > 0.001) {

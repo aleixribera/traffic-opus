@@ -4,13 +4,15 @@
 import * as THREE from "three";
 import type { Green } from "../game/settlements";
 import type { PlantedTree } from "./trees3d";
+import { seasonal } from "./envShader";
 
 /** A green's lawn: the hall squares' lawn colour, a touch fresher. */
 const LAWN = 0x93a050;
 
 export class Greens3D {
   readonly group = new THREE.Group();
-  private mat = new THREE.MeshLambertMaterial({ color: LAWN, side: THREE.DoubleSide });
+  // (under the season and the hour like every other lawn: it yellows, takes the snow, and goes dark at night)
+  private mat = seasonal(new THREE.MeshLambertMaterial({ color: LAWN, side: THREE.DoubleSide }));
   private lawn: THREE.Mesh | null = null;
   /** The greens' trees (the 3D trees draw them, render/trees3d.ts), and a count of how often they changed. */
   trees: PlantedTree[] = [];
@@ -33,7 +35,8 @@ export class Greens3D {
       const P = geo.getAttribute("position");
       for (let i = 0; i < P.count; i++) pos.push(P.getX(i), 0.05, P.getZ(i));
       const I = geo.getIndex();
-      if (I) for (let i = 0; i < I.count; i++) idx.push(base + I.getX(i));
+      // (wound to face up, so the snow that lies on what faces up lies on it)
+      if (I) for (let i = 0; i < I.count; i += 3) idx.push(base + I.getX(i), base + I.getX(i + 2), base + I.getX(i + 1));
       geo.dispose();
     }
     const geo = new THREE.BufferGeometry();

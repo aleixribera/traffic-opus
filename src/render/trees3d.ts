@@ -151,6 +151,8 @@ export class Trees3D {
   private wild = new Map<number, TileCache>();
   private planted = new Map<number, (Float32Array | null)[]>();
   private plantedVersion = 0;
+  /** the tiles the far view's planted trees were last gathered for (and the list's version then) */
+  private farBox = [0, 0, 0, 0, -1];
   private sig = "";
   private pending = false;
   private corners = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
@@ -290,6 +292,41 @@ export class Trees3D {
     const wildOn = t < 1;
     const useLod = mpp > LOD_MPP;
     if (!down) { for (const b of this.batches) b.full.visible = b.lod.visible = false; this.count = 0; return; }
+    if (!wildOn) {
+      // far out only the planted trees stand, and few tiles have any: those in the box round the view, gathered
+      // again only when the box moves on to other tiles (so a still view from far off costs nothing here)
+      const i0 = Math.floor((x0 - MARGIN) / TILE_M), i1 = Math.floor((x1 + MARGIN) / TILE_M);
+      const j0 = Math.floor((y0 - MARGIN) / TILE_M), j1 = Math.floor((y1 + MARGIN) / TILE_M);
+      const F = this.farBox;
+      if (this.sig !== "far" || F[0] !== i0 || F[1] !== i1 || F[2] !== j0 || F[3] !== j1 || F[4] !== this.plantedVersion) {
+        this.sig = "far";
+        F[0] = i0; F[1] = i1; F[2] = j0; F[3] = j1; F[4] = this.plantedVersion;
+        this.pending = false;
+        const counts = TREE_MODELS.map(() => 0);
+        for (let pass = 0; pass < 2; pass++) {
+          let total = 0;
+          const at = TREE_MODELS.map(() => 0);
+          for (const [key, pl] of this.planted) {
+            const ti = Math.floor(key / 65536) - 32768, tj = (key % 65536) - 32768;
+            if (ti < i0 || ti > i1 || tj < j0 || tj > j1 || total > MAX_INSTANCES) continue;
+            for (let m = 0; m < TREE_MODELS.length; m++) {
+              const arr = pl[m];
+              if (!arr) continue;
+              if (pass === 0) counts[m] += arr.length / FLOATS;
+              else { (this.batches[m].buf.array as Float32Array).set(arr, at[m]); at[m] += arr.length; }
+              total += arr.length / FLOATS;
+            }
+          }
+          if (pass === 0) for (let m = 0; m < TREE_MODELS.length; m++) this.reserve(m, counts[m]);
+        }
+        this.commit(counts);
+      }
+      for (const b of this.batches) {
+        b.full.visible = b.n > 0 && !useLod;
+        b.lod.visible = b.n > 0 && useLod;
+      }
+      return;
+    }
     // the tiles in view, nearest the middle first (so a cap, if it is ever reached, drops the far edge)
     const cx = (P[0].x + P[1].x + P[2].x + P[3].x) / 4, cy = (P[0].z + P[1].z + P[2].z + P[3].z) / 4;
     const reach = TILE_M * 0.71 + MARGIN;
@@ -341,21 +378,26 @@ export class Trees3D {
         });
         if (pass === 0) for (let m = 0; m < TREE_MODELS.length; m++) this.reserve(m, counts[m]);
       }
-      this.count = 0;
-      for (let m = 0; m < TREE_MODELS.length; m++) {
-        const b = this.batches[m];
-        b.n = counts[m];
-        this.count += b.n;
-        b.buf.clearUpdateRanges();
-        b.buf.addUpdateRange(0, b.n * FLOATS);
-        b.buf.needsUpdate = true;
-        (b.full.geometry as THREE.InstancedBufferGeometry).instanceCount = b.n;
-        (b.lod.geometry as THREE.InstancedBufferGeometry).instanceCount = b.n;
-      }
+      this.commit(counts);
     }
     for (const b of this.batches) {
       b.full.visible = b.n > 0 && !useLod;
       b.lod.visible = b.n > 0 && useLod;
+    }
+  }
+
+  /** The instances gathered into the models' buffers are these many: hand them to the GPU. */
+  private commit(counts: number[]) {
+    this.count = 0;
+    for (let m = 0; m < TREE_MODELS.length; m++) {
+      const b = this.batches[m];
+      b.n = counts[m];
+      this.count += b.n;
+      b.buf.clearUpdateRanges();
+      b.buf.addUpdateRange(0, b.n * FLOATS);
+      b.buf.needsUpdate = true;
+      (b.full.geometry as THREE.InstancedBufferGeometry).instanceCount = b.n;
+      (b.lod.geometry as THREE.InstancedBufferGeometry).instanceCount = b.n;
     }
   }
 }

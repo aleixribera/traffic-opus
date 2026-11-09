@@ -49,6 +49,7 @@ import { Forest } from "./render/forest";
 import { Trees3D } from "./render/trees3d";
 import { holdWind, setWind } from "./render/wind";
 import { Smoke } from "./render/smoke";
+import { Birds } from "./render/birds";
 import { Vehicles3D } from "./render/vehicles3d";
 import { Lamps3D } from "./render/lamps3d";
 import { DayCycle } from "./render/daycycle";
@@ -131,6 +132,8 @@ export class App {
   smoke = new Smoke();
   /** which layout of the buildings the smoke's emitters were last taken from */
   private smokeSig = -1;
+  /** a few birds wheeling over the woods and the fields by day */
+  birds = new Birds();
   /** money and moments rising off the map, and the shelf-time rings over refrigerated trucks */
   pops = new Pops();
   /** Shift + wheel scrolling not yet turned into a whole degree (px) */
@@ -462,6 +465,7 @@ export class App {
     this.treeSig = "";
     this.smoke.reset();
     this.smokeSig = -1;
+    this.birds.setWorld((x, y) => g.terrain.gen.at(x, y));
     this.roads = new Roads3D(g.net, {
       props: this.models.props, isWater: (p) => g.terrain.isWater(p),
       // each driveway as a line from where it leaves the road to the lot (a home's middle, a site's gate): no street
@@ -499,7 +503,7 @@ export class App {
     this.highlight.set(null);
     this.highlight.hoverV = null;
     this.glide = null;
-    this.worldRoot.add(this.terrain3d.group, this.trees3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.greens3d.group, this.lamps.group, this.fireworks.group, this.smoke.mesh);
+    this.worldRoot.add(this.terrain3d.group, this.trees3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.greens3d.group, this.lamps.group, this.fireworks.group, this.birds.mesh, this.smoke.mesh);
     this.roads.rebuildAll();
     this.buildings3d.rebuild(g.buildings.list);
     { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }
@@ -1710,6 +1714,7 @@ export class App {
     const L = this.dayCycle.update(g.time + g.alpha * SIM.dt, dt, this.mode === "menu", this.overlay !== "none");
     this.view.setLight(L.amb, L.sun, L.dir);
     this.smoke.setLight(L.amb, L.sun, L.dir);
+    this.birds.setLight(L.amb, L.sun, L.dir);
     // (no shadow map once the direct light is too faint to cast one)
     if (L.shade < 0.04) this.view.sun.castShadow = false;
     // the fields follow the season shown (the menu's and the dev hook's too)
@@ -1827,6 +1832,9 @@ export class App {
     }
     this.smoke.mesh.visible = this.terrain3d.shared.uOverlay.value < 0.5;
     this.smoke.update(this.view.camera, this.view.mpp, g.paused ? 0 : dt, g.time + g.alpha * SIM.dt, far ? null : g.traffic);
+    // and over the woods and the fields a few birds wheel
+    this.birds.update(this.view.camera, this.view.mpp, g.paused ? 0 : dt);
+    if (this.terrain3d.shared.uOverlay.value >= 0.5) this.birds.mesh.visible = false;
     this.terrain3d.update(this.view);
     this.roadsFar.update(this.view.mpp, this.view.w, this.view.h);
     this.labels.update(this.view);
