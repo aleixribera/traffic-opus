@@ -97,7 +97,7 @@ export interface TreeTile {
   ci: Int32Array; cj: Int32Array;
   /** 1 standing, 0 cleared by something built */
   alive: Uint8Array;
-  /** goes up each time `alive` changes */
+  /** a new number each time `alive` changes, and whenever the tile is worked out afresh (never one used before) */
   version: number;
   /** `alive` needs working out again */
   stale: boolean;
@@ -115,8 +115,11 @@ export class Forest {
   private buckets = new Map<number, number[]>();
   private keys = new Map<string, Rect>();
   private at = { x: 0, y: 0 };
+  /** the last version handed out: one count for every tile, so a tile dropped and grown again is never an old number */
+  private versions = 0;
 
-  constructor(private terrain: Terrain) {}
+  /** `maxTiles`: how many tiles are kept worked out (the oldest goes first). */
+  constructor(private terrain: Terrain, private maxTiles = MAX_TILES) {}
 
   /**
    * What is built now (clearing.ts clearShapes). Returns the ground whose trees may have changed: rectangles round
@@ -181,7 +184,7 @@ export class Forest {
     let t = this.tiles.get(k);
     if (!t) {
       t = this.grow(ti, tj);
-      if (this.tiles.size >= MAX_TILES) this.tiles.delete(this.tiles.keys().next().value!);
+      if (this.tiles.size >= this.maxTiles) this.tiles.delete(this.tiles.keys().next().value!);
       this.tiles.set(k, t);
     }
     if (t.stale) {
@@ -190,7 +193,7 @@ export class Forest {
         const a = this.cleared(t.x[i], t.y[i], t.r[i]) ? 0 : 1;
         if (a !== t.alive[i]) { t.alive[i] = a; changed = true; }
       }
-      if (changed) t.version++;
+      if (changed) t.version = ++this.versions;
       t.stale = false;
     }
     return t;
@@ -254,7 +257,7 @@ export class Forest {
     return {
       ti, tj, n,
       x: Float32Array.from(xs), y: Float32Array.from(ys), r: Float32Array.from(rs), grid: Uint8Array.from(gs),
-      ci: Int32Array.from(cis), cj: Int32Array.from(cjs), alive: new Uint8Array(n).fill(1), version: 0, stale: true,
+      ci: Int32Array.from(cis), cj: Int32Array.from(cjs), alive: new Uint8Array(n).fill(1), version: ++this.versions, stale: true,
     };
   }
 
