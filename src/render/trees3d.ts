@@ -150,7 +150,6 @@ export class Trees3D {
   private shapes: TreeShape[];
   private wild = new Map<number, TileCache>();
   private planted = new Map<number, (Float32Array | null)[]>();
-  private owners = new Map<string, PlantedTree[]>();
   private plantedVersion = 0;
   private sig = "";
   private pending = false;
@@ -218,27 +217,24 @@ export class Trees3D {
     return (this.batches[m] = this.makeBatch(m, Math.ceil(n * 1.5) + 64));
   }
 
-  /** One owner's planted trees (the streets', the parks', the squares'...), replacing what it gave before. */
-  setPlanted(owner: string, trees: PlantedTree[]) {
-    this.owners.set(owner, trees);
+  /** Every planted tree there is now (the streets', the greens', the squares', the gardens'), replacing the last list. */
+  setPlanted(trees: PlantedTree[]) {
     this.planted.clear();
     const lists = new Map<number, number[][]>();
-    for (const list of this.owners.values()) {
-      for (const t of list) {
-        // (hashed from where it stands: the same tree every time the list is rebuilt)
-        const a = Math.round(t.x * 4), b = Math.round(t.y * 4);
-        const kind = thashf(a, b, 41), tone = thashf(a, b, 42);
-        let model: number;
-        if (t.style === "street") {
-          // one kind along a block or two of street
-          model = thashf(Math.floor(t.x / 180), Math.floor(t.y / 180), 43) < 0.55 ? 0 : 1;
-          if (kind < 0.12) model = 1 - model;
-        } else model = treeModel(kind, t.r, EVERGREEN.street, true);
-        const key = tkey(Math.floor(t.x / TILE_M), Math.floor(t.y / TILE_M));
-        let e = lists.get(key);
-        if (!e) lists.set(key, (e = TREE_MODELS.map(() => [])));
-        e[model].push(t.x, t.h ?? 0, t.y, t.r * SCALE[model], tone, kind, thashf(a, b, 44) * 6.2832, 1);
-      }
+    for (const t of trees) {
+      // (hashed from where it stands: the same tree every time the list is rebuilt)
+      const a = Math.round(t.x * 4), b = Math.round(t.y * 4);
+      const kind = thashf(a, b, 41), tone = thashf(a, b, 42);
+      let model: number;
+      if (t.style === "street") {
+        // one kind along a block or two of street
+        model = thashf(Math.floor(t.x / 180), Math.floor(t.y / 180), 43) < 0.55 ? 0 : 1;
+        if (kind < 0.12) model = 1 - model;
+      } else model = treeModel(kind, t.r, EVERGREEN.street, true);
+      const key = tkey(Math.floor(t.x / TILE_M), Math.floor(t.y / TILE_M));
+      let e = lists.get(key);
+      if (!e) lists.set(key, (e = TREE_MODELS.map(() => [])));
+      e[model].push(t.x, t.h ?? 0, t.y, t.r * SCALE[model], tone, kind, thashf(a, b, 44) * 6.2832, 1);
     }
     for (const [key, e] of lists) this.planted.set(key, e.map((l) => (l.length ? Float32Array.from(l) : null)));
     this.plantedVersion++;

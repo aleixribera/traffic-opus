@@ -144,6 +144,8 @@ export class App {
   private forestAt = 0;
   /** the wind's clock: real seconds while the game runs (it stands still on pause, like everything else) */
   private windClock = 0;
+  /** which lists of planted trees the 3D trees were last given */
+  private treeSig = "";
   preview = new Preview3D();
   saves = new Saves();
   hud!: Hud;
@@ -450,6 +452,7 @@ export class App {
     this.terrain3d = new Terrain3D(g.terrain, this.forest, small);
     this.trees3d?.dispose();
     this.trees3d = new Trees3D(this.models.trees, this.forest);
+    this.treeSig = "";
     this.roads = new Roads3D(g.net, {
       props: this.models.props, isWater: (p) => g.terrain.isWater(p),
       // each driveway as a line from where it leaves the road to the lot (a home's middle, a site's gate): no street
@@ -1797,7 +1800,13 @@ export class App {
     this.dayFrame(dt, far);
     if (!g.paused) this.windClock += dt;
     setWind(g.time + g.alpha * SIM.dt, this.windClock);
-    // the trees stand in 3D near in; farther out the ground paints their crowns
+    // the trees stand in 3D near in; farther out the ground paints their crowns. The planted ones (streets, greens,
+    // squares, front gardens) are handed over whenever their lists change
+    const tv = `${this.roads.treeVersion}:${this.greens3d.treeVersion}:${this.buildings3d.treeVersion}`;
+    if (tv !== this.treeSig) {
+      this.treeSig = tv;
+      this.trees3d.setPlanted([...this.roads.streetTrees, ...this.greens3d.trees, ...this.buildings3d.squareTrees, ...this.buildings3d.stripTrees]);
+    }
     this.trees3d.update(this.view.camera, this.view.mpp, this.terrain3d.shared.uOverlay.value > 0.5);
     this.terrain3d.shared.uPaint.value = this.trees3d.paint;
     this.terrain3d.crownsSoon = this.trees3d.handoverNear;
