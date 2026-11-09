@@ -4,6 +4,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import type { BuildingKind } from "../config";
 import { SITE_MODELS } from "../game/sites";
 import { CON_MODELS } from "./construction3d";
+import { PILE_MODELS } from "./stockpiles3d";
 
 /** A Blender model flattened into one vertex-coloured geometry (one draw call per instanced kind). */
 export interface MergedModel {
@@ -46,6 +47,8 @@ export const SITE_PIECES: string[] = [
   "site_field_young", "site_field_cut", "site_field_bare", "farm_young", "farm_ripe", "farm_cut", "farm_bare",
   // industrial-park links: a belt or pipe segment, the transfer towers at its ends, and what moves along them
   "link_conveyor", "link_pipe", "link_tower", "link_load", "link_flow",
+  // what lies in the works' yards, as full as their stores (render/stockpiles3d.ts)
+  ...PILE_MODELS,
 ];
 export const VEHICLE_MODELS = [
   "car", "van", "truck", "tipper", "tanker", "flatbed", "bus",

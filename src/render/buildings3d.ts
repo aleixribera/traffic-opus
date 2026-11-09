@@ -19,6 +19,8 @@ import type { LampSpot, WindowSpot } from "./lamps3d";
 import type { WindowKind } from "./daylight";
 import { stageAt, stageOf, type StageInfo } from "../game/construction";
 import { Construction3D, type ConJob } from "./construction3d";
+import { Stockpiles3D, type YardJob } from "./stockpiles3d";
+import { YARDS, pileFills } from "../game/stockpiles";
 
 /**
  * The model a site's slot is drawn with now: a landmark's core by how far its building has got (foundations, the
@@ -224,9 +226,40 @@ export class Buildings3D {
   constructor(private models: ModelSet, private clock: () => number = () => 0, private net: RoadNetwork | null = null) {
     this.con = new Construction3D(models, this.mat);
     this.group.add(this.con.group);
+    this.piles = new Stockpiles3D(models, this.mat);
+    this.group.add(this.piles.group);
   }
   /** The stakes, slabs, frames, walls, scaffolds, piles, cranes and trucks of everything going up. */
   private con: Construction3D;
+  /** The heaps and log stacks in the works' yards, and the works that have yards (set on rebuild). */
+  private piles: Stockpiles3D;
+  private yardSites: Building[] = [];
+  /** the yards' fills as last drawn (quantized), to redraw them only when a store has moved on */
+  private yardKey = "";
+
+  /** Every yard's piles, as full as its works' stores; null when none has moved on since they were last drawn. */
+  private yardJobs(force: boolean): YardJob[] | null {
+    const jobs: YardJob[] = [];
+    const key: number[] = [];
+    for (const b of this.yardSites) {
+      const level = b.plant?.level ?? 1;
+      const slots = this.layoutOf(b).slots.filter((s) => s.level <= level);
+      const fills = pileFills(b, slots.map((s) => s.model));
+      const f = siteFrame(b.c, b.rot, b.side, b.hd);
+      slots.forEach((s, i) => {
+        const fl = fills[i];
+        // (a yard still going up has nothing in it yet)
+        if (!fl || this.riseOf(b, s) < 1) return;
+        const q = fl.map((u) => Math.round(u * 24) / 24);
+        key.push(b.id, ...q);
+        jobs.push({ model: s.model, base: this.slotMatrix(new THREE.Matrix4(), f, s, 1), fills: q, seed: b.id + i });
+      });
+    }
+    const k = key.join(",");
+    if (!force && k === this.yardKey) return null;
+    this.yardKey = k;
+    return jobs;
+  }
 
   /** The time whose season the fields show (the day cycle's: the title menu and the dev hook can show another). */
   seasonClock: (() => number) | null = null;
@@ -534,6 +567,8 @@ export class Buildings3D {
     }
     this.rebuildSites(list);
     this.rebuildDrives(list);
+    this.yardSites = list.filter((b) => b.placed && b.plant && this.layoutOf(b).slots.some((s) => YARDS[s.model]));
+    this.piles.update(this.yardJobs(true)!);
   }
 
   /** Fences, service roads and the pads of buildings to come, for every company site at once (a few draw calls). */
@@ -722,6 +757,8 @@ export class Buildings3D {
       if (j) jobs.push(j);
     }
     this.con.update(jobs, this.clock());
+    const yards = this.yardJobs(false);
+    if (yards) this.piles.update(yards);
     if (!this.building.length) return false;
     let done = false;
     const touched = new Set<THREE.InstancedMesh>();

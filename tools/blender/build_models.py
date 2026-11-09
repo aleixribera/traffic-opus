@@ -2976,10 +2976,11 @@ def b_site_logyard(M, P):
     L = lot(M, P, 40, 30, [])
     y0, y1 = L.y0, L.y1
     box(M, -19.6, 19.6, y0 - 0.6, y1 + 0.6, PAD_H, PAD_H + 0.02, P["lg_yard"])
+    # (the stacks are pile_logs_* models, as many as the works holds: src/render/stockpiles3d.ts; bark and
+    # sawdust mark the ground where they stand)
     for k, y in enumerate((y0 + 2.6, y0 + 8.4, y0 + 14.2)):
-        log_stack(M, P, "x", -17.5, -5.0, y, PAD_H + 0.02, 0.6, (4, 3, 2), seed=k)
-        if k < 2:
-            log_stack(M, P, "x", -3.5, 9.0, y, PAD_H + 0.02, 0.6, (4, 3) if k else (4, 3, 2), seed=k + 7)
+        for xa, xb in ((-17.5, -5.0), (-3.5, 9.0))[: 2 if k < 2 else 1]:
+            box(M, xa - 0.3, xb + 0.3, y - 2.6, y + 2.6, PAD_H + 0.02, PAD_H + 0.04, P["log_bark2"])
     x, y = 14.0, y0 + 9.0
     box(M, x - 1.4, x + 1.4, y - 2.4, y + 2.0, PAD_H, 2.0, P["ind_yellow"], bevel=0.05)
     box(M, x - 1.0, x + 1.0, y - 1.6, y + 0.4, 2.0, 3.4, P["ind_dark"])
@@ -2995,8 +2996,10 @@ def _heap(M, P, m, m2):
     for x in (-14.6, 14.0):
         box(M, x, x + 0.6, y0, y1, 0, 1.8, P["concrete"])
     box(M, -14.6, 14.6, y1 - 0.6, y1, 0, 1.8, P["concrete"])
-    pile(M, -6.5, (y0 + y1) / 2, 6.5, (y1 - y0) / 2 - 1.2, 5.6, m)
-    pile(M, 6.5, (y0 + y1) / 2, 6.5, (y1 - y0) / 2 - 1.2, 4.8, m2)
+    # (the heaps themselves are pile_* models, drawn as full as the works' store: src/render/stockpiles3d.ts; the
+    # bay floor keeps a spill of what lies there, so an empty bay still shows what it holds)
+    for x, mm in ((-6.5, m), (6.5, m2)):
+        box(M, x - 4.5, x + 4.5, y1 - 3.4, y1 - 0.6, PAD_H + 0.03, PAD_H + 0.05, mm)
     bar(M, (0.0, y0 + 0.5), (0.0, y1 - 1.0), 1.0, 6.4, 6.9, P["ind_steel"])
     for y in (y0 + 0.5, y1 - 1.0):
         box(M, -0.3, 0.3, y - 0.3, y + 0.3, 0, 6.4, P["ind_dark"])
@@ -3021,6 +3024,49 @@ def b_site_heap_sand(M, P):
 
 def b_site_heap_cu(M, P):
     return _heap(M, P, P["cu_ore"], P["cu_rock2"])
+
+
+# ------------------------------------------------------------------ stockpiles
+# What a works holds, drawn apart from the bay it lies in (src/render/stockpiles3d.ts): a heap grows taller and wider
+# as the store fills and shrinks as trucks haul it off; a log yard's stacks come and go stack by stack, layer by
+# layer. The bays (site_heap_*, site_logyard) keep their walls, belts and loaders; these stand where their piles were.
+HEAP_R = 6.5
+
+
+def _heap_pile(M, P, m, h):
+    """One heap tipped from the stacker: slumped foot, steep flanks, rounded top (13 m across)."""
+    r = HEAP_R
+    revolve(M, 0.0, 0.0, [(r, 0.0), (r * 0.97, 0.35), (r * 0.62, h * 0.55), (r * 0.22, h * 0.93), (0.0, h)], m,
+            n=12, rot=0.0)
+    # (a second, smaller heap slumped against its flank, so it doesn't read as a cone off a lathe)
+    revolve(M, 1.6, -2.2, [(3.4, 0.0), (2.2, h * 0.42), (0.8, h * 0.66), (0.0, h * 0.72)], m, n=10, rot=0.3)
+    return Lot(13, 13)
+
+
+def b_pile_ore_a(M, P): return _heap_pile(M, P, P["ore_pile"], 5.6)
+def b_pile_ore_b(M, P): return _heap_pile(M, P, P["ore_pile2"], 4.8)
+def b_pile_coal_a(M, P): return _heap_pile(M, P, P["coal"], 5.6)
+def b_pile_coal_b(M, P): return _heap_pile(M, P, P["cm_roof"], 4.8)
+def b_pile_lime_a(M, P): return _heap_pile(M, P, P["lime"], 5.6)
+def b_pile_lime_b(M, P): return _heap_pile(M, P, P["lime2"], 4.8)
+def b_pile_sand_a(M, P): return _heap_pile(M, P, P["sand_pile"], 5.6)
+def b_pile_sand_b(M, P): return _heap_pile(M, P, P["sand_pile2"], 4.8)
+def b_pile_cu_a(M, P): return _heap_pile(M, P, P["cu_ore"], 5.6)
+def b_pile_cu_b(M, P): return _heap_pile(M, P, P["cu_rock2"], 4.8)
+
+
+def _log_pile(M, P, layers):
+    """A stack of logs 12.5 m long (layers: logs per layer, bottom first), on its bearers."""
+    r = 0.6
+    for x in (-5.0, 0.0, 5.0):
+        box(M, x - 0.15, x + 0.15, -2.4, 2.4, 0, 0.12, P["log_end"])
+    log_stack(M, P, "x", -6.25, 6.25, 0.0, 0.12 + 0.19 * r, r, layers, seed=3)
+    return Lot(12.5, 4.8)
+
+
+def b_pile_logs_1(M, P): return _log_pile(M, P, (4,))
+def b_pile_logs_2(M, P): return _log_pile(M, P, (4, 3))
+def b_pile_logs_3(M, P): return _log_pile(M, P, (4, 3, 2))
 
 def _flagpole(M, P, x, y, h=9.0):
     cyl(M, x, y, 0.08, PAD_H, h, P["ind_steel"], n=5)
@@ -4853,6 +4899,19 @@ BUILDINGS = {
     "site_heap_lime": (b_site_heap_lime, 30, 24, 0),
     "site_heap_sand": (b_site_heap_sand, 30, 24, 0),
     "site_heap_cu": (b_site_heap_cu, 30, 24, 0),
+    "pile_ore_a": (b_pile_ore_a, 13, 13, 0),
+    "pile_ore_b": (b_pile_ore_b, 13, 13, 0),
+    "pile_coal_a": (b_pile_coal_a, 13, 13, 0),
+    "pile_coal_b": (b_pile_coal_b, 13, 13, 0),
+    "pile_lime_a": (b_pile_lime_a, 13, 13, 0),
+    "pile_lime_b": (b_pile_lime_b, 13, 13, 0),
+    "pile_sand_a": (b_pile_sand_a, 13, 13, 0),
+    "pile_sand_b": (b_pile_sand_b, 13, 13, 0),
+    "pile_cu_a": (b_pile_cu_a, 13, 13, 0),
+    "pile_cu_b": (b_pile_cu_b, 13, 13, 0),
+    "pile_logs_1": (b_pile_logs_1, 12.5, 4.8, 0),
+    "pile_logs_2": (b_pile_logs_2, 12.5, 4.8, 0),
+    "pile_logs_3": (b_pile_logs_3, 12.5, 4.8, 0),
     # deeper chains: the chemical works, dairy and creamery, rubber plant and Motor Works, and their site pieces
     "chemworks": (b_chemworks, 50, 42, 4),
     "dairyfarm": (b_dairyfarm, 40, 40, 2),

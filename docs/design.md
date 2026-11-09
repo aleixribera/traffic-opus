@@ -968,3 +968,10 @@ The game's setting is 1920s-40s American industry: steel, oil, highways, Deco.
   concrete driveway down its left side to a detached garage at the back, the family car on it, a path to the
   door, and a picket fence round the back yard; no paved pad, the town's lawn runs up to the walls. The street's
   driveway strip, the gap in the front hedge and the way cars drive in all follow the driveway to the side.
+- **Stockpiles** (src/game/stockpiles.ts, src/render/stockpiles3d.ts, tools/blender `pile_*`). A works' yards show
+  what it holds: an ore, coal, limestone, sand or copper bay's two heaps grow taller and wider as the store fills
+  and shrink as trucks haul it off, down to the scrapings; a log yard's five stacks come in stack by stack and layer
+  by layer (logs don't squash). What lies in a yard is the works' store of that product plus its output waiting
+  for a truck, over one store; the piles of every yard of a product fill one after another, so a half-full store
+  is full heaps and empty bays rather than every heap half height. A bay of a product the works doesn't handle is
+  dressed as 60% full. An empty bay keeps a spill of its material along the back wall, so it still says what it is.
