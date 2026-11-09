@@ -17,6 +17,10 @@ import { fieldLook, fieldModel } from "../game/calendar";
 import { seasonal } from "./envShader";
 import type { LampSpot, WindowSpot } from "./lamps3d";
 import type { WindowKind } from "./daylight";
+import { stageAt, stageOf, type StageInfo } from "../game/construction";
+import { Construction3D, type ConJob } from "./construction3d";
+import { Stockpiles3D, type YardJob } from "./stockpiles3d";
+import { YARDS, pileFills } from "../game/stockpiles";
 
 /**
  * The model a site's slot is drawn with now: a landmark's core by how far its building has got (foundations, the
@@ -70,6 +74,16 @@ const bayTaken = (b: Building, k: number) => (((b.id * 73856093) ^ (k * 19349663
 const setback = (spare: number) => Math.min(spare * 0.68, 5);
 
 const SITE = 0xb59d6a; // construction site: bare earth
+/** A building getting its roof on: raw timber, brick and concrete before the paint. */
+const RAW = 0xd6c6a4;
+/** Other houses a home may be (tools/blender: same lot, driveway and bay as the kind's own model). */
+const VARIANTS: Partial<Record<string, string[]>> = { house: ["house_b", "house_c"] };
+/** A lot's driveway off its middle (model x, m): a home's runs down the side to its garage. */
+const DRIVE_X: Partial<Record<string, number>> = { house: -4.0 };
+/** Where a home's own walls start (model x, z): what stands left of or behind that is its garage and shed. */
+const HOME_FOOT: Partial<Record<string, [number, number]>> = { house: [-1.9, -4.9], house_b: [-1.9, -4.9], house_c: [-1.9, -4.9] };
+/** Homes, shops and the small halls go up on a timber frame; blocks, towers and big halls on a steel skeleton. */
+const TIMBER = new Set<string>(["house", "terrace", "highstreet", "shop", "fuelstation", "hamlethall", "villagehall"]);
 /** Tints multiplied over a model's own colours, picked per building. */
 const VARY = [0xffffff, 0xffffff, 0xf2ebe4, 0xe2dcd8, 0xfbf3e6, 0xdcdcdc, 0xf5f0f0];
 /** Ground of a grown lot: lawn for homes, paving for business. */
@@ -211,7 +225,53 @@ export class Buildings3D {
    * `clock` gives the sim time (a site's new buildings rise for a while after it grows); `net`, the roads the front
    * strips run out to.
    */
-  constructor(private models: ModelSet, private clock: () => number = () => 0, private net: RoadNetwork | null = null) {}
+  constructor(private models: ModelSet, private clock: () => number = () => 0, private net: RoadNetwork | null = null) {
+    this.con = new Construction3D(models, this.mat);
+    this.group.add(this.con.group);
+    this.piles = new Stockpiles3D(models, this.mat);
+    this.group.add(this.piles.group);
+  }
+  /** The stakes, slabs, frames, walls, scaffolds, piles, cranes and trucks of everything going up. */
+  private con: Construction3D;
+  /** The heaps and log stacks in the works' yards, and the works that have yards (set on rebuild). */
+  private piles: Stockpiles3D;
+  private yardSites: Building[] = [];
+  /** each works' yards as last drawn: its fills (quantized) and their piles, to redo only a works whose stores moved on */
+  private yardCache = new Map<number, { key: string; jobs: YardJob[] }>();
+  private yardTick = 0;
+
+  /** Every yard's piles, as full as its works' stores; null when none has moved on since they were last drawn. */
+  private yardJobs(force: boolean): YardJob[] | null {
+    // (stores move on a load at a time: once a second is plenty)
+    if (!force && this.yardTick++ % 4) return null;
+    if (force) this.yardCache.clear();
+    let moved = force;
+    const jobs: YardJob[] = [];
+    const live = new Set<number>();
+    for (const b of this.yardSites) {
+      live.add(b.id);
+      const level = b.plant?.level ?? 1;
+      const slots = this.layoutOf(b).slots.filter((s) => s.level <= level);
+      const fills = pileFills(b, slots.map((s) => s.model));
+      // (a yard still going up has nothing in it yet)
+      const q = slots.map((s, i) => (fills[i] && this.riseOf(b, s) >= 1 ? fills[i]!.map((u) => Math.round(u * 12) / 12) : null));
+      const key = q.map((f) => (f ? f.join(" ") : "-")).join("|");
+      let c = this.yardCache.get(b.id);
+      if (!c || c.key !== key) {
+        const f = siteFrame(b.c, b.rot, b.side, b.hd);
+        const js: YardJob[] = [];
+        slots.forEach((s, i) => {
+          const fl = q[i];
+          if (fl) js.push({ model: s.model, base: this.slotMatrix(new THREE.Matrix4(), f, s, 1), fills: fl, seed: b.id + i });
+        });
+        this.yardCache.set(b.id, (c = { key, jobs: js }));
+        moved = true;
+      }
+      jobs.push(...c.jobs);
+    }
+    for (const id of this.yardCache.keys()) if (!live.has(id)) { this.yardCache.delete(id); moved = true; }
+    return moved ? jobs : null;
+  }
 
   /** The time whose season the fields show (the day cycle's: the title menu and the dev hook can show another). */
   seasonClock: (() => number) | null = null;
@@ -278,22 +338,43 @@ export class Buildings3D {
   }
 
   private slotMatrix(out: THREE.Matrix4, f: SiteFrame, s: SiteSlot, rise: number, y = 0): THREE.Matrix4 {
+    // (nothing of the model shows till its roof goes on: the construction pieces stand in for it)
+    if (rise <= 0) return out.makeScale(0, 0, 0);
     faceMatrix(out, siteToWorld(f, s.x, s.y), siteDir(f, s.fx, s.fy), y);
     if (rise < 1) out.multiply(this.tmp2.makeScale(1, rise, 1));
     return out;
   }
 
-  /** How far a piece has gone up (1: standing). */
-  private rise(p: Piece): number {
+  /** How far a piece's building has got (0..1; 1: standing): its own build, or a site's newest level going up. */
+  private progressOf(p: Piece): number {
     const b = p.b;
     // (a landmark is drawn by its stage models instead: its site stands at full height from the start)
     if (isMega(b.kind)) return 1;
-    if (b.built < 1) return 0.08 + 0.92 * b.built;
+    if (b.built < 1) return b.built;
     const P = b.plant;
     if (!p.slot || !P || p.slot.level !== P.level || P.level <= 1) return 1;
-    const t = (this.clock() - P.upAt) / GROW_ANIM;
-    if (t >= 1) return 1;
-    const k = Math.max(0, t);
+    return Math.min(1, Math.max(0, (this.clock() - P.upAt) / GROW_ANIM));
+  }
+
+  /** The construction step a piece is at (see game/construction.ts). */
+  private stageOfPiece(p: Piece): StageInfo {
+    const b = p.b;
+    if (b.built < 1 && !isMega(b.kind)) return stageOf(b);
+    return stageAt(this.progressOf(p));
+  }
+
+  /**
+   * How far a piece's model has gone up (1: standing). A building is drawn by its construction pieces till the roof
+   * goes on (0: hidden); a flat piece of a site (its truck yard) comes up out of the bare earth as before.
+   */
+  private rise(p: Piece): number {
+    const prog = this.progressOf(p);
+    if (prog >= 1) return 1;
+    if (this.footOf(p.model)) {
+      const st = this.stageOfPiece(p);
+      return st.stage === "roof" ? 0.9 + 0.1 * st.k : st.stage === "done" ? 1 : 0;
+    }
+    const k = Math.max(0, prog);
     return 0.06 + 0.94 * k * k * (3 - 2 * k);
   }
 
@@ -301,29 +382,60 @@ export class Buildings3D {
   private matrix(out: THREE.Matrix4, p: Piece): THREE.Matrix4 {
     const b = p.b;
     if (p.slot) return this.slotMatrix(out, siteFrame(b.c, b.rot, b.side, b.hd), p.slot, this.rise(p));
+    const grow = this.rise(p);
+    if (grow <= 0) return out.makeScale(0, 0, 0);
     lotMatrix(out, b.c, b.rot, b.side);
     if (!b.zone) {
-      // a town hall rises from its building site like the town's other buildings
-      if (b.built < 1 && isHall(b.kind)) out.multiply(this.tmp2.makeScale(1, 0.08 + 0.92 * b.built, 1));
+      // a town hall goes up from its building site like the town's other buildings
+      if (grow < 1) out.multiply(this.tmp2.makeScale(1, grow, 1));
       return out;
     }
     // the model stands near the street; deep lots keep the rest as a back yard
     const spare = Math.max(0, b.hd * 2 - this.depth(b));
-    const grow = b.built >= 1 ? 1 : 0.08 + 0.92 * b.built;
     this.tmp2.makeScale(b.fit, b.fit * b.tall * grow, b.fit).setPosition(0, 0, spare / 2 - setback(spare));
     return out.multiply(this.tmp2);
   }
 
   private baseColor(b: Building): number | null {
     if (b.abandoned) return ABANDONED;
-    if (b.built < 1 && !isMega(b.kind)) return SITE;
     // a street of the same model shouldn't look stamped: weathering and paint vary a little from one to the next
     return VARY[(Math.imul(b.id, 2654435761) >>> 28) % VARY.length];
   }
 
+  /** The model a zoned building is drawn with: its kind's, or for a home one of the kind's other houses. */
+  private modelOf(b: Building): string {
+    const v = VARIANTS[b.kind];
+    if (!v) return b.kind;
+    const pick = (Math.imul(b.id + 7, 2246822519) >>> 0) % (v.length + 1);
+    return pick === 0 || !this.geoOf(v[pick - 1]) ? b.kind : v[pick - 1];
+  }
+
+  /** How far along the street (lot x, m) a lot's driveway runs from its middle (a home's down the side to its garage). */
+  private driveX(b: Building): number {
+    return (DRIVE_X[b.kind] ?? 0) * (b.zone ? b.fit : 1);
+  }
+
+  /** Where a lot's driveway meets the kerb (a home's off to the side, toward its garage): verge trees and lamps keep clear. */
+  driveFront(b: Building): V2 {
+    const dx = this.driveX(b);
+    if (!dx) return b.front;
+    const away = right(fromAngle(b.rot));
+    return { x: b.front.x - away.y * b.side * dx, y: b.front.y + away.x * b.side * dx };
+  }
+
+  /**
+   * How far toward the road from a lot's middle its driveway strip ends: placed buildings at the lot edge; zoned
+   * lots start at the kerb, so to the model's front (a home's own driveway runs from there, so a little into it); a
+   * town hall, across its square to its door.
+   */
+  private reachOf(b: Building): number {
+    if (!b.zone) return isHall(b.kind) ? this.halfDepth(b) : b.hd;
+    return b.hd - setback(Math.max(0, b.hd * 2 - this.depth(b))) + (DRIVE_X[b.kind] !== undefined ? -0.3 : 0.5);
+  }
+
   /** The pieces a building is drawn with: one model, or a site's buildings up to its level. */
   private piecesOf(b: Building): Piece[] {
-    if (!b.placed || !b.plant) return [{ b, model: b.kind, slot: null }];
+    if (!b.placed || !b.plant) return [{ b, model: this.modelOf(b), slot: null }];
     const level = b.plant.level ?? 1;
     const now = this.seasonClock?.() ?? this.clock();
     return this.layoutOf(b).slots.filter((s) => s.level <= level).map((s) => ({ b, model: slotModel(b, s.model, now), slot: s }));
@@ -475,6 +587,8 @@ export class Buildings3D {
     }
     this.rebuildSites(list);
     this.rebuildDrives(list);
+    this.yardSites = list.filter((b) => b.placed && b.plant && this.layoutOf(b).slots.some((s) => YARDS[s.model]));
+    this.piles.update(this.yardJobs(true)!);
   }
 
   /** Fences, service roads and the pads of buildings to come, for every company site at once (a few draw calls). */
@@ -483,12 +597,15 @@ export class Buildings3D {
     if (this.feet.has(model)) return this.feet.get(model)!;
     const pos = this.geoOf(model)?.geo.getAttribute("position");
     let f: [number, number, number, number, number] | null = null;
+    // (a home's walls only: not its garage down the side, nor the shed in its back yard)
+    const clip = HOME_FOOT[model];
     if (pos) {
       let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, top = 0;
       for (let i = 0; i < pos.count; i++) {
         const y = pos.getY(i);
         if (y < 1.2) continue;
         const x = pos.getX(i), z = pos.getZ(i);
+        if (clip && (x < clip[0] || z < clip[1])) continue;
         if (x < x0) x0 = x;
         if (x > x1) x1 = x;
         if (z < z0) z0 = z;
@@ -657,6 +774,14 @@ export class Buildings3D {
    * finished rising: its pad and parked cars need a rebuild.
    */
   updateConstruction(): boolean {
+    const jobs: ConJob[] = [];
+    for (const it of this.building) {
+      const j = this.jobOf(it.p);
+      if (j) jobs.push(j);
+    }
+    this.con.update(jobs, this.clock());
+    const yards = this.yardJobs(false);
+    if (yards) this.piles.update(yards);
     if (!this.building.length) return false;
     let done = false;
     const touched = new Set<THREE.InstancedMesh>();
@@ -665,10 +790,8 @@ export class Buildings3D {
       const mesh = this.meshes.get(it.p.model);
       if (!mesh) continue;
       mesh.setMatrixAt(it.i, this.matrix(this.tmp, it.p));
-      if (it.p.slot) {
-        mesh.setColorAt(it.i, this.colorOf(it.p));
-        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      }
+      mesh.setColorAt(it.i, this.colorOf(it.p));
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       touched.add(mesh);
       // (zoned buildings stay on the list till the next rebuild: they finish with a change of colour)
       if (it.p.b.built < 1 || this.rise(it.p) < 1 || !it.p.slot) still.push(it);
@@ -685,11 +808,11 @@ export class Buildings3D {
     const u = fromAngle(b.rot);
     const away = right(u);
     const into = { x: away.x * b.side, y: away.y * b.side };
-    // placed buildings: from the kerb to the lot edge; zoned lots start at the kerb, so to the model's front; a
-    // town hall, across its square to its door
-    const reach = b.zone ? b.hd - setback(Math.max(0, b.hd * 2 - this.depth(b))) + 0.5 : isHall(b.kind) ? this.halfDepth(b) : b.hd;
-    const drive = { x: b.c.x - into.x * reach, y: b.c.y - into.y * reach };
-    const kerb = { ...b.front };
+    const reach = this.reachOf(b);
+    // (a home's driveway runs down the side of its lot: the way in shifts along the street with it)
+    const dx = this.driveX(b), al = { x: -into.y * dx, y: into.x * dx };
+    const drive = { x: b.c.x - into.x * reach + al.x, y: b.c.y - into.y * reach + al.y };
+    const kerb = { x: b.front.x + al.x, y: b.front.y + al.y };
     const bays: LotWay["bays"] = [];
     const mm = this.geoOf(b.kind);
     if (mm?.bays.length && b.built >= 1 && !b.abandoned) {
@@ -742,11 +865,11 @@ export class Buildings3D {
       if (isHall(b.kind)) continue; // a hall's path is its square's (rebuild)
       const u = fromAngle(b.rot);
       const away = right(u); // * side points away from the road
-      // placed buildings: from the kerb to the lot edge; zoned lots start at the kerb, so to the model's front; a
-      // town hall, across its square to its door
-      const reach = b.zone ? b.hd - setback(Math.max(0, b.hd * 2 - this.depth(b))) + 0.5 : isHall(b.kind) ? this.halfDepth(b) : b.hd;
-      const ex = { x: b.c.x - away.x * b.side * reach, y: b.c.y - away.y * b.side * reach };
-      const a = b.front;
+      const reach = this.reachOf(b);
+      // (a home's down the side of its lot, to its garage)
+      const dx = this.driveX(b), al = { x: -away.y * b.side * dx, y: away.x * b.side * dx };
+      const ex = { x: b.c.x - away.x * b.side * reach + al.x, y: b.c.y - away.y * b.side * reach + al.y };
+      const a = { x: b.front.x + al.x, y: b.front.y + al.y };
       if (Math.hypot(ex.x - a.x, ex.y - a.y) < 0.6) continue;
       const w = isHall(b.kind) ? 2.4 : b.zone && b.hw > 14 ? 2.6 : 1.7;
       q.strip(a, ex, w * 2, 0.08);
@@ -793,7 +916,8 @@ export class Buildings3D {
       const toward = scale(right(fromAngle(b.rot)), -b.side);
       const along = { x: toward.y, y: -toward.x };
       const rel = { x: b.front.x - b.c.x, y: b.front.y - b.c.y };
-      const kd = dot(rel, toward), xd = dot(rel, along);
+      // (xd: where the driveway crosses the strip, along the street from the lot's middle)
+      const kd = dot(rel, toward), xd = dot(rel, along) + this.driveX(b);
       const pave = this.paveOf(b.access.seg);
       if (isHall(b.kind)) { this.squareStrip(b, kd, toward, along, rect, lawns, paved); continue; }
       const grp = ZONE_GROUP[b.zone!];
@@ -977,17 +1101,57 @@ export class Buildings3D {
     return best;
   }
 
-  /** A piece's colour: its building's tint, going from bare earth to its own colours as a site's new building rises. */
+  /**
+   * A piece's colour: its building's tint. A building getting its roof on is still raw timber, brick and concrete,
+   * its paint going on as the roof does; a flat piece of a site comes up from the bare earth.
+   */
   private colorOf(p: Piece): THREE.Color {
     const c = this.tintFn?.(p.b) ?? this.baseColor(p.b);
     const out = c === null ? this.col.set(1, 1, 1) : this.col.setHex(c);
-    if (p.slot && p.b.built >= 1) {
-      const r = this.rise(p);
-      if (r < 1) out.lerp(this.site, 1 - r);
+    const prog = this.progressOf(p);
+    if (prog < 1) {
+      if (this.footOf(p.model)) out.lerp(this.raw, 0.55 * (1 - this.stageOfPiece(p).k));
+      else out.lerp(this.site, 1 - this.rise(p));
     }
     return out;
   }
   private site = new THREE.Color(SITE);
+  private raw = new THREE.Color(RAW);
+
+  /** A piece going up, for the construction pieces (null: a flat piece, or one that is up). */
+  private jobOf(p: Piece): ConJob | null {
+    const f = this.footOf(p.model);
+    if (!f) return null;
+    const stage = this.stageOfPiece(p);
+    if (stage.stage === "done") return null;
+    const b = p.b;
+    const base = new THREE.Matrix4();
+    let [x0, x1, z0, z1, top] = f;
+    let room: ConJob["room"] = null;
+    if (p.slot) this.slotMatrix(base, siteFrame(b.c, b.rot, b.side, b.hd), p.slot, 1);
+    else {
+      lotMatrix(base, b.c, b.rot, b.side);
+      room = { x0: -b.hw, x1: b.hw, z0: -b.hd, z1: b.hd };
+      if (b.zone) {
+        const spare = Math.max(0, b.hd * 2 - this.depth(b)), dz = spare / 2 - setback(spare), s = b.fit;
+        x0 *= s; x1 *= s; z0 = z0 * s + dz; z1 = z1 * s + dz; top *= s * b.tall;
+      }
+    }
+    const timber = p.slot ? (PLANTS[b.kind as PlantKind]?.tier ?? 2) <= 1 && top < 12 : TIMBER.has(b.kind);
+    const id = p.slot ? `${b.id}:${p.slot.x.toFixed(1)},${p.slot.y.toFixed(1)}` : `${b.id}`;
+    return { id, base, x0, x1, z0, z1, top, heavy: !timber, stage, seed: (Math.imul(b.id + 1, 2654435761) >>> 20) / 4096 + (p.slot ? p.slot.x * 0.13 : 0), room };
+  }
+
+  /** Let go of the construction pieces' and the yards' instance buffers (a new world is loaded). */
+  disposeExtras() {
+    this.con.dispose();
+    this.piles.dispose();
+  }
+
+  /** The construction pieces' moving parts (trucks, cranes), every frame. */
+  frameConstruction() {
+    this.con.frame(this.clock());
+  }
 
   private applyColors() {
     for (const [model, ps] of this.order) {

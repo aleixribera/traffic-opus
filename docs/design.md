@@ -977,3 +977,45 @@ The game's setting is 1920s-40s American industry: steel, oil, highways, Deco.
   (top left, by the menu) and the pause menu's Company item reopen it. Name and herald show in the HUD, on the
   pause menu, in the saves list and on milestone banners, and are saved (older saves get one from their seed).
   Not on the trucks: the camera looks straight down, so cab doors never show, and a roof badge is a few pixels.
+
+### Look: how things are built (owner, 2026-11-09: "make the game feel more real: from the way buildings are built, layouts, roads...")
+
+- **Construction in stages** (src/game/construction.ts, src/render/construction3d.ts). Every home, shop, block,
+  tower, hall and works building goes up in steps, each a Blender model: the plot dug over and set out with
+  stakes and a builder's line (and its material piles growing load by load while a town block or a works waits
+  for planks, cement or parts), the slab poured with a 1930s mixer truck parked by it, a timber frame (homes,
+  shops, small halls, first-tier works) or a riveted steel skeleton (blocks, towers, big halls, the rest of the
+  works) raised bay by bay and floor by floor while a stake-side lumber truck unloads, the walls closing in behind
+  a tube-and-plank scaffold with the floors decked over, then the roof on as the raw timber and brick take their
+  paint, the scaffold coming down last. Big steel jobs get a lattice tower crane that slews over them; big lots a
+  site hut. Trucks drive in off the street and away again. A site's new buildings after it grows go up the same
+  way over 8 game hours (the new level works from the start). Construction is slower, the one thing the owner
+  wanted slower: a house takes 3 game hours, a terrace 4, apartment blocks, stores and offices 6, modern flats,
+  malls and the office tower 9, the apartment and glass towers and the city hall 12; a first-tier works 3 (a
+  first farm opens two minutes after it is placed, at 1x), tier 2 works 6, deeper ones 8 to 12; a landmark 6, once
+  its last convoy is in.
+- **Lived-in home lots** (tools/blender/build_models.py `home_lot`, src/render/buildings3d.ts `VARIANTS`,
+  `DRIVE_X`). A street of homes is no longer one house stamped down: three 1920s homes share one lot plan, picked
+  per building (a cross-gable clapboard house with a vegetable patch, a brick bungalow under a hipped slate roof
+  with a shed and a washing line, a white Dutch colonial with a gambrel roof, a birdbath and a bench). Each has a
+  concrete driveway down its left side to a detached garage at the back, the family car on it, a path to the
+  door, and a picket fence round the back yard; no paved pad, the town's lawn runs up to the walls. The street's
+  driveway strip, the gap in the front hedge and the way cars drive in all follow the driveway to the side.
+- **Stockpiles** (src/game/stockpiles.ts, src/render/stockpiles3d.ts, tools/blender `pile_*`). A works' yards show
+  what it holds: an ore, coal, limestone, sand or copper bay's two heaps grow taller and wider as the store fills
+  and shrink as trucks haul it off, down to the scrapings; a log yard's five stacks come in stack by stack and layer
+  by layer (logs don't squash). What lies in a yard is the works' store of that product plus its output waiting
+  for a truck, over one store; the piles of every yard of a product fill one after another, so a half-full store
+  is full heaps and empty bays rather than every heap half height. A bay of a product the works doesn't handle is
+  dressed as 60% full. An empty bay keeps a spill of its material along the back wall, so it still says what it is.
+- **Town streets and country roads** (src/game/rural.ts, src/render/roads3d.ts). Out in the country a paved road
+  has no kerbs, pavements, street lamps or street trees: its asphalt runs out to a worn, slightly broken edge onto
+  a grey-tan gravel shoulder (about 1.2 m, ragged on the outside), then a strip of short grass fading into the
+  field. A town's streets keep all of them. Which stretch is which comes from the map, along each road and not
+  saved: a road is a town street where it runs through a town's land, where a town laid it on its own land (half
+  a block past its edge, so a town's road out stops being a street soon after the last houses), and in front of
+  homes, shops and town halls that face it. A company's works never make a road a street. The pavement rounds off
+  where the town ends, so the road a hamlet starts on runs on out of it as a country road. Junctions and bends
+  follow their roads: between two country roads the corner is gravel, between two town streets it is kerbed, and
+  where they meet the town's pavement stops at the corner. Highways keep their own paved shoulders, with gravel
+  past them. Only the roads that change are redrawn, when roads or buildings change.

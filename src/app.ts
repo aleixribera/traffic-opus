@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { BUILDING_TYPES, LEVEL_H, MAX_LEVEL, ROAD_TYPES, SIM, roadWidth, type RoadTypeId } from "./config";
 import { cubicAt, cubicTangent, dist, dot, formatMoney, norm, rectCorners, right, sub, v2, wrapAngle, type V2 } from "./core/math";
+import { townStreets } from "./game/rural";
 import type { Building } from "./game/buildings";
 import { Game } from "./game/city";
 import {
@@ -438,14 +439,22 @@ export class App {
     this.roads = new Roads3D(g.net, {
       props: this.models.props, isWater: (p) => g.terrain.isWater(p),
       // each driveway as a line from where it leaves the road to the lot (a home's middle, a site's gate): no street
-      // tree or lamp stands on it, however wide the road it comes off (a boulevard's verge is far from its centreline)
-      drives: () => g.buildings.list.filter((b) => b.access).map((b): [V2, V2] => [b.front, b.plant && b.placed ? siteFrame(b.c, b.rot, b.side, b.hd).gate : b.c]),
+      // tree or lamp stands on it, however wide the road it comes off (a boulevard's verge is far from its centreline);
+      // a home's runs down the side of its lot, to its garage
+      drives: () => g.buildings.list.filter((b) => b.access).map((b): [V2, V2] => {
+        if (b.plant && b.placed) return [b.front, siteFrame(b.c, b.rot, b.side, b.hd).gate];
+        const f = this.buildings3d?.driveFront(b) ?? b.front;
+        return [f, { x: b.c.x + f.x - b.front.x, y: b.c.y + f.y - b.front.y }];
+      }),
       gates: () => g.buildings.list.filter((b) => b.placed && b.plant).map((b) => ({ ...siteFrame(b.c, b.rot, b.side, b.hd), front: b.front })),
+      // town streets keep their kerbs, pavements, lamps and trees; the roads out in the country don't
+      townStreets: () => townStreets(g.net, g.towns.list, g.buildings.list),
     });
     this.roadsFar = new RoadsFar(g.net);
     this.labels.set([]);
     this.labelKey = "";
     this.vehicles = new Vehicles3D(this.models);
+    this.buildings3d?.disposeExtras();
     this.buildings3d = new Buildings3D(this.models, () => this.game.time, g.net);
     this.vehicles.lotOf = (id) => { const b = g.buildings.byId.get(id); return b ? this.buildings3d.lotWay(b) : null; };
     this.transit3d = new Transit3D(this.models.props.get("busstop"));
@@ -475,7 +484,7 @@ export class App {
       if (e.t === "shipped") { if (this.mode !== "menu") this.pops.shipped(e.from, e.to, e.p, this.view); return; }
       if (e.t === "roads") { this.roads.apply(e.cs); this.clearing.invalidate(); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
       else if (e.t === "buildings") {
-        this.buildings3d.rebuild(g.buildings.list); this.roads.refreshGates(); this.clearing.invalidate(); this.applyTint(); this.dirtyPreview = true;
+        this.buildings3d.rebuild(g.buildings.list); this.roads.refreshGates(); this.roads.refreshLook(); this.clearing.invalidate(); this.applyTint(); this.dirtyPreview = true;
         { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }
         // (street trees make way for new driveways: at most twice a second while a town grows)
         if (!this.treesDue) this.treesDue = setTimeout(() => { this.treesDue = 0; this.roads.refreshTrees(); }, 500);
@@ -1734,6 +1743,7 @@ export class App {
     }
     // (the clock counts every game minute; the rest of the bar every quarter second)
     this.hud?.clock();
+    this.buildings3d.frameConstruction();
     this.hudT += dt;
     if (this.hudT > 0.25) {
       this.hudT = 0;

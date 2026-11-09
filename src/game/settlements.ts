@@ -1240,6 +1240,9 @@ export class TownSystem {
   /** May the town start another rebuild now: within its pace for the day, and not too many sites at once? */
   private mayRebuild(t: Town, mine: Building[]): boolean {
     if (!t.built.size || t.trend < 0 || t.size < 1) return false;
+    // (a new day's pace from its first moment: the last rebuild was on an earlier day, though the day's tallies are
+    // only reset after this tick)
+    if (Number.isFinite(t.redevAt) && Math.floor(t.redevAt / DAY) < Math.floor(this.g.time / DAY)) t.redevToday = 0;
     const perDay = redevPerDay(t.size, mine.length);
     if (t.redevToday >= perDay || this.g.time - t.redevAt < DAY / perDay / 2) return false;
     let homes = 0, sites = 0;
@@ -1479,7 +1482,8 @@ export class TownSystem {
       t.yesterday = t.today;
       t.today = {};
       if (t.cars) t.cars *= 1 - CAR_SCRAP;
-      t.redevToday = 0;
+      // (unless the new day's first rebuild started in this very tick)
+      if (!Number.isFinite(t.redevAt) || Math.floor(t.redevAt / DAY) < Math.floor(this.g.time / DAY)) t.redevToday = 0;
       // (its own roads: a busy street widened, and in time one road out of town)
       this.widen(t);
       if ((this.g.day + t.id) % 3 === 0) this.reachOut(t);

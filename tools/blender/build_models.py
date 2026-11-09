@@ -77,6 +77,9 @@ def palette():
         # residential
         "res_wall": "#e2d6bc", "res_roof": "#b0603f", "res_wall2": "#d6c8aa", "res_roof2": "#96503a",
         "res_trim": "#ece8dc",
+        # a home's lot and its variants
+        "drive": "#77787a", "fence_w": "#e9e5d9", "soil": "#7a6146", "crop": "#6f8a3e", "wash1": "#c9d6e2",
+        "wash2": "#d9b48a", "bench": "#7a5a3c", "brick_home": "#a35e44", "slate": "#6a7075", "shingle": "#6d5848",
         "apt_wall": "#cdc4b2", "apt_roof": "#8e8f8d", "apt_brace": "#a9a8a2", "apt_band": "#b3ab9b",
         # commercial
         "com_wall": "#d4d2ca", "com_roof": "#b6b8b8", "com_rib": "#cacccb", "com_canopy": "#8a4a36",
@@ -391,20 +394,92 @@ def bay_row(n, cx=0.0):
 
 # ------------------------------------------------------------------ buildings
 
+HOUSE_DRIVE_X = -4.0   # the driveway's centre line (the game runs its kerb crossing in line with it)
+
+
+def home_lot(M, P, garage_roof, yard="veg"):
+    """A family home's lot (12 x 15): no pad, the town's lawn shows through; a concrete driveway down the left side
+    to a detached garage at the back, the family car on it; a picket fence round the back yard and a vegetable
+    patch, or a shed and a washing line, in it."""
+    L = Lot(12, 15)
+    drive, fence = P["drive"], P["fence_w"]
+    x0, x1 = HOUSE_DRIVE_X - 1.4, HOUSE_DRIVE_X + 1.4
+    box(M, x0, x1, -7.5, 2.0, 0, 0.05, drive)
+    # (a concrete apron in front of the garage doors)
+    box(M, x0 - 0.2, x1 + 0.2, 1.2, 2.0, 0.05, 0.06, drive)
+    # the garage: clapboard walls, a gable roof with its ridge front to back, the doors
+    gx0, gx1, gy0, gy1 = -5.8, -2.2, 2.0, 6.6
+    box(M, gx0, gx1, gy0, gy1, 0, 2.5, P["res_wall2"])
+    gable(M, gx0, gx1, gy0, gy1, 2.5, 3.6, "y", garage_roof, P["res_wall2"], oh_u=(0.25, 0.25), oh_a=(0.3, 0.2))
+    box(M, gx0 + 0.4, gx1 - 0.4, gy0 - 0.04, gy0, 0.0, 2.1, P["res_trim"])
+    # the path from the driveway to the front door
+    box(M, x1, -0.6, -1.4, -0.7, 0, 0.04, drive)
+    # the back yard's fence: along the back and the right side, gated at the garage
+    box(M, -6.0, 6.0, 7.38, 7.5, 0, 1.1, fence)
+    box(M, 5.88, 6.0, 0.8, 7.38, 0, 1.1, fence)
+    box(M, -2.2, -0.2, 2.6, 2.72, 0, 1.1, fence)
+    if yard == "veg":
+        # a vegetable patch: turned beds with rows of green
+        box(M, 0.6, 5.2, 4.9, 7.0, 0, 0.05, P["soil"])
+        for i in range(5):
+            y = 5.15 + i * 0.4
+            box(M, 0.8, 5.0, y, y + 0.18, 0.05, 0.16, P["crop"])
+    elif yard == "shed":
+        box(M, 3.4, 5.6, 5.0, 7.0, 0, 2.1, P["res_wall2"])
+        gable(M, 3.4, 5.6, 5.0, 7.0, 2.1, 2.7, "x", garage_roof, P["res_wall2"], oh_u=(0.15, 0.15), oh_a=(0.15, 0.15))
+        for x in (-0.4, 2.6):
+            box(M, x - 0.05, x + 0.05, 5.9, 6.0, 0, 1.9, P["res_trim"])
+        bar(M, (-0.4, 5.95), (2.6, 5.95), 0.03, 1.85, 1.88, P["res_trim"])
+        for k, x in enumerate((0.0, 0.5, 1.0, 1.6, 2.1)):
+            box(M, x - 0.2, x + 0.2, 5.92, 5.98, 1.25, 1.85, (P["wash1"], P["wash2"], P["res_trim"])[k % 3])
+    else:
+        # a lawn with a birdbath and a bench
+        cyl(M, 2.8, 5.6, 0.35, 0, 0.9, P["res_trim"], n=8)
+        box(M, 0.6, 2.0, 6.6, 7.1, 0, 0.45, P["bench"])
+    L.bays = [(HOUSE_DRIVE_X, -3.0)]
+    return L
+
+
 def b_house(M, P):
-    L = lot(M, P, 12, 15, [-3.2], asphalt=(-5.5, -0.9))
+    """A 1920s cross-gable house: the main body with its ridge along the street, a front wing, the porch, a chimney."""
+    L = home_lot(M, P, P["res_roof2"], "veg")
     wall, roof = P["res_wall"], P["res_roof"]
-    # main body, ridge along X, at the back of the zone (zone y 0..6.5)
-    box(M, -4.6, 4.2, 2.2, 6.3, 0, 3.0, wall)
-    gable(M, -4.6, 4.2, 2.2, 6.3, 3.0, 5.0, "x", roof, wall)
-    # front cross wing, ridge along Y
-    box(M, 0.6, 4.2, 0.4, 3.0, 0, 3.0, wall)
-    gable(M, 0.6, 4.2, 0.4, 4.2, 3.0, 4.55, "y", roof, wall, oh_a=(0.4, 0.0))
-    # porch roof over the door, chimney
-    box(M, -2.8, -0.4, 1.3, 2.2, 2.35, 2.55, roof, bevel=0.04)
-    box(M, -3.4, -2.7, 4.6, 5.3, 2.5, 5.7, P["res_trim"], bevel=0.04)
-    # path from the parking bay to the door
-    box(M, -2.2, -1.0, L.yf + PARK_DEPTH, 1.3, PAD_H, PAD_H + 0.02, P["asphalt"])
+    box(M, -1.4, 5.4, -0.2, 4.6, 0, 3.0, wall)
+    gable(M, -1.4, 5.4, -0.2, 4.6, 3.0, 5.0, "x", roof, wall)
+    box(M, 2.4, 5.4, -2.4, -0.2, 0, 3.0, wall)
+    gable(M, 2.4, 5.4, -2.4, 0.2, 3.0, 4.5, "y", roof, wall, oh_a=(0.4, 0.0))
+    box(M, -0.8, 2.4, -1.3, -0.2, 2.35, 2.55, roof, bevel=0.04)
+    box(M, 0.2, 0.9, 3.0, 3.7, 2.5, 5.7, P["res_trim"], bevel=0.04)
+    return L
+
+
+def b_house_b(M, P):
+    """A brick bungalow: low walls under a hipped slate roof, a gabled porch on the front, a chimney at the side."""
+    L = home_lot(M, P, P["res_roof"], "shed")
+    wall, roof = P["brick_home"], P["slate"]
+    box(M, -1.4, 5.4, -1.8, 4.4, 0, 2.9, wall)
+    taper(M, (-1.8, 5.8, -2.2, 4.8), (0.6, 3.4, 1.28, 1.32), 2.9, 4.7, roof)
+    box(M, 0.6, 3.0, -3.0, -1.8, 0, 2.5, P["res_trim"])
+    gable(M, 0.6, 3.0, -3.0, -1.8, 2.5, 3.4, "y", roof, P["res_trim"], oh_u=(0.2, 0.2), oh_a=(0.25, 0.0))
+    box(M, 5.2, 5.9, 1.0, 1.8, 0, 5.2, wall, bevel=0.04)
+    return L
+
+
+def b_house_c(M, P):
+    """A white clapboard Dutch colonial: a gambrel roof with its ridge along the street, a shed dormer across the
+    front slope, a side porch."""
+    L = home_lot(M, P, P["res_roof2"], "lawn")
+    wall, roof = P["res_trim"], P["shingle"]
+    y0, y1 = -1.0, 4.4
+    box(M, -1.0, 5.4, y0, y1, 0, 2.8, wall)
+    ym = (y0 + y1) / 2
+    extrude_profile(M, [(y0 - 0.3, 2.8), (y0 + 0.5, 4.6), (ym, 5.6), (y1 - 0.5, 4.6), (y1 + 0.3, 2.8),
+                        (y1 + 0.3, 2.62), (ym, 5.42), (y0 - 0.3, 2.62)], "x", -1.2, 5.6, roof)
+    box(M, -0.2, 4.6, y0 + 0.35, y0 + 1.6, 2.8, 4.75, wall)
+    taper(M, (-0.35, 4.75, y0 + 0.2, y0 + 1.75), (-0.35, 4.75, y0 + 1.0, y0 + 1.75), 4.75, 5.05, roof)
+    box(M, -1.0, -0.2, y0, y0 + 2.6, 0, 2.4, wall)
+    box(M, -1.2, 0.0, y0 - 0.2, y0 + 2.8, 2.4, 2.6, roof, bevel=0.04)
+    box(M, 4.6, 5.2, 3.0, 3.6, 2.5, 6.0, P["brick_home"], bevel=0.04)
     return L
 
 
@@ -1389,7 +1464,7 @@ def b_bridge_pylon(M, P):
 # ------------------------------------------------------------------ lights (the lamps layer places them)
 
 # Models whose origin is the foot of a post (the lamps layer stands them there), not their footprint's middle.
-POST_ORIGIN = {"streetlamp", "floodmast"}
+POST_ORIGIN = {"streetlamp", "floodmast", "con_crane"}
 
 
 def b_streetlamp(M, P):
@@ -2901,10 +2976,11 @@ def b_site_logyard(M, P):
     L = lot(M, P, 40, 30, [])
     y0, y1 = L.y0, L.y1
     box(M, -19.6, 19.6, y0 - 0.6, y1 + 0.6, PAD_H, PAD_H + 0.02, P["lg_yard"])
+    # (the stacks are pile_logs_* models, as many as the works holds: src/render/stockpiles3d.ts; bark and
+    # sawdust mark the ground where they stand)
     for k, y in enumerate((y0 + 2.6, y0 + 8.4, y0 + 14.2)):
-        log_stack(M, P, "x", -17.5, -5.0, y, PAD_H + 0.02, 0.6, (4, 3, 2), seed=k)
-        if k < 2:
-            log_stack(M, P, "x", -3.5, 9.0, y, PAD_H + 0.02, 0.6, (4, 3) if k else (4, 3, 2), seed=k + 7)
+        for xa, xb in ((-17.5, -5.0), (-3.5, 9.0))[: 2 if k < 2 else 1]:
+            box(M, xa - 0.3, xb + 0.3, y - 2.6, y + 2.6, PAD_H + 0.02, PAD_H + 0.04, P["log_bark2"])
     x, y = 14.0, y0 + 9.0
     box(M, x - 1.4, x + 1.4, y - 2.4, y + 2.0, PAD_H, 2.0, P["ind_yellow"], bevel=0.05)
     box(M, x - 1.0, x + 1.0, y - 1.6, y + 0.4, 2.0, 3.4, P["ind_dark"])
@@ -2920,8 +2996,10 @@ def _heap(M, P, m, m2):
     for x in (-14.6, 14.0):
         box(M, x, x + 0.6, y0, y1, 0, 1.8, P["concrete"])
     box(M, -14.6, 14.6, y1 - 0.6, y1, 0, 1.8, P["concrete"])
-    pile(M, -6.5, (y0 + y1) / 2, 6.5, (y1 - y0) / 2 - 1.2, 5.6, m)
-    pile(M, 6.5, (y0 + y1) / 2, 6.5, (y1 - y0) / 2 - 1.2, 4.8, m2)
+    # (the heaps themselves are pile_* models, drawn as full as the works' store: src/render/stockpiles3d.ts; the
+    # bay floor keeps a spill of what lies there, so an empty bay still shows what it holds)
+    for x, mm in ((-6.5, m), (6.5, m2)):
+        box(M, x - 4.5, x + 4.5, y1 - 3.4, y1 - 0.6, PAD_H + 0.03, PAD_H + 0.05, mm)
     bar(M, (0.0, y0 + 0.5), (0.0, y1 - 1.0), 1.0, 6.4, 6.9, P["ind_steel"])
     for y in (y0 + 0.5, y1 - 1.0):
         box(M, -0.3, 0.3, y - 0.3, y + 0.3, 0, 6.4, P["ind_dark"])
@@ -2946,6 +3024,49 @@ def b_site_heap_sand(M, P):
 
 def b_site_heap_cu(M, P):
     return _heap(M, P, P["cu_ore"], P["cu_rock2"])
+
+
+# ------------------------------------------------------------------ stockpiles
+# What a works holds, drawn apart from the bay it lies in (src/render/stockpiles3d.ts): a heap grows taller and wider
+# as the store fills and shrinks as trucks haul it off; a log yard's stacks come and go stack by stack, layer by
+# layer. The bays (site_heap_*, site_logyard) keep their walls, belts and loaders; these stand where their piles were.
+HEAP_R = 6.5
+
+
+def _heap_pile(M, P, m, h):
+    """One heap tipped from the stacker: slumped foot, steep flanks, rounded top (13 m across)."""
+    r = HEAP_R
+    revolve(M, 0.0, 0.0, [(r, 0.0), (r * 0.97, 0.35), (r * 0.62, h * 0.55), (r * 0.22, h * 0.93), (0.0, h)], m,
+            n=12, rot=0.0)
+    # (a second, smaller heap slumped against its flank, so it doesn't read as a cone off a lathe)
+    revolve(M, 1.6, -2.2, [(3.4, 0.0), (2.2, h * 0.42), (0.8, h * 0.66), (0.0, h * 0.72)], m, n=10, rot=0.3)
+    return Lot(13, 13)
+
+
+def b_pile_ore_a(M, P): return _heap_pile(M, P, P["ore_pile"], 5.6)
+def b_pile_ore_b(M, P): return _heap_pile(M, P, P["ore_pile2"], 4.8)
+def b_pile_coal_a(M, P): return _heap_pile(M, P, P["coal"], 5.6)
+def b_pile_coal_b(M, P): return _heap_pile(M, P, P["cm_roof"], 4.8)
+def b_pile_lime_a(M, P): return _heap_pile(M, P, P["lime"], 5.6)
+def b_pile_lime_b(M, P): return _heap_pile(M, P, P["lime2"], 4.8)
+def b_pile_sand_a(M, P): return _heap_pile(M, P, P["sand_pile"], 5.6)
+def b_pile_sand_b(M, P): return _heap_pile(M, P, P["sand_pile2"], 4.8)
+def b_pile_cu_a(M, P): return _heap_pile(M, P, P["cu_ore"], 5.6)
+def b_pile_cu_b(M, P): return _heap_pile(M, P, P["cu_rock2"], 4.8)
+
+
+def _log_pile(M, P, layers):
+    """A stack of logs 12.5 m long (layers: logs per layer, bottom first), on its bearers."""
+    r = 0.6
+    for x in (-5.0, 0.0, 5.0):
+        box(M, x - 0.15, x + 0.15, -2.4, 2.4, 0, 0.12, P["log_end"])
+    log_stack(M, P, "x", -6.25, 6.25, 0.0, 0.12 + 0.19 * r, r, layers, seed=3)
+    return Lot(12.5, 4.8)
+
+
+def b_pile_logs_1(M, P): return _log_pile(M, P, (4,))
+def b_pile_logs_2(M, P): return _log_pile(M, P, (4, 3))
+def b_pile_logs_3(M, P): return _log_pile(M, P, (4, 3, 2))
 
 def _flagpole(M, P, x, y, h=9.0):
     cyl(M, x, y, 0.08, PAD_H, h, P["ind_steel"], n=5)
@@ -4321,8 +4442,404 @@ def b_site_carlot(M, P):
     motor_car(M, P, tx, y0 + 8.0, P["car_green"], ang=math.pi / 2, z=0.8)
     return L
 
+# ------------------------------------------------------------------ construction (buildings going up in stages)
+# The game draws a building under construction from these: corner stakes on the cleared plot, then a slab, then a
+# timber frame (homes) or a riveted steel skeleton (blocks, towers, plants) tiled bay by bay over the footprint, the
+# walls run round its edge with a scaffold outside them, and the materials, a site hut, a crane and the contractor's
+# trucks beside it. The tiled and stretched pieces carry no detail that would distort when scaled.
+
+def CM():
+    """Construction colours."""
+    return {k: mat("con_" + k, v) for k, v in {
+        "pine": "#d2ad78", "pine2": "#b98f58", "end": "#e6cfa2", "tape": "#e8792b", "concrete": "#c3c0b6",
+        "concrete2": "#aeaba1", "oxide": "#8a3f2c", "oxide2": "#6c3022", "board": "#b9a27a", "tarpaper": "#4a4844",
+        "brick": "#a6503a", "brick2": "#8f4432", "pole": "#9ea3a6", "plank": "#a88c5f", "plank2": "#93794f",
+        "pallet": "#9b7a4c", "sack": "#d9d3c2", "sand": "#c9b07c", "sand2": "#b59a68", "steelgrey": "#5d6166",
+        "hut": "#7d6a4c", "door": "#5b4a33", "crane": "#3f5a3a", "crane2": "#2f4630", "weight": "#9a968c",
+        "cable": "#2b2b2b", "cab_green": "#355a44", "cab_red": "#7a2f2a", "black": "#26282a", "chrome": "#cfd2d3",
+        "drum": "#cfc8a8", "drum2": "#a39b78", "glass": "#2b3440", "flag": "#c8302a", "tank": "#7e8288",
+    }.items()}
+
+
+def b_con_stake(M, P):
+    C = CM()
+    L = Lot(0.3, 0.3)
+    L.bays = []
+    box(M, -0.035, 0.035, -0.035, 0.035, 0, 0.95, C["pine"])
+    box(M, -0.04, 0.04, -0.04, 0.04, 0.78, 0.9, C["tape"])
+    box(M, -0.15, 0.15, -0.025, 0.025, 0.55, 0.65, C["pine2"])    # batter board
+    box(M, -0.025, 0.025, -0.15, 0.15, 0.62, 0.7, C["pine2"])
+    return L
+
+
+def b_con_slab(M, P):
+    C = CM()
+    L = Lot(1.0, 1.0)
+    L.bays = []
+    box(M, -0.5, 0.5, -0.5, 0.5, 0, 0.3, C["concrete"], bevel=0.015)
+    return L
+
+
+def b_con_trench(M, P):
+    """The dug-over plot under a building to come: turned earth (stretched to the footprint), a little proud of the
+    lot so it reads against the bare yard."""
+    C = CM()
+    L = Lot(1.0, 1.0)
+    L.bays = []
+    box(M, -0.5, 0.5, -0.5, 0.5, 0, 0.04, mat("con_dug", "#8a7250"))
+    return L
+
+
+def b_con_string(M, P):
+    """1 m of builder's line between batter boards (stretched along an edge), with a strip of marking paint below."""
+    C = CM()
+    L = Lot(1.0, 0.12)
+    L.bays = []
+    box(M, -0.5, 0.5, -0.02, 0.02, 0.62, 0.66, mat("con_line", "#f2efe6"))
+    box(M, -0.5, 0.5, -0.06, 0.06, 0.0, 0.05, mat("con_paint", "#e8e2cf"))
+    return L
+
+
+def b_con_deck_wood(M, P):
+    """A 3 m bay of board sheathing laid over the joists: boards across, a little gap between, shades varying."""
+    C = CM()
+    L = Lot(3.0, 3.0)
+    L.bays = []
+    n = 10
+    for i in range(n):
+        y0 = -1.5 + 3.0 * i / n
+        box(M, -1.5, 1.5, y0 + 0.01, y0 + 3.0 / n - 0.01, 0, 0.05, C[("pine", "board", "pine2", "end")[i % 4]])
+    return L
+
+
+def b_con_frame_wood(M, P):
+    """One 3 m bay of a timber frame: corner posts, a top plate round the edge, ceiling joists, two braces."""
+    C = CM()
+    L = Lot(3.0, 3.0)
+    L.bays = []
+    h, t = 3.0, 0.14
+    for x in (-1.5, 1.5 - t):
+        for y in (-1.5, 1.5 - t):
+            box(M, x, x + t, y, y + t, 0, h - t, C["pine"])
+    frame(M, -1.5, 1.5, -1.5, 1.5, h - t, h, t, C["pine2"])
+    for x in (-0.75, 0.0, 0.75):
+        box(M, x - 0.03, x + 0.03, -1.5 + t, 1.5 - t, h - 0.2, h - 0.02, C["pine"])
+    # studs midway on two sides (an open frame reads as one from above)
+    box(M, -0.035, 0.035, -1.5, -1.5 + 0.1, 0, h - t, C["pine"])
+    box(M, -1.5, -1.5 + 0.1, -0.035, 0.035, 0, h - t, C["pine"])
+    # let-in braces
+    bar(M, (-1.5 + t, -1.5 + 0.05), (1.5 - t, -1.5 + 0.05), 0.05, 0.9, 1.0, C["pine2"])
+    return L
+
+
+def b_con_frame_steel(M, P):
+    """One 6 m bay of a riveted steel skeleton: I-columns at the corners, deep girders round the top, two beams."""
+    C = CM()
+    L = Lot(6.0, 6.0)
+    L.bays = []
+    h = 4.0
+
+    def column(cx, cy):
+        box(M, cx - 0.15, cx + 0.15, cy - 0.15, cy - 0.11, 0, h - 0.06, C["oxide"])
+        box(M, cx - 0.15, cx + 0.15, cy + 0.11, cy + 0.15, 0, h - 0.06, C["oxide"])
+        box(M, cx - 0.03, cx + 0.03, cy - 0.11, cy + 0.11, 0, h - 0.06, C["oxide2"])
+
+    for x in (-2.85, 2.85):
+        for y in (-2.85, 2.85):
+            column(x, y)
+    # girders: top flange wide, web below
+    for y in (-3.0, 2.7):
+        box(M, -3.0, 3.0, y, y + 0.3, h - 0.06, h, C["oxide"])
+        box(M, -3.0, 3.0, y + 0.12, y + 0.18, h - 0.45, h - 0.06, C["oxide2"])
+    for x in (-3.0, 2.7):
+        box(M, x, x + 0.3, -2.7, 2.7, h - 0.06, h, C["oxide"])
+        box(M, x + 0.12, x + 0.18, -2.7, 2.7, h - 0.45, h - 0.06, C["oxide2"])
+    for x in (-1.0, 1.0):
+        box(M, x - 0.1, x + 0.1, -2.7, 2.7, h - 0.05, h - 0.01, C["oxide"])
+        box(M, x - 0.03, x + 0.03, -2.7, 2.7, h - 0.3, h - 0.05, C["oxide2"])
+    # gusset plates at the corners
+    for x in (-2.85, 2.85):
+        for y in (-2.85, 2.85):
+            box(M, x - 0.15, x + 0.15, y - 0.15, y + 0.15, h - 0.03, h + 0.01, C["oxide2"])
+    return L
+
+
+def b_con_wall_wood(M, P):
+    """3 m of sheathed stud wall along X: boards over the studs, a top plate."""
+    C = CM()
+    L = Lot(3.0, 0.2)
+    L.bays = []
+    box(M, -1.5, 1.5, -0.1, 0.06, 0, 2.86, C["board"])
+    box(M, -1.5, 1.5, -0.1, 0.1, 2.86, 3.0, C["pine2"])
+    for x in (-1.0, 0.0, 1.0):
+        box(M, x - 0.03, x + 0.03, 0.06, 0.1, 0, 2.86, C["pine"])
+    return L
+
+
+def b_con_wall_brick(M, P):
+    """3 m of brick infill wall along X, a concrete course on top."""
+    C = CM()
+    L = Lot(3.0, 0.3)
+    L.bays = []
+    box(M, -1.5, 1.5, -0.15, 0.15, 0, 3.8, C["brick"])
+    box(M, -1.5, 1.5, -0.15, 0.15, 3.8, 4.0, C["concrete2"])
+    box(M, -1.5, 1.5, -0.16, 0.16, 1.9, 1.98, C["brick2"])
+    return L
+
+
+def b_con_scaffold(M, P):
+    """3 m of tube-and-plank scaffold along X: standards at the ends, ledgers, a plank deck on top, a brace."""
+    C = CM()
+    L = Lot(3.0, 1.0)
+    L.bays = []
+    h = 3.0
+    for x in (-1.45, 1.35):
+        for y in (-0.5, 0.4):
+            box(M, x, x + 0.1, y, y + 0.1, 0, h + 0.9, C["pole"])
+    for z in (1.4, h - 0.1):
+        for y in (-0.48, 0.42):
+            box(M, -1.5, 1.5, y, y + 0.06, z, z + 0.06, C["pole"])
+    # plank deck: four boards with small gaps, ends staggered
+    for k, (y0, y1) in enumerate(((-0.42, -0.2), (-0.17, 0.05), (0.08, 0.3), (0.33, 0.42))):
+        box(M, -1.5 + 0.04 * (k % 2), 1.5 - 0.04 * ((k + 1) % 2), y0, y1, h, h + 0.05,
+            C["plank" if k % 2 == 0 else "plank2"])
+    box(M, -1.5, 1.5, -0.5, -0.46, h, h + 0.2, C["plank2"])        # toe board
+    bar(M, (-1.45, -0.52), (1.45, -0.52), 0.05, 0.3, 0.38, C["pole"])
+    box(M, -1.5, 1.5, -0.55, -0.5, h + 0.85, h + 0.9, C["pole"])   # guard rail
+    return L
+
+
+def b_con_lumber(M, P):
+    C = CM()
+    L = Lot(4.0, 1.4)
+    L.bays = []
+    for x in (-1.6, 0.0, 1.6):
+        box(M, x - 0.08, x + 0.08, -0.7, 0.7, 0, 0.12, C["pine2"])
+    for k in range(5):
+        z = 0.12 + k * 0.13
+        j = 0.06 * (k % 2)
+        box(M, -2.0 + j, 2.0 - j, -0.62, 0.62, z, z + 0.12, C["pine" if k % 2 == 0 else "end"], bevel=0.01)
+    bar(M, (-1.6, -0.3), (1.9, 0.25), 0.22, 0.77, 0.84, C["pine"])
+    bar(M, (-1.2, 0.2), (1.7, 0.0), 0.2, 0.84, 0.9, C["end"])
+    return L
+
+
+def b_con_bricks(M, P):
+    C = CM()
+    L = Lot(3.2, 1.3)
+    L.bays = []
+    for cx, m, m2, hgt in ((-1.05, C["brick"], C["brick2"], 0.85), (0.05, C["brick"], C["brick2"], 0.7),
+                           (1.1, C["sack"], C["concrete2"], 0.55)):
+        box(M, cx - 0.5, cx + 0.5, -0.6, 0.6, 0, 0.14, C["pallet"])
+        box(M, cx - 0.46, cx + 0.46, -0.56, 0.56, 0.14, 0.14 + hgt, m, bevel=0.02)
+        box(M, cx - 0.47, cx + 0.47, -0.04, 0.04, 0.14, 0.15 + hgt, m2)
+    return L
+
+
+def b_con_steel(M, P):
+    C = CM()
+    L = Lot(6.2, 1.6)
+    L.bays = []
+    for x in (-2.4, 0.0, 2.4):
+        box(M, x - 0.12, x + 0.12, -0.8, 0.8, 0, 0.15, C["pallet"])
+    for k, (y, z) in enumerate(((-0.5, 0.15), (0.0, 0.15), (0.5, 0.15), (-0.25, 0.47), (0.25, 0.47))):
+        j = 0.15 * (k % 3)
+        box(M, -3.1 + j, 3.1 - j * 0.5, y - 0.18, y + 0.18, z, z + 0.04, C["oxide"])
+        box(M, -3.1 + j, 3.1 - j * 0.5, y - 0.03, y + 0.03, z + 0.04, z + 0.28, C["oxide2"])
+        box(M, -3.1 + j, 3.1 - j * 0.5, y - 0.18, y + 0.18, z + 0.28, z + 0.32, C["oxide"])
+    return L
+
+
+def b_con_gravel(M, P):
+    C = CM()
+    L = Lot(3.34, 3.15)
+    L.bays = []
+    ox, oy = 0.08, -0.32
+    pile(M, -0.4 + ox, oy, 1.4, 1.25, 1.05, C["sand"])
+    pile(M, 0.55 + ox, -0.35 + oy, 0.9, 0.8, 0.7, C["sand2"])
+    # a wheelbarrow beside it
+    x, y = 1.25 + ox, 0.95 + oy
+    taper(M, (x - 0.32, x + 0.32, y - 0.45, y + 0.25), (x - 0.38, x + 0.38, y - 0.5, y + 0.4), 0.3, 0.6, C["steelgrey"])
+    cyl(M, x, y - 0.62, 0.17, 0.0, 0.05, C["black"], n=8)
+    for s in (-1, 1):
+        bar(M, (x + s * 0.25, y + 0.3), (x + s * 0.28, y + 0.95), 0.05, 0.45, 0.5, C["pine2"])
+    return L
+
+
+def b_con_hut(M, P):
+    C = CM()
+    L = Lot(5.4, 3.2)
+    L.bays = []
+    box(M, -2.5, 1.2, -1.4, 1.4, 0, 2.4, C["hut"])
+    taper(M, (-2.7, 1.4, -1.6, 1.6), (-2.7, 1.4, -1.6, 1.6), 2.4, 2.5, C["tarpaper"])
+    extrude_profile(M, [(-1.6, 2.5), (1.6, 2.5), (1.6, 2.62), (-1.6, 2.85)], "x", -2.7, 1.4, C["tarpaper"])
+    box(M, -0.6, 0.3, -1.45, -1.4, 0, 1.9, C["door"])
+    box(M, -2.0, -1.2, -1.45, -1.4, 1.2, 1.8, C["glass"])
+    # the privy
+    box(M, 1.6, 2.6, -0.4, 0.5, 0, 2.1, C["board"])
+    taper(M, (1.5, 2.7, -0.5, 0.6), (1.5, 2.7, -0.5, 0.6), 2.1, 2.2, C["tarpaper"])
+    return L
+
+
+def lattice(M, p, q, z, wd, h, m, step=1.6):
+    """A flat lattice girder from p to q at height z: two chords wd apart, zigzag web between (reads open from
+    above)."""
+    d = Vector((q[0] - p[0], q[1] - p[1]))
+    ln = d.length
+    d.normalize()
+    n = Vector((-d.y, d.x)) * (wd / 2)
+    for s in (-1, 1):
+        bar(M, (p[0] + n.x * s, p[1] + n.y * s), (q[0] + n.x * s, q[1] + n.y * s), 0.12, z, z + h, m)
+    k = max(1, int(ln / step))
+    for i in range(k):
+        a = Vector(p) + d * (ln * i / k)
+        b = Vector(p) + d * (ln * (i + 1) / k)
+        s = 1 if i % 2 == 0 else -1
+        bar(M, (a.x + n.x * s, a.y + n.y * s), (b.x - n.x * s, b.y - n.y * s), 0.07, z + 0.02, z + h - 0.02, m)
+
+
+def b_con_crane(M, P):
+    """A 1930s lattice tower crane: ballast base, square lattice mast, the operator's cab, a 16 m jib along -Y and a
+    short counter-jib with its counterweight along +Y, the hook hanging partway out. Origin at the mast."""
+    C = CM()
+    L = Lot(3.0, 22.2)
+    L.bays = []
+    box(M, -1.5, 1.5, -1.5, 1.5, 0, 0.8, C["weight"], bevel=0.05)
+    H = 18.0
+    for x in (-0.45, 0.33):
+        for y in (-0.45, 0.33):
+            box(M, x, x + 0.12, y, y + 0.12, 0.8, H, C["crane"])
+    for z in range(2, 18, 2):
+        frame(M, -0.45, 0.45, -0.45, 0.45, z, z + 0.08, 0.07, C["crane2"])
+    box(M, -0.7, 0.7, -0.2, 1.4, H - 2.2, H - 0.4, C["crane2"], bevel=0.04)       # cab
+    box(M, -0.6, 0.6, -0.22, -0.2, H - 1.8, H - 0.8, C["glass"])
+    box(M, -0.6, 0.6, -0.6, 0.6, H, H + 0.3, C["crane"])                            # slewing ring
+    lattice(M, (0.0, -0.6), (0.0, -16.8), H + 0.1, 0.9, 0.7, C["crane"])
+    lattice(M, (0.0, 0.6), (0.0, 5.3), H + 0.1, 0.9, 0.6, C["crane"])
+    box(M, -0.8, 0.8, 4.0, 5.4, H - 1.0, H + 0.6, C["weight"], bevel=0.05)          # counterweight
+    # a peak with stays, the trolley and hook block on its cable
+    box(M, -0.15, 0.15, -0.15, 0.15, H + 0.3, H + 3.2, C["crane"])
+    bar(M, (0.0, -0.1), (0.0, -10.0), 0.05, H + 3.0, H + 3.06, C["cable"])
+    bar(M, (0.0, 0.1), (0.0, 4.8), 0.05, H + 3.0, H + 3.06, C["cable"])
+    box(M, -0.35, 0.35, -9.4, -8.6, H - 0.1, H + 0.15, C["crane2"])
+    box(M, -0.02, 0.02, -9.02, -8.98, 6.5, H - 0.1, C["cable"])
+    box(M, -0.25, 0.25, -9.25, -8.75, 6.0, 6.5, C["tape"])
+    return L
+
+
+def period_cab(M, C, paint, y_front, hw=1.05):
+    """A 1930s truck front: long hood, rounded fenders over separate wheels, headlamps, a closed cab behind."""
+    yb = y_front + 2.0                              # back of the hood
+    box(M, -0.62, 0.62, y_front + 0.1, yb, 0.75, 1.55, paint, bevel=0.12)            # hood
+    box(M, -0.6, 0.6, y_front - 0.02, y_front + 0.12, 0.7, 1.5, C["chrome"])          # radiator grille
+    for x0, x1 in ((-hw, -hw + 0.4), (hw - 0.4, hw)):                                # fenders and running boards
+        box(M, x0, x1, y_front + 0.1, y_front + 1.5, 0.55, 1.05, C["black"], bevel=0.12)
+        box(M, x0 + (0.1 if x0 > 0 else 0), x1 - (0 if x0 > 0 else 0.1), y_front + 1.5, yb + 1.6, 0.42, 0.52,
+            C["black"])
+    for s in (-1, 1):
+        cyl(M, s * 0.75, y_front + 0.05, 0.16, 1.15, 1.3, C["chrome"], n=8)           # headlamp
+    box(M, -hw + 0.1, hw - 0.1, yb, yb + 1.6, 0.6, 2.35, paint, bevel=0.1)              # cab
+    box(M, -hw + 0.05, hw - 0.05, yb - 0.05, yb + 1.7, 2.35, 2.45, C["black"], bevel=0.04)  # roof
+    box(M, -hw + 0.25, hw - 0.25, yb - 0.04, yb, 1.65, 2.2, C["glass"])                 # windscreen
+    for s in (-1, 1):
+        x0 = hw - 0.1 if s > 0 else -hw + 0.08
+        box(M, x0, x0 + 0.02, yb + 0.3, yb + 1.3, 1.65, 2.15, C["glass"])
+    return yb + 1.6
+
+
+def wheels(M, C, ys, hw, r=0.48):
+    for y in ys:
+        wheel_axle(M, y, r, hw, C["black"])
+
+
+def b_con_mixer(M, P):
+    """A 1930s cement mixer truck: period cab and hood, a water tank across behind the cab, a tilted drum with a
+    spiral band and its hopper, a chute at the back, dual rear wheels."""
+    C = CM()
+    L = Lot(2.3, 7.86)
+    L.bays = []
+    y0 = -3.8
+    cab_end = period_cab(M, C, C["cab_green"], y0)
+    box(M, -0.55, 0.55, y0 + 0.4, 3.6, 0.45, 0.75, C["black"])                         # chassis
+    extrude_profile(M, [(cab_end + 0.05, 1.0), (cab_end + 0.7, 1.0), (cab_end + 0.7, 2.0), (cab_end + 0.05, 2.0)],
+                    "x", -1.0, 1.0, C["tank"], bevel=0.12)                              # water tank
+    # the drum: an octagonal barrel tilted up toward the back, tapering at both ends
+    zc0, zc1 = 1.55, 2.25
+    ya, yb = cab_end + 0.9, 3.4
+    rings = []
+    for k, (y, r) in enumerate(((ya, 0.55), (ya + 0.5, 1.0), (yb - 1.0, 1.05), (yb, 0.6))):
+        t = (y - ya) / (yb - ya)
+        zc = zc0 + (zc1 - zc0) * t
+        rings.append([(r * math.cos(2 * math.pi * i / 8 + math.pi / 8), y, zc + r * math.sin(2 * math.pi * i / 8 + math.pi / 8))
+                      for i in range(8)])
+    for A, B in zip(rings, rings[1:]):
+        M.loft(A, B, C["drum"])
+    def ring(y, r):
+        zc = zc0 + (zc1 - zc0) * (y - ya) / (yb - ya)
+        return [(r * math.cos(2 * math.pi * i / 8 + math.pi / 8), y, zc + r * math.sin(2 * math.pi * i / 8 + math.pi / 8))
+                for i in range(8)]
+
+    for y in (ya + 0.9, ya + 1.7, yb - 1.0):                                           # riveted bands
+        M.loft(ring(y - 0.07, 1.06), ring(y + 0.07, 1.06), C["drum2"])
+    taper(M, (-0.35, 0.35, yb - 0.1, yb + 0.3), (-0.5, 0.5, yb, yb + 0.5), 2.7, 3.0, C["drum2"])  # hopper
+    bar(M, (0.0, yb + 0.1), (0.4, 3.8), 0.4, 0.9, 1.05, C["steelgrey"])                 # chute
+    for y in (ya + 0.3, yb - 0.4):
+        box(M, -0.7, 0.7, y - 0.12, y + 0.12, 0.75, zc0 + 0.1 + (zc1 - zc0) * ((y - ya) / (yb - ya)), C["steelgrey"])
+    wheels(M, C, (y0 + 0.8,), 1.0)
+    wheels(M, C, (2.1, 3.05), 1.12)
+    box(M, -1.15, 1.15, 1.6, 3.55, 0.95, 1.1, C["black"], bevel=0.05)                  # rear fenders
+    return L
+
+
+def b_con_lumbertruck(M, P):
+    """A 1930s stake-side flatbed of the same family, loaded with sawn lumber chained down, a red flag on the
+    overhang."""
+    C = CM()
+    L = Lot(2.3, 8.3)
+    L.bays = []
+    y0 = -4.0
+    cab_end = period_cab(M, C, C["cab_red"], y0)
+    box(M, -0.55, 0.55, y0 + 0.4, 3.4, 0.45, 0.75, C["black"])
+    yd0, yd1, zd = cab_end + 0.1, 3.4, 0.95
+    box(M, -1.1, 1.1, yd0, yd1, 0.75, zd, C["plank2"])
+    for y in (yd0 + 0.1, (yd0 + yd1) / 2, yd1 - 0.15):
+        for s in (-1, 1):
+            box(M, s * 1.06 - 0.05, s * 1.06 + 0.05, y - 0.05, y + 0.05, zd, 2.0, C["pine2"])
+    for k in range(4):
+        z = zd + k * 0.24
+        box(M, -0.95, 0.95, yd0 + 0.2 + 0.05 * k, 4.2 - 0.1 * (k % 2), z, z + 0.22,
+            C["pine" if k % 2 == 0 else "end"], bevel=0.01)
+    for y in (yd0 + 0.8, yd1 - 0.6):
+        box(M, -0.98, 0.98, y - 0.04, y + 0.04, zd + 0.94, zd + 0.99, C["black"])
+    box(M, -0.15, 0.15, 4.0, 4.2, zd + 0.7, zd + 0.98, C["flag"])
+    wheels(M, C, (y0 + 0.8,), 1.0)
+    wheels(M, C, (1.9, 2.85), 1.12)
+    box(M, -1.15, 1.15, 1.4, 3.35, 0.95, 1.05, C["black"], bevel=0.05)
+    return L
+
+
 BUILDINGS = {
+    "con_stake": (b_con_stake, 0.3, 0.3, 0),
+    "con_slab": (b_con_slab, 1.0, 1.0, 0),
+    "con_trench": (b_con_trench, 1.0, 1.0, 0),
+    "con_string": (b_con_string, 1.0, 0.12, 0),
+    "con_deck_wood": (b_con_deck_wood, 3.0, 3.0, 0),
+    "con_frame_wood": (b_con_frame_wood, 3.0, 3.0, 0),
+    "con_frame_steel": (b_con_frame_steel, 6.0, 6.0, 0),
+    "con_wall_wood": (b_con_wall_wood, 3.0, 0.2, 0),
+    "con_wall_brick": (b_con_wall_brick, 3.0, 0.3, 0),
+    "con_scaffold": (b_con_scaffold, 3.0, 1.0, 0),
+    "con_lumber": (b_con_lumber, 4.0, 1.4, 0),
+    "con_bricks": (b_con_bricks, 3.2, 1.3, 0),
+    "con_steel": (b_con_steel, 6.2, 1.6, 0),
+    "con_gravel": (b_con_gravel, 3.34, 3.15, 0),
+    "con_hut": (b_con_hut, 5.4, 3.2, 0),
+    "con_crane": (b_con_crane, 3.0, 22.2, 0),
+    "con_mixer": (b_con_mixer, 2.3, 7.86, 0),
+    "con_lumbertruck": (b_con_lumbertruck, 2.3, 8.3, 0),
     "house": (b_house, 12, 15, 1),
+    "house_b": (b_house_b, 12, 15, 1),
+    "house_c": (b_house_c, 12, 15, 1),
     "terrace": (b_terrace, 24, 17, 3),
     "apartments": (b_apartments, 30, 30, 6),
     "shop": (b_shop, 18, 20, 4),
@@ -4382,6 +4899,19 @@ BUILDINGS = {
     "site_heap_lime": (b_site_heap_lime, 30, 24, 0),
     "site_heap_sand": (b_site_heap_sand, 30, 24, 0),
     "site_heap_cu": (b_site_heap_cu, 30, 24, 0),
+    "pile_ore_a": (b_pile_ore_a, 13, 13, 0),
+    "pile_ore_b": (b_pile_ore_b, 13, 13, 0),
+    "pile_coal_a": (b_pile_coal_a, 13, 13, 0),
+    "pile_coal_b": (b_pile_coal_b, 13, 13, 0),
+    "pile_lime_a": (b_pile_lime_a, 13, 13, 0),
+    "pile_lime_b": (b_pile_lime_b, 13, 13, 0),
+    "pile_sand_a": (b_pile_sand_a, 13, 13, 0),
+    "pile_sand_b": (b_pile_sand_b, 13, 13, 0),
+    "pile_cu_a": (b_pile_cu_a, 13, 13, 0),
+    "pile_cu_b": (b_pile_cu_b, 13, 13, 0),
+    "pile_logs_1": (b_pile_logs_1, 12.5, 4.8, 0),
+    "pile_logs_2": (b_pile_logs_2, 12.5, 4.8, 0),
+    "pile_logs_3": (b_pile_logs_3, 12.5, 4.8, 0),
     # deeper chains: the chemical works, dairy and creamery, rubber plant and Motor Works, and their site pieces
     "chemworks": (b_chemworks, 50, 42, 4),
     "dairyfarm": (b_dairyfarm, 40, 40, 2),
