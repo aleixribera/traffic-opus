@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as THREE from "three";
 import {
   cameraRig, footprint, groundBounds, groundRay, rayAt, screenToGround, shadowFit, worldToScreen,
-  CASTER_H, TILT_DEFAULT, TILT_MAX, type ViewPose,
+  riseShare, risenTilt, CASTER_H, RISE_FROM, RISE_TO, TILT_DEFAULT, TILT_MAX, type ViewPose,
 } from "../src/render/viewmath";
 
 const deg = (d: number) => (d * Math.PI) / 180;
@@ -113,6 +113,29 @@ describe("the Diorama camera's maths", () => {
     const foot = worldToScreen(v, 1300, 800, 0), roof = worldToScreen(v, 1300, 800, 20);
     expect(roof.x).toBeCloseTo(foot.x, 9);
     expect(foot.y - roof.y).toBeCloseTo((20 * Math.sin(TILT_DEFAULT)) / m, 9);
+  });
+
+  it("the camera rises as it pulls back: the player's pitch close in, straight down far out, eased between", () => {
+    // close in, the pitch asked for; far out, straight down
+    for (const h of [28, 110, 260, RISE_FROM]) expect(risenTilt(TILT_DEFAULT, h)).toBe(TILT_DEFAULT);
+    for (const h of [RISE_TO, 4000, 30000]) expect(risenTilt(TILT_MAX, h)).toBe(0);
+    // the far views the tilt only squashed are (nearly) the map again; a town seen whole still stands up
+    expect(risenTilt(TILT_DEFAULT, 1200)).toBeLessThan(deg(16));
+    expect(risenTilt(TILT_DEFAULT, 1600)).toBeLessThan(deg(5));
+    expect(risenTilt(TILT_DEFAULT, 650)).toBeGreaterThan(deg(32));
+    // eased: it never goes back, and never jumps, in the pitch or in how fast the pitch changes (per 2% of zoom)
+    let prev = 1, prevStep = 0;
+    for (let h = RISE_FROM * 0.9; h < RISE_TO * 1.1; h *= 1.02) {
+      const k = riseShare(h), step = prev - k;
+      expect(k).toBeGreaterThanOrEqual(0);
+      expect(k).toBeLessThanOrEqual(1);
+      expect(step).toBeGreaterThanOrEqual(0);
+      expect(step).toBeLessThan(0.03);
+      expect(Math.abs(step - prevStep)).toBeLessThan(0.002);
+      prev = k; prevStep = step;
+    }
+    // the Map view stays the Map view at every zoom
+    for (const h of [100, 900, 5000]) expect(risenTilt(0, h)).toBe(0);
   });
 
   it("the footprint is the ground the screen's corners see", () => {

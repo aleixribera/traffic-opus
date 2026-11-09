@@ -3,7 +3,6 @@ import { App } from "./app";
 import { loadModels } from "./render/models";
 import { Hud } from "./ui/hud";
 import { MainMenu } from "./ui/menu";
-import { TILT_DEFAULT } from "./render/viewmath";
 import { TILT_MIN } from "./ui/cameraSetting";
 
 async function boot() {
@@ -15,9 +14,10 @@ async function boot() {
   const hud = new Hud(app, document.body);
   app.attachHud(hud);
   app.saves.thumb = () => {
-    // (a save's picture is always the Diorama: from the Map view the camera tips over for this one frame)
-    const v = app.view, tilt = v.tilt, tip = tilt < TILT_MIN;
-    if (tip) { v.tilt = TILT_DEFAULT; app.terrain3d.update(v); }
+    // (a save's picture is always the Diorama, at the player's own pitch: from the Map view the camera tips over
+    // for this one frame. Far out it has risen to straight down in either view, and the picture shows that)
+    const v = app.view, pitch = v.pitch, tip = pitch < TILT_MIN;
+    if (tip) { v.pitch = app.dioPitch; app.terrain3d.update(v); }
     v.render();
     const src = v.renderer.domElement;
     const c = document.createElement("canvas");
@@ -28,7 +28,7 @@ async function boot() {
     const w = src.width * s, h = src.height * s;
     g.drawImage(src, (c.width - w) / 2, (c.height - h) / 2, w, h);
     // (and back, drawn again, so the tipped frame never reaches the screen)
-    if (tip) { v.tilt = tilt; app.terrain3d.update(v); v.render(); }
+    if (tip) { v.pitch = pitch; app.terrain3d.update(v); v.render(); }
     return c.toDataURL("image/jpeg", 0.7);
   };
   const menu = new MainMenu(app, hud);

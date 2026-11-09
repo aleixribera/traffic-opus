@@ -16,6 +16,32 @@ export const TILT_DEFAULT = (40 * Math.PI) / 180;
 /** Below this the view counts as the Map view (straight down). */
 export const TILT_MAP = (0.5 * Math.PI) / 180;
 
+/** The closest the camera comes: half the visible height, in metres. */
+export const MIN_HALF_H = 28;
+
+/**
+ * The camera rises as it pulls back. Up to RISE_FROM (half the visible height, m) the pitch drawn is the pitch
+ * asked for; from there it eases up to straight down at RISE_TO, and stays there. Far out a tilt shows no building's
+ * side (they are specks) and only squashes the map, so the far view is the map itself; zooming back in brings the
+ * pitch back. Eased on the logarithm of the zoom, so each wheel notch lifts the camera by a like amount.
+ */
+export const RISE_FROM = 480;
+export const RISE_TO = 2200;
+
+/** How much of the pitch asked for is drawn at this zoom: 1 close in, 0 far out. */
+export function riseShare(halfH: number): number {
+  if (halfH <= RISE_FROM) return 1;
+  if (halfH >= RISE_TO) return 0;
+  const k = Math.log(halfH / RISE_FROM) / Math.log(RISE_TO / RISE_FROM);
+  // (smootherstep: no kink where the rise begins or ends, in the pitch or in how fast it changes)
+  return 1 - k * k * k * (k * (k * 6 - 15) + 10);
+}
+
+/** The pitch drawn at a zoom for the pitch asked for (radians from straight down). */
+export function risenTilt(pitch: number, halfH: number): number {
+  return pitch * riseShare(halfH);
+}
+
 export interface ViewPose {
   /** the ground point at the middle of the screen (m) */
   cx: number;
