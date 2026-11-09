@@ -53,7 +53,18 @@ describe("Roads with a median", () => {
     expect(route.keys[route.keys.length - 1]).toBe(dkey(e, -1));
   });
 
-  it.each(["avenueM", "boulevard"] as const)("drives cars between buildings on both sides of a %s without turning across it", (type) => {
+  it("a plain boulevard (no median) is turned into from the far side, with no detour", () => {
+    // a works' gate on the north side of a boulevard, a truck coming from the west on the south (eastbound) side
+    const plain = divided("boulevard"), med = divided("boulevardM");
+    const go = (net: RoadNetwork, w: number, e: number) => new Router(net).route(acc(net, w, 0.3, 1), acc(net, e, 0.5, -1), 1)!;
+    const r = go(plain.net, plain.w, plain.e), m = go(med.net, med.w, med.e);
+    // straight there on its own carriageway and across into the gate: west piece, east piece, nothing more
+    expect(r.keys).toEqual([dkey(plain.w, 1), dkey(plain.e, 1)]);
+    // (where a median is in the way the truck goes on to turn round and comes back: far longer)
+    expect(m.freeFlow).toBeGreaterThan(r.freeFlow * 1.5);
+  });
+
+  it.each(["avenueM", "boulevardM"] as const)("drives cars between buildings on both sides of a %s without turning across it", (type) => {
     const { net, w, e } = divided(type);
     let arrived = 0, failed = 0;
     const tr = new Traffic(net, { arrive: () => { arrived++; }, fail: () => { failed++; } });

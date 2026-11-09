@@ -23,7 +23,7 @@ import { BLOCK, CARS_PER_LOAD, demandPerDay, gridPt, isHall, needsOf, smokeReach
 import { F } from "../world/gen";
 import { Transit } from "./transit";
 import { Utilities } from "./utilities";
-import { fieldLook, seasonMult } from "./calendar";
+import { START_YDAY, fieldLook, seasonMult, setYearStart } from "./calendar";
 import { BIG_NAME, Convoys, TURBINE_BOOST, type BigKind } from "./convoys";
 import { isMega, megaBlock, megaStage, piecesLeft, townAt } from "./megaprojects";
 import { PARK_SMOKE, Parks } from "./parks";
@@ -73,7 +73,7 @@ export const SAVE_V = 5;
 
 /** Money a new company starts with: the first chain and plenty of road, room to try things (owner, 2026-11-08: $250k). */
 /** Households the company's first hamlet has when the game starts (about 2.5 people each). */
-export const START_HOUSEHOLDS = 30;
+export const START_HAMLET_HH = 30;
 export const START_MONEY = 250000;
 /** A new site's street starts this far out of its gate (where a road drawn to the gate ends too)... */
 export const GATE_LINK_OUT = 7;
@@ -99,6 +99,8 @@ export class Game {
   money = 0;
   time = 0;
   playtime = 0;
+  /** The day of the year its clock started on (calendar.yearStart while it is the game in play). */
+  calStart = START_YDAY;
   speed = 1;
   paused = false;
   readonly dt = SIM.dt;
@@ -139,6 +141,7 @@ export class Game {
 
   constructor(seed = 7) {
     this.seed = seed;
+    setYearStart(this.calStart);
     this.rng = mulberry32(seed * 31 + 5);
     this.company = makeCompany(seed);
     this.terrain = new Terrain(seed);
@@ -275,7 +278,7 @@ export class Game {
     this.cityName = town.name;
     // (owner, 2026-11-08: "a bit bigger, to have more employees for the early factories": about 60-80 people, hands
     // for a first farm, sawmill and food plant, still a Hamlet well short of the 150 goal)
-    town.target = START_HOUSEHOLDS;
+    town.target = START_HAMLET_HH;
     // the road out of town, from the end of its main street
     const a = gridPt(town.c, ang, 1, 0), b = gridPt(town.c, ang, 1 + 320 / BLOCK, 0);
     const plan = planRoad(this.net, this.world, { start: { p: a, h: 0, guides: [], node: this.nodeAt(a) }, end: { p: b, h: 0, guides: [] }, mode: "straight", type: "street" });
@@ -1821,6 +1824,7 @@ export class Game {
       budget: this.budget as Budget | undefined,
       time: this.time,
       playtime: this.playtime,
+      calStart: this.calStart,
       cityName: this.cityName,
       company: this.company as Company | undefined,
     };
@@ -1842,6 +1846,9 @@ export class Game {
     g.dayN = Math.floor(g.time / DAY); // (a loaded city carries on with the day it was saved in)
     g.traffic.time = data.time;
     g.playtime = data.playtime;
+    // (a save from before games started in late spring counts its year from day 1: it keeps its season and day)
+    g.calStart = (data as { calStart?: number }).calStart ?? 0;
+    setYearStart(g.calStart);
     g.cityName = data.cityName ?? g.cityName;
     // (saves from before companies had names get one from their seed)
     g.company = loadCompany(data.company, data.seed);

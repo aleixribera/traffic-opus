@@ -39,10 +39,18 @@ export const SEASONAL: Record<string, [number, number, number, number]> = {
  */
 export const START_YDAY = 10;
 
-/** Where in the year a sim time falls, 0..1 (the game starts at dawn on day START_YDAY + 1 of spring). */
+/**
+ * The day of the year the game in play started on (Game.calStart, kept in its save): START_YDAY for a new game, 0 for
+ * a save from before late-spring starts, so it keeps its season and day. Set by Game when it is made or loaded.
+ */
+let yearStart = START_YDAY;
+export function setYearStart(d: number) { yearStart = d; }
+export function yearStartDay(): number { return yearStart; }
+
+/** Where in the year a sim time falls, 0..1 (a new game starts at dawn on day START_YDAY + 1 of spring). */
 export function yearPhase(t: number): number {
   // (the clock starts at START_HOUR on its first day: count the year from that day's midnight, so a season starts at midnight)
-  const s = t + (START_YDAY + START_HOUR / 24) * DAY;
+  const s = t + (yearStart + START_HOUR / 24) * DAY;
   return (((s / YEAR) % 1) + 1) % 1;
 }
 
@@ -64,7 +72,7 @@ export function seasonDay(t: number): number {
 
 /** The year a sim time falls in, from 1. */
 export function yearOf(t: number): number {
-  return Math.floor((t + (START_YDAY + START_HOUR / 24) * DAY) / YEAR) + 1;
+  return Math.floor((t + (yearStart + START_HOUR / 24) * DAY) / YEAR) + 1;
 }
 
 /** A kind's pace at a sim time against its year-round average (1 for kinds without seasons). */
@@ -84,7 +92,7 @@ export function seasonAvg(kind: string, s: Season): number {
   if (!SEASONAL[kind]) return 1;
   const i = SEASONS.indexOf(s), N = 48;
   let sum = 0;
-  for (let k = 0; k < N; k++) sum += seasonMult(kind, ((i + (k + 0.5) / N) / 4) * YEAR - (START_YDAY + START_HOUR / 24) * DAY);
+  for (let k = 0; k < N; k++) sum += seasonMult(kind, ((i + (k + 0.5) / N) / 4) * YEAR - (yearStart + START_HOUR / 24) * DAY);
   return sum / N;
 }
 

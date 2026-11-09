@@ -255,6 +255,27 @@ describe("Seasons", () => {
     expect(h.day).toBe(24);
     expect(seasonDay(h.time)).toBe(2);
   }, 60000);
+
+  it("a save from before late-spring starts keeps its season and day; a new game starts in late spring again", () => {
+    const g = new Game(7);
+    g.start();
+    g.time = 22 * DAY + 6 * HOUR;
+    const json = JSON.parse(JSON.stringify(g.serialize()));
+    delete json.calStart; // (as saved by v0.0.69 and before: its year counted from day 1)
+    const h = Game.load(json);
+    expect(h.calStart).toBe(0);
+    expect(seasonOf(h.time)).toBe("summer");
+    expect(seasonDay(h.time)).toBe(7);
+    expect(seasonLine(h.time)).toContain("Summer · Day 7");
+    // saved again, it keeps counting from day 1
+    const again = Game.load(JSON.parse(JSON.stringify(h.serialize())));
+    expect(again.calStart).toBe(0);
+    expect(seasonDay(again.time)).toBe(7);
+    // and a new company after it starts on day 11 of spring
+    const n = new Game(8);
+    expect(n.calStart).toBe(START_YDAY);
+    expect(seasonDay(0)).toBe(START_YDAY + 1);
+  }, 60000);
 });
 
 describe("Convoys and landmarks in the game", () => {

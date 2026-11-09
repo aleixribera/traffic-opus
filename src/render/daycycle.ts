@@ -8,12 +8,12 @@
 //   __env.clear()                                        back to the sim's own clock
 
 import { DAY, HOUR, START_HOUR } from "../game/society";
-import { SEASONS, SEASON_DAYS, START_YDAY, YEAR_DAYS, type Season } from "../game/calendar";
+import { SEASONS, SEASON_DAYS, YEAR_DAYS, yearStartDay, type Season } from "../game/calendar";
 import { clockOf, lightAt, loadNightMode, saveNightMode, seasonLook, type Light, type NightMode, type SeasonLook } from "./daylight";
 import { setEnv } from "./envShader";
 
 /** The sim time at a day of the year (fractional: the hour is its fraction) in the first year. */
-export const timeAtYday = (yday: number) => (yday - START_YDAY) * DAY - START_HOUR * HOUR;
+export const timeAtYday = (yday: number) => (yday - yearStartDay()) * DAY - START_HOUR * HOUR;
 
 /** The title menu's time-lapse: from an autumn afternoon, through its golden hour and a lamplit night, a day every two minutes. */
 const MENU_START = timeAtYday(2 * SEASON_DAYS + 5 + 14.5 / 24);

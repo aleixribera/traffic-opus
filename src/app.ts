@@ -55,6 +55,7 @@ import { PLACED, type PlacedKind } from "./game/placed";
 import type { Hud, Chip } from "./ui/hud";
 import { CameraDirector } from "./ui/camera";
 import { followOn } from "./render/cinema";
+import { setYearStart } from "./game/calendar";
 
 export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "place" | "transit";
 /** The bus tool: put stops on the kerb, or click stops in order to make a line. */
@@ -410,6 +411,7 @@ export class App {
 
   private setGame(g: Game) {
     this.game = g;
+    setYearStart(g.calStart);
     this.view.rot = 0;
     this.hud?.compassAngle(0);
     this.hud?.clearBanners();
@@ -651,7 +653,11 @@ export class App {
       return;
     }
     this.updateCursor(p);
-    if (e.button === 0 && e.pointerType !== "touch" && this.st.tool === "bulldoze") this.dragRect = { a: p, b: p };
+    if (e.button === 0 && e.pointerType !== "touch" && this.st.tool === "bulldoze") {
+      // (a bulldoze rectangle is drawn on still ground: it lets a followed vehicle go)
+      if (followOn("build") === "end") this.camera.stopFollow();
+      this.dragRect = { a: p, b: p };
+    }
   }
 
   /** A plan through homes builds on a second click, and only when its cost and the compensation can be paid. */
