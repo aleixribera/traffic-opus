@@ -182,7 +182,7 @@ const KEYS: [string, string][] = [
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
   ["F5 / F9", "Quicksave / quickload"],
   ["`", "Hide the interface"],
-  ["G", "Follow the truck nearest the middle of the screen (again, or Esc, lets go)"],
+  ["G", "Follow the truck nearest the middle of the screen (again, or moving the map, lets go)"],
   ["T / Shift+T", "Tour camera / Vehicle cam (any key or click comes back)"],
 ];
 
@@ -266,7 +266,7 @@ export class Hud {
     tlb("info", ICON.layers, "Info views", () => this.toggleWin("info"));
     tlb("progression", ICON.flag, "Progression (P)", () => this.toggleWin("progression"));
     tlb("economy", ICON.coins, "Economy (Z)", () => this.toggleWin("economy"));
-    tlb("city", ICON.chart, "Towns (C)", () => this.toggleWin("city"));
+    tlb("city", ICON.townGlyph, "Towns (C)", () => this.toggleWin("city"));
     tlb("transport", ICON.car, "Transportation overview (X)", () => this.toggleWin("transport"));
     tlb("camera", ICON.camera, "Camera: follow a truck, Tour, Vehicle cam (G, T, Shift+T)", () => this.toggleWin("camera"));
     this.compass.innerHTML = ICON.north;
@@ -646,6 +646,20 @@ export class Hud {
     (this.compass.firstElementChild as HTMLElement | null)?.style.setProperty("transform", `rotate(${-rot}rad)`);
   }
 
+  private clockShown = "";
+
+  /** The clock, minute by minute (every frame: it writes only when the minute shown changes). */
+  clock() {
+    const g = this.app.game;
+    if (!g) return;
+    const hr = g.hour, txt = clockText(hr);
+    if (txt === this.clockShown) return;
+    this.clockShown = txt;
+    const b = this.clockEl.firstElementChild;
+    if (b) b.textContent = txt;
+    this.clockEl.classList.toggle("night", hr < 6 || hr >= 21);
+  }
+
   /** Cheap periodic update: the bar, tips, open panels. */
   tick(force = false) {
     const g = this.app.game;
@@ -663,9 +677,13 @@ export class Hud {
     const net = g.netIncome;
     this.moneyBtn.innerHTML = `<b class="${g.money < 0 ? "bad" : ""}">${formatMoney(Math.round(g.money))}</b><span class="${net >= 0 ? "good" : "bad"}">${signed(net)}/h</span>`;
     this.moneyBtn.setAttribute("aria-label", `Money ${formatMoney(Math.round(g.money))}, ${signed(net)} per hour. Open economy`);
-    const hr = g.hour, mm = Math.floor((hr % 1) * 60 / 10) * 10;
-    this.clockEl.innerHTML = `<b>${String(Math.floor(hr)).padStart(2, "0")}:${String(mm).padStart(2, "0")}</b>${seasonLine(g.time)}`;
-    this.clockEl.classList.toggle("night", hr < 6 || hr >= 21);
+    const season = seasonLine(g.time);
+    if (this.clockEl.dataset.k !== season) {
+      this.clockEl.dataset.k = season;
+      this.clockEl.innerHTML = `<b></b>${season}`;
+      this.clockShown = "";
+    }
+    this.clock();
     this.renderTips();
     this.ledger.observe(g);
     if (this.sel) this.fillSel();
@@ -725,10 +743,31 @@ export class Hud {
     box.innerHTML = list.map((c) => `<span class="chip ${c.kind}">${c.icon ? ICON[c.icon] : ""}${c.text}</span>`).join("");
     const r = this.root.getBoundingClientRect();
     const w = box.offsetWidth || 200, hh = box.offsetHeight || 24;
-    let x = pos.x + 18, y = pos.y + 20;
-    if (x + w > r.width - 8) x = pos.x - w - 14;
-    if (y + hh > r.height - 90) y = pos.y - hh - 16;
-    box.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+    // keep clear of the HUD's panels (the road drawer's tabs, tool options, goals, the bars): below and right of the
+    // cursor if that is clear, else above it, else to its left; failing all, lifted above whatever it would cover
+    const walls: DOMRect[] = [];
+    for (const el of this.root.querySelectorAll<HTMLElement>(".card, .bbar, .corner")) {
+      if (el === box || el.hidden || !el.offsetParent) continue;
+      const q = el.getBoundingClientRect();
+      if (q.width > 0 && q.height > 0) walls.push(new DOMRect(q.left - r.left, q.top - r.top, q.width, q.height));
+    }
+    const hits = (x: number, y: number) => walls.filter((q) => x < q.right + 4 && x + w > q.left - 4 && y < q.bottom + 4 && y + hh > q.top - 4);
+    const inside = (x: number, y: number) => x >= 8 && y >= 8 && x + w <= r.width - 8 && y + hh <= r.height - 8;
+    const tries: [number, number][] = [
+      [pos.x + 18, pos.y + 20], [pos.x + 18, pos.y - hh - 16], [pos.x - w - 14, pos.y + 20], [pos.x - w - 14, pos.y - hh - 16],
+    ];
+    let at = tries.find(([x, y]) => inside(x, y) && !hits(x, y).length);
+    if (!at) {
+      let [x, y] = tries[0];
+      if (x + w > r.width - 8) x = pos.x - w - 14;
+      for (let k = 0; k < 4; k++) {
+        const hit = hits(x, y);
+        if (!hit.length) break;
+        y = Math.min(...hit.map((q) => q.top)) - hh - 6;
+      }
+      at = [x, Math.max(8, y)];
+    }
+    box.style.transform = `translate(${Math.round(at[0])}px, ${Math.round(at[1])}px)`;
   }
 
   toast(msg: string, error = false) {
@@ -963,7 +1002,6 @@ export class Hud {
     this.app.sel = null;
     this.app.selected = null;
     this.app.highlight.set(null);
-    this.app.followVehicle(null);
     this.renderTips();
   }
 
@@ -1034,7 +1072,7 @@ export class Hud {
     const opt = (id: string, icon: string, name: string, key: string, blurb: string, on = false) =>
       `<button class="cam-opt${on ? " on" : ""}" data-cam="${id}" aria-pressed="${on}"><span class="cam-ic">${icon}</span><span class="cam-txt"><b>${name}</b><span class="small muted">${blurb}</span></span><span class="cam-key">${key}</span></button>`;
     const html = `<div class="cam-list">${
-      opt("follow", ICON.camFollow, following ? "Stop following" : "Follow a truck", "<kbd>G</kbd>", following ? "Let go of the vehicle the camera is riding with." : "The camera rides with the truck nearest the middle of the screen. Zoom as you like; pan, click the map or Esc lets go.", following)
+      opt("follow", ICON.camFollow, following ? "Stop following" : "Follow a truck", "<kbd>G</kbd>", following ? "Let go of the vehicle the camera is riding with." : "The camera rides with the truck nearest the middle of the screen. Zoom, click and Esc as you like; moving the map lets go.", following)
     }${
       opt("tour", ICON.camera, "Tour", "<kbd>T</kbd>", "An automatic camera drifts over your busiest junctions, towns, works and bridges, fading from one to the next. The interface hides; the game runs on.")
     }${
@@ -1057,7 +1095,7 @@ export class Hud {
     // only the words are read out)
     const el = this.followEl;
     if (!el.firstChild) {
-      el.innerHTML = `<i class="fc-lamp" aria-hidden="true"></i><span class="fc-text" role="status"><span class="fc-k">Following</span><b class="fc-what"></b><span class="fc-sub"></span></span><button class="fc-stop" type="button" aria-label="Stop following (Esc)">Stop<kbd>Esc</kbd></button>`;
+      el.innerHTML = `<i class="fc-lamp" aria-hidden="true"></i><span class="fc-text" role="status"><span class="fc-k">Following</span><b class="fc-what"></b><span class="fc-sub"></span></span><button class="fc-stop" type="button" aria-label="Stop following (G)">Stop<kbd>G</kbd></button>`;
       (el.querySelector(".fc-stop") as HTMLButtonElement).onclick = () => { this.sfx.play("click"); this.app.stopFollow(); };
     }
     if (info) {
@@ -1344,7 +1382,6 @@ export class Hud {
     this.sel = s;
     this.app.sel = s;
     this.app.selected = s.k === "building" ? this.app.game.buildings.byId.get(s.id) ?? null : null;
-    if (s.k !== "vehicle") this.app.followVehicle(null);
     this.panel.hidden = false;
     this.fillSel();
     this.renderTips();
@@ -1416,7 +1453,7 @@ export class Hud {
         : `<span class="fchip still">${body}</span>`;
     };
     const flow = m.flow.length ? `<dl class="ip-flow">${m.flow.map((r) => `<dt class="fl-${r.label.toLowerCase().replace(/\s+/g, "-")}">${escapeHtml(r.label)}</dt><dd>${r.chips.map(chip).join("")}</dd>`).join("")}</dl>` : "";
-    const lv = m.level ? `<div class="ip-lvl"><span class="ip-lvl-k">${escapeHtml(m.level.label)}</span><span class="bar" role="img" aria-label="${Math.round(m.level.pct * 100)}% of the way"><i style="width:${Math.max(2, m.level.pct * 100)}%"></i></span><span class="ip-lvl-t ${m.level.tone ?? ""}">${escapeHtml(m.level.line)}</span></div>` : "";
+    const lv = m.level ? `<div class="ip-lvl">${levelRun(m.level.from, m.level.to, m.level.pct)}<span class="ip-lvl-t ${m.level.tone ?? ""}">${escapeHtml(m.level.line)}</span></div>` : "";
     const open = moreOpen(o.kind);
     const details = o.details ? `<details class="ip-more" data-k="${o.kind}"${open ? " open" : ""}><summary>Details</summary><div class="ip-more-body">${o.details}</div></details>` : "";
     return `<header class="ip-head"><span class="svc-tag${/^(junction|roundabout|road:)/.test(m.icon) ? " lit" : ""}">${iconFor(m.icon)}</span><span class="ip-t"><span class="ip-tn">${escapeHtml(m.title)}</span>${m.sub ? `<small class="ip-ts">${escapeHtml(m.sub)}</small>` : ""}</span>${m.badge ? `<span class="lv-badge" title="Site level">${m.badge}</span>` : ""}${o.actions ?? ""}</header>
@@ -1707,7 +1744,8 @@ export class Hud {
     const nextLv = b.level < 5 ? LEVEL_LV[b.level + 1] : null;
     const lvBar = `<span class="bar lv"><i style="width:${Math.max(3, b.lv)}%"></i>${nextLv ? `<em style="left:${nextLv}%"></em>` : ""}</span>`;
     rows.push(["Land value", `${lvBar}<span class="num">${Math.round(b.lv)}</span>`]);
-    rows.push(["Level", `${b.level} of 5 <span class="muted">· ${nextLv ? `next at land value ${nextLv}` : "top level"}</span>`]);
+    const lvK = nextLv ? Math.max(0, Math.min(1, (b.lv - LEVEL_LV[b.level]) / (nextLv - LEVEL_LV[b.level]))) : 1;
+    rows.push(["Level", `<span class="lv-run">${levelRun(`Level ${b.level}`, nextLv ? `Level ${b.level + 1}` : undefined, lvK)}</span>${nextLv ? `<span class="muted small">at land value ${nextLv}</span>` : ""}`]);
     const details = `<dl class="facts">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
     if (this.setPanel(this.anatomy(m, { kind: grp === "res" ? "home" : "shop", actions: act, details }))) this.bindDemolishBtn(demolish);
   }
@@ -2099,6 +2137,16 @@ function stockBar(n: number, max: number, color?: number): string {
 }
 
 /** A company site's level, how far it is to the next, and what holds it back. */
+/**
+ * A level bar with both ends named: "Level 1 ━━━━──── Level 2", filled `pct` of the way (owner, 2026-11-08: a bar
+ * with only the next level on it read as the level it is). With no next level: "Level 4 · top level".
+ */
+function levelRun(from: string, to: string | undefined, pct: number): string {
+  if (to === undefined) return `<span class="lvr-k lvr-top">${escapeHtml(from)} · top level</span>`;
+  const p = Math.round(pct * 100);
+  return `<span class="lvr-k">${escapeHtml(from)}</span><span class="bar lvr-bar" role="progressbar" aria-label="${escapeHtml(`${from} to ${to}`)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p}"><i style="width:${Math.max(2, p)}%"></i></span><span class="lvr-k lvr-to">${escapeHtml(to)}</span>`;
+}
+
 function siteLevel(b: Building, next: Product[] = []): string {
   const P = b.plant;
   if (!P || !b.placed || b.built < 1) return "";
@@ -2111,7 +2159,7 @@ function siteLevel(b: Building, next: Product[] = []): string {
     : P.why === b.problem ? "Not growing till that is fixed."
     : `<span class="bad">Held back: ${P.why}.</span>`;
   return `<h3 class="sub-h">Site level ${L} of ${SITE_LEVELS}</h3>
-    <dl class="facts"><dt>To level ${L + 1}</dt><dd><span class="bar site-grow"><i style="width:${Math.max(2, k * 100)}%"></i></span><span class="num">${Math.round(k * 100)}%</span></dd></dl>
+    <dl class="facts"><dt>Growing</dt><dd><span class="lv-run">${levelRun(`Level ${L}`, `Level ${L + 1}`, k)}</span><span class="num">${Math.round(k * 100)}%</span></dd></dl>
     <p class="small muted">${why} Now ${mult}; level ${L + 1} gives ×${LEVEL_MULT[L]}${next.length ? ` and works through ${productList(Object.fromEntries(next.map((p) => [p, 1])))}, so it grows once it has some in store` : ""}.</p>`;
 }
 
@@ -2159,6 +2207,12 @@ function siteText(o: Partial<Record<Product, number>>): string {
 function trendOf(t: Town): { short: string; cls: string } {
   const gr = growthOf(t);
   return { short: gr.word, cls: gr.tone };
+}
+
+/** A time of day as the clock shows it, to the minute: "08:07". */
+export function clockText(hr: number): string {
+  const m = Math.floor((((hr % 24) + 24) % 24) * 60);
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
 
 function clonePlan(p: SignalPlan): SignalPlan {

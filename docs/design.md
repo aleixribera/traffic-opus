@@ -297,7 +297,8 @@ sinks the milestones promise.
 
 A game year is 64 game days, **16 per season** (owner, 2026-11-08: "For the seasons, let's have 16 days for each
 season"), long enough to settle into a season and enjoy its scenery: at 1x a season is about four hours of play
-and the year about seventeen. Day 1 at dawn is the start of spring, so the first harvest comes in on day 33.
+and the year about seventeen. A new game starts at dawn in late spring ("Spring · Day 11", calendar.START_YDAY), so summer is six days off and
+the first harvest comes in on the game's day 23.
 
 - **Towns eat the same all year.** The farms swing instead:
   - crops: spring 0.85, summer 1.05, an autumn surge of 1.6, winter 0.5;
@@ -799,7 +800,8 @@ height levels shown while drawing, and the instant upgrade preview.
 - Camera modes (the camera button in the top-left bar, or keys):
   - Follow (G, or a convoy's tag) rides with the truck nearest the middle of the screen, with a damped camera and a
     slight look-ahead. A "Following" chip names its cargo and destination. When it arrives the camera holds, then picks
-    up the same truck's next run, or lets go. Zooming still works; panning, a click on the map or Esc lets go.
+    up the same truck's next run, or lets go. Zooming, Esc (which clears panels) and clicks on the map keep it (a click
+    on another vehicle rides with that one instead); only panning, a build tool's click or the chip's Stop let go.
   - Tour (T) is a Cities: Skylines-style automatic camera. Slow 8–14 s pans and zooms over the busiest junctions, towns,
     works, bridges, convoys and recent events, weighted by live activity, never the same place twice in a row, fading
     through black between shots.
@@ -976,3 +978,14 @@ The game's setting is 1920s-40s American industry: steel, oil, highways, Deco.
   for a truck, over one store; the piles of every yard of a product fill one after another, so a half-full store
   is full heaps and empty bays rather than every heap half height. A bay of a product the works doesn't handle is
   dressed as 60% full. An empty bay keeps a spill of its material along the back wall, so it still says what it is.
+- **Town streets and country roads** (src/game/rural.ts, src/render/roads3d.ts). Out in the country a paved road
+  has no kerbs, pavements, street lamps or street trees: its asphalt runs out to a worn, slightly broken edge onto
+  a grey-tan gravel shoulder (about 1.2 m, ragged on the outside), then a strip of short grass fading into the
+  field. A town's streets keep all of them. Which stretch is which comes from the map, along each road and not
+  saved: a road is a town street where it runs through a town's land, where a town laid it on its own land (half
+  a block past its edge, so a town's road out stops being a street soon after the last houses), and in front of
+  homes, shops and town halls that face it. A company's works never make a road a street. The pavement rounds off
+  where the town ends, so the road a hamlet starts on runs on out of it as a country road. Junctions and bends
+  follow their roads: between two country roads the corner is gravel, between two town streets it is kerbed, and
+  where they meet the town's pavement stops at the corner. Highways keep their own paved shoulders, with gravel
+  past them. Only the roads that change are redrawn, when roads or buildings change.

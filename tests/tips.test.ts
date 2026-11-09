@@ -7,6 +7,7 @@ import { Game } from "../src/game/city";
 import { v2, type V2 } from "../src/core/math";
 import type { PlacedKind } from "../src/game/placed";
 import { TipPrefs, cutOff, joinedUp, soilInReach, tipFor, wants, type TipId } from "../src/ui/tips";
+import { planRoad, snap } from "../src/roads/planner";
 import { road } from "./helpers";
 import { nextTown } from "../src/ui/nextTown";
 
@@ -140,12 +141,24 @@ describe("tips follow the map", () => {
     expect(tip.id).toBe("newtown");
     expect(tip.html).toContain(t.name);
     expect(tip.html).toContain(home.name);
-    // a street from one of its own out a little: now it is on a road beyond its own streets
-    const s = [...g.net.segs.values()].find((x) => x.town === t.id)!;
-    const end = g.net.nodes.get(s.b)!.p, from = g.net.nodes.get(s.a)!.p;
-    const L = Math.hypot(end.x - from.x, end.y - from.y);
-    const out = v2(end.x + ((end.y - from.y) / L) * 120, end.y - ((end.x - from.x) / L) * 120);
-    road(g, end, out);
+    // a street from one of its own out a little: now it is on a road beyond its own streets (from the first of its
+    // street ends with room to lay one: the town's own plan, gardens and greens fill some of them)
+    let built = false;
+    for (const s of [...g.net.segs.values()].filter((x) => x.town === t.id)) {
+      for (const [ea, eb] of [[s.a, s.b], [s.b, s.a]]) {
+        const end = g.net.nodes.get(eb)!.p, from = g.net.nodes.get(ea)!.p;
+        const L = Math.hypot(end.x - from.x, end.y - from.y);
+        for (const side of [1, -1]) for (const len of [120, 80, 160]) {
+          if (built) break;
+          const out = v2(end.x + side * ((end.y - from.y) / L) * len, end.y - side * ((end.x - from.x) / L) * len);
+          const plan = planRoad(g.net, g.world, { start: snap(g.net, end, { mpp: 0.5, level: 0, type: "street" }), end: { p: out, h: 0, guides: [] }, mode: "straight", type: "street" });
+          if (!plan.errors.length && g.build(plan)) built = true;
+        }
+        if (built) break;
+      }
+      if (built) break;
+    }
+    expect(built).toBe(true);
     expect(joinedUp(g, t)).toBe(true);
     expect(tipFor(g, skip)).toBeNull();
   });

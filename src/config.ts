@@ -58,6 +58,15 @@ export const ROAD_ORDER: RoadTypeId[] = ["dirt", "one1", "street", "streetM", "o
 /** Motorway carriageways and ramps: one-way and closed to driveways. Drawn in darker asphalt with solid edge lines. */
 export const isHighway = (t: RoadType): boolean => t.bwd === 0 && !t.allowsAccess;
 
+/**
+ * A company site's gate can open onto it: any road a house can face, and a boulevard too (no driveways for homes, but
+ * a site's gate is a proper entrance, turned into from either side like any driveway). Never a motorway.
+ */
+export const takesGate = (t: RoadType): boolean => t.allowsAccess || t.bwd > 0;
+
+/** No turning across it into or out of a driveway or gate: a median (cars U-turn at the junctions instead). */
+export const rightOnly = (t: RoadType): boolean => (t.median ?? 0) > 0;
+
 /** A dirt road: packed earth, no markings, kerbs or pavement, only on the ground. */
 export const isUnpaved = (t: RoadType): boolean => !!t.unpaved;
 /** What a dirt road becomes where it has to leave the ground (a bridge and its ramps): a plain paved street. */

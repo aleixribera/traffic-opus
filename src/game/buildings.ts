@@ -1,4 +1,4 @@
-import { BUILDING_TYPES, ROAD_TYPES, ZONE_SETBACK, type BuildingKind } from "../config";
+import { BUILDING_TYPES, ROAD_TYPES, ZONE_SETBACK, takesGate, type BuildingKind, type RoadType } from "../config";
 import { type V2, add, angleOf, cubicAt, cubicTangent, dist, dot, norm, polyAt, polyDir, rectCorners, rectDistance, right, scale, sub, wrapAngle } from "../core/math";
 import type { RoadNetwork } from "../roads/network";
 import { cubicClosest, type SiteTarget } from "../roads/planner";
@@ -256,7 +256,7 @@ export class Buildings {
     const R = FACE_REACH + T.d / 2;
     for (const id of net.segsNear(p.x - R, p.y - R, p.x + R, p.y + R)) {
       const s = net.segs.get(id)!;
-      if (!ROAD_TYPES[s.type].allowsAccess) continue;
+      if (!takesGate(ROAD_TYPES[s.type])) continue;
       const r = cubicClosest(s.c, p);
       if (r.d < R && (!near || r.d < near.d)) near = { d: r.d, seg: id, t: r.t, q: r.p };
     }
@@ -332,7 +332,7 @@ export class Buildings {
     let best: { seg: number; t: number; q: V2; edge: number } | null = null;
     for (const id of net.segsNear(G.x - R, G.y - R, G.x + R, G.y + R)) {
       const s = net.segs.get(id)!;
-      if (!ROAD_TYPES[s.type].allowsAccess) continue;
+      if (!(site ? takesGate(ROAD_TYPES[s.type]) : ROAD_TYPES[s.type].allowsAccess)) continue;
       const g = net.segGeom.get(id)!;
       const r = cubicClosest(s.c, G);
       if (net.heightOnSeg(id, r.t) > 0.5) continue;
@@ -444,7 +444,7 @@ export class Buildings {
       const a = b.access;
       // (a building on a road that hasn't been rebuilt since it was last attached stays as it is: a city has thousands)
       if (a && this.attachedTo.get(b) === net.segGeom.get(a.seg) && net.segs.has(a.seg)) continue;
-      if (a && net.segs.has(a.seg) && ROAD_TYPES[net.segs.get(a.seg)!.type].allowsAccess) {
+      if (a && net.segs.has(a.seg) && (b.placed && b.plant ? takesGate : (t: RoadType) => t.allowsAccess)(ROAD_TYPES[net.segs.get(a.seg)!.type])) {
         // seg may have been rebuilt (new trims): refresh the arc-length
         const g = net.segGeom.get(a.seg)!;
         const s = net.segs.get(a.seg)!;

@@ -54,6 +54,10 @@ export const PAL = {
   dirtLight: 0xc5ac80,
   dirtRut: 0x80664a,
   dirtEdge: 0xa59865,
+  // country roads: a grey-tan gravel shoulder (pale chips, darker grit), then a mown verge
+  gravel: 0xaa9f88,
+  gravelLight: 0xc9bfa6,
+  gravelDark: 0x897e69,
   bg: 0x9d955a,
 };
 

@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { BUILDING_TYPES, LEVEL_H, MAX_LEVEL, ROAD_TYPES, SIM, roadWidth, type RoadTypeId } from "./config";
 import { cubicAt, cubicTangent, dist, dot, formatMoney, norm, rectCorners, right, sub, v2, wrapAngle, type V2 } from "./core/math";
+import { townStreets } from "./game/rural";
 import type { Building } from "./game/buildings";
 import { Game } from "./game/city";
 import {
@@ -54,6 +55,8 @@ import { Saves } from "./game/saves";
 import { PLACED, type PlacedKind } from "./game/placed";
 import type { Hud, Chip } from "./ui/hud";
 import { CameraDirector } from "./ui/camera";
+import { followOn } from "./render/cinema";
+import { setYearStart } from "./game/calendar";
 
 export type ToolId = "inspect" | "road" | "roundabout" | "junction" | "lane" | "bulldoze" | "place" | "transit";
 /** The bus tool: put stops on the kerb, or click stops in order to make a line. */
@@ -409,6 +412,7 @@ export class App {
 
   private setGame(g: Game) {
     this.game = g;
+    setYearStart(g.calStart);
     this.view.rot = 0;
     this.hud?.compassAngle(0);
     this.hud?.clearBanners();
@@ -422,8 +426,17 @@ export class App {
     sh.uClear.value = this.clearing.tex; sh.uClearO.value = this.clearing.origin; sh.uClearS.value = this.clearing.size;
     this.roads = new Roads3D(g.net, {
       props: this.models.props, isWater: (p) => g.terrain.isWater(p),
-      drives: () => g.buildings.list.filter((b) => b.access && !b.plant).map((b) => this.buildings3d?.driveFront(b) ?? b.front),
+      // each driveway as a line from where it leaves the road to the lot (a home's middle, a site's gate): no street
+      // tree or lamp stands on it, however wide the road it comes off (a boulevard's verge is far from its centreline);
+      // a home's runs down the side of its lot, to its garage
+      drives: () => g.buildings.list.filter((b) => b.access).map((b): [V2, V2] => {
+        if (b.plant && b.placed) return [b.front, siteFrame(b.c, b.rot, b.side, b.hd).gate];
+        const f = this.buildings3d?.driveFront(b) ?? b.front;
+        return [f, { x: b.c.x + f.x - b.front.x, y: b.c.y + f.y - b.front.y }];
+      }),
       gates: () => g.buildings.list.filter((b) => b.placed && b.plant).map((b) => ({ ...siteFrame(b.c, b.rot, b.side, b.hd), front: b.front })),
+      // town streets keep their kerbs, pavements, lamps and trees; the roads out in the country don't
+      townStreets: () => townStreets(g.net, g.towns.list, g.buildings.list),
     });
     this.roadsFar = new RoadsFar(g.net);
     this.labels.set([]);
@@ -459,7 +472,7 @@ export class App {
       if (e.t === "shipped") { if (this.mode !== "menu") this.pops.shipped(e.from, e.to, e.p, this.view); return; }
       if (e.t === "roads") { this.roads.apply(e.cs); this.clearing.invalidate(); this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
       else if (e.t === "buildings") {
-        this.buildings3d.rebuild(g.buildings.list); this.roads.refreshGates(); this.clearing.invalidate(); this.applyTint(); this.dirtyPreview = true;
+        this.buildings3d.rebuild(g.buildings.list); this.roads.refreshGates(); this.roads.refreshLook(); this.clearing.invalidate(); this.applyTint(); this.dirtyPreview = true;
         { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }
         // (street trees make way for new driveways: at most twice a second while a town grows)
         if (!this.treesDue) this.treesDue = setTimeout(() => { this.treesDue = 0; this.roads.refreshTrees(); }, 500);
@@ -649,7 +662,11 @@ export class App {
       return;
     }
     this.updateCursor(p);
-    if (e.button === 0 && e.pointerType !== "touch" && this.st.tool === "bulldoze") this.dragRect = { a: p, b: p };
+    if (e.button === 0 && e.pointerType !== "touch" && this.st.tool === "bulldoze") {
+      // (a bulldoze rectangle is drawn on still ground: it lets a followed vehicle go)
+      if (followOn("build") === "end") this.camera.stopFollow();
+      this.dragRect = { a: p, b: p };
+    }
   }
 
   /** A plan through homes builds on a second click, and only when its cost and the compensation can be paid. */
@@ -746,8 +763,8 @@ export class App {
       return;
     }
     if (pi.button === 0) {
-      // (a click elsewhere on the map lets a followed vehicle go)
-      this.camera.stopFollow();
+      // (a click with a build tool lets a followed vehicle go; in inspect, onClick keeps it or switches to a vehicle)
+      if (followOn(this.st.tool === "inspect" ? "select" : "build") === "end") this.camera.stopFollow();
       this.onClick(e.shiftKey);
     }
   }
@@ -776,8 +793,8 @@ export class App {
       return;
     }
     // Esc steps back like CS2: popups, dialogs, panels, the tool, the asset menu, then the pause menu
-    // (a dialog or panel goes first, then a followed vehicle, then the pause menu)
-    if (k === "Escape") { if (!this.hud?.back()) { if (this.camera.following !== null) this.camera.stopFollow(); else this.hud?.openPause(); } }
+    // (a followed vehicle stays followed: Esc clears the screen, only taking the camera lets it go, cinema.followOn)
+    if (k === "Escape") { if (!this.hud?.back()) this.hud?.openPause(); }
     else if (k === " ") { e.preventDefault(); if (!e.repeat) this.togglePause(); }
     else if (k === "1") this.setSpeed(1);
     else if (k === "2") this.setSpeed(2);
@@ -1072,6 +1089,8 @@ export class App {
       if (!s) { this.hud?.closePanels(); return; }
       if (s.k === "node") this.hud?.openSignal(s.id);
       else this.hud?.openSel(s);
+      // (following one vehicle, a click on another rides with that one instead)
+      if (this.camera.following !== null && this.camera.following !== s.id && followOn("select", s.k === "vehicle" ? "vehicle" : "other") === "switch") this.camera.followVehicle(s.id);
       this.dirtyPreview = true;
       return;
     }
@@ -1631,6 +1650,8 @@ export class App {
       // (a preview that can't be drawn must never stop the game)
       try { this.refreshPreview(); } catch (e) { this.dirtyPreview = false; console.error(e); }
     }
+    // (the clock counts every game minute; the rest of the bar every quarter second)
+    this.hud?.clock();
     this.buildings3d.frameConstruction();
     this.hudT += dt;
     if (this.hudT > 0.25) {

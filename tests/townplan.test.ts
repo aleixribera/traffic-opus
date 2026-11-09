@@ -48,7 +48,8 @@ describe("a town's own plan", () => {
   it("is less crowded round its hall and reaches further out", () => {
     // (on the square grid, v0.0.68, the same town at Town size: 7.2 homes a hectare within 150 m of the hall, its
     // land reaching 547 m out)
-    expect(homesPerHa(g, t, 150)).toBeLessThan(5.5);
+    // (front strips set the homes back and re-lay their lots: a little denser than the strips-free 5.3, still well under 7.2)
+    expect(homesPerHa(g, t, 150)).toBeLessThan(6.5);
     expect(t.reach).toBeGreaterThan(620);
   });
 

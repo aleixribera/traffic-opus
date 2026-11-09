@@ -826,11 +826,16 @@ button.fchip:hover { background: var(--plate-3); border-color: var(--pin); }
 .fchip em.good { color: var(--good); }
 
 /* the level: one thin bar and one line */
-.ip-lvl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; align-items: center; margin: 0 0 4px; font-size: var(--t-xs); color: var(--cream-2); }
-.ip-lvl-k { font-weight: 600; color: var(--ochre-hi); font-variant-numeric: tabular-nums lining-nums; }
-.ip-lvl .bar { height: 4px; }
-.ip-lvl .bar i { background: var(--ochre); }
-.ip-lvl-t { grid-column: 2; line-height: 1.35; }
+.ip-lvl { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 8px; align-items: center; margin: 0 0 4px; font-size: var(--t-xs); color: var(--cream-2); }
+.ip-lvl .lvr-top { grid-column: 1 / -1; }
+.ip-lvl-t { grid-column: 1 / -1; line-height: 1.35; }
+/* a level bar named at both ends (levelRun): this level, the way to the next, the next */
+.lvr-k { font-weight: 600; color: var(--ochre-hi); font-variant-numeric: tabular-nums lining-nums; white-space: nowrap; }
+.lvr-k.lvr-to { color: var(--cream-2); font-weight: 500; }
+.lvr-bar { height: 4px; min-width: 48px; }
+.lvr-bar i { background: var(--ochre); }
+.lv-run { display: inline-grid; grid-template-columns: auto minmax(48px, 1fr) auto; gap: 6px; align-items: center; width: 100%; max-width: 220px; vertical-align: middle; }
+.lv-run .lvr-top { grid-column: 1 / -1; }
 .ip-lvl-t.bad { color: var(--bad); }
 
 /* everything else, folded away (remembered per kind) */

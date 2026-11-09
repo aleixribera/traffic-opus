@@ -225,6 +225,8 @@ export const ICON = {
   stuck: svg(28, 28, `<path d="M14 2.5 L25.5 14 L14 25.5 L2.5 14 Z" fill="${C.ochre}" stroke="${C.navy}" stroke-width="1.4" stroke-linejoin="round"/><rect x="12.6" y="7.6" width="2.8" height="8.6" fill="${C.navy}"/><rect x="12.6" y="18" width="2.8" height="2.8" fill="${C.navy}"/>`),
   // the camera menu: a newsreel camera (two reels on a box, the lens hood forward), and viewfinder corners round a
   // truck (follow) or round a heading (riding along)
+  /** the Towns window (control glyph): a church spire between two houses */
+  townGlyph: svg(18, 18, `<path d="M1.5 16.5 V10 L4.5 7.4 L7.5 10 V16.5 Z M6.5 16.5 V6.6 L9 2 L11.5 6.6 V16.5 Z M10.5 16.5 V10 L13.5 7.4 L16.5 10 V16.5 Z" fill="currentColor"/>`),
   camera: svg(18, 18, `<circle cx="4.6" cy="4.3" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="4.3" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="1.5" y="8" width="10.5" height="7.5" rx="0.8" fill="currentColor"/><path d="M12 10.4 L16.6 8.2 V15.3 L12 13.1 Z" fill="currentColor"/>`),
   camFollow: svg(18, 18, `<path d="M2 6 V2 H6 M12 2 H16 V6 M16 12 V16 H12 M6 16 H2 V12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"/><rect x="5" y="6.6" width="5.6" height="4.8" fill="currentColor"/><path d="M10.6 8 H12.3 L13.4 9.6 V11.4 H10.6 Z" fill="currentColor"/>`),
   camRide: svg(18, 18, `<path d="M2 6 V2 H6 M12 2 H16 V6 M16 12 V16 H12 M6 16 H2 V12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"/><path d="M9 4.6 L13 12.4 L9 10.6 L5 12.4 Z" fill="currentColor"/>`),

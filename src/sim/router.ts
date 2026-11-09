@@ -1,4 +1,4 @@
-import { ROAD_TYPES } from "../config";
+import { ROAD_TYPES, rightOnly } from "../config";
 import type { RoadNetwork, Lane } from "../roads/network";
 import { dist, type V2 } from "../core/math";
 
@@ -159,7 +159,7 @@ export class Router {
     const heap = new Heap();
     const goalKeys = new Map<number, number>(); // key -> remaining fraction cost
     const toSeg = this.net.segs.get(to.seg)!;
-    const divided = (ROAD_TYPES[toSeg.type].median ?? 0) > 0;
+    const divided = rightOnly(ROAD_TYPES[toSeg.type]);
     for (const d of [1, -1] as const) {
       if (!this.hasLanes(to.seg, d)) continue;
       if (divided && to.side && d !== to.side) continue; // across the median: go round and come back on the right side

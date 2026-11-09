@@ -149,7 +149,11 @@ describe("a town's needs, read out", () => {
 
   it("growth in words, no numbers: against the town's own best, so a hamlet and a city read alike", () => {
     const pop = t.pop, trend = t.trend;
-    /** every need at this share of a day's want, and the town growing at the pace the sim gives that */
+    /**
+     * every need at this share of a day's want, and the town growing at `k` of its best pace (towns.ts grows a town
+     * at its full pace on a proven supply and eases off as it nears what that supply supports, so the share of its
+     * best pace is what the words read)
+     */
     const at = (p: number, share: Partial<Record<Product, number>>, k = 1) => {
       t.pop = p;
       const want = (q: Product) => demandPerDay(q, p) * (share[q] ?? 1);
@@ -161,21 +165,21 @@ describe("a town's needs, read out", () => {
     };
     for (const p of [400, 2500, 8000]) {
       expect(at(p, {}).word).toBe("Growing fast");
-      expect(at(p, Object.fromEntries(needsOf(p).map((q) => [q, ENOUGH]))).word).toBe("Growing");
+      expect(at(p, Object.fromEntries(needsOf(p).map((q) => [q, ENOUGH])), 0.7).word).toBe("Growing");
       // one need running low holds it to a trickle, and says which
-      expect(at(p, { food: 0.6 })).toEqual({ word: "Growing slowly", tone: "", why: "needs more food" });
-      expect(at(p, { food: 0.3 })).toMatchObject({ word: "Not growing", tone: "bad", why: "needs food" });
+      expect(at(p, { food: 0.6 }, 0.2)).toEqual({ word: "Growing slowly", tone: "", why: "needs more food" });
+      expect(at(p, { food: 0.3 }, 0)).toMatchObject({ word: "Not growing", tone: "bad", why: "needs food" });
     }
     // two short: both named
-    expect(at(400, { food: 0.3, planks: 0 }).why).toBe("needs food and planks");
+    expect(at(400, { food: 0.3, planks: 0 }, 0).why).toBe("needs food and planks");
     // none at all: it loses households
-    expect(at(400, { food: 0 })).toEqual({ word: "Shrinking", tone: "bad", why: "needs food" });
+    expect(at(400, { food: 0 }, -0.1)).toEqual({ word: "Shrinking", tone: "bad", why: "needs food" });
     // a landmark's boost on top still reads "fast"; a settlement just settles
     expect(at(400, {}, 1.3).word).toBe("Growing fast");
     t.pop = 40;
     expect(growthOf(t).word).toBe("Settling in");
     // and the panel's status line carries the word, never a figure
-    expect(at(400, { food: 0.3 })).toBeTruthy();
+    expect(at(400, { food: 0.3 }, 0)).toBeTruthy();
     expect(townModel(g, t).status.text).toBe("Not growing, needs food");
     at(400, {});
     expect(townModel(g, t).status.text).toBe("Growing fast");

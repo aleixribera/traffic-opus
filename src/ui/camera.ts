@@ -184,7 +184,7 @@ export class CameraDirector {
     return true;
   }
 
-  /** Let go of the followed vehicle (pan, Esc, a click on the map, the chip's Stop). */
+  /** Let go of the followed vehicle (a pan, the chip's Stop, a build tool's click: cinema.followOn). */
   stopFollow() {
     if (this.mode !== "follow") return;
     this.mode = "free";
