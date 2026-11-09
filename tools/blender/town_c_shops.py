@@ -634,6 +634,8 @@ _town("shop_u", "shop", 0.65, 1.6, 1, _mainstreet, units=[
 # store (30 x 28): the department store, the five-and-dime row; on 3-cell lots the bank
 _town("store", "store", 1.0, 1.0, 5, _dept_store, floors=3, wall="brick_r", seed=31)
 _town("store_b", "store", 1.0, 1.0, 5, _dime_row, seed=32)
+_town("store_c", "store", 1.0, 1.0, 5, _dept_store, floors=2, wall="brick_b", base="lime2", spandrel="cream", awn="navy",
+      blade="win_sign_blue", sign=None, marquee="navy", tanks=0, fh=4.2, seed=35)
 _town("store_m", "store", 0.75, 1.0, 3, _bank, seed=33)
 _town("store_n", "store", 0.75, 1.0, 3, _dept_store, floors=3, wall="brick_y", base="lime2", spandrel="green", awn="oxblood",
       blade="win_sign_green", sign=None, marquee="green", yard=7.0, bay=3.8, tanks=1, seed=34)

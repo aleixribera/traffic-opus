@@ -9,14 +9,14 @@
 
 /** A grown kind's models, the kind's own first. */
 export const TOWN_MODELS: Record<string, string[]> = {
-  house: ["house", "house_b", "house_c"],
+  house: ["house", "house_b", "house_c", "house_d", "house_e"],
   terrace: ["terrace", "terrace_b", "terrace_c", "terrace_s", "terrace_n", "terrace_t"],
   apartments: ["apartments", "apartments_b", "apartments_m", "apartments_n", "apartments_s"],
   modernflats: ["modernflats", "modernflats_b", "modernflats_m"],
   aptower: ["aptower", "aptower_b", "aptower_m"],
   highstreet: ["highstreet", "highstreet_b", "highstreet_c", "highstreet_d"],
   shop: ["shop", "shop_b", "shop_c", "shop_t", "shop_u"],
-  store: ["store", "store_b", "store_m", "store_n"],
+  store: ["store", "store_b", "store_c", "store_m", "store_n"],
   office: ["office", "office_b", "office_c", "office_t", "office_u", "office_s"],
   mall: ["mall", "mall_b", "mall_c"],
   tower: ["tower", "tower_b", "tower_t", "tower_u"],

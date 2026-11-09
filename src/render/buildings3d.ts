@@ -86,7 +86,7 @@ const RAW = 0xd6c6a4;
  * its yard behind it has an alley instead, where its model says: MergedModel.via.) */
 const DRIVE_X: Partial<Record<string, number>> = { house: -4.0 };
 /** Where a home's own walls start (model x, z): what stands left of or behind that is its garage and shed. */
-const HOME_FOOT: Partial<Record<string, [number, number]>> = { house: [-1.9, -4.9], house_b: [-1.9, -4.9], house_c: [-1.9, -4.9] };
+const HOME_FOOT: Partial<Record<string, [number, number]>> = Object.fromEntries(TOWN_MODELS.house.map((m) => [m, [-1.9, -4.9]]));
 /** Homes, shops and the small halls go up on a timber frame; blocks, towers and big halls on a steel skeleton. */
 const TIMBER = new Set<string>(["house", "terrace", "highstreet", "shop", "fuelstation", "hamlethall", "villagehall"]);
 /** ...up to this height (m): a five-storey tenement on a row-house lot is a steel and brick job. */
