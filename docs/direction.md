@@ -71,7 +71,7 @@ days apart). Seasons last 16 days and autumn is a freight rush. PC only (mouse a
 
 ## How work is done here
 
-- One change, one branch, one worktree. Run `npx vitest run --exclude tests/balance.test.ts` (about a minute) and
+- One change, one branch, one worktree. Run `npx vitest run --exclude tests/balance.test.ts` (a minute or two) and
   `npx tsc --noEmit -p .` in the foreground before every commit.
 - **Done means you watched it work**: `npx vite --port <your own port> --strictPort`, drive it with
   `playwright-cli -s=<your own session>` at 1600×900, and look at the screenshots. `window.app` is the game

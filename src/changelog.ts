@@ -15,6 +15,15 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.80", date: "2026-11-09", title: "Tidy lots, steadier building sites",
+    notes: [
+      "A building site is no longer held up by one works with a jammed gate: another works sends the load instead.",
+      "New homes and shops no longer overlap their neighbours where a street bends or is laid out again.",
+      "A town's day has more shape: busiest at the two rushes, a small bump at lunch, quietest in the small hours.",
+      "Info views: Land value and Building level now say what moves them, such as your works next door or shops close by.",
+    ],
+  },
+  {
     v: "v0.0.79", date: "2026-11-09", title: "Rarer town orders",
     notes: [
       "Town orders are rare now: one at a time on the whole map, five to ten days apart.",

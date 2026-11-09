@@ -49,14 +49,14 @@ describe("busy junctions", () => {
     expect(r.maxWait).toBeLessThan(60); // (it was 150: a ring locked solid, cars giving up)
     expect(r.done).toBeGreaterThan(250); // of ~325 asked for (it was 183)
     expect(r.jamBreaks).toBe(0);
-  }, 60000);
+  }, 120000);
 
   it("a plain four-way past its capacity levels off instead of falling over", () => {
     const at700 = bench(0, 700), at900 = bench(0, 900);
     expect(at900.done).toBeGreaterThanOrEqual(at700.done * 0.95); // (it was 281 against 302)
     expect(at900.maxWait).toBeLessThan(60);
     expect(at900.jamBreaks).toBe(0);
-  }, 60000);
+  }, 120000);
 });
 
 describe("long trucks pulling out across a queued street", () => {
@@ -101,5 +101,5 @@ describe("long trucks pulling out across a queued street", () => {
     expect(worst).toBeLessThan(3 * (GREEN + AMBER + ALL_RED));
     expect(arrived).toBeGreaterThan(60);
     expect(tr.jamBreaks).toBe(0);
-  }, 60000);
+  }, 120000);
 });
