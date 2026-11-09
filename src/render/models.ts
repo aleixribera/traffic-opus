@@ -7,6 +7,7 @@ import { SITE_MODELS } from "../game/sites";
 import { CIVIC_KINDS } from "../game/civics";
 import { CON_MODELS } from "./construction3d";
 import { PILE_MODELS } from "./stockpiles3d";
+import { TOWN_VARIANTS } from "./townmodels";
 
 /** A Blender model flattened into one vertex-coloured geometry (one draw call per instanced kind). */
 export interface MergedModel {
@@ -15,6 +16,46 @@ export interface MergedModel {
   bays: THREE.Matrix4[];
   /** Where it smokes, steams or raises dust (the GLB's `stack_N`, `steam_N`... empties; model space). */
   fx: FxSpot[];
+  /** A town model's alley end (model x, z): cars drive in along it to the yard behind (the GLB's `via_0`). */
+  via?: [number, number];
+  /** A town model's building without its yard: x0, x1, z0, z1, top (the GLB's `body_0`). */
+  body?: [number, number, number, number, number];
+  /** The lot scale and height stretch a town model was made for (the GLB's `design_0`; render/townmodels.ts). */
+  design?: [number, number];
+}
+
+/**
+ * Glass that lights at night: a material named `win_<kind>` (tools/blender/town_a_kit.py). Its vertices carry
+ * `lit` = 1 + the kind's index + a random share per pane, which the buildings' shader (envShader `windows`) turns
+ * into lit and dark windows by the hour. Signs (`win_sign_*`) glow in their own colour while the lamps are on.
+ */
+export const LIT_KINDS = ["home", "shop", "office", "hall", "sign"] as const;
+export const litKind = (material: string): number => {
+  const m = /^win_([a-z]+)/.exec(material);
+  return m ? LIT_KINDS.indexOf(m[1] as (typeof LIT_KINDS)[number]) : -1;
+};
+
+/** The `lit` attribute for one material's geometry: 0 for walls; for glass, each pane (a quad's two triangles share
+ * their bounds) its own steady random share. */
+function litAttribute(g: THREE.BufferGeometry, kind: number): THREE.BufferAttribute {
+  const pos = g.getAttribute("position");
+  const out = new Float32Array(pos.count);
+  if (kind >= 0) {
+    const q = (v: number) => Math.round(v * 50);
+    for (let i = 0; i + 2 < pos.count; i += 3) {
+      let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+      for (let k = i; k < i + 3; k++) {
+        const x = pos.getX(k), y = pos.getY(k), z = pos.getZ(k);
+        x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); z0 = Math.min(z0, z); z1 = Math.max(z1, z);
+      }
+      let h = 2166136261;
+      for (const v of [q(x0), q(x1), q(y0), q(y1), q(z0), q(z1)]) h = Math.imul(h ^ (v & 0xffff), 16777619);
+      h ^= h >>> 15; h = Math.imul(h, 2246822519); h ^= h >>> 13;
+      const v = 1 + kind + 0.04 + (((h >>> 0) % 1000) / 1000) * 0.92;
+      out[i] = out[i + 1] = out[i + 2] = v;
+    }
+  }
+  return new THREE.BufferAttribute(out, 1);
 }
 
 /** A vehicle split by material: tinted parts get the per-vehicle colour; a "beacon" part (a convoy's amber lamps)
@@ -31,10 +72,10 @@ export const BUILDING_MODELS: BuildingKind[] = [
   ...CIVIC_KINDS,
 ];
 /**
- * Other looks of a kind (a street of homes shouldn't be one house stamped down): same lot, driveway and parking bay
- * as the kind's own model, a different house on it (see Buildings3D.modelOf).
+ * Other looks of a grown kind (a street shouldn't be one building stamped down): same footprint as the kind's own
+ * model, a different building on it, made for a lot size and height (render/townmodels.ts, Buildings3D.modelOf).
  */
-export const HOME_VARIANTS: string[] = ["house_b", "house_c"];
+export const HOME_VARIANTS: string[] = TOWN_VARIANTS;
 /**
  * What industry sites are built from besides the kinds' own models: the shared modules (halls, silos, heaps, the
  * truck yard...) and the plants of the later tiers, ready for their chains.
@@ -210,7 +251,14 @@ function mergeModel(sc: THREE.Object3D): MergedModel {
   const geos: THREE.BufferGeometry[] = [];
   const bays: THREE.Matrix4[] = [];
   const fx: FxSpot[] = [];
+  let via: MergedModel["via"], body: MergedModel["body"], design: MergedModel["design"];
   const flip = new THREE.Matrix4().makeRotationY(Math.PI);
+  const prep = (mesh: THREE.Mesh) => {
+    const g = prepGeometry(mesh, meshColor(mesh));
+    const mat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.Material | undefined;
+    g.setAttribute("lit", litAttribute(g, litKind(mat?.name ?? "")));
+    return g;
+  };
   sc.traverse((o) => {
     const m = o as THREE.Mesh;
     if (m.isMesh) {
@@ -225,9 +273,9 @@ function mergeModel(sc: THREE.Object3D): MergedModel {
           }
           const mm = new THREE.Mesh(sub, mats[gr.materialIndex ?? 0]);
           mm.matrixWorld.copy(m.matrixWorld);
-          geos.push(prepGeometry(mm, meshColor(mm)));
+          geos.push(prep(mm));
         }
-      } else geos.push(prepGeometry(m, meshColor(m)));
+      } else geos.push(prep(m));
     } else if (/^park_?\d+/i.test(o.name)) {
       // empty: its -z (Blender +Y) is where the car's nose points; car models face +z
       const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
@@ -240,13 +288,21 @@ function mergeModel(sc: THREE.Object3D): MergedModel {
         const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
         o.matrixWorld.decompose(pos, q, sc);
         fx.push({ kind: k[1].toLowerCase() as FxKind, x: pos.x, y: pos.y, z: pos.z, size: sc.x });
+      } else if (/^(via|body|design)_?\d+/i.test(o.name)) {
+        // a town model's own notes (tools/blender/town_a_kit.py)
+        const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+        o.matrixWorld.decompose(pos, q, sc);
+        const n = o.name.toLowerCase();
+        if (n.startsWith("via")) via = [pos.x, pos.z];
+        else if (n.startsWith("body")) body = [pos.x - sc.x, pos.x + sc.x, pos.z - sc.z, pos.z + sc.z, pos.y];
+        else design = [sc.x, sc.z];
       }
     }
   });
   const geo = mergeGeometries(geos, false)!;
   geo.computeBoundingBox();
   geo.computeBoundingSphere();
-  return { geo, bays, fx };
+  return { geo, bays, fx, via, body, design };
 }
 
 function splitVehicle(sc: THREE.Object3D): VehicleModel {

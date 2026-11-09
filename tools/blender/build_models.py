@@ -450,9 +450,42 @@ def home_lot(M, P, garage_roof, yard="veg"):
     return L
 
 
+def home_window(M, F, a, w=1.0, z0=0.95, z1=2.15, frame=None, shutters=None):
+    """A house window on wall F (town_a_kit's _Face), centred at `a`: glass that lights at night (win_home), in a
+    painted frame, or between shutters."""
+    T = _td()
+    if frame is not None:
+        _wq(M, F, a - w / 2 - 0.1, a + w / 2 + 0.1, z0 - 0.1, z1 + 0.1, frame, 0.03)
+    if shutters is not None:
+        for s in (-1, 1):
+            _wq(M, F, a + s * (w / 2 + 0.2) - 0.17, a + s * (w / 2 + 0.2) + 0.17, z0, z1, shutters, 0.04)
+    _wq(M, F, a - w / 2, a + w / 2, z0, z1, T["win_home"], 0.055)
+
+
+def home_door(M, F, a, m, w=0.95, h=2.05, frame=None):
+    if frame is not None:
+        _wq(M, F, a - w / 2 - 0.1, a + w / 2 + 0.1, 0, h + 0.1, frame, 0.03)
+    _wq(M, F, a - w / 2, a + w / 2, 0, h, m, 0.055)
+
+
 def b_house(M, P):
     """A 1920s cross-gable house: the main body with its ridge along the street, a front wing, the porch, a chimney."""
     L = home_lot(M, P, P["res_roof2"], "veg")
+    T, tr = _td(), P["res_trim"]
+    B, W = _faces(-1.4, 5.4, -0.2, 4.6), _faces(2.4, 5.4, -2.4, -0.2)
+    home_door(M, B["f"], 1.9, T["door_g"], frame=tr)
+    home_window(M, B["f"], 0.7, 1.0, frame=tr)
+    home_window(M, W["f"], 1.5, 1.5, frame=tr)
+    home_window(M, W["f"], 1.5, 0.6, 3.15, 3.75, frame=tr)
+    home_window(M, W["r"], 1.1, 0.9, frame=tr)
+    home_window(M, B["r"], 2.6, 1.0, frame=tr)
+    home_window(M, B["r"], 2.4, 0.7, 3.3, 4.05, frame=tr)
+    home_window(M, B["l"], 1.5, 1.0, frame=tr)
+    home_window(M, B["l"], 3.4, 1.0, frame=tr)
+    home_window(M, B["l"], 2.4, 0.7, 3.3, 4.05, frame=tr)
+    home_window(M, B["b"], 1.6, 1.0, frame=tr)
+    home_window(M, B["b"], 5.3, 0.8, 1.2, 2.15, frame=tr)
+    home_door(M, B["b"], 3.6, T["door"], w=0.85, frame=tr)
     wall, roof = P["res_wall"], P["res_roof"]
     box(M, -1.4, 5.4, -0.2, 4.6, 0, 3.0, wall)
     gable(M, -1.4, 5.4, -0.2, 4.6, 3.0, 5.0, "x", roof, wall)
@@ -468,6 +501,18 @@ def b_house_b(M, P):
     """A brick bungalow: low walls under a hipped slate roof, a gabled porch on the front, a chimney at the side."""
     L = home_lot(M, P, P["res_roof"], "shed")
     wall, roof = P["brick_home"], P["slate"]
+    T, tr = _td(), P["res_trim"]
+    B, W = _faces(-1.4, 5.4, -1.8, 4.4), _faces(0.6, 3.0, -3.0, -1.8)
+    home_door(M, W["f"], 1.2, T["oxblood"])
+    home_window(M, B["f"], 1.0, 1.2, frame=tr)
+    home_window(M, B["f"], 5.6, 1.2, frame=tr)
+    home_window(M, B["r"], 1.3, 1.0, frame=tr)
+    home_window(M, B["r"], 4.9, 1.0, frame=tr)
+    home_window(M, B["l"], 1.6, 1.0, frame=tr)
+    home_window(M, B["l"], 4.6, 1.0, frame=tr)
+    home_window(M, B["b"], 1.5, 1.0, frame=tr)
+    home_window(M, B["b"], 5.4, 0.8, 1.2, 2.15, frame=tr)
+    home_door(M, B["b"], 3.6, T["door"], w=0.85, frame=tr)
     box(M, -1.4, 5.4, -1.8, 4.4, 0, 2.9, wall)
     taper(M, (-1.8, 5.8, -2.2, 4.8), (0.6, 3.4, 1.28, 1.32), 2.9, 4.7, roof)
     box(M, 0.6, 3.0, -3.0, -1.8, 0, 2.5, P["res_trim"])
@@ -483,6 +528,20 @@ def b_house_c(M, P):
     L = home_lot(M, P, P["res_roof2"], "lawn")
     wall, roof = P["res_trim"], P["shingle"]
     y0, y1 = -1.0, 4.4
+    T = _td()
+    B, D = _faces(-1.0, 5.4, y0, y1), _faces(-0.2, 4.6, y0 + 0.35, y0 + 1.6)
+    sh = T["green"]
+    home_door(M, B["f"], 3.2, T["oxblood"])
+    home_window(M, B["f"], 1.75, 0.95, shutters=sh)
+    home_window(M, B["f"], 4.85, 0.95, shutters=sh)
+    for a in (0.9, 2.4, 3.9):
+        home_window(M, D["f"], a, 0.85, 3.35, 4.3, shutters=sh if a != 2.4 else None)
+    home_window(M, B["r"], 1.5, 0.95, shutters=sh)
+    home_window(M, B["r"], 3.9, 0.95, shutters=sh)
+    home_window(M, B["l"], 1.4, 0.95, shutters=sh)
+    home_window(M, B["b"], 1.5, 0.95, shutters=sh)
+    home_window(M, B["b"], 5.0, 0.95, shutters=sh)
+    home_door(M, B["b"], 3.3, T["door"], w=0.85)
     box(M, -1.0, 5.4, y0, y1, 0, 2.8, wall)
     ym = (y0 + y1) / 2
     extrude_profile(M, [(y0 - 0.3, 2.8), (y0 + 0.5, 4.6), (ym, 5.6), (y1 - 0.5, 4.6), (y1 + 0.3, 2.8),
@@ -5085,9 +5144,10 @@ BUILDINGS = {
 }
 
 # The towns' civic buildings that town orders bring (src/game/civics.ts): each batch lives in its own file,
-# tools/blender/civics_*.py, run into this module so it can use the helpers above and add to BUILDINGS.
+# tools/blender/civics_*.py, run into this module so it can use the helpers above and add to BUILDINGS. The towns'
+# grown buildings (homes, shops, offices, towers) follow in tools/blender/town_*.py, the same way.
 for _f in sorted(os.listdir(HERE)):
-    if _f.startswith("civics_") and _f.endswith(".py"):
+    if _f.startswith(("civics_", "town_")) and _f.endswith(".py"):
         with open(os.path.join(HERE, _f), encoding="utf-8") as _fh:
             exec(compile(_fh.read(), os.path.join(HERE, _f), "exec"), globals())
 
@@ -5788,7 +5848,7 @@ def build_building(name):
         e.empty_display_type = "SPHERE"
         e.empty_display_size = 0.5
         e.location = (x, y, z)
-        e.scale = (size, size, size)
+        e.scale = size if isinstance(size, tuple) else (size, size, size)
         coll.objects.link(e)
         objs.append(e)
     return objs
@@ -5877,7 +5937,7 @@ def shoot(cam, objs, view, path, rx, ry, margin=1.08):
         cam.location = (c.x, c.y, 500.0)
         cam.rotation_euler = (0.0, 0.0, 0.0)
     else:
-        dv = Vector((0.8, -1.0, 1.15)).normalized()
+        dv = (Vector((-0.8, 1.0, 1.15)) if view == "qb" else Vector((0.8, -1.0, 1.15))).normalized()
         cam.location = c + dv * 500.0
         cam.rotation_euler = (-dv).to_track_quat("-Z", "Y").to_euler()
     bpy.context.view_layer.update()
@@ -5918,8 +5978,18 @@ def preview(cam, name, objs, size=640):
     os.makedirs(PREV, exist_ok=True)
     meshes = [o for o in objs if o.type == "MESH"]
     a, b = os.path.join(PREV, f"_{name}_a.png"), os.path.join(PREV, f"_{name}_b.png")
-    shoot(cam, meshes, "top", a, size, size)
-    shoot(cam, meshes, "q", b, size, size)
+    if name in TOWN_DESIGN:
+        # a town model is made for one lot (town_a_kit.py): shown as the game stands it there, from the street and
+        # from the yard, the two views a tilted camera gets of it
+        for o in meshes:
+            o.scale = (1, 1, TOWN_DESIGN[name][2])
+        shoot(cam, meshes, "q", a, size, size)
+        shoot(cam, meshes, "qb", b, size, size)
+        for o in meshes:
+            o.scale = (1, 1, 1)
+    else:
+        shoot(cam, meshes, "top", a, size, size)
+        shoot(cam, meshes, "q", b, size, size)
     tile([a, b], os.path.join(PREV, name + ".png"), size, size)
 
 

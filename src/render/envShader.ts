@@ -22,6 +22,11 @@ export const ENV = {
   /** x how far colour drains towards moonlit blue-grey at night (the eye's night vision). */
   uGrade: { value: new THREE.Vector2(0, 0) },
 };
+/**
+ * The share of each kind's windows lit now (x home, y shop, z office, w hall): the buildings' lit glass and the light
+ * it throws on the ground (render/lamps3d.ts, which sets it each frame) read the same numbers.
+ */
+export const LIT = { uLit: { value: new THREE.Vector4(0, 0, 0, 0) } };
 /** How much colour the night drains, by the Nights setting's darkness (full nights most). */
 export const NIGHT_DESAT = 0.48;
 
@@ -195,14 +200,53 @@ vec4 envLeaf(vec3 summer, float tone, float h, vec2 q, float lit, float evergree
  * take the season's grass, and snow settles on whatever faces up, drawn from the world position and normal. More of it
  * lies on roofs than on the ground (`roofs`), less where it is cleared or sheltered (`shelter`, 0..1), and none on the
  * dark asphalt and concrete a model stands on (its car park, its yard), which is ploughed.
+ *
+ * `windows`: the model's glass lights at night. Its vertices carry `lit` (render/models.ts: 0 a wall; else 1 + the
+ * window's kind + the pane's own random share): a pane is lit while the share of its kind's windows lit at this
+ * hour (LIT) is above its own number, so a street's windows come on and go out one by one through the evening; a
+ * sign glows in its own colour as long as the street lamps burn. A building drawn dark (abandoned) stays dark.
  */
-export function seasonal(mat: THREE.MeshLambertMaterial, opts: { roofs?: boolean; shelter?: number; key?: string } = {}): THREE.MeshLambertMaterial {
+export function seasonal(mat: THREE.MeshLambertMaterial, opts: { roofs?: boolean; shelter?: number; key?: string; windows?: boolean } = {}): THREE.MeshLambertMaterial {
   const prev = mat.onBeforeCompile;
   mat.onBeforeCompile = (sh, r) => {
     prev?.call(mat, sh, r);
     Object.assign(sh.uniforms, ENV);
+    if (opts.windows) Object.assign(sh.uniforms, LIT);
+    const litVert = opts.windows
+      ? `
+    vLit = vec2(lit, 0.0);
+#ifdef USE_INSTANCING
+    vLit.y = fract(sin(dot(instanceMatrix[3].xz, vec2(12.9898, 78.233))) * 43758.5453);
+#endif
+#ifdef USE_INSTANCING_COLOR
+    if (instanceColor.g < 0.4) vLit.x = 0.0;
+#endif`
+      : "";
+    const litFrag = opts.windows
+      ? `
+    if (vLit.x > 0.5 && uNight.x + uNight.y > 0.002) {
+      float kind = floor(vLit.x);
+      float rnd = fract(fract(vLit.x) + vLit.y);
+      if (kind > 4.5) {
+        // a sign, a marquee: its own paint lit, as long as the lamps burn
+        totalEmissiveRadiance += dc * 1.25 * uNight.x;
+        diffuseColor.rgb *= 1.0 - 0.7 * uNight.x;
+      } else {
+        float occ = kind < 1.5 ? uLit.x : kind < 2.5 ? uLit.y : kind < 3.5 ? uLit.z : uLit.w;
+        float on = step(rnd, occ) * smoothstep(0.08, 0.5, uNight.y);
+        float r2 = fract(rnd * 7.13 + vLit.y * 3.7);
+        // homes: lamplight behind curtains, each its own; shops: bright and even; offices: a paler, steadier light
+        vec3 glow = kind < 1.5 ? mix(vec3(1.0, 0.56, 0.2), vec3(1.0, 0.74, 0.4), r2) * (0.62 + 0.38 * fract(r2 * 5.3))
+          : kind < 2.5 ? vec3(1.0, 0.8, 0.46)
+          : kind < 3.5 ? mix(vec3(0.95, 0.78, 0.46), vec3(0.9, 0.84, 0.6), r2) * 0.85
+          : vec3(1.0, 0.76, 0.42);
+        totalEmissiveRadiance += glow * on;
+        diffuseColor.rgb *= 1.0 - on;
+      }
+    }`
+      : "";
     sh.vertexShader = sh.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vEnvW; varying vec3 vEnvN;")
+      .replace("#include <common>", `#include <common>\nvarying vec3 vEnvW; varying vec3 vEnvN;${opts.windows ? "\nattribute float lit; varying vec2 vLit;" : ""}`)
       .replace(
         "#include <begin_vertex>",
         `#include <begin_vertex>
@@ -212,11 +256,11 @@ export function seasonal(mat: THREE.MeshLambertMaterial, opts: { roofs?: boolean
     envM = modelMatrix * instanceMatrix;
 #endif
     vEnvW = (envM * vec4(position, 1.0)).xyz;
-    vEnvN = normalize(mat3(envM) * normal);
+    vEnvN = normalize(mat3(envM) * normal);${litVert}
   }`,
       );
     sh.fragmentShader = sh.fragmentShader
-      .replace("#include <common>", `#include <common>\n${ENV_GLSL}\nvarying vec3 vEnvW; varying vec3 vEnvN;`)
+      .replace("#include <common>", `#include <common>\n${ENV_GLSL}\nvarying vec3 vEnvW; varying vec3 vEnvN;${opts.windows ? "\nuniform vec4 uLit; varying vec2 vLit;" : ""}`)
       .replace(
         "#include <color_fragment>",
         `#include <color_fragment>
@@ -243,13 +287,13 @@ export function seasonal(mat: THREE.MeshLambertMaterial, opts: { roofs?: boolean
       float s = envSnowAt(vEnvW.xz, mix(${(opts.shelter ?? 0).toFixed(2)}, -0.05, roof)) * up * (1.0 - paved * 0.92);
       dc = mix(dc, envSnowCol(vEnvW.xz) * (0.95 + 0.05 * n.y), s);
     }
-    diffuseColor.rgb = envGrade(dc);
+    diffuseColor.rgb = envGrade(dc);${litFrag}
   }`,
       );
   };
   // (the program cache must tell this material's shader from another seasonal one with a different shader of its own)
   const own = mat.customProgramCacheKey !== THREE.Material.prototype.customProgramCacheKey ? mat.customProgramCacheKey() : prev?.toString() ?? "";
-  const k = `${own}|${opts.key ?? "seasonal"}${opts.roofs ? "r" : ""}${opts.shelter ?? 0}`;
+  const k = `${own}|${opts.key ?? "seasonal"}${opts.roofs ? "r" : ""}${opts.windows ? "w" : ""}${opts.shelter ?? 0}`;
   mat.customProgramCacheKey = () => k;
   return mat;
 }

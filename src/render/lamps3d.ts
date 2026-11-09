@@ -7,7 +7,7 @@
 // One time-of-day value drives it all (ENV.uNight); by day the layer is hidden.
 
 import * as THREE from "three";
-import { ENV, seasonal } from "./envShader";
+import { ENV, LIT, seasonal } from "./envShader";
 import { windowsLit, WINDOW_KINDS, type WindowKind } from "./daylight";
 import type { MergedModel } from "./models";
 
@@ -218,7 +218,8 @@ function twice(geo: THREE.BufferGeometry): THREE.BufferGeometry {
 export class Lamps3D {
   readonly group = new THREE.Group();
   private mpp = { value: 1 };
-  private occ = { value: new THREE.Vector4() };
+  /** (shared with the buildings' own lit glass: envShader LIT) */
+  private occ = LIT.uLit;
   private poolMat = brighten(POOL_VS, POOL_FS, 0.5, 0.42);
   private floodMat = brighten(POOL_VS, FLOOD_FS, 0.5, 0.36);
   private beamMat = brighten(POOL_VS, BEAM_FS, 0.5, 0.3);
