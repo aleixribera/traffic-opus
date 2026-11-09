@@ -21,6 +21,12 @@ import { GATE_GAP, siteFrame, siteToWorld } from "./game/sites";
 const MENU_TILT = (50 * Math.PI) / 180;
 const MENU_SWAY = (16 * Math.PI) / 180;
 const MENU_SWAY_S = 110;
+/**
+ * A drag that turns and tilts the camera, in radians a pixel: the tilt is the slower of the two, so a sideways drag
+ * that wanders a little up or down turns the map without throwing the pitch about (its whole range is under a radian).
+ */
+const ORBIT_TURN = 0.005;
+const ORBIT_TILT = 0.003;
 
 /** How far outside a waiting site's gate the road tool snaps a road's end (m): clear of the fence, well in reach. */
 const GATE_SNAP = 7;
@@ -445,12 +451,15 @@ export class App {
 
   /**
    * Turn and tilt the camera by a drag of (dx, dy) pixels: sideways turns it about the middle of the screen, up and
-   * down tilts it (the middle button, and the camera control for a touchpad with none).
+   * down tilts it (the middle button, and the camera control for a touchpad with none). The drag takes hold of the
+   * near side of the map, as on a turntable: drag right and the ground in front comes round to the right (the same
+   * way E turns it), drag up and the camera drops toward the horizon. Seen at a tilt the near side is what the eye
+   * holds on to; the old straight-down sign (the far side following the pointer) read as inverted.
    */
   orbitBy(dx: number, dy: number) {
     if (this.camera.cinematic || this.mode === "menu") return;
-    if (dx) this.view.rotateAt(this.view.w / 2, this.view.h / 2, -dx * 0.006);
-    this.pitchBy(-dy * 0.005, "drag");
+    if (dx) this.view.rotateAt(this.view.w / 2, this.view.h / 2, dx * ORBIT_TURN);
+    this.pitchBy(-dy * ORBIT_TILT, "drag");
     this.dirtyPreview = true;
   }
 

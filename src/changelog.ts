@@ -15,6 +15,13 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.82", date: "2026-11-09", title: "The camera turns the right way",
+    notes: [
+      "Dragging with the middle button turns the map the way your hand moves: drag right and the ground in front of you comes round to the right, the same way E turns it.",
+      "The tilt is calmer on that drag, so turning the map no longer throws the camera up or down.",
+    ],
+  },
+  {
     v: "v0.0.81", date: "2026-11-09", title: "The Diorama view",
     notes: [
       "The map is seen at a tilt now, so buildings, stacks, bridges and trucks stand up like a model on a table.",
