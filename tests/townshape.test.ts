@@ -11,6 +11,7 @@ import { BLOCK, sizeOf, type GridEdge } from "../src/game/towns";
 import { dist, type V2 } from "../src/core/math";
 
 const land = { isWater: () => false, isMountain: () => false };
+const ORGANIC_PRINT = -1979193400;
 
 /** Share of a plan's streets (by length, 2..R blocks out) that run round the centre rather than out from it. */
 function planTangential(P: TownPlan, R: number): number {
@@ -57,20 +58,40 @@ function shapeOf(g: Game, t: Town) {
     if (k === 3) T++;
     else if (k >= 4) X++;
   }
-  const mx = Math.max(...far);
-  return { tan: tan / all, T, X, lop: mx / Math.max(1, Math.min(...far)), furthest: far.indexOf(mx) };
+  // (how lopsided: its furthest reach over its shortest, of the ways it reaches at all)
+  const mx = Math.max(...far), mn = Math.min(...far.filter((d) => d > 0));
+  return { tan: tan / all, T, X, lop: mx / mn, furthest: far.indexOf(mx) };
 }
 
 describe("a PLAN_TOWN plan", () => {
-  it("is the same every time for a town (nothing about it is saved)", () => {
+  it("is the same every time for a town, whichever way it leans and in whatever order it is asked (nothing about it is saved)", () => {
     const a = new TownPlan({ x: 100, y: 200 }, 0.3, PLAN_TOWN, 12345, land);
     const b = new TownPlan({ x: 100, y: 200 }, 0.3, PLAN_TOWN, 12345, land);
+    // (the lean, which changes with the roads and sites round the town, orders its growth and nothing else)
+    b.setLean(Array.from({ length: 32 }, (_, k) => 0.3 + (k % 5) * 0.4));
+    for (let i = 9; i >= -9; i--) for (let j = 9; j >= -9; j--) {
+      b.has([i + 1, j, i, j]);
+      b.has([i, j + 1, i, j]);
+    }
     for (let i = -9; i <= 9; i++) for (let j = -9; j <= 9; j++) {
       expect(a.pt(i, j)).toEqual(b.pt(i, j));
       expect(a.has([i, j, i + 1, j])).toBe(b.has([i, j, i + 1, j]));
       expect(a.has([i, j, i, j + 1])).toBe(b.has([i, j, i, j + 1]));
-      expect(a.growR(i, j)).toBe(b.growR(i, j));
+      expect(a.shape([i, j, i + 1, j])).toEqual(b.shape([i, j, i + 1, j]));
     }
+  });
+
+  it("leaves a v0.0.69 town's plan as it was", () => {
+    // (a fingerprint of the rings-and-spokes plan of three towns, taken from v0.0.69)
+    let h = 0;
+    for (const seed of [1, 77, 4242]) {
+      const P = new TownPlan({ x: 50, y: -80 }, 0.7, PLAN_ORGANIC, seed, land);
+      for (let i = -6; i <= 6; i++) for (let j = -6; j <= 6; j++) {
+        const p = P.pt(i, j)!;
+        h = (Math.imul(h, 31) + Math.round(p.x * 10) * 7 + Math.round(p.y * 10) + (P.has([i, j, i + 1, j]) ? 1 : 0) + (P.has([i, j, i, j + 1]) ? 2 : 0)) | 0;
+      }
+    }
+    expect(h).toBe(ORGANIC_PRINT);
   });
 
   it("differs from town to town, in its streets as well as where they lie", () => {

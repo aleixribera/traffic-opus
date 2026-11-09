@@ -523,14 +523,22 @@ export class TownPlan {
     const ring = Math.max(Math.abs(fi + 0.5), Math.abs(fj + 0.5));
     if (ring < 1.5) return false;
     // (the land inside a loop drive is all one green, or all homes)
+    // (and only where every street round it can be laid)
     const L = this.loopOf(fi, fj);
-    if (L) return L.green;
+    if (L) return L.green && this.loopRing(fi, fj).every((e) => this.has(e));
     // more parks among the inner streets, fewer at the edge
     const rate = this.parks * (ring < 5 ? 1.25 : 0.7);
     if (this.style !== PLAN_TOWN) return this.hash(fi, fj, 11) < rate;
     // (greens spread through the town, never two side by side)
+    // (and with streets on two sides of it at least, so it is a green and not a field behind the houses)
     const r2 = rate * 1.2;
-    return this.hash(fi, fj, 11) < r2 && this.hash(fi - 1, fj, 11) >= r2 && this.hash(fi, fj - 1, 11) >= r2;
+    return this.hash(fi, fj, 11) < r2 && this.hash(fi - 1, fj, 11) >= r2 && this.hash(fi, fj - 1, 11) >= r2
+      && this.sidesOf(fi, fj).filter((e) => this.has(e)).length >= 2;
+  }
+
+  /** The four lattice edges round block (fi, fj), in order round it. */
+  sidesOf(fi: number, fj: number): GridEdge[] {
+    return [[fi, fj, fi + 1, fj], [fi + 1, fj, fi + 1, fj + 1], [fi, fj + 1, fi + 1, fj + 1], [fi, fj, fi, fj + 1]];
   }
 
   /** The PLAN_TOWN loop quarter whose loop drive block (fi, fj) lies inside, if it does. */
@@ -553,9 +561,19 @@ export class TownPlan {
    * first of the four blocks inside it and they are a green (null otherwise).
    */
   loopGreen(fi: number, fj: number): GridEdge[] | null {
-    const q = this.loopOf(fi, fj);
     const i = Math.floor(fi / SB) * SB, j = Math.floor(fj / SB) * SB;
-    if (!q?.green || fi - i !== 1 || fj - j !== 1) return null;
+    if (fi - i !== 1 || fj - j !== 1 || !this.green(fi, fj)) return null;
+    return this.loopRing(fi, fj);
+  }
+
+  /** The streets round block (fi, fj)'s green: its loop drive's, inside one, else its own four sides. */
+  streetsRound(fi: number, fj: number): GridEdge[] {
+    return this.loopOf(fi, fj) ? this.loopRing(fi, fj) : this.sidesOf(fi, fj);
+  }
+
+  /** The eight streets of the loop drive of the quarter block (fi, fj) lies in, in order round it. */
+  private loopRing(fi: number, fj: number): GridEdge[] {
+    const i = Math.floor(fi / SB) * SB, j = Math.floor(fj / SB) * SB;
     const R = [[1, 1], [2, 1], [3, 1], [3, 2], [3, 3], [2, 3], [1, 3], [1, 2]];
     return R.map(([a, b], k) => [i + a, j + b, i + R[(k + 1) % 8][0], j + R[(k + 1) % 8][1]]);
   }

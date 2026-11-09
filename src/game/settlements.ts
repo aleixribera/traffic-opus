@@ -553,7 +553,7 @@ export class TownSystem {
    * How a town of today's plan leans (TownPlan.setLean), worked out again whenever what it depends on changes: the
    * roads that aren't its own, the other towns and the company's sites. Out along LEAN_DIRS directions, open flat
    * land draws it on and water, mountain, the foothills and forest put it off (the nearer, the more); the player's
-   * roads and other towns' streets and centres within LEAN_REACH draw it toward them; the company's sites put it off.
+   * roads and the other towns' centres within LEAN_REACH draw it toward them; the company's sites put it off.
    */
   private leanFor(t: Town, P: TownPlan) {
     const net = this.g.net;
@@ -563,7 +563,7 @@ export class TownSystem {
       this.roadSig = { v: net.version, sig: `${n}.${ids}` };
     }
     const sites = this.g.buildings.list.filter((b) => b.placed);
-    const key = `${this.roadSig.sig}|${this.list.map((o) => o.id).join(",")}|${sites.length}`;
+    const key = `${this.roadSig.sig}|${this.list.map((o) => o.id).join(",")}|${sites.map((b) => b.id).join(",")}`;
     if (P.leanKey === key) return;
     P.leanKey = key;
     const N = LEAN_DIRS, w = this.g.world, T = this.g.terrain, c = t.c;
@@ -599,10 +599,11 @@ export class TownSystem {
     };
     const R = LEAN_REACH;
     for (const id of net.segsNear(c.x - R, c.y - R, c.x + R, c.y + R)) {
-      const s = net.segs.get(id)!;
-      if (s.town) continue;
+      const s = net.segs.get(id);
+      if (!s || s.town) continue;
       const L = net.segGeom.get(id)?.center.length ?? 0;
-      for (const q of [s.c.p0, s.c.p3]) lobe(q, L / 200, pull);
+      // (the nearest point of it: a long road passing close by draws the town as much as one ending there)
+      lobe(cubicClosest(s.c, c).p, Math.min(L, 800) / 100, pull);
     }
     for (const o of this.list) if (o !== t) lobe(o.c, 3, pull);
     for (const b of sites) lobe(b.c, 1.5, push);
@@ -634,11 +635,12 @@ export class TownSystem {
           continue;
         }
         if (!P.green(fi, fj) || P.inLoop(fi, fj)) continue;
-        const sides: GridEdge[] = [[fi, fj, fi + 1, fj], [fi + 1, fj, fi + 1, fj + 1], [fi, fj + 1, fi + 1, fj + 1], [fi, fj, fi, fj + 1]];
-        // (a PLAN_TOWN block may have a side no street will ever be laid on: its other sides laid are enough)
+        const sides = P.sidesOf(fi, fj);
+        // (a PLAN_TOWN block may have a side no street will ever be laid on, by the plan or because it couldn't be:
+        // its other sides laid are enough)
         if (t.layout === PLAN_TOWN) {
-          const planned = sides.filter((e) => P.has(e));
-          if (planned.length < 2 || !planned.every((e) => t.built.has(edgeKey(e)))) continue;
+          const live = sides.filter((e) => this.liveSide(t, P, e));
+          if (live.length < 2 || !live.every((e) => t.built.has(edgeKey(e)))) continue;
         } else if (sides.filter((e) => t.built.has(edgeKey(e))).length < 3) continue;
         const g = this.greenOf(t, P, "", fi, fj, sides, [false, false, true, true], P.faceCorners(fi, fj));
         if (!g) continue;
@@ -651,12 +653,27 @@ export class TownSystem {
 
   private greenCache = new Map<string, Green | null>();
 
+  /** A side of a PLAN_TOWN block that has, or will have, a street on it: one of the plan's, not failed to be laid. */
+  private liveSide(t: Town, P: TownPlan, e: GridEdge): boolean {
+    return P.has(e) && !t.failed.has(edgeKey(e));
+  }
+
+  /**
+   * Will a PLAN_TOWN green never be drawn, streets round it having failed to be laid (a loop drive's, or all but one
+   * of a block's)? Its land then goes to homes rather than lying bare.
+   */
+  private greenLost(t: Town, P: TownPlan, fi: number, fj: number): boolean {
+    if (t.layout !== PLAN_TOWN || !t.failed.size) return false;
+    if (P.inLoop(fi, fj)) return P.streetsRound(fi, fj).some((e) => t.failed.has(edgeKey(e)));
+    return P.sidesOf(fi, fj).filter((e) => this.liveSide(t, P, e)).length < 2;
+  }
+
   /**
    * The green inside streets `sides` (in order round it; `order` marks the ones whose lines run against that way),
    * with corners `corners`; `tag` and (fi, fj) name it (and seed its trees).
    */
   private greenOf(t: Town, P: TownPlan, tag: string, fi: number, fj: number, sides: GridEdge[], order: boolean[], corners: (V2 | null)[] | null): Green | null {
-    const ck = `${t.id}:${tag}${fi},${fj}:${this.g.net.version}:${this.g.buildings.list.length}`;
+    const ck = `${t.id}:${tag}${fi},${fj}:${this.g.net.version}:${this.g.buildings.list.length}:${t.failed.size}`;
     if (this.greenCache.has(ck)) return this.greenCache.get(ck)!;
     if (this.greenCache.size > 4000) this.greenCache.clear();
     let out: Green | null = null;
@@ -680,7 +697,7 @@ export class TownSystem {
       const lines = sides.map((e) => P.line(e, 6));
       const halves = sides.map((e, k) => half(e, lines[k]));
       // (a side of a PLAN_TOWN block no street will be laid on: the lawn runs on to a few metres short of its line)
-      const real = sides.map((e) => t.layout !== PLAN_TOWN || P.has(e));
+      const real = sides.map((e) => t.layout !== PLAN_TOWN || this.liveSide(t, P, e));
       // (cut square at the street corners; a loop drive's corners are gentle bends, with no cut)
       const CUT = tag === "L" ? 0 : Math.max(...halves) + SIDEWALK.small + 5.5;
       sides.forEach((e, k) => {
@@ -693,7 +710,8 @@ export class TownSystem {
           const tan = norm(sub(b, a));
           let nrm = { x: -tan.y, y: tan.x };
           if (dot(nrm, sub(mid, line[n])) < 0) nrm = { x: -nrm.x, y: -nrm.y };
-          if (real[k] && (dist(line[n], line[0]) < CUT || dist(line[n], line[L - 1]) < CUT)) continue;
+          // (a side with no street stops short of its corners too: the streets beside it run on past them)
+          if (dist(line[n], line[0]) < CUT || dist(line[n], line[L - 1]) < CUT) continue;
           pts.push({ x: line[n].x + nrm.x * IN, y: line[n].y + nrm.y * IN });
         }
       });
@@ -859,7 +877,7 @@ export class TownSystem {
       if (s.town === t.id || !ROAD_TYPES[s.type].allowsAccess || s.ring) continue;
       const r = cubicClosest(s.c, t.c);
       const d = dist(r.p, t.c);
-      if (d > R || d < this.reachToward(t, nodes, r.p) * 0.75 || net.heightOnSeg(id, r.t) > 0.5) continue;
+      if (d > R || (d < t.reach * 0.75 && d < this.reachToward(t, nodes, r.p) * 0.75) || net.heightOnSeg(id, r.t) > 0.5) continue;
       // (a road it already reaches, it joins again only in a new direction)
       const dir = norm(sub(r.p, t.c));
       if (this.g.connected(mine[0], id) && exits.some((x) => dot(x, dir) > wide)) continue;
@@ -1130,7 +1148,7 @@ export class TownSystem {
     if (P.nearOpen(c.c, CORRIDOR, own?.k ?? null, (k) => !t.built.has(k) && !t.failed.has(k))) return null;
     // the town's greens stay open, and here and there a garden between the houses
     const face = own ? P.faceOf(own.e, c.c, own.foot) : null;
-    if (face && P.green(face[0], face[1])) return null;
+    if (face && P.green(face[0], face[1]) && !this.greenLost(t, P, face[0], face[1])) return null;
     const z = this.planZone(t, c.c, c.rot, size, own);
     if (own && face && (z === "resLow" || z === "resRow") && P.garden(own.k, face[0] * 7919 + face[1], own.along)) return null;
     // (no new homes in a plant's smoke and noise, nor shops deep in it: the land is left open)
