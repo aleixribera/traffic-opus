@@ -1079,6 +1079,8 @@ export class Industry {
       }
       // (how soon each town would read below "Enough" on what has landed there, with the loads on time to it)
       const dip = new Map<number, number>();
+      let slow: TruckClass | undefined;
+      const slowest = () => (slow ??= from.plant ? [...TRUCK_CLASS_ORDER].reverse().find((c) => this.mixOf(from)[c] > 0) ?? "light" : "light");
       for (const o of shops) {
         if (!o.access || o.abandoned || o.built < 1 || !this.h.connected(seg, o.access.seg)) continue;
         const t = this.h.townOf(o);
@@ -1094,7 +1096,8 @@ export class Industry {
           if (!dip.has(t)) dip.set(t, this.h.dipIn(t, product, this.due.get(t)?.get(product) ?? []));
           soon = dip.get(t)!;
         }
-        const trip = soon < Infinity ? this.tripTo(from, o) : 0;
+        // (on its slowest trucks, till one has made the run)
+        const trip = soon < Infinity ? this.tripTo(from, o, slowest()) : 0;
         const ahead = soon <= trip * (1 + SEND_SPARE) + SEND_PAD;
         out.push({
           b: o, value: price - km(o) * FUEL_PER_KM * 2 + (short >= 1 ? 400 : 0) + (ahead ? SEND_FIRST : 0) + Math.min(3, l) * 15 - (product === "food" ? o.stock * 15 : 0),

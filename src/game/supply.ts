@@ -61,15 +61,26 @@ export function deliveredLately(t: Town, p: Product): number {
 export const lineOf = (t: Town, p: Product): number => ENOUGH * demandPerDay(p, t.pop);
 
 /**
- * Sim seconds until what a town has landed of a need would read below "Enough", with nothing more coming but the
- * loads `arriving` (sim time each lands, loads): 0 when it reads below already, Infinity when not within two days or
- * the town doesn't need it. The reading only falls as an hour rolls over and an old load leaves the window, so each
- * coming hour's roll is checked in turn. `frac` is the share of the hour under way already gone.
+ * Sim seconds until a town's need would read below "Enough", with nothing more landing but the loads `arriving` (sim
+ * time each lands, loads): 0 when it reads below already, Infinity when not within two days or the town doesn't need
+ * it. In its grace, the time left of it (when its people would see the drop). The reading only falls as an hour rolls
+ * over and an old load leaves the window, so each coming hour's roll is checked in turn. `frac` is the share of the
+ * hour under way already gone.
  */
 export function dipIn(t: Town, p: Product, now: number, frac: number, arriving: readonly { at: number; n: number }[]): number {
   if (!needsOf(t.pop).includes(p)) return Infinity;
   const line = lineOf(t, p), hours = t.hours ?? [];
   if (line <= 0) return Infinity;
+  const g = t.grace?.[p];
+  if (g) {
+    // (the loads that land before its grace is out and would put it back over the line see to it; until then the
+    // time left is how soon it must have a load)
+    const end = g.at + GRACE;
+    let more = 0;
+    for (const a of arriving) if (a.at <= end) more += a.n;
+    const back = more > 0 && shown(hours, (t.hourNow?.[p] ?? 0) + more, t.yesterday[p] ?? 0, (t.today[p] ?? 0) + more, p) >= line - 1e-9;
+    return back ? Infinity : Math.max(1, end - now);
+  }
   if (deliveredLately(t, p) < line - 1e-9) return 0;
   // (a town with only a few hours behind it reads on yesterday and today: no rolling window to fall out of yet)
   if (hours.length < ROLL_MIN) return Infinity;

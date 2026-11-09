@@ -90,9 +90,13 @@ function run(opts: { far: number; trip: number; near?: number; heavy?: boolean }
   return { ind, plant, shop, near, step, sent, jamOn: () => { jam = true; } };
 }
 
-/** The town as if it had had `loads[i]` loads of food land in the hour `i` hours before this one (48 of them). */
-function history(loads: Record<number, number>) {
-  t.hours = Array.from({ length: 48 }, (_, i) => (loads[47 - i] ? { food: loads[47 - i] } : {}));
+/**
+ * The town as if a delivery of `share` of a day's food had landed in each hour `ago` listed (hours before this one, of
+ * the 48 its supply rolls on). Six of them read 3 x share of its need a day; five, 2.5 x share.
+ */
+function history(ago: number[], share: number) {
+  const n = share * demandPerDay("food", t.pop);
+  t.hours = Array.from({ length: 48 }, (_, i) => (ago.includes(47 - i) ? { food: n } : {}));
   t.hourNow = {};
   t.rate = averageSupply(t.hours);
   t.today = { food: demandPerDay("food", t.pop) };
@@ -113,19 +117,23 @@ beforeEach(() => {
 
 describe("deliveries that land in time", () => {
   it("a steady, established single-truck run never shows the town running low", () => {
-    // one light truck shuttling food 4.1 game hours each way: a load every ~8.2 hours, about 2.9 loads a day of the
-    // town's 3.25 (Enough). The two-day window holds 5 or 6 of them, so for an hour or two a cycle it reads 2.5, under
-    // the line, before the next lands.
-    const D = demandPerDay("food", t.pop);
-    const r = run({ far: 2000, trip: 4.1 * HOUR });
+    // one light truck shuttling food: a load every T hours, just over the line on average (Enough), T such that the
+    // two-day window holds c or c + 1 of them and with c it reads under the line, for an hour or so a cycle, before
+    // the next lands
+    const D = demandPerDay("food", t.pop), line = 0.8 * D;
+    const c = Math.ceil(2 * line) - 1;
+    const trip = Math.floor((48 / (c + 0.7) / 2) * 8) / 8;
+    expect(24 / (2 * trip)).toBeGreaterThanOrEqual(line);
+    expect(c / 2).toBeLessThan(line);
+    const r = run({ far: 2000, trip: trip * HOUR });
     r.plant.plant!.out.food = 8;
     // three days to settle in
-    for (let i = 0; i < 3 * 192; i++) r.step(4);
-    expect(r.sent.length).toBeGreaterThan(6);
+    for (let i = 0; i < 3 * 192; i++) r.step(D);
+    expect(r.sent.length).toBeGreaterThan(c);
     const seen = new Set<string>();
     let dips = 0;
     for (let i = 0; i < 4 * 192; i++) {
-      r.step(4);
+      r.step(D);
       seen.add(state());
       if (t.grace?.food) dips++;
     }
@@ -137,9 +145,9 @@ describe("deliveries that land in time", () => {
   });
 
   it("a town about to dip has its load sent ahead of a nearer buyer, without waiting for a full truck, and it lands first", () => {
-    // what has landed reads 3 a day (Enough, of 3.25) and falls to 2.5 in 8 hours, when its oldest load leaves the
-    // two-day window. The run there takes ~6.4 hours; another town's shop is next door.
-    history({ 40: 1, 30: 1, 20: 1, 10: 1, 5: 1, 0: 1 });
+    // what has landed reads 93% of its need a day (Enough) and falls to 78% in 8 hours, when its oldest delivery leaves
+    // the two-day window. The run there takes ~6.4 hours; another town's shop is next door.
+    history([40, 30, 20, 10, 5, 0], 0.31);
     const r = run({ far: 2000, near: 300, trip: 6.4 * HOUR, heavy: true });
     // one load in the yard: a heavy truck would wait an hour for its second
     r.plant.plant!.out.food = 1;
@@ -153,28 +161,45 @@ describe("deliveries that land in time", () => {
     expect(t.grace).toBeUndefined();
   });
 
+  it("a town in its grace has its load sent at once too, and one on its way in time to put it back is enough", () => {
+    history([47, 30, 20, 10, 5, 0], 0.3);
+    g.time += HOUR;
+    g.towns.hourly();
+    expect(t.grace?.food).toBeDefined();
+    const r = run({ far: 600, trip: 1.5 * HOUR, heavy: true });
+    // one load in the yard: a heavy truck would wait an hour for its second
+    r.plant.plant!.out.food = 1;
+    for (let i = 0; i < 4; i++) r.step(0);
+    expect(r.sent).toEqual([{ to: r.shop.id, at: g.time - 3 * TICK, n: 1 }]);
+    for (let i = 0; i < 16; i++) r.step(0);
+    expect(t.grace).toBeUndefined();
+    expect(state()).not.toMatch(/low|none/);
+  });
+
   it("a jammed road still lets the town run low", () => {
-    const r = run({ far: 2000, trip: 4.1 * HOUR });
+    const D = demandPerDay("food", t.pop);
+    // (a load every three hours or so: over what it needs)
+    const r = run({ far: 2000, trip: 1.25 * HOUR });
     r.plant.plant!.out.food = 8;
-    for (let i = 0; i < 3 * 192; i++) r.step(4);
-    expect(state()).not.toBe("low");
+    for (let i = 0; i < 3 * 192; i++) r.step(D);
+    expect(state()).not.toMatch(/low|none/);
     // the truck out on the run stands in a jam and never gets there
     r.jamOn();
     let low = -1;
     for (let i = 0; i < 3 * 192 && low < 0; i++) {
-      r.step(4);
+      r.step(D);
       if (state() === "low" || state() === "none") low = i;
     }
     expect(low).toBeGreaterThan(0);
     // and it stays that way while nothing lands
-    for (let i = 0; i < 48; i++) r.step(4);
+    for (let i = 0; i < 48; i++) r.step(D);
     expect(["low", "none"]).toContain(state());
   });
 });
 
 describe("a grace before a dip shows", () => {
-  /** reads 3 a day (Enough) now, 2.5 (Running low) from the next roll: its oldest load is about to leave the window */
-  const aboutToDip = () => history({ 47: 1, 46: 1, 30: 1, 20: 1, 10: 1, 2: 1 });
+  /** reads 90% of its need (Enough) now, 75% (Running low) from the next roll: its oldest delivery is leaving the window */
+  const aboutToDip = () => history([47, 46, 30, 20, 10, 2], 0.3);
   const hour = () => { for (let i = 0; i < 8; i++) { g.time += TICK; if (i === 7) g.towns.hourly(); } };
 
   it("is three game hours: two real minutes at 1x", () => {
@@ -195,8 +220,8 @@ describe("a grace before a dip shows", () => {
       expect(t.rate!.food).toBeGreaterThanOrEqual(line - 1e-9);
       expect(t.supply.food).toBeGreaterThanOrEqual(0.8 - 1e-9);
     }
-    // two loads land within the grace: nothing was ever shown, and the dip never counted
-    g.towns.sold(t.id, "food", 2);
+    // two deliveries' worth lands within the grace: nothing was ever shown, and the dip never counted
+    g.towns.sold(t.id, "food", 0.6 * demandPerDay("food", t.pop));
     expect(t.grace).toBeUndefined();
     expect(state()).not.toMatch(/low|none/);
     for (let i = 0; i < 6; i++) { hour(); expect(state()).not.toMatch(/low|none/); }

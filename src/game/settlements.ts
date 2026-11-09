@@ -1276,7 +1276,8 @@ export class TownSystem {
       // (what each need read, and its averages, just before the roll: a need that falls below "Enough" with this hour
       // starts its grace from them)
       const before = Object.fromEntries(needsOf(t.pop).map((p) => [p, deliveredLately(t, p)]));
-      const was = { rate: t.rate ?? {}, day: averageSupply(hours.slice(-24)) };
+      // (as landed, never as held by a grace: a grace never carries over into the next one)
+      const was = { rate: averageSupply(hours), day: averageSupply(hours.slice(-24)) };
       hours.push(t.hourNow ?? {});
       t.hourNow = {};
       if (hours.length > SUPPLY_HOURS) hours.splice(0, hours.length - SUPPLY_HOURS);
