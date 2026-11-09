@@ -172,6 +172,7 @@ export class Game {
       townOf: (b) => b.town ?? null,
       want: (town, p) => this.towns.want(town, p),
       short: (town, p) => this.towns.short(town, p),
+      dipIn: (town, p, arriving) => this.towns.dipIn(town, p, arriving),
       sold: (town, p, n) => { this.towns.sold(town, p, n); this.progress.onSold(p, n); },
       request: (sp) => this.traffic.request(sp),
       trips: () => this.trips(),
