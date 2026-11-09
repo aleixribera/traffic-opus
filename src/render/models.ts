@@ -3,6 +3,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { BuildingKind } from "../config";
 import { SITE_MODELS } from "../game/sites";
+import { CIVIC_KINDS } from "../game/civics";
 import { CON_MODELS } from "./construction3d";
 import { PILE_MODELS } from "./stockpiles3d";
 
@@ -23,6 +24,8 @@ export const BUILDING_MODELS: BuildingKind[] = [
   "house", "terrace", "apartments", "modernflats", "aptower", "highstreet", "shop", "store", "fuelstation", "office", "mall", "tower", "glasstower",
   "hamlethall", "villagehall", "townhall", "cityhall", "farm", "loggingcamp", "foodplant", "sawmill", "coalplant",
   "ironmine", "coalmine", "quarry", "smelter", "cementworks",
+  // the towns' civic buildings, each the reward of a town order (game/civics.ts)
+  ...CIVIC_KINDS,
 ];
 /**
  * Other looks of a kind (a street of homes shouldn't be one house stamped down): same lot, driveway and parking bay

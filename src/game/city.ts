@@ -29,6 +29,8 @@ import { BIG_NAME, Convoys, TURBINE_BOOST, type BigKind } from "./convoys";
 import { isMega, megaBlock, megaStage, piecesLeft, townAt } from "./megaprojects";
 import { PARK_SMOKE, Parks } from "./parks";
 import { sizeOf } from "./towns";
+import { OrderSystem } from "./orders";
+import { CIVICS, isCivic, type CivicKind } from "./civics";
 import type { PlaceOpts, Placement } from "./buildings";
 import type { BuildingKind } from "../config";
 import { CELL, DEPTH, MIN_LOT_DEPTH, ZoneMap, zoneEdge, type Block, type Cell, type ZoneGroup, type ZoneId } from "./zones";
@@ -57,6 +59,8 @@ export type GameEvent =
   | { t: "landmark"; b: number }
   /** an oversized-load convoy set off ("out") or got there ("in") */
   | { t: "convoy"; phase: "out" | "in"; kind: BigKind; from: number; to: number }
+  /** a town order opened, was filled (its building going up: b, and its grant) or lapsed (orders.ts) */
+  | { t: "order"; phase: "open" | "done" | "lapsed"; town: number; kind: CivicKind; b?: number; grant?: number }
   /** a load was handed over (the map pops its money; a perishable shows how fresh it came, cars arrive in town) */
   | { t: "delivery"; d: Delivery }
   /** a by-product left a plant for another plant, as its own cargo */
@@ -97,6 +101,8 @@ export class Game {
   /** conveyors and pipes between neighbouring plants (parks.ts) */
   parks: Parks;
   towns: TownSystem;
+  /** each town's orders: the civic buildings it asks the company for (orders.ts) */
+  orders: OrderSystem;
   money = 0;
   time = 0;
   playtime = 0;
@@ -160,6 +166,7 @@ export class Game {
     this.transit = new Transit(this);
     this.utilities = new Utilities(this);
     this.towns = new TownSystem(this);
+    this.orders = new OrderSystem(this, (e) => this.emit(e));
     const game = this;
     this.industry = new Industry({
       get time() { return game.time; },
@@ -172,7 +179,7 @@ export class Game {
       want: (town, p) => this.towns.want(town, p),
       short: (town, p) => this.towns.short(town, p),
       dipIn: (town, p, arriving) => this.towns.dipIn(town, p, arriving),
-      sold: (town, p, n) => { this.towns.sold(town, p, n); this.progress.onSold(p, n); },
+      sold: (town, p, n) => { this.towns.sold(town, p, n); this.progress.onSold(p, n); this.orders.onSold(town, p, n); },
       request: (sp) => this.traffic.request(sp),
       trips: () => this.trips(),
       held: () => this.heldTrips(),
@@ -839,7 +846,7 @@ export class Game {
     const removed: Building[] = [];
     for (const id of bIds) {
       const b = this.buildings.byId.get(id);
-      if (!b || isHall(b.kind)) continue; // (a town's hall is the town's: it can't be pulled down)
+      if (!b || isHall(b.kind) || isCivic(b.kind)) continue; // (a town's hall and its civic buildings are the town's: they can't be pulled down)
       removed.push(b);
       this.removeBuildingRaw(b);
     }
@@ -1152,13 +1159,18 @@ export class Game {
     this.people.onBuildingRemoved(b.id);
     // (a zoned lot took its cells by row and column, which can reach a little past its footprint, so every cell
     // round it that still names it is freed: a cell left naming a building that's gone could never be built on again)
-    if (b.zone || b.placed || isHall(b.kind)) for (const c of this.zones.inPoly(rectCorners(b.c, b.hw + 16, b.hd + 16, b.rot))) if (c.lot === b.id) c.lot = 0;
+    if (b.zone || b.placed || isHall(b.kind) || isCivic(b.kind)) for (const c of this.zones.inPoly(rectCorners(b.c, b.hw + 16, b.hd + 16, b.rot))) if (c.lot === b.id) c.lot = 0;
     this.shopCache = null;
     this.candVersion = -1;
   }
 
   private restoreBuilding(b: Building) {
     if (this.buildings.byId.has(b.id)) return;
+    // (the town has since built a hall or a civic building on its land: that stays, and this isn't put back)
+    for (const c of this.lotCells(b)) {
+      const o = c.lot && c.lot !== b.id ? this.buildings.byId.get(c.lot) : undefined;
+      if (o && (isHall(o.kind) || isCivic(o.kind))) return;
+    }
     this.buildings.insert(b);
     for (const c of this.lotCells(b)) c.lot = b.id;
     this.buildings.reattach();
@@ -1174,7 +1186,7 @@ export class Game {
 
   /** Zone cells under a building's lot. */
   lotCells(b: Building): Cell[] {
-    if (!b.zone && !b.placed && !isHall(b.kind)) return [];
+    if (!b.zone && !b.placed && !isHall(b.kind) && !isCivic(b.kind)) return [];
     return this.zones.inPoly(rectCorners(b.c, b.hw - 0.5, b.hd - 0.5, b.rot));
   }
 
@@ -1318,6 +1330,85 @@ export class Game {
     this.candVersion = -1;
     if (this.ticking) this.grew = true; else this.emit({ t: "buildings" });
     return b;
+  }
+
+  /**
+   * A town's civic building, an order filled (orders.ts): a building site on a straight stretch of the town's own
+   * streets, as near its centre as can be, on land it has zoned. Free land is preferred; homes and shops standing
+   * there make way when the best spot needs it (their households move to the town's other homes, or wait for new
+   * ones). Null when no stretch of its streets is long and deep enough (it tries again as the town grows).
+   */
+  addCivic(town: number, kind: CivicKind): Building | null {
+    const t = this.towns.byId.get(town);
+    if (!t) return null;
+    const C = CIVICS[kind];
+    if (C.d > DEPTH) return null;
+    const spots: { blk: Block; col0: number; gone: Set<number>; c: V2; score: number }[] = [];
+    for (const blk of this.zones.blocks.values()) {
+      const seg = this.net.segs.get(blk.seg);
+      if (!seg || seg.town !== town || blk.cols < C.w) continue;
+      for (let col0 = 0; col0 + C.w <= blk.cols; col0++) {
+        const r0 = blk.cells[col0 * DEPTH].rot;
+        const gone = new Set<number>();
+        let ok = true, cx = 0, cy = 0, n = 0;
+        for (let k = col0; k < col0 + C.w && ok; k++) {
+          if (Math.abs(Math.cos(blk.cells[k * DEPTH].rot - r0)) < 0.97) { ok = false; break; } // (too curved)
+          for (let r = 0; r < C.d; r++) {
+            const c = blk.cells[k * DEPTH + r];
+            // (land the town zoned, or a home or shop of its own standing on it: never a street still to come, its
+            // square or greens, nor anything else's lot)
+            if (!c?.ok) { ok = false; break; }
+            if (c.lot) {
+              const o = this.buildings.byId.get(c.lot);
+              if (!o?.zone || o.town !== town) { ok = false; break; }
+              gone.add(o.id);
+            } else if (!c.zone) { ok = false; break; }
+            cx += c.c.x; cy += c.c.y; n++;
+          }
+        }
+        if (!ok || !n) continue;
+        const c = { x: cx / n, y: cy / n };
+        let homes = 0;
+        for (const id of gone) homes += this.people.householdsIn(id);
+        spots.push({ blk, col0, gone, c, score: dist(c, t.c) + gone.size * 24 + homes * 8 });
+      }
+    }
+    spots.sort((a, b) => a.score - b.score);
+    for (const s of spots.slice(0, 24)) {
+      const { blk, col0 } = s;
+      const g = this.net.segGeom.get(blk.seg);
+      if (!g) continue;
+      const cells: Cell[] = [];
+      let ux = 0, uy = 0;
+      for (let k = col0; k < col0 + C.w; k++) for (let r = 0; r < C.d; r++) {
+        const c = blk.cells[k * DEPTH + r];
+        cells.push(c);
+        ux += Math.cos(c.rot); uy += Math.sin(c.rot);
+      }
+      const rot = Math.atan2(uy, ux), hw = (C.w * CELL) / 2, hd = (C.d * CELL) / 2;
+      // (nothing else of the town's or the company's in the way: a hall, another civic building, a site's fence)
+      if (this.buildings.list.some((o) => !o.zone && !s.gone.has(o.id) && dist(o.c, s.c) < hw + hd + o.hw + o.hd && obbOverlap(s.c, hw - 0.5, hd - 0.5, rot, o.c, o.hw, o.hd, o.rot))) continue;
+      const away = { x: -Math.sin(rot) * blk.side, y: Math.cos(rot) * blk.side };
+      const front = add(s.c, scale(away, -(hd + zoneEdge(g.width) - g.width / 2)));
+      this.clearForTown(town, [...s.gone].map((id) => this.buildings.byId.get(id)).filter((b): b is Building => !!b));
+      const b: Building = {
+        id: this.buildings.nextId++, town, kind, c: s.c, rot, hw, hd, front, access: null, side: blk.side,
+        level: 1, cap: 0, fit: 1, tall: 1, built: 0, abandoned: 0, lv: 0, upT: 0, badT: 0, problem: null, stock: 0, prodT: 0, visits: 0, born: this.time,
+      };
+      this.buildings.insert(b);
+      for (const cc of cells) { cc.lot = b.id; cc.zone = null; }
+      this.buildings.reattach();
+      this.zones.version++;
+      this.candVersion = -1;
+      this.shopCache = null;
+      // (the town built on land the redo history may still mean to put a site on: that history is gone)
+      this.redoStack = [];
+      this.orders.invalidate();
+      this.emit({ t: "zones" });
+      if (this.ticking) this.grew = true; else this.emit({ t: "buildings" });
+      return b;
+    }
+    return null;
   }
 
   /** A town's hall is rebuilt for its new size: the old one makes way for a building site. */
@@ -1609,7 +1700,7 @@ export class Game {
     // a new day: shops close the books on yesterday's customers, the towns on yesterday's deliveries
     const day = Math.floor(this.time / DAY);
     if (day !== this.dayN) {
-      if (this.dayN >= 0) { this.towns.daily(); this.checkMilestones(); this.progress.daily(); }
+      if (this.dayN >= 0) { this.towns.daily(); this.orders.daily(); this.checkMilestones(); this.progress.daily(); }
       this.dayN = day;
       for (const b of this.shops) { b.custDay = b.custToday ?? 0; b.custToday = 0; }
     }
@@ -1641,7 +1732,7 @@ export class Game {
     // land value: an eighth of the buildings a tick, so each is valued once an hour without a big town's whole lot at once
     this.landValue((this.lvPart = (this.lvPart + 1) % 8));
     this.checkMilestones();
-    if (changed) this.emit({ t: "buildings" });
+    if (changed) { this.orders.invalidate(); this.emit({ t: "buildings" }); }
   }
 
   private stepBuilding(b: Building, span: number) {
@@ -1761,6 +1852,7 @@ export class Game {
     for (const b of this.buildings.list) if ((b.placed || (b.zone && ZONE_GROUP[b.zone] !== "res")) && !b.abandoned) jobs += b.cap;
     this.history.push({ money: this.money, pop: st.population, jobs });
     this.towns.hourly();
+    this.orders.hourly();
     if (this.history.length > 72) this.history.shift();
     for (const [id, t] of this.noRouteAt) if (this.time - t > HOUR * 3) this.noRouteAt.delete(id);
     this.emit({ t: "money" });
@@ -1807,6 +1899,8 @@ export class Game {
         }
       } else if (grp === "com") lv += Math.min(10, b.visits / Math.max(1, b.cap * 4));
       lv += this.utilities.landValueOf(b);
+      // (a town's civic buildings make the streets round them nicer to live and shop on: orders.ts)
+      lv += this.orders.landValueAt(b.c);
       b.lv = Math.max(0, Math.min(100, lv));
     }
   }
@@ -1828,6 +1922,7 @@ export class Game {
       money: this.money,
       progress: this.progress.toJSON(),
       towns: this.towns.toJSON(),
+      orders: this.orders.toJSON() as ReturnType<OrderSystem["toJSON"]> | undefined,
       budget: this.budget as Budget | undefined,
       time: this.time,
       playtime: this.playtime,
@@ -1896,6 +1991,8 @@ export class Game {
     g.people.load(data.people);
     g.transit.load(data.transit);
     g.towns.load(data.towns);
+    // (a save from before the town orders has none: its towns are dealt their sets and start rolling them)
+    g.orders.load(data.orders);
     g.utilities.tick(0);
     return g;
   }

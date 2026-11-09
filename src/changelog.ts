@@ -15,6 +15,14 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.76", date: "2026-11-09", title: "Town orders",
+    notes: [
+      "Town orders: towns ask for freight and build a schoolhouse, church, fire hall and more when you deliver.",
+      "Each town has its own list of civic buildings; a filled order pays a grant and gives the town a lasting perk.",
+      "A missed order costs nothing: the town asks again later.",
+    ],
+  },
+  {
     v: "v0.0.75", date: "2026-11-09", title: "Towns that grow like towns, and buildings that go up",
     notes: [
       "Towns grow like real American towns: a main street, uneven growth along the roads, mostly T-junctions.",

@@ -19,6 +19,8 @@ export interface MapLabel {
   /** a few words beside the pictograms ("No road yet") */
   note?: string;
   compactHalfH?: number;
+  /** an open order: a tag hung beside the nameplate with what it is for ("Schoolhouse") */
+  order?: string;
 }
 
 /** Place names drawn over the map: station nameplates, so a name reads the same over grass, asphalt or roofs. */
@@ -47,6 +49,13 @@ export class MapLabels {
       const plate = e.firstElementChild as HTMLElement;
       plate.querySelector("b")!.textContent = l.name;
       if (l.sub) plate.querySelector("span")!.textContent = l.sub;
+      if (l.order) {
+        const o = document.createElement("span");
+        o.className = "ml-order";
+        o.innerHTML = `<i aria-hidden="true"></i><span></span>`;
+        o.lastElementChild!.textContent = l.order;
+        plate.appendChild(o);
+      }
       let icons: HTMLElement | null = null;
       if (l.icons?.length) {
         icons = document.createElement("span");

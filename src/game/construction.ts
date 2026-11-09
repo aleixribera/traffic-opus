@@ -2,6 +2,7 @@ import type { BuildingKind } from "../config";
 import type { Building } from "./buildings";
 import { HOUR } from "./society";
 import { PLANTS, isPlantKind, type Product } from "./industry";
+import { CIVICS, isCivic } from "./civics";
 
 /**
  * How a building goes up (docs/design.md "Construction"). A plot is cleared and staked out while its materials come
@@ -41,6 +42,8 @@ export function buildTime(kind: BuildingKind): number {
   // (a landmark has waited on its materials and its convoys: once they are in, it rises over a working day)
   if (isPlantKind(kind) && PLANTS[kind].mega) return HOUR * 6;
   if (isPlantKind(kind)) return HOUR * (PLANT_HOURS[PLANTS[kind].tier] ?? 8);
+  // (a town's civic building, an order filled: a post office in an afternoon, a county hospital over a working day)
+  if (isCivic(kind)) return HOUR * Math.min(10, 3 + (CIVICS[kind].w * CIVICS[kind].d) / 4);
   return HOUR * (HOURS[kind] ?? 4);
 }
 

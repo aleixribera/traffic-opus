@@ -8,6 +8,7 @@ import type { PlantKind } from "../game/industry";
 import { GATE_GAP, GROW_ANIM, siteDir, siteFrame, siteLayout, siteToWorld, slotHalf, type SiteFrame, type SiteLayout, type SiteSlot } from "../game/sites";
 import type { MergedModel, ModelSet } from "./models";
 import { isHall } from "../game/towns";
+import { isCivic } from "../game/civics";
 import { CAR_COLORS, PAL } from "./palette";
 import { HALL_TIER, squarePlan, type SquarePlan } from "./civic";
 import { makeTreeMesh } from "./roads3d";
@@ -33,7 +34,7 @@ function windowKind(b: Building): WindowKind | null {
     if (ZONE_GROUP[b.zone] === "res") return "home";
     return b.zone === "comHigh" || b.zone === "comTower" ? "office" : "shop";
   }
-  if (isHall(b.kind)) return "hall";
+  if (isHall(b.kind) || isCivic(b.kind)) return "hall";
   if (b.plant || b.placed) return null;
   return "office";
 }
@@ -395,7 +396,7 @@ export class Buildings3D {
     if (grow <= 0) return out.makeScale(0, 0, 0);
     lotMatrix(out, b.c, b.rot, b.side);
     if (!b.zone) {
-      // a town hall goes up from its building site like the town's other buildings
+      // a town hall, or a civic building, goes up from its building site like the town's other buildings
       if (grow < 1) out.multiply(this.tmp2.makeScale(1, grow, 1));
       return out;
     }
@@ -877,7 +878,7 @@ export class Buildings3D {
         q.strip(b.front, gate, 7, 0.08);
         continue;
       }
-      if (isHall(b.kind)) continue; // a hall's path is its square's (rebuild)
+      if (isHall(b.kind) || isCivic(b.kind)) continue; // a hall's path is its square's (rebuild); a civic building's, its apron's
       const u = fromAngle(b.rot);
       const away = right(u); // * side points away from the road
       const reach = this.reachOf(b);
@@ -927,7 +928,7 @@ export class Buildings3D {
         .multiply(T.makeRotationY(rot).setPosition((x0 + x1) / 2, 0, (z0 + z1) / 2))
         .multiply(S.makeScale(Math.abs(x1 - x0), 1, Math.abs(z1 - z0)));
     for (const b of list) {
-      if (!b.access || !(b.zone || isHall(b.kind))) continue;
+      if (!b.access || !(b.zone || isHall(b.kind) || isCivic(b.kind))) continue;
       const toward = scale(right(fromAngle(b.rot)), -b.side);
       const along = { x: toward.y, y: -toward.x };
       const rel = { x: b.front.x - b.c.x, y: b.front.y - b.c.y };

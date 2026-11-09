@@ -8,6 +8,7 @@
 import { dist, polyAt, type Polyline, type V2 } from "../core/math";
 import type { RoadNetwork } from "../roads/network";
 import { BLOCK, isHall } from "./towns";
+import { isCivic } from "./civics";
 import type { BuildingKind } from "../config";
 
 /** A town's built-up land: its centre and how far its land reaches (m). */
@@ -67,10 +68,10 @@ export const townAt = (runs: TownRuns | undefined, s: number) => !!runs && runs.
  * buildings are indexed once by the road they face, and only the roads near a town or with houses on them are looked at.
  */
 export function townStreets(net: RoadNetwork, towns: readonly TownLand[], buildings: readonly Frontage[]): Map<number, TownRuns> {
-  // homes, shops and halls along a road: the stretch each one's front takes up
+  // homes, shops, halls and civic buildings along a road: the stretch each one's front takes up
   const fronts = new Map<number, [number, number][]>();
   for (const b of buildings) {
-    if (!b.access || !(b.zone || isHall(b.kind))) continue;
+    if (!b.access || !(b.zone || isHall(b.kind) || isCivic(b.kind))) continue;
     let L = fronts.get(b.access.seg);
     if (!L) fronts.set(b.access.seg, (L = []));
     L.push([b.access.s - b.hw - PAST_FRONT, b.access.s + b.hw + PAST_FRONT]);
