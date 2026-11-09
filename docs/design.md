@@ -320,6 +320,15 @@ the first harvest comes in on the game's day 23.
     adds the year and how long until the next season.
   - A farm's or logging camp's panel shows its season pace now ("Autumn harvest · x1.54") and the next
     season's average.
+  - **The season's title card** (owner, 2026-11-09: "a cool visual text when changing seasons, and show a bit which
+    building bonuses/debuffs that means"). The moment the calendar crosses into a new season, a newsreel title card
+    drops in at the top centre: the season's name in tall poster capitals, a line under it ("The harvest rush is
+    on"), then what the season does to the seasonal kinds the player runs ("Farms ▲ +60%", "Logging camps ≈ steady"),
+    each the kind's mid-season value in `SEASONAL` against the year's average, and one practical hint ("Warehouses
+    bank the surplus for winter"). With none of them, one line gives the general effect. It holds about 4.5 s and
+    fades; it never takes a click, waits behind a milestone banner and gives way to one, and never shows for a new
+    game or a loaded save (ui/seasonCard.ts).
+  - Hovering or clicking the clock's season line shows the same lines, with the day and the next season.
 - Pure functions of the sim clock: nothing to save. A save from the four-day year keeps its clock and lands in
   whichever season that day falls in now.
 

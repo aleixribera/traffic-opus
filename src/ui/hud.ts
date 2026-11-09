@@ -33,6 +33,7 @@ import { landmarkDone, landmarkSite, parkSection, seasonLine, specialRows } from
 import { MEGAS, isMega } from "../game/megaprojects";
 import { TipPrefs, joinedUp, tipFor } from "./tips";
 import { nextTown } from "./nextTown";
+import { SeasonCard } from "./seasonCard";
 
 export interface Chip {
   text: string;
@@ -192,7 +193,7 @@ export class Hud {
   private cityName = h("button", "cb-city");
   private popEl = h("span", "cb-pop");
   private moneyBtn = h("button", "cb-money");
-  private clockEl = h("span", "cb-clock");
+  private clockEl = h("button", "cb-clock");
   private speed = h("div", "speed");
   private cats = h("nav", "cats");
   private assets = h("section", "card assets");
@@ -209,6 +210,8 @@ export class Hud {
   private modal = h("div", "modal");
   private rectEl = h("div", "selrect");
   private banner = h("section", "card banner");
+  /** the season's title card when the calendar turns, and the clock's season popover */
+  private seasons = new SeasonCard(() => ({ game: this.app.game, mode: this.app.mode }));
   /** the company's name and herald, top left by the menu (click: rename it) */
   private companyEl = h("button", "company");
   private companyKey = "";
@@ -348,7 +351,8 @@ export class Hud {
     this.bannerQ = [];
     this.rectEl.hidden = true;
     this.tut.hidden = true;
-    this.root.append(tl, tr, bottom, this.chipBox, this.toastBox, this.banner, this.rectEl, this.modal);
+    this.seasons.wireClock(this.clockEl);
+    this.root.append(tl, tr, bottom, this.chipBox, this.toastBox, this.banner, this.seasons.el, this.seasons.pop, this.rectEl, this.modal);
     document.addEventListener("pointerdown", () => this.sfx.unlock());
   }
 
@@ -680,9 +684,12 @@ export class Hud {
     if (this.clockEl.dataset.k !== season) {
       this.clockEl.dataset.k = season;
       this.clockEl.innerHTML = `<b></b>${season}`;
+      // (the season popover says what the tooltip did, and more)
+      this.clockEl.querySelector(".cb-season")?.removeAttribute("title");
       this.clockShown = "";
     }
     this.clock();
+    this.seasons.tick(!this.banner.hidden || this.bannerQ.length > 0);
     this.renderTips();
     this.ledger.observe(g);
     if (this.sel) this.fillSel();
@@ -823,6 +830,7 @@ export class Hud {
     clearTimeout(this.bannerT);
     this.bannerQ = [];
     this.banner.hidden = true;
+    this.seasons.clear();
   }
 
   private queueBanner(x: Banner) {
@@ -882,6 +890,7 @@ export class Hud {
         <div class="banner-btns"><button class="btn" data-k="town">Open ${escapeHtml(t!.name)}</button><button class="btn primary" data-k="ok">Continue</button></div>`;
     }
     this.banner.hidden = false;
+    this.seasons.yieldTo();
     this.banner.classList.remove("in");
     void this.banner.offsetWidth;
     this.banner.classList.add("in");
@@ -978,6 +987,7 @@ export class Hud {
 
   back(): boolean {
     if (!this.banner.hidden) { this.nextBanner(); return true; }
+    if (this.seasons.popOpen) { this.seasons.closePop(); return true; }
     if (!this.modal.hidden) { this.closeModal(); return true; }
     if (this.sel) { this.closeSelection(); return true; }
     if (this.winKind) { this.closeWin(); return true; }
