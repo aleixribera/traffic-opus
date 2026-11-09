@@ -1,0 +1,33 @@
+/* Sound (ui/soundPanel.ts): the wireless set beside the clock, and the Sound dialog's sliders. Tokens: theme.css. */
+
+/* the wireless: a readout plate like the speed group, the tune's name on a dial strip between its two buttons */
+.wireless { display: flex; align-items: center; background: var(--ink); border: 1px solid var(--edge); border-radius: var(--r); box-shadow: inset 0 0 0 1px var(--rule); padding: 2px; gap: 2px; min-width: 0; }
+.wl-name { width: 168px; padding: 0 8px; font: 600 var(--t-xs)/32px var(--f-text); letter-spacing: 0.04em; color: var(--ochre-hi); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left: 1px solid var(--rule); border-right: 1px solid var(--rule); }
+.wl-name.idle { color: var(--cream-3); }
+.wireless .speed-btn:disabled { color: var(--plate-3); }
+.wireless .speed-btn:disabled:hover { background: transparent; }
+@media (max-width: 1500px) { .wl-name { width: 112px; } }
+@media (max-width: 1340px) { .wl-name { display: none; } }
+
+/* the Sound dialog */
+.dialog.sound { width: min(380px, calc(100vw - 24px)); }
+.snd { display: flex; flex-direction: column; }
+.snd-row { display: grid; grid-template-columns: 132px 1fr 30px; align-items: center; gap: 12px; padding: 9px 2px; border-bottom: 1px solid var(--rule); }
+.snd-n { display: flex; flex-direction: column; gap: 2px; font-size: 15px; font-weight: 600; color: var(--cream); line-height: 1.1; }
+.snd-n .muted { font: 400 var(--t-xs)/1.2 var(--f-text); color: var(--cream-3); }
+.snd-row output { text-align: right; color: var(--cream-2); font-size: var(--t-sm); }
+/* a slider as a gauge: an ink track filled in ochre up to a square brass knob */
+.snd-row input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 22px; margin: 0; background: transparent; cursor: pointer; }
+.snd-row input[type="range"]::-webkit-slider-runnable-track { height: 6px; border-radius: 1px; box-shadow: 0 0 0 1px var(--edge), inset 0 0 0 1px var(--rule);
+  background: linear-gradient(90deg, var(--ochre) calc(var(--p, 0.5) * 100%), var(--ink) 0); }
+.snd-row input[type="range"]::-moz-range-track { height: 6px; border-radius: 1px; box-shadow: 0 0 0 1px var(--edge), inset 0 0 0 1px var(--rule); background: var(--ink); }
+.snd-row input[type="range"]::-moz-range-progress { height: 6px; background: var(--ochre); }
+.snd-row input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 20px; margin-top: -7px; border-radius: 1px; background: var(--cream); border: 1px solid var(--edge); box-shadow: inset 0 0 0 1px var(--rule-2); }
+.snd-row input[type="range"]::-moz-range-thumb { width: 10px; height: 18px; border-radius: 1px; background: var(--cream); border: 1px solid var(--edge); }
+.snd-row input[type="range"]:focus-visible { outline: 2px solid var(--ochre); outline-offset: 2px; }
+.snd-row input[type="range"]:hover::-webkit-slider-thumb { background: var(--ochre-hi); }
+.snd-sw { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin: 0 -8px; padding-left: 10px; padding-right: 10px; }
+.snd-sw:first-of-type { margin-top: 8px; }
+.snd-sw .muted { margin-right: auto; font: 600 var(--t-xs)/1 var(--f-text); color: var(--cream-3); border: 1px solid var(--rule-2); border-radius: var(--r); padding: 2px 5px; }
+.snd-sw[aria-checked="false"] .pm-v { color: var(--cream-3); }
+.pm.sound { display: flex; justify-content: space-between; align-items: baseline; }
