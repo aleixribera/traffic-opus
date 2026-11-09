@@ -15,6 +15,16 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.81", date: "2026-11-09", title: "The Diorama view",
+    notes: [
+      "The map is seen at a tilt now, so buildings, stacks, bridges and trucks stand up like a model on a table.",
+      "Press M for the Map view, straight down, for planning. Press it again to come back.",
+      "Tilt with Y and H, or hold the middle mouse button and drag to turn and tilt.",
+      "Pause menu: a Camera setting picks Diorama or Map, and the game remembers it.",
+      "You click what you see: a tall building, a truck on a bridge and the road under it all pick correctly.",
+    ],
+  },
+  {
     v: "v0.0.80", date: "2026-11-09", title: "Tidy lots, steadier building sites",
     notes: [
       "A building site is no longer held up by one works with a jammed gate: another works sends the load instead.",
