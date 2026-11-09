@@ -1,5 +1,7 @@
 // Tunables in one place. Distances in metres, times in seconds, speeds in m/s.
 
+import { CIVICS, type CivicKind } from "./game/civics";
+
 export const LANE_W = 3.5;
 export const SHOULDER = 0.7;
 export const LEVEL_H = 6; // height of one elevation level
@@ -128,7 +130,9 @@ export type BuildingKind =
   // the company's logistics: a store that buffers deliveries, and a depot that fuels trucks at cost
   | "warehouse" | "fueldepot"
   // the company's landmarks, one of each, built once over days (see game/megaprojects.ts)
-  | "hydrodam" | "skylinetower" | "exposition";
+  | "hydrodam" | "skylinetower" | "exposition"
+  // a town's civic buildings, each the reward of one of its orders (see game/civics.ts, game/orders.ts)
+  | CivicKind;
 export type Zone = "res" | "com" | "placed";
 
 export interface BuildingType {
@@ -196,8 +200,18 @@ export const BUILDING_TYPES: Record<BuildingKind, BuildingType> = {
   hydrodam: { kind: "hydrodam", name: "Hydro Dam", zone: "placed", w: 200, d: 170, residents: 0, jobs: 12, pollution: 0, parking: 3, blurb: "A dam and power station across the river: power for every building on its roads within 15 km, with no coal to feed." },
   skylinetower: { kind: "skylinetower", name: "Skyline Tower", zone: "placed", w: 140, d: 140, residents: 0, jobs: 40, pollution: 0, parking: 6, blurb: "A stepped skyscraper: the city it stands in grows faster and buys more." },
   exposition: { kind: "exposition", name: "Grand Exposition", zone: "placed", w: 220, d: 200, residents: 0, jobs: 30, pollution: 0, parking: 8, blurb: "A world's fair of pavilions round a great hall: the towns grow faster while it draws crowds." },
+  ...civicTypes(),
   coalplant: { kind: "coalplant", name: "Power Plant", zone: "placed", w: 220, d: 200, residents: 0, jobs: 12, pollution: 140, parking: 5, blurb: "Burns coal for power: the buildings that need it on its roads within 4 km work at full pace. Its smoke drags land value down for a few hundred metres." },
 };
+
+/** The towns' civic buildings as building types: the town's own, on a lot of its streets (zone "placed", as a hall). */
+function civicTypes(): Record<CivicKind, BuildingType> {
+  const out = {} as Record<CivicKind, BuildingType>;
+  for (const c of Object.values(CIVICS)) {
+    out[c.kind] = { kind: c.kind, name: c.name, zone: "placed", w: c.w * 8, d: c.d * 8, residents: 0, jobs: 0, pollution: 0, parking: 0, blurb: c.blurb };
+  }
+  return out;
+}
 
 export const ZONE_LABEL: Record<Zone, string> = { res: "Residential", com: "Commercial", placed: "Company building" };
 

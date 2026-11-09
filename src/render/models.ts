@@ -3,6 +3,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { BuildingKind } from "../config";
 import { SITE_MODELS } from "../game/sites";
+import { CIVIC_KINDS } from "../game/civics";
 
 /** A Blender model flattened into one vertex-coloured geometry (one draw call per instanced kind). */
 export interface MergedModel {
@@ -21,6 +22,8 @@ export const BUILDING_MODELS: BuildingKind[] = [
   "house", "terrace", "apartments", "modernflats", "aptower", "highstreet", "shop", "store", "fuelstation", "office", "mall", "tower", "glasstower",
   "hamlethall", "villagehall", "townhall", "cityhall", "farm", "loggingcamp", "foodplant", "sawmill", "coalplant",
   "ironmine", "coalmine", "quarry", "smelter", "cementworks",
+  // the towns' civic buildings, each the reward of a town order (game/civics.ts)
+  ...CIVIC_KINDS,
 ];
 /**
  * What industry sites are built from besides the kinds' own models: the shared modules (halls, silos, heaps, the

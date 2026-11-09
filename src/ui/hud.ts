@@ -33,6 +33,9 @@ import { landmarkDone, landmarkSite, parkSection, seasonLine, specialRows } from
 import { MEGAS, isMega } from "../game/megaprojects";
 import { TipPrefs, joinedUp, tipFor } from "./tips";
 import { nextTown } from "./nextTown";
+import { openOrders, townOrders } from "./orders";
+import { CIVICS, type CivicKind } from "../game/civics";
+import { orderLine } from "../game/orders";
 
 export interface Chip {
   text: string;
@@ -103,7 +106,8 @@ const fmtTime = (s: number) => {
 
 const fmtNum = (n: number) => (n >= 10000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : n.toLocaleString("en-US"));
 /** A banner waiting its turn: a milestone reached (with the towns it brought), a town grown into a new size, a landmark, a town sprung up. */
-type Banner = { m: Milestone; towns?: number[] } | { town: number; size: number } | { landmark: number } | { spawned: number; from: number | null; dist: number; dir: string };
+type Banner = { m: Milestone; towns?: number[] } | { town: number; size: number } | { landmark: number } | { spawned: number; from: number | null; dist: number; dir: string }
+  | { order: number; kind: CivicKind; b?: number; grant: number };
 const signed = (n: number) => `${n >= 0 ? "+" : "−"}${formatMoney(Math.abs(Math.round(n)))}`;
 const hex = (c: number) => "#" + c.toString(16).padStart(6, "0");
 const lum = (c: number) => {
@@ -773,7 +777,8 @@ export class Hud {
     const t = h("div", "toast " + (error ? "error" : ""), msg);
     t.setAttribute("role", "status");
     this.toastBox.appendChild(t);
-    while (this.toastBox.children.length > 3) this.toastBox.firstChild!.remove();
+    // (the order note stays: it is put away by itself)
+    for (let ts = this.toastBox.querySelectorAll(".toast:not(.order-note)"), i = 0; i < ts.length - 3; i++) ts[i].remove();
     setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 300); }, error ? 2200 : 2800);
   }
 
@@ -818,11 +823,73 @@ export class Hud {
     this.queueBanner({ landmark: b });
   }
 
+  /** A town's order is filled: its banner (the building going up, the grant, the perk). */
+  orderFilled(town: number, kind: CivicKind, b: number | undefined, grant: number) {
+    this.queueBanner({ order: town, kind, b, grant });
+  }
+
+  // (orders opened lately, still on the note: newest last)
+  private orderNote: HTMLElement | null = null;
+  private orderNoteT = 0;
+  private orderNoted: { town: number; kind: CivicKind }[] = [];
+
+  /**
+   * An order opened in a town: a small note under the toasts, which stays a while and can be put away. Orders that
+   * open while it shows join it rather than piling up notes.
+   */
+  orderOpened(town: number, kind: CivicKind) {
+    const g = this.app.game;
+    if (!g.towns.byId.has(town)) return;
+    let n = this.orderNote;
+    if (!n || !n.isConnected) {
+      n = this.orderNote = h("div", "toast order-note");
+      n.setAttribute("role", "status");
+      this.orderNoted = [];
+      this.toastBox.prepend(n);
+      n.addEventListener("mouseenter", () => clearTimeout(this.orderNoteT));
+      n.addEventListener("mouseleave", () => this.orderNoteAway(6000));
+    }
+    this.orderNoted = this.orderNoted.filter((x) => x.town !== town || x.kind !== kind).concat({ town, kind });
+    const list = this.orderNoted.map((x) => ({ x, o: g.orders.open.find((o) => o.town === x.town && o.kind === x.kind), t: g.towns.byId.get(x.town) }))
+      .filter((r): r is { x: { town: number; kind: CivicKind }; o: NonNullable<typeof r.o>; t: Town } => !!r.o && !!r.t);
+    const shown = list.slice(-3);
+    const one = list.length === 1 ? list[0] : null;
+    n.innerHTML = `<p class="on-k">${list.length > 1 ? `${list.length} new town orders` : "New town order"}</p>
+      <ul class="on-list">${shown.map((r) => `<li><button class="on-row" data-id="${r.t.id}">${escapeHtml(orderLine(r.o, r.t.name))}</button></li>`).join("")}</ul>
+      ${list.length > shown.length ? `<p class="on-more">and ${list.length - shown.length} more in the Towns window</p>` : ""}
+      <button class="close on-x" aria-label="Put the note away">${ICON.close}</button>`;
+    for (const b of n.querySelectorAll<HTMLButtonElement>(".on-row")) b.onclick = () => { this.sfx.play("click"); this.orderNoteAway(0); this.showTown(+b.dataset.id!); };
+    n.querySelector<HTMLButtonElement>(".on-x")!.onclick = () => this.orderNoteAway(0);
+    n.classList.remove("out");
+    if (one) n.title = `Open ${one.t.name}`;
+    this.sfx.play("place");
+    this.orderNoteAway(14000);
+  }
+
+  private orderNoteAway(ms: number) {
+    clearTimeout(this.orderNoteT);
+    this.orderNoteT = window.setTimeout(() => {
+      const n = this.orderNote;
+      if (!n) return;
+      if (ms && n.matches(":hover, :focus-within")) return;
+      n.classList.add("out");
+      this.orderNote = null;
+      setTimeout(() => n.remove(), 300);
+    }, ms);
+  }
+
+  /** A town's order ran out of time: a quiet word, no cost (it asks again later). */
+  orderLapsed(town: number, kind: CivicKind) {
+    const t = this.app.game.towns.byId.get(town);
+    if (t) this.toast(`${t.name}'s ${CIVICS[kind].name.toLowerCase()} order ran out of time. It will ask again.`);
+  }
+
   /** Drop every banner still showing or waiting (a new game or a load: they belonged to the last one). */
   clearBanners() {
     clearTimeout(this.bannerT);
     this.bannerQ = [];
     this.banner.hidden = true;
+    this.orderNoteAway(0);
   }
 
   private queueBanner(x: Banner) {
@@ -838,17 +905,27 @@ export class Hud {
     const X = this.bannerQ.shift();
     if (!X) { this.banner.hidden = true; return; }
     const g = this.app.game;
-    const t = "town" in X ? g.towns.byId.get(X.town) : "spawned" in X ? g.towns.byId.get(X.spawned) : undefined;
-    if (("town" in X || "spawned" in X) && !t) { this.nextBanner(); return; }
+    const t = "town" in X ? g.towns.byId.get(X.town) : "spawned" in X ? g.towns.byId.get(X.spawned) : "order" in X ? g.towns.byId.get(X.order) : undefined;
+    if (("town" in X || "spawned" in X || "order" in X) && !t) { this.nextBanner(); return; }
+    const civ = "order" in X && X.b !== undefined ? g.buildings.byId.get(X.b) : undefined;
     const lm = "landmark" in X ? g.buildings.byId.get(X.landmark) : undefined;
     if ("landmark" in X && (!lm || !isMega(lm.kind))) { this.nextBanner(); return; }
     this.banner.classList.toggle("lm", !!lm || "spawned" in X);
     this.banner.classList.toggle("nt", "spawned" in X);
+    this.banner.classList.toggle("ord", "order" in X);
     if (lm && isMega(lm.kind)) {
       this.banner.innerHTML = `<p class="lm-kicker">The company presents</p>
         <header>The ${BUILDING_TYPES[lm.kind].name} is open</header>
         <p class="gifts">${escapeHtml(MEGAS[lm.kind].reward)}</p>
         <div class="banner-btns"><button class="btn" data-k="show">Show me</button><button class="btn primary" data-k="ok">Continue</button></div>`;
+    } else if ("order" in X) {
+      // an order filled: the town's new building going up, the grant, and what it does for the town for good
+      const C = CIVICS[X.kind];
+      this.banner.innerHTML = `<p class="lm-kicker">Order filled</p>
+        <header>${escapeHtml(t!.name)} builds its ${C.name.toLowerCase()}</header>
+        <p class="sub">${escapeHtml(t!.name)} pays the company ${formatMoney(X.grant)}</p>
+        <p class="gifts">${escapeHtml(C.perkText)}.</p>
+        <div class="banner-btns">${civ ? `<button class="btn" data-k="civic">Show me</button>` : ""}<button class="btn" data-k="town">Open ${escapeHtml(t!.name)}</button><button class="btn primary" data-k="ok">Continue</button></div>`;
     } else if ("spawned" in X) {
       const T = g.towns.byId.get(X.spawned)!;
       const from = X.from !== null ? g.towns.byId.get(X.from) : undefined;
@@ -891,6 +968,8 @@ export class Hud {
     if (open && t) open.onclick = () => { this.nextBanner(); this.openTown(t.id); };
     const show = this.banner.querySelector<HTMLButtonElement>('[data-k="show"]');
     if (show && lm) show.onclick = () => { this.app.glideTo(lm.c, Math.max(220, Math.hypot(lm.hw, lm.hd) * 1.6)); this.nextBanner(); this.app.selected = lm; this.openBuilding(lm); };
+    const sc = this.banner.querySelector<HTMLButtonElement>('[data-k="civic"]');
+    if (sc && civ) sc.onclick = () => { this.app.glideTo(civ.c, Math.max(150, Math.hypot(civ.hw, civ.hd) * 2.8)); this.nextBanner(); };
     const fly = this.banner.querySelector<HTMLButtonElement>('[data-k="fly"]');
     if (fly && t) fly.onclick = () => { this.nextBanner(); this.app.flyToTown(t.id); };
     this.bannerMore();
@@ -1218,14 +1297,14 @@ export class Hud {
     const next = nt
       ? `<p class="tw-next"><span>Next town springs up at</span> <b>${escapeHtml(nt.m.name)}</b> · ${measureText(nt.m, nt.have, nt.need)}${nt.before ? ` <span class="muted">· opens after ${nt.before} more goal${nt.before === 1 ? "" : "s"}</span>` : ""}</p>`
       : `<p class="tw-next muted">Every town the goals bring has sprung up.</p>`;
-    const html = `${next}<ul class="tw-list">${rows}</ul>
+    const html = `${next}${openOrders(g)}<ul class="tw-list">${rows}</ul>
       <dl class="facts">
         <dt>People in your towns</dt><dd>${fmtNum(s.population)}</dd>
         <dt>Working at your plants</dt><dd>${fmtNum(g.industry.plants().reduce((a, b) => a + g.people.workersAt(b.id), 0))}</dd>
       </dl>
       ${sparkline(g.history.map((x) => x.pop), "Population")}`;
     if (!this.setWin("Towns", html)) return;
-    for (const b of this.win.querySelectorAll<HTMLButtonElement>(".tw-row")) b.onclick = () => { this.sfx.play("click"); this.showTown(+b.dataset.id!); };
+    for (const b of this.win.querySelectorAll<HTMLButtonElement>(".tw-row, .tw-order")) b.onclick = () => { this.sfx.play("click"); this.showTown(+b.dataset.id!); };
   }
 
   /** Look at a town and open its panel. */
@@ -1572,7 +1651,7 @@ export class Hud {
     const soon = cn
       ? `<p class="nd-soon">${cn.products.map((p) => `<span class="nd-ic" aria-hidden="true">${productIcon(p)}</span>`).join("")}<span><b>Soon: ${cn.products.map((p) => PRODUCTS[p].name).join(" and ")}</b> <span class="muted">when it reaches ${fmtNum(cn.pop)} people</span></span></p>`
       : "";
-    const lead = `<h3 class="sub-h nd-h">What it needs</h3><ul class="nds">${rows}</ul>${soon}`;
+    const lead = `<h3 class="sub-h nd-h">What it needs</h3><ul class="nds">${rows}</ul>${soon}${townOrders(g, t)}`;
     const figures = views.map((v) => `<dt title="${buyer(v.p)} up to ${fmtLoads(v.want * MARKET)} a day; ${fmtLoads(t.today[v.p] ?? 0)} so far today">${PRODUCTS[v.p].name}</dt><dd>${fmtLoads(v.got)} <span class="muted">of ${fmtLoads(v.want)}</span></dd>`).join("");
     // what holds it back, in words (no figures: docs/design.md, "growth in words"): the need its proven supply runs
     // out on, and that it grows again once that supply has held for a couple of days

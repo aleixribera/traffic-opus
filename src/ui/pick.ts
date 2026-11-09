@@ -6,6 +6,7 @@ import type { Vehicle } from "../sim/traffic";
 import type { Game } from "../game/city";
 import { segAt } from "../roads/planner";
 import { isHall } from "../game/towns";
+import { isCivic } from "../game/civics";
 import type { Sel } from "./inspect";
 
 /** Distance from p to the segment a-b. */
@@ -98,7 +99,7 @@ export function pickAt(g: Game, p: V2, mpp: number, vehicles = true): Sel | null
   const sid = stopNear(g, p, 6);
   if (sid !== null) return { k: "stop", id: sid };
   const b = g.buildings.at(p);
-  if (b) return isHall(b.kind) && b.town !== undefined ? { k: "town", id: b.town } : { k: "building", id: b.id };
+  if (b) return (isHall(b.kind) || isCivic(b.kind)) && b.town !== undefined ? { k: "town", id: b.town } : { k: "building", id: b.id };
   const n = junctionAt(g, p, mpp);
   if (n !== null) return { k: "node", id: n };
   const seg = segAt(g.net, p, Math.max(2, 6 * mpp), null);
