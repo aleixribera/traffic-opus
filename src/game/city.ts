@@ -1515,7 +1515,11 @@ export class Game {
         }
         if (best) {
           const tt = best.w === t.w ? t : { ...t, w: best.w };
-          return this.placeLot(b, best.x0, tt, this.lotDepth(b, best.x0, tt, c.zone), c.zone);
+          // (as deep as the zoned cells behind it reach, short of a building already standing there)
+          for (let d = this.lotDepth(b, best.x0, tt, c.zone); d >= tt.d; d--) {
+            const rect = this.lotRect(b, best.x0, tt.w, d);
+            if (rect) return this.placeLot(b, best.x0, tt, d, c.zone, rect);
+          }
         }
       }
     }
@@ -1548,7 +1552,49 @@ export class Game {
       }
       if (Math.abs(Math.cos(b.cells[k * DEPTH].rot - r0)) < 0.97) return false; // too curved
     }
-    return true;
+    return this.lotRect(b, col0, t.w, t.d) !== null;
+  }
+
+  /**
+   * Where a lot of w x depth cells at col0 stands: the rectangle over its cells (centred on them, turned the way they
+   * run on average), kept clear of every building already standing. Its cells only roughly say where the land is
+   * free: a street laid out again shifts its columns under the buildings already on it, the rectangle of a lot on a
+   * bend overhangs its fanned cells, and an older and a newer block's cells may overlap a little where they meet. So a
+   * lot standing in the way trims the new one off its side or its back (never its front, on the street), by up to
+   * LOT_TRIM; null if more would be needed.
+   */
+  private lotRect(b: Block, col0: number, w: number, depth: number): LotRect | null {
+    let cx = 0, cy = 0, ux = 0, uy = 0, n = 0;
+    for (let k = col0; k < col0 + w; k++) for (let r = 0; r < depth; r++) {
+      const c = b.cells[k * DEPTH + r];
+      cx += c.c.x; cy += c.c.y; ux += Math.cos(c.rot); uy += Math.sin(c.rot); n++;
+    }
+    const c = { x: cx / n, y: cy / n }, rot = Math.atan2(uy, ux);
+    // the lot's own frame: x along the street (the way its road runs), y away from the street into the lot
+    const u = { x: Math.cos(rot), y: Math.sin(rot) }, v = { x: -u.y * b.side, y: u.x * b.side };
+    const hw = (w * CELL) / 2, hd = (depth * CELL) / 2;
+    let x0 = -hw, x1 = hw, y1 = hd;
+    const y0 = -hd;
+    for (const o of this.buildings.near(c, Math.hypot(hw, hd) + LOT_GIVE)) {
+      const q = rectCorners(o.c, o.hw, o.hd, o.rot).map((p) => ({ x: (p.x - c.x) * u.x + (p.y - c.y) * u.y, y: (p.x - c.x) * v.x + (p.y - c.y) * v.y }));
+      if (!lotsOverlap(x0, x1, y0, y1, q)) continue;
+      // the least trim that clears it: its side nearer the street's start or end, or its back
+      const across = clipTo(q, "y", y0, y1), deep = clipTo(q, "x", x0, x1);
+      const opts: [number, () => void][] = [];
+      if (across.length) {
+        const hi = Math.max(...across.map((p) => p.x)), lo = Math.min(...across.map((p) => p.x));
+        if (hi + hw <= LOT_TRIM && hi < x1) opts.push([hi - x0, () => { x0 = hi; }]);
+        if (hw - lo <= LOT_TRIM && lo > x0) opts.push([x1 - lo, () => { x1 = lo; }]);
+      }
+      if (deep.length) {
+        const lo = Math.min(...deep.map((p) => p.y));
+        if (hd - lo <= LOT_TRIM && lo > y0) opts.push([y1 - lo, () => { y1 = lo; }]);
+      }
+      if (!opts.length) return null;
+      opts.sort((p, q) => p[0] - q[0])[0][1]();
+    }
+    const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+    return { c: { x: c.x + u.x * mx + v.x * my, y: c.y + u.y * mx + v.y * my }, rot, hw: (x1 - x0) / 2, hd: (y1 - y0) / 2, along: mx };
   }
 
   /** How deep a lot can reach: the template's depth, then on through the zoned cells behind it (CS2 lots take the block's depth, the rest is yard). */
@@ -1564,33 +1610,27 @@ export class Game {
     return d;
   }
 
-  private placeLot(b: Block, col0: number, t: LotTemplate, depth: number, zone: ZoneId): Building | null {
+  private placeLot(b: Block, col0: number, t: LotTemplate, depth: number, zone: ZoneId, rect: LotRect): Building | null {
     const g = this.net.segGeom.get(b.seg);
     if (!g) return null;
-    let cx = 0, cy = 0, ux = 0, uy = 0;
     const cells: Cell[] = [];
-    for (let k = col0; k < col0 + t.w; k++) for (let r = 0; r < depth; r++) {
-      const c = b.cells[k * DEPTH + r];
-      cells.push(c);
-      cx += c.c.x; cy += c.c.y;
-      ux += Math.cos(c.rot); uy += Math.sin(c.rot);
-    }
-    const n = cells.length;
-    const c = { x: cx / n, y: cy / n };
-    const rot = Math.atan2(uy, ux);
-    const sMid = (b.colS[col0] + b.colS[col0 + t.w - 1]) / 2;
+    for (let k = col0; k < col0 + t.w; k++) for (let r = 0; r < depth; r++) cells.push(b.cells[k * DEPTH + r]);
+    const { c, rot, hw, hd } = rect;
+    const sMid = (b.colS[col0] + b.colS[col0 + t.w - 1]) / 2 + rect.along;
     // kerb point in front of the lot's middle
     const away = { x: -Math.sin(rot) * b.side, y: Math.cos(rot) * b.side };
     // (the kerb: the lot starts behind the front strip its driveway crosses)
-    const front = add(c, scale(away, -((depth * CELL) / 2 + zoneEdge(g.width) - g.width / 2)));
+    const front = add(c, scale(away, -(hd + zoneEdge(g.width) - g.width / 2)));
     const M = BUILDING_TYPES[t.model];
     const tall = t.tall ? t.tall[0] + this.rng() * (t.tall[1] - t.tall[0]) : 1;
     const seg = this.net.segs.get(b.seg);
+    // (a lot trimmed clear of its neighbours fits its model to what is left)
+    const fit = Math.min(modelFit(t, M.w, M.d), (2 * hw - 1.5) / M.w, (2 * hd - 3) / M.d);
     const bl: Building = {
-      id: this.buildings.nextId++, town: seg?.town ?? this.towns.townAt(c)?.id, kind: t.model, c, rot, hw: (t.w * CELL) / 2, hd: (depth * CELL) / 2, front,
+      id: this.buildings.nextId++, town: seg?.town ?? this.towns.townAt(c)?.id, kind: t.model, c, rot, hw, hd, front,
       access: { seg: b.seg, s: sMid, p: front }, side: b.side, zone, lot: { block: b.key, col0, w: t.w, d: depth },
       // deeper lots hold a bit more (the back is yard, parking or storage)
-      level: 1, cap: capacity(zone, t.w, t.d + (depth - t.d) * 0.5, 1, tall), fit: modelFit(t, M.w, M.d), tall, built: 0, abandoned: 0, lv: 0, upT: 0, badT: 0,
+      level: 1, cap: capacity(zone, t.w, t.d + (depth - t.d) * 0.5, 1, tall), fit, tall, built: 0, abandoned: 0, lv: 0, upT: 0, badT: 0,
       problem: null, stock: ZONE_GROUP[zone] === "com" ? 2 : 0, prodT: 0, visits: 0, born: this.time,
     };
     // (from the moment the company can make construction parts, a town's blocks and towers are put up from them)
@@ -2124,6 +2164,47 @@ function sum(o: Record<string, number>): number {
   let s = 0;
   for (const v of Object.values(o)) s += v;
   return s;
+}
+
+/** A lot's rectangle: its centre, heading and half sizes, and how far its middle moved along the street off its cells'. */
+type LotRect = { c: V2; rot: number; hw: number; hd: number; along: number };
+/** How far a new lot may overlap a building already standing (m): touching, give or take rounding. */
+const LOT_GIVE = 0.05;
+/**
+ * How far a new lot may be trimmed off one side or its back to stand clear of one already there (m). Under half a
+ * cell, so each of its cells still has its centre on it (Game.lotCells).
+ */
+const LOT_TRIM = 3;
+
+/** Whether the box [x0, x1] x [y0, y1] and the rectangle q (its corners in order) overlap by more than LOT_GIVE. */
+function lotsOverlap(x0: number, x1: number, y0: number, y1: number, q: V2[]): boolean {
+  const box = [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+  const e1 = sub(q[1], q[0]), e2 = sub(q[2], q[1]);
+  for (const ax of [{ x: 1, y: 0 }, { x: 0, y: 1 }, e1, e2]) {
+    const L = Math.hypot(ax.x, ax.y);
+    if (L < 1e-9) continue;
+    const pr = (p: V2) => (p.x * ax.x + p.y * ax.y) / L;
+    const a = box.map(pr), b = q.map(pr);
+    if (Math.min(Math.max(...a), Math.max(...b)) - Math.max(Math.min(...a), Math.min(...b)) <= LOT_GIVE) return false;
+  }
+  return true;
+}
+
+/** The part of a convex polygon with `k` between lo and hi. */
+function clipTo(poly: V2[], k: "x" | "y", lo: number, hi: number): V2[] {
+  const cut = (pts: V2[], inside: (p: V2) => boolean, at: number) => {
+    const out: V2[] = [];
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      if (inside(a)) out.push(a);
+      if (inside(a) !== inside(b)) {
+        const t = (at - a[k]) / (b[k] - a[k]);
+        out.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+      }
+    }
+    return out;
+  };
+  return cut(cut(poly, (p) => p[k] >= lo, lo), (p) => p[k] <= hi, hi);
 }
 
 function pointInRect(p: V2, b: Building, pad: number): boolean {

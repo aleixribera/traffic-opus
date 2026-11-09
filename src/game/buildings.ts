@@ -102,6 +102,9 @@ export interface PlaceOpts {
 /** Where a site's gate would join a road: the access, the kerb point, and its pose put the road's way round. */
 export interface GateAccess { access: Access; front: V2; side: 1 | -1; rot: number; type: string }
 
+/** Size of the squares Buildings.near files buildings under (m). */
+const NEAR_CELL = 32;
+
 /** How far round a placed site looks for a road to turn its gate toward (m). */
 const FACE_REACH = 300;
 
@@ -121,8 +124,41 @@ export class Buildings {
   private sitesCache: Building[] = [];
   /** the road geometry each building was last attached to (see reattach) */
   private attachedTo = new WeakMap<Building, unknown>();
+  /** buildings by NEAR_CELL square their footprint reaches, as they stood at `gridAt` (see near) */
+  private grid = new Map<number, Building[]>();
+  private gridAt = "";
+  private moved = 0;
 
   constructor(private net: RoadNetwork) {}
+
+  /** Buildings whose footprint may reach within r of p (a quick first pass: test their footprints yourself). */
+  near(p: V2, r: number): Building[] {
+    const key = `${this.version}:${this.moved}`;
+    if (key !== this.gridAt) {
+      this.grid.clear();
+      for (const b of this.list) this.file(b);
+      this.gridAt = key;
+    }
+    const out = new Set<Building>();
+    for (let i = Math.floor((p.x - r) / NEAR_CELL); i <= Math.floor((p.x + r) / NEAR_CELL); i++) {
+      for (let j = Math.floor((p.y - r) / NEAR_CELL); j <= Math.floor((p.y + r) / NEAR_CELL); j++) {
+        for (const b of this.grid.get((i + 32768) * 65536 + (j + 32768)) ?? []) if (this.byId.get(b.id) === b) out.add(b);
+      }
+    }
+    return [...out];
+  }
+
+  /** File a building in the squares its footprint reaches (or take it out of them). */
+  private file(b: Building, out = false) {
+    const R = Math.hypot(b.hw, b.hd);
+    for (let i = Math.floor((b.c.x - R) / NEAR_CELL); i <= Math.floor((b.c.x + R) / NEAR_CELL); i++) {
+      for (let j = Math.floor((b.c.y - R) / NEAR_CELL); j <= Math.floor((b.c.y + R) / NEAR_CELL); j++) {
+        const k = (i + 32768) * 65536 + (j + 32768);
+        const L = this.grid.get(k);
+        if (out) { const n = L ? L.indexOf(b) : -1; if (n >= 0) L!.splice(n, 1); } else if (L) L.push(b); else this.grid.set(k, [b]);
+      }
+    }
+  }
 
   /** The placed buildings (company sites, power plants...): few, so loops over them stay cheap. */
   get sites(): Building[] {
@@ -392,9 +428,12 @@ export class Buildings {
   }
 
   insert(b: Building): Building {
+    const filed = this.gridAt === `${this.version}:${this.moved}`;
     this.list.push(b);
     this.byId.set(b.id, b);
     this.version++;
+    // (the grid takes it in, rather than being filled again for every new home)
+    if (filed) { this.file(b); this.gridAt = `${this.version}:${this.moved}`; }
     if (b.id >= this.nextId) this.nextId = b.id + 1;
     return b;
   }
@@ -402,9 +441,11 @@ export class Buildings {
   remove(id: number) {
     const b = this.byId.get(id);
     if (!b) return;
+    const filed = this.gridAt === `${this.version}:${this.moved}`;
     this.byId.delete(id);
     this.list.splice(this.list.indexOf(b), 1);
     this.version++;
+    if (filed) { this.file(b, true); this.gridAt = `${this.version}:${this.moved}`; }
   }
 
   /** Buildings whose footprint is within `hw` of any point. */
@@ -583,6 +624,7 @@ export class Buildings {
       b.front = to ? m.f1 : m.f0;
       this.attachedTo.delete(b);
     }
+    this.moved++;
   }
 }
 
