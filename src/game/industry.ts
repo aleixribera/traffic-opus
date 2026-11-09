@@ -516,6 +516,12 @@ export class Industry {
 
   /** Per building, this tick: its trucks held at its own gate or in traffic, and loads on their way to it held up. */
   private jam = new Map<number, { gate: number; road: number; on: Partial<Record<Product, number>>; held: Partial<Record<Product, number>> }>();
+  /** Per plant, this tick: loads for works' building sites still in its yard behind its jammed gate ("dest:product"). */
+  private gated = new Map<number, Map<string, number>>();
+  /** Loads of `p` for `dest` that `from` has waiting behind its own jammed gate (counted on by it alone). */
+  private stuckFor(from: number, dest: number, p: Product): number {
+    return this.gated.get(from)?.get(`${dest}:${p}`) ?? 0;
+  }
   private jamOf(id: number) {
     let j = this.jam.get(id);
     if (!j) this.jam.set(id, (j = { gate: 0, road: 0, on: {}, held: {} }));
@@ -758,6 +764,7 @@ export class Industry {
     const held = this.h.held?.();
     this.jam.clear();
     this.due.clear();
+    this.gated.clear();
     for (const t of this.h.trips()) {
       const r = t.haul;
       // (a convoy with an oversized piece is not one of its works' trucks: convoys.ts keeps its own count)
@@ -777,6 +784,16 @@ export class Industry {
       const c = r.cls ?? "light";
       by[c] = (by[c] ?? 0) + 1;
       if (r.leg !== "out") continue;
+      // (a load for a works' building site still in its yard behind a jammed gate isn't counted on there: another
+      // plant whose trucks can get out sends it, or the site's last loads wait on that one gate for days; its own
+      // plant still counts it, so it doesn't pile more into the same queue: see stuckFor)
+      if (h === "gate" && this.h.buildings.byId.get(r.dest)?.plant?.site) {
+        let s = this.gated.get(r.plant);
+        if (!s) this.gated.set(r.plant, (s = new Map()));
+        const k = `${r.dest}:${r.product}`;
+        s.set(k, (s.get(k) ?? 0) + r.n);
+        continue;
+      }
       let m = coming.get(r.dest);
       if (!m) coming.set(r.dest, (m = new Map()));
       m.set(r.product, (m.get(r.product) ?? 0) + r.n);
@@ -1037,7 +1054,7 @@ export class Industry {
       // building sites waiting for it come first: a plant that isn't built makes nothing (a landmark's site comes
       // after the chains and the towns' growth: it takes what is left over, see megaValue)
       if (o.plant.site) {
-        const room = Industry.siteLeft(o, product) - on(o.id);
+        const room = Industry.siteLeft(o, product) - on(o.id) - this.stuckFor(from.id, o.id, product);
         if (room >= 1) out.push({ b: o, value: PLANTS[o.kind as PlantKind].mega ? megaValue(price, km(o)) : 20000 + room * 100 - km(o) * FUEL_PER_KM * 2, room });
         continue;
       }
@@ -1328,6 +1345,13 @@ export class Industry {
         const take = Math.min(n, Math.max(0, Industry.siteLeft(to, product)));
         s.got[product] = (s.got[product] ?? 0) + take;
         Industry.finishSite(to);
+        return;
+      }
+      // (a load for a works' site that another plant's truck finished first: the works has no use for it, so it goes
+      // back to its own yard, as when a buyer is pulled down, rather than clog the works' store)
+      const kind = to.kind as PlantKind;
+      if (!PLANTS[kind].logistics && !takesIn(kind, product) && !suppliedWith(kind, product)) {
+        if (from?.plant) { const back = Industry.logisticsOf(from) === "warehouse" ? from.plant.stock : from.plant.out; back[product] = (back[product] ?? 0) + n; }
         return;
       }
       to.plant.stock[product] = (to.plant.stock[product] ?? 0) + n;
