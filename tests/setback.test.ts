@@ -101,7 +101,8 @@ describe("front strips", () => {
     const g = new Game(7);
     g.start();
     const t = g.towns.list[0];
-    for (let d = 0; d < 6; d++) g.fastForward(t.id, 24);
+    // (ten days: enough blocks to count; at six the start town had only ~140 columns, on v0.0.69 too)
+    for (let d = 0; d < 10; d++) g.fastForward(t.id, 24);
     // every column of a town street's blocks that has any lot room at all: how many rows deep it runs
     let cols = 0, deep = 0;
     for (const blk of g.zones.blocks.values()) {

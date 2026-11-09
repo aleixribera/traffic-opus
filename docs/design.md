@@ -382,7 +382,7 @@ itself across modes; you build tracks, docks and the transfer points, never line
 
 ## Towns (like Transport Fever 2)
 
-- A town lays out its own streets, growing outward in a rough circle, and joins them to your roads where they
+- A town lays out its own streets, growing out unevenly along its roads, and joins them to your roads where they
   meet. Houses and shops build themselves along its streets.
 - **Towns spring up; the player never founds one (owner, 2026-11-08).** The company starts with one hamlet. Fresh
   hamlets (level 0) appear as milestones are reached, and the milestones that bring them are about the towns
@@ -551,16 +551,18 @@ houses." "Let villages fully control themselves apart from just growing, let the
 cool layout aswell, not just squared, let them eventually build an outwards road that ends up connecting to maybe
 an external road, but don't overdo it, this is the player's job."
 
-- **A plan of its own (townplan.ts).** Every town still grows a street at a time on a lattice of 96 m blocks, but
-  the lattice is bent into a plan seeded from the town, the same every time it is loaded. Each town has its own
-  character, somewhere between long straight American blocks and rings and spokes round the centre. Its main street runs
-  straight through the hall's crossroads. The side streets curve with low-frequency noise and the outer ones
-  swirl a little round the centre. Junctions that would fall in water or on a mountain are drawn back toward the
-  centre by up to half a block, so the street along a shore follows it, or they are left out. From the second
-  ring out, 10 to 20% of the streets are left out (more at the edge), which gives bigger, uneven blocks,
-  T-junctions and closes. The crossroads and the four blocks round it stay square, so the hall's square is the
-  same in every town. Bent streets are laid as arcs with the road tool's own curve mode. Towns from saves
-  before this keep their square grid.
+- **A plan of its own (townplan.ts).** Every town still grows a street at a time on a lattice of 96 m blocks, laid
+  out as a small American town that grew over time (PLAN_TOWN, 2026-11-09), seeded from the town and the same every
+  time it is loaded. The main street runs along the road the town began on, straight through the hall's crossroads
+  and bending gently once past the old town; the crossroads and the four blocks round it stay square, so the hall's
+  square is the same in every town. Every fourth line is a through street. The land between them is a quarter laid
+  out by its own builder: long blocks along the main street (or across it) with staggered cross streets, a loose
+  grid, a spine with short closes off it, or a loop drive (sometimes round a green). Through streets meet them
+  mostly in T-junctions; blocks differ in size, quarters bow, cross roads sometimes run at an angle, and side
+  streets curve with low-frequency noise. The town leans as it grows: it reaches further along the main street and
+  the cross road, toward the player's roads and other towns within 2.5 km, and less toward water, mountains,
+  steep ground, forest and the company's sites. Junctions near water are drawn back as before, or left out. Towns
+  from v0.0.69 keep their rings-and-spokes plan, and older ones their square grid.
 - **Less crowded, spreading outward.** About one block in ten is kept as a green: a lawn inside its pavements with
   a row of trees round it and clumps within. There are more greens among the inner streets, and always the town
   green across the main street from the hall's square. The green shows once three of the block's streets are laid. A
