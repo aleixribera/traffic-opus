@@ -1,7 +1,7 @@
 import { LANE_W, ROAD_TYPES, SIM, rightOnly } from "../config";
 import { clamp, dist, dot, norm, polyAt, polyClosest, polyDirSmooth, right, sub, type V2 } from "../core/math";
 import type { ChangeSet, Connector, Edge, Lane, RoadNetwork, SignalPhase, SignalPlan } from "../roads/network";
-import { Router, dkey, dkDir, dkSeg, type Access } from "./router";
+import { Router, dkey, dkDir, dkSeg, type Access, type Driver } from "./router";
 import type { HaulRun } from "../game/industry";
 
 export type TripKind = "shop" | "leisure" | "work" | "home" | "cargo" | "empty" | "bus";
@@ -50,6 +50,8 @@ export interface Vehicle {
    * other way. See DRIVERS.
    */
   drv: number;
+  /** who it routes as (see Router.cost): its driver's way of judging roads, and whether it is a truck */
+  who: Driver;
   /** a speed it never goes above, whatever the limit (m/s): an escorted oversized load */
   vmax?: number;
   /** never changes lane to overtake (only when its route needs it): an escorted convoy holds its lane */
@@ -225,6 +227,11 @@ const RING_FULL = 0.6;
 const CROSS_SWEEP = 10;
 /** Edges kept in a vehicle's history (a road train spans a lane, a junction and the lane before it). */
 const HIST = 8;
+/**
+ * How fast a road's memory of an hour moves to what it sees now, per second of that hour (an hour is 40 s: about
+ * 0.55 of the way there over one day's hour, so yesterday counts most and a one-off jam fades in a couple of days).
+ */
+const USUAL_RATE = 0.02;
 /** A destination this close (m) past the start of its road: a car picks its lane for it on the road before. */
 const PREP_AHEAD = 400;
 /**
@@ -308,11 +315,26 @@ export class Traffic {
   private forks = new Map<number, number>(); // connector pair -> where they part (see forkAt)
   private gates = new Map<number, { v: Vehicle; at: V2 }>(); // building -> its last long truck out, till its tail clears the gate
   flow = new Map<number, FlowStat>(); // by directed seg key
+  /**
+   * The hour of the day (0-24), from the game's clock: with it each road remembers how it flows hour by hour, and
+   * drivers plan round the roads that are slow at this time of day before they jam today (see Router.usual).
+   */
+  hourOf: (() => number) | null = null;
+  /** directed seg -> its speed as a share of the limit, by hour of the day (a running average over the days) */
+  private usual = new Map<number, Float32Array>();
+  private usualHour = -1;
   trips: { ff: number; actual: number; t: number }[] = [];
   jams = new Map<number, number>(); // node id -> seconds of blockage recently
 
   constructor(public net: RoadNetwork, private ev: TrafficEvents) {
     this.router = new Router(net);
+    // the speed a road usually slows to over this hour and the next (a trip takes a while): only where it does
+    this.router.usual = (k) => {
+      const u = this.usual.get(k);
+      if (!u || this.usualHour < 0) return undefined;
+      const s = Math.min(u[this.usualHour], u[(this.usualHour + 1) % 24]);
+      return s < 0.85 ? this.router.limit(k) * Math.max(0.15, s) : undefined;
+    };
   }
 
   // ---------------------------------------------------------------- spawning
@@ -321,6 +343,11 @@ export class Traffic {
     p.t0 ??= this.time;
     p.look ??= (Math.random() * 1e6) | 0;
     this.pending.push(p);
+  }
+
+  /** Who a trip routes as: a resident the same way every time (their habits), anyone else by its look. */
+  private whoOf(p: PendingSpawn): Driver {
+    return { salt: p.trip.resident >= 0 ? p.trip.resident * 7 + 3 : p.look ?? 0, truck: p.truck };
   }
 
   private trySpawn(p: PendingSpawn): "ok" | "wait" | "fail" {
@@ -337,7 +364,7 @@ export class Traffic {
       for (const d of [1, -1] as const) {
         const crossing = (d === 1 ? 1 : -1) !== p.fromSide;
         if (crossing && divided(p.from.seg) && !p.through) continue;
-        const r = this.router.route(p.from, to, d);
+        const r = this.router.route(p.from, to, d, undefined, this.whoOf(p));
         if (!r) continue;
         const t = r.time + (crossing ? 6 : 0);
         if (!best || t < best.time) best = { ...r, time: t, dir: d };
@@ -411,7 +438,7 @@ export class Traffic {
       lat: 0, lcCool: 2, wait: 0, stuck: 0, dest: to, destSide: p.toSide, destS: -1,
       trip: { ...p.trip, freeFlow: best.freeFlow },
       x: 0, y: 0, h: 0, ang: 0, px: 0, py: 0, ph: 0, pang: 0, fade: 0, leaving: 0,
-      ideal: 0, born: this.time, v0e: 1, constrained: false, drv: driver(this.nextId - 1),
+      ideal: 0, born: this.time, v0e: 1, constrained: false, drv: driver(this.nextId - 1), who: this.whoOf(p),
     };
     if (p.vf !== undefined) v.vf = p.vf;
     if (p.af !== undefined) v.af = p.af;
@@ -904,7 +931,7 @@ export class Traffic {
         // wrong lane at the end: after a short wait, take any exit and re-plan
         if (((toEnd < 2 && v.wait > 3.5 && !v.wish) || (v.wish && toEnd < 9 && (v.wait > 20 || (v.wait > 4 && this.swapLocked(v, lane))))) && lane.outs.length) {
           // prefer a way on from which the destination can still be reached
-          const viable = lane.outs.filter((c) => this.router.routeFromKey(dkey(c.to.seg, c.to.dir), v.dest));
+          const viable = lane.outs.filter((c) => this.router.routeFromKey(dkey(c.to.seg, c.to.dir), v.dest, v.who));
           const pool = viable.length ? viable : lane.outs;
           const alt = pool[(Math.random() * pool.length) | 0];
           v.route = [dkey(lane.seg, lane.dir), dkey(alt.to.seg, alt.to.dir)];
@@ -2103,7 +2130,7 @@ export class Traffic {
     v.granted = false;
     v.destS = -1;
     v.ri = 0;
-    const r = this.router.routeFromKey(k, v.dest);
+    const r = this.router.routeFromKey(k, v.dest, v.who);
     if (r) { v.route = r; return; }
     v.route = [k];
     if (v.lost) return;
@@ -2121,7 +2148,7 @@ export class Traffic {
     const k = dkey(lane.seg, lane.dir);
     let best: number[] | null = null, bl = Infinity;
     for (const c of lane.outs) {
-      const r = this.router.routeFromKey(dkey(c.to.seg, c.to.dir), v.dest);
+      const r = this.router.routeFromKey(dkey(c.to.seg, c.to.dir), v.dest, v.who);
       if (!r) continue;
       let L = 0;
       for (const x of r) L += this.router.segLen(x);
@@ -2153,7 +2180,7 @@ export class Traffic {
   /** Keep route[0..from] and plan the rest from route[from]. */
   private rerouteFrom(v: Vehicle, from: number) {
     const k = v.route[from];
-    const r = this.router.routeFromKey(k, v.dest);
+    const r = this.router.routeFromKey(k, v.dest, v.who);
     if (r) v.route = v.route.slice(0, from).concat(r);
   }
 
@@ -2518,6 +2545,20 @@ export class Traffic {
       const nt = t * 0.92;
       if (nt < 0.2) this.jams.delete(n);
       else this.jams.set(n, nt);
+    }
+    // remember how each road flows at this hour (the last few days count most)
+    if (this.hourOf) {
+      const h = Math.floor(this.hourOf()) % 24;
+      this.usualHour = h;
+      for (const [k, f] of this.flow) {
+        let u = this.usual.get(k);
+        if (!u) {
+          if (f.speed > 0.95) continue;
+          this.usual.set(k, (u = new Float32Array(24).fill(1)));
+        }
+        u[h] += (f.speed - u[h]) * USUAL_RATE;
+      }
+      for (const k of this.usual.keys()) if (!this.net.segs.has(dkSeg(k))) this.usual.delete(k);
     }
     // feed measured speeds into the router (only where congested; else limit)
     for (const [k, f] of this.flow) {

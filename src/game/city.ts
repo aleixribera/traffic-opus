@@ -156,6 +156,8 @@ export class Game {
     // (towns grow on any land, never inside the fence of one of the company's sites)
     this.zones = new ZoneMap(this.net, { isWater: (p) => t.isWater(p), isMountain: (p) => t.isMountain(p), taken: (p) => this.inSite(p), landKey: () => this.buildings.sites.map((b) => b.id).join() });
     this.people = new Society(this);
+    // (roads remember how they flow hour by hour, and drivers plan round the rush-hour ones)
+    this.traffic.hourOf = () => this.people.hourOf();
     this.transit = new Transit(this);
     this.utilities = new Utilities(this);
     this.towns = new TownSystem(this);

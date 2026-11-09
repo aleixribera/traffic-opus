@@ -809,6 +809,16 @@ and turning it back on brings every dismissed tip back. Both are kept per browse
   cruises at the same share of the limit: varying that by 4-6% made streams so lumpy that a crossing's left-turn
   arrow helped or didn't by luck, and took more go-aheads back at a busy four-way. Throughput on the junction bench
   is unchanged (3,489 cars through vs 3,482 over 12 runs; three more seeds +0.2%).
+- **Route choice like drivers (2026-11-09).** Every driver judges each road's time up to 10% either way, always the
+  same way (a resident's commute takes the same route every day), so two ways about as good as each other share
+  the traffic instead of all of it taking the one a second quicker and switching all at once when it slows. A way
+  more than ~22% longer is never taken for it. Roads remember how they flow at each hour of the day (mostly the
+  last day or two): where a road usually crawls at this hour or the next, drivers count it halfway to that speed
+  before it jams today, so the rush-hour bottleneck is planned round, and it is the player's roads that decide
+  where the queues are, the same way every day. Trucks count a town's own one-lane streets 1.6 times over unless
+  they start or end on one: they keep to the bigger roads where there is one. On two equal ways a fifth to a third
+  of drivers take each; on the late-game save 0.36 of truck time is on town streets (0.38 before; most of it is
+  deliveries into the towns).
 - **Picking the lane early for a stop just past a merge (2026-11-09).** A car whose destination is less than
   400 m along a road it joins without a junction (past an on-ramp's merge, a lane gain, a bend) gets into the lane
   that leads to the destination's side on the road before. Before, a car that had overtaken a truck on the inner
