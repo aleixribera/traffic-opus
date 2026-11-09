@@ -25,6 +25,7 @@ const PLACE_TURN_PER_PX = (10 * Math.PI) / 180 / 100;
 const FINE_TURN = Math.PI / 180;
 import { ZONES } from "./game/zones";
 import { MIN_DEPOSIT, PLANTS, PRODUCTS, UNPOWERED, isPlantKind, type Product } from "./game/industry";
+import { CIVICS } from "./game/civics";
 import { labelNeeds, type LabelNeeds } from "./ui/needs";
 import { productIcon } from "./ui/icons";
 import { TownPings } from "./ui/townPings";
@@ -325,13 +326,15 @@ export class App {
   }
 
   /** A landmark is finished: the camera swings over to it and a fireworks show goes up over it. */
-  private celebrate(id: number) {
+  private celebrate(id: number, shots = 18) {
     const b = this.game.buildings.byId.get(id);
     if (!b || this.mode !== "play") return;
     this.camera.note(b.c.x, b.c.y);
-    // (a cinematic camera keeps its shot, and a followed vehicle stays followed; the fireworks still go up)
-    if (this.camera.mode === "free") this.glideTo(b.c, Math.max(220, Math.hypot(b.hw, b.hd) * 1.6), 2.2);
-    this.fireworks.launch(b.c, Math.max(70, Math.hypot(b.hw, b.hd) * 0.8), 18, performance.now() / 1000 + 1.4);
+    // (a cinematic camera keeps its shot, and a followed vehicle stays followed; the fireworks still go up. A town's
+    // building is smaller than a landmark: the camera comes in closer, and a smaller show goes up)
+    const near = shots < 18;
+    if (this.camera.mode === "free") this.glideTo(b.c, near ? Math.max(150, Math.hypot(b.hw, b.hd) * 2.8) : Math.max(220, Math.hypot(b.hw, b.hd) * 1.6), 2.2);
+    this.fireworks.launch(b.c, Math.max(near ? 40 : 70, Math.hypot(b.hw, b.hd) * 0.8), shots, performance.now() / 1000 + 1.4);
   }
 
   /** Whether a place is well inside the screen (not under the panels at its edges). */
@@ -499,6 +502,17 @@ export class App {
         if (this.mode === "play") this.hud?.townGrew(e.town, e.size);
       }
       else if (e.t === "landmark") { if (this.mode === "play") { this.hud?.landmarkDone(e.b); this.celebrate(e.b); } }
+      else if (e.t === "order") {
+        // a town's order (game/orders.ts): a note when one opens, its building's moment when one is filled
+        const t = g.towns.byId.get(e.town);
+        if (t) this.camera.note(t.c.x, t.c.y);
+        if (this.mode === "play") {
+          if (e.phase === "open") this.hud?.orderOpened(e.town, e.kind);
+          else if (e.phase === "lapsed") this.hud?.orderLapsed(e.town, e.kind);
+          else { this.hud?.orderFilled(e.town, e.kind, e.b, e.grant ?? 0); if (e.b !== undefined) this.celebrate(e.b, 8); }
+        }
+        this.labelKey = "";
+      }
       this.hud?.refresh();
     });
     this.cancelStroke();
@@ -1801,7 +1815,9 @@ export class App {
     const hide = this.bare;
     const info = g.towns.list.map((t) => ({ t, ln: labelNeeds(t) }));
     const sig = (ln: LabelNeeds) => (ln.kind === "calm" ? "" : ln.kind === "noroad" ? `x${ln.needs.join(",")}` : ln.needs.map((n) => `${n.p}.${n.state}`).join(","));
-    const key = hide ? "" : info.map(({ t, ln }) => `${t.id}:${t.name}:${g.towns.sizeName(t)}:${t.pop}:${sig(ln)}`).join("|");
+    // (a town with an open order wears a tag saying what for: owner, 2026-11-08)
+    const ord = (id: number) => g.orders.openIn(id).map((o) => CIVICS[o.kind].fair ? CIVICS[o.kind].fair!.event : CIVICS[o.kind].name).join(" · ");
+    const key = hide ? "" : info.map(({ t, ln }) => `${t.id}:${t.name}:${g.towns.sizeName(t)}:${t.pop}:${sig(ln)}:${ord(t.id)}`).join("|");
     if (key === this.labelKey) return;
     this.labelKey = key;
     this.labels.set(hide ? [] : info.map(({ t, ln }) => {
@@ -1816,7 +1832,8 @@ export class App {
       }
       return {
         p: t.c, name: t.name, sub: `${size} · ${pop}`, minHalfH: 160,
-        title: `${t.name}, ${size} of ${pop} people${say}. Open the town`,
+        title: `${t.name}, ${size} of ${pop} people${say}${ord(t.id) ? `, with an order open: ${ord(t.id)}` : ""}. Open the town`,
+        order: ord(t.id) || undefined,
         icons: ln.kind === "calm" ? undefined
           : ln.kind === "noroad" ? ln.needs.map((p) => ({ svg: productIcon(p), cls: "noroad" }))
           : ln.needs.map((n) => ({ svg: productIcon(n.p), cls: n.state })),

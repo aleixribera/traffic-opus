@@ -633,6 +633,69 @@ an external road, but don't overdo it, this is the player's job."
   only one, ever, and with nothing in reach it builds nothing at all, not even a stub: joining towns up stays
   the player's job.
 
+### Town orders (owner, 2026-11-08)
+
+"Like milestones we have to complete for each town, randomly appearing from time to time, getting bigger depending
+on the town's scale, and they add a specific special building to the town" (game/orders.ts, game/civics.ts,
+ui/orders.ts).
+
+- **Each town has its own set.** Five to eight civic buildings drawn from the catalogue below and seeded from the
+  map seed and the town, so a save always deals the same set. Every set holds at least two a hamlet can ask for.
+  Each order has a fixed grade from 1 to 3, its difficulty, and opens only once the town is the size its building
+  wants. Each building comes once per town. The town panel counts them: "Orders · 4 of 7 filled".
+- **They open at random, spread over the map.** About every 7 to 19 game hours (the first about 4 hours after a
+  town is ready), one opens in a town that can take it. A town is ready once it has had a delivery and has 40
+  people. Towns that have waited longest are likelier, so orders don't queue in one town. Caps: one open per town
+  (two from Town size) and four on the whole map.
+- **What an order asks.** Either freight in a window ("Millbrook wants a schoolhouse: 30 planks and 20 cement in 4
+  days") or, for a fair, a need kept at Plenty for some days ("Ridgefield's Fair: keep food at Plenty for 3
+  days").
+  - Freight orders are sized to the town as it is when the order opens, and to its grade: 1.15 to 1.55 times what
+    the town takes over the window, which is 3 + grade days. They ask for one product in a hamlet, two from
+    Village size, and three at grade 3 from Town size. Only products the town buys and the company can bring
+    (a plant makes it, or the town has had some lately) are asked for.
+  - A fair counts the hours the town's last day of loads stays at or above its need plus a quarter, for the
+    crowds, and fills after 2 to 4 days of them.
+  - Either way the difficulty is the freight, pushed through the player's roads, not the money (pillar 5).
+- **Filled.**
+  - **Building:** the town builds its building on its own streets, as near the centre as there is room. It may
+    pull down a few homes, but never a corridor kept for a future street, a square, a hall or a company site. It
+    goes up as a building site, rises like a hall, and can't be bulldozed. With no room yet, it tries again each
+    day.
+  - **Grant:** a cash grant of about 60% of the loads' worth, at least $5,000.
+  - **Perk:** a small, lasting perk in words, which applies exactly once.
+  - **The moment:** a banner ("Order filled · Millbrook builds its schoolhouse"), the camera gliding over, and a
+    small fireworks show.
+- **Missed.** Nothing is lost. A toast says it ran out of time, and the town asks again after one and a half to
+  three days, sized afresh to the town as it is then.
+- **On screen.**
+  - A note under the toasts when an order opens. Orders opening together share one note, it can be put away,
+    and a click opens the town.
+  - A tag beside the town's map nameplate.
+  - The town panel's Orders section, with each open order's loads, days left and what it brings, and each
+    building filled so far with its perk.
+  - A short list of every open order in the Towns window.
+- **Saves.** The sets, the open orders and the draw count are saved. A save from before orders loads with none
+  open, its towns are dealt their sets, and orders start to roll.
+
+| Building | From | Lot (cells) | Asks for | Perk |
+|---|---|---|---|---|
+| Schoolhouse | Hamlet | 3×4 | planks, food | grows 5% faster |
+| Church | Hamlet | 3×5 | planks, cement, food | land value +6 nearby |
+| Bandstand Green | Hamlet | 4×4 | fair: food, milk | land value +5, grows 2% faster |
+| Post Office | Hamlet | 3×3 | planks, food, goods | shops buy 4% more |
+| Fire Hall | Village | 3×4 | cement, planks, fuel | land value +5, grows 2% faster |
+| Library | Village | 4×4 | planks, cement, goods | grows 5% faster |
+| Water Tower | Village | 3×3 | cement, planks, machinery | grows 6% faster |
+| Picture House | Town | 4×4 | goods, cement, electronics | shops buy 6% more |
+| County Hospital | Town | 5×5 | cement, goods, food, machinery | grows 8% faster |
+| Ballpark | Town | 6×5 | fair ("Opening Day"): food, cheese, milk | land value +7, shops buy 3% more |
+| County Courthouse | City | 5×5 | cement, machinery, electronics | shops buy 6% more, land value +4 |
+| Market Hall | City | 6×5 | fair ("Market Week"): food, milk, cheese, goods | shops buy 8% more |
+
+The models are real Blender models (tools/blender/civics_a.py and civics_b.py), period-correct for the 1920s to
+1940s.
+
 ## Company
 
 - Income: payment for every load delivered to a town. Plant-to-plant transfers earn nothing; they keep the

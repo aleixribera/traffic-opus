@@ -4974,6 +4974,13 @@ BUILDINGS = {
     "link_flow": (b_link_flow, 1.0, 0.9, 0),
 }
 
+# The towns' civic buildings that town orders bring (src/game/civics.ts): each batch lives in its own file,
+# tools/blender/civics_*.py, run into this module so it can use the helpers above and add to BUILDINGS.
+for _f in sorted(os.listdir(HERE)):
+    if _f.startswith("civics_") and _f.endswith(".py"):
+        with open(os.path.join(HERE, _f), encoding="utf-8") as _fh:
+            exec(compile(_fh.read(), os.path.join(HERE, _f), "exec"), globals())
+
 
 # ------------------------------------------------------------------ vehicles
 

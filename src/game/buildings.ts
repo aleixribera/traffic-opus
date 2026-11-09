@@ -8,6 +8,7 @@ import type { PlantState, Product } from "./industry";
 import { GATE_CLEAR, GATE_ENTRY, GATE_REACH, GATE_SETBACK, siteFrame } from "./sites";
 import { isPlantKind } from "./industry";
 import { isHall } from "./towns";
+import { isCivic } from "./civics";
 
 export interface Lot {
   block: string; // zone block key
@@ -590,7 +591,7 @@ export class Buildings {
  * neither side: then it keeps `keep`, so the site's driveway doesn't flip kerbs from one rebuild to the next.
  */
 /** Homes, shops and the town halls' squares stand behind a front strip (config ZONE_SETBACK); their kerb point follows the kerb. */
-const behindStrip = (b: Building) => !!b.zone || isHall(b.kind);
+const behindStrip = (b: Building) => !!b.zone || isHall(b.kind) || isCivic(b.kind);
 
 /** How far a building's kerb point may be from a road's centreline and still be on it (a home: across its front strip). */
 const reach = (b: Building, width: number) => (behindStrip(b) ? Math.max(width / 2, ZONE_SETBACK) : width / 2) + 1.5;

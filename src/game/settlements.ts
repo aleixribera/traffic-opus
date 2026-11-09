@@ -254,7 +254,7 @@ export class TownSystem {
     // (its extras too: milk and cheese from a Village, cars from a Town, which it buys without needing them to grow)
     if (!t || !buys(t.pop, p)) return -Infinity;
     // (a finished Skyline Tower in it: its shops and offices buy more of everything, see megaprojects.ts)
-    return demandPerDay(p, t.pop) * MARKET * townBoost(id, this.g.buildings.sites).demand - (t.today[p] ?? 0);
+    return demandPerDay(p, t.pop) * MARKET * townBoost(id, this.g.buildings.sites).demand * this.g.orders.boost(id).demand - (t.today[p] ?? 0);
   }
 
   /** Loads a town still needs today to grow (0 when its needs are met or it doesn't use the product). */
@@ -1452,7 +1452,7 @@ export class TownSystem {
     // (the more its proven supply runs ahead of it, the faster it fills in toward it: a share of its needs met, as
     // the panels count it, of 1 grows it at the base pace, 2 at 5/3 of it, up to 4/3 of 3)
     const ahead = Math.min(4, Math.max(1, (0.5 + (cap / Math.max(1, t.target)) * SUPPLY_COVER) / 1.5));
-    const fast = growthPerDay(t.pop) * ahead * townBoost(t.id, this.g.buildings.sites).growth * comfortOf(rate, t.pop);
+    const fast = growthPerDay(t.pop) * ahead * townBoost(t.id, this.g.buildings.sites).growth * this.g.orders.boost(t.id).growth * comfortOf(rate, t.pop);
     if (t.pop < SETTLING) {
       // a new settlement fills its first streets regardless, as fast as its supply allows
       t.target += Math.max(SETTLE_RATE, cap > t.target ? fast : 0) * share;
