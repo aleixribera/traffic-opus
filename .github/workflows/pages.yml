@@ -46,7 +46,7 @@ jobs:
           cache: npm
       - run: npm ci
       # (the balance playthrough takes hours on a runner: it runs locally, before a release)
-      - run: npx vitest run --exclude 'tests/_diag/**' --exclude tests/balance.test.ts
+      - run: npx vitest run --exclude tests/balance.test.ts
 
   deploy:
     needs: build
