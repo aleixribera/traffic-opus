@@ -235,18 +235,16 @@ describe("the need word holds still (display hysteresis)", () => {
     expect(at(1.01).word).toBe("Plenty");
   });
 
-  it("the same at the Enough line, and the town's map label follows the shown word", () => {
-    expect(at(0.7).word).toBe("Running low");
-    expect(at(0.79).word).toBe("Running low"); // not earned until the line
+  it("no band at the Enough line: under it the panel says short, as growth counts it (the grace covers a short dip)", () => {
+    expect(at(0.79).word).toBe("Running low");
     expect(at(ENOUGH + 0.01).word).toBe("Enough");
-    expect(at(0.76).word).toBe("Enough");
     expect(labelNeeds(h).kind).toBe("calm");
-    expect(at(0.74).word).toBe("Running low");
+    expect(at(0.79).word).toBe("Running low");
     expect(labelNeeds(h).kind).toBe("needs");
-    // a fall straight from Plenty lands on the word it falls to
+    // a fall straight from a held "Plenty" to under the line says short at once
     at(1);
-    expect(at(0.77).word).toBe("Enough");
-    at(1);
-    expect(at(0.5).word).toBe("Running low");
+    expect(at(0.96).word).toBe("Plenty");
+    expect(at(0.79).word).toBe("Running low");
+    expect(labelNeeds(h).kind).toBe("needs");
   });
 });

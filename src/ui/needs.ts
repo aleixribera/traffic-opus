@@ -30,22 +30,21 @@ export function needState(share: number, crate: number): NeedState {
 }
 
 /**
- * How far under its line a need may slip and keep its word: "Plenty" holds down to 95% of the day's need, "Enough"
- * down to 75%. A word is only earned at the line itself (100%, 80%). Why: what has landed lately moves with every
- * hourly reading, so a town fed just about right read "Plenty", then "Enough", then "Plenty" again each game hour
- * (coordinator, 2026-11-09: "reads as flicker"). This is for the eye only. Growth still counts the real figure against
- * ENOUGH (settlements.ts hourly).
+ * How far under a full day's need "Plenty" may slip and keep its word (down to 95%). It is only earned at 100%. Why:
+ * what has landed lately moves with every hourly reading, so a town fed just about right read "Plenty", then
+ * "Enough", then "Plenty" again each game hour (coordinator, 2026-11-09: "reads as flicker"). Both words mean
+ * "growing", so holding one is harmless. The "Enough" line has no band: under it the town is short for growth, and
+ * the panel must say so. The grace (supply.ts GRACE) already covers a short dip there.
  */
 export const HOLD_BAND = 0.05;
 
 // the word each town's need showed last, so the next reading can hold it (display only: not in the save, gone with the town)
 const shownLast = new WeakMap<Town, Partial<Record<Product, NeedState>>>();
 
-/** The state to show, given the one shown last: a slip of less than HOLD_BAND under a word's line keeps that word. */
+/** The state to show, given the one shown last: "Plenty" keeps its word through a slip of less than HOLD_BAND. */
 export function heldState(share: number, crate: number, last: NeedState | undefined): NeedState {
   const now = needState(share, crate);
-  if (last === "plenty" && now !== "plenty" && share >= 1 - HOLD_BAND - 1e-9) return "plenty";
-  if ((last === "plenty" || last === "enough") && (now === "low" || now === "none") && share >= ENOUGH - HOLD_BAND - 1e-9) return "enough";
+  if (last === "plenty" && now === "enough" && share >= 1 - HOLD_BAND - 1e-9) return "plenty";
   return now;
 }
 
@@ -86,7 +85,7 @@ export function needView(t: Town, p: Product): NeedView {
   const want = demandPerDay(p, t.pop), got = loadsLately(t, p);
   const share = want > 0 ? got / want : 1;
   const per = loadsPerCrate(want), n = Math.max(1, Math.ceil(want / per - 1e-6));
-  // (held for the eye: HOLD_BAND. The crates follow the word, so a held "Plenty" still fills every crate)
+  // (a "Plenty" held for the eye: HOLD_BAND. The crates follow the word, so a held "Plenty" still fills every crate)
   const last = shownLast.get(t) ?? {};
   const state = heldState(share, per / want, last[p]);
   last[p] = state;
