@@ -48,10 +48,20 @@ describe("a town's own plan", () => {
   it("is less crowded round its hall and reaches further out", () => {
     // (on the square grid, v0.0.68, the same town at Town size: 7.2 homes a hectare within 150 m of the hall, its
     // land reaching 547 m out)
-    // (front strips set the homes back and re-lay their lots: a little denser than the strips-free 5.3, still well under 7.2)
-    expect(homesPerHa(g, t, 150)).toBeLessThan(6.5);
+    // (one town's 150 m is a handful of lots, so the figure swings by seed, 3.5 to 7 here: it is judged over six
+    // towns, 5.3 on average with front strips and lots kept clear of each other, v0.0.80)
+    let sum = homesPerHa(g, t, 150);
+    const more = [3, 5, 11, 21, 42];
+    for (const seed of more) {
+      const h = new Game(seed);
+      h.start();
+      const u = h.towns.list[0];
+      for (let d = 0; d < 30 && sizeOf(u.pop) < 2; d++) h.fastForward(u.id, 24, 2);
+      sum += homesPerHa(h, u, 150);
+    }
+    expect(sum / (more.length + 1)).toBeLessThan(6.2);
     expect(t.reach).toBeGreaterThan(620);
-  });
+  }, 120_000);
 
   it("lays streets that aren't all on a square grid", () => {
     let square = 0, n = 0;
