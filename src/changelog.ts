@@ -15,6 +15,12 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.74", date: "2026-11-09", title: "Touchpad play",
+    notes: [
+      "Touchpad: two-finger scroll pans, pinch zooms, two-finger click cancels; Space+drag pans with any tool; a Scroll wheel setting in the pause menu.",
+    ],
+  },
+  {
     v: "v0.0.73", date: "2026-11-09", title: "Deliveries that land on time",
     notes: [
       "Deliveries to towns: your plants send loads early enough to land before a town runs low, and a short gap of a couple of minutes no longer shows as a shortfall.",
