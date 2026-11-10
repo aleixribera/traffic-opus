@@ -452,11 +452,14 @@ describe("Convoys and landmarks in the game", () => {
     ex.plant!.landmark!.pieces = 1;
     mw.plant!.big = { prog: 0.4, n: 1, shipped: 3 };
     g.progress.pieces = 3;
-    g.convoys.tick(); // (one piece on its way to the fair: it goes back to the yard in the save)
+    // (one piece on its way to the fair: it is still on its way in the loaded game, its convoy saved with the rest of
+    // the traffic. Until 2026-11-10 a save dropped every vehicle and put the piece back in the yard: playtest A3)
+    g.convoys.tick();
     expect([...g.trips()].some((t) => t.haul?.big)).toBe(true);
     const json = JSON.parse(JSON.stringify(g.serialize()));
     const h = Game.load(json);
-    expect(h.buildings.byId.get(mw.id)!.plant!.big).toEqual({ prog: 0.4, n: 1, shipped: 3 });
+    expect(h.buildings.byId.get(mw.id)!.plant!.big).toEqual({ prog: 0.4, n: 0, shipped: 3 });
+    expect([...h.trips()].filter((t) => t.haul?.big).map((t) => t.haul)).toEqual([...g.trips()].filter((t) => t.haul?.big).map((t) => t.haul));
     expect(h.buildings.byId.get(cp.id)!.plant!.turbines).toBe(2);
     expect(h.buildings.byId.get(ex.id)!.plant!.landmark).toEqual({ pieces: 1 });
     expect(h.progress.pieces).toBe(3);
@@ -468,6 +471,7 @@ describe("Convoys and landmarks in the game", () => {
       for (const v of Object.values(o)) strip(v);
     };
     strip(old);
+    delete old.traffic; // (nor were the vehicles saved then)
     const k = Game.load(old);
     expect(k.progress.pieces).toBe(0);
     expect(k.buildings.byId.get(cp.id)!.plant!.turbines).toBeUndefined();

@@ -8,7 +8,7 @@ import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/
 import {
   applyPave, applyTrim, chainPoints, cubicClosest, planRoad, snap, strokeProfile, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type LanePlan, type Plan, type PlanError,
 } from "../roads/planner";
-import { fromLot, Traffic, type Trip, type Vehicle } from "../sim/traffic";
+import { fromLot, Traffic, type TrafficSave, type Trip, type Vehicle } from "../sim/traffic";
 import { SITE_LEVELS, siteFrame } from "./sites";
 import { Terrain } from "../world/terrain";
 import { Buildings, obbOverlap, type Building, type BuildingMove } from "./buildings";
@@ -1954,8 +1954,14 @@ export class Game {
       v: SAVE_V,
       seed: this.seed,
       net: this.net.toJSON(),
-      // (trucks on the road aren't saved: a load out on delivery goes back to its plant's yard)
-      buildings: this.buildings.list.map((b) => ({ ...b, access: null, plant: b.plant && this.plantSaved(b) })),
+      buildings: this.buildings.list.map((b) => ({ ...b, access: null })),
+      // every vehicle on the road and every trip waiting to set off, with its load (see Traffic.toJSON). Saves from
+      // before v0.0.83 have none: there a load out on delivery had gone back to its plant's yard, and the roads
+      // started empty
+      traffic: this.traffic.toJSON() as TrafficSave | undefined,
+      // the clock as the player had it: the speed, and stopped or not
+      speed: this.speed as number | undefined,
+      paused: this.paused as boolean | undefined,
       nextBuilding: this.buildings.nextId,
       zones: [...this.zones.allCells()].filter((c) => c.zone).map((c) => [Math.round(c.c.x * 10) / 10, Math.round(c.c.y * 10) / 10, c.zone]),
       zoneAges: this.zones.agesJSON(),
@@ -2036,6 +2042,16 @@ export class Game {
     // (a save from before the town orders has none: its towns are dealt their sets and start rolling them)
     g.orders.load(data.orders);
     g.utilities.tick(0);
+    if (data.traffic) {
+      // the traffic it was saved with: the people driving are on their way again (everyone else is at home), each
+      // bus is its line's again (its riders are among those at home), then every vehicle goes back on its lane
+      const trips = [...data.traffic.vehicles, ...data.traffic.pending].map((x) => x.trip);
+      g.people.onRoad(trips);
+      for (const t of trips) if (t.bus) { t.bus.pax = []; g.transit.runs.add(t.bus); }
+      g.traffic.load(data.traffic);
+    }
+    g.speed = data.speed ?? 1;
+    g.paused = !!data.paused;
     return g;
   }
 
@@ -2112,20 +2128,6 @@ export class Game {
     B.version++;
     this.zones.version++;
     return moved;
-  }
-
-  /** A plant's state as saved: loads its trucks are carrying count as still in its yard. */
-  private plantSaved(b: Building) {
-    const P = structuredClone(b.plant!);
-    for (const t of this.trips()) {
-      const r = t.haul;
-      if (!r || r.done || r.leg !== "out" || r.plant !== b.id) continue;
-      // (an oversized piece on its way goes back to the works' yard, to be sent again)
-      if (r.big) { const B = (P.big ??= { prog: 0, n: 0 }); B.n++; continue; }
-      // (a warehouse's loads go back into store, where it ships from)
-      const s = Industry.logisticsOf(b) === "warehouse" ? P.stock : P.out; s[r.product] = (s[r.product] ?? 0) + r.n;
-    }
-    return P;
   }
 
   segCost(id: number) {

@@ -303,6 +303,11 @@ export class App {
 
   loadGame(data: ReturnType<Game["serialize"]>) {
     this.setGame(Game.load(data));
+    // the clock is the save's (its speed, stopped or not): a menu the load came from under goes, and the pause it
+    // had put on with it, and so do the old game's stuck-traffic alerts (playtest 2026-11-09, A4)
+    this.hud?.dropModal();
+    this.stuckAlerts.sync([], this.game.time, true);
+    this.hud?.refresh();
   }
 
   /**

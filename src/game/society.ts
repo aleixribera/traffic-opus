@@ -480,6 +480,23 @@ export class Society {
     this.schedule(c, this.now + Math.max(1, dt));
   }
 
+  /**
+   * A game was loaded with its traffic: the people whose cars are on the road, or about to pull out, are on their
+   * way again (load puts everyone at home, and a car arriving for someone at home would count for nothing).
+   */
+  onRoad(trips: Iterable<Trip>) {
+    for (const t of trips) {
+      if (t.bus || t.haul) continue;
+      const c = this.citizens.get(t.resident);
+      if (!c) continue;
+      c.st = St.Travel;
+      c.kind = t.kind;
+      c.at = t.to;
+      c.tStart = t.startT;
+      c.next = Infinity; // (what load had planned for them is off: they act when they arrive)
+    }
+  }
+
   /** A car reached its destination. */
   onArrive(v: Vehicle) {
     const c = this.citizens.get(v.trip.resident);

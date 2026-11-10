@@ -31,6 +31,7 @@ async function boot() {
     if (tip) { v.tilt = tilt; app.terrain3d.update(v); v.render(); }
     return c.toDataURL("image/jpeg", 0.7);
   };
+  app.saves.menuPaused = () => hud.menuPaused;
   const menu = new MainMenu(app, hud);
   app.openMenu = () => void menu.open();
   const q = new URLSearchParams(location.search);

@@ -4,7 +4,11 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Saves, packBytes, unpackBytes } from "../src/game/saves";
-import type { Game } from "../src/game/city";
+import { Game } from "../src/game/city";
+import { DAY, HOUR } from "../src/game/society";
+import type { Lane } from "../src/roads/network";
+import type { Vehicle } from "../src/sim/traffic";
+import { buildGateJam, feed } from "./gatejam.scenario";
 
 const QUOTA = (10 * 1024 * 1024) / 2; // characters
 
@@ -114,4 +118,102 @@ describe("saves", () => {
     expect(store.getItem("flowtown.save.a")).toBe(before);
     expect(store.getItem("flowtown.save.tmp")).toBeNull();
   });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// A save keeps the traffic (docs/playtest-2026-11-09.md, A3 and A4): F5 then F9 with 190 vehicles on the road left
+// none, every load in transit went back to its yard, and the game came back at 1x under a menu that said "Paused".
+
+/** Loads on the road and waiting to leave, by product (the "out" legs of every haul trip). */
+function inTransit(g: Game): Record<string, number> {
+  const m: Record<string, number> = {};
+  for (const t of g.trips()) if (t.haul && !t.haul.done && t.haul.leg === "out") m[t.haul.product] = (m[t.haul.product] ?? 0) + t.haul.n;
+  return m;
+}
+const where = (v: Vehicle) => (v.edge.kind === "lane" ? (v.edge as Lane).key : `conn@${(v.edge as unknown as { node: number }).node}`);
+const round = (g: Game) => Game.load(JSON.parse(JSON.stringify(g.serialize())));
+
+describe("a save keeps the traffic", () => {
+  // the play-test's company (one sawmill, two towns, four building sites on one road), a busy morning in
+  const s = buildGateJam({ sites: 1, pop: 600 });
+  const g = s.g;
+  for (const end = g.time + 2 * DAY; g.time < end && g.traffic.vehicles.length < 70;) { feed(g); g.step(g.dt); }
+
+  it("every vehicle is back where it was, with its load, its route and what it was doing; every waiting trip too", () => {
+    g.speed = 4;
+    const h = round(g);
+    expect(g.traffic.vehicles.length).toBeGreaterThan(60);
+    expect(h.traffic.vehicles.length).toBe(g.traffic.vehicles.length);
+    expect(h.traffic.pending.length).toBe(g.traffic.pending.length);
+    expect(Object.keys(inTransit(g)).length).toBeGreaterThan(0);
+    expect(inTransit(h)).toEqual(inTransit(g));
+    const byId = new Map(h.traffic.vehicles.map((v) => [v.id, v]));
+    let trains = 0;
+    for (const v of g.traffic.vehicles) {
+      const w = byId.get(v.id)!;
+      expect(w, `vehicle ${v.id}`).toBeDefined();
+      expect(where(w)).toBe(where(v));
+      expect(w.s).toBeCloseTo(v.s, 6);
+      expect(w.v).toBeCloseTo(v.v, 6);
+      expect(w.route.slice(w.ri)).toEqual(v.route.slice(v.ri)); // (the way on from here)
+      expect(w.trip).toEqual(v.trip);
+      expect(!!w.next).toBe(!!v.next);
+      expect(w.granted).toBe(v.granted);
+      expect(w.stuck).toBeCloseTo(v.stuck, 6);
+      // drawn where it was: the body (it is laid again along the way it came; a car half out of its driveway to
+      // within half a metre), and a road train's last trailer
+      expect(Math.hypot(w.x - v.x, w.y - v.y), `vehicle ${v.id} moved`).toBeLessThan(0.6);
+      if (v.uPose && w.uPose) {
+        trains++;
+        const o = v.uPose.length - 4;
+        expect(Math.hypot(w.uPose[o] - v.uPose[o], w.uPose[o + 1] - v.uPose[o + 1]), `trailer of ${v.id} moved`).toBeLessThan(0.25);
+      }
+    }
+    expect(trains).toBeGreaterThan(3);
+    // the works' books are as they were: nothing went back to a yard
+    for (const b of g.buildings.list) if (b.plant) expect(h.buildings.byId.get(b.id)!.plant!.out, b.kind).toEqual(b.plant.out);
+    // the people driving are on their way, not at home
+    const drivers = [...g.trips()].filter((t) => t.resident >= 0);
+    expect(drivers.length).toBeGreaterThan(5);
+    for (const t of drivers) expect(h.people.citizens.get(t.resident)!.st, `resident ${t.resident}`).toBe(g.people.citizens.get(t.resident)!.st);
+    // and the clock as the player had it
+    expect(h.speed).toBe(4);
+    expect(h.paused).toBe(false);
+    g.paused = true;
+    expect(round(g).paused).toBe(true);
+    g.paused = false;
+    g.speed = 1;
+  }, 120000);
+
+  it("the loaded game carries on: every load that was on the road lands, none is lost and nobody stands", () => {
+    const h = round(g);
+    const runs = [...h.trips()].filter((t) => t.haul && !t.haul.done && t.haul.leg === "out").map((t) => t.haul!);
+    expect(runs.length).toBeGreaterThan(5);
+    let landed = 0;
+    h.on((e) => { if (e.t === "delivery") landed++; });
+    const failed = h.failedTrips, quits = h.traffic.jamQuits, breaks = h.traffic.jamBreaks;
+    let worst = 0;
+    for (const end = h.time + 1.5 * DAY; h.time < end;) {
+      feed(h); h.step(h.dt);
+      for (const v of h.traffic.vehicles) if (v.stuck > worst) worst = v.stuck;
+    }
+    for (const r of runs) expect(r.done, `${r.n} ${r.product} for #${r.dest}`).toBe(true);
+    expect(landed).toBeGreaterThanOrEqual(runs.length);
+    expect(h.failedTrips).toBe(failed);
+    expect(h.traffic.jamQuits).toBe(quits);
+    expect(h.traffic.jamBreaks).toBe(breaks);
+    expect(worst).toBeLessThan(120);
+  }, 120000);
+
+  it("a save from before vehicles were saved still loads: empty roads that fill again", () => {
+    const old = JSON.parse(JSON.stringify(g.serialize()));
+    delete old.traffic; delete old.speed; delete old.paused;
+    const h = Game.load(old);
+    expect(h.traffic.vehicles.length).toBe(0);
+    expect(h.traffic.pending.length).toBe(0);
+    expect(h.speed).toBe(1);
+    expect(h.paused).toBe(false);
+    for (const end = h.time + 2 * HOUR; h.time < end;) { feed(h); h.step(h.dt); }
+    expect(h.traffic.vehicles.length).toBeGreaterThan(4);
+  }, 120000);
 });
