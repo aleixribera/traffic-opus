@@ -1497,6 +1497,9 @@ export class TownSystem {
       t.lack = 0;
     } else {
       t.target += grows * share;
+      // (and never past the homes its supply supports, where it would be supplied GROW_FROM of its worst need: homes
+      // still to be built for a target that ran ahead would take it below the growing band once they fill)
+      if (grows > 0) t.target = Math.min(t.target, Math.max(before, S.pop / per));
       // a shortfall that lasts: it shrinks, slowly, toward what the supply still covers (a hamlet nobody serves yet
       // holds on rather than dwindling away)
       const short = low < HOLD_FROM && t.pop >= SETTLING * 1.5;

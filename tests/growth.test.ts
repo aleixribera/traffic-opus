@@ -5,7 +5,7 @@ import { Game } from "../src/game/city";
 import { HOUR, DAY } from "../src/game/society";
 import { type Product } from "../src/game/industry";
 import { buildStep } from "../src/game/construction";
-import { SHRINK_AFTER, SHRINK_RATE, averageSupply, demandPerDay } from "../src/game/towns";
+import { GROW_FROM, SHRINK_AFTER, SHRINK_RATE, averageSupply, demandPerDay } from "../src/game/towns";
 import { townGrowth, type Town } from "../src/game/settlements";
 
 const STEADY: Partial<Record<Product, number>> = { food: 20, planks: 8, cement: 6 };
@@ -73,6 +73,8 @@ describe("steady growth on a proven supply", () => {
     expect(steady.t.rate).toEqual(averageSupply(steady.t.hours!));
     expect(steady.t.rate!.food!).toBeGreaterThan(0);
     expect(steady.maxLack).toBe(0);
+    // (and it settles where its supply still has it growing, never on homes built for a target that ran ahead)
+    expect(steady.t.level!).toBeGreaterThanOrEqual(GROW_FROM - 0.01);
   });
 
   it("a day without deliveries shrinks nothing", () => {
