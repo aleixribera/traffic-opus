@@ -350,8 +350,12 @@ visuals." Time to enjoy the scenery: the light moves through the day, and the ma
   a lit town is a string of pearls.
 - **Windows** light the ground round homes, shops, offices and town halls, each kind on its own evening: homes
   fill up after work and most are lit at 9 pm, fewer by midnight, a few early risers before dawn; shops stay lit
-  into the evening; offices empty after work; the hall is lit late. The lit share eases through the hours and
-  each building's windows come on in their own order.
+  into the evening, their show windows till past ten; offices empty after work; the hall is lit late. The lit
+  share eases through the hours and each building's windows come on in their own order. The glass itself lights:
+  a model's window panes carry which kind they are (materials `win_home`, `win_shop`, `win_office`, `win_hall`)
+  and each pane comes on by the hour in its own warm tone, tungsten and never blue-white. Signs, marquees and
+  billboard posters (`win_sign_*`) glow in their own paint for as long as the street lamps burn, so main street
+  at night is a row of lit shop fronts under its signs.
 - **Works** get lattice floodlight masts (a Blender model) round the yard as built so far, throwing an even
   white light over it; farms work by daylight and have none.
 - **Vehicles** carry headlights (a beam on the road ahead) and red tail lights; **signals** keep a halo so they
@@ -581,7 +585,7 @@ itself across modes; you build tracks, docks and the transfer points, never line
   Construction parts are not a need on the list. Once the company can make them (the construction plant is
   unlocked), every block a town puts up from its 1960s era on is a building site that waits for its parts, the
   way a plant's site waits for planks and cement. That covers new growth and redevelopment alike: apartment
-  blocks, stores and offices take 1 load, modern flats 2, malls and towers 3, glass towers 4. The town pays for
+  blocks, stores and offices take 1 load, courtyard apartments 2, grand stores and towers 3, skyscrapers 4. The town pays for
   them on delivery. Houses, terraces and high-street shops need none. This gives steel its buyer from Town
   size; tier 4 plant sites will take parts too.
 - **Electronics and machinery (tier 4, 2026-11-08).** A City's electronics go to its shops. Its machinery goes to its
@@ -606,9 +610,12 @@ A town should visibly turn from a hamlet into a city over a playthrough: bigger,
   |---|---|---|
   | Hamlet | houses | high-street shop-houses |
   | Village | houses, terraces in the middle | high street |
-  | Town | terraces, 1960s apartment blocks in the middle | stores, offices |
-  | City | modern flats, apartment towers in the core | malls, office towers |
-  | Metropolis | towers in the core | glass towers (the skyline) |
+  | Town | row houses, brick apartment houses in the middle | department stores, office blocks |
+  | City | courtyard apartments, apartment towers in the core | grand stores, office towers |
+  | Metropolis | towers in the core | skyscrapers (the skyline) |
+
+  The kinds keep their old keys in the code and the saves (`modernflats`, `mall`, `glasstower`...); what the
+  player reads and sees is 1920-1940 (see "Look: the towns of 1930").
 
 - **Redevelopment, not just sprawl.** When a town reaches a size, its inner rings are rezoned denser. Old
   buildings in a denser ring are pulled down one at a time, centre first, and rebuilt (a construction site,
@@ -1178,14 +1185,15 @@ The game's setting is 1920s-40s American industry: steel, oil, highways, Deco.
   paint, the scaffold coming down last. Big steel jobs get a lattice tower crane that slews over them; big lots a
   site hut. Trucks drive in off the street and away again. A site's new buildings after it grows go up the same
   way over 8 game hours (the new level works from the start). Construction is slower, the one thing the owner
-  wanted slower: a house takes 3 game hours, a terrace 4, apartment blocks, stores and offices 6, modern flats,
-  malls and the office tower 9, the apartment and glass towers and the city hall 12; a first-tier works 3 (a
+  wanted slower: a house takes 3 game hours, a terrace 4, apartment blocks, stores and offices 6, courtyard
+  apartments, grand stores and the office tower 9, the apartment tower, the skyscraper and the city hall 12; a first-tier works 3 (a
   first farm opens two minutes after it is placed, at 1x), tier 2 works 6, deeper ones 8 to 12; a landmark 6, once
   its last convoy is in.
 - **Lived-in home lots** (tools/blender/build_models.py `home_lot`, src/render/buildings3d.ts `VARIANTS`,
-  `DRIVE_X`). A street of homes is no longer one house stamped down: three 1920s homes share one lot plan, picked
+  `DRIVE_X`). A street of homes is no longer one house stamped down: five 1920s homes share one lot plan, picked
   per building (a cross-gable clapboard house with a vegetable patch, a brick bungalow under a hipped slate roof
-  with a shed and a washing line, a white Dutch colonial with a gambrel roof, a birdbath and a bench). Each has a
+  with a shed and a washing line, a white Dutch colonial with a gambrel roof, a birdbath and a bench, a foursquare
+  and a gable-front cottage). Each has a
   concrete driveway down its left side to a detached garage at the back, the family car on it, a path to the
   door, and a picket fence round the back yard; no paved pad, the town's lawn runs up to the walls. The street's
   driveway strip, the gap in the front hedge and the way cars drive in all follow the driveway to the side.
@@ -1207,6 +1215,50 @@ The game's setting is 1920s-40s American industry: steel, oil, highways, Deco.
   follow their roads: between two country roads the corner is gravel, between two town streets it is kerbed, and
   where they meet the town's pavement stops at the corner. Highways keep their own paved shoulders, with gravel
   past them. Only the roads that change are redrawn, when roads or buildings change.
+
+### Look: the towns of 1930 (2026-11-10)
+
+A town is American small-town and city building of 1920 to 1940, made to be looked at from all four sides at
+the tilted camera. Nothing here is in the game's state: the simulation, the saves and each kind's footprint,
+origin, front and entrance are what they were.
+
+- **Every grown kind is a period building** (tools/blender/town_*.py, run by build_models.py): frame and brick
+  family homes; brick row houses and tenements with stoops; walk-up apartment houses; courtyard apartments; a
+  setback apartment tower; main street shop-houses with awnings, blade signs, painted wall signs and the flat
+  over the shop; small shops and a dime-store row; the department store with its marquee, roof sign and a
+  skylit or monitor roof; the brick and terracotta office block; the grand store; setback office towers; the
+  stepped stone skyscraper under a lit crown. Roofs are worked hardest, since the camera sees them most:
+  parapets, copings, tar in three tones, skylights, lift houses, a water tank on the tall ones only, chimneys
+  (`chimney_N`, so they smoke).
+- **Names in plain words** (src/config.ts, the keys unchanged): Family Home, Row Houses, Apartment House,
+  Courtyard Apartments, Apartment Tower, Main Street Shops, Small Shops, Department Store, Office Block, Grand
+  Store, Office Tower, Skyscraper.
+- **No street is stamped** (src/render/townmodels.ts). Each kind has three to seven models, in different brick,
+  stone and trim. A building is drawn with one of those made nearest its own lot and height (below), its id
+  choosing among equals, and of those it takes one that no building of its kind near it has (`Variety`: within
+  44 m of a house, 100 m of a store, so across the street too): two of a model never stand side by side while there is another to
+  take. A building keeps its model for as long as it stands. On top of that each building has a faint tint of
+  its own (never greener than it is red: the seasons' shader takes green for leaves and turns it in autumn).
+- **Made for a lot.** The game scales a model to its lot (`fit`) and stretches it in height (`tall`). One model
+  per kind made a small lot a dolls' house and a tall one a tower of stretched windows, so models are built at
+  the fits and talls the lots really come in (a `design_0` empty in each GLB says which): `_s`, `_m`, `_n` for
+  narrow lots, `_t`, `_u` for tall ones. No model is drawn more than a third off the size it was made.
+- **On the pavement, cars behind.** A town building's front wall stands at the front of its lot; its cars park
+  in a yard behind, reached by an alley down one side (`via_0`). The sim's bays are where they were, the asphalt
+  round them is a small walled yard and no longer a car park in front. A business lot is paved only as deep as
+  it is built, edge to edge; the rest of a deep lot is left as grass.
+- **Roadside furniture** (src/render/furniture.ts, models in town_f_furniture.py), placed again from the roads
+  and what is built each time they change, by rules alone:
+  - **The telegraph line** follows every country road that carries traffic (not motorways, not bridges, not a
+    town's streets): a pole about every 46 m on the verge, 2.6 m off the asphalt, six wires sagging between
+    them, the line carried round corners from one road to the next. It keeps to the north or west side, so at
+    the home rotation the wires hang over the grass and not over the road. A pole is left out where the ground
+    is taken, and no span is hung across a lot or a works.
+  - **Billboards** meet the traffic coming into a town: one on the right of the road a little before its first
+    street, turned to face the driver, a poster on each face (so it reads from all four sides), lamps over
+    both. Three hoardings, at least 160 m apart, no trees in front of them.
+  - It never stands on a road, a driveway, a lot, a works site or water (tests/furniture.test.ts), and it is
+    not drawn from far up: wires above 0.26 m a pixel, poles above 0.56, billboards above 1.0.
 
 ## Sound
 

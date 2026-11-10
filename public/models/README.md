@@ -202,8 +202,8 @@ face toward +Z). Placed by `src/render/furniture.ts`.
 | highstreet_b | 18 × 20 | 10.3 | 758 | 3 |
 | highstreet_c | 18 × 20 | 6.9 | 780 | 3 |
 | highstreet_d | 18 × 20 | 13.3 | 796 | 3 |
-| shop_b | 18 × 20.154 | 14.1 | 452 | 1 |
-| shop_c | 18 × 20.154 | 14.4 | 466 | 1 |
+| shop_b | 18 × 20 | 14.1 | 386 | 1 |
+| shop_c | 18 × 20 | 14.4 | 400 | 1 |
 | shop_t | 18 × 20 | 17.3 | 628 | 1 |
 | shop_u | 18 × 20 | 14.8 | 484 | 1 |
 | store_b | 30 × 28 | 12.3 | 1266 | 5 |
