@@ -139,6 +139,12 @@ describe("Milestones", () => {
     expect(p.check(view({ made: { steel: 5 } }))).toEqual([]);
   });
 
+  it("the first goal is reached by the first load of food a town gets (play-test 2026-11-09, B3)", () => {
+    const p = new Progress();
+    expect(p.check(view({ sold: {} }))).toEqual([]);
+    expect(p.check(view({ sold: { food: 1 } })).map((m) => m.id)).toEqual(["food10"]);
+  });
+
   it("reaching one can open another that is met already: they come in order", () => {
     const p = new Progress();
     const v = view({ sold: { food: 10 }, towns: [{ pop: 320, supply: {} }, { pop: 10, supply: {} }], made: { planks: 12 } });

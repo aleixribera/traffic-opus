@@ -11,6 +11,8 @@ import { PLANTS, PRODUCTS, SHELF, UNPOWERED, type PlantKind, type Product } from
 import { compassWords, type Town } from "../game/settlements";
 import { needFrom, needsOf } from "../game/towns";
 import { F } from "../world/gen";
+import { needHelp, shortfalls, worstCeiling } from "./bottleneck";
+import { STUCK_RAISE, stuckSpots } from "./stuckAlerts";
 
 export interface Tip {
   /** which tip it is (what a dismissal remembers) */
@@ -20,7 +22,7 @@ export interface Tip {
   cat?: "roads" | "industry";
 }
 
-export type TipId = "farm" | "noroad" | "foodplant" | "connect" | "planks" | "newtown" | "sitewait" | "deposits" | "power" | "parts" | "milk" | "supplies";
+export type TipId = "farm" | "noroad" | "foodplant" | "connect" | "jam" | "ceiling" | "planks" | "newtown" | "sitewait" | "deposits" | "power" | "parts" | "milk" | "supplies";
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const km = (m: number) => `${(m / 1000).toFixed(1)} km`;
@@ -57,7 +59,11 @@ export function soilInReach(g: Game): boolean {
   return c.soil;
 }
 
-/** Is a town's street network joined by road to anything beyond its own streets (the company's roads, another town)? */
+/**
+ * Is a town joined by road to somewhere a load can come from: another town's streets, or the gate of a works that
+ * makes something it buys? A stub of road out of it, or a logging camp at its edge, is not that: its label said
+ * "First load due" with nothing that makes food on its roads.
+ */
 export function joinedUp(g: Game, t: Town): boolean {
   const c = cacheOf(g);
   const k = c.joined.get(t.id);
@@ -66,10 +72,13 @@ export function joinedUp(g: Game, t: Town): boolean {
   for (const s of g.net.segs.values()) if (s.town === t.id) { start = s.a; break; }
   let out = false;
   if (start !== undefined) {
+    const needs = needsOf(t.pop);
+    const gates = new Set<number>();
+    for (const b of g.buildings.list) if (b.plant && b.access && needs.some((p) => PLANTS[b.kind as PlantKind]?.outputs[p])) gates.add(b.access.seg);
     const seen = new Set([start]), q = [start];
     walk: while (q.length) {
       for (const s of g.net.segsAt(q.pop()!)) {
-        if (s.town !== t.id) { out = true; break walk; }
+        if (gates.has(s.id) || (s.town !== undefined && s.town !== t.id)) { out = true; break walk; }
         for (const m of [s.a, s.b]) if (!seen.has(m)) { seen.add(m); q.push(m); }
       }
     }
@@ -102,6 +111,9 @@ export function cutOff(g: Game, b: Building): boolean {
   c.cut.set(b.id, out);
   return out;
 }
+
+/** Vehicles standing together before the tip calls it a jam (one truck waiting out a long turn is not one). */
+export const JAM_CARS = 4;
 
 /** The plants that make a product (a sawmill for planks). */
 const makersOf = (p: Product) => (Object.keys(PLANTS) as PlantKind[]).filter((k) => PLANTS[k].outputs[p]);
@@ -142,6 +154,23 @@ export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false): Tip
     () => {
       const b = plants.find((x) => built(x) && x.problem?.startsWith("Nobody your roads reach"));
       return b ? { id: "connect", cat: "roads", html: `<b>Your ${lower(b.kind as PlantKind)} has nobody to sell to.</b> Join it by road to a plant or a town that takes what it makes.` } : null;
+    },
+    // traffic standing still: while it does, that is the one job (play-test 2026-11-09, D3: the tip talked about
+    // limestone 5.5 km north through an hour of gridlock)
+    () => {
+      const spots = stuckSpots(g.traffic.stuckCars(STUCK_RAISE)).filter((s) => s.cars >= JAM_CARS);
+      if (!spots.length) return null;
+      const n = spots.length;
+      return { id: "jam", cat: "roads", html: `<b>Traffic is stuck in ${n === 1 ? "one place" : `${n} places`}.</b> The <b>Traffic stuck</b> sign above the clock flies you there. More works will not help till it moves: give that junction a turn lane or lights, or lay a second road past it.` };
+    },
+    // a works flat out with a town still asking for more (B1: "nothing said build a second Food Plant")
+    () => {
+      const w = worstCeiling(g);
+      if (w?.c.town) return { id: "ceiling", cat: "industry", html: `<b>Your ${esc(BUILDING_TYPES[w.b.kind].name)} is at full output.</b> ${esc(w.c.fix)}` };
+      // (or a step up the chain: the food plant waits for crops with the one farm flat out)
+      const s = shortfalls(g, 1)[0];
+      const h = s ? needHelp(g, s.worst, s.p) : null;
+      return s && h?.kind === "full" ? { id: "ceiling", cat: "industry", html: `<b>${esc(s.worst.name)} needs more ${PRODUCTS[s.p].name.toLowerCase()}.</b> ${esc(h.say)}` } : null;
     },
     // timber, before the hamlet wants planks
     () => {

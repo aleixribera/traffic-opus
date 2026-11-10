@@ -14,7 +14,7 @@ import type { Building } from "../src/game/buildings";
 import {
   GROUND_HILLS, GROUND_WATER, STUCK_NEAR, TradeLedger, WORK_LINE, approaches, congestion, extractorFor, fmtNum, fmtRate, groundAt,
   groundModel, homeModel, junctionModel, metresLeft, modelOf, patchAt, rateLately, roadModel, routeLine, routesThrough, siteModel,
-  splitProblem, stuckAt, stuckModel, townModel, trucksOut, vehicleModel, vehiclesOnSeg, waitTone, type Sel,
+  splitProblem, stuckAt, stuckModel, townModel, townStatus, trucksOut, vehicleModel, vehiclesOnSeg, waitTone, type Sel,
 } from "../src/ui/inspect";
 import { dkDir, dkSeg } from "../src/sim/router";
 import { junctionAt, pickAt, pickRadius, poseOf, vehicleAt } from "../src/ui/pick";
@@ -113,7 +113,9 @@ describe("The inspector's panels", () => {
     const was = { spawned: t.spawned, today: t.today, yesterday: t.yesterday, days: t.hist.days };
     Object.assign(t, { spawned: true, today: {}, yesterday: {} });
     t.hist.days = [];
-    expect(townModel(g, t, led).status.text).toBe("No road yet");
+    expect(townStatus(t).text).toBe("No road yet");
+    // (this one has the company's roads at its door: it is joined, and waiting for its first load. Play-test A10)
+    expect(townModel(g, t, led).status.text).toBe("Joined by road");
     Object.assign(t, { spawned: was.spawned, today: was.today, yesterday: was.yesterday });
     t.hist.days = was.days;
     const P = farm.plant!, why = P.why;

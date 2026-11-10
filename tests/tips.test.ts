@@ -159,6 +159,13 @@ describe("tips follow the map", () => {
       if (built) break;
     }
     expect(built).toBe(true);
+    // (a stub of road out of it is no road to it: nothing a load could come from is on it)
+    expect(joinedUp(g, t)).toBe(false);
+    expect(tipFor(g, skip)?.id).toBe("newtown");
+    // nor is a logging camp at its edge; a food plant on its roads is
+    placeNear(g, "loggingcamp", t.c);
+    expect(joinedUp(g, t)).toBe(false);
+    placeNear(g, "foodplant", t.c);
     expect(joinedUp(g, t)).toBe(true);
     expect(tipFor(g, skip)).toBeNull();
   });
