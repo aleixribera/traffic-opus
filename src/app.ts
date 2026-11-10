@@ -43,9 +43,7 @@ const START_INSET = { l: 40, t: 84, r: 330, b: 96 };
 
 /** How far outside a waiting site's gate the road tool snaps a road's end (m): clear of the fence, well in reach. */
 const GATE_SNAP = 7;
-/** How far one pixel of scrolling turns the building being placed (a wheel notch of ~100 px: ~10°). */
-const PLACE_TURN_PER_PX = (10 * Math.PI) / 180 / 100;
-/** Shift + the wheel, or Shift + , and ., turns it in fine steps: a wheel notch (or a key press) turns it 1°. */
+/** Shift + , and . turn the building being placed in fine steps: 1° a press (plain, and Shift + wheel: 15°). */
 const FINE_TURN = Math.PI / 180;
 import { ZONES } from "./game/zones";
 import { MIN_DEPOSIT, PLANTS, PRODUCTS, UNPOWERED, isPlantKind, type Product } from "./game/industry";
@@ -167,7 +165,7 @@ export class App {
   /** money and moments rising off the map, and the shelf-time rings over refrigerated trucks */
   pops = new Pops();
   /** Shift + wheel scrolling not yet turned into a whole degree (px) */
-  private fineWheel = 0;
+  private turnWheel = 0;
   private treesDue: ReturnType<typeof setTimeout> | 0 = 0;
   private iconT = 0;
   private labelKey = "";
@@ -912,25 +910,21 @@ export class App {
       const act = this.wheel.read(e);
       if (performance.now() < this.wheelQuiet) return;
       if (act === "pinch" && this.gesturing) return;
-      // a building in hand turns with a mouse wheel, Shift + wheel by 1° (Ctrl + wheel and a pinch still zoom, as do
-      // R and F; two fingers on a touchpad still move the map, and , and . turn it)
-      if (this.st.tool === "place" && !e.ctrlKey && act !== "pinch" && (act === "zoom" || e.shiftKey)) {
+      // The wheel always zooms, with a building in hand too: the first thing a player does with a farm in hand is
+      // zoom out to look for soil, and the wheel span the farm instead (play-test 2026-11-09, C4). Shift + wheel
+      // turns the building, 15° a notch (, and . do the same; with Shift they turn it by 1°).
+      if (this.st.tool === "place" && e.shiftKey && !e.ctrlKey && act !== "pinch") {
         // (with Shift held the browser may scroll sideways instead: either way it is the wheel turning)
-        const d = e.deltaY || (e.shiftKey ? e.deltaX : 0);
+        const d = e.deltaY || e.deltaX;
         if (!d) return;
         const px = e.deltaMode === 1 ? d * 33 : d;
-        if (e.shiftKey) {
-          // (fine: a degree per wheel notch, ~100 px; a trackpad's many small steps add up to the same)
-          this.fineWheel += Math.sign(px) * Math.min(Math.abs(px), 200);
-          while (Math.abs(this.fineWheel) >= 100) {
-            const dir = this.fineWheel > 0 ? 1 : -1;
-            this.fineWheel -= dir * 100;
-            this.turnPlaced(dir, true);
-          }
-          return;
+        // (a notch is ~100 px; a trackpad's many small steps add up to the same)
+        this.turnWheel += Math.sign(px) * Math.min(Math.abs(px), 200);
+        while (Math.abs(this.turnWheel) >= 100) {
+          const dir = this.turnWheel > 0 ? 1 : -1;
+          this.turnWheel -= dir * 100;
+          this.turnPlaced(dir);
         }
-        this.st.placeTurn = wrapAngle(this.st.placeTurn + Math.sign(px) * Math.min(Math.abs(px), 200) * PLACE_TURN_PER_PX);
-        this.dirtyPreview = true;
         return;
       }
       const r = el.getBoundingClientRect();
@@ -978,6 +972,12 @@ export class App {
     window.addEventListener("keydown", (e) => this.onKey(e, true));
     window.addEventListener("keyup", (e) => this.onKey(e, false));
     window.addEventListener("resize", () => this.view.resize());
+    // (the canvas can change size with no resize event: the page laid out after the first frame, a window resized
+    // while loading. Then the picture was drawn for the old size and stood off from the pointer)
+    if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => {
+      const r = el.getBoundingClientRect();
+      if (Math.abs(r.width - this.view.w) > 0.5 || Math.abs(r.height - this.view.h) > 0.5) { this.view.resize(); this.dirtyPreview = true; }
+    }).observe(el);
     window.addEventListener("blur", () => { this.keys.clear(); this.setSpace(false); });
   }
 
@@ -1189,6 +1189,9 @@ export class App {
       const i = order.indexOf(this.st.mode);
       this.setTool({ tool: "road", mode: order[(i + (e.shiftKey ? order.length - 1 : 1)) % order.length] });
     }
+    // R and I: the two catalogs a company lives in (zoom is on the wheel and on + and -)
+    else if (k === "r" && !e.repeat) { this.hud?.catKey("roads"); this.hud?.sound("click"); }
+    else if (k === "i" && !e.repeat) { this.hud?.catKey("industry"); this.hud?.sound("click"); }
     else if (k === "b") this.setTool({ tool: "bulldoze" });
     else if (k === "l") this.setTool({ tool: this.st.tool === "lane" ? "inspect" : "lane" });
     else if (k === "p") this.hud?.toggleWin("progression");
@@ -2067,14 +2070,14 @@ export class App {
     this.last = now;
     const g = this.game;
     this.syncRise();
-    // The camera from the keys: W A S D or the arrows move it along the screen's own axes, Q/E turn it, R/F zoom
-    // (CS2), Y/H tilt it. Not with Ctrl held (Ctrl+S saves, Ctrl+Y is redo), nor while a cinematic camera films.
+    // The camera from the keys: W A S D or the arrows move it along the screen's own axes, Q/E turn it, + and - zoom
+    // (R and I open the catalogs), Y/H tilt it. Not with Ctrl held (Ctrl+S saves, Ctrl+Y is redo), nor while a cinematic camera films.
     const held = (...ks: string[]) => ks.some((k) => this.keys.has(k));
     const free = !this.camera.cinematic && !held("Control", "Meta");
     let mx = free ? (held("d", "ArrowRight") ? 1 : 0) - (held("a", "ArrowLeft") ? 1 : 0) : 0;
     let my = free ? (held("s", "ArrowDown") ? 1 : 0) - (held("w", "ArrowUp") ? 1 : 0) : 0;
     const turn = free ? (held("e") ? 1 : 0) - (held("q") ? 1 : 0) : 0;
-    const zoom = free ? (held("f") ? 1 : 0) - (held("r") ? 1 : 0) : 0;
+    const zoom = free ? (held("-", "_") ? 1 : 0) - (held("+", "=") ? 1 : 0) : 0;
     // Y up toward the Map view, H down toward the horizon
     const pitch = free ? (held("h") ? 1 : 0) - (held("y") ? 1 : 0) : 0;
     if ((mx || my) && (this.camera.following !== null || this.glide)) { this.camera.stopFollow(); this.glide = null; }
