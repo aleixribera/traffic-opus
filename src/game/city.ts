@@ -512,7 +512,22 @@ export class Game {
       const was = before.get(id);
       if (was && ng.arms.every((a) => was.some((d) => a.dir.x * d.x + a.dir.y * d.y > 0.985))) continue;
       const plan = this.defaultSignal(id);
-      if (plan) { this.net.setSignal(id, plan); lit++; }
+      if (plan) { this.net.setSignal(id, plan); lit += 1 + this.lightCluster(id).length; }
+    }
+    return lit;
+  }
+
+  /**
+   * Lights on one junction of a cluster (close links, see CLOSE_LINK) cover all of it: the others get the default
+   * plan too (they run on its clock: Traffic.syncClusters). Returns the junctions it lit. Lights at one end only
+   * let cars into a link that a free-for-all at the other end then left them standing on.
+   */
+  private lightCluster(id: number): number[] {
+    const lit: number[] = [];
+    for (const m of this.net.clusterOf(id)) {
+      if (m === id || this.net.nodes.get(m)?.signal) continue;
+      const plan = this.defaultSignal(m);
+      if (plan) { this.net.setSignal(m, plan); lit.push(m); }
     }
     return lit;
   }
@@ -981,9 +996,15 @@ export class Game {
     if (!n) return false;
     // lights the player takes away stay away (they aren't put back when the junction changes)
     if (!plan && n.signal) n.noAutoLights = true;
-    const cost = !n.signal && plan ? SIGNAL_COST : 0;
+    // (the rest of its cluster with it: lights on part of one cover all of it, see lightCluster)
+    const others = this.net.clusterOf(nodeId).filter((m) => m !== nodeId && !plan === !!this.net.nodes.get(m)?.signal && (!plan || this.defaultSignal(m)));
+    const cost = plan ? ((n.signal ? 0 : 1) + others.length) * SIGNAL_COST : 0;
     if (cost > this.money) return false;
-    const ops = this.applyRoads(() => this.net.setSignal(nodeId, plan));
+    const ops = this.applyRoads(() => {
+      this.net.setSignal(nodeId, plan);
+      if (plan) this.lightCluster(nodeId);
+      else for (const m of others) { this.net.setSignal(m, null); this.net.nodes.get(m)!.noAutoLights = true; }
+    });
     this.money -= cost;
     this.pushUndo({ label: "signal", ops, money: cost, added: [], removed: [] });
     this.emit({ t: "money" });
@@ -1027,6 +1048,10 @@ export class Game {
       phases.push({ arms: group });
       if (big && g.conns.some((c) => group.includes(c.armIn) && c.turn === "L")) phases.push({ arms: [...group], left: true });
     }
+    // in a cluster (close links, see CLOSE_LINK) the road along the link goes first, at each junction alike: their
+    // lights run on one clock, so that traffic has green at both ends together
+    const k = phases.findIndex((p) => !p.left && p.arms.some((x) => this.net.closeLink(x)));
+    if (k > 0) phases.push(...phases.splice(0, k));
     return { phases };
   }
 

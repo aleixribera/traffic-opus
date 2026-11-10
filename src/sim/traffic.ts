@@ -358,6 +358,9 @@ export class Traffic {
   // Traffic lights, on a fixed clock (see updateSignals): per signalled node, which phase is on, its stage (0 green,
   // 1 yellow, 2 all red) and how long it has been in it. Made the first time anything asks about that node's lights.
   private sigCtl = new Map<number, { plan: SignalPlan; i: number; st: 0 | 1 | 2; t: number }>();
+  // the lights whose clock each signalled node follows (see syncClusters), as of network version `leadVer`
+  private leadOf = new Map<number, number>();
+  private leadVer = -1;
 
   private ringLoads = new Map<number, number>(); // ring id -> share of its capacity in use (this step)
   private roomV = Infinity; // set by ringRoom: speed of what ends the room it found
@@ -1146,6 +1149,33 @@ export class Traffic {
       for (let k = 1; k <= ph.length; k++) if (ph[(c.i + k) % ph.length].arms.length) { to = (c.i + k) % ph.length; break; }
       c.i = to; c.st = 0; c.t = 0;
     }
+    this.syncClusters();
+  }
+
+  /**
+   * Lights on junctions that work as one (close links, see CLOSE_LINK) run on one clock, the lowest-numbered one's:
+   * the same phase, stage and time, so traffic along the links has green at both ends at once. (Their plans put the
+   * phase along the link first: see Game.defaultSignal.) Out of step, a car let into a link on green at one end
+   * stood on it at a red at the other, its tail in the box behind.
+   */
+  private syncClusters() {
+    if (this.leadVer !== this.net.version) { this.leadOf.clear(); this.leadVer = this.net.version; }
+    for (const [id, c] of this.sigCtl) {
+      let lead = this.leadOf.get(id);
+      if (lead === undefined) {
+        lead = id;
+        for (const m of this.net.clusterOf(id)) if (this.net.nodes.get(m)?.signal?.phases.length) { lead = m; break; }
+        this.leadOf.set(id, lead);
+      }
+      if (lead === id) continue;
+      let L = this.sigCtl.get(lead);
+      if (!L) { this.signalState(lead, -1); L = this.sigCtl.get(lead); }
+      if (!L || L.plan !== this.net.nodes.get(lead)?.signal) continue; // (its plan changed this step: next step)
+      const ph = c.plan.phases;
+      let i = L.i % ph.length;
+      if (!ph[i].arms.length) i = c.i;
+      c.i = i; c.st = L.st; c.t = L.t;
+    }
   }
 
   private canEnter(v: Vehicle, c: Connector, toEnd: number): boolean {
@@ -1232,7 +1262,56 @@ export class Traffic {
         return false;
       }
     }
+    if (!ringIn && this.net.closeLink(out.seg)) {
+      const by = this.clusterExit(v, out);
+      if (by !== undefined) { v.block = "box"; v.blockBy = by; return false; }
+    }
     return this.conflictsClear(v, c, sig, toEnd);
+  }
+
+  /**
+   * Into a close link (see CLOSE_LINK): the junctions at its two ends work as one, so a car goes in only when it has
+   * room on its way out beyond the far one as well (beyond the last of them, through a chain of close links), as it
+   * goes into one big junction only when its exit has room. A link that short holds a car or two: let in on room
+   * there alone, a car could stand on it waiting with the next one's tail still in the box behind, or a car on each
+   * of two links could wait for room on the other's way out, a circular wait nobody can end. Undefined: there is
+   * room (or nothing beyond to need it); otherwise what fills the way out (null: nothing in particular).
+   */
+  private clusterExit(v: Vehicle, out: Lane): Vehicle | null | undefined {
+    let lane = out;
+    for (let k = v.ri + 2, hop = 0; hop < 4 && this.net.closeLink(lane.seg); k++, hop++) {
+      const nk = v.route[k];
+      if (nk === undefined) return undefined; // (its destination is on the link itself)
+      let by: Vehicle | null | undefined = undefined, room: Lane | null = null;
+      for (const c2 of lane.outs) {
+        if (dkey(c2.to.seg, c2.to.dir) !== nk) continue;
+        if (this.net.segs.get(c2.to.seg)?.ring) return undefined; // (onto a roundabout: its entry has its own rules)
+        const b = this.roomOn(c2.to, v, lane, nk);
+        if (b === undefined) { room = c2.to; break; }
+        by ??= b;
+      }
+      if (!room) return by; // (no way on from here at all: it re-plans when it gets there)
+      lane = room;
+    }
+    return undefined;
+  }
+
+  /**
+   * Room for `v` on lane `b` on its way through a cluster, from link `via`: the cars on `b` and those let in towards
+   * it, and the cars ahead on the link going the same way (`nk`), which get there first. Undefined: room; otherwise
+   * what fills it (null: the cars ahead on the link).
+   */
+  private roomOn(b: Lane, v: Vehicle, via: Lane, nk: number): Vehicle | null | undefined {
+    let free = b.pl.length;
+    const first = (b.occ as Vehicle[])[0];
+    if (first) free = first.s - first.len;
+    const tl = this.tails.get(b);
+    if (tl) for (const t of tl) if (t.v !== v) free = Math.min(free, t.rear);
+    let by: Vehicle | null = first ?? null;
+    for (const h of this.holdersInto(b)) if (h !== v && h.edge !== via) { free -= h.len + 2; by ??= h; }
+    for (const u of via.occ as Vehicle[]) if (u !== v && u.route[u.ri + 1] === nk) { free -= u.len + 2; by ??= u; }
+    if (free >= v.len + 1.5 || (first && first.v > 3 && free > 0.5)) return undefined;
+    return by;
   }
 
   /**

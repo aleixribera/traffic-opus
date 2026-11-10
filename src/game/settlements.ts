@@ -6,9 +6,9 @@
 // (Building.town).
 
 import { BUILDING_TYPES, ROAD_TYPES, SIDEWALK, ZONE_SETBACK, roadWidth, type BuildingKind } from "../config";
-import { angleOf, cubicTangent, dist, dot, fromAngle, norm, right, scale, sub, type V2 } from "../core/math";
+import { angleOf, cubicTangent, dist, dot, fromAngle, norm, polyClosest, right, scale, sub, type V2 } from "../core/math";
 import { chainPoints, cubicClosest, planRoad, snap, type Plan, type Snap } from "../roads/planner";
-import type { RSeg } from "../roads/network";
+import { JUNCTION_GAP, type RSeg } from "../roads/network";
 import { dkey } from "../sim/router";
 import { mulberry32 } from "../core/noise";
 import { F, MOUNTAIN_STEPS } from "../world/gen";
@@ -516,11 +516,38 @@ export class TownSystem {
       : { start, end, mode: "straight", type: "street" });
   }
 
+  /**
+   * Would the street make a junction within JUNCTION_GAP of another (where it joins a road, ends on one or crosses
+   * one)? A town never lays one that close: the two would lock each other up (review 2026-11-10, B1).
+   */
+  closeJunctions(plan: Plan): boolean {
+    const net = this.g.net, at: V2[] = [...plan.crossings];
+    for (const st of plan.strokes) {
+      for (const p of [st.chain[0]?.p0, st.chain[st.chain.length - 1]?.p3]) {
+        if (!p) continue;
+        // (a road carrying on from a dead end, or starting out in the open, makes no junction)
+        let nodeArms = -1, onRoad = false;
+        for (const id of net.segsNear(p.x - 2, p.y - 2, p.x + 2, p.y + 2)) {
+          const sg = net.segs.get(id), g = net.segGeom.get(id);
+          if (!sg || !g) continue;
+          for (const n of [sg.a, sg.b]) if (dist(net.nodes.get(n)!.p, p) < 1) nodeArms = net.segsAt(n).length;
+          if (polyClosest(g.center, p).d < 1) onRoad = true;
+        }
+        if (nodeArms >= 0 ? nodeArms >= 2 : onRoad) at.push(p);
+      }
+    }
+    for (let i = 0; i < at.length; i++) {
+      if (net.junctionNear(at[i])) return true;
+      for (let j = i + 1; j < at.length; j++) if (dist(at[i], at[j]) > 1 && dist(at[i], at[j]) < JUNCTION_GAP) return true;
+    }
+    return false;
+  }
+
   /** Lay a lattice edge (free). False if it can't be built there; it is then never tried again. */
   layEdge(t: Town, e: GridEdge): boolean {
     const k = edgeKey(e);
     const plan = this.planEdge(t, e);
-    if (plan.errors.length || !this.g.buildFree(plan, t.id)) { t.failed.add(k); return false; }
+    if (plan.errors.length || this.closeJunctions(plan) || !this.g.buildFree(plan, t.id)) { t.failed.add(k); return false; }
     t.built.add(k);
     // (the land reaches past its furthest node)
     const P = this.planOf(t);
@@ -985,7 +1012,7 @@ export class TownSystem {
       for (const tan of ways) {
         if (dot(tan, norm(sub(q, st.p))) < 0.3) continue;
         const plan = planRoad(net, world, { start: { p: st.p, h: 0, guides: [], node: st.n }, end, mode: "curve", squareEnd: true, type: "street", startTangent: tan });
-        if (plan.errors.length || !plan.strokes.length || plan.crossings.length || plan.length > OUT_REACH) continue;
+        if (plan.errors.length || !plan.strokes.length || plan.crossings.length || plan.length > OUT_REACH || this.closeJunctions(plan)) continue;
         if (plan.strokes.some((s) => s.h0 > 0.5 || s.h1 > 0.5)) continue;
         const pts = plan.strokes.flatMap((s) => chainPoints(s.chain, 8));
         if (pts.some((p) => W.isWater(p) || W.isMountain(p) || !W.inBounds(p))) continue;

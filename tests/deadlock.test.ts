@@ -3,8 +3,11 @@
 // A jam the player can fix is the game; a lock the player did not build, and that never clears, is a bug.
 
 import { describe, expect, it } from "vitest";
-import { straightCubic, v2 } from "../src/core/math";
+import { straightCubic, v2, type V2 } from "../src/core/math";
+import { Game } from "../src/game/city";
+import { planRoad, snap } from "../src/roads/planner";
 import { RoadNetwork } from "../src/roads/network";
+import { SIGNAL_COST } from "../src/config";
 import { Traffic, type PendingSpawn, type Vehicle } from "../src/sim/traffic";
 import { DT, acc, trip } from "./trafficWatch";
 
@@ -51,11 +54,119 @@ function exitFills(rate: number, T = 900) {
 
 describe("a junction where straight and turning traffic wait for room on the same exit lane", () => {
   it("never locks in a circular wait: whoever holds the claim on the exit goes when it opens", () => {
-    for (const rate of [100, 150, 200, 250]) console.log(rate, JSON.stringify(exitFills(rate, 1200)));
     const r = exitFills(200);
     expect(r.cycleT).toBe(0);
     expect(r.jamBreaks).toBe(0);
     expect(r.maxWait).toBeLessThan(90);
     expect(r.done).toBeGreaterThan(r.asked * 0.8);
   }, 120000);
+});
+
+/**
+ * Two crossings `d` apart along a street (A west, B east; at 22 m the piece of street between their boxes is under
+ * 7 m, a car and a bit), each with a street across it, and lights 60 m beyond each on the main street so the ways
+ * out fill every red. `rate` cars/h from each of the six ends to any other.
+ */
+function twoClose(d: number, rate: number, T = 1500) {
+  const net = new RoadNetwork();
+  net.begin();
+  const P = (x: number, y: number) => net.addNode(v2(x, y), 0);
+  const mk = (a: number, b: number) => net.addSeg(a, b, "street", straightCubic(net.nodes.get(a)!.p, net.nodes.get(b)!.p));
+  const A = P(300, 300), B = P(300 + d, 300), W = P(240, 300), E = P(360 + d, 300);
+  const link = mk(A, B), an = mk(P(300, -100), A), as = mk(P(300, 700), A), bn = mk(P(300 + d, -100), B), bs = mk(P(300 + d, 700), B);
+  const wl = mk(W, A), el = mk(B, E), wf = mk(W, P(-300, 300)), ef = mk(E, P(900 + d, 300));
+  net.setSignal(W, { phases: [{ arms: [wl, wf] }, { arms: [mk(W, P(240, 0)), mk(W, P(240, 600))] }] });
+  net.setSignal(E, { phases: [{ arms: [el, ef] }, { arms: [mk(E, P(360 + d, 0)), mk(E, P(360 + d, 600))] }] });
+  net.commit();
+  net.rebuild();
+  const rnd = rng(4242);
+  let done = 0, maxWait = 0, cycleT = 0, asked = 0, step = 0;
+  const tr = new Traffic(net, { arrive: () => { done++; }, fail: () => {} });
+  const ends = [an, as, bn, bs, wf, ef];
+  const next = ends.map(() => (rnd() * 3600) / rate);
+  for (let t = 0; t < T; t += DT) {
+    for (let a = 0; a < ends.length; a++) while (next[a] <= t) {
+      let k = Math.floor(rnd() * ends.length);
+      if (k === a) k = (k + 1) % ends.length;
+      const far = ends[a] === wf || ends[a] === ef;
+      tr.request({ from: acc(net, ends[a], far ? 0.95 : 0.15), fromSide: far ? 2 : 1, to: acc(net, ends[k], 0.5), toSide: 1, trip: trip(), truck: rnd() < 0.2, tries: 0, wait: 0, through: true } as PendingSpawn);
+      asked++;
+      next[a] += (-Math.log(1 - rnd()) * 3600) / rate;
+    }
+    tr.step(DT);
+    // (looked at twice a second: the scenario is long)
+    if (++step % 15) continue;
+    for (const v of tr.vehicles as Vehicle[]) maxWait = Math.max(maxWait, v.wait);
+    if (tr.waitCycles(5).length) cycleT += 15 * DT;
+  }
+  return { close: net.closeLink(link), done, asked, maxWait, cycleT, jamBreaks: tr.jamBreaks };
+}
+
+describe("junctions closer than a couple of car lengths work as one", () => {
+  it("a car goes into the short link between them only with room on its way out beyond the far one", () => {
+    // (without the look-through: 147 s of circular waits, a jam break, a car waiting 156 s and 96 cars left queueing at the end)
+    const r = twoClose(22, 240);
+    expect(r.close).toBe(true);
+    expect(r.cycleT).toBeLessThan(3); // (a moment of one, while the waits change hands)
+    expect(r.jamBreaks).toBe(0);
+    expect(r.maxWait).toBeLessThan(90);
+    expect(r.done).toBeGreaterThan(r.asked * 0.9);
+  }, 120000);
+
+  it("lights on one of them cover both, on one clock, the road along the link going first at each", () => {
+    const g = new Game(7);
+    g.unlockAll();
+    g.money = 1e7;
+    const lay = (a: V2, b: V2) => {
+      const sn = (p: V2) => {
+        const s = snap(g.net, p, { mpp: 0.5, level: 0, type: "street" });
+        return s.node !== undefined || s.seg !== undefined ? s : { p, h: 0, guides: [] };
+      };
+      expect(g.build(planRoad(g.net, g.world, { start: sn(a), end: sn(b), mode: "straight", type: "street" }))).toBe(true);
+    };
+    lay(v2(0, 0), v2(300, 0));
+    lay(v2(120, -120), v2(120, 120));
+    lay(v2(142, -120), v2(142, 120));
+    const near = (x: number) => [...g.net.nodes.values()].find((n) => Math.hypot(n.p.x - x, n.p.y) < 1)!.id;
+    const A = near(120), B = near(142);
+    expect(g.net.clusterOf(A)).toEqual([A, B].sort((a, b) => a - b));
+    const money = g.money;
+    expect(g.setSignal(A, g.defaultSignal(A))).toBe(true);
+    expect(g.money).toBe(money - 2 * SIGNAL_COST);
+    for (const n of [A, B]) {
+      const sig = g.net.nodes.get(n)!.signal!;
+      expect(sig.phases[0].arms.some((x) => g.net.closeLink(x))).toBe(true);
+    }
+    // whatever each clock was doing, they run as one from the next step on
+    const tr = g.traffic;
+    const link = g.net.nodeGeom.get(A)!.arms.find((a) => g.net.closeLink(a.seg))!.seg;
+    tr.signalState(B, link);
+    (tr as unknown as { sigCtl: Map<number, { i: number; t: number }> }).sigCtl.get(B)!.i = 1;
+    for (let t = 0; t < 200; t += DT) {
+      tr.step(DT);
+      expect(tr.signalState(B, link)).toBe(tr.signalState(A, link));
+    }
+    // and taking them away takes both
+    expect(g.setSignal(B, null)).toBe(true);
+    expect(g.net.nodes.get(A)!.signal).toBeNull();
+  });
+
+  it("a town never lays a street that would make a junction that close to another", () => {
+    // (both close pairs in the late save were a town's street run onto a player's road a few metres from a crossing)
+    const g = new Game(7);
+    g.money = 1e7;
+    const sn = (p: V2) => {
+      const s = snap(g.net, p, { mpp: 0.5, level: 0, type: "street" });
+      return s.node !== undefined || s.seg !== undefined ? s : { p, h: 0, guides: [] };
+    };
+    const plan = (a: V2, b: V2) => planRoad(g.net, g.world, { start: sn(a), end: sn(b), mode: "straight", type: "street" });
+    expect(g.build(plan(v2(0, 0), v2(300, 0)))).toBe(true);
+    expect(g.build(plan(v2(120, -120), v2(120, 120)))).toBe(true);
+    // a street from the south ending on the main street 20 m from the crossing: no; 60 m along: yes
+    expect(g.towns.closeJunctions(plan(v2(140, 120), v2(140, 0)))).toBe(true);
+    expect(g.towns.closeJunctions(plan(v2(180, 120), v2(180, 0)))).toBe(false);
+    // nor across another road 20 m from it, nor onto a crossing itself (that junction is there already)
+    expect(g.towns.closeJunctions(plan(v2(140, 120), v2(140, -120)))).toBe(true);
+    expect(g.towns.closeJunctions(plan(v2(240, 120), v2(120, 0)))).toBe(false);
+  });
 });

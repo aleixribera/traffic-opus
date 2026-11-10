@@ -258,6 +258,19 @@ export interface SplitRoles {
   rampIn?: Arm;
 }
 
+/**
+ * Junctions closer than this (m of lane between their boxes: room for two cars and their gaps, not three) work as
+ * one junction (review 2026-11-10, B1). A car goes into the short road between them only when it has room on its
+ * way out beyond the last of them (Traffic.clusterExit), lights on one of them are lights on all of them, on one
+ * clock (Game.lightCluster, Traffic.syncClusters), and towns don't lay junctions that close (JUNCTION_GAP).
+ */
+export const CLOSE_LINK = 15;
+/**
+ * The least distance between two junctions' middles that a town lays a street to make (m): two street boxes and a
+ * CLOSE_LINK between them (two streets crossing 30 m apart leave 14.8 m of lane between the boxes).
+ */
+export const JUNCTION_GAP = 32;
+
 /** How far a shifted centreline takes to ease back onto its own line. */
 const SHIFT_LEN = 90;
 /** Connector paths closer than this (but not crossing) are a near miss: too close for two truck bodies. */
@@ -586,6 +599,55 @@ export class RoadNetwork {
     const out: RSeg[] = [];
     for (const s of this.segs.values()) if (s.a === nodeId || s.b === nodeId) out.push(s);
     return out;
+  }
+
+  /**
+   * Is road `id` a close link: a short piece of road between two junctions, its lanes shorter than CLOSE_LINK
+   * between the two boxes? (Not a roundabout's own arcs: those are built short and work as a ring.)
+   */
+  closeLink(id: number): boolean {
+    const s = this.segs.get(id), g = this.segGeom.get(id);
+    if (!s || !g || s.ring || s.a === s.b) return false;
+    if (this.nodeGeom.get(s.a)?.kind !== "junction" || this.nodeGeom.get(s.b)?.kind !== "junction") return false;
+    let L = Infinity;
+    for (const l of g.lanes) if (!l.pocket) L = Math.min(L, l.pl.length);
+    return L < CLOSE_LINK;
+  }
+
+  /**
+   * The junctions that work as one with `node` (see CLOSE_LINK): those joined to it by close links, and on through
+   * theirs, itself included, lowest id first. A junction on its own is a cluster of one.
+   */
+  clusterOf(node: number): number[] {
+    const seen = new Set<number>([node]), todo = [node];
+    while (todo.length) {
+      const n = todo.pop()!;
+      for (const a of this.nodeGeom.get(n)?.arms ?? []) {
+        if (!this.closeLink(a.seg)) continue;
+        const s = this.segs.get(a.seg)!, o = s.a === n ? s.b : s.a;
+        if (!seen.has(o) && seen.size < 8) { seen.add(o); todo.push(o); }
+      }
+    }
+    return [...seen].sort((a, b) => a - b);
+  }
+
+  /**
+   * Would a junction at p (a road joining or crossing another there) stand within `gap` of another junction (a node
+   * three or more roads meet at)? The node at p itself doesn't count.
+   */
+  junctionNear(p: V2, gap = JUNCTION_GAP): boolean {
+    const seen = new Set<number>();
+    for (const id of this.segsNear(p.x - gap, p.y - gap, p.x + gap, p.y + gap)) {
+      const s = this.segs.get(id);
+      if (!s) continue;
+      for (const n of [s.a, s.b]) {
+        if (seen.has(n)) continue;
+        seen.add(n);
+        const q = this.nodes.get(n)!.p, d = Math.hypot(q.x - p.x, q.y - p.y);
+        if (d > 1 && d < gap && (this.degree.get(n) ?? this.segsAt(n).length) >= 3) return true;
+      }
+    }
+    return false;
   }
 
   heightOnSeg(id: number, t: number): number {
