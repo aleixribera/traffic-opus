@@ -208,6 +208,20 @@ export class GameAudio {
     if (e.shot(`sting:${id}`, e.ui, STING_GAIN, { prio: 2, when: at })) this.stingFree = at + b.duration * 0.8;
   }
 
+  /**
+   * A dedication (audio/dedication.ts): the station's ident chimes (after any moment's sting still sounding), the
+   * tune playing fades under it, and the next one, named for `town`, starts after. False when the wireless is off.
+   */
+  dedicate(town: string): boolean {
+    if (!this.settings.wireless) return false;
+    const e = this.eng, radio = this.radio;
+    if (!e || !radio || e.ctx.state !== "running") return true;
+    const at = Math.max(e.now, this.stingFree);
+    this.sting("dedication");
+    radio.dedicate(town, at + 2.2);
+    return true;
+  }
+
   /** The season's title card dropping in (0 spring .. 3 winter). */
   season(i: number) { this.sting(SEASON_STING[((i % 4) + 4) % 4]); }
 
