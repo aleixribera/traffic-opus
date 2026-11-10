@@ -77,12 +77,10 @@ function clearLine(g: Game, a: V2, b: V2, pad = 0): boolean {
 }
 
 /**
- * Build the company as it stood when the tester placed the steel chain: both towns grown (off the clock, every need
- * met), the timber chain running at its level, the sites just placed. Deposits are wherever the scenario needs them
- * (the world's fields are overridden for forest, ore and coal), so the layout is the same on any seed that has 3.5 km
- * of dry land one way out of the start town.
+ * A company with money and a grown first town, on a seed with 3.6 km of dry, flat, empty land one way out of it:
+ * `at(along, across)` is a point that far along the way out and to its right. Deposits are wherever a test needs them.
  */
-export function buildGateJam(o: GateJamOpts = {}): GateJam {
+export function openLand(o: { seed?: number; pop?: number } = {}): { g: Game; A: Town; dir: V2; origin: V2; at: (along: number, across?: number) => V2 } {
   const g = new Game(o.seed ?? 7);
   g.start();
   const terr = g.terrain as unknown as { has(f: number, p: V2): boolean };
@@ -116,6 +114,17 @@ export function buildGateJam(o: GateJamOpts = {}): GateJam {
   if (!dir || !origin) throw new Error("gatejam: no clear way out of the start town on this seed");
   const n = v2(-dir.y, dir.x);
   const at = (along: number, across = 0) => v2(origin!.x + dir!.x * along + n.x * across, origin!.y + dir!.y * along + n.y * across);
+  return { g, A, dir, origin, at };
+}
+
+/**
+ * Build the company as it stood when the tester placed the steel chain: both towns grown (off the clock, every need
+ * met), the timber chain running at its level, the sites just placed. Deposits are wherever the scenario needs them
+ * (the world's fields are overridden for forest, ore and coal), so the layout is the same on any seed that has 3.5 km
+ * of dry land one way out of the start town.
+ */
+export function buildGateJam(o: GateJamOpts = {}): GateJam {
+  const { g, A, dir, origin, at } = openLand(o);
   const west = o.west ?? "dirt";
   const M = o.millAt ?? 560;
   // paved as far as the sawmill's gate, the first road (dirt) beyond, as the tester had it
@@ -227,7 +236,7 @@ export function jamStats(s: GateJam): JamStats {
     else if (h.leg === "out") out++;
     else back++;
   }
-  for (const v of vs) if (v.trip.haul?.plant === mill.id && v.stuck > 30) held++;
+  for (const v of vs) if (v.trip.haul?.plant === mill.id && v.stuck > 30 + g.traffic.redTime(v)) held++;
   const share = (t: Town) => Math.round((t.supply.planks ?? 0) * 100);
   return {
     day: +(g.time / DAY).toFixed(2), vehicles: vs.length, standing: vs.filter((v) => v.stuck >= STAND).length,

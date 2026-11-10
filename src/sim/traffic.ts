@@ -314,6 +314,8 @@ export class Traffic {
   vehicles: Vehicle[] = [];
   pending: PendingSpawn[] = [];
   router: Router;
+  /** Where a building's driveway is now, with its side of the road (set by the game: see movedEnd). */
+  whereIs: ((building: number) => Access | null) | null = null;
   time = 0;
   private grantSeq = 0;
   private nextId = 1;
@@ -2219,6 +2221,19 @@ export class Traffic {
     v.route = [k, ...best];
   }
 
+  /**
+   * The longest the lights at the end of a vehicle's lane hold it by themselves (s): their cycle less one green. 0
+   * where its lane ends at no lights. Standing that long is waiting for a green, not being held up in traffic.
+   */
+  redTime(v: Vehicle): number {
+    if (v.edge.kind !== "lane") return 0;
+    const plan = this.net.nodes.get((v.edge as Lane).to)?.signal;
+    if (!plan || !plan.phases.length) return 0;
+    let cycle = 0;
+    for (const ph of plan.phases) cycle += greenFor(ph) + AMBER + ALL_RED;
+    return cycle - GREEN;
+  }
+
   /** The lights at a node now (inspector): the phase that is on, its stage (0 green, 1 yellow, 2 all red) and for how long; null unsignalled or not yet run. */
   signalNow(node: number): { i: number; st: 0 | 1 | 2; t: number } | null {
     const c = this.sigCtl.get(node);
@@ -2257,8 +2272,8 @@ export class Traffic {
       // destination seg removed or split: find it again first, so any new plan below heads for the right road
       // (the old route ends on the removed seg, so it gets re-planned)
       if (!net.segs.has(v.dest.seg)) {
-        const nd = this.remapAccess(v.dest);
-        if (nd) v.dest = nd;
+        const nd = this.movedEnd(v.trip, "to") ?? this.remapAccess(v.dest);
+        if (nd) { v.dest = nd; if (nd.side) v.destSide = nd.side; }
         else { lost.push(v); continue; }
       }
       const e = v.edge;
@@ -2341,9 +2356,20 @@ export class Traffic {
     }
     // pending spawns whose access seg vanished
     for (const p of this.pending) {
-      if (!net.segs.has(p.from.seg)) { const a = this.remapAccess(p.from); if (a) p.from = a; }
-      if (!net.segs.has(p.to.seg)) { const a = this.remapAccess(p.to); if (a) p.to = a; }
+      if (!net.segs.has(p.from.seg)) { const a = this.movedEnd(p.trip, "from") ?? this.remapAccess(p.from); if (a) { p.from = a; if (a.side) p.fromSide = a.side; } }
+      if (!net.segs.has(p.to.seg)) { const a = this.movedEnd(p.trip, "to") ?? this.remapAccess(p.to); if (a) { p.to = a; if (a.side) p.toSide = a.side; } }
     }
+  }
+
+  /**
+   * Where the building at one end of a trip has its driveway now, when the road it was on is gone and the game has
+   * joined it to another (a works' gate on the roundabout that took its street: its trucks on the road come home to
+   * the new gate, they aren't lost with the old one). Null: not known (the point is looked for under the old one).
+   */
+  private movedEnd(trip: Trip, end: "from" | "to"): Access | null {
+    if (trip.bus || !this.whereIs) return null;
+    const a = this.whereIs(end === "to" ? trip.to : trip.from);
+    return a && this.net.segs.has(a.seg) ? { ...a } : null;
   }
 
   /** Find the segment now under a driveway point (after a split or rebuild). */

@@ -366,7 +366,8 @@ export class Buildings {
     const f = siteFrame(c, rot, side, hd);
     const G = f.gate, out = scale(f.into, -1);
     const R = GATE_REACH + 14;
-    let best: { seg: number; t: number; q: V2; edge: number } | null = null;
+    type Cand = { seg: number; t: number; q: V2; edge: number; s0: number; sC: number };
+    let best: Cand | null = null;
     for (const id of net.segsNear(G.x - R, G.y - R, G.x + R, G.y + R)) {
       const s = net.segs.get(id)!;
       if (!(site ? takesGate(ROAD_TYPES[s.type]) : ROAD_TYPES[s.type].allowsAccess)) continue;
@@ -377,15 +378,18 @@ export class Buildings {
       const rel = sub(r.p, G);
       // in front of the gate: outside the fence, and not off to one side of it
       if (edge > GATE_REACH || dot(rel, out) < 0.5 || Math.abs(dot(rel, f.along)) > GATE_REACH + g.width / 2) continue;
-      if (!best || edge < best.edge) best = { seg: id, t: r.t, q: r.p, edge };
+      if (best && edge >= best.edge) continue;
+      // (a road that is all junction mouth has no room for a driveway: the next nearest in front of the gate then,
+      // as where a roundabout has left a metre or two of the gate's street sticking out of its ring)
+      const s0 = g.center.length * arcFrac(s.c, r.t, g.center.pts);
+      const sC = this.gateS(id, s0, site);
+      if (sC !== null) best = { seg: id, t: r.t, q: r.p, edge, s0, sC };
     }
     if (!best) return null;
     const s = net.segs.get(best.seg)!, g = net.segGeom.get(best.seg)!;
     const to = sub(G, best.q), L = Math.hypot(to.x, to.y) || 1;
     const front = add(best.q, scale(to, Math.min(g.width / 2, L) / L));
-    const s0 = g.center.length * arcFrac(s.c, best.t, g.center.pts);
-    const sC = this.gateS(best.seg, s0, site);
-    if (sC === null) return null; // (a road all junction mouth: no room for a driveway)
+    const { s0, sC } = best;
     const rs = sideOf(s.c, best.t, c, side);
     // (rot, side) and (rot + PI, -side) are the same plot: keep its gate where it is
     const kerb = this.gateKerb(best.seg, s0, sC, front);
@@ -400,7 +404,13 @@ export class Buildings {
   private gateS(id: number, s: number, site: boolean): number | null {
     const net = this.net, g = net.segGeom.get(id)!, sg = net.segs.get(id)!, L = g.center.length;
     const lo = g.trimA + 2, hi = L - g.trimB - 2;
-    if (hi <= lo) return null;
+    if (hi <= lo) {
+      // a few metres of dead end (what a roundabout leaves of a gate's street): the gate is at its end, as on the
+      // street the game lays; any other road this short is all junction mouth
+      const endA = net.segsAt(sg.a).length === 1, endB = net.segsAt(sg.b).length === 1;
+      const l0 = g.trimA + 0.5, l1 = L - g.trimB - 0.5;
+      return site && endA !== endB && l1 > l0 + 1 ? (endB ? l1 : l0) : null;
+    }
     const clear = (n: number) => (site && net.segsAt(n).length >= 3 ? GATE_CLEAR : 2);
     const lo2 = g.trimA + clear(sg.a), hi2 = L - g.trimB - clear(sg.b);
     if (hi2 < lo2) return Math.max(lo, Math.min(hi, (lo2 + hi2) / 2));

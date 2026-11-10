@@ -158,6 +158,10 @@ export class Game {
       fail: (trip, reason) => this.onFail(trip, reason),
       busAt: (v) => this.transit.busAt(v),
     });
+    this.traffic.whereIs = (id) => {
+      const b = this.buildings.byId.get(id);
+      return b?.access ? { ...b.access, side: b.side } : null;
+    };
     this.money = START_MONEY;
     const t = this.terrain;
     // (towns grow on any land, never inside the fence of one of the company's sites)
@@ -320,7 +324,8 @@ export class Game {
    */
   private heldTrips(): Map<Trip, "gate" | "road"> {
     const m = new Map<Trip, "gate" | "road">();
-    for (const v of this.traffic.vehicles) if (v.trip.haul && v.stuck > 30) m.set(v.trip, "road");
+    // (standing in traffic half a minute and more; at lights, that much longer than a red lasts)
+    for (const v of this.traffic.vehicles) if (v.trip.haul && v.stuck > 30 && v.stuck > 30 + this.traffic.redTime(v)) m.set(v.trip, "road");
     const blocked = new Set<number>();
     for (const p of this.traffic.pending) if (p.trip.haul && p.wait > 20) blocked.add(p.trip.from);
     if (blocked.size) for (const p of this.traffic.pending) if (p.trip.haul && blocked.has(p.trip.from)) m.set(p.trip, "gate");
@@ -688,6 +693,13 @@ export class Game {
     // (the homes and shops it clears are paid for: the ones the preview showed, before anything is built)
     const owed = this.demolishCost(this.lotsUnder(plan));
     if (plan.cost + owed > this.money + 0.5) return false;
+    if (plan.kind === "roundabout") {
+      const cut = this.ringStrands(plan);
+      if (cut) {
+        this.toast(`Not built: a roundabout there would leave the ${BUILDING_TYPES[cut.kind].name} with no road to its gate. Try it a little further from the gate`);
+        return false;
+      }
+    }
     const was = new Set(this.buildings.sites.filter((b) => b.access).map((b) => b.id));
     const ops = this.applyRoads(() => {
       if (plan.kind === "roundabout") commitRoundabout(this.net, plan);
@@ -719,6 +731,13 @@ export class Game {
         }
       }
     });
+    // a works whose gate street the ring took, with the ring out of its gate's reach, gets the street laid again to
+    // the ring (the company's own street: no charge, and one Undo takes ring and street away together)
+    if (plan.kind === "roundabout") for (const b of this.buildings.sites) {
+      if (b.access || !was.has(b.id)) continue;
+      const link = this.gateLink(b.kind as PlacedKind, b.c, b.rot, b.side);
+      if (link) ops.push(...this.applyRoads(() => { for (const st of link.strokes) commitStrokes(this.net, [st]); }));
+    }
     const gone = this.clearRoadsOverLots(ops);
     const moved = this.setBackJoined(was);
     const paid = plan.cost + owed;
@@ -727,6 +746,27 @@ export class Game {
     this.emit({ t: "money" });
     if (gone.length || moved.length) this.emit({ t: "buildings" });
     return true;
+  }
+
+  /**
+   * A works a roundabout would cut off its road for good (docs/playtest-2026-11-09.md, A2: a Small one on the
+   * sawmill's gate junction left it with "No road to the gate", and only Undo saved it). A ring that takes the road
+   * at a gate is tried on the network and taken back, nothing else told of it: the gate is fine if the ring itself, or
+   * what is left of its street, passes in front of it, or if its street can be laid again to the ring. Null: no works
+   * is left stranded.
+   */
+  private ringStrands(plan: Plan): Building | null {
+    const cut = new Set(plan.removeSegs ?? []);
+    const at = this.buildings.sites.filter((b) => b.access && cut.has(b.access.seg));
+    if (!at.length) return null;
+    const net = this.net;
+    net.begin();
+    commitRoundabout(net, plan);
+    net.rebuild();
+    const bad = at.find((b) => !this.buildings.gateAccess(b.c, b.rot, b.side, b.hd, isPlantKind(b.kind)) && !this.gateLink(b.kind as PlacedKind, b.c, b.rot, b.side)) ?? null;
+    net.undo(net.commit());
+    this.afterRoads(net.rebuild());
+    return bad;
   }
 
   /**

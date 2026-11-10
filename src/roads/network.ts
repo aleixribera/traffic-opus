@@ -1259,7 +1259,7 @@ export class RoadNetwork {
       const s = this.segs.get(arm.seg)!;
       // (a stop sign puts its arm below every other; lights, if there are any, take over from the signs)
       if (!node.signal && !s.ring && node.stops?.includes(arm.seg)) return -1;
-      if (node.signal || s.ring || arms.length < 3) return rankOf(arm);
+      if (s.ring || arms.length < 3) return rankOf(arm);
       const end = (a: Arm) => { const x = this.segs.get(a.seg)!; return (this.degree.get(a.end === "a" ? x.b : x.a) ?? 2) <= 1; };
       // (the arm it carries straight on from, if any: the same road through the junction)
       let on: Arm | undefined, straight = -0.85;
@@ -1267,6 +1267,11 @@ export class RoadNetwork {
         const d = o.dir.x * arm.dir.x + o.dir.y * arm.dir.y;
         if (o !== arm && d < straight && !this.segs.get(o.seg)!.ring) { on = o; straight = d; }
       }
+      // Under lights the two sides of a road that carries straight on share a green, and rank the same: a left turn
+      // off either gives way to what comes the other way. Where the paving ended at a lit junction, the trucks turning
+      // left off the paved side had the right of way over everyone coming along the dirt side, and that side got two
+      // cars through a green (measured 2026-11-10, tests/gatecures.test.ts).
+      if (node.signal) return on ? Math.max(rankOf(arm), rankOf(on)) : rankOf(arm);
       // A dead-end street that meets a road sideways gives way to it, whatever the two are made of: the street a works
       // lays to its gate is paved and the road it meets may be a dirt one, and by rank alone every truck out of the
       // gate had the right of way over the only road past it (docs/playtest-2026-11-09.md, A1). Half a rank below the

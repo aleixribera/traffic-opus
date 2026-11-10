@@ -1492,7 +1492,7 @@ function planRoadOnce(net: RoadNetwork, world: BuildWorld, inp: PlanInput): Plan
   }
   const plan = validateStrokes(net, world, strokes, "road", anchors, undefined, par ? strokes.map((_, i) => anchors.slice(i * 2, i * 2 + 2)) : undefined, skip, slips);
   plan.errors.unshift(...extra);
-  siteErrors(plan, start, end);
+  siteErrors(net, plan, start, end);
   // (a bridge that can't fit has said why and what to do: not also "raise it with Page Up")
   if (noBridge) plan.errors = plan.errors.filter((e) => !e.msg.startsWith("Needs a bridge here"));
   if (spans.length) plan.bridges = spans;
@@ -1533,9 +1533,17 @@ function planRoadOnce(net: RoadNetwork, world: BuildWorld, inp: PlanInput): Plan
  * A road from or to a site's gate that would cut back across that site: not "Building in the way" (the player meant
  * to connect it) but where its gate is, marked. Other buildings in the way still say so.
  */
-function siteErrors(plan: Plan, start: Snap, end: Snap) {
+function siteErrors(net: RoadNetwork, plan: Plan, start: Snap, end: Snap) {
   const own = [start.site, end.site].filter((x): x is NonNullable<Snap["site"]> => !!x);
   if (!own.length) return;
+  // dragged from a gate to the road (or the roundabout) that gate is on already: there is nothing to draw, and
+  // "Too short: drag further" sent the player looking for a road the works did not need
+  const [at, to] = start.site ? [start, end] : [end, start];
+  const ringOf = (x: Snap) => (x.seg !== undefined ? net.segs.get(x.seg)?.ring : undefined);
+  if (at.seg !== undefined && to.seg !== undefined && (to.seg === at.seg || (!!ringOf(at) && ringOf(at) === ringOf(to))) && plan.errors.some((e) => e.msg.startsWith("Too short"))) {
+    plan.errors = [{ msg: `${at.site!.name}'s gate is on this road already`, p: at.site!.gate }];
+    return;
+  }
   const out: PlanError[] = [];
   for (const e of plan.errors) {
     const mine = own.find((o) => e.buildings?.includes(o.id));
@@ -2158,6 +2166,8 @@ export function planRoundabout(net: RoadNetwork, world: BuildWorld, c: V2, size:
     const s = net.segs.get(id)!;
     const cp = g.center.pts;
     let inside = false;
+    const first = hits.length;
+    let cutAt = 0; // (how far along the road its last crossing of the circle is)
     for (let j = 0; j < cp.length; j++) {
       const dj = dist(cp[j], c);
       if (dj < R) inside = true;
@@ -2166,6 +2176,7 @@ export function planRoundabout(net: RoadNetwork, world: BuildWorld, c: V2, size:
       if ((d0 < 0) !== (d1 < 0)) {
         const t = d0 / (d0 - d1);
         const p = lerpV(cp[j], cp[j + 1], t);
+        cutAt = g.center.cum[j] + (g.center.cum[j + 1] - g.center.cum[j]) * t;
         const hh = g.hs[j] + (g.hs[j + 1] - g.hs[j]) * t;
         if (Math.abs(hh - h) >= CLEARANCE) continue;
         if (Math.abs(hh - h) > 0.6) { errors.push({ msg: "Not enough clearance", p }); continue; }
@@ -2180,6 +2191,12 @@ export function planRoundabout(net: RoadNetwork, world: BuildWorld, c: V2, size:
     if (inside && Math.abs(hS - h) < CLEARANCE) {
       removeSegs.add(id);
       for (const n of [s.a, s.b]) if (dist(net.nodes.get(n)!.p, c) < R) removeNodes.add(n);
+      // a dead end that would be left sticking out of the ring shorter than a road may be (the last metres of a
+      // works' gate street, say) goes too, and is no arm of the ring: what it served is on the ring itself now
+      if (hits.length === first + 1) {
+        const [end, left] = dist(net.nodes.get(s.a)!.p, c) >= R ? [s.a, cutAt] : [s.b, g.center.length - cutAt];
+        if (left < MIN_SEG_LEN && net.segsAt(end).length === 1 && dist(net.nodes.get(end)!.p, c) >= R) { hits.pop(); removeNodes.add(end); }
+      }
     }
   }
   hits.sort((a, b) => a.ang - b.ang);
@@ -2230,13 +2247,17 @@ export function commitRoundabout(net: RoadNetwork, plan: Plan): void {
   const c = plan.ringCenter!;
   const st = plan.strokes[0];
   const R = dist(st.chain[0].p0, c);
+  const drop = new Set(plan.removeNodes ?? []);
   // cut roads at the circle and drop what's inside
   for (const id of plan.removeSegs ?? []) {
     const s = net.segs.get(id);
     if (!s) continue;
     const pts = sampleCubic(s.c, 0.5);
     // find parameter ranges outside the circle: walk the cubic and keep outside runs
-    const N = 400;
+    // (steps of 0.75 m at most: at 400 steps whatever its length, a road a kilometre long was cut up to 3 m short of
+    // the ring, and an end that far from it was no arm of the ring, only a dead end beside it)
+    const L = makePolyline(pts).length;
+    const N = Math.max(400, Math.ceil(L / 0.75));
     const outside: [number, number][] = [];
     let runStart: number | null = null;
     for (let i = 0; i <= N; i++) {
@@ -2245,11 +2266,10 @@ export function commitRoundabout(net: RoadNetwork, plan: Plan): void {
       if (o && runStart === null) runStart = t;
       if ((!o || i === N) && runStart !== null) {
         const end = o ? 1 : (i - 1) / N;
-        if (end - runStart > 0.01) outside.push([runStart, end]);
+        if (end - runStart > 0.01 || (end - runStart) * L > MIN_SEG_LEN) outside.push([runStart, end]);
         runStart = null;
       }
     }
-    void pts;
     const na = net.nodes.get(s.a)!, nb = net.nodes.get(s.b)!;
     const type = s.type, ring = s.ring;
     net.removeSeg(id, true);
@@ -2258,6 +2278,8 @@ export function commitRoundabout(net: RoadNetwork, plan: Plan): void {
       const pa = t0 < 1e-6 ? s.a : null;
       const pb = t1 > 1 - 1e-6 ? s.b : null;
       const ha = net.heightOnSegRaw(na.h, nb.h, t0), hb = net.heightOnSegRaw(na.h, nb.h, t1);
+      // (a stub the plan drops: see planRoundabout)
+      if ((pa !== null && drop.has(pa)) || (pb !== null && drop.has(pb))) continue;
       const a = pa !== null && net.nodes.has(pa) ? pa : net.addNode(sub1.p0, ha);
       const b = pb !== null && net.nodes.has(pb) ? pb : net.addNode(sub1.p3, hb);
       if (!net.nodes.has(a)) continue;
