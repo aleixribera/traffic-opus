@@ -4,13 +4,13 @@ import { wireCamera } from "./cameraSetting";
 import { WHEEL_MODES, saveWheelMode } from "./wheel";
 import { formatMoney, type V2 } from "../core/math";
 import type { Building } from "../game/buildings";
-import { LEVEL_LV, ZONE_GROUP } from "../game/growables";
+import { ZONE_GROUP } from "../game/growables";
 import { MILESTONES, unlockedBy, type Milestone, type Unlocks } from "../game/progression";
 import { buildTime } from "../game/construction";
 import { DEPOT_REACH, HIST_HOURS, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, SUPPLY_STORE, UNPOWERED, isPlantKind, powerPace, type PlantKind, type Product } from "../game/industry";
 import { TRUCK_CLASSES, TRUCK_CLASS_ORDER, type TruckClass } from "../game/trucks";
 import { LEVEL_MULT, SITE_LEVELS, growNeed } from "../game/sites";
-import { MARKET, type Town } from "../game/settlements";
+import { MARKET, compassWords, served, type Town } from "../game/settlements";
 import { HALLS, SUPPLY_COVER, TOWN_SIZES, needFrom, needsOf, sizeOf } from "../game/towns";
 import { HOUR } from "../game/society";
 import { PAL } from "../render/palette";
@@ -28,7 +28,7 @@ import { comingNeeds, growthOf, townNeeds, type NeedView } from "./needs";
 import type { Lane } from "../roads/network";
 import { CHANGELOG } from "../changelog";
 import { PLACED, PLACED_TABS, type PlacedKind } from "../game/placed";
-import { SAVE_V } from "../game/city";
+import { SAVE_V, type Game } from "../game/city";
 import { BUS_UPKEEP, STOP_COST } from "../game/transit";
 import { WirelessControl, soundHtml, soundSummary, wireSound } from "./soundPanel";
 import { heraldSvg } from "./herald";
@@ -37,6 +37,8 @@ import { companyName } from "../game/names";
 import { landmarkDone, landmarkSite, parkSection, seasonLine, specialRows } from "./specials";
 import { MEGAS, isMega } from "../game/megaprojects";
 import { TipPrefs, joinedUp, tipFor } from "./tips";
+import { blockWords, buildOrder, needHelp, shortfalls, steadyProblem, watchSites } from "./bottleneck";
+import { STUCK_RAISE, stuckSpots } from "./stuckAlerts";
 import { nextTown } from "./nextTown";
 import { openOrders, townOrders } from "./orders";
 import { CIVICS, type CivicKind } from "../game/civics";
@@ -46,7 +48,8 @@ import { escLayer, type EscState } from "./escape";
 
 export interface Chip {
   text: string;
-  kind: "info" | "error" | "cost";
+  /** `dear`: a cost that is a large share of the company's cash */
+  kind: "info" | "error" | "cost" | "dear";
   icon?: keyof typeof ICON;
 }
 
@@ -330,7 +333,7 @@ export class Hud {
     this.cityName.title = "Progression (P)";
     this.moneyBtn.onclick = () => this.toggleWin("economy");
     this.moneyBtn.title = "Economy (Z)";
-    this.popEl.title = "Population";
+    this.popEl.title = "People living in all your towns together";
     city.append(this.cityName, this.popEl, this.moneyBtn);
     // categories (centre)
     const cat = (key: string, icon: string, label: string, title: string, fn: () => void) => {
@@ -859,10 +862,13 @@ export class Hud {
     const key = [g.cityName, reached].join("|");
     if (force || this.cityName.dataset.k !== key) {
       this.cityName.dataset.k = key;
-      this.cityName.innerHTML = `<b>${escapeHtml(g.cityName)}</b><span class="cb-ms"><span>${last ? escapeHtml(last.name) : "No milestones yet"}</span><i style="--p:${reached / all}"></i></span>`;
-      this.cityName.setAttribute("aria-label", `${g.cityName}: ${reached} of ${all} milestones reached${last ? `, last ${last.name}` : ""}. Open progression`);
+      // (it opens the goals, so it is named for them: it used to wear the first town's name beside the people of
+      // every town, which read as that town's count. Play-test 2026-11-09, A14)
+      this.cityName.innerHTML = `<b>Goals ${reached}<small> of ${all}</small></b><span class="cb-ms"><i style="--p:${reached / all}"></i><span>${last ? `Last: ${escapeHtml(last.name)}` : "None reached yet"}</span></span>`;
+      this.cityName.setAttribute("aria-label", `Goals: ${reached} of ${all} reached${last ? `, last ${last.name}` : ""}. Open progression`);
     }
-    this.popEl.innerHTML = `${ICON.people}<span>${fmtNum(st.population)}</span>`;
+    const pop = `${ICON.people}<span class="cb-pop-n"><b>${fmtNum(st.population)}</b><small>${g.towns.list.length === 1 ? "people" : "in all towns"}</small></span>`;
+    if (this.popEl.dataset.k !== pop) { this.popEl.dataset.k = pop; this.popEl.innerHTML = pop; }
     const net = g.netIncome;
     this.moneyBtn.innerHTML = `<b class="${g.money < 0 ? "bad" : ""}">${formatMoney(Math.round(g.money))}</b><span class="${net >= 0 ? "good" : "bad"}">${signed(net)}/h</span>`;
     this.moneyBtn.setAttribute("aria-label", `Money ${formatMoney(Math.round(g.money))}, ${signed(net)} per hour. Open economy`);
@@ -878,6 +884,7 @@ export class Hud {
     this.seasons.tick(!this.banner.hidden || this.bannerQ.length > 0);
     this.renderTips();
     this.ledger.observe(g);
+    watchSites(g);
     if (this.sel) this.fillSel();
     if (this.winKind) this.fillWin();
   }
@@ -890,9 +897,10 @@ export class Hud {
     const g = this.app.game;
     if (this.sel || this.app.mode !== "play") { this.tut.hidden = true; this.hint(null); return; }
     const prefs = this.tipPrefs;
-    const tip = prefs.off ? null : tipFor(g, (id) => prefs.dismissed.has(id));
-    this.tut.hidden = false;
     const open = g.progress.open();
+    // (with every goal reached the card lists the towns' shortfalls itself: the tip that says the same stands down)
+    const tip = prefs.off ? null : tipFor(g, (id) => prefs.dismissed.has(id) || (id === "ceiling" && !open.length));
+    this.tut.hidden = false;
     const v = g.progressView();
     const folded = this.tutHidden;
     const head = `<button class="gl-head" aria-expanded="${!folded}" aria-controls="gl-body"><b>Goals</b><span class="gl-count">${g.progress.done.length} of ${MILESTONES.length} reached</span><span class="gl-caret">${ICON.caret}</span></button>`;
@@ -906,7 +914,7 @@ export class Hud {
           <span class="bar gl-bar" role="progressbar" aria-label="${m.name}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p * 100)}"><i style="width:${Math.max(2, p * 100)}%"></i></span>
           <p class="gl-gift">${unlockList(m.unlocks).join(" · ")}</p></li>`;
       }).join("");
-      body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : `<p class="gl-done">Every milestone reached, to the first cars off the line. More comes with the Metropolis.</p>`}${tip ? `<div class="gl-tip" data-tip="${tip.id}"><p>${tip.html}</p><button class="gl-x" aria-label="Dismiss this tip" title="Dismiss this tip (Pause › Tips turns them all off)">${ICON.close}</button></div>` : ""}</div>`;
+      body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : this.afterGoals()}${tip ? `<div class="gl-tip" data-tip="${tip.id}"><p>${tip.html}</p><button class="gl-x" aria-label="Dismiss this tip" title="Dismiss this tip (Pause › Tips turns them all off)">${ICON.close}</button></div>` : ""}</div>`;
     }
     const html = head + body;
     if (this.tut.dataset.html !== html) {
@@ -920,6 +928,18 @@ export class Hud {
       if (hadFocus && !this.tut.contains(document.activeElement)) btn.focus({ preventScroll: true });
     }
     this.hint(folded ? null : tip?.cat ?? null);
+  }
+
+  /**
+   * Under the Goals card once every goal is reached (play-test 2026-11-09, E2: "nothing to aim at"): what the towns
+   * are short of, the biggest first, each turned into works to build.
+   */
+  private afterGoals(): string {
+    const jobs = shortfalls(this.app.game);
+    if (!jobs.length) return `<p class="gl-done">Every goal reached, and every town has what it needs. Grow them on: the next size asks for more.</p>`;
+    const items = jobs.map((j) => `<li><div class="gl-top"><b>${PRODUCTS[j.p].name}</b><span class="num">${fmtNum(j.more)} more ${j.more === 1 ? "load" : "loads"} a day</span></div>
+      <p class="gl-goal gl-job">${escapeHtml(j.say)}</p></li>`).join("");
+    return `<p class="gl-done">Every goal reached. Now the towns set the work:</p><ol class="gl-list">${items}</ol>`;
   }
 
   private hint(cat: string | null) {
@@ -1138,10 +1158,20 @@ export class Hud {
       const M = X.m;
       const co = g.company;
       const names = (X.towns ?? []).map((id) => g.towns.byId.get(id)?.name).filter((n): n is string => !!n);
+      // new works are introduced one by one, in the order to build them, each with what it takes and makes
+      // (play-test 2026-11-09, B5: "Village unlocks four buildings at once and then explains none of them")
+      const works = buildOrder(M.unlocks.buildings ?? []);
+      const intro = works.map((k) => {
+        const D = PLANTS[k];
+        const needs = [D.site ? `site needs ${siteShort(D.site)}` : "", D.power ? `draws ${D.power} MW` : ""].filter(Boolean).join(" · ");
+        return `<li><span class="bn-ic" aria-hidden="true">${placedIcon(k)}</span><b>${BUILDING_TYPES[k].name}</b><span class="bn-flow as-flow" aria-hidden="true">${flowIcons(k)}</span><span class="bn-say">${escapeHtml(chainText(k))}${needs ? `<small>${escapeHtml(needs)}</small>` : ""}</span></li>`;
+      }).join("");
+      const rest = unlockList({ ...M.unlocks, buildings: [] }, names);
       this.banner.innerHTML = `<header class="banner-co">${heraldSvg(co.herald, co.name, 26)}<span>${M.name}</span></header>
         <p class="sub">${escapeHtml(co.name)} · milestone reached · ${M.goal}</p>
-        <p class="gifts">Unlocked: ${unlockList(M.unlocks, names).map(escapeHtml).join(" · ")}</p>
-        <div class="banner-btns"><button class="btn primary" data-k="ok">Continue</button></div>`;
+        ${works.length ? `<p class="bn-lead">${works.length > 1 ? "New in Industry, in the order to build them" : "New in Industry"}</p><ol class="bn-new${works.length > 1 ? " num" : ""}">${intro}</ol>` : ""}
+        ${rest.length ? `<p class="gifts">${works.length ? "Also" : "Unlocked"}: ${rest.map(escapeHtml).join(" · ")}</p>` : ""}
+        <div class="banner-btns">${works.length ? `<button class="btn" data-k="industry">Open Industry</button>` : ""}<button class="btn primary" data-k="ok">Continue</button></div>`;
     } else if ("town" in X) {
       const S = TOWN_SIZES[X.size];
       const adds = S.adds.filter((p) => needFrom(p) === S.pop).map((p) => PRODUCTS[p].name.toLowerCase());
@@ -1170,6 +1200,19 @@ export class Hud {
     if (sc && civ) sc.onclick = () => { this.app.glideTo(civ.c, Math.max(150, Math.hypot(civ.hw, civ.hd) * 2.8)); this.nextBanner(); };
     const fly = this.banner.querySelector<HTMLButtonElement>('[data-k="fly"]');
     if (fly && t) fly.onclick = () => { this.nextBanner(); this.app.flyToTown(t.id); };
+    // (a milestone's new works: straight to their tab in the catalog, nothing in hand)
+    const ind = this.banner.querySelector<HTMLButtonElement>('[data-k="industry"]');
+    if (ind && "m" in X) ind.onclick = () => {
+      const first = buildOrder(X.m.unlocks.buildings ?? [])[0];
+      const tab = CATS.industry.tabs.find((x) => x.assets.some((a) => a.kind === "placed" && a.id === first));
+      this.nextBanner();
+      if (tab) this.tab.industry = tab.id;
+      this.cat = "industry";
+      this.catPeek = false;
+      this.sfx.play("open");
+      if (this.app.st.tool !== "inspect") this.app.setTool({ tool: "inspect" });
+      else this.refresh();
+    };
     this.bannerMore();
     // a milestone waits to be read; a town's news steps aside by itself after a while (and doesn't take the keyboard)
     if ("m" in X || lm || "spawned" in X) requestAnimationFrame(() => ok.focus({ preventScroll: true }));
@@ -1359,6 +1402,8 @@ export class Hud {
       refocus = (root) => root.querySelectorAll<HTMLElement>("button, input, select, [tabindex]")[i] ?? null;
     }
     this.win.innerHTML = full;
+    // (the windows that are lists of named things get the room to name them: A15, E4)
+    this.win.classList.toggle("wide", title === "Towns" || title === "Economy");
     this.win.querySelector(".win-body")!.scrollTop = scroll;
     if (refocus) refocus(this.win)?.focus({ preventScroll: true });
     (this.win.querySelector(".close") as HTMLButtonElement).onclick = () => this.closeWin();
@@ -1470,9 +1515,16 @@ export class Hud {
     const total = rows.reduce((a, [, v]) => a + v, 0);
     const n = Math.max(1, g.budgetLog.length);
     // each plant's own books over the last hour
-    const plants = g.industry.plants().map((b) => {
+    // (told apart by where they stand, the ones in trouble first; a row flies there. Play-test 2026-11-09, E3:
+    // "plants cannot be told apart")
+    const open = (b: Building) => b.built >= 1 && !b.plant!.site;
+    // (its trouble: the steady reading, the same one its panel and its mark on the map go by)
+    const trouble = new Map(g.industry.plants().map((b) => [b.id, steadyProblem(g, b)]));
+    const rank = (b: Building) => (trouble.get(b.id) && open(b) ? 0 : open(b) ? 1 : 2);
+    const plants = [...g.industry.plants()].sort((a, b) => rank(a) - rank(b) || (a.plant!.last.earned - a.plant!.last.spent) - (b.plant!.last.earned - b.plant!.last.spent)).map((b) => {
       const L = b.plant!.last, net = L.earned - L.spent;
-      return `<dt>${BUILDING_TYPES[b.kind].name}</dt><dd class="${net >= 0 ? "good" : "bad"}">${signed(net)}</dd>`;
+      const state = !open(b) ? `<span class="ec-st">Being built</span>` : trouble.get(b.id) ? `<span class="ec-st bad">${escapeHtml(trouble.get(b.id)!.split(": ")[0])}</span>` : "";
+      return `<li><button class="ec-row" data-id="${b.id}" title="Show this ${escapeHtml(BUILDING_TYPES[b.kind].name)} on the map"><span class="ec-ic" aria-hidden="true">${iconFor(b.kind)}</span><span class="ec-name"><b>${BUILDING_TYPES[b.kind].name}</b><span class="small muted">${escapeHtml(whereIs(g, b))}</span>${state}</span><span class="num ${net >= 0 ? "good" : "bad"}">${signed(net)}</span></button></li>`;
     }).join("");
     // what the company made over the last day, per product, against what its plants can make
     const made = new Map<Product, { made: number; can: number; byHour: number[] }>();
@@ -1491,9 +1543,17 @@ export class Hud {
       <dl class="facts money-rows">${rows.filter(([, v, always]) => always || Math.abs(v) >= 0.5).map(([k, v]) => `<dt>${k}</dt><dd class="${v > 0 ? "good" : v < 0 ? "bad" : ""}">${signed(v)}</dd>`).join("")}
       <dt class="tot">Balance</dt><dd class="tot ${total >= 0 ? "good" : "bad"}">${signed(total)}</dd></dl>
       ${prodRows ? `<h3 class="sub-h">Made, last 24 hours <span class="muted">· made / can make</span></h3><ul class="pd-list">${prodRows}</ul>` : ""}
-      ${plants ? `<h3 class="sub-h">Your plants, last hour</h3><dl class="facts">${plants}</dl>` : ""}
+      ${plants ? `<h3 class="sub-h">Your works, last hour <span class="muted">· click one to go there</span></h3><ul class="ec-list">${plants}</ul>` : ""}
       ${sparkline(g.history.map((x) => x.money), "Money")}`;
-    this.setWin("Economy", html);
+    if (!this.setWin("Economy", html)) return;
+    for (const r of this.win.querySelectorAll<HTMLButtonElement>(".ec-row")) r.onclick = () => {
+      const b = g.buildings.byId.get(+r.dataset.id!);
+      if (!b) return;
+      this.sfx.play("click");
+      this.app.setTool({ tool: "inspect" });
+      this.app.glideTo(b.c, Math.min(this.app.view.halfH, CHIP_HALF_H), 1);
+      this.openBuilding(b);
+    };
   }
 
   private fillProgression() {
@@ -1524,6 +1584,8 @@ export class Hud {
       // (a town that sprang up and no road reaches yet says so: its needs mean nothing till one does)
       const need = t.spawned && !joinedUp(g, t)
         ? `<span class="tw-need low">No road yet</span>`
+        : t.spawned && !served(t)
+        ? `<span class="tw-need">Joined · first load due</span>`
         : worst && t.pop >= 60
         ? `<span class="tw-need ${worst.state === "low" ? "mid" : worst.state === "none" ? "low" : ""}">${productIcon(worst.p)}${PRODUCTS[worst.p].name} · ${worst.word}</span>`
         : "";
@@ -1548,19 +1610,24 @@ export class Hud {
   showTown(id: number) {
     const t = this.app.game.towns.byId.get(id);
     if (!t) return;
-    this.app.lookAt(t.c, Math.max(220, t.reach * 1.2));
+    // (in to where the town fills the view: from far out the row used to centre it and leave it a dot. E4)
+    this.app.glideTo(t.c, Math.max(220, t.reach * 1.2), 1);
     this.openTown(id);
   }
 
   private fillTransport() {
     const g = this.app.game;
     const flow = g.traffic.flowScore();
-    let cars = 0, trucks = 0;
-    for (const v of g.traffic.vehicles) { if (v.truck) trucks++; else cars++; }
+    let cars = 0, trucks = 0, standing = 0;
+    for (const v of g.traffic.vehicles) { if (v.truck) trucks++; else cars++; if (v.stuck >= STANDING_S && !v.dwell) standing++; }
+    const all = cars + trucks;
+    const jams = stuckSpots(g.traffic.stuckCars(STUCK_RAISE)).length;
     let len = 0;
     for (const s of g.net.segs.values()) len += cubicLength(s);
     const html = `<dl class="facts">
-        <dt>Traffic flow</dt><dd class="${flow < 0.6 ? "bad" : flow > 0.85 ? "good" : ""}">${Math.round(flow * 100)}%</dd>
+        <dt title="How fast traffic is moving, against the speed limits of the roads it is on">Traffic flow</dt><dd class="${flow < 0.6 ? "bad" : flow > 0.85 ? "good" : ""}">${Math.round(flow * 100)}%</dd>
+        <dt title="Vehicles that have not moved for ${STANDING_S} seconds or more">Standing still</dt><dd class="${all && standing / all > 0.25 ? "bad" : ""}">${fmtNum(standing)} <span class="muted">of ${fmtNum(all)} vehicles</span></dd>
+        ${jams ? `<dt>Stuck</dt><dd class="bad">${jams === 1 ? "one place" : `${jams} places`} <span class="muted">· the sign above the clock flies there</span></dd>` : ""}
         <dt>Cars on the road</dt><dd>${fmtNum(cars)}</dd>
         <dt>Trucks on the road</dt><dd>${fmtNum(trucks)}</dd>
         <dt>Road network</dt><dd>${(len / 1000).toFixed(1)} km</dd>
@@ -1671,7 +1738,9 @@ export class Hud {
       const g = this.app.game;
       const at = s.k === "town" ? g.towns.byId.get(s.id)?.c : s.k === "building" ? g.buildings.byId.get(s.id)?.c
         : s.k === "node" ? g.net.nodes.get(s.id)?.p : s.k === "vehicle" ? g.traffic.vehicles.find((v) => v.id === s.id) : undefined;
-      if (at && !this.app.onScreen(at)) this.app.glideTo(at, this.app.view.halfH, 1);
+      // (from far out a works is a dot: fly in to where it can be read. Play-test 2026-11-09, A20)
+      const near = s.k === "town" ? Infinity : CHIP_HALF_H;
+      if (at && (!this.app.onScreen(at) || this.app.view.halfH > near * 1.6)) this.app.glideTo(at, Math.min(this.app.view.halfH, near), 1);
     };
     return true;
   }
@@ -1822,7 +1891,7 @@ export class Hud {
     const elapsed = Math.max(0, g.time - tr.startT);
     rows.push(["On the road", `${Math.round((elapsed / HOUR) * 60)} min`]);
     if (tr.freeFlow > 0 && elapsed > tr.freeFlow * 1.15) rows.push(["Held up", `<span class="bad">+${Math.round(((elapsed - tr.freeFlow) / HOUR) * 60)} min</span> <span class="muted">over a clear road</span>`]);
-    if (v.block && v.v < 0.5) rows.push(["Waiting for", escapeHtml(v.block)]);
+    if (v.block && v.v < 0.5) rows.push(["Standing", escapeHtml(cap(blockWords(v.block)))]);
     const on = v.edge.kind === "lane" ? g.net.segs.get((v.edge as Lane).seg) : undefined;
     if (on) rows.push(["On", `${ROAD_TYPES[on.type].name} · ${Math.round(ROAD_TYPES[on.type].speed * 3.6)} km/h`]);
     const details = `<dl class="facts">${rows.map(([k, x]) => `<dt>${k}</dt><dd>${x}</dd>`).join("")}</dl>`;
@@ -1871,16 +1940,22 @@ export class Hud {
     const stations = mine.filter((b) => BUILDING_TYPES[b.kind].fuel).length;
     const offices = mine.some((b) => Industry.isOffice(b) && b.built >= 1 && !b.abandoned);
     const buyer = (p: Product) => (p === "fuel" && stations ? "Filling stations buy" : p === "machinery" && offices ? "Offices buy" : "Shops buy");
-    const views = townNeeds(t);
+    const joined = !t.spawned || joinedUp(g, t);
+    const views = townNeeds(t, t.spawned && joined);
     const rows = views.map((v) => {
       const tip = `${fmtLoads(v.got)} loads a day coming, of the ${fmtLoads(v.want)} it needs to grow. ${buyer(v.p)} up to ${fmtLoads(v.want * MARKET)} a day; ${fmtLoads(t.today[v.p] ?? 0)} so far today.`;
       const crates = Array.from({ length: v.crates.n }, (_, i) => `<i class="cr${i < v.crates.full ? " on" : ""}"></i>`).join("");
       const each = v.crates.per > 1 ? `<span class="nd-each">1 crate = ${fmtNum(v.crates.per)} loads</span>` : "";
+      // what to do about it, and the works to look at (play-test 2026-11-09, B1: the town said how much, never what)
+      // (a town no road reaches has one job, and its row says it: the works to build are not its trouble yet)
+      const nh = joined ? needHelp(g, t, v.p) : null;
+      const at = nh && "works" in nh ? g.buildings.byId.get(nh.works) : undefined;
+      const fix = nh ? `<span class="nd-fix"><span>${escapeHtml(nh.say)}</span>${at ? `<button class="fchip" data-k="building" data-id="${at.id}" title="Select your ${escapeHtml(BUILDING_TYPES[at.kind].name)} and light it up on the map">${iconFor(at.kind)}<span class="fc-t">Show it</span></button>` : ""}</span>` : "";
       return `<li class="nd ${v.state}" title="${escapeHtml(tip)}">
           <span class="nd-ic" aria-hidden="true">${productIcon(v.p)}</span>
           <span class="nd-top"><b>${PRODUCTS[v.p].name}</b><span class="nd-st">${v.word}</span></span>
           <span class="nd-crates" role="img" aria-label="${v.crates.full} of ${v.crates.n} crates filled">${crates}${each}</span>
-          <span class="nd-say">${escapeHtml(v.say)}</span>
+          <span class="nd-say">${escapeHtml(v.say)}</span>${fix}
         </li>`;
     }).join("");
     const cn = comingNeeds(t.pop);
@@ -2055,13 +2130,12 @@ export class Hud {
       const tw = b.town !== undefined ? g.towns.byId.get(b.town) : undefined;
       if (Industry.isOffice(b) && tw && needsOf(tw.pop).includes("machinery")) rows.push(["Buys", `${productIcon("machinery")} Machinery`]);
     }
-    const nextLv = b.level < 5 ? LEVEL_LV[b.level + 1] : null;
-    const lvBar = `<span class="bar lv"><i style="width:${Math.max(3, b.lv)}%"></i>${nextLv ? `<em style="left:${nextLv}%"></em>` : ""}</span>`;
-    rows.push(["Land value", `${lvBar}<span class="num">${Math.round(b.lv)}</span>`]);
-    const lvK = nextLv ? Math.max(0, Math.min(1, (b.lv - LEVEL_LV[b.level]) / (nextLv - LEVEL_LV[b.level]))) : 1;
-    rows.push(["Level", `<span class="lv-run">${levelRun(`Level ${b.level}`, nextLv ? `Level ${b.level + 1}` : undefined, lvK)}</span>${nextLv ? `<span class="muted small">at land value ${nextLv}</span>` : ""}`]);
-    const details = `<dl class="facts">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
-    if (this.setPanel(this.anatomy(m, { kind: grp === "res" ? "home" : "shop", actions: act, details }))) this.bindDemolishBtn(demolish);
+    // (a town's own building: the town puts it up, grows it and replaces it. No land value, level or demolish
+    // button here, which were a city-builder's: the Bulldoze tool still clears one out of a road's way. D8)
+    const whose = b.town !== undefined ? `<p class="small muted ip-note">${escapeHtml(g.towns.byId.get(b.town)?.name ?? "The town")} builds and looks after it. It grows with the town.</p>` : "";
+    const details = rows.length ? `<dl class="facts">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>` : undefined;
+    const mine = b.town === undefined;
+    if (this.setPanel(this.anatomy(m, { kind: grp === "res" ? "home" : "shop", actions: mine ? act : undefined, body: whose, details })) && mine) this.bindDemolishBtn(demolish);
   }
 
   /** A warehouse's panel: what it holds, and per product whether it takes it and whether it is a feeder for it. */
@@ -2510,6 +2584,19 @@ function siteLevel(b: Building, next: Product[] = []): string {
 
 const km = (m: number) => `${(m / 1000).toFixed(1)} km`;
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
+/** Seconds without moving before a vehicle counts as standing still in the Transportation window. */
+const STANDING_S = 15;
+
+/** Where a works stands, to tell it from the others of its kind: "600 m north-east of Alder Run". */
+function whereIs(g: Game, b: Building): string {
+  let t: Town | null = null, bd = Infinity;
+  for (const x of g.towns.list) { const d = Math.hypot(x.c.x - b.c.x, x.c.y - b.c.y); if (d < bd) { bd = d; t = x; } }
+  if (!t) return "";
+  return `${bd < 950 ? `${Math.round(bd / 50) * 50} m` : `${(bd / 1000).toFixed(1)} km`} ${compassWords(t.c, b.c)} of ${t.name}`;
+}
+
+/** The view (half its height, m) a panel chip flies in to when its works is clicked from far out. */
+const CHIP_HALF_H = 420;
 const fmtLoads = (n: number) => (n < 10 && n % 1 ? n.toFixed(1) : Math.round(n).toLocaleString("en-US"));
 
 function productList(o: Partial<Record<Product, number>>): string {
