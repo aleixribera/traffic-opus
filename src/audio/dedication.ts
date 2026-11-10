@@ -52,6 +52,21 @@ export function dedicationFor(ev: DedicationEvent, hour: number): Dedication {
   }
 }
 
+/**
+ * Which of two things happening together gets the number (higher wins): a landmark over a goal over a town, a
+ * convoy, then a jam cleared. A bigger town beats a smaller one.
+ */
+export function weightOf(ev: DedicationEvent): number {
+  switch (ev.k) {
+    case "landmark": return 60;
+    case "goal": return 50;
+    case "newTown": return 42;
+    case "townSize": return 40 + Math.min(9, ["Village", "Town", "City", "Metropolis"].indexOf(ev.size) + 1);
+    case "convoy": return 30;
+    case "jam": return 20;
+  }
+}
+
 /** The whole line, as plain text (the card sets the name in bold). */
 export const lineOf = (d: Dedication) => `${d.lead} ${d.to}${d.sep}${d.why}.`;
 
@@ -63,9 +78,13 @@ export class DedicationDesk {
   /** A game was opened (a load, a new game) at real time `now` (s). */
   open(now: number) { this.opened = now; }
 
+  /** One may go out now (nothing is used up: `offer` takes the turn). */
+  ready(now: number): boolean {
+    return now - this.opened >= DEDICATION_SETTLE && now - this.last >= DEDICATION_GAP;
+  }
+
   offer(now: number): boolean {
-    if (now - this.opened < DEDICATION_SETTLE) return false;
-    if (now - this.last < DEDICATION_GAP) return false;
+    if (!this.ready(now)) return false;
     this.last = now;
     return true;
   }
