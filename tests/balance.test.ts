@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Game, START_MONEY } from "../src/game/city";
 import type { Trip } from "../src/sim/traffic";
 import { DAY, HOUR } from "../src/game/society";
-import { BLOCK, TOWN_SIZES, gridPt, needsOf, sizeOf } from "../src/game/towns";
+import { TOWN_SIZES, blockOf, demandPerDay, gridPt, needsOf, sizeOf } from "../src/game/towns";
 import { type Town } from "../src/game/settlements";
 import { PLANTS, PRODUCTS, type PlantKind, type Product } from "../src/game/industry";
 import { MILESTONES, OPEN_AT_ONCE } from "../src/game/progression";
@@ -126,6 +126,8 @@ function play() {
         const pl = g.placedPlan(kind, p);
         if (pl?.ok) {
           const x = g.place(kind, p)!;
+          // (a spot whose gate no street reaches is no use: a player would see "No road to the gate" and move it)
+          if (!x.access) { g.undo(); continue; }
           say(`place ${kind}${x.plant!.yld < 1 ? ` (${Math.round(x.plant!.yld * 100)}% on its deposit)` : ""}, ${(dist(p, A.c) / 1000).toFixed(1)} km from ${A.name} · $${Math.round(g.money).toLocaleString("en-US")} left`);
           return x;
         }
@@ -151,9 +153,9 @@ function play() {
    * player wouldn't).
    */
   const edge = (t: Town, toward: V2, built = false) => {
-    let best = gridPt(t.c, t.ang, 1, 0), bd = Infinity;
+    let best = gridPt(t.c, t.ang, 1, 0, blockOf(t)), bd = Infinity;
     for (const [i, j] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
-      const q = gridPt(t.c, t.ang, i, j);
+      const q = gridPt(t.c, t.ang, i, j, blockOf(t));
       const d = dist(q, toward) + (built && !isBuilt(q) ? 1e5 : 0);
       if (d < bd) { bd = d; best = q; }
     }
@@ -164,7 +166,7 @@ function play() {
 
   const A = g.towns.list[0];
   say(`start: ${A.name}, ${A.pop} people, $${START_MONEY.toLocaleString("en-US")}`);
-  const soil = deposit(F.fert, gridPt(A.c, A.ang, 1 + 320 / BLOCK, 0), 60, 1500)!;
+  const soil = deposit(F.fert, gridPt(A.c, A.ang, 1 + 320 / blockOf(A), 0, blockOf(A)), 60, 1500)!;
   const wood = deposit(F.forest, A.c, 400, 3000)!;
   /** Spots on a deposit field, nearest the start first (one per patch or so). */
   const spots = (field: number, from = 2500, to = 8000, need = 23): V2[] => {
@@ -188,7 +190,7 @@ function play() {
   const blocked = new Map<string, number>();
   /** Where a new road to q starts: the nearest of the company's road ends and the towns' street ends. */
   const startsFor = (q: V2): V2[] =>
-    [edge(A, q), ...joined().map((t) => edge(t, q)), ...Object.values(roads).flat()].sort((x, y) => dist(x, q) - dist(y, q));
+    [edge(A, q, true), ...joined().map((t) => edge(t, q, true)), ...Object.values(roads).flat()].sort((x, y) => dist(x, q) - dist(y, q));
   const startFor = (q: V2): V2 => startsFor(q)[0];
   /**
    * A site on a deposit, the way a player places one: the plot near `near` with the most of the field under it,
@@ -488,6 +490,11 @@ function play() {
   // ---------------------------------------------------------------- the clock
   let first = -1, steel = -1, cement = -1, fuel = -1, goods = -1, parts = -1, town = -1, copper = -1, electronics = -1, machinery = -1, milk = -1, supplies = -1, car = -1;
   const started = Date.now();
+  /** the most company trucks on the road at once (sampled hourly), and when each size was first reached */
+  let peakTrucks = 0, peakAt = 0;
+  const sizeAt: number[] = TOWN_SIZES.map(() => -1);
+  /** the most loads a day any one town wanted of all its needs, and of food (its demand, not what came) */
+  let peakLoads = 0, peakFood = 0;
   for (let h = 0; h < MAX_DAYS * 24; h++) {
     plan();
     for (let i = 0; i < HOUR * 30; i++) {
@@ -508,6 +515,14 @@ function play() {
     if (milk < 0 && (g.progress.sold.milk ?? 0) >= 1) { milk = g.time; say("FIRST MILK SOLD"); }
     if (supplies < 0 && ((made.fertilizer ?? 0) >= 1 || (made.explosives ?? 0) >= 1)) { supplies = g.time; say("FIRST SUPPLIES FROM THE CHEMICAL WORKS"); }
     if (car < 0 && (g.progress.sold.cars ?? 0) >= 1) { car = g.time; say("FIRST CAR SOLD"); }
+    const onRoad = g.traffic.vehicles.filter((v) => v.trip.haul).length;
+    if (onRoad > peakTrucks) { peakTrucks = onRoad; peakAt = g.time; }
+    for (const t of g.towns.list) {
+      const s = sizeOf(t.pop);
+      for (let k = 1; k <= s; k++) if (sizeAt[k] < 0) { sizeAt[k] = g.time; say(`SIZE ${TOWN_SIZES[k].name}: ${t.name} ${t.pop}`); }
+      peakLoads = Math.max(peakLoads, needsOf(t.pop).reduce((a, p) => a + demandPerDay(p, t.pop), 0));
+      peakFood = Math.max(peakFood, demandPerDay("food", t.pop));
+    }
     if (h % 24 === 23) {
       const pct = (o: Partial<Record<Product, number>>) => Object.entries(o).map(([p, v]) => `${p} ${Math.round(v! * 100)}%`).join(" ");
       const towns = g.towns.list.map((t) => `${t.name} ${t.pop} (${pct(t.supply)})`).join(", ");
@@ -533,7 +548,7 @@ function play() {
     if (T5 ? car >= 0 : T4 ? electronics >= 0 && machinery >= 0 : T3 ? g.progress.isDone("townSupplied") : cement >= 0 && steel >= 0) break;
   }
   const supplied = reached.find((r) => r.id === "townSupplied")?.t ?? -1;
-  return { g, lines, reached, spawned, first, low, steel, cement, fuel, goods, parts, town, supplied, poorHours, copper, electronics, machinery, milk, supplies, car };
+  return { g, lines, reached, spawned, first, low, peakTrucks, peakAt, sizeAt, peakLoads, peakFood, steel, cement, fuel, goods, parts, town, supplied, poorHours, copper, electronics, machinery, milk, supplies, car };
 }
 
 describe("Balance: the game to Town size", () => {
@@ -572,6 +587,9 @@ describe("Balance: the game to Town size", () => {
       `first steel day ${day(steel)}, first cement day ${day(cement)}, first fuel day ${day(r.fuel)}, first goods day ${day(r.goods)}, first parts day ${day(r.parts)}, a Town day ${day(r.town)}, a Town supplied day ${day(r.supplied)}${T4 ? `, first copper day ${day(r.copper)}, first electronics day ${day(r.electronics)}, first machinery day ${day(r.machinery)}` : ""}${T5 ? `, first milk sold day ${day(r.milk)}, first supplies day ${day(r.supplies)}, first car day ${day(r.car)}` : ""}`,
       `at 1x: first delivery ${min(r.first)}, sawmill placed ${min(said(/place sawmill/))}, planks10 ${min(at1("planks10"))}, Village ${min(at1("village"))}, first steel ${min(steel)}, first cement ${min(cement)}`,
       `new towns: ${r.spawned.map((s) => `${s.t.name} at ${min(s.at)} (day ${day(s.at)}), ${(s.dist / 1000).toFixed(1)} km from the nearest town, joined ${s.joined < 0 ? "never" : min(s.joined)}`).join("; ") || "none"}`,
+      `sizes first reached at 1x: ${TOWN_SIZES.slice(1).map((s, i) => `${s.name} ${min(r.sizeAt[i + 1])}`).join(", ")}`,
+      `towns at the end (day ${day(g.time)}): ${g.towns.list.map((t) => `${t.name} ${t.pop}`).join(", ")}; ${g.towns.list.reduce((a, t) => a + t.pop, 0)} people in all`,
+      `peak company trucks on the road ${r.peakTrucks} (day ${day(r.peakAt)}); most loads a day one town wanted ${Math.round(r.peakLoads)}, of food ${Math.round(r.peakFood)}`,
       `lowest balance $${Math.round(low).toLocaleString("en-US")}; hours a build waited for money in tier 3: ${r.poorHours}; ${((Date.now() - t0) / 1000).toFixed(0)} s`].join("\n"));
     // solvent all the way
     expect(low).toBeGreaterThanOrEqual(0);
@@ -592,7 +610,8 @@ describe("Balance: the game to Town size", () => {
     expect(at("food10")).toBeLessThan(at("village"));
     expect(at("village")).toBeLessThan(at("steel"));
     expect(at("heavy")).toBeLessThan(at("cement"));
-    expect(at("steel")).toBeLessThan(at("cement"));
+    // (steel opens nothing cement needs: Steady trade opens the quarry and the cement works, so either may come first;
+    // with towns that eat less, the cement chain now often wins while the smelter waits on its far iron ore)
     // never more than OPEN_AT_ONCE ahead of the first one not reached
     for (const [i, id] of ids.entries()) expect(MILESTONES.findIndex((m) => m.id === id)).toBeLessThan(i + OPEN_AT_ONCE + 1);
     if (!T3) return;

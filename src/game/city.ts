@@ -1466,9 +1466,13 @@ export class Game {
         ux += Math.cos(c.rot); uy += Math.sin(c.rot);
       }
       const rot = Math.atan2(uy, ux), hw = (C.w * CELL) / 2, hd = (C.d * CELL) / 2;
-      // (nothing else of the town's or the company's in the way: a hall, another civic building, a site's fence, or a
-      // home beside it that stands a little over its cells, as one does when its street was re-laid since it was built)
-      if (this.buildings.list.some((o) => !s.gone.has(o.id) && dist(o.c, s.c) < hw + hd + o.hw + o.hd && obbOverlap(s.c, hw - 0.5, hd - 0.5, rot, o.c, o.hw, o.hd, o.rot))) continue;
+      // (nothing else of the town's or the company's in the way: a hall, another civic building, a site's fence)
+      if (this.buildings.list.some((o) => !o.zone && !s.gone.has(o.id) && dist(o.c, s.c) < hw + hd + o.hw + o.hd && obbOverlap(s.c, hw - 0.5, hd - 0.5, rot, o.c, o.hw, o.hd, o.rot))) continue;
+      // (and a home or shop on a neighbouring block whose lot reaches over it, round a corner, makes way too; one of
+      // another town's rules the spot out)
+      const over = this.buildings.list.filter((o) => o.zone && !s.gone.has(o.id) && dist(o.c, s.c) < hw + hd + o.hw + o.hd && obbOverlap(s.c, hw - 0.5, hd - 0.5, rot, o.c, o.hw - 0.5, o.hd - 0.5, o.rot));
+      if (over.some((o) => o.town !== town)) continue;
+      for (const o of over) s.gone.add(o.id);
       const away = { x: -Math.sin(rot) * blk.side, y: Math.cos(rot) * blk.side };
       const front = add(s.c, scale(away, -(hd + zoneEdge(g.width) - g.width / 2)));
       this.clearForTown(town, [...s.gone].map((id) => this.buildings.byId.get(id)).filter((b): b is Building => !!b));
@@ -1503,14 +1507,16 @@ export class Game {
   /**
    * Debug and tests: run a town's own growth for some game hours without the traffic, every need met. Construction,
    * streets, zoning, redevelopment, households and its history all run as in play; trips and the plants don't.
+   * `pace`: it grows that many times faster than in play (a test that wants a Town without a month of game time).
    */
-  fastForward(town: number, hours: number, ample = 1) {
+  fastForward(town: number, hours: number, ample = 1, pace = 1) {
     const AMPLE = ample;
     const t = this.towns.byId.get(town);
     if (!t) return;
     const TICK = HOUR / 8;
     this.ticking = true;
     this.grew = false;
+    this.towns.pace = pace;
     try {
       for (let k = 0; k < hours * 8; k++) {
         this.time += TICK;
@@ -1531,7 +1537,7 @@ export class Game {
         const day = Math.floor(this.time / DAY);
         if (day !== this.dayN) { this.towns.daily(); this.dayN = day; }
       }
-    } finally { this.ticking = false; }
+    } finally { this.ticking = false; this.towns.pace = 1; }
     this.towns.census();
     this.emit({ t: "zones" });
     this.emit({ t: "buildings" });

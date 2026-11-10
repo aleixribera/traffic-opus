@@ -25,8 +25,8 @@ describe("a town's needs, read out", () => {
     g = new Game(7);
     g.start();
     t = g.towns.list[0];
-    // a hamlet of 40: food only, about 5 loads a day, one step a load
-    t.pop = 40;
+    // a hamlet of 85: food only, about 5 loads a day, one step a load
+    t.pop = 85;
   });
 
   it("breaks between the states where the sim does", () => {
@@ -144,8 +144,8 @@ describe("a town's needs, read out", () => {
 
   it("a big town's need: a trickle under a step reads None!, half reads Running low with a half bar", () => {
     const pop = t.pop;
-    t.pop = 1600;
-    const want = demandPerDay("food", 1600), step = loadStep(want);
+    t.pop = 3000;
+    const want = demandPerDay("food", 3000), step = loadStep(want);
     expect(step).toBeGreaterThan(1);
     feed(step * 0.5);
     expect(needView(t, "food").state).toBe("none");

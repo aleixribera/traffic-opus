@@ -14,7 +14,7 @@ export type NeedState = "plenty" | "enough" | "low" | "none";
 /** The one word for each state (never colour alone: the word says it too). */
 export const NEED_WORD: Record<NeedState, string> = { plenty: "Plenty", enough: "Enough", low: "Running low", none: "None!" };
 
-// (a need supplied this well lets the town grow: supply.ts ENOUGH, 80% of a day's needs and up)
+// (a need supplied this well lets the town grow: supply.ts ENOUGH, 85% of a day's needs and up)
 export { ENOUGH };
 /** A need is read in at most this many steps: under one step's worth coming, it reads "None!". */
 export const STEPS = 10;

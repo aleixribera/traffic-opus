@@ -43,7 +43,7 @@ describe("zone cells re-tested only near a road edit", () => {
     const t = g.towns.list[0];
     let checks = 0;
     for (let d = 0; d < 40 && sizeOf(t.pop) < 2; d++) {
-      g.fastForward(t.id, 24);
+      g.fastForward(t.id, 24, 1, 5);
       // (every cell usable or not alike too, whatever order the blocks were laid in: zones.ts revalidate)
       expect(diff(g.zones, shadow).slice(0, 8), `day ${d}`).toEqual([]);
       checks++;
@@ -57,7 +57,7 @@ describe("zone cells re-tested only near a road edit", () => {
     const shadow = attachShadow(g);
     g.start();
     const t = g.towns.list[0];
-    for (let d = 0; d < 8; d++) g.fastForward(t.id, 24);
+    for (let d = 0; d < 8; d++) g.fastForward(t.id, 24, 1, 5);
     // an avenue straight across the town between its streets (away from its square), and a street across that
     const at = (i: number, j: number) => gridPt(t.c, t.ang, i, j);
     road(g, at(-3.5, -0.45 * t.sq[1]), at(3.5, -0.45 * t.sq[1]), "avenue");

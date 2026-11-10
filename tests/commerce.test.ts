@@ -45,10 +45,10 @@ describe("a City's commerce", () => {
     g = new Game(7);
     g.start();
     t = g.towns.list[0];
-    for (let d = 0; d < 240 && t.pop < 7000; d++) g.fastForward(t.id, 6);
+    for (let d = 0; d < 240 && t.pop < 7000; d++) g.fastForward(t.id, 6, 1, 5);
     // then a few days at that size, for its old houses on the high streets to make way for shops
     const hold = t.target;
-    for (let d = 0; d < 8; d++) { t.target = hold; g.fastForward(t.id, 24); t.target = hold; }
+    for (let d = 0; d < 8; d++) { t.target = hold; g.fastForward(t.id, 24, 1, 5); t.target = hold; }
     g.towns.census();
   }, 600_000);
 
