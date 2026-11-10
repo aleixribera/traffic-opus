@@ -322,12 +322,13 @@ export function worksStatus(g: Game, b: Building): PanelModel["status"] {
     else if (ws) status = { text: ws.text, tone: ws.tone, fix: ws.fix, show: ref(ws.show) };
     else if (b.problem) {
       const pf = powerFix(g, b);
-      status = pf ? { text: splitProblem(b.problem).text, tone: "bad", fix: `${powerCause(b.problem)}${pf.fix}`, show: ref(pf.show) }
+      status = pf?.back ? { text: "Power back on", tone: "", fix: pf.fix, show: ref(pf.show) }
+        : pf ? { text: splitProblem(b.problem).text, tone: "bad", fix: `${powerCause(b.problem)}${pf.fix}`, show: ref(pf.show) }
         : waitingFor(g, b) ?? noBuyer(g, b) ?? { ...splitProblem(b.problem), tone: "bad" };
     }
     else {
       // (at the top of what it can make while somebody would take more: the one state "Working normally" hid)
-      const c = D.logistics ? null : ceilingOf(g, b);
+      const c = D.logistics ? null : powerCeiling(g, b) ?? ceilingOf(g, b);
       status = c ? { text: "At full output", tone: "", fix: c.fix }
         : (D.logistics ? null : waitingFor(g, b)) ?? { text: D.logistics === "depot" ? "Filling your trucks" : D.logistics === "warehouse" ? "Storing and shipping" : "Working normally", tone: "good" };
     }
@@ -339,6 +340,17 @@ export function worksStatus(g: Game, b: Building): PanelModel["status"] {
     status.tag = `${SEASON_NAME[se]}${word ? ` ${word}` : ""} ×${m.toFixed(1)}`;
   }
   return status;
+}
+
+/**
+ * A power plant making all it can while the works in its reach want more: its own "At full output" (the late save
+ * read "Working normally" here beside three works short of its power).
+ */
+export function powerCeiling(g: Game, b: Building): { fix: string } | null {
+  const pl = g.utilities.plants.get(b.id);
+  if (!pl || pl.made <= 0 || pl.used <= pl.made * 1.02) return null;
+  const short = g.buildings.list.filter((o) => g.utilities.supplyOf(o) < 0.999 && g.utilities.reaches(b, o)).length, L = b.plant!.level ?? 1;
+  return { fix: `The ${short === 1 ? "works" : `${short} works`} in its reach want ${Math.round(pl.used)} MW. It makes ${Math.round(pl.made)}. Build another Power Plant nearby${L < SITE_LEVELS && !b.plant!.why ? `, or wait for level ${L + 1}` : ""}.` };
 }
 
 /** Is a works fine to leave alone (no mark on the map, no red in a list)? Anything its status does not call bad. */
@@ -384,7 +396,8 @@ export function siteModel(g: Game, b: Building, led?: TradeLedger): PanelModel {
     keys.push({ value: String(Math.round(made)), unit: ` MW`, label: `made, of ${D.makes}`, tone: toneOf(made / Math.max(1, D.makes), 0.8, 0.3) });
     // (with nothing made, the buildings in its reach are not powered: "4 buildings powered" beside "0 MW" disagreed)
     const users = pl?.users ?? 0, things = users === 1 ? "building" : "buildings";
-    keys.push({ value: String(users), label: made > 0 ? `${things} powered` : `${things} in reach, unpowered`, tone: made > 0 || !users ? "" : "bad", title: `${Math.round(pl?.used ?? 0)} MW wanted in reach` });
+    const over = made > 0 && (pl?.used ?? 0) > made * 1.02;
+    keys.push({ value: String(users), label: made <= 0 ? `${things} in reach, unpowered` : over ? `${things} in reach, short` : `${things} powered`, tone: (made > 0 && !over) || !users ? "" : "bad", title: `${Math.round(pl?.used ?? 0)} MW wanted in reach` });
     if (fuel) keys.push({ value: String(Math.floor(P.stock[fuel] ?? 0)), unit: `/${Industry.storeOf(b)}`, label: `${lower(fuel)} in the yard`, tone: (P.stock[fuel] ?? 0) < 1 ? "bad" : "" });
   } else if (b.built >= 1 && outs.length) {
     const p0 = outs[0];

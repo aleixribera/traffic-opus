@@ -1596,7 +1596,7 @@ export class Hud {
       }
     }
     const prodRows = [...made].map(([p, e]) => `<li><span class="pd-name">${productIcon(p)}${PRODUCTS[p].name}</span>${hourTicks(e.byHour, PRODUCTS[p].color)}<span class="num"><b>${fmtNum(Math.round(e.made))}</b><span class="muted"> / ${fmtNum(Math.round(e.can))}</span></span></li>`).join("");
-    const html = `<p class="win-sub">Average hour, last ${n} hour${n === 1 ? "" : "s"}</p>
+    const html = `<p class="win-sub">${n === 1 ? "Last hour" : `Average hour, last ${n} hours`}</p>
       <dl class="facts money-rows">${rows.filter(([, v, always]) => always || Math.abs(v) >= 0.5).map(([k, v]) => `<dt>${k}</dt><dd class="${moneyTone(v)}">${signed(v)}</dd>`).join("")}
       <dt class="tot">Balance</dt><dd class="tot ${moneyTone(total)}">${signed(total)}</dd></dl>
       ${prodRows ? `<h3 class="sub-h">Made, last 24 hours <span class="muted">· made / can make</span></h3><ul class="pd-list">${prodRows}</ul>` : ""}

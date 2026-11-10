@@ -263,7 +263,7 @@ export function ceilingOf(g: Game, b: Building): Ceiling | null {
   }
   // one of the company's own works standing idle for it
   const waiting = g.industry.plants().find((o) => o.id !== b.id && hungryFor(g, o, p));
-  if (waiting) return { p, made, can, works: waiting, nextLevel, fix: ceilingFix({ works: nameOf(k), product: lower(p), taker: `Your ${nameOf(waiting.kind)}`, nextLevel }) };
+  if (waiting) return { p, made, can, works: waiting, nextLevel, fix: ceilingFix({ works: nameOf(k), product: lower(p), taker: `Your ${startUp(g, waiting) ? "new " : ""}${nameOf(waiting.kind)}`, nextLevel }) };
   return null;
 }
 
@@ -295,11 +295,23 @@ export function needHelp(g: Game, t: Town, p: Product): NeedHelp | null {
   // (a jam or a missing input: that works is the thing to look at, not another one)
   // (one in real trouble before one only starting up, so the advice does not flick between the two as loads land)
   const helds = up.filter((b) => steadyProblem(g, b));
-  const held = helds.find((b) => !startUp(g, b)) ?? helds[0];
-  if (held) {
+  const held = helds.find((b) => !startUp(g, b));
+  const starting = helds.filter((b) => startUp(g, b));
+  // (one new works starting up beside others flat out: the advice is still how many more, the new one counted in.
+  // The late save's Food row talked about the new Food Plant's first load with 1,055 loads a day still short)
+  const rest = up.filter((b) => !starting.includes(b));
+  if (!held && starting.length && rest.length && up.length === mine.length && rest.every((b) => flatOut(g, b, p))) {
+    const each = rest.reduce((a, b) => a + canPerDay(g, b, p), 0) / rest.length;
+    const n = worksFor(Math.max(0, total - starting.reduce((a, b) => a + canPerDay(g, b, p), 0)), each);
+    const also = `Your new ${nameOf(starting[0].kind)} is starting up${starting.length > 1 ? `, and ${starting.length - 1} more` : ""}.`;
+    if (n > 0) return { kind: "full", build: kind, n, works: rest[0].id, say: `${needHelpSay({ kind: "full", works: nameOf(rest[0].kind), have: rest.length, n })} ${also}` };
+  }
+  if (!held && starting.length) {
     // (a works that has made nothing yet is starting up: it says when its first load comes, not that it is held up)
-    const su = startUp(g, held);
-    if (su) return { kind: "held", works: held.id, say: `Your ${nameOf(held.kind)} is starting up. ${su.fix}` };
+    const su = startUp(g, starting[0])!;
+    return { kind: "held", works: starting[0].id, say: `Your ${nameOf(starting[0].kind)} is starting up. ${su.fix}` };
+  }
+  if (held) {
     const problem = steadyProblem(g, held)!;
     // (short of an input whose makers are all flat out: the works to build is one of those, a step up the chain)
     const q = problem.includes("stuck in traffic") ? undefined : (Object.keys(PLANTS[held.kind as PlantKind].inputs) as Product[]).find((x) => problem.startsWith(`Waiting for ${lower(x)}`));
@@ -567,15 +579,18 @@ export function waitsForSite(g: Game, b: Building): { text: string; tone: "bad" 
  * What to do about a works short of power, said for the map as it is (owner, 2026-11-10: a Coal Mine read "Build a
  * power plant within reach" with one 290 m away, standing dark for want of coal). The power plant that reaches it
  * and why it gives too little; else the one going up; else the one too far off; else build one. `show`: the power
- * plant to look at. Null when it is not short of power.
+ * plant to look at; `back`: its power came back since the sim's hourly line was written. Null when it is not short of
+ * power.
  */
-export function powerFix(g: Game, b: Building): { fix: string; show?: number } | null {
+export function powerFix(g: Game, b: Building): { fix: string; show?: number; back?: boolean } | null {
   if (!b.problem || !/^(No power|Short of power)/.test(b.problem)) return null;
   const d = (o: Building) => Math.hypot(o.c.x - b.c.x, o.c.y - b.c.y);
   const makers = g.buildings.list.filter((o) => o.plant && (PLANTS[o.kind as PlantKind]?.makes ?? 0) > 0).sort((x, y) => d(x) - d(y));
   const reach = (o: Building) => PLANTS[o.kind as PlantKind].reach ?? 0;
   const near = makers.filter((o) => working(o) && g.utilities.reaches(o, b));
   if (near.length) {
+    // (its problem line is the sim's hourly one; power is shared out eight times an hour: it can be back already)
+    if (g.utilities.supplyOf(b) >= 0.999) return { fix: "It is up to pace again within the hour.", show: near[0].id, back: true };
     // (out of fuel: the trouble is its coal, so say where the next load is; making some but not enough: another)
     const dark = near.find((o) => g.utilities.outputOf(o) <= 0);
     if (dark) {

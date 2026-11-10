@@ -156,7 +156,7 @@ export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false): Tip
     () => {
       if (!has("farm") || has("foodplant")) return null;
       const t = biggest(reached.filter((x) => wants(x, "food")));
-      return { id: "foodplant", cat: "industry", html: `<b>Build a Food plant</b> (Industry › Processing) on a road your farm reaches. The farm's trucks bring it crops; its own trucks sell the food to ${t ? `${esc(t.name)}'s` : "your towns'"} shops.` };
+      return { id: "foodplant", cat: "industry", html: `<b>Build a Food Plant</b> (Industry › Processing) on a road your farm reaches. The farm's trucks bring it crops; its own trucks sell the food to ${t ? `${esc(t.name)}'s` : "your towns'"} shops.` };
     },
     // a plant whose roads lead nowhere it can sell
     () => {

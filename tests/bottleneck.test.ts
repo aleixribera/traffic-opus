@@ -18,7 +18,7 @@ import {
   needHelp, needHelpSay, nextLoad, shortOf, shortfalls, shownRate, siteHours, siteLine, siteStatus, startUp, steadyProblem, tally, townAdvice, townWants,
   powerFix, waitsForSite, worksFor, worstCeiling,
 } from "../src/ui/bottleneck";
-import { noBuyer, signedMoney, siteModel, takenBy, townModel, worksCalm, worksStatus } from "../src/ui/inspect";
+import { noBuyer, powerCeiling, signedMoney, siteModel, takenBy, townModel, worksCalm, worksStatus } from "../src/ui/inspect";
 import { goalNow, goalNowSay } from "../src/ui/goalNow";
 import { DEAR_MIN, DEAR_SHARE, dearShare } from "../src/ui/cost";
 import { tipFor } from "../src/ui/tips";
@@ -149,6 +149,34 @@ function chain(g: Game) {
   const foodplant = placeAlong(g, "foodplant", gridPt(t.c, t.ang, 1, 0), end, 35);
   return { t, farm, foodplant };
 }
+
+describe("a power plant at its limit", () => {
+  // (the late save read "Working normally" on a plant beside three works short of its power)
+  const plant = { id: 1, plant: { level: 1 } } as unknown as Building;
+  const works = [2, 3, 4].map((id) => ({ id }) as unknown as Building);
+  const game = (made: number, used: number, short: number[]) => ({
+    buildings: { list: [plant, ...works] },
+    utilities: { plants: new Map([[1, { made, used, users: 3 }]]), supplyOf: (o: Building) => (short.includes(o.id) ? 0.4 : 1), reaches: () => true },
+  }) as unknown as Game;
+  it("says how much its reach wants against what it makes, and the way out", () => {
+    expect(powerCeiling(game(60, 90, [2, 3, 4]), plant)!.fix).toBe("The 3 works in its reach want 90 MW. It makes 60. Build another Power Plant nearby, or wait for level 2.");
+    expect(powerCeiling(game(60, 70, [4]), plant)!.fix).toMatch(/^The works in its reach want 70 MW\./);
+  });
+  it("a works whose power came back since its hourly line says so, not that the plant is short", () => {
+    const pp = { id: 1, kind: "coalplant", built: 1, c: { x: 0, y: 0 }, plant: { stock: { coal: 5 } } } as unknown as Building;
+    const mine = { id: 2, kind: "coalmine", built: 1, c: { x: 300, y: 0 }, plant: {}, problem: "No power: working at 40%" } as unknown as Building;
+    const at = (supply: number) => ({
+      buildings: { list: [pp, mine] },
+      utilities: { plants: new Map([[1, { made: 40, used: 50, users: 2 }]]), supplyOf: () => supply, reaches: () => true, outputOf: () => 40 },
+    }) as unknown as Game;
+    expect(powerFix(at(1), mine)).toEqual({ fix: "It is up to pace again within the hour.", show: 1, back: true });
+    expect(powerFix(at(0.4), mine)).toEqual({ fix: "Your Power Plant (300 m) cannot power everything in its reach. Build another Power Plant nearby.", show: 1 });
+  });
+  it("makes no such claim with power to spare, or with none made (that is its coal's line)", () => {
+    expect(powerCeiling(game(60, 60, []), plant)).toBeNull();
+    expect(powerCeiling(game(0, 90, [2, 3, 4]), plant)).toBeNull();
+  });
+});
 
 describe("read off the game", () => {
   let g: Game, t: Town, farm: Building, foodplant: Building;
@@ -560,5 +588,35 @@ describe("read off the game", () => {
     expect(signedMoney(0.3)).toBe("$0");
     expect(signedMoney(1200)).toMatch(/^\+\$/);
     expect(signedMoney(-1200)).toMatch(/^[-−]\$/);
+  });
+
+  // (last: it places a second Food Plant in the shared game)
+  it("a new works starting up beside one flat out: the advice is still how many more, the new one counted in (late save's Food row)", () => {
+    const second = placeAlong(g, "foodplant", gridPt(t.c, t.ang, 1, 0), gridPt(t.c, t.ang, 1 + 320 / BLOCK, 0), 90);
+    Object.assign(second, { built: 1, problem: "Waiting for crops" });
+    second.plant!.site = undefined;
+    second.plant!.hist = [];
+    foodplant.problem = null;
+    made(foodplant, "food", 1);
+    expect(startUp(g, second)).not.toBeNull();
+    expect(flatOut(g, foodplant, "food")).toBe(true);
+    // (a town short of more than the new one will make)
+    const pop = t.pop;
+    t.pop = 1500;
+    expect(townWants(t, "food")).toBeGreaterThan(canPerDay(g, second, "food") + canPerDay(g, foodplant, "food"));
+    const h = needHelp(g, t, "food")!;
+    expect(h).toMatchObject({ kind: "full", build: "foodplant", works: foodplant.id });
+    if (h.kind === "full") {
+      expect(h.n).toBe(worksFor(townWants(t, "food") - canPerDay(g, second, "food"), canPerDay(g, foodplant, "food")));
+      expect(h.say).toBe(`Your Food Plant is at full output. Build ${h.n === 1 ? "another" : `about ${h.n} more`}. Your new Food Plant is starting up.`);
+    }
+    // short of no more than the new one will make: it says when its first load comes
+    t.pop = pop;
+    expect(needHelp(g, t, "food")!.say.startsWith("Your Food Plant is starting up. ")).toBe(true);
+    // nor while the old one still has room: the new one is the news
+    t.pop = 1500;
+    made(foodplant, "food", 0.2);
+    expect(needHelp(g, t, "food")!.say.startsWith("Your Food Plant is starting up. ")).toBe(true);
+    t.pop = pop;
   });
 });
