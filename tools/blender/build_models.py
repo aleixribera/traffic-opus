@@ -5449,6 +5449,14 @@ def vehicle_mats():
     }
 
 
+# The vehicles of 1925-1940 (tools/blender/vehicles_*.py): run into this module the way the town files are, they
+# replace the models above in VEHICLES (and say what a vehicle model is made of now).
+for _f in sorted(os.listdir(HERE)):
+    if _f.startswith("vehicles_") and _f.endswith(".py"):
+        with open(os.path.join(HERE, _f), encoding="utf-8") as _fh:
+            exec(compile(_fh.read(), os.path.join(HERE, _f), "exec"), globals())
+
+
 # ------------------------------------------------------------------ build, export, preview
 
 def new_collection(name):
@@ -5698,12 +5706,17 @@ def verify(names):
             if sorted(parts) != st["meshes"]:
                 st["issues"].append(f"objects {st['meshes']} != {sorted(parts)}")
             for want, got in ((W, size.x), (Ln, size.y), (H, size.z)):
-                if abs(want - got) > 0.03:
+                if want is not None and abs(want - got) > 0.03:
                     st["issues"].append(f"size {[round(v, 3) for v in size]} != {(W, Ln, H)}")
                     break
-            cap = 480 if {"cargo", "piece", "beacon"} & set(parts) else 300   # freight and convoys carry more detail; there are far fewer of them
-            if tris > cap:
-                st["issues"].append(f"{tris} tris over {cap}")
+            # (the far model is counted on its own: it is drawn instead of the full one, never with it)
+            far = sum(len(p.vertices) - 2 for o in meshes if o.name == "far" for p in o.data.polygons)
+            st["tris"], st["far"] = tris - far, far
+            cap, far_cap = VEHICLE_TRIS(name)
+            if st["tris"] > cap or far > far_cap:
+                st["issues"].append(f"{st['tris']} tris (far {far}) over {cap} ({far_cap})")
+            if abs(lo.x + size.x / 2) > 0.02 or abs(lo.y + size.y / 2) > 0.02:
+                st["issues"].append("footprint not centred on the origin")
             for o in meshes:
                 if o.matrix_world.translation.length > 1e-4:
                     st["issues"].append(f"{o.name} origin not at vehicle origin")
