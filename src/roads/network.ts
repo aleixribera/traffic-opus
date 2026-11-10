@@ -579,6 +579,9 @@ export class RoadNetwork {
 
   // ---------------- queries ----------------
 
+  /** segments at each node, as of the last rebuild (a dead end has one) */
+  private degree = new Map<number, number>();
+
   segsAt(nodeId: number): RSeg[] {
     const out: RSeg[] = [];
     for (const s of this.segs.values()) if (s.a === nodeId || s.b === nodeId) out.push(s);
@@ -747,6 +750,8 @@ export class RoadNetwork {
     }
 
     // 4) junction geometry + connectors at every endpoint of a dirty seg
+    this.degree.clear();
+    for (const [nid, arr] of segsByNode) this.degree.set(nid, arr.length);
     const connNodes = new Set<number>(dirtyNodes);
     for (const id of dirtySegs) {
       const s = this.segs.get(id)!;
@@ -1249,10 +1254,36 @@ export class RoadNetwork {
         .sort((x, y) => x.idx - y.idx);
     };
     const nodeH = node.h;
+    const rankOf = (arm: Arm) => { const s = this.segs.get(arm.seg)!; return s.ring ? 10 : ROAD_TYPES[s.type].rank; };
     const prioOf = (arm: Arm) => {
       const s = this.segs.get(arm.seg)!;
       // (a stop sign puts its arm below every other; lights, if there are any, take over from the signs)
-      return !node.signal && !s.ring && node.stops?.includes(arm.seg) ? -1 : s.ring ? 10 : ROAD_TYPES[s.type].rank;
+      if (!node.signal && !s.ring && node.stops?.includes(arm.seg)) return -1;
+      if (node.signal || s.ring || arms.length < 3) return rankOf(arm);
+      const end = (a: Arm) => { const x = this.segs.get(a.seg)!; return (this.degree.get(a.end === "a" ? x.b : x.a) ?? 2) <= 1; };
+      // (the arm it carries straight on from, if any: the same road through the junction)
+      let on: Arm | undefined, straight = -0.85;
+      for (const o of arms) {
+        const d = o.dir.x * arm.dir.x + o.dir.y * arm.dir.y;
+        if (o !== arm && d < straight && !this.segs.get(o.seg)!.ring) { on = o; straight = d; }
+      }
+      // A dead-end street that meets a road sideways gives way to it, whatever the two are made of: the street a works
+      // lays to its gate is paved and the road it meets may be a dirt one, and by rank alone every truck out of the
+      // gate had the right of way over the only road past it (docs/playtest-2026-11-09.md, A1). Half a rank below the
+      // lowest of the others: no stop sign (-1), it rolls out into a gap. One that carries straight on from another
+      // arm is the end of that road: it ranks no higher than the road it carries on from. Lights take over from this.
+      if (end(arm)) {
+        if (on) return Math.min(rankOf(arm), rankOf(on));
+        let low = rankOf(arm);
+        for (const o of arms) if (o !== arm) low = Math.min(low, rankOf(o));
+        return low - 0.5;
+      }
+      // A road that carries straight on through a junction ranks the same on both sides of it, as its better half:
+      // where the paving ends at a works' gate, the trucks turning in off the paved side had the right of way over
+      // everyone coming along the dirt side, one after another, and a car there stood two minutes (measured
+      // 2026-11-10, tests/gatejam.test.ts).
+      if (on && !end(on)) return Math.max(rankOf(arm), rankOf(on));
+      return rankOf(arm);
     };
 
     if (kind === "bend") geom.curve = this.bendCurve(node, arms, segs);

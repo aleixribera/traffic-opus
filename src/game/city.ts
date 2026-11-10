@@ -8,7 +8,7 @@ import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/
 import {
   applyPave, applyTrim, chainPoints, cubicClosest, planRoad, snap, strokeProfile, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type LanePlan, type Plan, type PlanError,
 } from "../roads/planner";
-import { Traffic, type Trip, type Vehicle } from "../sim/traffic";
+import { fromLot, Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import { SITE_LEVELS, siteFrame } from "./sites";
 import { Terrain } from "../world/terrain";
 import { Buildings, obbOverlap, type Building, type BuildingMove } from "./buildings";
@@ -183,6 +183,8 @@ export class Game {
       request: (sp) => this.traffic.request(sp),
       trips: () => this.trips(),
       held: () => this.heldTrips(),
+      queued: () => this.gateQueues(),
+      supply: (t, p) => this.towns.byId.get(t)?.supply[p] ?? 0,
       earn: (v) => { this.money += v; this.budgetNow.income.sales += v; this.progress.onEarned(v); },
       spend: (v, what) => { this.money -= v; this.budgetNow.expense[what] += v; },
       levelCap: (kind, at) => {
@@ -322,6 +324,13 @@ export class Game {
     const blocked = new Set<number>();
     for (const p of this.traffic.pending) if (p.trip.haul && p.wait > 20) blocked.add(p.trip.from);
     if (blocked.size) for (const p of this.traffic.pending) if (p.trip.haul && blocked.has(p.trip.from)) m.set(p.trip, "gate");
+    return m;
+  }
+
+  /** Per building, the company's trucks waiting in its yard to pull out of its gate (convoys keep their own count). */
+  private gateQueues(): Map<number, number> {
+    const m = new Map<number, number>();
+    for (const p of this.traffic.pending) if (p.trip.haul && !p.trip.haul.big && fromLot(p)) m.set(p.trip.from, (m.get(p.trip.from) ?? 0) + 1);
     return m;
   }
 

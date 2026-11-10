@@ -220,12 +220,15 @@ describe("Industry", () => {
     expect(fp.plant!.now.earned).toBe(0);
   });
 
-  it("construction is a real haul (owner, 2026-11-08: \"waaaaay tougher\"): every site from tier 2 waits for dozens of loads", () => {
+  // (2026-11-10: the tier 2 bills came down, 30/30/50/40 to 12/12/24/20 for the steel chain. A works' sites now take
+  // one load in four while a town is short of the product, so the old bills, 150 loads for the first steel, took one
+  // sawmill over two real hours: docs/playtest-2026-11-09.md, B2. From tier 3 they are as the owner set them.)
+  it("construction is a real haul (owner, 2026-11-08: \"waaaaay tougher\"): a tier 2 site waits for a dozen loads and more, every site from tier 3 for dozens", () => {
     for (const k of Object.keys(PLANTS) as (keyof typeof PLANTS)[]) {
       const d = PLANTS[k];
       if (d.tier < 2 || !d.site) continue;
       const loads = Object.values(d.site).reduce((a, n) => a + (n ?? 0), 0);
-      expect(loads, k).toBeGreaterThanOrEqual(30);
+      expect(loads, k).toBeGreaterThanOrEqual(d.tier >= 3 ? 30 : 12);
     }
   });
 
