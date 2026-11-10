@@ -25,7 +25,8 @@ import {
   BLOCK, CAR_SCRAP, HALLS, OPEN_BLOCK, blockOf, NOISE, NUISANCE_HOMES, NUISANCE_SHOPS, NUISANCE_STREET, REDEV_SHARE, SEED_EDGES, TOWN_SIZES, buys, comfortOf,
   demandPerDay, edgeKey, gridPt, growthPerDay, motoring, needsOf, nextEdge, nuisanceAt, redevPerDay, ringZone, sizeOf,
   smokeReach, supplyShare, townRadius, wallZone, onMain, HIGH_STREET, highLine, highStreetReach, MAIN_STREET, type GridEdge, type Nuisance,
-  SETTLING, SHRINK_AFTER, SHRINK_AT, SHRINK_RATE, SUPPLY_COVER, SUPPLY_HOURS, averageSupply, supportOf,
+  HOLD_FROM, PER_HOME, SETTLING, SHRINK_AFTER, SHRINK_RATE, SUPPLY_HOURS, averageSupply, countsForShrinking, growthShare, supplyLevel, supportOf,
+  growthBand, growthLine, type GrowthBand,
 } from "./towns";
 import { LEAN_N as LEAN_DIRS, PLAN_GRID, PLAN_TOWN, TownPlan, type EdgeHit } from "./townplan";
 import { CELL, DEPTH, ZONE_RANK, zoneEdge, type Cell, type ZoneId } from "./zones";
@@ -66,6 +67,21 @@ export function served(t: Town): boolean {
   return Object.keys(t.today).length > 0 || Object.keys(t.yesterday).length > 0 || t.hist.days.some((d) => Object.keys(d.loads).length > 0);
 }
 
+/**
+ * A town's growth as the panel shows it (docs/design.md "Growth in words"): its band ("fast" at full pace, "slow",
+ * "hold", "shrink" once a shortfall has lasted SHRINK_AFTER hours), the plain line for it ("Holding steady: 72%
+ * supplied, grows from 85%"), its supply level (the share of a day's use of its worst-supplied need it has been
+ * getting, over the last two days) and that need (null with none). A town still settling its first streets grows
+ * whatever its supply: "slow" (or "fast" if fully supplied), "Settling in".
+ */
+export function townGrowth(t: Town): { band: GrowthBand; line: string; level: number; by: Product | null } {
+  const { level, by } = supplyLevel(t.rate ?? averageSupply(t.hours ?? []), t.pop);
+  const shrinking = (t.lack ?? 0) >= SHRINK_AFTER;
+  // (a town settling its first streets grows whatever its supply)
+  const band = growthBand(level, shrinking);
+  return { band: t.pop < SETTLING && level < 1 ? "slow" : band, line: growthLine(level, t.pop, shrinking), level, by };
+}
+
 /** A compass point, in words, from a to b (north is -y on the map). */
 export function compassWords(a: V2, b: V2): string {
   const deg = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
@@ -76,11 +92,6 @@ export function compassWords(a: V2, b: V2): string {
 const START_HOUSEHOLDS = 24;
 /** Households a day a settlement still filling its first streets grows by, supplied or not. */
 const SETTLE_RATE = 6;
-/**
- * How fast a town closes on the people its supply supports, as a share of the gap a day: the last stretch eases in
- * over a few hours rather than running into the line.
- */
-const APPROACH = 6;
 /** How many times its needs a town's shops will buy in a day. */
 export const MARKET = 3;
 /** Households per shop the town keeps open. */
@@ -180,17 +191,19 @@ export interface Town {
   /** loads delivered in each of the last SUPPLY_HOURS game hours, oldest first, and in the hour under way: its supply rolls on these */
   hours?: Partial<Record<Product, number>>[];
   hourNow?: Partial<Record<Product, number>>;
-  /** hours in a row its supply has fallen well short of its households (it shrinks after SHRINK_AFTER of them) */
+  /** hours in a row its supply level has been below HOLD_FROM (it shrinks after SHRINK_AFTER of them) */
   lack?: number;
   /** needs just fallen below "Enough" that it doesn't show or count yet (supply.ts GRACE) */
   grace?: Partial<Record<Product, Grace>>;
   // (worked out every hour from `hours`; not saved)
   /** loads a day of each product delivered, averaged over the last two days (averageSupply): what its growth goes on */
   rate?: Partial<Record<Product, number>>;
-  /** the people that supply supports, with a margin to spare (supportOf) */
+  /** the people that supply supports: where it would stop growing (supportOf) */
   supports?: number;
-  /** the need that holds it back, once it has grown to what its supply supports */
+  /** the need that holds it back, while it grows at under half its full pace or not at all (its worst supplied) */
   limit?: Product;
+  /** its supply level: the share of a day's use of its worst-supplied need it has been getting (towns.ts supplyLevel) */
+  level?: number;
   /** its target households stay where they are put (a test's stand-in town) */
   fixed?: boolean;
   /** its street plan: PLAN_TOWN for every new town; PLAN_ORGANIC (v0.0.69) and PLAN_GRID (the old square grid) for towns from older saves */
@@ -1497,6 +1510,8 @@ export class TownSystem {
 
   /** sim time the hour last rolled over (not saved: a loaded game is at most an hour out on it) */
   private rolledAt = 0;
+  /** Debug and tests (Game.fastForward): every town grows this many times its pace. Never set in play. */
+  pace = 1;
 
   /**
    * Sim seconds until what a town has landed of a need would read below "Enough", with only the loads `arriving`
@@ -1509,47 +1524,55 @@ export class TownSystem {
   }
 
   /**
-   * A town grows by `share` of a day toward the people its supply has proved it can feed (supportOf, on the loads a
-   * day averaged over the last two days, with a margin to spare), slowing as it nears them and never past them; and
-   * shrinks only after a long shortfall, slowly (towns.ts, "steady growth on a proven supply"). The company's
-   * landmarks make it grow faster and its extras supplied add a little; neither makes it shrink faster.
+   * A town grows in bands on its supply level (towns.ts, "growth in bands"): the share of a day's use of its
+   * worst-supplied need it has been getting over the last two days. From GROW_FROM it grows by `share` of a day at
+   * its pace (growthPerDay, times growthShare: very little at first, all of it at 100%), from HOLD_FROM it holds,
+   * and below HOLD_FROM for SHRINK_AFTER hours in a row it shrinks, slowly, never below what the supply still covers.
+   * The company's landmarks make it grow faster and its extras supplied add a little; neither makes it shrink faster.
    */
   private grow(t: Town, share: number, lastDay: Partial<Record<Product, number>>) {
     if (t.fixed) return;
     const rate = t.rate ?? {};
     const S = supportOf(rate, t.pop);
+    const L = supplyLevel(rate, t.pop);
     // (a shortfall is judged on the better of the last two days and the last one: a day's gap, made good since,
-    // isn't held against it for the two days it stays in the average)
+    // isn't held against it for the two days it stays in the average; and only on the needs of its size, so a
+    // hamlet's planks, opened early, never shrink it)
     const better: Partial<Record<Product, number>> = { ...rate };
     for (const [p, n] of Object.entries(lastDay) as [Product, number][]) better[p] = Math.max(better[p] ?? 0, n);
+    const low = supplyLevel(better, t.pop, (p) => countsForShrinking(p, t.pop)).level;
     // (in households: the people a household has here, on average)
-    const per = t.households > 0 ? t.pop / t.households : 2.5;
-    const cap = S.pop / per, floor = supportOf(better, t.pop).floor / per;
+    const per = t.households > 0 ? t.pop / t.households : PER_HOME;
+    const floor = supportOf(better, t.pop).floor / per;
     const before = t.target;
-    // (the more its proven supply runs ahead of it, the faster it fills in toward it: a share of its needs met, as
-    // the panels count it, of 1 grows it at the base pace, 2 at 5/3 of it, up to 4/3 of 3)
-    const ahead = Math.min(4, Math.max(1, (0.5 + (cap / Math.max(1, t.target)) * SUPPLY_COVER) / 1.5));
-    const fast = growthPerDay(t.pop) * ahead * townBoost(t.id, this.g.buildings.sites).growth * this.g.orders.boost(t.id).growth * comfortOf(rate, t.pop);
+    const pace = growthPerDay(t.pop) * townBoost(t.id, this.g.buildings.sites).growth * this.g.orders.boost(t.id).growth * comfortOf(rate, t.pop);
+    const grows = pace * growthShare(L.level) * this.pace;
     if (t.pop < SETTLING) {
-      // a new settlement fills its first streets regardless, as fast as its supply allows
-      t.target += Math.max(SETTLE_RATE, cap > t.target ? fast : 0) * share;
+      // a new settlement fills its first streets regardless, faster still if supplied
+      t.target += Math.max(SETTLE_RATE, grows) * share;
       t.lack = 0;
     } else {
-      // up toward what the supply supports, easing in over the last stretch (APPROACH)
-      if (cap > t.target) t.target += Math.min(fast, (cap - t.target) * APPROACH) * share;
+      t.target += grows * share;
+      // (and never past the homes its supply supports, where it would be supplied GROW_FROM of its worst need: homes
+      // still to be built for a target that ran ahead would take it below the growing band once they fill)
+      if (grows > 0) t.target = Math.min(t.target, Math.max(before, S.pop / per));
       // a shortfall that lasts: it shrinks, slowly, toward what the supply still covers (a hamlet nobody serves yet
       // holds on rather than dwindling away)
-      const short = floor < t.households * SHRINK_AT && t.pop >= SETTLING * 1.5;
+      const short = low < HOLD_FROM && t.pop >= SETTLING * 1.5;
       t.lack = short ? (t.lack ?? 0) + share * 24 : Math.max(0, (t.lack ?? 0) - share * 48);
       // (supply that has dropped for now holds it where it is: its target goes no higher, and nobody is pushed out)
-      if (t.lack >= SHRINK_AFTER) t.target = Math.max(floor, Math.min(t.target, t.households) - Math.max(1, t.households * SHRINK_RATE) * share);
+      if (t.lack >= SHRINK_AFTER) {
+        const to = Math.max(floor, Math.min(t.target, t.households) - Math.max(1, t.households * SHRINK_RATE) * share);
+        t.target = Math.min(t.target, to);
+      }
     }
     // (the target never runs far ahead of the town: a dry spell isn't banked as growth for later)
     t.target = Math.max(0, Math.min(t.target, Math.max(t.households, START_HOUSEHOLDS) * 1.4 + 6));
     t.trend = (t.target - before) / share;
     t.supports = Math.round(S.pop);
-    // (what holds it back, once it is near what its supply supports)
-    t.limit = S.by && cap - t.target < Math.max(2, t.households * 0.05) ? S.by : undefined;
+    t.level = L.level;
+    // (what holds it back: its worst-supplied need, while it grows at under half its full pace)
+    t.limit = L.by && growthShare(L.level) < 0.5 ? L.by : undefined;
   }
 
   /** A day is over: its deliveries go into the town's history, and today's tallies start again. */

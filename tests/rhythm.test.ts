@@ -79,9 +79,10 @@ describe("the daily rhythm", () => {
     expect((busiest >= 6 && busiest < 10) || (busiest >= 16 && busiest < 20)).toBe(true);
     expect(night).toBeLessThan(0.8 * Math.min(morning, evening));
     expect(night).toBeLessThan(mean(9, 17));
-    // (cars on the road at lunch only must not dip under the late morning: a town of 500 sends out about fifty lunch
-    // trips, a few cars an hour, which one run's dice can hide; the trip counts below are where the lunch bump is proved)
-    expect(lunch).toBeGreaterThan(0.85 * mean(10, 12));
+    // (a bump over the hours either side of it, not a dip: the hour or two before it can still carry the tail of the
+    // morning rush, more so in a bigger town, and a town of 500 sends out about fifty lunch trips, a few cars an hour,
+    // which one run's dice can hide; the trip counts below are where the lunch bump is proved)
+    expect(lunch).toBeGreaterThan(0.85 * (mean(10, 12) + mean(14, 16)) / 2);
     expect(lunch).toBeLessThan(Math.min(morning, evening));
     // the morning commute leaves before the day shifts (the early shift's in the small hours); the evening one comes
     // home after them

@@ -5,9 +5,10 @@ import { Game } from "../src/game/city";
 import { HOUR, DAY } from "../src/game/society";
 import { type Product } from "../src/game/industry";
 import { buildStep } from "../src/game/construction";
-import { SHRINK_AFTER, SHRINK_RATE, averageSupply } from "../src/game/towns";
+import { GROW_FROM, SHRINK_AFTER, SHRINK_RATE, averageSupply, demandPerDay } from "../src/game/towns";
+import { townGrowth, type Town } from "../src/game/settlements";
 
-const STEADY: Partial<Record<Product, number>> = { food: 100, planks: 40, cement: 20 };
+const STEADY: Partial<Record<Product, number>> = { food: 20, planks: 8, cement: 6 };
 
 /**
  * The start town of seed 7 with no traffic: every need's loads come in through the day at a steady rate (as far as
@@ -72,6 +73,8 @@ describe("steady growth on a proven supply", () => {
     expect(steady.t.rate).toEqual(averageSupply(steady.t.hours!));
     expect(steady.t.rate!.food!).toBeGreaterThan(0);
     expect(steady.maxLack).toBe(0);
+    // (and it settles where its supply still has it growing, never on homes built for a target that ran ahead)
+    expect(steady.t.level!).toBeGreaterThanOrEqual(GROW_FROM - 0.01);
   });
 
   it("a day without deliveries shrinks nothing", () => {
@@ -84,8 +87,10 @@ describe("steady growth on a proven supply", () => {
   it("a long cut: it holds for two days, then declines slowly", () => {
     const cut = run(days + 2, [6, 99]);
     const before = cut.hh[at(6)];
-    // (held through the first day and a half of it)
-    expect(cut.hh[at(7.5)]).toBe(before);
+    // (held through the first day and a half of it: nobody leaves; a home already going up may still finish, and the
+    // two-day average stays in the growing band for the first few hours of the cut)
+    expect(cut.hh[at(7.5)]).toBeGreaterThanOrEqual(before);
+    expect(cut.hh[at(7.5)]).toBeLessThanOrEqual(before + 2);
     // (then down, but never by more than SHRINK_RATE of it a day, give or take a household)
     const end = cut.hh[cut.hh.length - 1];
     expect(end).toBeLessThan(before);
@@ -93,3 +98,48 @@ describe("steady growth on a proven supply", () => {
     expect(end).toBeGreaterThan(before * 0.75);
   });
 }, 600_000);
+
+describe("a save from before the demand rework", () => {
+  // (public/showcase.json was saved under the old demand, a town's use of each need rising 1.6x a size: its towns'
+  // supply now covers more of the new, smaller use, so none of them is pushed into shrinking by loading it)
+  it("loads, and over its next two days no town's target drops, none counts toward shrinking, none ends smaller", async () => {
+    // (before the rework its Elton counted toward shrinking from its first hour, 40 hours of it by the end of the
+    // second day; a home rebuilt bigger takes a household away for an afternoon, so homes are judged at the end)
+    const fs = await import(/* @vite-ignore */ ["node", "fs"].join(":"));
+    const g = Game.load(JSON.parse(fs.readFileSync("public/showcase.json", "utf8")));
+    const homes = new Map(g.towns.list.map((t) => [t.id, t.households]));
+    const target = new Map(g.towns.list.map((t) => [t.id, t.target]));
+    expect(homes.size).toBeGreaterThan(1);
+    let maxLack = 0;
+    for (let i = 0; i < (2 * DAY) / (1 / 4); i++) {
+      g.step(1 / 4);
+      for (const t of g.towns.list) {
+        if (!target.has(t.id)) continue;
+        expect(t.target, t.name).toBeGreaterThanOrEqual(target.get(t.id)! - 1e-9);
+        target.set(t.id, t.target);
+        maxLack = Math.max(maxLack, t.lack ?? 0);
+      }
+    }
+    expect(maxLack).toBe(0);
+    for (const t of g.towns.list) if (homes.has(t.id)) expect(t.households, t.name).toBeGreaterThanOrEqual(homes.get(t.id)!);
+  });
+}, 600_000);
+
+describe("townGrowth: the band and line the town panel shows", () => {
+  // (stand-in towns: only what townGrowth reads)
+  const town = (pop: number, food: number, lack = 0) => /* (under 100 people: food is its only need) */ ({ pop, rate: { food }, lack, hours: [] }) as unknown as Town;
+  const food = (pop: number) => demandPerDay("food", pop);
+  it("fast at full supply, slow just under it, hold through the wide middle, shrink only once the shortfall has lasted", () => {
+    expect(townGrowth(town(90, food(90) * 1.1))).toMatchObject({ band: "fast", line: "Growing: fully supplied", by: "food" });
+    expect(townGrowth(town(90, food(90) * 0.92))).toMatchObject({ band: "slow", line: "Growing slowly: 92% supplied, full pace from 100%" });
+    expect(townGrowth(town(90, food(90) * 0.72))).toMatchObject({ band: "hold", line: "Holding steady: 72% supplied, grows from 85%" });
+    expect(townGrowth(town(90, food(90) * 0.48))).toMatchObject({ band: "hold", line: "Short of supplies: 48% supplied, holds from 60%" });
+    expect(townGrowth(town(90, food(90) * 0.48, SHRINK_AFTER))).toMatchObject({ band: "shrink", line: "Shrinking: 48% supplied, holds from 60%" });
+    expect(townGrowth(town(90, food(90) * 0.72, SHRINK_AFTER)).band).toBe("hold");
+    expect(townGrowth(town(90, food(90) * 0.72)).level).toBeCloseTo(0.72, 6);
+  });
+  it("a town still settling in grows whatever its supply", () => {
+    expect(townGrowth(town(40, 0))).toMatchObject({ band: "slow", line: "Settling in" });
+    expect(townGrowth(town(40, food(40) * 2)).band).toBe("fast");
+  });
+});

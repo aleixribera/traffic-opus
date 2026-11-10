@@ -29,7 +29,7 @@ describe("lots follow their street when it is laid out again", () => {
     const t = g.towns.list[0];
     let lots = 0;
     for (let d = 0; d < 10; d++) {
-      g.fastForward(t.id, 24);
+      g.fastForward(t.id, 24, 1, 5);
       expect(stale(g), `day ${d}`).toEqual([]);
       lots = g.buildings.list.filter((b) => b.lot).length;
     }
@@ -40,7 +40,7 @@ describe("lots follow their street when it is laid out again", () => {
     const g = new Game(7);
     g.start();
     const t = g.towns.list[0];
-    for (let d = 0; d < 5; d++) g.fastForward(t.id, 24);
+    for (let d = 0; d < 5; d++) g.fastForward(t.id, 24, 1, 5);
     const h = Game.load(JSON.parse(JSON.stringify(g.serialize())));
     expect(stale(h)).toEqual([]);
   }, 300_000);
@@ -83,7 +83,7 @@ describe("lots never overlap", () => {
       g.start();
       const t = g.towns.list[0];
       for (let d = 0; d < days; d++) {
-        g.fastForward(t.id, 24, 3);
+        g.fastForward(t.id, 24, 3, 7);
         expect(overlapping(g).slice(0, 6), `day ${d}`).toEqual([]);
       }
       expect(g.buildings.list.filter((b) => b.zone).length).toBeGreaterThan(seed === 7 ? 700 : 150);
