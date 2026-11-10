@@ -26,7 +26,10 @@ describe("one sawmill, two towns and eight building sites on one road", () => {
         expect(e.need).toBe(site.need.planks);
         expect(e.got).toBe(site.got.planks);
         expect(e.got).toBeLessThan(e.need);
-        if (e.perHour > 0 && e.hours !== null && e.hours > 0 && e.hours < 24 * 6) timed++;
+        if (!(e.perHour > 0 && e.hours !== null && e.hours > 0 && e.hours < 24 * 6)) continue;
+        timed++;
+        // (what its panel says)
+        expect(Industry.siteReport(b)).toMatch(new RegExp(`^${e.got} of ${e.need} loads, about (an hour|[0-9]+ hours) at this rate$`));
       }
     });
     // no vehicle stands five game minutes (it was 25 by the end of the first day and 98 and more by the fourth);

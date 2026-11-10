@@ -36,6 +36,8 @@ export interface GateJamOpts {
   warm?: number;
   /** people in the second town */
   popB?: number;
+  /** a game that is running already (the real game, for a look at it: tools/gatejam.build.ts says how) */
+  game?: Game;
 }
 
 export interface GateJam {
@@ -80,9 +82,9 @@ function clearLine(g: Game, a: V2, b: V2, pad = 0): boolean {
  * A company with money and a grown first town, on a seed with 3.6 km of dry, flat, empty land one way out of it:
  * `at(along, across)` is a point that far along the way out and to its right. Deposits are wherever a test needs them.
  */
-export function openLand(o: { seed?: number; pop?: number } = {}): { g: Game; A: Town; dir: V2; origin: V2; at: (along: number, across?: number) => V2 } {
-  const g = new Game(o.seed ?? 7);
-  g.start();
+export function openLand(o: { seed?: number; pop?: number; game?: Game } = {}): { g: Game; A: Town; dir: V2; origin: V2; at: (along: number, across?: number) => V2 } {
+  const g = o.game ?? new Game(o.seed ?? 7);
+  if (!o.game) g.start();
   const terr = g.terrain as unknown as { has(f: number, p: V2): boolean };
   const has0 = terr.has.bind(terr);
   terr.has = (f, p) => f === F.forest || f === F.ore || f === F.coal || has0(f, p);

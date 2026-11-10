@@ -249,7 +249,7 @@ export function siteModel(g: Game, b: Building, led?: TradeLedger): PanelModel {
   let status: PanelModel["status"];
   if (P.site) {
     const left = (Object.keys(P.site.need) as Product[]).filter((p) => (P.site!.got[p] ?? 0) < P.site!.need[p]!);
-    status = { text: "Building site", tone: "", fix: left.length ? `Waiting for ${left.map(lower).join(" and ")}: your plants that make ${left.length > 1 ? "them" : "it"} truck ${left.length > 1 ? "them" : "it"} here` : "All in: going up" };
+    status = { text: "Building site", tone: "", fix: left.length ? `Waiting for ${left.map(lower).join(" and ")}: your plants that make ${left.length > 1 ? "them" : "it"} truck ${left.length > 1 ? "them" : "it"} here. ${Industry.siteReport(b)}` : "All in: going up" };
   } else if (b.built < 1) status = { text: `Under construction · ${Math.round(b.built * 100)}%`, tone: "" };
   else if (b.problem) status = { ...splitProblem(b.problem), tone: "bad" };
   else status = { text: D.logistics === "depot" ? "Filling your trucks" : D.logistics === "warehouse" ? "Storing and shipping" : "Working normally", tone: "good" };

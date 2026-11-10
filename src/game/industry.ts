@@ -1546,6 +1546,16 @@ export class Industry {
     return { got, need, perHour, hours: left <= 0 ? 0 : perHour > 0 ? left / perHour : null };
   }
 
+  /** siteEta in words, for the site's panel: "12 of 30 loads, about 9 hours at this rate" (game hours). */
+  static siteReport(b: Building): string {
+    const e = Industry.siteEta(b);
+    if (!e) return "";
+    const n = `${Math.floor(e.got)} of ${e.need} loads`;
+    if (e.hours === null) return e.got > 0 ? `${n}, none in the last hours` : `${n} so far`;
+    if (e.hours <= 0) return n;
+    return `${n}, about ${e.hours < 1.5 ? "an hour" : `${Math.round(e.hours)} hours`} at this rate`;
+  }
+
   /** Wages and upkeep, and the hour's books (a building site costs nothing to keep). */
   hourly() {
     for (const b of this.plants()) {
