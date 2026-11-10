@@ -25,13 +25,16 @@ import {
   BLOCK, CAR_SCRAP, HALLS, OPEN_BLOCK, blockOf, NOISE, NUISANCE_HOMES, NUISANCE_SHOPS, NUISANCE_STREET, REDEV_HOUSEHOLDS, REDEV_SHARE, SEED_EDGES, TOWN_SIZES, buys, comfortOf,
   demandPerDay, edgeKey, gridPt, growthPerDay, motoring, needsOf, nextEdge, nuisanceAt, redevPerDay, ringZone, sizeOf,
   smokeReach, supplyShare, townRadius, wallZone, onMain, HIGH_STREET, highLine, highStreetReach, MAIN_STREET, type GridEdge, type Nuisance,
-  HOLD_FROM, PER_HOME, SETTLING, SHRINK_AFTER, SHRINK_RATE, SUPPLY_HOURS, averageSupply, countsForShrinking, growthShare, supplyLevel, supportOf,
+  EARLY, HOME_EARLY, HOLD_FROM, PER_HOME, SETTLING, SHRINK_AFTER, SHRINK_RATE, SUPPLY_HOURS, averageSupply, countsForShrinking, growthShare, supplyLevel, supportOf,
   growthBand, growthLine, type GrowthBand,
 } from "./towns";
 import { LEAN_N as LEAN_DIRS, PLAN_GRID, PLAN_TOWN, TownPlan, type EdgeHit } from "./townplan";
 import { CELL, DEPTH, ZONE_RANK, zoneEdge, type Cell, type ZoneId } from "./zones";
 
 /** Closest a town may be to another town's centre (m). */
+/** A town's early growth: the home town's first streets fill faster than a hamlet that springs up later (towns.ts HOME_EARLY). */
+export const earlyOf = (t: { spawned?: boolean }): number => (t.spawned ? EARLY : HOME_EARLY);
+
 export const TOWN_SPACING = 1200;
 /**
  * Where new towns spring up (docs/design.md "Towns": they appear by themselves as the company reaches milestones,
@@ -1552,7 +1555,7 @@ export class TownSystem {
     const per = t.households > 0 ? t.pop / t.households : PER_HOME;
     const floor = supportOf(better, t.pop).floor / per;
     const before = t.target;
-    const pace = growthPerDay(t.pop) * townBoost(t.id, this.g.buildings.sites).growth * this.g.orders.boost(t.id).growth * comfortOf(rate, t.pop);
+    const pace = growthPerDay(t.pop, earlyOf(t)) * townBoost(t.id, this.g.buildings.sites).growth * this.g.orders.boost(t.id).growth * comfortOf(rate, t.pop);
     const grows = pace * growthShare(L.level) * this.pace;
     if (t.pop < SETTLING) {
       // a new settlement fills its first streets regardless, faster still if supplied

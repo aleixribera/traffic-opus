@@ -15,7 +15,7 @@ import { served, type Town } from "../game/settlements";
 import { SITE_LEVELS } from "../game/sites";
 import { Age, HOUR } from "../game/society";
 import { SETTLING, demandPerDay, needsOf } from "../game/towns";
-import { loadsLately, townNeeds } from "./needs";
+import { loadsLately, townNeeds, warmingUp } from "./needs";
 
 // ------------------------------------------------------------------------------------------- the sums (pure)
 
@@ -262,12 +262,18 @@ export function makerKind(p: Product): PlantKind | undefined {
   return ks.find((k) => mainOf(k) === p) ?? ks.find((k) => (PLANTS[k].outputs[p] ?? 0) > 0);
 }
 
-/** Loads of p a day a town would still take to have plenty (0: it has plenty, or does not buy it yet). */
+/**
+ * Loads of p a day a town would still take to have plenty (0: it has plenty, or does not buy it yet, or its first
+ * loads have only just started coming: needs.ts warmingUp. No advice to build more on a rate one load can't tell).
+ */
 export function townWants(t: Town, p: Product): number {
-  if (!needsOf(t.pop).includes(p)) return 0;
+  if (!needsOf(t.pop).includes(p) || warmingUp(t, p)) return 0;
   const want = demandPerDay(p, t.pop), got = loadsLately(t, p);
   return got >= want - 1e-9 ? 0 : Math.max(1, Math.ceil(want - got - 1e-6));
 }
+
+/** Has none of a product the towns buy landed in a town yet (needHelp: no "build more" on a chain still starting)? */
+const firstToLand = (g: Game, p: Product): boolean => (g.progress.sold[p] ?? 0) < 1;
 
 /** The towns the company's trucks can sell to: all but one that sprang up and has had nothing yet. */
 const markets = (g: Game) => g.towns.list.filter((t) => !t.spawned || served(t));
@@ -347,7 +353,7 @@ export function ceilingOf(g: Game, b: Building): Ceiling | null {
   const L = b.plant!.level ?? 1;
   // (held at its level by a goal, or fully grown: there is no next level to wait for)
   const nextLevel = L < SITE_LEVELS && !b.plant!.why ? L + 1 : null;
-  if (PRODUCTS[p].price > 0) {
+  if (PRODUCTS[p].price > 0 && !firstToLand(g, p)) {
     const short = markets(g).map((t) => ({ t, more: townWants(t, p) })).filter((x) => x.more > 0).sort((a, c) => c.more - a.more);
     if (short.length) {
       const total = short.reduce((a, x) => a + x.more, 0);
@@ -382,6 +388,10 @@ export function needHelp(g: Game, t: Town, p: Product): NeedHelp | null {
   if (!kind) return null;
   const mine = g.industry.plants().filter((b) => (PLANTS[b.kind as PlantKind].outputs[p] ?? 0) > 0 && mainOf(b.kind as PlantKind) === p);
   if (!mine.length) return { kind: "none", build: kind, say: needHelpSay({ kind: "none", works: nameOf(kind), product: lower(p) }) };
+  // (none of it has landed in any town yet: its works are new, and how many more it takes is not known till their
+  // loads come in, so no "at full output, build more" till then; a works held up still says so. Play-test 2026-11-10:
+  // "Your Farm is at full output. Build another" while the first food was on the road, the one farm three times enough)
+  const early = firstToLand(g, p);
   const near = (a: Building, c: Building) => Math.hypot(a.c.x - t.c.x, a.c.y - t.c.y) - Math.hypot(c.c.x - t.c.x, c.c.y - t.c.y);
   const up = mine.filter(working).sort(near);
   // (every town's shortfall of it: new works feed them all)
@@ -398,7 +408,7 @@ export function needHelp(g: Game, t: Town, p: Product): NeedHelp | null {
   // the towns, never to build more; only one on this town's roads: one short elsewhere says nothing of these)
   const thin = held ? undefined : rest.find((b) => understaffed(g, b) && staffing(g, b).towns.includes(t));
   if (thin) return { kind: "held", works: thin.id, say: workersSay(g, thin) };
-  if (!held && starting.length && rest.length && up.length === mine.length && rest.every((b) => flatOut(g, b, p))) {
+  if (!early && !held && starting.length && rest.length && up.length === mine.length && rest.every((b) => flatOut(g, b, p))) {
     const each = rest.reduce((a, b) => a + canPerDay(g, b, p), 0) / rest.length;
     const n = worksFor(Math.max(0, total - starting.reduce((a, b) => a + canPerDay(g, b, p), 0)), each);
     const also = `Your new ${nameOf(starting[0].kind)} is starting up${starting.length > 1 ? `, and ${starting.length - 1} more` : ""}.`;
@@ -416,6 +426,7 @@ export function needHelp(g: Game, t: Town, p: Product): NeedHelp | null {
     const q = problem.includes("stuck in traffic") ? undefined : (Object.keys(PLANTS[held.kind as PlantKind].inputs) as Product[]).find((x) => problem.startsWith(`Waiting for ${lower(x)}`));
     const full = q ? makersFlatOut(g, q, held) : null;
     if (q && full) {
+      if (early) return null;
       const k = full.works[0].kind as PlantKind, D = PLANTS[held.kind as PlantKind];
       // how many: enough of the input for what the works that take it could still make (no more than the towns want)
       const spare = up.reduce((a, b) => a + Math.max(0, canPerDay(g, b, p) - (madePerDay(b, p) ?? 0)), 0);
@@ -428,7 +439,7 @@ export function needHelp(g: Game, t: Town, p: Product): NeedHelp | null {
     if (q && lean) return { kind: "held", works: lean.id, say: `Your ${nameOf(held.kind)} is short of ${lower(q)}. ${workersSay(g, lean)}` };
     return { kind: "held", works: held.id, say: needHelpSay({ kind: "held", works: nameOf(held.kind), problem: problem.split(": ")[0] }) };
   }
-  if (up.length && up.length === mine.length && up.every((b) => flatOut(g, b, p))) {
+  if (!early && up.length && up.length === mine.length && up.every((b) => flatOut(g, b, p))) {
     const each = up.reduce((a, b) => a + canPerDay(g, b, p), 0) / up.length;
     const n = worksFor(total, each);
     return { kind: "full", build: kind, n, works: up[0].id, say: needHelpSay({ kind: "full", works: nameOf(up[0].kind), have: up.length, n }) };

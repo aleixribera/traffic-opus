@@ -188,6 +188,8 @@ describe("read off the game", () => {
     g = new Game(7);
     ({ t, farm, foodplant } = chain(g));
     for (const b of [farm, foodplant]) { b.built = 1; b.problem = null; if (b.plant) b.plant.site = undefined; }
+    // (a chain under way: food has landed in a town before, so the advice may ask for more works)
+    g.progress.sold.food = 1;
     // (the town's adults take the jobs, as the sim's hiring does a quarter hour in: a works short of them reads so)
     g.people.matchJobs();
   }, 120000);
@@ -222,6 +224,13 @@ describe("read off the game", () => {
     // the Goals card's list once the goals run out names the same job
     expect(shortfalls(g)[0]).toMatchObject({ p: "food", worst: t });
     expect(shortfalls(g)[0].say).toContain("Your Food Plant is at full output.");
+    // but not while the company's first food is still to land anywhere: the works are new and their loads still to
+    // come in (play-test 2026-11-10: "build another farm" while the first truck was on the road)
+    g.progress.sold.food = 0;
+    expect(ceilingOf(g, foodplant)).toBeNull();
+    expect(needHelp(g, t, "food")).toBeNull();
+    expect(tipFor(g)?.id).not.toBe("ceiling");
+    g.progress.sold.food = 1;
   });
 
   it("a works under its ceiling, or with no pace yet, makes no such claim", () => {
@@ -664,6 +673,7 @@ describe("a works short of workers", () => {
     g = new Game(7);
     ({ t, farm, foodplant: fp } = chain(g));
     for (const b of [farm, fp]) { b.built = 1; b.problem = null; if (b.plant) b.plant.site = undefined; }
+    g.progress.sold.food = 1;
   }, 120000);
 
   it("the words: who its staff come from, and the way out the sim offers", () => {
@@ -734,6 +744,11 @@ describe("a works short of workers", () => {
     const h = needHelp(g, t, "food")!;
     expect(h).toMatchObject({ kind: "held", works: farm.id });
     expect(h.say).toMatch(new RegExp(`^Your Food Plant is short of crops\. Your Farm has ${farm.cap - 2} of ${farm.cap} workers\. ${t.name} needs to grow to fill it\.`));
+    // (the same before any food has landed: only "at full output, build more" waits for the first load. Review,
+    // 2026-11-10: the first-load rule had silenced this too)
+    g.progress.sold.food = 0;
+    expect(needHelp(g, t, "food")).toMatchObject({ kind: "held", works: farm.id });
+    g.progress.sold.food = 1;
     // the food plant's own panel names it too
     expect(siteModel(g, fp).status.fix).toContain(`It is short of workers: ${farm.cap - 2} of ${farm.cap} jobs filled.`);
     fp.problem = null;

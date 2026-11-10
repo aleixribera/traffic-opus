@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  TOWN_SIZES, sizeOf, needsOf, demandPerDay, supplyShare, growthPerDay, townRadius, gridPt, edgeKey, nextEdge, SEED_EDGES, BLOCK, nuisanceAt, type GridEdge,
+  TOWN_SIZES, sizeOf, needsOf, demandPerDay, supplyShare, growthPerDay, EARLY, EARLY_TO, HOME_EARLY, townRadius, gridPt, edgeKey, nextEdge, SEED_EDGES, BLOCK, nuisanceAt, type GridEdge,
   SUPPLY_HOURS, SUPPLY_COVER, SUPPLY_WARMUP, GROW_FROM, HOLD_FROM, PER_HOME, averageSupply, supportOf, supportedPop, growthShare, growthBand, growthLine,
   supplyLevel, extrasOf,
 } from "../src/game/towns";
 import type { Product } from "../src/game/industry";
+import { Game } from "../src/game/city";
+import { earlyOf } from "../src/game/settlements";
 
 /** Every load a day a town of this population wants of its needs. */
 const total = (pop: number) => needsOf(pop).reduce((a, p) => a + demandPerDay(p, pop), 0);
@@ -209,6 +211,19 @@ describe("growth in bands", () => {
     expect(pace(300)).toBeGreaterThan(pace(1000));
     expect(pace(1000)).toBeGreaterThan(pace(3000));
     expect(pace(3000)).toBeGreaterThan(pace(8000));
+  });
+
+  it("the home town's first streets fill faster than a hamlet that springs up later; past the early band, the same", () => {
+    // (first-hour play-test, 2026-11-10: a Village came at 40 minutes at the old pace)
+    expect(HOME_EARLY).toBeGreaterThan(EARLY);
+    for (const pop of [80, 150, 300]) expect(growthPerDay(pop, HOME_EARLY)).toBeGreaterThan(growthPerDay(pop) * 1.3);
+    for (const pop of [EARLY_TO, 1000, 6000]) expect(growthPerDay(pop, HOME_EARLY)).toBe(growthPerDay(pop));
+ 
+    // the faster pace is the home town's alone: the one the game starts with, not a town that springs up
+    const g = new Game(7);
+    g.start();
+    expect(earlyOf(g.towns.list[0])).toBe(HOME_EARLY);
+    expect(earlyOf({ ...g.towns.list[0], spawned: true })).toBe(EARLY);
   });
 });
 

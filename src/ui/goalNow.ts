@@ -11,7 +11,7 @@ import { unlockedBy, type Milestone } from "../game/progression";
 import type { V2 } from "../core/math";
 import { compassWords } from "../game/settlements";
 import { makerKind } from "./bottleneck";
-import { farmSpot } from "./goalPointer";
+import { farmSpot, groundSpot } from "./goalPointer";
 import { worksStatus } from "./inspect";
 
 /** The goals that wait on a first load, and the product each waits for (sold to a town, or just made). */
@@ -142,6 +142,12 @@ export function goalNow(g: Game, m: Milestone, have: number): GoalNow | null {
   if (m.id === "food10") {
     const at = farmSpot(g), home = g.towns.list[0];
     if (at && home) return { key: "Where", text: `Fertile soil for your farm lies ${far(Math.hypot(at.x - home.c.x, at.y - home.c.y))} ${compassWords(home.c, at)} of ${home.name}`, tone: "", spot: at };
+  }
+  // and the timber's forest, once the first food is sold (one chain at a time, as the tip): the nearest wood a
+  // logging camp fits with a road in reach, not the big patch kilometres over the river (play-test 2026-11-10)
+  if (m.id === "planks10" && (g.progress.sold.food ?? 0) >= 1 && !g.buildings.list.some((b) => b.kind === "loggingcamp")) {
+    const at = groundSpot(g, "loggingcamp"), home = g.towns.list[0];
+    if (at && home) return { key: "Where", text: `Forest for a logging camp lies ${far(Math.hypot(at.x - home.c.x, at.y - home.c.y))} ${compassWords(home.c, at)} of ${home.name}`, tone: "", spot: at };
   }
   return null;
 }

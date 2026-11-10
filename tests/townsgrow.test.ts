@@ -201,13 +201,21 @@ describe("a town growing into a town", () => {
     expect(g.buildings.list.some((b) => b.site)).toBe(false);
     g.progress.done.push("goods1");
     expect(g.placedUnlocked("constructionplant")).toBe(true);
-    // an old store in the centre is rebuilt as a new one
-    const old = g.buildings.list.find((o) => o.town === t.id && o.kind === "store" && o.lot && o.built >= 1)!;
-    expect(old).toBeDefined();
-    const b = g.rebuildLots(t.id, [old.id], old.zone!, old.lot!.block, old.lot!.col0, old.lot!.col0 + old.lot!.w, "store");
+    // an old block in the centre is rebuilt as a store, which goes up from parts: an old store, office or block of
+    // flats as its own kind, or a high-street row as a store (which a town has by now is up to its own growth); the
+    // first whose lot takes it as it stands
+    const mine = g.buildings.list.filter((o) => o.town === t.id && o.lot && o.built >= 1);
+    const olds = [...mine.filter((o) => !!PARTS_FOR[o.kind]), ...mine.filter((o) => o.kind === "highstreet")];
+    let b: Building | null = null;
+    for (const old of olds) {
+      const own = !!PARTS_FOR[old.kind];
+      b = g.rebuildLots(t.id, [old.id], own ? old.zone! : "comMid", old.lot!.block, old.lot!.col0, old.lot!.col0 + old.lot!.w, own ? old.kind : "store");
+      if (b) break;
+    }
     expect(b).not.toBeNull();
     expect(b!.redev).toBe(true);
-    expect(b!.site).toEqual({ need: { parts: PARTS_FOR.store }, got: {} });
+    const parts = PARTS_FOR[b!.kind]!;
+    expect(b!.site).toEqual({ need: { parts }, got: {} });
     // a house is still put up the old way
     let h: Building | null = null;
     for (let i = 0; i < 40 && !h; i++) h = g.growIn(t.id, "res", "house");
@@ -215,9 +223,9 @@ describe("a town growing into a town", () => {
     const tick = (n: number) => { for (let i = 0; i < n; i++) (g as unknown as { tick(s: number): void }).tick(HOUR / 8); };
     tick(16);
     expect(b!.built).toBe(0);
-    expect(b!.problem).toBe(`Building site: waiting for ${PARTS_FOR.store === 1 ? "1 load" : `${PARTS_FOR.store} loads`} of construction parts`);
+    expect(b!.problem).toBe(`Building site: waiting for ${parts === 1 ? "1 load" : `${parts} loads`} of construction parts`);
     // the parts arrive: the site is done waiting, and the block goes up like any other
-    g.industry.deliver(b!, "parts", PARTS_FOR.store!);
+    g.industry.deliver(b!, "parts", parts);
     expect(b!.site).toBeUndefined();
     tick(8);
     expect(b!.built).toBeGreaterThan(0);

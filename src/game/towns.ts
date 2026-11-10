@@ -237,17 +237,23 @@ export const PER_HOME = 2.5;
  * grows at the plain pace of its size.
  */
 export const EARLY = 20, EARLY_TO = 380;
-export const earlyBoost = (pop: number): number => 1 + EARLY * Math.max(0, 1 - pop / EARLY_TO);
+/**
+ * The company's home town, the one the game starts beside, gets a stronger boost: the first hour is its growth, and a
+ * player who wasn't a bot reached its Village in 40 minutes at EARLY (first-hour play-test, 2026-11-10). Towns that
+ * spring up later keep EARLY, so the mid game paces as it did.
+ */
+export const HOME_EARLY = 30;
+export const earlyBoost = (pop: number, early = EARLY): number => 1 + early * Math.max(0, 1 - pop / EARLY_TO);
 /** Below this many people a town is still settling: it fills its first streets whether supplied or not. */
 export const SETTLING = 60;
 
 /**
  * Households a day a town grows by with every need met in full (at least one): a hamlet of 80 by one and two thirds
- * households for every one it has (a Village in about 20 minutes at 1x), a Village of 300 by a third of its homes,
- * past 380 a Village by 6% a day, a Town 4.5%, a City 3.5% (a size in six to eight hours at 1x).
+ * households for every one it has, a Village of 300 by a third of its homes (the home town, at HOME_EARLY, about
+ * half as fast again), past 380 a Village by 6% a day, a Town 4.5%, a City 3.5% (a size in six to eight hours at 1x).
  */
-export function growthPerDay(pop: number): number {
-  return Math.max(1, (pop / PER_HOME) * RATE[sizeOf(pop)] * earlyBoost(pop));
+export function growthPerDay(pop: number, early = EARLY): number {
+  return Math.max(1, (pop / PER_HOME) * RATE[sizeOf(pop)] * earlyBoost(pop, early));
 }
 
 /**

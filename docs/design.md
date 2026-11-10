@@ -126,7 +126,13 @@ Our own names, look and art throughout.
   (`,` and `.` turn it in 15 degree steps). Its **gate** is
   the middle of one side, marked on the map while it has no road. Any road that passes the gate or ends in front
   of it (within ~12 m) connects it; the site says "Connected" and its trucks start. Until then it shows
-  "No road to the gate" and does nothing but wait. A gate never joins the road in a junction's mouth: within
+  "No road to the gate" and does nothing but wait. Put down with no road at its gate and no street of its own,
+  it says so at once ("Farm built for $8,000. No road reaches its gate yet: draw one to it"). "Connected" waits
+  until its roads reach somewhere that takes what it makes: a works that uses it, a warehouse that stores it, or
+  a town if towns buy it. A Sawmill joined only to its Logging Camp, or an Iron Mine before any steel works, is
+  told "Sawmill connected. Nothing on your roads takes its planks yet", and "its trucks can start" once a buyer
+  is on its roads (play-test 2026-11-10: the Sawmill was told its trucks could start, its planks with nowhere
+  to go). A road at its gate that joins nothing yet asks for that road to be joined to the others. A gate never joins the road in a junction's mouth: within
   24 m of one (a road train's length) its drive runs along the kerb to a point that far down the road, so trucks
   waiting to turn in or pull out stand clear of the box.
 - **The gate finds the road (2026-11-10, play-test C1 and C8).** As played, a new site's gate faced the bottom of
@@ -586,7 +592,9 @@ itself across modes; you build tracks, docks and the transfer points, never line
     (towns.ts `supplyLevel`), and:
     - *100% and over:* it grows at its full pace, a few percent of its homes a day: a Village 6%, a Town 4.5%, a
       City and up 3.5% (a hamlet much faster, up to 21 times at a few dozen people, fading out by 380, so the first
-      Village comes in about half an hour). With every need met in full, measured on the pace alone: a hamlet of 80
+      Village comes in about half an hour). The home town, the one the company starts beside, gets a stronger early
+      boost (up to 31 times, `HOME_EARLY`): a first-hour play-test (2026-11-10) reached its Village at 40 minutes at
+      the hamlets' pace. Towns that spring up later keep the hamlets' pace, so the mid game paces as before. With every need met in full, measured on the pace alone: a hamlet of 80
       to a Village 1.2 days (20 minutes at 1x), a Village to a Town 24 days (6.5 hours), a Town to a City 31 days
       (8.2 hours). Before: 0.8 days, 4.9 and 6.4. In the balance run (the scripted company, seed 7) the first
       Village comes on day 2.0 (32 minutes, as before) and first cement and steel at 80 and 88 minutes, with every
@@ -996,8 +1004,8 @@ no longer applies; it names a town only when that town is the one that needs it 
 | Build a Food Plant | a farm and no food plant |
 | Nobody to sell to | a built plant whose roads reach no buyer |
 | Traffic is stuck | four or more vehicles stand together (the Traffic stuck sign is up). It says more works will not help till it moves, and names the three ways out: a turn lane, lights, a second road. While it shows, no later tip does. |
-| A works is at full output | a works is flat out and a town still asks for more of what it makes, or (a step up the chain) the works that feeds the town's supplier is flat out. Says what to build. |
-| Planks | no sawmill, the first food has landed (one chain at a time), and a town is at 60% of the size that wants planks (names it, "will want" or "wants now") |
+| A works is at full output | a works is flat out and a town still asks for more of what it makes, or (a step up the chain) the works that feeds the town's supplier is flat out. Says what to build. A supply whose first load landed under 8 game hours ago (the town's own warm-up) never counts as short here: one load can't tell a rate, and the first food read as 3 loads a day against 5 sent a play-tester to build a second farm the first was three times enough for (2026-11-10). The town's panel says the first loads are coming in. |
+| Planks | no sawmill, the first food has landed (one chain at a time), and a town is at 60% of the size that wants planks (names it, "will want" or "wants now"). The Sawn timber goal's Where line says where the nearest forest a camp fits lies, and the "Nearest forest" pointer leads there before the big patches. |
 | A new town has no road | a town that sprang up isn't joined by road to another town or to a works that makes something it buys (a stub of road out of it, or a logging camp at its edge, is not a road to it) |
 | A site waits for something | a building site needs a product none of the company's plants makes |
 | Where a deposit lies | a mined kind is unlocked by one of the last two goals reached and none placed: the nearest deposit's distance and direction, in the order to build them (the power plant first). None once every goal is reached |
@@ -1348,8 +1356,10 @@ height levels shown while drawing, and the instant upgrade preview.
 - Esc goes back one thing at a time: the tool in hand (a road half drawn goes with it), the catalog, a panel, a window, an
   info view. With nothing open it opens the pause menu (src/ui/escape.ts).
 - R and I open the Roads and Industry catalogs (again to close). Opening Industry puts nothing in hand; a card
-  click does. Locked cards stay in their place and say what unlocks them. With something in hand the catalog
-  folds to one strip so the map is clear, and its tabs stay where they were.
+  click does. Locked cards stay in their place and say what unlocks them. With a building in hand, or once a
+  road's first point is down, the catalog folds to one strip so the map is clear (play-test 2026-11-10: the road
+  cards hid the town a road was being drawn to), and its tabs stay where they were. Its button brings the cards
+  back.
 - The wheel always zooms, also with a road or a building in hand. Shift + wheel turns a building 15° a notch.
 - Tab / Shift+Tab cycle the road modes.
 - B selects the bulldozer.

@@ -61,6 +61,12 @@ export function loadStep(want: number): number {
  * hours before there was any are no shortfall"). 0 when nothing has landed in that time.
  */
 export function sinceFirstLoad(t: Town, p: Product): number {
+  const { n, since } = firstLoad(t, p);
+  return since ? (n * 24) / Math.max(since, SUPPLY_WARMUP) : 0;
+}
+
+/** Loads of a product landed in the two days kept (the hour under way included), and the hours since the first of them. */
+function firstLoad(t: Town, p: Product): { n: number; since: number } {
   const hs = (t.hours ?? []).slice(-SUPPLY_HOURS), now = t.hourNow?.[p] ?? 0;
   let n = now, since = now > 0 ? 1 : 0;
   // (oldest first: the first hour with a load sets how long the supply has been coming, the hour under way included)
@@ -68,7 +74,18 @@ export function sinceFirstLoad(t: Town, p: Product): number {
     const k = hs[i][p] ?? 0;
     if (k > 0) { n += k; since = hs.length - i + 1; }
   }
-  return since ? (n * 24) / Math.max(since, SUPPLY_WARMUP) : 0;
+  return { n, since };
+}
+
+/**
+ * A supply whose first load landed less than SUPPLY_WARMUP hours ago: one or two loads can't tell a rate yet. The
+ * town's growth waits for it (towns.ts averageSupply), and the advice does too: a hamlet's first load of food read
+ * as 3 loads a day against the 5 it wants, and the tip sent the player off to build a second farm the one farm was
+ * already three times enough for (first-hour play-test, 2026-11-10).
+ */
+export function warmingUp(t: Town, p: Product): boolean {
+  const { since } = firstLoad(t, p);
+  return since > 0 && since < SUPPLY_WARMUP;
 }
 
 /**
@@ -127,6 +144,7 @@ export function needView(t: Town, p: Product, joined = false): NeedView {
   // it, a little more lets it grow again)
   else if (state === "enough" && t.limit === p && t.trend < 0.5) say = `Just enough to hold steady. ${more} more ${loads(more)} a day and it grows again.`;
   else if (state === "enough") say = `Enough to grow. ${more} more ${loads(more)} a day and it has plenty.`;
+  else if (warmingUp(t, p)) say = `The first ${low} ${isAre(low)} coming in. It counts as a supply once it has kept coming a few hours.`;
   else if (state === "low") say = `Bring ${more} more ${loads(more)} of ${low} a day.`;
   else if (got < 0.05) say = `No ${low} ${isAre(low)} coming. Bring ${more} ${loads(more)} a day.`;
   else say = `Almost no ${low} ${isAre(low)} coming. Bring ${more} more ${loads(more)} a day.`;
