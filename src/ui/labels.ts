@@ -94,6 +94,9 @@ export class MapLabels {
   readonly el = document.createElement("div");
   private items: { l: MapLabel; el: HTMLElement; icons: HTMLElement | null; size: [Sizes | null, Sizes | null]; fit?: Fit["mode"] }[] = [];
   private boxes: Rect[] = [];
+  /** the labels drawn now, in the order of `boxes` */
+  private shown: HTMLElement[] = [];
+  private under: HTMLElement | null = null;
 
   constructor() {
     this.el.className = "map-labels";
@@ -105,8 +108,30 @@ export class MapLabels {
     this.el.classList.toggle("passive", on);
   }
 
+  /**
+   * Where the pointer is (px; null off the map). While a tool is in hand, the label under it fades to a ghost, so the
+   * junction or the road a click there joins, and the snap's mark on it, show through (review 2026-11-10, B6).
+   */
+  pointer(x: number | null, y = 0) {
+    let hit: HTMLElement | null = null;
+    if (x !== null && this.el.classList.contains("passive")) {
+      const pad = 4;
+      for (let i = this.boxes.length - 1; i >= 0; i--) {
+        const b = this.boxes[i];
+        if (x >= b.l - pad && x <= b.r + pad && y >= b.t - pad && y <= b.b + pad) { hit = this.shown[i]; break; }
+      }
+    }
+    if (hit === this.under) return;
+    this.under?.classList.remove("under");
+    hit?.classList.add("under");
+    this.under = hit;
+  }
+
   set(labels: MapLabel[]) {
     this.el.replaceChildren();
+    this.under = null;
+    this.shown = [];
+    this.boxes = [];
     this.items = labels.map((l) => {
       const e = document.createElement(l.onClick ? "button" : "div");
       e.className = "map-label" + (l.onClick ? " click" : "");
@@ -180,6 +205,7 @@ export class MapLabels {
     }
     const fits = declutter(asks);
     this.boxes = [];
+    this.shown = [];
     for (let i = 0; i < who.length; i++) {
       const it = who[i], f = fits[i], a = asks[i];
       it.fit = f.mode;
@@ -188,6 +214,7 @@ export class MapLabels {
       it.el.classList.toggle("brief", f.mode === "name");
       it.el.style.transform = `translate(${a.x.toFixed(1)}px, ${(a.y + f.dy).toFixed(1)}px) translate(-50%, -50%)`;
       this.boxes.push(at(f.mode === "full" ? a.full : a.name, a.x, a.y + f.dy));
+      this.shown.push(it.el);
     }
   }
 }

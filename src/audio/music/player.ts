@@ -5,13 +5,27 @@
 //
 // Notes are set down a third of a second ahead of the audio clock, from the frame loop: a hidden tab schedules
 // nothing, and a late frame only delays a note it had not yet reached.
+//
+// The next tune is written ahead, while this one plays, by a worker (compose.worker.ts): writing one takes a few
+// milliseconds, and the session's first several more (review 2026-11-10: the radio's 51 ms worst frame). With no
+// worker (the offline renders, the tests) it is written here, in an idle moment.
 
 import { BASS_BASE, PIANO_BASE } from "../bank";
 import { midiHz } from "../dsp";
 import { Engine, Loop } from "../engine";
-import { compose, swung, type Mood, type NameSource, type Note, type Tune } from "./compose";
+import { compose, swung, type Mood, type NameSource, type Note } from "./compose";
+import { noteAt, sheetOf, type Sheet } from "./sheet";
+import type { WriteAsk } from "./compose.worker";
 
 const AHEAD = 0.35;
+/** How long a tune due to start waits for the worker's before it is written here (s). */
+const WAIT_WRITER = 2;
+const idleCall = (f: () => void, timeout: number): boolean => {
+  const idle = (globalThis as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+  if (!idle) return false;
+  idle(f, { timeout });
+  return true;
+};
 /** Each part's level in the band. */
 const LEVEL = { piano: 0.5, comp: 0.24, bass: 0.5, lead: 0.26, tap: 0.5, swish: 0.4, hat: 0.32, kick: 0.3, cym: 0.4 };
 /** The band's level into the set, and the set's crackle. */
@@ -23,7 +37,7 @@ const namesOf = (s: NameSource) => s.company + "|" + s.towns.join("|");
 const nearest = (bases: number[], m: number) => { let b = bases[0]; for (const x of bases) if (Math.abs(x - m) < Math.abs(b - m)) b = x; return b; };
 
 export class Wireless {
-  tune: Tune | null = null;
+  tune: Sheet | null = null;
   /** called when a tune starts ("" when the set goes quiet) */
   onTune: ((name: string) => void) | null = null;
   /** where the names come from, and the hour's mood, asked as each tune is written */
@@ -47,11 +61,31 @@ export class Wireless {
   private old = true;
   /** when the horn's last note ends (it is not re-tongued inside a slur) */
   private hornEnd = 0;
-  /** the next tune, written ahead while the browser had nothing to do (a tune takes a few ms to write) */
-  private ahead: { tune: Tune; mood: Mood; names: string } | null = null;
+  /** the next tune, written ahead (by the worker, or here while the browser had nothing to do) */
+  private ahead: { tune: Sheet; mood: Mood; names: string } | null = null;
   private asked = false;
+  /** the worker that writes the tunes, and the tune it is writing */
+  private writer: Worker | null = null;
+  private writing: { id: number; mood: Mood; names: string } | null = null;
+  private asks = 0;
+  /** since when (context time) a tune due to start has waited for the worker's */
+  private waitFrom = 0;
+  private hornAsked = false;
 
-  constructor(private e: Engine) {
+  constructor(private e: Engine, opts: { worker?: boolean } = {}) {
+    if (opts.worker && typeof Worker !== "undefined") {
+      try {
+        const w = new Worker(new URL("./compose.worker.ts", import.meta.url), { type: "module" });
+        w.onmessage = (ev: MessageEvent<{ id: number; sheet: Sheet }>) => {
+          const W = this.writing;
+          if (!W || ev.data.id !== W.id) return;
+          this.writing = null;
+          this.ahead = { tune: ev.data.sheet, mood: W.mood, names: W.names };
+        };
+        w.onerror = () => { this.writer = null; this.writing = null; };
+        this.writer = w;
+      } catch { this.writer = null; }
+    }
     const ctx = e.ctx;
     const g = (v: number) => { const n = ctx.createGain(); n.gain.value = v; return n; };
     this.band = g(BAND);
@@ -88,6 +122,7 @@ export class Wireless {
   setOn(on: boolean) {
     if (on === this.on) return;
     this.on = on;
+    this.waitFrom = 0;
     if (on) { this.band.gain.setTargetAtTime(BAND, this.e.now, 0.05); this.startAt = this.e.now + 1.2; }
     else { this.hush(); this.dropHorn(); }
     if (!on) this.onTune?.("");
@@ -116,6 +151,7 @@ export class Wireless {
   /** Cut the band off (what is already set down fades with it). */
   private hush() {
     const t = this.e.now;
+    this.waitFrom = 0;
     this.band.gain.cancelScheduledValues(t);
     this.band.gain.setTargetAtTime(0, t, 0.07);
     this.tune = null;
@@ -131,26 +167,49 @@ export class Wireless {
     return b.has("piano:60") && b.has("piano:48") && b.has("bass:40") && b.has("drum:tap") && b.has("drum:hat");
   }
 
-  /** Write the next tune in an idle moment, so that starting it costs the frame nothing. */
+  /** Write the next tune ahead (by the worker, or in an idle moment), so that starting it costs the frame nothing. */
   private prepare() {
-    if (this.ahead || this.asked) return;
-    const idle = (globalThis as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
-    if (!idle) return;
-    this.asked = true;
-    idle(() => {
+    if (this.ahead || this.writing) return;
+    if (this.writer) {
+      const mood = this.mood(), src = this.source();
+      const ask: WriteAsk = { id: ++this.asks, seed: this.seed(), mood, src: { towns: [...src.towns], company: src.company }, avoid: [...this.recent] };
+      this.writing = { id: ask.id, mood, names: namesOf(src) };
+      this.writer.postMessage(ask);
+      return;
+    }
+    if (this.asked) return;
+    this.asked = idleCall(() => {
       this.asked = false;
       if (this.ahead) return;
       const mood = this.mood(), src = this.source();
-      this.ahead = { mood, names: namesOf(src), tune: compose(this.seed(), mood, src, new Set(this.recent)) };
-    }, { timeout: 5000 });
+      this.ahead = { mood, names: namesOf(src), tune: sheetOf(compose(this.seed(), mood, src, new Set(this.recent))) };
+    }, 5000);
   }
 
-  private begin() {
-    const e = this.e, avoid = new Set(this.recent), mood = this.mood(), src = this.source(), a = this.ahead;
-    this.ahead = null;
+  /** The horn's oscillators and waves, made in an idle moment before the first tune needs them. */
+  private prepareHorn() {
+    if (this.horn || this.hornAsked) return;
+    this.hornAsked = idleCall(() => { this.hornAsked = false; if (this.on && !this.horn) this.makeHorn(); }, 1000);
+  }
+
+  /** Start the next tune; false while it waits for the worker to write it. */
+  private begin(): boolean {
+    const e = this.e, avoid = new Set(this.recent), mood = this.mood(), src = this.source(), names = namesOf(src), a = this.ahead;
     // (the one written ahead, unless the hour has turned since, or another save was loaded: a night tune is not
     // played at noon, nor one named after a town that is not on this map)
-    const tune = a && a.mood === mood && a.names === namesOf(src) && !avoid.has(a.tune.name) ? a.tune : compose(this.seed(), mood, src, avoid);
+    let tune = a && a.mood === mood && a.names === names && !avoid.has(a.tune.name) ? a.tune : null;
+    this.ahead = null;
+    if (!tune) {
+      // the worker writes one for now; if it is slow to, it is written here
+      if (this.writer && (!this.waitFrom || e.now - this.waitFrom < WAIT_WRITER)) {
+        if (!this.waitFrom) this.waitFrom = e.now;
+        if (this.writing && (this.writing.mood !== mood || this.writing.names !== names)) this.writing = null;
+        this.prepare();
+        return false;
+      }
+      tune = sheetOf(compose(this.seed(), mood, src, avoid));
+    }
+    this.waitFrom = 0;
     this.recent.push(tune.name);
     if (this.recent.length > 24) this.recent.shift();
     this.tune = tune;
@@ -164,6 +223,7 @@ export class Wireless {
     const cl = tune.lead === "clarinet";
     h.nose.gain.setValueAtTime(cl ? 0 : 9, e.now);
     this.onTune?.(tune.name);
+    return true;
   }
 
   private makeHorn() {
@@ -195,20 +255,23 @@ export class Wireless {
     this.crackle.set(this.on && this.old ? CRACKLE : 0, 1 / 60, 1, 0.5);
     if (!this.on) return;
     if (!this.tune) {
+      // (the next tune is written, and the horn made, while the set's noise plays between tunes)
+      this.prepareHorn();
+      this.prepare();
       if (now >= this.startAt && this.ready()) this.begin();
       return;
     }
     this.prepare();
-    const T = this.tune, ns = T.notes, spb = this.spb, t0 = this.t0;
+    const T = this.tune, spb = this.spb, t0 = this.t0;
     // (a tab that slept, a frame that hung: skip what is past instead of playing it all at once)
-    while (this.idx < ns.length) {
-      const n = ns[this.idx], at = t0 + swung(n.t, T.swing) * spb;
+    while (this.idx < T.count) {
+      const k = this.idx, at = t0 + swung(T.t[k], T.swing) * spb;
       if (at > now + AHEAD) break;
       this.idx++;
       if (at < now - 0.05) continue;
-      this.play(n, Math.max(at, now + 0.005), T);
+      this.play(noteAt(T, k), Math.max(at, now + 0.005), T);
     }
-    if (this.idx >= ns.length && now > t0 + T.beats * spb) {
+    if (this.idx >= T.count && now > t0 + T.beats * spb) {
       // the tune is over: a few seconds of the set's own noise, then another
       this.tune = null;
       this.startAt = now + 3 + 3 * e.rnd();
@@ -216,7 +279,7 @@ export class Wireless {
     }
   }
 
-  private play(n: Note, at: number, T: Tune) {
+  private play(n: Note, at: number, T: Sheet) {
     const e = this.e, spb = this.spb, r = e.rnd;
     const dur = Math.max(0.09, (swung(n.t + n.d, T.swing) - swung(n.t, T.swing)) * spb);
     if (n.i === "lead") { this.hornNote(n, at, dur); return; }

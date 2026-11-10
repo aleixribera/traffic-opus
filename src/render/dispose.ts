@@ -9,7 +9,7 @@ import type { ModelSet } from "./models";
 export function modelGeometries(models: ModelSet): Set<THREE.BufferGeometry> {
   const keep = new Set<THREE.BufferGeometry>();
   for (const t of models.trees.values()) keep.add(t.full).add(t.lod);
-  for (const m of [...models.buildings.values(), ...models.props.values(), ...models.sites.values()]) keep.add(m.geo);
+  for (const m of [...models.buildings.values(), ...models.props.values(), ...models.sites.values(), ...(models.far?.values() ?? [])]) keep.add(m.geo);
   for (const v of models.vehicles.values()) {
     keep.add(v.geo);
     if (v.far) keep.add(v.far);

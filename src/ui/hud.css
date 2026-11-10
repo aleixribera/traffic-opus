@@ -496,9 +496,9 @@ body.in-menu .hud > :not(.modal):not(.toasts) { display: none !important; }
 .pm:hover, .pm:focus-visible { background: var(--plate-2); box-shadow: inset 3px 0 0 var(--ochre); }
 .pm:focus-visible { outline-offset: -2px; }
 .pm.resume { color: var(--ochre-hi); }
-.pm.tips, .pm.wheel { display: flex; justify-content: space-between; align-items: baseline; }
+.pm.tips, .pm.wheel, .pm.edge { display: flex; justify-content: space-between; align-items: baseline; }
 .pm-v { font: 600 var(--t-xs)/1 var(--f-text); text-transform: uppercase; letter-spacing: 0.14em; color: var(--ochre-hi); }
-.pm.tips[aria-checked="false"] .pm-v { color: var(--cream-3); }
+.pm.tips[aria-checked="false"] .pm-v, .pm.edge[aria-checked="false"] .pm-v { color: var(--cream-3); }
 .pm.new { color: var(--bad); margin-top: 6px; border-top: 1px solid var(--rule); border-radius: 0 0 var(--r) var(--r); }
 .keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; align-items: baseline; }
 .keys dt { white-space: nowrap; }
@@ -557,6 +557,9 @@ kbd { font: 600 var(--t-sm)/1 var(--f-text); padding: 3px 6px; border: 1px solid
 .map-label.click:hover .ml-plate > b { background: var(--plate-2); box-shadow: inset 0 0 0 1px var(--ochre), 0 2px 5px rgba(3, 7, 14, 0.5); }
 .map-label.click:focus-visible { outline: 2px solid var(--ochre); outline-offset: 2px; }
 .map-labels.passive .map-label.click { pointer-events: none; }
+/* with a tool in hand, the label under the pointer fades, so the junction a click there joins shows (labels.ts pointer) */
+.map-label { transition: opacity 0.12s ease-out; }
+.map-labels.passive .map-label.under { opacity: 0.18; }
 /* a smaller town's label where a bigger one stands in its way: its name alone (labels.ts declutter) */
 .map-label.brief .ml-plate > span, .map-label.brief .ml-icons { display: none; }
 .map-label.brief .ml-plate > b { font-size: 14px; line-height: 17px; padding: 1px 7px 0; }

@@ -39,6 +39,8 @@ export class RoadsFar {
   /** every line drawn: its material, its width on the page, which tier's roads it follows */
   private lines: { line: LineSegments2; mat: LineMaterial; px: number; tier: number }[] = [];
   private dirty = true;
+  /** each road's thinned centreline, kept while its geometry stands (a road rebuilt gets a new one) */
+  private thinned = new WeakMap<object, { x: number; y: number }[]>();
 
   constructor(private net: RoadNetwork) {
     this.group.renderOrder = 5;
@@ -56,6 +58,11 @@ export class RoadsFar {
       add(i, t.fill, t.color, 20 + i, t.dash);
       if (t.centre) add(i, t.centre.px, t.centre.color, 30 + i);
     });
+  }
+
+  /** Builds the lines now if they are due (at load, so the first zoom out doesn't). */
+  prepare() {
+    if (this.dirty) this.rebuild();
   }
 
   invalidate() {
@@ -89,33 +96,53 @@ export class RoadsFar {
         if (!t.pick(T)) continue;
         const g = this.net.segGeom.get(s.id);
         if (!g) continue;
-        const pts = g.center.pts;
-        const step = Math.max(1, Math.floor(pts.length / 400));
+        let pts = this.thinned.get(g.center.pts);
+        if (!pts) this.thinned.set(g.center.pts, (pts = thin(g.center.pts)));
         let d = 0;
-        for (let i = step; i < pts.length + step - 1; i += step) {
-          const p = pts[i - step], q = pts[Math.min(i, pts.length - 1)];
+        for (let i = 1; i < pts.length; i++) {
+          const p = pts[i - 1], q = pts[i];
           pos.push(p.x, 40, p.y, q.x, 40, q.y);
           const l = Math.hypot(q.x - p.x, q.y - p.y);
           dist.push(d, d + l);
           d += l;
         }
       }
-      for (const l of this.lines) {
-        if (l.tier !== ti) continue;
-        l.line.geometry.dispose();
-        const geo = new LineSegmentsGeometry();
-        if (pos.length) {
-          geo.setPositions(pos);
-          if (l.mat.dashed) {
-            // (how far along its road each piece starts and ends: the dashes run on from piece to piece)
-            const buf = new THREE.InstancedInterleavedBuffer(new Float32Array(dist), 2, 1);
-            geo.setAttribute("instanceDistanceStart", new THREE.InterleavedBufferAttribute(buf, 1, 0));
-            geo.setAttribute("instanceDistanceEnd", new THREE.InterleavedBufferAttribute(buf, 1, 1));
-          }
+      // (one geometry for every line of the tier: its casing, fill and centre line follow the same roads)
+      const mine = this.lines.filter((l) => l.tier === ti);
+      mine[0].line.geometry.dispose();
+      const geo = new LineSegmentsGeometry();
+      if (pos.length) {
+        geo.setPositions(pos);
+        if (mine.some((l) => l.mat.dashed)) {
+          // (how far along its road each piece starts and ends: the dashes run on from piece to piece)
+          const buf = new THREE.InstancedInterleavedBuffer(new Float32Array(dist), 2, 1);
+          geo.setAttribute("instanceDistanceStart", new THREE.InterleavedBufferAttribute(buf, 1, 0));
+          geo.setAttribute("instanceDistanceEnd", new THREE.InterleavedBufferAttribute(buf, 1, 1));
         }
+      }
+      for (const l of mine) {
         l.line.geometry = geo;
         l.line.visible = pos.length > 0;
       }
     });
   }
+}
+
+/**
+ * A road's centreline with only the points a far line needs: one is kept where leaving it out would bend the line
+ * more than a few decimetres off the road (under a tenth of a pixel at the zooms that draw these), or every 160 m.
+ */
+export function thin(pts: readonly { x: number; y: number }[], tol = 0.3, most = 160): { x: number; y: number }[] {
+  if (pts.length <= 2) return pts.slice();
+  const out = [pts[0]];
+  let k = 0;
+  for (let i = 2; i < pts.length; i++) {
+    const a = pts[k], b = pts[i];
+    const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy);
+    let keep = L > most;
+    for (let j = k + 1; j < i && !keep; j++) keep = L > 1e-6 && Math.abs((pts[j].x - a.x) * dy - (pts[j].y - a.y) * dx) / L > tol;
+    if (keep) out.push(pts[i - 1]), (k = i - 1);
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
 }

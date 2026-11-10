@@ -53,6 +53,11 @@ export class LandMask {
     this.uniforms.uMask.value = this.tex;
   }
 
+  /** Whether update would draw the mask again now. */
+  due(version: number, now = performance.now()): boolean {
+    return version !== this.sig && now - this.at >= EVERY;
+  }
+
   /** Call every frame with the buildings and a number that changes when they do. */
   update(list: readonly MaskPlot[], version: number, now = performance.now()) {
     if (version === this.sig || now - this.at < EVERY) return;

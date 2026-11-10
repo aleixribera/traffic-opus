@@ -164,12 +164,12 @@ export class Terrain3D {
         for (const [k, c] of old.slice(0, map.size - MAX_PER_LOD)) this.drop(c), map.delete(k);
       }
     }
-    // coarse first (fills the screen fast), then nearest-first; ~7 ms a frame
+    // coarse first (fills the screen fast), then nearest-first; ~4 ms a frame (the coarser level shows meanwhile)
     this.queue.sort((a, b) => a.d - b.d);
     const t0 = performance.now();
     for (const q of this.queue) {
       this.build(q.lod, q.ci, q.cj);
-      if (performance.now() - t0 > 7) break;
+      if (performance.now() - t0 > 4) break;
     }
     // the painted crowns of the chunks in view (only at the zooms that show them), nearest first, a few ms a frame
     this.crownsDue = false;
@@ -181,7 +181,7 @@ export class Terrain3D {
       for (const c of todo) {
         this.bake(c);
         done++;
-        if (performance.now() - t0 > 9) break;
+        if (performance.now() - t0 > 6) break;
       }
       this.crownsDue = done < todo.length;
     }

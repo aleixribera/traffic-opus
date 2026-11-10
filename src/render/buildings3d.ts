@@ -151,6 +151,18 @@ const STRIP_CHUNK = 256;
  * this zoom the calls cost more than the squares left undrawn save.)
  */
 export const BUILD_NEAR_TO = 0.55;
+/**
+ * Past this many metres a pixel the family homes are drawn as their far models (models.ts FAR_MODELS): a house is
+ * a dozen pixels across there and its windows two, which the far model keeps; its window frames, fence boards and
+ * bevels are under a pixel (side by side on a late map at 0.56, the two differ in a few hundred pixels of the
+ * screen). Most of a grown map's triangles were its houses. The same zoom as the whole-map meshes start.
+ */
+export const HOUSE_FAR_FROM = BUILD_NEAR_TO;
+/**
+ * Past this the garden hedges and fences (a few tenths of a pixel wide there) are drawn as their flattest models,
+ * a top and two sides (6 triangles to the far model's 30 or 50): only the speck of green or white they leave shows.
+ */
+export const STRIP_FLAT_FROM = 2.0;
 const BUILD_CHUNK = 512;
 /** How far a corner lot's side, and a town square's edges, reach out to a kerb (m). */
 const SIDE_REACH = 14, SQUARE_REACH = 16;
@@ -242,6 +254,40 @@ class Quads {
     m.renderOrder = order;
     return m;
   }
+}
+
+/** The front strips laid out (render/buildings3d.ts stripsPlan): what commitStrips draws. */
+/** Which of a garden hedge's or fence's models is drawn (Buildings3D.lod). */
+type StripLod = "near" | "far" | "flat";
+
+interface StripPlan {
+  /** the strips' lawns, paving, hedges and fences, made ahead and not yet shown (the hedges' and fences' near or far: userData.lod) */
+  meshes: THREE.InstancedMesh[];
+  trees: PlantedTree[];
+}
+
+/** A model's pieces, made into meshes ahead and not yet shown: the whole map's, and one by square of the map. */
+interface ModelPlan {
+  model: string;
+  ps: Piece[];
+  mesh: THREE.InstancedMesh;
+  squares: { ps: Piece[]; nm: THREE.InstancedMesh }[];
+}
+
+const _sph = new THREE.Sphere(), _mat = new THREE.Matrix4();
+/** The sphere round every copy of a model placed by the matrices arr[from..to): the one InstancedMesh.computeBoundingSphere finds, worked out ahead, off the mesh. */
+function sphereOf(geo: THREE.BufferGeometry, arr: Float32Array, from = 0, to = arr.length / 16): THREE.Sphere {
+  if (!geo.boundingSphere) geo.computeBoundingSphere();
+  const out = new THREE.Sphere().makeEmpty();
+  for (let i = from; i < to; i++) out.union(_sph.copy(geo.boundingSphere!).applyMatrix4(_mat.fromArray(arr, i * 16)));
+  return out;
+}
+
+/** The sphere round a set of spheres. */
+function sphereAround(xs: THREE.Sphere[]): THREE.Sphere {
+  const out = new THREE.Sphere().makeEmpty();
+  for (const x of xs) out.union(x);
+  return out;
 }
 
 export class Buildings3D {
@@ -608,137 +654,178 @@ export class Buildings3D {
     return this.layoutOf(b).slots.filter((s) => s.level <= level).map((s) => ({ b, model: slotModel(b, s.model, now), slot: s }));
   }
 
+  // ---------------------------------------------------------------- laying out, all at once or a slice a frame
+  //
+  // A late town has thousands of buildings, and laying them all out takes some 80 ms: done whenever one finished,
+  // the game hitched every few seconds (review 2026-11-10, B12). So the sim's changes are laid out in slices, a few
+  // ms a frame (rebuildSoon, work): the layout as it was stays drawn, and the new one goes in whole, in one frame,
+  // when it is ready. The player's own edits and a loaded game are laid out at once (rebuild).
+
+  /** The layout under way in slices, whether it is only the driveways and strips, and the one asked for next. */
+  private job: Generator<void, void> | null = null;
+  private jobDrives = false;
+  private due: { list: Building[]; drives: boolean } | null = null;
+  /** How many times the driveways and strips went in: a plan made before the last one is out of date (rebuildDrives). */
+  private drivesGen = 0;
+  /** The last layout in slices to finish was a whole one (not only the driveways and strips). */
+  doneWhole = false;
+  /** When this frame's slice must stop (performance.now ms; Infinity: laying out at once). */
+  private until = Infinity;
+  private steps = 0;
+  /** Time this slice stopped (checked every few steps). */
+  private late(): boolean {
+    return (++this.steps & 15) === 0 && performance.now() > this.until;
+  }
+
+  /** Lay every building out now (a loaded game, the player's own edit). Drops a layout under way in slices. */
   rebuild(list: Building[]) {
-    for (const m of this.meshes.values()) { this.group.remove(m); m.dispose(); }
-    this.meshes.clear();
-    for (const m of this.nearMeshes) { this.group.remove(m); m.dispose(); }
-    this.nearMeshes = [];
-    if (this.yards) { this.group.remove(this.yards); this.yards.dispose(); this.yards = null; }
-    if (this.paving) { this.group.remove(this.paving); this.paving.geometry.dispose(); this.paving.dispose(); this.paving = null; }
-    this.squareTrees = [];
-    this.treeVersion++;
+    this.job = null;
+    this.due = null;
+    this.run(this.layout(list));
+  }
+
+  /** The driveways and front strips again now (the roads changed). */
+  rebuildDrives(list: Building[]) {
+    // (a whole layout under way lays them out from the roads as they were: it goes in, then they are done again)
+    // (one of only the driveways, under way from the roads as they were, is dropped: this one is newer)
+    if (this.job && this.jobDrives) this.job = null;
+    else if (this.job && !this.due) this.due = { list, drives: true };
+    this.run(this.drivesJob(list));
+  }
+
+  /**
+   * Lay out again over the next frames (work): the whole layout, or only the driveways and strips. Asked again while
+   * one is under way, the newest list is laid out after it.
+   */
+  rebuildSoon(list: Building[], drivesOnly = false) {
+    this.due = { list, drives: drivesOnly && (!this.due || this.due.drives) };
+  }
+
+  /** A layout is under way, or waiting to start. */
+  get busy(): boolean {
+    return !!this.job || !!this.due;
+  }
+
+  /**
+   * Carry the layout under way on for about `ms` milliseconds. True on the frame a new layout went in (its lights,
+   * emitters and trees may have changed: version and treeVersion have moved on).
+   */
+  work(ms: number): boolean {
+    if (!this.job && this.due) {
+      const d = this.due;
+      this.due = null;
+      this.jobDrives = d.drives;
+      // (a copy: the sim's list changes under a layout spread over several frames)
+      this.job = d.drives ? this.drivesJob(d.list.slice()) : this.layout(d.list.slice());
+    }
+    if (!this.job) return false;
+    this.until = performance.now() + ms;
+    const r = this.job.next();
+    this.until = Infinity;
+    if (!r.done) return false;
+    this.job = null;
+    this.doneWhole = !this.jobDrives;
+    return true;
+  }
+
+  private run(g: Generator<void, void>) {
+    const was = this.until;
+    this.until = Infinity;
+    try { while (!g.next().done); } finally { this.until = was; }
+  }
+
+  private *layout(list: Building[]): Generator<void, void> {
     const live = new Set(list.map((b) => b.id));
-    // what is built, for the roadside furniture to keep off (render/furniture.ts): every lot and works site
-    let sig = list.length;
-    for (const b of list) sig = (Math.imul(sig, 31) + b.id) | 0;
-    LOTS.set("buildings", list.map((b) => rectCorners(b.c, b.hw, b.hd, b.rot)), sig);
     for (const id of this.layouts.keys()) if (!live.has(id)) this.layouts.delete(id);
     for (const id of this.picked.keys()) if (!live.has(id)) { this.picked.delete(id); this.walled.delete(id); this.variety.drop(id); }
-    const lots = list.filter((b) => b.zone);
-    const squares = list.filter((b) => isHall(b.kind)).map((b) => ({ b, plan: this.squareOf(b) }));
-    // lawns (and the lots' yards) in one instanced mesh, paving in another
-    let nLawn = lots.length, nPave = 0;
-    for (const { plan } of squares) {
-      for (const r of [{ kind: plan.base }, ...plan.rects]) if (r.kind === "lawn") nLawn++; else nPave++;
-    }
-    const sc = new THREE.Matrix4(), rt = new THREE.Matrix4();
-    if (nLawn) {
-      const ym = new THREE.InstancedMesh(this.yardGeo, this.yardMat, nLawn);
-      ym.receiveShadow = true;
-      ym.renderOrder = 1;
-      lots.forEach((b, i) => {
-        lotMatrix(this.tmp, b.c, b.rot, b.side, 0.04);
-        // the lot is hw along the road and hd deep; in lot space x runs along the road
-        const home = ZONE_GROUP[b.zone!] === "res";
-        // a business paves its lot edge to edge (two side by side share one yard, with no strip of grass between),
-        // but only as far back as it is built: a deep lot's back is left to the grass, not an empty paved field
-        const edge = home ? 0.8 : 0;
-        const used = home || (b.built < 1 && !b.wall) ? b.hd * 2 : this.usedDepth(b);
-        // (a front of the street wall too: a short yard behind it, then its court is grass with a tree or two)
-        const deep = used < b.hd * 2 - BACK_WILD ? used : b.hd * 2;
-        ym.setMatrixAt(i, this.tmp.multiply(sc.makeScale(b.hw * 2 - edge, 1, deep - edge).setPosition(0, 0, b.hd - deep / 2)));
-        ym.setColorAt(i, this.col.setHex(b.built < 1 ? SITE : YARD[ZONE_GROUP[b.zone!]]));
-      });
-      this.yards = ym;
-      this.group.add(ym);
-    }
-    if (nPave) {
-      const pm = new THREE.InstancedMesh(this.yardGeo.clone(), this.paveMat, nPave);
-      pm.geometry.setAttribute("aPat", new THREE.InstancedBufferAttribute(new Float32Array(nPave * 2), 2));
-      pm.receiveShadow = true;
-      pm.renderOrder = 1;
-      this.paving = pm;
-      this.group.add(pm);
-    }
-    // a hall's square: lawn and paving to the pavements, its path to the hall's door, its trees (bare earth, and no
-    // trees yet, while the hall is being built)
-    let iy = lots.length, ip = 0;
-    const pat = this.paving?.geometry.getAttribute("aPat") as THREE.InstancedBufferAttribute | undefined;
-    for (const { b, plan } of squares) {
-      const site = b.built < 1;
-      const H = b.hw - 0.4;
-      const pieces = [{ x: 0, z: 0, w: H * 2, d: H * 2, rot: 0, kind: plan.base, y: 0.04 }, ...plan.rects.map((r) => ({ ...r, y: r.kind === "path" ? 0.07 : 0.06 }))];
-      pieces.forEach((r, k) => {
-        lotMatrix(this.tmp, b.c, b.rot, b.side, r.y);
-        this.tmp.multiply(rt.makeRotationY(r.rot).setPosition(r.x, 0, r.z)).multiply(sc.makeScale(r.w, 1, r.d));
-        if (r.kind === "lawn") {
-          this.yards!.setMatrixAt(iy, this.tmp);
-          this.yards!.setColorAt(iy++, this.col.setHex(site ? SITE : SQUARE_LAWN));
-          return;
-        }
-        const bare = site && r.kind !== "path";
-        this.paving!.setMatrixAt(ip, this.tmp);
-        this.paving!.setColorAt(ip, this.col.setHex(bare ? SITE : r.kind === "path" ? SQUARE_PATH : SQUARE_PAVING));
-        const p = bare ? PAVE_NONE : r.kind === "path" ? PAVE_PATH : k === 0 ? PAVE_FIELD : PAVE_RECT;
-        pat!.setXY(ip++, p[0], p[1]);
-      });
-      if (site) continue;
-      lotMatrix(this.tmp, b.c, b.rot, b.side, 0);
-      for (const t of plan.trees) {
-        const w = this.v3.set(t.x, 0, t.z).applyMatrix4(this.tmp);
-        this.squareTrees.push({ x: w.x, y: w.z, r: t.r, style: "park" });
-      }
-    }
-    this.yards?.computeBoundingSphere();
-    this.paving?.computeBoundingSphere();
-    this.order.clear();
-    this.building = [];
-    this.emitters = [];
+    // every building's pieces (models), and where each stack and vent will smoke
+    const order = new Map<string, Piece[]>();
+    const emitters: FxEmitter[] = [];
+    const tmp = new THREE.Matrix4(), v3 = new THREE.Vector3();
     for (const b of list) {
+      if (this.late()) yield;
       for (const p of this.piecesOf(b)) {
         const mm = this.geoOf(p.model);
         if (!mm) continue;
-        let a = this.order.get(p.model);
-        if (!a) this.order.set(p.model, (a = []));
+        let a = order.get(p.model);
+        if (!a) order.set(p.model, (a = []));
         a.push(p);
         // its stacks and vents, where they will stand once it is up
         if (!mm.fx.length || isMega(b.kind)) continue;
-        this.standMatrix(this.tmp, p);
+        this.standMatrix(tmp, p);
         const up = () => b.built >= 1 && this.rise(p) >= 1;
         for (const f of mm.fx) {
-          const w = this.v3.set(f.x, f.y, f.z).applyMatrix4(this.tmp);
-          this.emitters.push({ b, kind: f.kind, x: w.x, y: w.z, h: w.y, size: f.size * (b.zone ? b.fit : 1), up });
+          const w = v3.set(f.x, f.y, f.z).applyMatrix4(tmp);
+          emitters.push({ b, kind: f.kind, x: w.x, y: w.z, h: w.y, size: f.size * (b.zone ? b.fit : 1), up });
         }
       }
     }
-    for (const [model, ps] of this.order) {
+    // each piece's matrix (and which were still going up when it was set: the commit keeps them on the building
+    // list even if they finished since, or one planned at no height would stay invisible)
+    const growing = new Set<Piece>();
+    for (const ps of order.values()) {
+      for (const p of ps) {
+        if (this.late()) yield;
+        p.m = this.matrix(new THREE.Matrix4(), p);
+        if (this.rise(p) < 1 || p.b.built < 1) growing.add(p);
+      }
+    }
+    // the lots' lawns and the halls' squares, then the driveways and front strips
+    const ground = this.groundOf(list);
+    if (this.late()) yield;
+    const gen = this.drivesGen;
+    const drives = yield* this.drivesPlan(list);
+    // every model's meshes, made now and shown at the commit: the whole map's, and again by squares of the map for
+    // near in (only those on screen drawn)
+    const plans: ModelPlan[] = [];
+    const meshOf = (geo: THREE.BufferGeometry, ps: Piece[], near: boolean) => {
+      const m = new THREE.InstancedMesh(geo, this.mat, ps.length);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      if (near) m.userData.near = true;
+      const arr = m.instanceMatrix.array as Float32Array;
+      ps.forEach((p, i) => p.m!.toArray(arr, i * 16));
+      return m;
+    };
+    for (const [model, ps] of order) {
+      if (this.late()) yield;
       const mm = this.geoOf(model)!;
-      const mesh = new THREE.InstancedMesh(mm.geo, this.mat, ps.length);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      ps.forEach((p, i) => {
-        mesh.setMatrixAt(i, (p.m = this.matrix(new THREE.Matrix4(), p)));
-        if (this.rise(p) < 1 || p.b.built < 1) this.building.push({ p, i });
-      });
-      mesh.computeBoundingSphere();
-      mesh.visible = !this.nearOn;
-      this.meshes.set(model, mesh);
-      this.group.add(mesh);
-      // and again by squares of the map, for near in
-      const squares = new Map<number, Piece[]>();
+      const bySquare = new Map<number, Piece[]>();
       for (const p of ps) {
         const k = (Math.floor(p.b.c.x / BUILD_CHUNK) + 4096) * 8192 + Math.floor(p.b.c.y / BUILD_CHUNK) + 4096;
-        const a = squares.get(k);
+        const a = bySquare.get(k);
         if (a) a.push(p);
-        else squares.set(k, [p]);
+        else bySquare.set(k, [p]);
       }
-      for (const sq of squares.values()) {
-        const nm = new THREE.InstancedMesh(mm.geo, this.mat, sq.length);
-        nm.castShadow = true;
-        nm.receiveShadow = true;
-        nm.userData.near = true;
-        sq.forEach((p, i) => { nm.setMatrixAt(i, p.m!); p.nm = nm; p.ni = i; });
-        nm.computeBoundingSphere();
+      const squares = [...bySquare.values()].map((sq) => {
+        const nm = meshOf(mm.geo, sq, true);
+        nm.boundingSphere = sphereOf(mm.geo, nm.instanceMatrix.array as Float32Array);
+        return { ps: sq, nm };
+      });
+      const mesh = meshOf(mm.geo, ps, false);
+      mesh.userData.model = model;
+      // (and its far model, if it has one: lod() swaps them)
+      const far = this.models.far?.get(model);
+      if (far) { mesh.userData.full = mm.geo; mesh.userData.far = far.geo; }
+      mesh.boundingSphere = sphereAround(squares.map((q) => q.nm.boundingSphere!));
+      plans.push({ model, ps, mesh, squares });
+    }
+    // ---- and in it all goes: the buildings and their lots in one frame, their driveways and gardens the next
+    this.commitGround(ground);
+    this.drop([...this.meshes.values(), ...this.nearMeshes]);
+    this.meshes.clear();
+    this.nearMeshes = [];
+    this.order = order;
+    this.emitters = emitters;
+    this.building = [];
+    for (const { model, ps, mesh, squares } of plans) {
+      ps.forEach((p, i) => { if (growing.has(p) || this.rise(p) < 1 || p.b.built < 1) this.building.push({ p, i }); });
+      mesh.visible = !this.nearOn;
+      if (this.housesFar && mesh.userData.far) mesh.geometry = mesh.userData.far;
+      this.meshes.set(model, mesh);
+      this.group.add(mesh);
+      for (const { ps: sq, nm } of squares) {
+        sq.forEach((p, i) => { p.nm = nm; p.ni = i; });
         nm.visible = this.nearOn;
         this.nearMeshes.push(nm);
         this.group.add(nm);
@@ -746,8 +833,98 @@ export class Buildings3D {
     }
     this.applyColors();
     this.lights(list);
-    // parked cars: a fixed share of the bays keep a car (it keeps its size whatever the model's scale), which is in
-    // or out by the hour (render/parked3d.ts draws them); a site's truck yard stays free for its trucks
+    this.parked();
+    this.rebuildSites(list);
+    yield;
+    // (unless the roads changed and the driveways were laid out again from them meanwhile)
+    if (this.drivesGen === gen) this.commitDrives(drives);
+    // what is built, for the roadside furniture to keep off (render/furniture.ts): every lot and works site
+    let sig = list.length;
+    for (const b of list) sig = (Math.imul(sig, 31) + b.id) | 0;
+    LOTS.set("buildings", list.map((b) => rectCorners(b.c, b.hw, b.hd, b.rot)), sig);
+    this.yardSites = list.filter((b) => b.placed && b.plant && this.layoutOf(b).slots.some((s) => YARDS[s.model]));
+    this.piles.update(this.yardJobs(true)!);
+  }
+
+  /** The lots' yards and the town halls' squares: their lawns, their paving, and the squares' trees. */
+  private groundOf(list: Building[]) {
+    const tmp = new THREE.Matrix4(), v3 = new THREE.Vector3();
+    const lawn: { m: THREE.Matrix4; c: number }[] = [];
+    const pave: { m: THREE.Matrix4; c: number; pat: number[] }[] = [];
+    const trees: PlantedTree[] = [];
+    const sc = new THREE.Matrix4(), rt = new THREE.Matrix4();
+    for (const b of list) {
+      if (!b.zone) continue;
+      lotMatrix(tmp, b.c, b.rot, b.side, 0.04);
+      // the lot is hw along the road and hd deep; in lot space x runs along the road
+      const home = ZONE_GROUP[b.zone] === "res";
+      // a business paves its lot edge to edge (two side by side share one yard, with no strip of grass between),
+      // but only as far back as it is built: a deep lot's back is left to the grass, not an empty paved field
+      const edge = home ? 0.8 : 0;
+      const used = home || (b.built < 1 && !b.wall) ? b.hd * 2 : this.usedDepth(b);
+      // (a front of the street wall too: a short yard behind it, then its court is grass with a tree or two)
+      const deep = used < b.hd * 2 - BACK_WILD ? used : b.hd * 2;
+      lawn.push({ m: tmp.clone().multiply(sc.makeScale(b.hw * 2 - edge, 1, deep - edge).setPosition(0, 0, b.hd - deep / 2)), c: b.built < 1 ? SITE : YARD[ZONE_GROUP[b.zone]] });
+    }
+    // a hall's square: lawn and paving to the pavements, its path to the hall's door, its trees (bare earth, and no
+    // trees yet, while the hall is being built)
+    for (const b of list) {
+      if (!isHall(b.kind)) continue;
+      const plan = this.squareOf(b);
+      const site = b.built < 1;
+      const H = b.hw - 0.4;
+      const pieces = [{ x: 0, z: 0, w: H * 2, d: H * 2, rot: 0, kind: plan.base, y: 0.04 }, ...plan.rects.map((r) => ({ ...r, y: r.kind === "path" ? 0.07 : 0.06 }))];
+      pieces.forEach((r, k) => {
+        lotMatrix(tmp, b.c, b.rot, b.side, r.y);
+        tmp.multiply(rt.makeRotationY(r.rot).setPosition(r.x, 0, r.z)).multiply(sc.makeScale(r.w, 1, r.d));
+        if (r.kind === "lawn") { lawn.push({ m: tmp.clone(), c: site ? SITE : SQUARE_LAWN }); return; }
+        const bare = site && r.kind !== "path";
+        const p = bare ? PAVE_NONE : r.kind === "path" ? PAVE_PATH : k === 0 ? PAVE_FIELD : PAVE_RECT;
+        pave.push({ m: tmp.clone(), c: bare ? SITE : r.kind === "path" ? SQUARE_PATH : SQUARE_PAVING, pat: p });
+      });
+      if (site) continue;
+      lotMatrix(tmp, b.c, b.rot, b.side, 0);
+      for (const t of plan.trees) {
+        const w = v3.set(t.x, 0, t.z).applyMatrix4(tmp);
+        trees.push({ x: w.x, y: w.z, r: t.r, style: "park" });
+      }
+    }
+    return { lawn, pave, trees };
+  }
+
+  /** The lots' and squares' ground in (and the old taken out). */
+  private commitGround(G: ReturnType<Buildings3D["groundOf"]>) {
+    if (this.yards) { this.group.remove(this.yards); this.yards.dispose(); this.yards = null; }
+    if (this.paving) { this.group.remove(this.paving); this.paving.geometry.dispose(); this.paving.dispose(); this.paving = null; }
+    if (G.lawn.length) {
+      const ym = new THREE.InstancedMesh(this.yardGeo, this.yardMat, G.lawn.length);
+      ym.receiveShadow = true;
+      ym.renderOrder = 1;
+      G.lawn.forEach((q, i) => { ym.setMatrixAt(i, q.m); ym.setColorAt(i, this.col.setHex(q.c)); });
+      ym.computeBoundingSphere();
+      this.yards = ym;
+      this.group.add(ym);
+    }
+    if (G.pave.length) {
+      const pm = new THREE.InstancedMesh(this.yardGeo.clone(), this.paveMat, G.pave.length);
+      const pat = new THREE.InstancedBufferAttribute(new Float32Array(G.pave.length * 2), 2);
+      pm.geometry.setAttribute("aPat", pat);
+      G.pave.forEach((q, i) => { pm.setMatrixAt(i, q.m); pm.setColorAt(i, this.col.setHex(q.c)); pat.setXY(i, q.pat[0], q.pat[1]); });
+      pm.receiveShadow = true;
+      pm.renderOrder = 1;
+      pm.computeBoundingSphere();
+      this.paving = pm;
+      this.group.add(pm);
+    }
+    this.squareTrees = G.trees;
+    this.treeVersion++;
+  }
+
+  /**
+   * Parked cars: a fixed share of the bays keep a car (it keeps its size whatever the model's scale), which is in or
+   * out by the hour (render/parked3d.ts draws them); a site's truck yard stays free for its trucks.
+   */
+  private parked() {
     const slots: ParkSlot[] = [];
     const inv = new THREE.Matrix4(), jig = new THREE.Matrix4();
     for (const [model, ps] of this.order) {
@@ -770,10 +947,6 @@ export class Buildings3D {
     }
     setParked(slots);
     PARKED.hour = () => clockOf(this.seasonClock?.() ?? this.clock()).hour;
-    this.rebuildSites(list);
-    this.rebuildDrives(list);
-    this.yardSites = list.filter((b) => b.placed && b.plant && this.layoutOf(b).slots.some((s) => YARDS[s.model]));
-    this.piles.update(this.yardJobs(true)!);
   }
 
   /** Fences, service roads and the pads of buildings to come, for every company site at once (a few draw calls). */
@@ -1072,10 +1245,18 @@ export class Buildings3D {
     return { kerb: { ...b.front }, drive: add(f.gate, scale(f.into, 6)), into: f.into, h: 0, bays };
   }
 
-  rebuildDrives(list: Building[]) {
-    if (this.drives) { this.group.remove(this.drives); this.drives.geometry.dispose(); this.drives = null; }
+  /** The driveways and front strips, laid out in slices, then in. */
+  private *drivesJob(list: Building[]): Generator<void, void> {
+    const gen = this.drivesGen;
+    const plan = yield* this.drivesPlan(list);
+    if (this.drivesGen === gen) this.commitDrives(plan);
+  }
+
+  /** What the driveways and front strips will be (nothing drawn yet). */
+  private *drivesPlan(list: Building[]) {
     const q = new Quads();
     for (const b of list) {
+      if (this.late()) yield;
       if (b.placed && b.plant) {
         // a site: from the road's edge to its gate, as wide as its spine road (none till a road reaches it)
         if (!b.access) continue;
@@ -1097,13 +1278,33 @@ export class Buildings3D {
       const w = isHall(b.kind) ? 2.4 : b.zone && b.hw > 14 ? 2.6 : 1.7;
       q.strip(a, ex, w * 2, 0.08);
     }
-    const m = q.mesh(this.driveMat, 3);
+    const strips = yield* this.stripsPlan(list);
+    return { drive: q.mesh(this.driveMat, 3), strips };
+  }
+
+  /** The driveways and front strips in (and the old taken out). */
+  /** Takes many meshes out of the group at once (one by one, each would search a thousand children) and frees them. */
+  private drop(xs: THREE.Object3D[]) {
+    if (!xs.length) return;
+    const gone = new Set(xs);
+    this.group.children = this.group.children.filter((o) => !gone.has(o));
+    for (const o of gone) {
+      o.parent = null;
+      o.dispatchEvent({ type: "removed" });
+      if (o instanceof THREE.InstancedMesh) o.dispose();
+    }
+  }
+
+  private commitDrives(plan: { drive: ReturnType<Quads["mesh"]>; strips: StripPlan }) {
+    this.drivesGen++;
+    if (this.drives) { this.group.remove(this.drives); this.drives.geometry.dispose(); this.drives = null; }
+    const m = plan.drive;
     if (m) {
       m.receiveShadow = true;
       this.drives = m;
       this.group.add(m);
     }
-    this.rebuildStrips(list);
+    this.commitStrips(plan.strips);
   }
 
   /**
@@ -1114,23 +1315,13 @@ export class Buildings3D {
    * roads, so a road widened over the strip simply covers it: the lawn narrows, and hedges and trees that no longer
    * fit go.
    */
-  private rebuildStrips(list: Building[]) {
-    for (const o of this.strips) {
-      this.group.remove(o);
-      if (!(o instanceof THREE.InstancedMesh)) continue;
-      // (the paving's own copy of the plane goes with it; the hedge and fence models are shared, and stay)
-      if (o.userData.ownGeo) o.geometry.dispose();
-      o.dispose();
-    }
-    this.strips = [];
-    this.stripTrees = [];
-    this.treeVersion++;
+  private *stripsPlan(list: Building[]): Generator<void, StripPlan> {
     const lawns: { m: THREE.Matrix4; c: number }[] = [];
     const paved: { m: THREE.Matrix4; c: number; pat: number[] }[] = [];
     const props: Record<"hedge" | "picket", THREE.Matrix4[]> = { hedge: [], picket: [] };
     // (the back gardens' are drawn apart, casting no shadow: behind the house it would hardly show, and they are many)
     const backs: Record<"hedge" | "picket", THREE.Matrix4[]> = { hedge: [], picket: [] };
-    const trees = this.stripTrees;
+    const trees: PlantedTree[] = [];
     const L = new THREE.Matrix4(), T = new THREE.Matrix4(), S = new THREE.Matrix4(), R = new THREE.Matrix4().makeRotationY(Math.PI / 2);
     // the town life: each hall's square, and the pavements in front of the shops and homes, busier near the hall
     const lifeSquares: LifeSquare[] = [], lifeFronts: LifeFront[] = [];
@@ -1142,6 +1333,7 @@ export class Buildings3D {
         .multiply(T.makeRotationY(rot).setPosition((x0 + x1) / 2, 0, (z0 + z1) / 2))
         .multiply(S.makeScale(Math.abs(x1 - x0), 1, Math.abs(z1 - z0)));
     for (const b of list) {
+      if (this.late()) yield;
       if (!b.access || !(b.zone || isHall(b.kind) || isCivic(b.kind))) continue;
       const toward = scale(right(fromAngle(b.rot)), -b.side);
       const along = { x: toward.y, y: -toward.x };
@@ -1270,13 +1462,16 @@ export class Buildings3D {
       const live = new Set(list.map((b) => b.id));
       for (const id of this.sideCache.keys()) if (!live.has(id)) this.sideCache.delete(id);
     }
+    yield;
+    // and their meshes, made now and shown at the commit
+    const meshes: THREE.InstancedMesh[] = [];
     if (lawns.length) {
       const m = new THREE.InstancedMesh(this.yardGeo, this.yardMat, lawns.length);
       lawns.forEach((q, i) => { m.setMatrixAt(i, q.m); m.setColorAt(i, this.col.setHex(q.c)); });
       m.receiveShadow = true;
       m.renderOrder = 1;
       m.computeBoundingSphere();
-      this.strips.push(m);
+      meshes.push(m);
     }
     if (paved.length) {
       const m = new THREE.InstancedMesh(this.yardGeo.clone(), this.paveMat, paved.length);
@@ -1287,53 +1482,82 @@ export class Buildings3D {
       m.receiveShadow = true;
       m.renderOrder = 1;
       m.computeBoundingSphere();
-      this.strips.push(m);
+      meshes.push(m);
     }
     // the hedges and fences: near in, by squares of the map (only those on screen are drawn); farther out, every one
-    // at once as its far model (lod)
+    // at once as its far model (lod). Sorted by their square and written out once: the far mesh takes them all, each
+    // near one its square's run (each one's square and its place in the list packed into one number, and sorted as
+    // plain numbers: a sort with a compare function took some 25 ms over a big map's hundred thousand)
     for (const kind of ["hedge", "picket"] as const) {
       const mm = this.models.props.get(kind), far = this.models.props.get(`${kind}_far`) ?? mm;
+      const flat = this.models.props.get(`${kind}_flat`) ?? far;
+      if (!mm || !far || !flat) continue;
+      // (bounded as the biggest of the models)
+      for (const g of [mm.geo, far.geo, flat.geo]) if (!g.boundingSphere) g.computeBoundingSphere();
+      const geo = [mm.geo, far.geo, flat.geo].reduce((a, b) => (b.boundingSphere!.radius > a.boundingSphere!.radius ? b : a));
       for (const [list, shadow] of [[props[kind], true], [backs[kind], false]] as const) {
-        if (!mm || !far || !list.length) continue;
-        // (sorted by their square, and written out once: the far mesh takes them all, each near one its square's run)
-        // (each one's square and its place in the list packed into one number, and sorted as plain numbers: a sort
-        // with a compare function took some 25 ms over a big map's hundred thousand)
-        const n = list.length, sh = 2 ** Math.ceil(Math.log2(n + 1)), packed = new Float64Array(n), key = new Float64Array(n);
+        if (!list.length) continue;
+        yield;
+        const n = list.length, sh = 2 ** Math.ceil(Math.log2(n + 1)), packed = new Float64Array(n);
         for (let i = 0; i < n; i++) {
           const e = list[i].elements;
           packed[i] = ((Math.floor(e[12] / STRIP_CHUNK) + 4096) * 8192 + Math.floor(e[14] / STRIP_CHUNK) + 4096) * sh + i;
         }
         packed.sort();
-        const all = new Float32Array(n * 16);
+        const all = new Float32Array(n * 16), cuts = [0];
+        let last = -1;
         for (let i = 0; i < n; i++) {
-          const v = packed[i], at = v % sh;
-          key[i] = (v - at) / sh;
+          const v = packed[i], at = v % sh, key = (v - at) / sh;
+          if (i && key !== last) cuts.push(i);
+          last = key;
           list[at].toArray(all, i * 16);
         }
-        const add = (geo: THREE.BufferGeometry, from: number, to: number, lod: "near" | "far") => {
-          const m = new THREE.InstancedMesh(geo, this.mat, to - from);
+        cuts.push(n);
+        const add = (g: THREE.BufferGeometry, from: number, to: number, lod: StripLod) => {
+          const m = new THREE.InstancedMesh(g, this.mat, to - from);
           (m.instanceMatrix.array as Float32Array).set(all.subarray(from * 16, to * 16));
-          m.castShadow = shadow;
+          m.castShadow = shadow && lod !== "flat";
           m.receiveShadow = true;
           m.userData.lod = lod;
-          m.visible = (lod === "far") === this.far;
-          m.computeBoundingSphere();
-          this.strips.push(m);
+          meshes.push(m);
+          return m;
         };
-        add(far.geo, 0, n, "far");
-        for (let i = 0, j = 1; i < n; i = j++) {
-          while (j < n && key[j] === key[i]) j++;
-          add(mm.geo, i, j, "near");
+        const spheres: THREE.Sphere[] = [];
+        for (let r = 0; r + 1 < cuts.length; r++) {
+          if (this.late()) yield;
+          const m = add(mm.geo, cuts[r], cuts[r + 1], "near");
+          spheres.push((m.boundingSphere = sphereOf(geo, all, cuts[r], cuts[r + 1])));
         }
+        const whole = sphereAround(spheres);
+        add(far.geo, 0, n, "far").boundingSphere = whole;
+        add(flat.geo, 0, n, "flat").boundingSphere = whole;
       }
     }
+    return { meshes, trees };
+  }
+
+  /** The front strips in (and the old taken out). */
+  private commitStrips(P: StripPlan) {
+    // (the paving's own copy of the plane goes with it; the hedge and fence models are shared, and stay)
+    for (const o of this.strips) if (o.userData.ownGeo) (o as THREE.Mesh).geometry.dispose();
+    this.drop(this.strips);
+    this.strips = P.meshes;
+    this.stripTrees = P.trees;
+    this.treeVersion++;
+    for (const m of this.strips) if (m.userData.lod) m.visible = this.stripShown(m.userData.lod);
     for (const o of this.strips) this.group.add(o);
   }
 
-  /** Drawing the garden hedges and fences as their far models (past STRIP_FAR_FROM metres a pixel). */
-  private far = false;
+  /** The garden hedges and fences: drawn as their near models, their far ones (past STRIP_FAR_FROM metres a pixel), or their flat ones (past STRIP_FLAT_FROM). */
+  private stripLod: StripLod = "near";
+  /** Drawing the family homes as their far models (past HOUSE_FAR_FROM). */
+  private housesFar = false;
 
-  /** Every frame: the garden hedges and fences near in or far off, by how many metres a pixel is. */
+  private stripShown(lod: StripLod): boolean {
+    return lod === this.stripLod;
+  }
+
+  /** Every frame: the buildings, homes and garden hedges and fences drawn near in or far off, by how many metres a pixel is. */
   lod(mpp: number) {
     const near = mpp <= BUILD_NEAR_TO;
     if (near !== this.nearOn) {
@@ -1341,10 +1565,15 @@ export class Buildings3D {
       for (const m of this.meshes.values()) m.visible = !near;
       for (const m of this.nearMeshes) m.visible = near;
     }
-    const far = mpp > STRIP_FAR_FROM;
-    if (far === this.far) return;
-    this.far = far;
-    for (const o of this.strips) if (o.userData.lod) o.visible = (o.userData.lod === "far") === far;
+    const houses = mpp > HOUSE_FAR_FROM;
+    if (houses !== this.housesFar) {
+      this.housesFar = houses;
+      for (const m of this.meshes.values()) if (m.userData.far) m.geometry = houses ? m.userData.far : m.userData.full;
+    }
+    const strip = mpp > STRIP_FLAT_FROM ? "flat" : mpp > STRIP_FAR_FROM ? "far" : "near";
+    if (strip === this.stripLod) return;
+    this.stripLod = strip;
+    for (const o of this.strips) if (o.userData.lod) o.visible = this.stripShown(o.userData.lod);
   }
 
   /**

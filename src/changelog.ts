@@ -15,6 +15,18 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.103", date: "2026-11-10", title: "Steady hands",
+    notes: [
+      "Keyboard panning moves the same share of the screen at every zoom, starting gently and speeding up as you hold the key. A quick tap at far zoom no longer throws you kilometres away.",
+      "Edge scrolling, off by default: switch it on in the pause menu.",
+      "Each wheel notch shows a small ring at the cursor, and a grey pulse when you reach the zoom limit.",
+      "With a tool in hand, a town's name plate fades under the pointer so you can see the junction you're joining.",
+      "No more regular stutters at top speed: new buildings are laid out over several frames, and shaders and models warm up when a game loads.",
+      "Far zooms draw less than half as much, with simpler far models for houses, hedges and fences.",
+      "The radio writes its tunes in the background, so a new tune never catches a frame.",
+    ],
+  },
+  {
     v: "v0.0.102", date: "2026-11-10", title: "No more gridlock",
     notes: [
       "Fixed a lock where two cars at one junction each waited for the other forever, and the queue spread to the junctions around it.",

@@ -92,6 +92,11 @@ export const BUILDING_MODELS: BuildingKind[] = [
  */
 export const HOME_VARIANTS: string[] = TOWN_VARIANTS;
 /**
+ * Models drawn instead of a model from a way off (render/buildings3d.ts HOUSE_FAR_FROM): the family homes, a town's
+ * most numerous buildings, at about a fifth of their triangles (tools/blender/town_h_far.py).
+ */
+export const FAR_MODELS: Record<string, string> = Object.fromEntries(["house", "house_b", "house_c", "house_d", "house_e"].map((n) => [n, n + "_far"]));
+/**
  * What industry sites are built from besides the kinds' own models: the shared modules (halls, silos, heaps, the
  * truck yard...) and the plants of the later tiers, ready for their chains.
  */
@@ -129,7 +134,7 @@ export const VEHICLE_MODELS = [
   "carrier", "heavy_carrier", "rt_carrier_a", "rt_carrier_b", "motorcar",
 ] as const;
 /** Street furniture, drawn on its own (not a lot). */
-export const PROP_MODELS = ["busstop", "fence", "hedge", "picket", "hedge_far", "picket_far", "bridge_pier", "bridge_abutment", "bridge_pylon", "bridge_truss", "streetlamp", "signal", "floodmast", "telegraphpole", "telegraphwire", "billboard_a", "billboard_b", "billboard_c", "land_hedgerow_a", "land_hedgerow_b", "land_gate", "land_haystack", "land_reeds", "land_hedgerow_a_far", "land_hedgerow_b_far", "land_haystack_far", "land_reeds_far", ...CON_MODELS, ...LIFE_MODELS] as const;
+export const PROP_MODELS = ["busstop", "fence", "hedge", "picket", "hedge_far", "picket_far", "hedge_flat", "picket_flat", "bridge_pier", "bridge_abutment", "bridge_pylon", "bridge_truss", "streetlamp", "signal", "floodmast", "telegraphpole", "telegraphwire", "billboard_a", "billboard_b", "billboard_c", "land_hedgerow_a", "land_hedgerow_b", "land_gate", "land_haystack", "land_reeds", "land_hedgerow_a_far", "land_hedgerow_b_far", "land_haystack_far", "land_reeds_far", ...CON_MODELS, ...LIFE_MODELS] as const;
 export type VehicleKind = (typeof VEHICLE_MODELS)[number];
 
 /**
@@ -151,13 +156,16 @@ export interface ModelSet {
   props: Map<string, MergedModel>;
   /** Site modules and later-tier plants, by name (see SITE_PIECES). */
   sites: Map<string, MergedModel>;
+  /** The far models, by the name of the model each stands in for (see FAR_MODELS). */
+  far?: Map<string, MergedModel>;
 }
 
 const base = import.meta.env.BASE_URL + "models/";
 
 export async function loadModels(onProgress?: (k: number) => void): Promise<ModelSet> {
   const loader = new GLTFLoader();
-  const all = [...BUILDING_MODELS, ...HOME_VARIANTS, ...VEHICLE_MODELS, ...PROP_MODELS, ...SITE_PIECES];
+  const farOf = new Map(Object.entries(FAR_MODELS).map(([full, far]) => [far, full]));
+  const all = [...BUILDING_MODELS, ...HOME_VARIANTS, ...VEHICLE_MODELS, ...PROP_MODELS, ...SITE_PIECES, ...farOf.keys()];
   let done = 0;
   const load = (n: string) => loader.loadAsync(base + n + ".glb").then((g) => g.scene);
   const treesDue = load("trees");
@@ -174,17 +182,19 @@ export async function loadModels(onProgress?: (k: number) => void): Promise<Mode
   const vehicles = new Map<VehicleKind, VehicleModel>();
   const props = new Map<string, MergedModel>();
   const sites = new Map<string, MergedModel>();
+  const far = new Map<string, MergedModel>();
   all.forEach((n, i) => {
     const sc = scenes[i];
     sc.updateMatrixWorld(true);
-    if ((VEHICLE_MODELS as readonly string[]).includes(n)) vehicles.set(n as VehicleKind, splitVehicle(sc));
+    if (farOf.has(n)) far.set(farOf.get(n)!, mergeModel(sc));
+    else if ((VEHICLE_MODELS as readonly string[]).includes(n)) vehicles.set(n as VehicleKind, splitVehicle(sc));
     else if ((PROP_MODELS as readonly string[]).includes(n)) props.set(n, mergeModel(sc));
     else if (SITE_PIECES.includes(n)) sites.set(n, mergeModel(sc));
     else buildings.set(n as BuildingKind, mergeModel(sc));
   });
   const treeScene = await treesDue;
   treeScene.updateMatrixWorld(true);
-  return { buildings, vehicles, props, sites, trees: splitTrees(treeScene) };
+  return { buildings, vehicles, props, sites, far, trees: splitTrees(treeScene) };
 }
 
 const TREE_PARTS: Record<string, number> = { trunk: 0, leaf: 1, bare: 2, needle: 3, bush: 4 };

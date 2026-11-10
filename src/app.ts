@@ -32,6 +32,8 @@ const ORBIT_TILT = 0.003;
 const KEY_TILT = 0.8;
 /** How quickly the keys' pull on the camera comes on and lets go (1/s: most of it within a tenth of a second). */
 const KEY_EASE = 16;
+/** How long a frame may spend laying out the buildings the sim changed (ms; render/buildings3d.ts work). */
+const LAYOUT_MS = 4;
 
 /**
  * How a new company opens (App.frameStart): the half height it may open at (m: close enough for the hamlet's houses
@@ -72,6 +74,8 @@ import { RIBBONS_SEE, Roads3D } from "./render/roads3d";
 import { disposeTree, modelGeometries } from "./render/dispose";
 import { RoadsFar } from "./render/roadsFar";
 import { MapLabels } from "./ui/labels";
+import { ZoomRing } from "./ui/zoomRing";
+import { edgePush, loadEdgeScroll, panRate } from "./ui/panning";
 import { MapIcons } from "./ui/mapIcons";
 import { Pops } from "./ui/pops";
 import { Terrain3D } from "./render/terrain3d";
@@ -181,7 +185,14 @@ export class App {
   pops = new Pops();
   /** Shift + wheel scrolling not yet turned into a whole degree (px) */
   private turnWheel = 0;
-  private treesDue: ReturnType<typeof setTimeout> | 0 = 0;
+  /** when the street trees are due a look (performance.now ms; 0: not due): they make way for new driveways */
+  private treesDue = 0;
+  /** The sim is stepping (game.update): what it changes is laid out over the next frames, not in the step (B12). */
+  private simming = false;
+  /** A whole layout of the buildings, laid out in slices, has gone in: its follow-ups are due (afterLayout). */
+  private layoutIn = false;
+  /** The heavy work left this frame may still take: one big rebuild a frame (spend). */
+  private heavy = 0;
   private iconT = 0;
   /** The building whose map mark was under the pointer at the last icon set (-1: none). */
   private iconHover = -1;
@@ -251,6 +262,14 @@ export class App {
   private tiltAnim: { from: number; to: number; t: number } | null = null;
   /** The keys' pull on the camera, eased: across and down the screen, the turn, the zoom (each -1 to 1). */
   private keyCam = { x: 0, y: 0, turn: 0, zoom: 0 };
+  /** How long the map has been moving under the keys (or the window's edge) without a stop (s): it speeds up. */
+  private panT = 0;
+  /** Edge scrolling (pause menu): the pointer against an edge of the window moves the map. Off by default. */
+  edgeScroll = loadEdgeScroll();
+  /** Where the pointer is in the window (CSS px), null when it is out of it: for edge scrolling. */
+  private pointerAt: V2 | null = null;
+  /** The ring each wheel notch leaves at the cursor. */
+  private zoomRing = new ZoomRing(document.body);
   /** A tilt key is held (the view settles when it is let go). */
   private pitching = false;
   /** A wheel zoom easing in: the pixel whose ground it holds still, and the zoom it is going to. */
@@ -773,6 +792,8 @@ export class App {
     this.vehicles.attach(this.view, () => this.game.company?.herald);
     this.buildings3d?.disposeExtras();
     this.buildings3d = new Buildings3D(this.models, () => this.game.time, g.net);
+    this.treesDue = 0;
+    this.layoutIn = false;
     this.vehicles.lotOf = (id) => { const b = g.buildings.byId.get(id); return b ? this.buildings3d.lotWay(b) : null; };
     this.transit3d = new Transit3D(this.models.props.get("busstop"));
     this.parks3d = new Parks3D(this.models);
@@ -810,12 +831,17 @@ export class App {
       // (a delivery or a by-product leaving only pops over the map: nothing else on screen changes)
       if (e.t === "delivery") { this.camera.note(e.d.to.c.x, e.d.to.c.y); if (this.mode !== "menu") this.pops.delivery(e.d, this.view); if (e.d.lost > 0 && this.mode === "play") this.audio.sting("spoil"); return; }
       if (e.t === "shipped") { if (this.mode !== "menu") this.pops.shipped(e.from, e.to, e.p, this.view); return; }
-      if (e.t === "roads") { this.roads.apply(e.cs); this.forestDue = true; this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
+      if (e.t === "roads") {
+        this.roads.apply(e.cs); this.forestDue = true; this.roadsFar.invalidate(); this.dirtyPreview = true;
+        // (a town laying its own streets: the driveways follow over the next frames; the player's road, at once)
+        if (this.simming) this.buildings3d.rebuildSoon(g.buildings.list, true);
+        else this.buildings3d.rebuildDrives(g.buildings.list);
+      }
       else if (e.t === "buildings") {
-        this.buildings3d.rebuild(g.buildings.list); this.roads.refreshGates(); this.roads.refreshLook(); this.forestDue = true; this.applyTint(); this.dirtyPreview = true;
-        { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }
-        // (street trees make way for new driveways: at most twice a second while a town grows)
-        if (!this.treesDue) this.treesDue = setTimeout(() => { this.treesDue = 0; this.roads.refreshTrees(); }, 500);
+        // (what the sim changed is laid out over the next frames, the old layout drawn meanwhile; the player's own
+        // edit, or a load, at once)
+        if (this.simming) this.buildings3d.rebuildSoon(g.buildings.list);
+        else { this.buildings3d.rebuild(g.buildings.list); this.afterLayout(); }
       }
       else if (e.t === "zones") this.dirtyPreview = true;
       else if (e.t === "milestone") { if (this.mode === "play") this.hud?.milestone(e.m, e.towns); }
@@ -844,6 +870,9 @@ export class App {
     this.cancelStroke();
     this.selected = null;
     this.hud?.refresh();
+    // every material's shaders compiled now, while the game opens, not on the first far zoom (review 2026-11-10, B12)
+    this.roadsFar.prepare();
+    this.view.warm();
   }
 
   // ---------------------------------------------------------------- tools
@@ -955,7 +984,10 @@ export class App {
       if (!t?.closest?.("input, textarea, [contenteditable='true']")) e.preventDefault();
     });
     el.addEventListener("pointerdown", (e) => this.onDown(e));
-    window.addEventListener("pointermove", (e) => this.onMove(e));
+    window.addEventListener("pointermove", (e) => { this.pointerAt = v2(e.clientX, e.clientY); this.onMove(e); });
+    // (out of the window, or the window put aside: no edge scrolling)
+    document.addEventListener("pointerout", (e) => { if (!e.relatedTarget) this.pointerAt = null; });
+    window.addEventListener("blur", () => { this.pointerAt = null; });
     window.addEventListener("pointerup", (e) => this.onUp(e));
     window.addEventListener("pointercancel", (e) => { this.pointers.delete(e.pointerId); this.pinch = null; });
     el.addEventListener("pointerleave", () => { this.hasCursor = false; this.dirtyPreview = true; this.hud?.chips(null); });
@@ -1000,8 +1032,17 @@ export class App {
         // the zoom, and a whole notch at once would jolt it); a pinch follows the fingers as they move
         if (act === "zoom" && !reducedMotion() && !this.glide) {
           const from = this.zoomEase?.to ?? this.view.halfH;
-          this.zoomEase = { px: at.x, py: at.y, to: clamp(from * f, this.view.minHalfH, this.view.maxHalfH) };
-        } else { this.zoomEase = null; this.view.zoomAt(at.x, at.y, f); }
+          const to = clamp(from * f, this.view.minHalfH, this.view.maxHalfH);
+          this.zoomEase = { px: at.x, py: at.y, to };
+          this.zoomRing.show(e.clientX, e.clientY, Math.abs(to - from) < from * 1e-3 ? "stop" : to < from ? "in" : "out");
+        } else {
+          if (act === "zoom") {
+            const h = this.view.halfH, to = clamp(h * f, this.view.minHalfH, this.view.maxHalfH);
+            this.zoomRing.show(e.clientX, e.clientY, Math.abs(to - h) < h * 1e-3 ? "stop" : to < h ? "in" : "out");
+          }
+          this.zoomEase = null;
+          this.view.zoomAt(at.x, at.y, f);
+        }
       }
       this.clampView();
       this.updateCursor(at);
@@ -2157,16 +2198,17 @@ export class App {
     this.view.setLight(L.amb, L.sun, L.dir);
     this.smoke.setLight(L.amb, L.sun, L.dir);
     this.birds.setLight(L.amb, L.sun, L.dir);
-    // (no shadow map once the direct light is too faint to cast one)
-    if (L.shade < 0.04) this.view.sun.castShadow = false;
+    // (no shadow map far out, where the ground draws its own hill shadows, nor once the direct light is too faint to
+    // cast one)
+    this.view.shadows(this.view.halfH < 2400 && L.shade >= 0.04);
     // the fields follow the season shown (the menu's and the dev hook's too)
     const look = fieldLook(this.dayCycle.lookTime(g.time));
     if (look !== this.fieldsWere) {
-      if (this.fieldsWere) { this.buildings3d.rebuild(g.buildings.list); this.applyTint(); }
+      if (this.fieldsWere) this.buildings3d.rebuildSoon(g.buildings.list);
       this.fieldsWere = look;
     }
     const sig = `${this.roads.lampVersion}:${this.buildings3d.version}`;
-    if (sig !== this.lampSig) {
+    if (sig !== this.lampSig && (!this.lampSig || this.spend())) {
       this.lampSig = sig;
       this.lamps.setStatic([...this.roads.lamps, ...this.buildings3d.floods], this.buildings3d.windows);
     }
@@ -2180,8 +2222,28 @@ export class App {
     this.lamps.update(L.lamps, this.dayCycle.hour, this.view.mpp, this.roads.signalHeads, lum(L.amb) + lum(L.sun));
   }
 
+  /** What follows the buildings being laid out again: the gates, the look of the roads, the trees, the greens. */
+  private afterLayout() {
+    const g = this.game;
+    this.roads.refreshGates(); this.roads.refreshLook(); this.forestDue = true; this.applyTint(); this.dirtyPreview = true;
+    { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }
+    // (street trees make way for new driveways: at most twice a second while a town grows)
+    if (!this.treesDue) this.treesDue = performance.now() + 500;
+  }
+
+  /**
+   * One heavy rebuild a frame (a layout going in, the lamps, the smoke, the trees, the ground's mask): each waits its
+   * turn rather than land in the same frame as the others (review 2026-11-10, B12). True: go ahead now.
+   */
+  private spend(): boolean {
+    if (this.heavy <= 0) return false;
+    this.heavy--;
+    return true;
+  }
+
   frame = () => {
     const now = performance.now();
+    this.heavy = 1;
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     const g = this.game;
@@ -2192,6 +2254,18 @@ export class App {
     const free = !this.camera.cinematic && !held("Control", "Meta");
     let mx = free ? (held("d", "ArrowRight") ? 1 : 0) - (held("a", "ArrowLeft") ? 1 : 0) : 0;
     let my = free ? (held("s", "ArrowDown") ? 1 : 0) - (held("w", "ArrowUp") ? 1 : 0) : 0;
+    // and the pointer held against an edge of the window, if the player turned that on (not over a dialog)
+    if (free && this.edgeScroll && this.pointerAt && this.mode === "play" && document.hasFocus() && !document.querySelector("[aria-modal='true']")) {
+      const p = this.pointerAt, W = window.innerWidth, H = window.innerHeight;
+      let e = edgePush(p.x, p.y, W, H);
+      // (over the bars and panels that reach the edge, only right against it: a button there stays easy to click)
+      if (e.x || e.y) {
+        const t = document.elementFromPoint(p.x, p.y);
+        if (t && t !== this.view.canvas && !this.labels.el.contains(t)) e = edgePush(p.x, p.y, W, H, 3);
+      }
+      mx = clamp(mx + e.x, -1, 1);
+      my = clamp(my + e.y, -1, 1);
+    }
     const turn = free ? (held("e") ? 1 : 0) - (held("q") ? 1 : 0) : 0;
     const zoom = free ? (held("-", "_") ? 1 : 0) - (held("+", "=") ? 1 : 0) : 0;
     // Y up toward the Map view, H down toward the horizon
@@ -2204,10 +2278,13 @@ export class App {
     const toward = (v: number, to: number) => { const n = v + (to - v) * ease; return Math.abs(n - to) < 0.01 ? to : n; };
     K.x = toward(K.x, mx); K.y = toward(K.y, my); K.turn = toward(K.turn, turn); K.zoom = toward(K.zoom, zoom);
     if (this.camera.cinematic || this.mode === "menu") K.x = K.y = K.turn = K.zoom = 0;
+    // held, the map speeds up: a tap nudges it a little, a long press crosses the map (review 2026-11-10, Camera 1)
+    this.panT = mx || my ? this.panT + dt : 0;
     if (K.x || K.y) {
-      // (at the same speed on screen whichever way: at a tilt the ground up the screen is foreshortened, so the
-      // camera covers more of it going up or down than going across)
-      const px = (520 * dt * (this.view.halfH / 170) ** 0.85) / this.view.mpp;
+      // A share of the screen a second, at every zoom: a tap moves the view the same part of itself near or far.
+      // On screen, so at the same speed whichever way: at a tilt the ground up the screen is foreshortened, and the
+      // camera covers more of it going up or down than going across.
+      const px = panRate(this.panT) * this.view.h * dt;
       const v = this.view.screenVec(K.x * px, K.y * px);
       this.view.cx += v.x;
       this.view.cy += v.y;
@@ -2248,7 +2325,17 @@ export class App {
       v.cx = M.c.x - Math.cos(v.rot) * W * 0.14;
       v.cy = M.c.y - Math.sin(v.rot) * W * 0.14;
     }
-    g.update(dt);
+    this.simming = true;
+    try { g.update(dt); } finally { this.simming = false; }
+    // the buildings the sim changed, laid out a slice a frame (a slice keeps to its few ms, so it is not one of the
+    // frame's heavy jobs); a layout going in is: nothing else heavy that frame, and what follows it the next
+    const B = this.buildings3d;
+    if (this.layoutIn && this.spend()) { this.layoutIn = false; this.afterLayout(); }
+    else if (B.busy) {
+      const v = B.version;
+      if (B.work(LAYOUT_MS)) { this.heavy = 0; if (B.doneWhole) this.layoutIn = true; }
+      else if (B.version !== v) this.heavy = 0;
+    }
     this.audio.update(dt);
     this.vehicles.update(g.traffic, g.alpha);
     this.parks3d.update(g.parks.links, g.time + g.alpha * SIM.dt);
@@ -2288,11 +2375,12 @@ export class App {
       this.hudT = 0;
       this.rememberView();
       this.hud?.tick();
-      if (this.buildings3d.updateConstruction()) { this.buildings3d.rebuild(this.game.buildings.list); this.applyTint(); }
+      if (this.buildings3d.updateConstruction()) this.buildings3d.rebuildSoon(this.game.buildings.list);
       if ((this.overlay !== "none" && this.overlay !== "flow") || this.st.tool === "place") this.applyTint();
     }
     this.saveT += dt;
-    if (this.saveT > 60) { this.saveT = 0; if (this.mode === "play") void this.saves.autosaveSoon(g); }
+    // (in a frame of its own: no layout or rebuild lands with it)
+    if (this.saveT > 60 && (this.spend() || this.saveT > 75)) { this.saveT = 0; if (this.mode === "play") void this.saves.autosaveSoon(g); }
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - dt * 4);
       this.hud?.shake(this.shake);
@@ -2301,9 +2389,8 @@ export class App {
     const far = this.view.halfH > 1800;
     this.vehicles.group.visible = !far;
     this.roads.group.visible = this.view.mpp < RIBBONS_SEE;
-    this.view.sun.castShadow = this.view.halfH < 2400;
     // the trees make way for what was just built (and come back where it was removed)
-    if (this.forestDue && now - this.forestAt > 250) {
+    if (this.forestDue && now - this.forestAt > 250 && this.spend()) {
       this.forestDue = false;
       this.forestAt = now;
       this.terrain3d.invalidateTrees(this.forest.setShapes(clearShapes(g.net, g.buildings.list)));
@@ -2314,7 +2401,7 @@ export class App {
     // the trees stand in 3D near in; farther out the ground paints their crowns. The planted ones (streets, greens,
     // squares, front gardens) are handed over whenever their lists change
     const tv = `${this.roads.treeVersion}:${this.greens3d.treeVersion}:${this.buildings3d.treeVersion}`;
-    if (tv !== this.treeSig) {
+    if (tv !== this.treeSig && (!this.treeSig || this.spend())) {
       this.treeSig = tv;
       this.trees3d.setPlanted([...this.roads.streetTrees, ...this.greens3d.trees, ...this.buildings3d.squareTrees, ...this.buildings3d.stripTrees]);
     }
@@ -2322,7 +2409,7 @@ export class App {
     this.terrain3d.shared.uPaint.value = this.trees3d.paint;
     this.terrain3d.crownsSoon = this.trees3d.handoverNear;
     // the works smoke, the chimneys too in the cold, and the dirt roads raise dust (not on the data maps)
-    if (this.buildings3d.version !== this.smokeSig) {
+    if (this.buildings3d.version !== this.smokeSig && (this.smokeSig < 0 || this.spend())) {
       this.smokeSig = this.buildings3d.version;
       this.smoke.setEmitters(this.buildings3d.emitters);
     }
@@ -2333,10 +2420,13 @@ export class App {
     // the townspeople about the squares and the pavements (walking at their own pace, whatever the game's speed)
     this.buildings3d.life.frame(this.view.camera, this.view.mpp, performance.now() / 1000, this.dayCycle.hour, this.dayCycle.yday);
     if (this.terrain3d.shared.uOverlay.value >= 0.5) this.birds.mesh.visible = false;
-    this.landMask.update(g.buildings.list, this.buildings3d.version);
+    if (this.landMask.due(this.buildings3d.version) && this.spend()) this.landMask.update(g.buildings.list, this.buildings3d.version);
+    // the street trees, making way for new driveways
+    if (this.treesDue && now >= this.treesDue && this.spend()) { this.treesDue = 0; this.roads.refreshTrees(); }
     this.terrain3d.update(this.view);
     this.roadsFar.update(this.view.mpp, this.view.w, this.view.h);
     this.labels.update(this.view);
+    this.labels.pointer(this.hasCursor ? this.cursorPx.x : null, this.cursorPx.y);
     this.convoyTags.update(this.view, g.alpha);
     this.townPings.update(this.view);
     this.depositMarks.update(this.view);
