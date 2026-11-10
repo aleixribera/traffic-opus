@@ -29,7 +29,7 @@ export class DayCycle {
   /** A look fixed from the console: its sim time, and how fast it runs on (game seconds a second). */
   private dev: { t: number; speed: number } | null = null;
   private menu: { t: number } | null = null;
-  /** How far the map's light is lifted towards day for an overlay (eased). */
+  /** How far the map's light is lifted towards day for an overlay or a far view (eased). */
   private lift = 0;
   /** The moment last drawn. */
   hour = 12;
@@ -72,9 +72,10 @@ export class DayCycle {
 
   /**
    * Once a frame: `simTime` the sim clock, `dt` real seconds, `menu` whether the title menu is up, `overlay` whether
-   * a data overlay is on (it lifts the night so its colours read). Returns the light, which the caller hands on.
+   * a data overlay is on (it lifts the night so its colours read), `far` how far out the camera is (0 close in, 1
+   * the whole map: `farLift`). Returns the light, which the caller hands on.
    */
-  update(simTime: number, dt: number, menu: boolean, overlay: boolean): Light {
+  update(simTime: number, dt: number, menu: boolean, overlay: boolean, far = 0): Light {
     this.simTime = simTime;
     if (menu) this.menu = { t: (this.menu?.t ?? MENU_START) + dt * MENU_SPEED };
     else this.menu = null;
@@ -88,13 +89,26 @@ export class DayCycle {
     // autumn's light is a little warmer
     if (S.warm > 0) L.sun = [L.sun[0] * (1 + 0.06 * S.warm), L.sun[1] * (1 + 0.01 * S.warm), L.sun[2] * (1 - 0.1 * S.warm)];
     // an overlay lifts the night most of the way to day: its colours have to read
-    this.lift += ((overlay ? 1 : 0) - this.lift) * Math.min(1, dt * 6);
-    if (this.lift > 0.002 && mode !== "day") L = mixLight(L, lightAt(hour, yday, "day"), this.lift * 0.8);
+    // ...and so does looking from far out, part of the way: up there no lamp reads, and a third of every day was a
+    // flat grey-green in which the roads and the works were lost (play-test 2026-11-09, D5)
+    this.lift += (Math.max(overlay ? OVERLAY_LIFT : 0, far * FAR_LIFT) - this.lift) * Math.min(1, dt * 6);
+    if (this.lift > 0.002 && mode !== "day") L = mixLight(L, lightAt(hour, yday, "day"), this.lift);
     this.light = L;
     this.look = S;
     setEnv(L, S);
     return L;
   }
+}
+
+/** How far towards day an overlay lifts the night, and the far view at its furthest. */
+export const OVERLAY_LIFT = 0.8, FAR_LIFT = 0.3;
+/** The far view's lift starts at this zoom (view half height, m) and is whole by `FAR_FULL`. */
+export const FAR_FROM = 700, FAR_FULL = 2200;
+
+/** How far out the camera is for the night's floor: 0 up to `FAR_FROM`, 1 from `FAR_FULL`, eased between. */
+export function farLift(halfH: number): number {
+  const k = Math.min(1, Math.max(0, (halfH - FAR_FROM) / (FAR_FULL - FAR_FROM)));
+  return k * k * (3 - 2 * k);
 }
 
 /** A light partway to another (`k` 0..1). */

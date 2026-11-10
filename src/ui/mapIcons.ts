@@ -3,7 +3,7 @@ import type { Building } from "../game/buildings";
 import { siteFrame } from "../game/sites";
 import type { View } from "../render/view";
 import type { Product } from "../game/industry";
-import { productIcon } from "./icons";
+import { placedIcon, productIcon } from "./icons";
 
 const UP = `<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2 6.5 5 3.5 8 6.5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
@@ -13,6 +13,21 @@ function iconFor(p: string): { key: string; svg: string; urgent: boolean } {
   if (p === "No road access" || p.startsWith("Trips can't") || p.startsWith("Not connected")) return { key: "road", svg: ROAD, urgent: false };
   if (p.startsWith("Full of") || p.startsWith("Waiting for") || p.startsWith("Building site") || p.startsWith("Nobody") || p.startsWith("Towns on your roads") || p.startsWith("Your plants") || p === "Out of food") return { key: "cargo", svg: CARGO, urgent: false };
   return { key: "warn", svg: WARN, urgent: false };
+}
+
+/** From this zoom out a works is too small to find: each gets a marker of its own in place of its gate's roundel. */
+export const WORKS_FAR = 1100;
+/** Half the square the pointer has around a mark (px): 32 across, more than the 24 px plate it is drawn as. */
+const HIT = 16;
+
+/**
+ * Whether a building's trouble is the freight company's to fix. A town's shop short of staff or of customers is the
+ * town's own business: its roundel said nothing a road or a load could answer (play-test 2026-11-09, A18).
+ */
+export function fixable(b: Pick<Building, "town" | "zone">, problem: string | null): boolean {
+  if (!problem) return false;
+  if (b.town !== undefined || b.zone) return problem !== "Not enough workers" && problem !== "Not enough customers";
+  return true;
 }
 
 /** A company site with no road to its gate yet: its icon stands on the gate, where the road has to come. */
@@ -28,13 +43,23 @@ const ROAD = `<svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14
 
 /**
  * Problem icons floating over buildings (CS2's notification icons): no road, and a generic warning for business
- * trouble. Only the closest few hundred on screen, and only zoomed in.
+ * trouble. Only the closest few hundred on screen, and only zoomed in. Further out (`WORKS_FAR`) every company
+ * works carries a small plate with its pictogram instead, in brick with a "!" when it is in trouble: from up there
+ * the works themselves are a few pixels and only the towns' names were left (play-test 2026-11-09, D6).
  */
 export class MapIcons {
   readonly el = document.createElement("div");
   private pool: HTMLElement[] = [];
-  private shown: { at: V2; h: number; el: HTMLElement; dx?: number }[] = [];
+  private shown: { at: V2; h: number; el: HTMLElement; dx?: number; b?: Building; far?: boolean; sx?: number; sy?: number }[] = [];
   private badges: HTMLElement[] = [];
+  private marks: HTMLElement[] = [];
+  /** Trouble that is no trouble yet: a new works still waiting for its first loads shows no roundel (set by the app). */
+  quiet: ((b: Building) => boolean) | null = null;
+  /**
+   * A building's trouble for its mark (set by the app): a works' own line comes and goes with every load that
+   * lands, so the app gives the steady reading. Unset: the building's own line.
+   */
+  troubleOf: ((b: Building) => string | null) | null = null;
   /**
    * The supplies boosting a company site and by how much (docs/design.md "Supplies"): a badge by its gate shows the
    * site working past its level-2 pace on fertilizer, explosives or machinery (set by the app).
@@ -55,18 +80,48 @@ export class MapIcons {
     // and a city's dozens of "Out of food" pins would bury the company's own warnings)
     const town = view.halfH < 260;
     this.shown = [];
-    let n = 0, nb = 0;
+    let n = 0, nb = 0, nm = 0;
+    if (!on) {
+      // the works' plates, the troubled ones first (they win a spot where two would sit on each other)
+      const cand: { b: Building; x: number; y: number; bad: boolean }[] = [];
+      for (const b of list) {
+        if (!b.placed || b.abandoned) continue;
+        const s = view.worldToScreen(b.c.x, b.c.y, 0);
+        if (s.x < -20 || s.y < -20 || s.x > view.w + 20 || s.y > view.h + 20) continue;
+        cand.push({ b, x: s.x, y: s.y, bad: b.built >= 1 && !b.plant?.site && fixable(b, this.troubleOf ? this.troubleOf(b) : b.problem) && !this.quiet?.(b) });
+      }
+      cand.sort((a, b) => Number(b.bad) - Number(a.bad));
+      const put: { x: number; y: number }[] = [];
+      for (const c of cand) {
+        if (put.some((p) => Math.abs(p.x - c.x) < 22 && Math.abs(p.y - c.y) < 22)) continue;
+        put.push(c);
+        let el = this.marks[nm];
+        if (!el) { el = document.createElement("div"); this.el.appendChild(el); this.marks.push(el); }
+        const site = c.b.built < 1 || !!c.b.plant?.site;
+        const key = `${c.b.kind}${c.bad ? "!" : ""}${site ? "s" : ""}`;
+        if (el.dataset.k !== key) {
+          el.dataset.k = key;
+          el.className = "map-works" + (c.bad ? " bad" : "") + (site ? " site" : "");
+          el.innerHTML = placedIcon(c.b.kind) + (c.bad ? `<i aria-hidden="true">!</i>` : "");
+        }
+        el.style.display = "";
+        this.shown.push({ at: c.b.c, h: 0, el, b: c.b, far: true });
+        if (++nm >= 200) break;
+      }
+    }
     if (on) {
       const pad = 40;
       for (const b of list) {
-        if (!b.problem || b.abandoned || b.built < 1 || (b.zone && !town)) continue;
+        if (b.abandoned || b.built < 1 || (b.zone && !town)) continue;
+        const problem = this.troubleOf ? this.troubleOf(b) : b.problem;
+        if (!problem || !fixable(b, problem) || this.quiet?.(b)) continue;
         // (a company site's trouble shows by its gate, where its plant and truck yard are, not out in its fields)
         const f = b.placed ? siteFrame(b.c, b.rot, b.side, b.hd) : null;
-        const at = !f ? b.c : b.problem === GATE_PROBLEM ? f.gate : { x: f.gate.x + f.into.x * 30, y: f.gate.y + f.into.y * 30 };
+        const at = !f ? b.c : problem === GATE_PROBLEM ? f.gate : { x: f.gate.x + f.into.x * 30, y: f.gate.y + f.into.y * 30 };
         const h = f ? GATE_H : (this.topOf?.(b) ?? 0) + 1;
         const s = view.worldToScreen(at.x, at.y, h);
         if (s.x < -pad || s.y < -pad || s.x > view.w + pad || s.y > view.h + pad) continue;
-        const ic = iconFor(b.problem);
+        const ic = iconFor(problem);
         let el = this.pool[n];
         if (!el) { el = document.createElement("div"); this.el.appendChild(el); this.pool.push(el); }
         if (el.dataset.k !== ic.key) {
@@ -75,7 +130,7 @@ export class MapIcons {
           el.innerHTML = ic.svg;
         }
         el.style.display = "";
-        this.shown.push({ at, h, el });
+        this.shown.push({ at, h, el, b });
         if (++n >= 300) break;
       }
       // the supply badges: a green chevron, what is in store and the % it adds, beside the gate (right of any warning)
@@ -96,20 +151,38 @@ export class MapIcons {
           el.innerHTML = `<i class="up">${UP}</i>${bs.map((x) => `<i>${productIcon(x.p)}</i>`).join("")}<b>+${total}%</b>`;
         }
         el.style.display = "";
-        this.shown.push({ at, h: GATE_H, el, dx: b.problem && !b.abandoned ? 16 : 0 });
+        this.shown.push({ at, h: GATE_H, el, dx: (this.troubleOf ? this.troubleOf(b) : b.problem) && !b.abandoned ? 16 : 0 });
         nb++;
       }
     }
     for (let i = n; i < this.pool.length; i++) this.pool[i].style.display = "none";
     for (let i = nb; i < this.badges.length; i++) this.badges[i].style.display = "none";
+    for (let i = nm; i < this.marks.length; i++) this.marks[i].style.display = "none";
     this.update(view);
+  }
+
+  /**
+   * The building whose roundel or plate is under a point of the screen (px), if any: the pointer names its trouble
+   * there and a click opens it (hovering one showed nothing: play-test 2026-11-09, A18). `far`: a works' plate.
+   */
+  hit(x: number, y: number): { b: Building; far: boolean } | null {
+    for (let i = this.shown.length - 1; i >= 0; i--) {
+      const s = this.shown[i];
+      if (!s.b || s.sx === undefined || s.sy === undefined) continue;
+      if (Math.abs(x - s.sx) <= HIT && Math.abs(y - s.sy) <= HIT) return { b: s.b, far: !!s.far };
+    }
+    return null;
   }
 
   /** Follow the camera (every frame). */
   update(view: View) {
     const lift = Math.min(28, 9 / Math.max(0.12, view.mpp));
-    for (const { at, h, el, dx } of this.shown) {
+    for (const e of this.shown) {
+      const { at, h, el, dx } = e;
       const s = view.worldToScreen(at.x, at.y, h);
+      // (a works' plate sits on the works itself; a roundel stands on its post over the gate)
+      if (e.far) { e.sx = s.x; e.sy = s.y; el.style.transform = `translate(${s.x.toFixed(1)}px, ${s.y.toFixed(1)}px) translate(-50%, -50%)`; continue; }
+      if (e.b) { e.sx = s.x; e.sy = s.y - lift - 14; }
       // (a badge stands just right of the gate, clear of a warning icon there)
       if (dx !== undefined) el.style.transform = `translate(${(s.x + dx).toFixed(1)}px, ${(s.y - lift).toFixed(1)}px) translate(0, -100%)`;
       else el.style.transform = `translate(${s.x.toFixed(1)}px, ${(s.y - lift).toFixed(1)}px) translate(-50%, -100%)`;

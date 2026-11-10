@@ -37,6 +37,16 @@ export class DepositMarks {
   /** what is marked: the kind being placed (pointers too), every kind (the Resources view), or nothing */
   private kinds: DepositKind[] = [];
   private focus = false;
+  /**
+   * The extractor in hand sits on its ground right now (set by the app): no pointer to "the nearest forest, 4.2 km"
+   * while the cursor's own chip says "Forest 100%" (play-test 2026-11-09, A19).
+   */
+  here = false;
+  /**
+   * The ground it needs is in view (set by the app): soil and forest are everywhere, not only in the big patches
+   * the pointers know, and "Nearest forest 9 km" over a screen half full of forest was wrong.
+   */
+  inView = false;
   /** where the lists were last gathered round, and for what: gathered again when the view moves on */
   private at: V2 | null = null;
   private atKey = "";
@@ -53,8 +63,9 @@ export class DepositMarks {
     if (key !== this.atKey) { this.atKey = key; this.at = null; }
     this.kinds = kinds;
     this.focus = focus;
+    if (!focus) this.here = this.inView = false;
     if (!kinds.length) this.clear();
-    this.walls = this.edges.length ? [...document.querySelectorAll(".corner > *, .banner:not([hidden])")].map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0) : [];
+    this.walls = this.edges.length ? [...document.querySelectorAll(".corner > *, .banner:not([hidden]), .bottom > .assets")].map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0) : [];
   }
 
   private clear() {
@@ -136,7 +147,7 @@ export class DepositMarks {
     for (const e of order) {
       const s = view.worldToScreen(e.c.x, e.c.y);
       const off = !(s.x > 0 && s.y > 0 && s.x < W && s.y < H);
-      const show = off && !anyOn && shown < POINTERS;
+      const show = off && !anyOn && !this.here && !this.inView && shown < POINTERS;
       e.el.style.display = show ? "" : "none";
       if (!show) continue;
       shown++;
