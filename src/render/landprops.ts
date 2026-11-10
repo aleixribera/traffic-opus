@@ -14,6 +14,16 @@ import type { MergedModel } from "./models";
 /** Drawn while a pixel is no more than this many metres; they sink into the ground over the last part of it. */
 export const LAND_PROPS_SEE = 1.25;
 const SINK_FROM = 0.95;
+/**
+ * Past this many metres a pixel a hedge, a haystack or a clump of reeds is drawn as its far model: the same shape in
+ * a tenth of the faces. A hedge is then a few pixels high, and a screen of enclosed country holds thousands of them.
+ */
+const FAR_FROM = 0.2;
+/** A gate is not drawn past this many metres a pixel (the gap in the painted hedge is what is seen of it). */
+const GATE_SEE = 0.6;
+/** The kinds that have a far model (its name the kind's and "_far"), and whose model each kind is drawn with. */
+const MODEL: Record<string, string> = { haycock: "land_haystack" };
+const HAS_FAR = new Set(["land_hedgerow_a", "land_hedgerow_b", "land_haystack", "land_reeds"]);
 /** A hedgerow piece's length (m), as modelled. */
 const PIECE = 8;
 /** A gate's width between the outsides of its posts (m), as modelled. */
@@ -27,6 +37,8 @@ const KINDS = ["land_hedgerow_a", "land_hedgerow_b", "land_gate", "land_haystack
 type Kind = (typeof KINDS)[number];
 
 interface Chunk { meshes: THREE.InstancedMesh[]; used: number; stale: boolean; ci: number; cj: number }
+/** A kind's two models: near and far (the same one twice where there is no far one). */
+type Geos = [THREE.BufferGeometry, THREE.BufferGeometry];
 
 /** Where a chunk's props stand: a matrix each, by kind (pure: tested without a renderer). */
 export function placeLand(
@@ -55,8 +67,11 @@ export function placeLand(
         const gate = gateAt(cx, cy, side) * len;
         // (a point `s` metres along the side, on the ground)
         const along = (s: number) => (side === 0 ? encUnwarp(X0, Y0 + s) : encUnwarp(X0 + s, Y0));
+        // (one piece ends where the next begins: that point is found once)
+        let endS = NaN, end: [number, number] = [0, 0];
         const piece = (kind: Kind, s0: number, s1: number, h: number, flip: boolean) => {
-          const [ax, ay] = along(s0), [bx, by] = along(s1), mx = (ax + bx) / 2, my = (ay + by) / 2;
+          const [ax, ay] = s0 === endS ? end : along(s0), [bx, by] = (end = along(s1)), mx = (ax + bx) / 2, my = (ay + by) / 2;
+          endS = s1;
           if (blocked(mx, my, 1.6) || blocked(ax, ay, 0.8) || blocked(bx, by, 0.8) || inWater(mx, my)) return;
           // (a model's length runs along its x: turned onto the line, end for end or not)
           const ang = Math.atan2(-(by - ay), bx - ax) + (flip ? Math.PI : 0);
@@ -95,14 +110,22 @@ export function placeLand(
     }
   }
   // the reeds: clumps in the shallows and on the bank, where the shore has no beach
-  const w = (gi: number, gj: number) => Math.max(terrain.node(F.lake, gi, gj) / 255, riverWater(terrain.node(F.river, gi, gj) / 255, terrain.node(F.flow, gi, gj) / 255));
+  // (the water at each of the chunk's nodes, read once: a square with wet and dry corners has a shore in it)
+  const W1 = CHS + 1, wn = new Uint8Array(W1 * W1);
+  let anyWet = 0;
+  for (let b = 0; b < W1; b++) {
+    for (let a = 0; a < W1; a++) {
+      const gi = ci * CHS + a, gj = cj * CHS + b;
+      anyWet += wn[b * W1 + a] = Math.max(terrain.node(F.lake, gi, gj) / 255, riverWater(terrain.node(F.river, gi, gj) / 255, terrain.node(F.flow, gi, gj) / 255)) >= 0.5 ? 1 : 0;
+    }
+  }
   const p = { x: 0, y: 0 };
   const water = (x: number, y: number) => { p.x = x; p.y = y; return terrain.water(p); };
-  for (let b = 0; b < CHS; b++) {
+  for (let b = 0; b < CHS && anyWet; b++) {
     for (let a = 0; a < CHS; a++) {
       const gi = ci * CHS + a, gj = cj * CHS + b;
-      const w0 = w(gi, gj), w1 = w(gi + 1, gj), w2 = w(gi, gj + 1), w3 = w(gi + 1, gj + 1);
-      if (Math.min(w0, w1, w2, w3) >= 0.5 || Math.max(w0, w1, w2, w3) < 0.5) continue;
+      const wet4 = wn[b * W1 + a] + wn[b * W1 + a + 1] + wn[(b + 1) * W1 + a] + wn[(b + 1) * W1 + a + 1];
+      if (wet4 === 0 || wet4 === 4) continue;
       for (let k = 0; k < 14; k++) {
         const x = (gi + thashf(gi, gj, LAND_K.reed + 1 + k * 2)) * RES, y = (gj + thashf(gi, gj, LAND_K.reed + 2 + k * 2)) * RES;
         if (beachAt(x, y) > 0.4 || reedAt(x, y) < 0.42) continue;
@@ -171,6 +194,8 @@ export class LandProps {
   private lastRefresh = 0;
   /** How long the last chunk took to set out (ms). */
   lastBuildMs = 0;
+  /** Whether a chunk in view is still to be set out. */
+  due = false;
 
   constructor(
     private props: Map<string, MergedModel>, private terrain: Terrain, private forest: Forest, private enc: Enclosures,
@@ -187,15 +212,21 @@ export class LandProps {
     }
   }
 
-  update(view: { mpp: number; cx: number; cy: number; bounds(): { x0: number; y0: number; x1: number; y1: number } }) {
+  /**
+   * Call every frame. `mayBuild`: whether this frame has time left to set a chunk out (the ground's own building
+   * comes first: a chunk of ground and a chunk of hedges are never both made in one frame).
+   */
+  update(view: { mpp: number; cx: number; cy: number; bounds(): { x0: number; y0: number; x1: number; y1: number } }, mayBuild = true) {
     this.frame++;
     const mpp = view.mpp;
-    this.group.visible = mpp < LAND_PROPS_SEE;
+    this.group.visible = mpp < LAND_PROPS_SEE && this.props.size > 0;
+    this.due = false;
     if (!this.group.visible) return;
     this.grow.value = 1 - Math.min(1, Math.max(0, (mpp - SINK_FROM) / (LAND_PROPS_SEE - SINK_FROM))) ** 2;
     // (the hay stands in the meadows from the mowing: the cocks until they are carted, the stacks through the winter)
     const dry = ENV.uSeasonA.value.z, fall = ENV.uSeasonA.value.w, bare = ENV.uSeasonB.value.x;
     const stacks = dry > 0.45 || fall > 0.15 || bare > 0.15, cocks = dry > 0.45 && fall < 0.45;
+    const lod = mpp > FAR_FROM ? 1 : 0;
     if (this.town && this.town.stamp !== this.stamp) { this.stamp = this.town.stamp; this.invalidate(null); }
     const S = CHS * RES, { x0, y0, x1, y1 } = view.bounds();
     let want: { ci: number; cj: number; d: number } | null = null, stale: Chunk | null = null;
@@ -204,7 +235,12 @@ export class LandProps {
         const c = this.chunks.get(`${ci},${cj}`);
         if (c) {
           c.used = this.frame;
-          for (const m of c.meshes) m.visible = m.name === "land_haystack" ? stacks : m.name === "haycock" ? cocks : true;
+          for (const m of c.meshes) {
+            m.visible = m.name === "land_haystack" ? stacks : m.name === "haycock" ? cocks : m.name === "land_gate" ? mpp < GATE_SEE : true;
+            m.geometry = (m.userData.geos as Geos)[lod];
+            // (far, a hedge's shadow is the one the ground paints along it: only a haystack still throws its own)
+            m.castShadow = m.name === "land_haystack" || (lod === 0 && m.name !== "land_reeds" && m.name !== "haycock");
+          }
           if (c.stale) stale = c;
           continue;
         }
@@ -215,7 +251,9 @@ export class LandProps {
     for (const c of this.chunks.values()) if (c.used !== this.frame) for (const m of c.meshes) m.visible = false;
     // one chunk a frame: a missing one first; one grown stale now and then (a town adds a house every few seconds)
     const now = performance.now();
-    if (want) this.build(want.ci, want.cj);
+    this.due = !!want && !mayBuild;
+    if (!mayBuild) return;
+    if (want) { this.build(want.ci, want.cj); this.due = true; }
     else if (stale && now - this.lastRefresh > 120) { this.lastRefresh = now; this.build(stale.ci, stale.cj); }
     if (this.chunks.size > KEEP) {
       const old = [...this.chunks.entries()].filter(([, c]) => c.used !== this.frame).sort((a, b) => a[1].used - b[1].used);
@@ -231,9 +269,10 @@ export class LandProps {
     const placed = placeLand(ci, cj, this.terrain, this.enc, (x, y, r) => this.forest.cleared(x, y, r) || (!!town && town.townAt(x, y) > 0.2));
     const meshes: THREE.InstancedMesh[] = [];
     for (const kind of KINDS) {
-      const list = placed[kind], mm = this.props.get(kind === "haycock" ? "land_haystack" : kind);
+      const list = placed[kind], name = MODEL[kind] ?? kind, mm = this.props.get(name);
       if (!mm || !list.length) continue;
       const mesh = new THREE.InstancedMesh(mm.geo, this.mat, list.length);
+      mesh.userData.geos = [mm.geo, (HAS_FAR.has(name) && this.props.get(name + "_far")?.geo) || mm.geo] satisfies Geos;
       list.forEach((m, i) => mesh.setMatrixAt(i, m));
       mesh.instanceMatrix.needsUpdate = true;
       mesh.name = kind;

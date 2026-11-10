@@ -166,6 +166,22 @@ float envSnowAt(vec2 p, float shelter) {
   // (in deep winter it lies nearly everywhere; while it comes and goes, in drifts with the ground showing between)
   return smoothstep(1.0 - k * 0.72 - aa, 1.0 - k * 0.72 + aa + 0.04, n) * smoothstep(0.0, 0.2, envSnow);
 }
+/* The same in two steps, for a shader that asks inside a branch (a derivative there makes Direct3D's compiler run
+   both sides of the branch for every pixel): the drifts' noise at p and the width of a soft edge in it, worked out
+   from the size of a pixel on the ground (mppS: its two sides added, fwidth(p.x) + fwidth(p.y)); then the snow. */
+vec2 envSnowNoise(vec2 p, float mppS) {
+  vec2 q0 = mat2(0.96, 0.28, -0.28, 0.96) * p, q1 = mat2(0.8, -0.6, 0.6, 0.8) * p, q2 = mat2(0.28, 0.96, -0.96, 0.28) * p;
+  vec2 q3 = mat2(-0.6, 0.8, -0.8, -0.6) * p;
+  float kC = 1.0 - smoothstep(0.25, 0.8, mppS), kB = 1.0 - smoothstep(1.2, 3.5, mppS);
+  float n = envNoise(q0 / 39.0) * 0.5 + envNoise(q1 / 12.0 + 7.1) * 0.27
+    + mix(0.5, envNoise(q2 / 3.3 - 2.7), kB) * 0.15 + mix(0.5, envNoise(q3 / 0.85 + 3.9), kC) * 0.08;
+  // (the noise's own slope, octave by octave, times the pixel)
+  return vec2(n, max(mppS * (0.013 + 0.024 * kB + 0.05 * kC), 0.004) * 1.5);
+}
+float envSnowOf(vec2 na, float shelter) {
+  float k = envSnow * (1.0 - shelter);
+  return smoothstep(1.0 - k * 0.72 - na.y, 1.0 - k * 0.72 + na.y + 0.04, na.x) * smoothstep(0.0, 0.2, envSnow);
+}
 /* Snow's colour at a point: a little blue in the hollows. */
 vec3 envSnowCol(vec2 p) {
   return mix(${v3(SNOW_SHADE)}, ${v3(SNOW)}, 0.55 + 0.45 * envNoise(p / 2.1));
