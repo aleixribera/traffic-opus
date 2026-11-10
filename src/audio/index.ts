@@ -137,7 +137,7 @@ export class GameAudio {
     this.eng = new Engine(ctx, this.bank);
     this.eng.setLevels(this.settings, true);
     this.world = new World(this.eng);
-    const radio = this.radio = new Wireless(this.eng);
+    const radio = this.radio = new Wireless(this.eng, { worker: true });
     radio.source = () => ({ towns: this.host?.game.towns.list.map((t) => t.name) ?? [], company: this.host?.game.company.name ?? "" });
     radio.mood = () => (this.host ? moodFor(this.host.dayCycle.hour, Math.floor(this.host.dayCycle.yday / SEASON_DAYS) % 4) : "day");
     radio.onTune = (name) => { this.tune = name; this.onChange?.(); };
