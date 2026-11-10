@@ -2,6 +2,7 @@ import { BUILDING_TYPES, LEVEL_H, MAX_LEVEL, ROAD_TYPES, SIGNAL_COST, type Build
 import { wireNights } from "./nightsSetting";
 import { wireCamera } from "./cameraSetting";
 import { WHEEL_MODES, saveWheelMode } from "./wheel";
+import { saveEdgeScroll, wireEdgeScroll } from "./panning";
 import { formatMoney, type V2 } from "../core/math";
 import type { Building } from "../game/buildings";
 import { ZONE_GROUP } from "../game/growables";
@@ -2381,6 +2382,7 @@ export class Hud {
         <button class="pm camview"></button>
         <button class="pm nights"></button>
         <button class="pm wheel"></button>
+        <button class="pm edge"></button>
         <button class="pm home">Main menu</button>
         <button class="pm new">New company</button>
       </div>`, "Pause menu");
@@ -2421,6 +2423,7 @@ export class Hud {
       showWheel();
     };
     showWheel();
+    wireEdgeScroll(dlg.querySelector(".pm.edge"), () => app.edgeScroll, (v) => { app.edgeScroll = v; saveEdgeScroll(v); }, () => this.sfx.play("click"));
     on(".pm.co", () => this.openCompany("pause"));
     on(".home", () => {
       if (app.mode === "play") app.saves.autosave(app.game);

@@ -74,6 +74,8 @@ import { RIBBONS_SEE, Roads3D } from "./render/roads3d";
 import { disposeTree, modelGeometries } from "./render/dispose";
 import { RoadsFar } from "./render/roadsFar";
 import { MapLabels } from "./ui/labels";
+import { ZoomRing } from "./ui/zoomRing";
+import { edgePush, loadEdgeScroll, panRate } from "./ui/panning";
 import { MapIcons } from "./ui/mapIcons";
 import { Pops } from "./ui/pops";
 import { Terrain3D } from "./render/terrain3d";
@@ -258,6 +260,14 @@ export class App {
   private tiltAnim: { from: number; to: number; t: number } | null = null;
   /** The keys' pull on the camera, eased: across and down the screen, the turn, the zoom (each -1 to 1). */
   private keyCam = { x: 0, y: 0, turn: 0, zoom: 0 };
+  /** How long the map has been moving under the keys (or the window's edge) without a stop (s): it speeds up. */
+  private panT = 0;
+  /** Edge scrolling (pause menu): the pointer against an edge of the window moves the map. Off by default. */
+  edgeScroll = loadEdgeScroll();
+  /** Where the pointer is in the window (CSS px), null when it is out of it: for edge scrolling. */
+  private pointerAt: V2 | null = null;
+  /** The ring each wheel notch leaves at the cursor. */
+  private zoomRing = new ZoomRing(document.body);
   /** A tilt key is held (the view settles when it is let go). */
   private pitching = false;
   /** A wheel zoom easing in: the pixel whose ground it holds still, and the zoom it is going to. */
@@ -963,7 +973,10 @@ export class App {
       if (!t?.closest?.("input, textarea, [contenteditable='true']")) e.preventDefault();
     });
     el.addEventListener("pointerdown", (e) => this.onDown(e));
-    window.addEventListener("pointermove", (e) => this.onMove(e));
+    window.addEventListener("pointermove", (e) => { this.pointerAt = v2(e.clientX, e.clientY); this.onMove(e); });
+    // (out of the window, or the window put aside: no edge scrolling)
+    document.addEventListener("pointerout", (e) => { if (!e.relatedTarget) this.pointerAt = null; });
+    window.addEventListener("blur", () => { this.pointerAt = null; });
     window.addEventListener("pointerup", (e) => this.onUp(e));
     window.addEventListener("pointercancel", (e) => { this.pointers.delete(e.pointerId); this.pinch = null; });
     el.addEventListener("pointerleave", () => { this.hasCursor = false; this.dirtyPreview = true; this.hud?.chips(null); });
@@ -1008,8 +1021,17 @@ export class App {
         // the zoom, and a whole notch at once would jolt it); a pinch follows the fingers as they move
         if (act === "zoom" && !reducedMotion() && !this.glide) {
           const from = this.zoomEase?.to ?? this.view.halfH;
-          this.zoomEase = { px: at.x, py: at.y, to: clamp(from * f, this.view.minHalfH, this.view.maxHalfH) };
-        } else { this.zoomEase = null; this.view.zoomAt(at.x, at.y, f); }
+          const to = clamp(from * f, this.view.minHalfH, this.view.maxHalfH);
+          this.zoomEase = { px: at.x, py: at.y, to };
+          this.zoomRing.show(e.clientX, e.clientY, Math.abs(to - from) < from * 1e-3 ? "stop" : to < from ? "in" : "out");
+        } else {
+          if (act === "zoom") {
+            const h = this.view.halfH, to = clamp(h * f, this.view.minHalfH, this.view.maxHalfH);
+            this.zoomRing.show(e.clientX, e.clientY, Math.abs(to - h) < h * 1e-3 ? "stop" : to < h ? "in" : "out");
+          }
+          this.zoomEase = null;
+          this.view.zoomAt(at.x, at.y, f);
+        }
       }
       this.clampView();
       this.updateCursor(at);
@@ -2211,6 +2233,12 @@ export class App {
     const free = !this.camera.cinematic && !held("Control", "Meta");
     let mx = free ? (held("d", "ArrowRight") ? 1 : 0) - (held("a", "ArrowLeft") ? 1 : 0) : 0;
     let my = free ? (held("s", "ArrowDown") ? 1 : 0) - (held("w", "ArrowUp") ? 1 : 0) : 0;
+    // and the pointer held against an edge of the window, if the player turned that on (not over a dialog)
+    if (free && this.edgeScroll && this.pointerAt && this.mode === "play" && document.hasFocus() && !document.querySelector("[aria-modal='true']")) {
+      const e = edgePush(this.pointerAt.x, this.pointerAt.y, window.innerWidth, window.innerHeight);
+      mx = clamp(mx + e.x, -1, 1);
+      my = clamp(my + e.y, -1, 1);
+    }
     const turn = free ? (held("e") ? 1 : 0) - (held("q") ? 1 : 0) : 0;
     const zoom = free ? (held("-", "_") ? 1 : 0) - (held("+", "=") ? 1 : 0) : 0;
     // Y up toward the Map view, H down toward the horizon
@@ -2223,10 +2251,13 @@ export class App {
     const toward = (v: number, to: number) => { const n = v + (to - v) * ease; return Math.abs(n - to) < 0.01 ? to : n; };
     K.x = toward(K.x, mx); K.y = toward(K.y, my); K.turn = toward(K.turn, turn); K.zoom = toward(K.zoom, zoom);
     if (this.camera.cinematic || this.mode === "menu") K.x = K.y = K.turn = K.zoom = 0;
+    // held, the map speeds up: a tap nudges it a little, a long press crosses the map (review 2026-11-10, Camera 1)
+    this.panT = mx || my ? this.panT + dt : 0;
     if (K.x || K.y) {
-      // (at the same speed on screen whichever way: at a tilt the ground up the screen is foreshortened, so the
-      // camera covers more of it going up or down than going across)
-      const px = (520 * dt * (this.view.halfH / 170) ** 0.85) / this.view.mpp;
+      // A share of the screen a second, at every zoom: a tap moves the view the same part of itself near or far.
+      // On screen, so at the same speed whichever way: at a tilt the ground up the screen is foreshortened, and the
+      // camera covers more of it going up or down than going across.
+      const px = panRate(this.panT) * this.view.h * dt;
       const v = this.view.screenVec(K.x * px, K.y * px);
       this.view.cx += v.x;
       this.view.cy += v.y;
@@ -2360,6 +2391,7 @@ export class App {
     this.terrain3d.update(this.view);
     this.roadsFar.update(this.view.mpp, this.view.w, this.view.h);
     this.labels.update(this.view);
+    this.labels.pointer(this.hasCursor ? this.cursorPx.x : null, this.cursorPx.y);
     this.convoyTags.update(this.view, g.alpha);
     this.townPings.update(this.view);
     this.depositMarks.update(this.view);
