@@ -189,8 +189,8 @@ export class App {
   private treesDue = 0;
   /** The sim is stepping (game.update): what it changes is laid out over the next frames, not in the step (B12). */
   private simming = false;
-  /** A whole layout of the buildings is under way in slices: its follow-ups are due when it goes in. */
-  private layoutFollow = false;
+  /** A whole layout of the buildings, laid out in slices, has gone in: its follow-ups are due (afterLayout). */
+  private layoutIn = false;
   /** The heavy work left this frame may still take: one big rebuild a frame (spend). */
   private heavy = 0;
   private iconT = 0;
@@ -782,7 +782,7 @@ export class App {
     this.buildings3d?.disposeExtras();
     this.buildings3d = new Buildings3D(this.models, () => this.game.time, g.net);
     this.treesDue = 0;
-    this.layoutFollow = false;
+    this.layoutIn = false;
     this.vehicles.lotOf = (id) => { const b = g.buildings.byId.get(id); return b ? this.buildings3d.lotWay(b) : null; };
     this.transit3d = new Transit3D(this.models.props.get("busstop"));
     this.parks3d = new Parks3D(this.models);
@@ -829,7 +829,7 @@ export class App {
       else if (e.t === "buildings") {
         // (what the sim changed is laid out over the next frames, the old layout drawn meanwhile; the player's own
         // edit, or a load, at once)
-        if (this.simming) { this.buildings3d.rebuildSoon(g.buildings.list); this.layoutFollow = true; }
+        if (this.simming) this.buildings3d.rebuildSoon(g.buildings.list);
         else { this.buildings3d.rebuild(g.buildings.list); this.afterLayout(); }
       }
       else if (e.t === "zones") this.dirtyPreview = true;
@@ -2183,7 +2183,7 @@ export class App {
     // the fields follow the season shown (the menu's and the dev hook's too)
     const look = fieldLook(this.dayCycle.lookTime(g.time));
     if (look !== this.fieldsWere) {
-      if (this.fieldsWere) { this.buildings3d.rebuildSoon(g.buildings.list); this.layoutFollow = true; }
+      if (this.fieldsWere) this.buildings3d.rebuildSoon(g.buildings.list);
       this.fieldsWere = look;
     }
     const sig = `${this.roads.lampVersion}:${this.buildings3d.version}`;
@@ -2235,7 +2235,13 @@ export class App {
     let my = free ? (held("s", "ArrowDown") ? 1 : 0) - (held("w", "ArrowUp") ? 1 : 0) : 0;
     // and the pointer held against an edge of the window, if the player turned that on (not over a dialog)
     if (free && this.edgeScroll && this.pointerAt && this.mode === "play" && document.hasFocus() && !document.querySelector("[aria-modal='true']")) {
-      const e = edgePush(this.pointerAt.x, this.pointerAt.y, window.innerWidth, window.innerHeight);
+      const p = this.pointerAt, W = window.innerWidth, H = window.innerHeight;
+      let e = edgePush(p.x, p.y, W, H);
+      // (over the bars and panels that reach the edge, only right against it: a button there stays easy to click)
+      if (e.x || e.y) {
+        const t = document.elementFromPoint(p.x, p.y);
+        if (t && t !== this.view.canvas && !this.labels.el.contains(t)) e = edgePush(p.x, p.y, W, H, 3);
+      }
       mx = clamp(mx + e.x, -1, 1);
       my = clamp(my + e.y, -1, 1);
     }
@@ -2300,9 +2306,15 @@ export class App {
     }
     this.simming = true;
     try { g.update(dt); } finally { this.simming = false; }
-    // the buildings the sim changed, laid out a slice a frame; in whole, with what follows, when ready
-    if (this.layoutFollow && !this.buildings3d.busy && this.spend()) { this.layoutFollow = false; this.afterLayout(); }
-    else if (this.buildings3d.busy && this.spend()) this.buildings3d.work(LAYOUT_MS);
+    // the buildings the sim changed, laid out a slice a frame (a slice keeps to its few ms, so it is not one of the
+    // frame's heavy jobs); a layout going in is: nothing else heavy that frame, and what follows it the next
+    const B = this.buildings3d;
+    if (this.layoutIn && this.spend()) { this.layoutIn = false; this.afterLayout(); }
+    else if (B.busy) {
+      const v = B.version;
+      if (B.work(LAYOUT_MS)) { this.heavy = 0; if (B.doneWhole) this.layoutIn = true; }
+      else if (B.version !== v) this.heavy = 0;
+    }
     this.audio.update(dt);
     this.vehicles.update(g.traffic, g.alpha);
     this.parks3d.update(g.parks.links, g.time + g.alpha * SIM.dt);
@@ -2342,12 +2354,12 @@ export class App {
       this.hudT = 0;
       this.rememberView();
       this.hud?.tick();
-      if (this.buildings3d.updateConstruction()) { this.buildings3d.rebuildSoon(this.game.buildings.list); this.layoutFollow = true; }
+      if (this.buildings3d.updateConstruction()) this.buildings3d.rebuildSoon(this.game.buildings.list);
       if ((this.overlay !== "none" && this.overlay !== "flow") || this.st.tool === "place") this.applyTint();
     }
     this.saveT += dt;
     // (in a frame of its own: no layout or rebuild lands with it)
-    if (this.saveT > 60 && this.spend()) { this.saveT = 0; if (this.mode === "play") void this.saves.autosaveSoon(g); }
+    if (this.saveT > 60 && (this.spend() || this.saveT > 75)) { this.saveT = 0; if (this.mode === "play") void this.saves.autosaveSoon(g); }
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - dt * 4);
       this.hud?.shake(this.shake);

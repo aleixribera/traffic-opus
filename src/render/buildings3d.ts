@@ -658,6 +658,10 @@ export class Buildings3D {
   private job: Generator<void, void> | null = null;
   private jobDrives = false;
   private due: { list: Building[]; drives: boolean } | null = null;
+  /** How many times the driveways and strips went in: a plan made before the last one is out of date (rebuildDrives). */
+  private drivesGen = 0;
+  /** The last layout in slices to finish was a whole one (not only the driveways and strips). */
+  doneWhole = false;
   /** When this frame's slice must stop (performance.now ms; Infinity: laying out at once). */
   private until = Infinity;
   private steps = 0;
@@ -676,7 +680,9 @@ export class Buildings3D {
   /** The driveways and front strips again now (the roads changed). */
   rebuildDrives(list: Building[]) {
     // (a whole layout under way lays them out from the roads as they were: it goes in, then they are done again)
-    if (this.job && !this.jobDrives && !this.due) this.due = { list, drives: true };
+    // (one of only the driveways, under way from the roads as they were, is dropped: this one is newer)
+    if (this.job && this.jobDrives) this.job = null;
+    else if (this.job && !this.due) this.due = { list, drives: true };
     this.run(this.drivesJob(list));
   }
 
@@ -711,6 +717,7 @@ export class Buildings3D {
     this.until = Infinity;
     if (!r.done) return false;
     this.job = null;
+    this.doneWhole = !this.jobDrives;
     return true;
   }
 
@@ -746,16 +753,20 @@ export class Buildings3D {
         }
       }
     }
-    // each piece's matrix
+    // each piece's matrix (and which were still going up when it was set: the commit keeps them on the building
+    // list even if they finished since, or one planned at no height would stay invisible)
+    const growing = new Set<Piece>();
     for (const ps of order.values()) {
       for (const p of ps) {
         if (this.late()) yield;
         p.m = this.matrix(new THREE.Matrix4(), p);
+        if (this.rise(p) < 1 || p.b.built < 1) growing.add(p);
       }
     }
     // the lots' lawns and the halls' squares, then the driveways and front strips
     const ground = this.groundOf(list);
     if (this.late()) yield;
+    const gen = this.drivesGen;
     const drives = yield* this.drivesPlan(list);
     // every model's meshes, made now and shown at the commit: the whole map's, and again by squares of the map for
     // near in (only those on screen drawn)
@@ -801,7 +812,7 @@ export class Buildings3D {
     this.emitters = emitters;
     this.building = [];
     for (const { model, ps, mesh, squares } of plans) {
-      ps.forEach((p, i) => { if (this.rise(p) < 1 || p.b.built < 1) this.building.push({ p, i }); });
+      ps.forEach((p, i) => { if (growing.has(p) || this.rise(p) < 1 || p.b.built < 1) this.building.push({ p, i }); });
       mesh.visible = !this.nearOn;
       if (this.housesFar && mesh.userData.far) mesh.geometry = mesh.userData.far;
       this.meshes.set(model, mesh);
@@ -818,7 +829,8 @@ export class Buildings3D {
     this.parked();
     this.rebuildSites(list);
     yield;
-    this.commitDrives(drives);
+    // (unless the roads changed and the driveways were laid out again from them meanwhile)
+    if (this.drivesGen === gen) this.commitDrives(drives);
     // what is built, for the roadside furniture to keep off (render/furniture.ts): every lot and works site
     let sig = list.length;
     for (const b of list) sig = (Math.imul(sig, 31) + b.id) | 0;
@@ -1228,8 +1240,9 @@ export class Buildings3D {
 
   /** The driveways and front strips, laid out in slices, then in. */
   private *drivesJob(list: Building[]): Generator<void, void> {
+    const gen = this.drivesGen;
     const plan = yield* this.drivesPlan(list);
-    this.commitDrives(plan);
+    if (this.drivesGen === gen) this.commitDrives(plan);
   }
 
   /** What the driveways and front strips will be (nothing drawn yet). */
@@ -1276,6 +1289,7 @@ export class Buildings3D {
   }
 
   private commitDrives(plan: { drive: ReturnType<Quads["mesh"]>; strips: StripPlan }) {
+    this.drivesGen++;
     if (this.drives) { this.group.remove(this.drives); this.drives.geometry.dispose(); this.drives = null; }
     const m = plan.drive;
     if (m) {

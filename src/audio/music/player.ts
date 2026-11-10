@@ -122,6 +122,7 @@ export class Wireless {
   setOn(on: boolean) {
     if (on === this.on) return;
     this.on = on;
+    this.waitFrom = 0;
     if (on) { this.band.gain.setTargetAtTime(BAND, this.e.now, 0.05); this.startAt = this.e.now + 1.2; }
     else { this.hush(); this.dropHorn(); }
     if (!on) this.onTune?.("");
@@ -150,6 +151,7 @@ export class Wireless {
   /** Cut the band off (what is already set down fades with it). */
   private hush() {
     const t = this.e.now;
+    this.waitFrom = 0;
     this.band.gain.cancelScheduledValues(t);
     this.band.gain.setTargetAtTime(0, t, 0.07);
     this.tune = null;
