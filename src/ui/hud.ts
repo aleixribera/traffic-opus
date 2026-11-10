@@ -1342,6 +1342,10 @@ export class Hud {
     this.renderTips();
   }
 
+  /** Stopped only because a menu is up (a save taken now is of a running game); and a game loaded under a menu: the menu goes, without its resume. */
+  get menuPaused(): boolean { return this.resumeOnClose && !this.modal.hidden; }
+  dropModal() { this.resumeOnClose = false; if (!this.modal.hidden) this.closeModal(); }
+
   private closeModal() {
     this.modal.hidden = true;
     this.modal.innerHTML = "";

@@ -91,6 +91,8 @@ export interface Vehicle {
   dest: Access;
   destSide: 1 | -1; // side of the destination relative to the seg's a->b direction
   destS: number; // lane arc-length of the driveway on the final lane (-1 = not computed)
+  /** its driveway is at the dead end of its road (see END_GATE): it drives straight in, whichever side it is on */
+  destEnd?: boolean;
   trip: Trip;
   // render state
   x: number; y: number; h: number; ang: number;
@@ -170,6 +172,41 @@ export interface PendingSpawn {
   go?: number;
 }
 
+/** An edge as saved: a lane's key, or a connector as its junction and the keys of the two lanes it joins. */
+export type EdgeRef = string | [number, string, string];
+
+/**
+ * A vehicle on the road as saved (Traffic.toJSON): what it is, where it is on its lane or in its junction, the way
+ * it is going and its trip (with its load), and what it holds at the junction it is at.
+ */
+export interface SavedVehicle {
+  id: number; truck: boolean; len: number; look: number; color: number;
+  vf?: number; af?: number; vmax?: number; keepLane?: boolean; units?: Unit[]; exit?: boolean;
+  e: EdgeRef; s: number; v: number; lat: number; latV?: number; lcCool: number;
+  route: number[]; ri: number; dest: Access; destSide: 1 | -1; destS: number; destEnd?: boolean;
+  trip: Trip; born: number; ideal: number; wait: number; stuck: number;
+  odo?: number; progOdo?: number; progT?: number; dwell?: number;
+  next?: EdgeRef; granted?: boolean; grantT?: number; overrode?: boolean; forced?: boolean; turnOk?: boolean;
+  hold?: EdgeRef; stopAt?: EdgeRef; boxes?: EdgeRef[];
+  hist?: EdgeRef[]; histSpan?: [number, number][]; entS?: number;
+  lcFrom?: string; lcS?: number; crossing?: { lane: string; s: number }[]; crossFrom?: number; crossOut?: number;
+}
+
+/** A trip waiting to set off as saved: in its lot, at the kerb, or beyond the edge of the map. */
+export type SavedSpawn = Omit<PendingSpawn, "why" | "blocker" | "clear" | "plan">;
+
+/** The traffic as saved: every vehicle and waiting trip, the lights' clocks, and the lots a long truck is pulling out of. */
+export interface TrafficSave {
+  nextId: number;
+  grantSeq: number;
+  vehicles: SavedVehicle[];
+  pending: SavedSpawn[];
+  /** per signalled junction: the phase that is on, its stage and how long it has been in it */
+  signals: [number, number, 0 | 1 | 2, number][];
+  /** per lot: the long truck last out of its gate (its id) and where the gate is */
+  gates: [number, number, V2][];
+}
+
 type SpawnRoute = { keys: number[]; time: number; freeFlow: number; dir: 1 | -1 };
 /** Seconds a car waiting to pull out keeps the route it found before looking again (traffic speeds change). */
 const REPLAN = 3;
@@ -195,6 +232,11 @@ export const LONG = 10;
  * whole fleets in queues at their gates and halved what they moved: tests/balance.test.ts).
  */
 export const TRAIN = 16;
+/**
+ * The most a trailer is drawn folded against the piece that pulls it (rad, 75 degrees: past that a real one has
+ * jack-knifed). Through any turn the roads can make a road train bends about 65 degrees at the most.
+ */
+export const MAX_BEND = (75 * Math.PI) / 180;
 /**
  * The jam breaker, a last resort (owner, 2026-11-08: "let infinite traffic jams get a bit fixed into non infinite
  * ones"). The give-way rules are meant never to lock, but a city is big and odd layouts get built, and a spot that
@@ -223,6 +265,16 @@ const ROUGH_HEAVY = 0.85;
 const RING_FULL = 0.6;
 /** How far along a near lane (m) a vehicle pulling out across it sweeps as it turns: kept clear while it crosses. */
 const CROSS_SWEEP = 10;
+/**
+ * A driveway this close (m) to the dead end of a road is at the end of it: the road runs into the gate (the street a
+ * works lays from its gate, or one drawn to it). A vehicle drives straight in off the lane it is on and straight out
+ * onto the lane leading away: nothing crosses in the gate's throat. Before, the gate counted as beside the road, so
+ * a truck driving up to it "turned in across" the lane the trucks leave by: with one waiting there to pull out onto
+ * the road beyond, the one coming in stood in the throat (or went on to turn round at the dead end, which the one
+ * leaving also blocked), the next one in stopped in the junction behind it, and that held the one leaving: a ring of
+ * three, and with it the road past the gate (docs/playtest-2026-11-09.md, A1).
+ */
+export const END_GATE = 9;
 /** Edges kept in a vehicle's history (a road train spans a lane, a junction and the lane before it). */
 const HIST = 8;
 /** A destination this close (m) past the start of its road: a car picks its lane for it on the road before. */
@@ -267,6 +319,8 @@ export class Traffic {
   vehicles: Vehicle[] = [];
   pending: PendingSpawn[] = [];
   router: Router;
+  /** Where a building's driveway is now, with its side of the road (set by the game: see movedEnd). */
+  whereIs: ((building: number) => Access | null) | null = null;
   time = 0;
   private grantSeq = 0;
   private nextId = 1;
@@ -333,9 +387,12 @@ export class Traffic {
     // (a car waiting for a gap asks again only every few seconds, or when the roads change: two searches every step
     // for each waiting car cost a big town milliseconds a frame)
     let best: SpawnRoute | null = p.plan && p.plan.ver === net.version && this.time - p.plan.t < REPLAN ? p.plan.best : null;
+    // a gate at the dead end of its road (see END_GATE): straight out onto the lane leading away, crossing nothing
+    const endOut = p.through ? 0 : this.endGate(p.from);
     if (!best) {
       for (const d of [1, -1] as const) {
-        const crossing = (d === 1 ? 1 : -1) !== p.fromSide;
+        if (endOut && d !== endOut) continue;
+        const crossing = !endOut && (d === 1 ? 1 : -1) !== p.fromSide;
         if (crossing && divided(p.from.seg) && !p.through) continue;
         const r = this.router.route(p.from, to, d);
         if (!r) continue;
@@ -347,7 +404,7 @@ export class Traffic {
     }
     const k = best.keys[0];
     const lanes = this.lanesOf(k);
-    const crossing = (best.dir === 1 ? 1 : -1) !== p.fromSide;
+    const crossing = !endOut && (best.dir === 1 ? 1 : -1) !== p.fromSide;
     // joining from the far side you turn into the lane nearest the middle, as real drivers do
     const full = lanes.filter((l) => !l.pocket);
     const want = crossing ? Math.max(...full.map((l) => l.idx)) : 0;
@@ -382,6 +439,11 @@ export class Traffic {
       const courtesy = o.v < 4 && ls - len - o.s > 1.5 + (o.v * o.v) / (2 * SIM.idm.b) + o.v * 0.8;
       if (o.s <= ls && ls - o.s < Math.max(10, o.v * headway) && !courtesy) { p.why = "oncoming"; p.blocker = o.id; return "wait"; }
     }
+    // a body whose front has gone on into the junction ahead (or beyond it) but whose tail is still on this lane,
+    // across the mouth: not out into it (trucks at a works' gate were drawn through the one before them, which was
+    // waiting at the line a few metres on)
+    for (const c of lane.outs) for (const o of c.occ as Vehicle[]) if (lane.pl.length + o.s - o.len < ls + len + 3) { p.why = "occupied"; p.blocker = o.id; return "wait"; }
+    for (const t of this.tails.get(lane) ?? []) if (t.rear < ls + len + 3 && this.vehicles.includes(t.v) && t.v.edge !== lane) { p.why = "occupied"; p.blocker = t.v.id; return "wait"; }
     // incoming vehicles from the connector feeding this lane near the start
     if (ls < 12) for (const c of lane.ins) if ((c.occ as Vehicle[]).length) { p.why = "junction"; return "wait"; }
     if (crossing) {
@@ -439,7 +501,7 @@ export class Traffic {
     // slide out of the driveway: start offset towards the building
     const side = (lane.dir === 1 ? 1 : -1) * p.fromSide; // +1 = building on the right of travel
     // start at the kerb (less a little: the nose is already poking out) and slide across into the lane
-    v.lat = side * Math.max(LANE_W * 0.9, lc.d - 1.2);
+    v.lat = endOut ? 0 : side * Math.max(LANE_W * 0.9, lc.d - 1.2);
     if (fromLot(p)) v.fade = 1; // it was drawn rolling out of its lot up to here
     if (crossing) {
       v.crossing = this.lanesAt(dkey(p.from.seg, best.dir === 1 ? -1 : 1), p.from.p);
@@ -452,7 +514,8 @@ export class Traffic {
     if (this.isFinal(v)) this.computeDestS(v);
     // nose out first: the tail is still in the driveway, angled back a little
     const ld = polyDirSmooth(lane.pl, clamp(ls, 0, lane.pl.length), 1), lr = right(ld);
-    this.place(v, true, norm({ x: lr.x * side - ld.x * 0.35, y: lr.y * side - ld.y * 0.35 }));
+    // (out of a gate at the end of the road: straight out, its tail still in the yard behind it)
+    this.place(v, true, endOut ? { x: -ld.x, y: -ld.y } : norm({ x: lr.x * side - ld.x * 0.35, y: lr.y * side - ld.y * 0.35 }));
     return "ok";
   }
 
@@ -835,7 +898,20 @@ export class Traffic {
 
   /** The lane a car on its last road turns into its destination from: kerb lane, or the inner lane for the far side. */
   private turnIdx(v: Vehicle, lane: Lane): number {
-    return (lane.dir === 1 ? 1 : -1) * v.destSide > 0 ? 0 : lane.count - 1;
+    // (a gate at the end of the road is driven straight into: from the kerb lane, as on its own side)
+    return v.destEnd || (lane.dir === 1 ? 1 : -1) * v.destSide > 0 ? 0 : lane.count - 1;
+  }
+
+  /**
+   * Is a driveway at the dead end of its road (see END_GATE)? The way a vehicle leaves it: 1 along the road, -1
+   * against it; 0 when it is beside a road like any other.
+   */
+  endGate(a: Access): 1 | -1 | 0 {
+    const net = this.net, sg = net.segs.get(a.seg), g = net.segGeom.get(a.seg);
+    if (!sg || !g) return 0;
+    if (a.s < END_GATE && net.segsAt(sg.a).length === 1) return 1;
+    if (a.s > g.center.length - END_GATE && net.segsAt(sg.b).length === 1) return -1;
+    return 0;
   }
 
   private computeDestS(v: Vehicle) {
@@ -843,6 +919,8 @@ export class Traffic {
     if (lane.kind !== "lane" || lane.seg !== v.dest.seg) { v.destS = -1; return; }
     // all lanes of this direction share roughly the same arc-length
     v.destS = polyClosest(lane.pl, v.dest.p).s;
+    // (driving up to a gate at the end of this road: straight in)
+    v.destEnd = this.endGate(v.dest) === -lane.dir;
     if (v.destS < v.s - 1) {
       // already past it on this lane: loop
       v.destS = -1;
@@ -852,7 +930,7 @@ export class Traffic {
 
   private canTurnIn(v: Vehicle, lane: Lane): boolean {
     const sideOfTravel = (lane.dir === 1 ? 1 : -1) * v.destSide; // +1 = on our right
-    if (sideOfTravel > 0) return true;
+    if (sideOfTravel > 0 || v.destEnd) return true;
     // crossing the opposite carriageway: wait for a gap, with growing impatience
     const opp = this.lanesAt(dkey(lane.seg, lane.dir === 1 ? -1 : 1), v.dest.p);
     const need = v.wait > 12 ? 0.8 : v.wait > 5 ? 1.6 : 2.6;
@@ -1078,7 +1156,7 @@ export class Traffic {
       return true;
     }
     // a stop sign: a full stop at the line first (then the usual giving way, to everyone: its arm ranks lowest)
-    if (c.prio < 0 && !v.granted && v.stopAt !== c) {
+    if (c.prio <= -1 && !v.granted && v.stopAt !== c) {
       if (toEnd > 2.5 || v.v > 0.3) { v.block = "stop"; return false; }
       v.stopAt = c;
     }
@@ -1102,19 +1180,28 @@ export class Traffic {
     // (a road train whose front is already further on still fills this lane with its trailers)
     const tl = this.tails.get(out);
     if (tl) for (const t of tl) if (t.v !== v) free = Math.min(free, t.rear);
+    // how far the last one on the exit lane can still roll on without a go-ahead of its own: to its stop line, or
+    // to the driveway it will stand at waiting to turn in across the road (one that turns in on its own side, or
+    // has its go-ahead at the next junction, is on its way out of the lane)
+    let run = Infinity;
     if (first) {
       free = first.s - first.len;
+      if (this.isFinal(first) && first.destS >= 0 && !first.exit) run = (out.dir === 1 ? 1 : -1) * first.destSide > 0 || first.destEnd ? Infinity : Math.max(0, first.destS - first.s);
+      else if (!first.granted) run = Math.max(0, out.pl.length - first.s);
       // still some way off: what matters is the room there will be when we get there. A crawling queue
       // keeps creeping on, so a car isn't stopped (and then waved on again) every time it bunches up.
       // (at most about a car's length: a queue that stalls after all mustn't leave us standing in the junction)
-      if (first.v > 0.5 && toEnd > 3) free += Math.min(v.len + 2, first.v * 0.7 * ((toEnd + c.pl.length) / Math.max(v.v, 2)));
+      if (first.v > 0.5 && toEnd > 3) free += Math.min(v.len + 2, run, first.v * 0.7 * ((toEnd + c.pl.length) / Math.max(v.v, 2)));
     }
     for (const h of this.holdersInto(out)) {
       if (h === v) continue;
       if (this.outranks(v, h)) continue; // still far off and able to stop: it re-checks and waits for us
       free -= h.len + 2;
     }
-    const moving = first && first.v > 3;
+    // (moving, and with the road to move on far enough for us to fit in behind it: a car rolling up to the stop
+    // line of a short link, or to a driveway it must wait at, is about to stand right where we would need to be,
+    // and following it in left us stopped in the junction, across everyone else's way)
+    const moving = first && first.v > 3 && first.s - first.len + run >= v.len + 0.5;
     // someone else has been waiting at their line for room on this lane: they get it first
     const claim = this.roomClaim.get(out);
     if (claim && claim !== v) {
@@ -1224,6 +1311,9 @@ export class Traffic {
         const w = ap[ap.length - 1];
         if (w && w !== v && (w.next === o || (w.next === null && !this.isFinal(w)))) {
           if (exempt && !this.committed(w)) continue; // it can still stop for us
+          // it stands at its line waiting for room on its way out (not for us): it is not about to come through.
+          // Giving way to it all the same could lock a junction: it waits for room, the room waits for us.
+          if (w.next === o && !w.granted && w.block === "box" && w.v < 0.3 && w.wait > 1 && o.to !== c.to) continue;
           if (this.clearsBefore(w, o, cf, tMe, false, m)) continue; // it goes through before we get there
           // (turning off at the change of the lights: one that can still stop for its own amber or red, does)
           if (sneak && !w.granted && this.signalState(o.node, o.armIn, o.turn) !== "green" && o.from.pl.length - w.s > (w.v * w.v) / (2 * SIM.idm.b) + 1) continue;
@@ -1253,7 +1343,7 @@ export class Traffic {
       if (v.edge.kind !== "lane" || v.v > 0.5 || v.destS < 0 || !this.isFinal(v)) continue;
       const lane = v.edge as Lane;
       if (lane.idx !== this.turnIdx(v, lane) || v.s < v.destS - 2) continue;
-      if ((lane.dir === 1 ? 1 : -1) * v.destSide > 0) continue; // turning in on its own side: crosses nothing
+      if ((lane.dir === 1 ? 1 : -1) * v.destSide > 0 || v.destEnd) continue; // turning in on its own side: crosses nothing
       for (const o of this.lanesAt(dkey(lane.seg, lane.dir === 1 ? -1 : 1), v.dest.p)) add(o.lane, o.s);
     }
     for (const p of this.pending) if (p.wait > 1.5 && p.clear) for (const c of p.clear) add(c.lane, c.s, c.b, c.a);
@@ -1931,7 +2021,7 @@ export class Traffic {
   private canTurnInCheap(v: Vehicle, lane: Lane): boolean {
     const sideOfTravel = (lane.dir === 1 ? 1 : -1) * v.destSide;
     // (across oncoming traffic, it looks once it is about its stopping distance off)
-    return sideOfTravel > 0 || v.s < v.destS - Math.max(25, this.askAt(v)) ? true : this.canTurnIn(v, lane);
+    return sideOfTravel > 0 || v.destEnd || v.s < v.destS - Math.max(25, this.askAt(v)) ? true : this.canTurnIn(v, lane);
   }
 
   // ---------------------------------------------------------------- lane changes
@@ -2141,6 +2231,19 @@ export class Traffic {
     v.route = [k, ...best];
   }
 
+  /**
+   * The longest the lights at the end of a vehicle's lane hold it by themselves (s): their cycle less one green. 0
+   * where its lane ends at no lights. Standing that long is waiting for a green, not being held up in traffic.
+   */
+  redTime(v: Vehicle): number {
+    if (v.edge.kind !== "lane") return 0;
+    const plan = this.net.nodes.get((v.edge as Lane).to)?.signal;
+    if (!plan || !plan.phases.length) return 0;
+    let cycle = 0;
+    for (const ph of plan.phases) cycle += greenFor(ph) + AMBER + ALL_RED;
+    return cycle - GREEN;
+  }
+
   /** The lights at a node now (inspector): the phase that is on, its stage (0 green, 1 yellow, 2 all red) and for how long; null unsignalled or not yet run. */
   signalNow(node: number): { i: number; st: 0 | 1 | 2; t: number } | null {
     const c = this.sigCtl.get(node);
@@ -2179,8 +2282,8 @@ export class Traffic {
       // destination seg removed or split: find it again first, so any new plan below heads for the right road
       // (the old route ends on the removed seg, so it gets re-planned)
       if (!net.segs.has(v.dest.seg)) {
-        const nd = this.remapAccess(v.dest);
-        if (nd) v.dest = nd;
+        const nd = this.movedEnd(v.trip, "to") ?? this.remapAccess(v.dest);
+        if (nd) { v.dest = nd; if (nd.side) v.destSide = nd.side; }
         else { lost.push(v); continue; }
       }
       const e = v.edge;
@@ -2263,9 +2366,20 @@ export class Traffic {
     }
     // pending spawns whose access seg vanished
     for (const p of this.pending) {
-      if (!net.segs.has(p.from.seg)) { const a = this.remapAccess(p.from); if (a) p.from = a; }
-      if (!net.segs.has(p.to.seg)) { const a = this.remapAccess(p.to); if (a) p.to = a; }
+      if (!net.segs.has(p.from.seg)) { const a = this.movedEnd(p.trip, "from") ?? this.remapAccess(p.from); if (a) { p.from = a; if (a.side) p.fromSide = a.side; } }
+      if (!net.segs.has(p.to.seg)) { const a = this.movedEnd(p.trip, "to") ?? this.remapAccess(p.to); if (a) { p.to = a; if (a.side) p.toSide = a.side; } }
     }
+  }
+
+  /**
+   * Where the building at one end of a trip has its driveway now, when the road it was on is gone and the game has
+   * joined it to another (a works' gate on the roundabout that took its street: its trucks on the road come home to
+   * the new gate, they aren't lost with the old one). Null: not known (the point is looked for under the old one).
+   */
+  private movedEnd(trip: Trip, end: "from" | "to"): Access | null {
+    if (trip.bus || !this.whereIs) return null;
+    const a = this.whereIs(end === "to" ? trip.to : trip.from);
+    return a && this.net.segs.has(a.seg) ? { ...a } : null;
   }
 
   /** Find the segment now under a driveway point (after a split or rebuild). */
@@ -2335,6 +2449,232 @@ export class Traffic {
       const last = this.vehicles.pop()!;
       if (last !== v) this.vehicles[i] = last;
     }
+  }
+
+  // ---------------------------------------------------------------- save / load
+
+  /**
+   * The traffic as saved (A3 of docs/playtest-2026-11-09.md: loading a save emptied the roads, and every load on
+   * them with it): every vehicle where it is, with its trip, its way and what it holds at its junction, and every
+   * trip still waiting to set off. Lanes are named by their keys and a junction's paths by the lanes they join, which
+   * the same roads build again the same. Left out: a driver giving up or one that lost its way (its trip has already
+   * failed and been dealt with).
+   */
+  toJSON(): TrafficSave {
+    const ref = (e: Edge): EdgeRef => (e.kind === "lane" ? (e as Lane).key : [(e as Connector).node, (e as Connector).from.key, (e as Connector).to.key]);
+    const vehicles: SavedVehicle[] = [];
+    for (const v of this.vehicles) {
+      if (v.quit !== undefined || v.lost) continue;
+      // (the roads it has already driven aren't kept, but for the last two: its tail may still be on them)
+      const r0 = Math.max(0, v.ri - 2);
+      const d: SavedVehicle = {
+        id: v.id, truck: v.truck, len: v.len, look: v.look, color: v.color,
+        e: ref(v.edge), s: v.s, v: v.v, lat: v.lat, lcCool: v.lcCool,
+        route: r0 ? v.route.slice(r0) : v.route, ri: v.ri - r0, dest: v.dest, destSide: v.destSide, destS: v.destS,
+        trip: v.trip, born: v.born, ideal: v.ideal, wait: v.wait, stuck: v.stuck,
+      };
+      if (v.vf !== undefined) d.vf = v.vf;
+      if (v.af !== undefined) d.af = v.af;
+      if (v.vmax !== undefined) d.vmax = v.vmax;
+      if (v.keepLane) d.keepLane = true;
+      if (v.units) d.units = v.units;
+      if (v.exit) d.exit = true;
+      if (v.latV) d.latV = v.latV;
+      if (v.destEnd) d.destEnd = true;
+      if (v.odo !== undefined) d.odo = v.odo;
+      if (v.progOdo !== undefined) d.progOdo = v.progOdo;
+      if (v.progT !== undefined) d.progT = v.progT;
+      if (v.dwell !== undefined) d.dwell = v.dwell;
+      if (v.next) { d.next = ref(v.next); if (v.granted) d.granted = true; if (v.grantT !== undefined) d.grantT = v.grantT; }
+      if (v.overrode) d.overrode = true;
+      if (v.forced) d.forced = true;
+      if (v.turnOk) d.turnOk = true;
+      if (v.holding) d.hold = ref(v.holding);
+      if (v.stopAt) d.stopAt = ref(v.stopAt);
+      if (v.boxes?.length) d.boxes = v.boxes.map(ref);
+      if (v.hist?.length) { d.hist = v.hist.map(ref); d.histSpan = v.histSpan; }
+      if (v.entS !== undefined) d.entS = v.entS;
+      if (v.lcFrom) { d.lcFrom = v.lcFrom.key; d.lcS = v.lcS; }
+      if (v.crossing?.length) { d.crossing = v.crossing.map((c) => ({ lane: c.lane.key, s: c.s })); d.crossFrom = v.crossFrom; d.crossOut = v.crossOut; }
+      vehicles.push(d);
+    }
+    const pending = this.pending.map((p): SavedSpawn => {
+      const { why: _w, blocker: _b, clear: _c, plan: _p, ...rest } = p;
+      return rest;
+    });
+    const signals: TrafficSave["signals"] = [];
+    for (const [id, c] of this.sigCtl) signals.push([id, c.i, c.st, c.t]);
+    const gates: TrafficSave["gates"] = [];
+    for (const [b, gt] of this.gates) if (this.vehicles.includes(gt.v)) gates.push([b, gt.v.id, gt.at]);
+    return { nextId: this.nextId, grantSeq: this.grantSeq, vehicles, pending, signals, gates };
+  }
+
+  /**
+   * Put a saved traffic back on the roads (which must be built, and the clock set, first). Every vehicle goes back on
+   * its lane or junction path at its place and speed, with its trip and its load, its route, its go-ahead and the
+   * junction boxes it held; every waiting trip back in its queue. A vehicle whose lane isn't there (a save whose
+   * junction is laid out differently now) goes on the lane it was heading into, or, with no road left under it at
+   * all, fails its trip as when a road is taken away under it: no load is dropped silently. Returns how many
+   * vehicles are back.
+   */
+  load(d: TrafficSave | undefined): number {
+    if (!d) return 0;
+    const net = this.net;
+    const edge = (r: EdgeRef | undefined): Edge | null => {
+      if (r === undefined) return null;
+      if (typeof r === "string") return net.lanes.get(r) ?? null;
+      return net.nodeGeom.get(r[0])?.conns.find((c) => c.from.key === r[1] && c.to.key === r[2]) ?? null;
+    };
+    const conn = (r: EdgeRef | undefined): Connector | null => { const e = edge(r); return e && e.kind === "conn" ? (e as Connector) : null; };
+    this.nextId = Math.max(this.nextId, d.nextId);
+    this.grantSeq = Math.max(this.grantSeq, d.grantSeq ?? 0);
+    const byId = new Map<number, Vehicle>();
+    for (const s of d.vehicles) {
+      let e = edge(s.e), at = s.s, moved = false;
+      if (!e && typeof s.e !== "string") { e = net.lanes.get(s.e[2]) ?? null; at = 0.5; moved = true; }
+      if (!e || !net.segs.has(s.dest.seg)) { this.ev.fail(s.trip, "road removed", this.time); continue; }
+      const v: Vehicle = {
+        id: s.id, truck: s.truck, len: s.len, look: s.look, color: s.color,
+        edge: e, s: clamp(at, 0, e.pl.length), v: s.v, acc: 0, route: s.route, ri: s.ri, next: null, granted: false, holding: null,
+        lat: s.lat, lcCool: s.lcCool, wait: s.wait, stuck: s.stuck, dest: s.dest, destSide: s.destSide, destS: -1,
+        trip: s.trip, x: 0, y: 0, h: 0, ang: 0, px: 0, py: 0, ph: 0, pang: 0, fade: 1, leaving: 0,
+        ideal: s.ideal, born: s.born, v0e: 1, constrained: false, drv: driver(s.id),
+      };
+      if (s.vf !== undefined) v.vf = s.vf;
+      if (s.af !== undefined) v.af = s.af;
+      if (s.vmax !== undefined) v.vmax = s.vmax;
+      if (s.keepLane) v.keepLane = true;
+      if (s.units) v.units = s.units;
+      if (s.exit) v.exit = true;
+      if (s.latV) v.latV = s.latV;
+      if (s.odo !== undefined) v.odo = s.odo;
+      if (s.progOdo !== undefined) v.progOdo = s.progOdo;
+      if (s.progT !== undefined) v.progT = s.progT;
+      if (s.dwell !== undefined) v.dwell = s.dwell;
+      insertOcc(e, v);
+      this.vehicles.push(v);
+      byId.set(v.id, v);
+      this.nextId = Math.max(this.nextId, v.id + 1);
+      if (e.kind === "conn") {
+        // in a junction: it holds its path through it, as it did
+        const c = e as Connector;
+        c.holders.push(v);
+        v.holding = c;
+      } else {
+        const lane = e as Lane, k = dkey(lane.seg, lane.dir);
+        if (moved || v.route[v.ri] !== k) {
+          // not where its route says (see above): it plans again from here
+          const i = v.route.indexOf(k);
+          if (i >= 0) v.ri = i; else { v.route = [k]; v.ri = 0; this.reroute(v); }
+        } else {
+          v.destS = lane.seg === v.dest.seg ? s.destS : -1;
+          if (s.destEnd) v.destEnd = true;
+          if (s.turnOk) v.turnOk = true;
+          const nx = conn(s.next);
+          if (nx && nx.from === lane) {
+            v.next = nx;
+            v.granted = !!s.granted;
+            if (s.grantT !== undefined) v.grantT = s.grantT;
+            if (s.overrode) v.overrode = true;
+            if (s.forced) v.forced = true;
+          }
+          const st = conn(s.stopAt);
+          if (st) v.stopAt = st;
+          // the junction it has a go-ahead into, or the one its tail is still coming out of
+          const hc = conn(s.hold);
+          if (hc) { hc.holders.push(v); v.holding = hc; }
+        }
+      }
+      if (!moved) {
+        // a long body's tail: the edges it still trails back over, and the boxes it still holds with it
+        const hist = s.hist?.map(edge);
+        if (hist && hist.every((x) => x)) { v.hist = hist as Edge[]; v.histSpan = s.histSpan; }
+        if (s.entS !== undefined) v.entS = s.entS;
+        const boxes = (s.boxes ?? []).map(conn).filter((c): c is Connector => !!c);
+        if (boxes.length) { v.boxes = boxes; for (const c of boxes) if (!c.holders.includes(v)) c.holders.push(v); }
+        // half way through a lane change, or still pulling out across the far lanes
+        const lf = s.lcFrom ? net.lanes.get(s.lcFrom) : undefined;
+        if (lf) { v.lcFrom = lf; v.lcS = s.lcS; }
+        const cr = (s.crossing ?? []).map((c) => ({ lane: net.lanes.get(c.lane), s: c.s })).filter((c): c is { lane: Lane; s: number } => !!c.lane);
+        if (cr.length) { v.crossing = cr; v.crossFrom = s.crossFrom; v.crossOut = s.crossOut; }
+      } else v.lat = 0;
+      this.layTrail(v);
+      this.place(v, false);
+      v.px = v.x; v.py = v.y; v.ph = v.h; v.pang = v.ang;
+      if (v.uPose) v.puPose!.set(v.uPose);
+    }
+    for (const p of d.pending) this.pending.push({ ...p });
+    for (const [id, i, st, t] of d.signals ?? []) {
+      const n = net.nodes.get(id);
+      if (n?.signal && i < n.signal.phases.length) this.sigCtl.set(id, { plan: n.signal, i, st, t });
+    }
+    for (const [b, id, at] of d.gates ?? []) { const v = byId.get(id); if (v) this.gates.set(b, { v, at }); }
+    return byId.size;
+  }
+
+  /**
+   * The path behind a vehicle put back on the road (its body and trailers are drawn along the way its front drove):
+   * back along the edge it is on, then the edges before it, from its history or, for a short vehicle, the way its
+   * route came. Past what is known, straight on behind.
+   */
+  private layTrail(v: Vehicle) {
+    const T = (v.trail ??= new Float32Array(TR_N * 3));
+    v.trH = 0;
+    // the stretches behind the front, nearest first: [edge, from s, down to s]
+    const legs: [Edge, number, number][] = [[v.edge, clamp(v.s, 0, v.edge.pl.length), Math.min(v.entS ?? 0, v.s)]];
+    if (v.hist?.length) {
+      for (let k = v.hist.length - 1; k >= 0; k--) { const sp = v.histSpan?.[k] ?? [0, v.hist[k].pl.length]; legs.push([v.hist[k], sp[1], sp[0]]); }
+    } else {
+      let e: Edge | undefined = v.edge, ri = v.ri, len = v.s;
+      for (let n = 0; e && n < 4 && len < TR_N * TR_STEP; n++) {
+        let prev: Edge | undefined;
+        if (e.kind === "conn") prev = (e as Connector).from;
+        else if (ri > 0) { const pk = v.route[--ri]; prev = (e as Lane).ins.find((c) => dkey(c.from.seg, c.from.dir) === pk); }
+        if (!prev) break;
+        legs.push([prev, prev.pl.length, 0]);
+        len += prev.pl.length;
+        e = prev;
+      }
+    }
+    let li = 0, [e, s, lo] = legs[0];
+    let x = 0, y = 0, h = 0, bx = 0, by = 0, over = 0;
+    // still coming out of its driveway: the way it has driven since lies beside the lane as far as it is still off its
+    // line, and behind that its tail points back into the lot (as trySpawn starts it)
+    const pull = v.lat !== 0 && !v.lcFrom, odo = v.odo ?? 0;
+    for (let k = 0; k < TR_N; k++) {
+      const i = ((TR_N - k) % TR_N) * 3;
+      if (over > 0) { over += TR_STEP; T[i] = x + bx * over; T[i + 1] = y + by * over; T[i + 2] = h; continue; }
+      const p = polyAt(e.pl, s), dir = polyDirSmooth(e.pl, s, 1), r = right(dir);
+      if (pull) {
+        x = p.x + r.x * v.lat; y = p.y + r.y * v.lat;
+        if (k * TR_STEP >= odo) {
+          const sd = Math.sign(v.lat), b = norm({ x: r.x * sd - dir.x * 0.35, y: r.y * sd - dir.y * 0.35 });
+          bx = b.x; by = b.y; over = 1e-9;
+        }
+      } else {
+        // (a body still coming across from the next lane: its front is off the line, its tail less so)
+        const off = v.lat * Math.max(0, 1 - (k * TR_STEP) / Math.max(6, v.len));
+        x = p.x + r.x * off; y = p.y + r.y * off; bx = -dir.x; by = -dir.y;
+      }
+      h = this.hOn(e, s);
+      T[i] = x; T[i + 1] = y; T[i + 2] = h;
+      if (over > 0) continue;
+      s -= TR_STEP;
+      while (s < lo) {
+        const short = lo - s;
+        if (++li >= legs.length) { over = 1e-9; break; }
+        [e, s, lo] = legs[li];
+        s -= short;
+      }
+    }
+  }
+
+  /** How high an edge is at `s` along it. */
+  private hOn(e: Edge, s: number): number {
+    const n = e.pl.pts.length;
+    if (!n) return 0;
+    const f = (clamp(s, 0, e.pl.length) / (e.pl.length || 1)) * (n - 1), i0 = Math.floor(f), i1 = Math.min(n - 1, i0 + 1);
+    return e.hs[i0] + (e.hs[i1] - e.hs[i0]) * (f - i0);
   }
 
   // ---------------------------------------------------------------- render placement + stats
@@ -2453,15 +2793,31 @@ export class Traffic {
       const o = order[j] * 3, extra = want[order[j]] - acc;
       pts[o] = px - bx * extra; pts[o + 1] = py - by * extra; pts[o + 2] = ph;
     }
+    // A trailer rides the rear axle of the piece ahead of it (the fifth wheel), and folds against it no further than
+    // MAX_BEND: where the path behind doubles back tighter than a real one could follow (a hairpin, a tail laid
+    // sideways into a lot), the trailer swings round on its kingpin instead of being drawn jack-knifed across the
+    // tractor, and the ones behind it follow its rear axle, not the path, till the train has straightened out.
+    let hitched = false, bent = false, pa = 0, hx = 0, hy = 0;
     for (let n = 0; n < U.length; n++) {
       const u = U[n], p = n * 6, q = p + 3;
-      const dx = pts[p] - pts[q], dy = pts[p + 1] - pts[q + 1];
-      const a = Math.atan2(dy, dx), cx = Math.cos(a), sy = Math.sin(a);
+      const Px = hitched && bent ? hx : pts[p], Py = hitched && bent ? hy : pts[p + 1];
+      const dx = Px - pts[q], dy = Py - pts[q + 1];
+      let a = Math.atan2(dy, dx);
+      if (hitched) {
+        let d = a - pa;
+        while (d > Math.PI) d -= 2 * Math.PI;
+        while (d < -Math.PI) d += 2 * Math.PI;
+        if (Math.abs(d) > MAX_BEND) { a = pa + Math.sign(d) * MAX_BEND; bent = true; }
+      } else bent = false;
+      const cx = Math.cos(a), sy = Math.sin(a);
       // the middle of the piece, from its pivot back along its heading
       const back = u.len / 2 - u.pivot;
       const o = n * 4;
-      v.uPose![o] = pts[p] - cx * back; v.uPose![o + 1] = pts[p + 1] - sy * back;
+      v.uPose![o] = Px - cx * back; v.uPose![o + 1] = Py - sy * back;
       v.uPose![o + 2] = (pts[p + 2] + pts[q + 2]) / 2; v.uPose![o + 3] = a;
+      const nx = U[n + 1];
+      hitched = !!nx && Math.abs(nx.at + nx.pivot - (u.at + u.axle)) < 0.05;
+      if (hitched) { const wb = Math.sqrt(dx * dx + dy * dy); hx = Px - cx * wb; hy = Py - sy * wb; pa = a; }
     }
   }
   private tmpA = [0, 0, 0];

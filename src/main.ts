@@ -32,6 +32,7 @@ async function boot() {
     return c.toDataURL("image/jpeg", 0.7);
   };
   app.saves.where = () => app.savedView();
+  app.saves.menuPaused = () => hud.menuPaused;
   const menu = new MainMenu(app, hud);
   app.openMenu = () => void menu.open();
   const q = new URLSearchParams(location.search);

@@ -105,8 +105,10 @@ export interface GateAccess { access: Access; front: V2; side: 1 | -1; rot: numb
 /** Size of the squares Buildings.near files buildings under (m). */
 const NEAR_CELL = 32;
 
-/** How far round a placed site looks for a road to turn its gate toward (m). */
+/** The first square a placed site looks in for a road to turn its gate toward (m each way; it widens till one is found). */
 const FACE_REACH = 300;
+/** How much farther a town's own street counts than the company's roads, for a site choosing the road to face and join. */
+export const TOWN_STREET = 1.5;
 
 export interface PlaceWorld {
   isWater(p: V2): boolean;
@@ -174,8 +176,32 @@ export class Buildings {
     return this.sites.map((b) => {
       const f = siteFrame(b.c, b.rot, b.side, b.hd);
       const out = scale(f.into, -1);
-      return { id: b.id, name: BUILDING_TYPES[b.kind].name, c: b.c, hw: b.hw, hd: b.hd, rot: b.rot, gate: f.gate, out, entry: add(f.gate, scale(out, GATE_ENTRY)), access: b.access?.seg };
+      const t: SiteTarget = { id: b.id, name: BUILDING_TYPES[b.kind].name, c: b.c, hw: b.hw, hd: b.hd, rot: b.rot, gate: f.gate, out, entry: add(f.gate, scale(out, GATE_ENTRY)), access: b.access?.seg };
+      // (with no road yet, a road that comes to the back of its plot gets the gate there: see turnsOf)
+      const turns = this.turnsOf(b);
+      if (turns.length) t.turns = turns.map((rot) => {
+        const k = siteFrame(b.c, rot, b.side, b.hd), ko = scale(k.into, -1);
+        return { gate: k.gate, out: ko, entry: add(k.gate, scale(ko, GATE_ENTRY)) };
+      });
+      return t;
     });
+  }
+
+  /**
+   * The other way a site with no road at its gate could be turned to have its gate on another side of its plot: half
+   * round, its gate at the back. That is the same plot (see siteFrame), so nothing round it is in the way. A quarter
+   * turn is not offered: no plot is square, so it would be another plot (its share of a deposit, its shore, the lots
+   * beside it), and the road would have to end inside the fence that stands now. A site with a road keeps its gate.
+   */
+  turnsOf(b: Building): number[] {
+    return !b.placed || b.access ? [] : [wrapAngle(b.rot + Math.PI)];
+  }
+
+  /** Turn a site with no road so its gate joins the road found for it (see turnsOf). */
+  turn(b: Building, ga: GateAccess) {
+    Object.assign(b, { access: ga.access, front: ga.front, side: ga.side, rot: ga.rot });
+    this.attachedTo.delete(b);
+    this.moved++;
   }
 
   footprint(b: { c: V2; hw: number; hd: number; rot: number }, pad = 0): V2[] {
@@ -280,33 +306,63 @@ export class Buildings {
     return { c, rot, side, front, seg: best.seg, t: best.t };
   }
 
-  /** A free-standing site at p: its gate toward the nearest road (or the bottom of the screen), then turned. */
+  /**
+   * A free-standing site at p: its gate toward the nearest road, however far (with no road on the map, the bottom of
+   * the screen), then turned as the player has it. The player's turn counts from there: the game hands over how the
+   * site is turned on the screen (`rot`, with the screen's `down`), and the difference is what they turned it by.
+   * (docs/playtest-2026-11-09.md, C1 and C8: the gate faced the bottom of the screen whatever stood round it, a mine
+   * with its back to the only road, a plant whose street went to a town's back street behind it.)
+   */
   private freePose(kind: BuildingKind, p: V2, opts: PlaceOpts): { rot: number; front: V2 } {
     const T = BUILDING_TYPES[kind];
-    const net = this.net;
-    if (opts.rot !== undefined) {
+    if (opts.rot !== undefined && !opts.down) {
       const f = siteFrame(p, opts.rot, 1, T.d / 2);
       return { rot: opts.rot, front: add(f.gate, scale(f.into, -GATE_SETBACK)) };
     }
     let gd = opts.down ?? { x: 0, y: 1 };
-    let near: { d: number; seg: number; t: number; q: V2 } | null = null;
-    const R = FACE_REACH + T.d / 2;
-    for (const id of net.segsNear(p.x - R, p.y - R, p.x + R, p.y + R)) {
-      const s = net.segs.get(id)!;
-      if (!takesGate(ROAD_TYPES[s.type])) continue;
-      const r = cubicClosest(s.c, p);
-      if (r.d < R && (!near || r.d < near.d)) near = { d: r.d, seg: id, t: r.t, q: r.p };
-    }
+    const t = opts.rot !== undefined ? wrapAngle(opts.rot - Math.atan2(gd.x, -gd.y)) : opts.turn ?? 0;
+    const near = this.nearestRoad(p);
     if (near) {
-      // square to the road, gate on the side toward it
-      const n = right(norm(cubicTangent(net.segs.get(near.seg)!.c, near.t)));
-      gd = dot(sub(near.q, p), n) >= 0 ? n : scale(n, -1);
+      const tan = norm(cubicTangent(this.net.segs.get(near.seg)!.c, near.t)), n = right(tan);
+      const to = norm(sub(near.q, p)), along = dot(to, tan);
+      // square to the road, gate on the side toward it; past the road's end, toward that end, in line with the road
+      gd = Math.abs(along) > 0.7 ? scale(tan, Math.sign(along)) : dot(to, n) >= 0 ? n : scale(n, -1);
     }
-    const t = opts.turn ?? 0, cs = Math.cos(t), sn = Math.sin(t);
+    const cs = Math.cos(t), sn = Math.sin(t);
     gd = norm({ x: gd.x * cs - gd.y * sn, y: gd.x * sn + gd.y * cs });
     // side 1: the gate looks along -right(fromAngle(rot))
     const rot = Math.atan2(gd.x, -gd.y);
     return { rot, front: add(p, scale(gd, T.d / 2 + GATE_SETBACK)) };
+  }
+
+  /**
+   * The road nearest p that a site's gate can join (on the ground, of a kind that takes one), however far: looked for
+   * in widening squares. A town's own street counts half as far again (TOWN_STREET): a works faces the company's
+   * road rather than the back street a little nearer.
+   */
+  nearestRoad(p: V2): { seg: number; t: number; q: V2; d: number } | null {
+    const net = this.net;
+    let best: { seg: number; t: number; q: V2; d: number; w: number } | null = null;
+    const seen = new Set<number>();
+    for (let R = FACE_REACH; ; R *= 3) {
+      const ids = R > 30000 ? net.segs.keys() : net.segsNear(p.x - R, p.y - R, p.x + R, p.y + R);
+      for (const id of ids) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const s = net.segs.get(id), g = net.segGeom.get(id);
+        if (!s || !g || !takesGate(ROAD_TYPES[s.type])) continue;
+        const k = s.town ? TOWN_STREET : 1;
+        // (no nearer than its box: most roads of a big map are passed over without a look)
+        const bx = Math.max(g.bbox.x0 - p.x, 0, p.x - g.bbox.x1), by = Math.max(g.bbox.y0 - p.y, 0, p.y - g.bbox.y1);
+        if (best && Math.hypot(bx, by) * k >= best.w) continue;
+        const r = cubicClosest(s.c, p);
+        if (net.heightOnSeg(id, r.t) > 0.5) continue;
+        if (!best || r.d * k < best.w) best = { seg: id, t: r.t, q: r.p, d: r.d, w: r.d * k };
+      }
+      // (a road found inside this square is the nearest only if nothing outside it could be nearer)
+      if ((best && best.w <= R) || R > 30000) break;
+    }
+    return best;
   }
 
   /** Can a lot stand here: land, water, mountains, other buildings and roads. */
@@ -366,7 +422,8 @@ export class Buildings {
     const f = siteFrame(c, rot, side, hd);
     const G = f.gate, out = scale(f.into, -1);
     const R = GATE_REACH + 14;
-    let best: { seg: number; t: number; q: V2; edge: number } | null = null;
+    type Cand = { seg: number; t: number; q: V2; edge: number; s0: number; sC: number };
+    let best: Cand | null = null;
     for (const id of net.segsNear(G.x - R, G.y - R, G.x + R, G.y + R)) {
       const s = net.segs.get(id)!;
       if (!(site ? takesGate(ROAD_TYPES[s.type]) : ROAD_TYPES[s.type].allowsAccess)) continue;
@@ -377,15 +434,18 @@ export class Buildings {
       const rel = sub(r.p, G);
       // in front of the gate: outside the fence, and not off to one side of it
       if (edge > GATE_REACH || dot(rel, out) < 0.5 || Math.abs(dot(rel, f.along)) > GATE_REACH + g.width / 2) continue;
-      if (!best || edge < best.edge) best = { seg: id, t: r.t, q: r.p, edge };
+      if (best && edge >= best.edge) continue;
+      // (a road that is all junction mouth has no room for a driveway: the next nearest in front of the gate then,
+      // as where a roundabout has left a metre or two of the gate's street sticking out of its ring)
+      const s0 = g.center.length * arcFrac(s.c, r.t, g.center.pts);
+      const sC = this.gateS(id, s0, site);
+      if (sC !== null) best = { seg: id, t: r.t, q: r.p, edge, s0, sC };
     }
     if (!best) return null;
     const s = net.segs.get(best.seg)!, g = net.segGeom.get(best.seg)!;
     const to = sub(G, best.q), L = Math.hypot(to.x, to.y) || 1;
     const front = add(best.q, scale(to, Math.min(g.width / 2, L) / L));
-    const s0 = g.center.length * arcFrac(s.c, best.t, g.center.pts);
-    const sC = this.gateS(best.seg, s0, site);
-    if (sC === null) return null; // (a road all junction mouth: no room for a driveway)
+    const { s0, sC } = best;
     const rs = sideOf(s.c, best.t, c, side);
     // (rot, side) and (rot + PI, -side) are the same plot: keep its gate where it is
     const kerb = this.gateKerb(best.seg, s0, sC, front);
@@ -400,7 +460,13 @@ export class Buildings {
   private gateS(id: number, s: number, site: boolean): number | null {
     const net = this.net, g = net.segGeom.get(id)!, sg = net.segs.get(id)!, L = g.center.length;
     const lo = g.trimA + 2, hi = L - g.trimB - 2;
-    if (hi <= lo) return null;
+    if (hi <= lo) {
+      // a few metres of dead end (what a roundabout leaves of a gate's street): the gate is at its end, as on the
+      // street the game lays; any other road this short is all junction mouth
+      const endA = net.segsAt(sg.a).length === 1, endB = net.segsAt(sg.b).length === 1;
+      const l0 = g.trimA + 0.5, l1 = L - g.trimB - 0.5;
+      return site && endA !== endB && l1 > l0 + 1 ? (endB ? l1 : l0) : null;
+    }
     const clear = (n: number) => (site && net.segsAt(n).length >= 3 ? GATE_CLEAR : 2);
     const lo2 = g.trimA + clear(sg.a), hi2 = L - g.trimB - clear(sg.b);
     if (hi2 < lo2) return Math.max(lo, Math.min(hi, (lo2 + hi2) / 2));

@@ -161,10 +161,14 @@ describe("The company economy", () => {
       expect(l.plant!.stock).toEqual(b.plant!.stock);
       expect(l.plant!.yld).toBeCloseTo(b.plant!.yld, 6);
       expect(h.industry.trucksOf(l)).toBe(g.industry.trucksOf(b));
-      // (loads that were on the road are back in the yard, to go out again)
+      // (the yard is as it was: the loads on the road are still on the road, in their trucks. Until 2026-11-10 a
+      // save dropped every vehicle and this test had them back in the yard, to go out again: playtest A3)
       const yard = (x: Building) => Object.values(x.plant!.out).reduce((a, n) => a + (n ?? 0), 0);
-      expect(yard(l)).toBe(yard(b) + (onRoad[b.id] ?? 0));
+      expect(yard(l)).toBe(yard(b));
     }
+    const back: Record<number, number> = {};
+    for (const v of h.traffic.vehicles) { const r = v.trip.haul; if (r?.leg === "out" && !r.done) back[r.plant] = (back[r.plant] ?? 0) + r.n; }
+    expect(back).toEqual(onRoad);
     const u = h.towns.byId.get(t.id)!;
     expect({ target: u.target, today: u.today, yesterday: u.yesterday, supply: u.supply }).toEqual({ target: t.target, today: t.today, yesterday: t.yesterday, supply: t.supply });
     // and it carries on: the loads go out again and arrive

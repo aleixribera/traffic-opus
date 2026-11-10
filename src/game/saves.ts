@@ -86,6 +86,15 @@ export class Saves {
   thumb: (() => string | undefined) | null = null;
   /** Where the player's camera is now, for the save to open on (nothing while there is no view of the player's own). */
   where: (() => SavedView | undefined) | null = null;
+  /** Whether the game is stopped only because a menu is up (the pause menu saves from under itself): saved as running. */
+  menuPaused: (() => boolean) | null = null;
+
+  /** The game as written: as it is, but for a pause that is only the menu's. */
+  private state(game: Game): string {
+    const d = game.serialize();
+    if (d.paused && this.menuPaused?.()) d.paused = false;
+    return JSON.stringify(d);
+  }
 
   list(): SaveMeta[] {
     try {
@@ -106,7 +115,7 @@ export class Saves {
     this.ticket.set(id, ++this.tickets);
     const meta = this.meta(game, name, id, auto);
     meta.thumb = this.thumb?.(); // ~192x120 jpeg: a few ms, worth it so saves are recognisable
-    return this.write(id, pack(JSON.stringify(game.serialize())), meta) ? meta : null;
+    return this.write(id, pack(this.state(game)), meta) ? meta : null;
   }
 
   /**
@@ -118,7 +127,7 @@ export class Saves {
     const ticket = ++this.tickets;
     this.ticket.set(id, ticket);
     const meta = this.meta(game, name, id, auto);
-    const json = JSON.stringify(game.serialize());
+    const json = this.state(game);
     await nextFrame();
     meta.thumb = this.thumb?.();
     let data: string;

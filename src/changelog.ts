@@ -15,6 +15,19 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.89", date: "2026-11-10", title: "Freight that never seizes",
+    notes: [
+      "A jam at a works gate gets slow. It no longer locks the whole company.",
+      "A works keeps its trucks at the dock when the road outside cannot take them.",
+      "Traffic lights or a roundabout at a busy gate now help. A short road can reach a gate.",
+      "A site's gate faces the nearest road. Draw a road to its back and the gate turns to meet it.",
+      "A save keeps every vehicle on the road, the lights, the speed and the pause. Loading puts you back in the same moment.",
+      "Towns are served before building sites when a works cannot do both.",
+      "Second-tier works need fewer planks to build, so first steel and cement come sooner.",
+      "Trucks no longer roll out through each other, and trailers no longer fold.",
+    ],
+  },
+  {
     v: "v0.0.88", date: "2026-11-10", title: "The game says what it needs",
     notes: [
       "A works at its limit says so: \"At full output\", and the town tells you what to build, with a button that shows you where.",

@@ -69,6 +69,17 @@ Our own names, look and art throughout.
   stream of lorries to the site, so building out a chain is itself a traffic job, and bigger truck classes pay
   off. Town blocks and towers built from construction parts need 3-12 loads each, and the company projects
   twice their old bill.
+  **Sites never starve towns, and never wait for ever (2026-11-10, play-test B2).** As played, four sites took
+  every plank for six game days: both towns fell from "Enough" to "None", and no site was finished. Now a town's
+  needs come first on what a works makes. While a town on its roads is short of the product (below "Enough", or
+  about to be before a truck could land) the works' building sites get one load in four (SITE_SHARE), whatever
+  happens; with no town short they get all of it. Among sites the one nearest done goes first (one works
+  running is worth more than four half supplied), and among short towns the shortest, not the nearest. Each
+  site's panel says how it is doing: "12 of 30 loads, about 9 hours at this rate", from what has landed over its
+  last 12 game hours. So that the first tier-2 works are still inside reach of one sawmill at that share (first
+  mine about 20 real minutes after placing, first steel about 75, at 1x), the tier-2 bills came down: mines and
+  the quarry 30 to 12 planks, smelter and cement works 50 to 24, power plant 40 to 20, dairy farm 30 to 12,
+  creamery 40 to 16, warehouse 30 to 12. Tier 3 and up keep their 30 loads and more.
 - **Power** runs along the roads from power plants that burn coal brought by truck.
 - **Supplies (2026-11-08): the chain feeds itself.** The chemical works' fertilizer goes back to farms and dairy
   farms from level 3; its explosives go to iron, coal and copper mines, quarries, sand pits and oil wells from
@@ -112,12 +123,29 @@ Our own names, look and art throughout.
 ## Industry sites (owner, 2026-11-08)
 
 - **Placed anywhere, connected later.** A site can go down with no road near it: you place it free-standing
-  (`,` and `.` turn it in 15 degree steps; with a road close by it turns its gate to face it). Its **gate** is
+  (`,` and `.` turn it in 15 degree steps). Its **gate** is
   the middle of one side, marked on the map while it has no road. Any road that passes the gate or ends in front
   of it (within ~12 m) connects it; the site says "Connected" and its trucks start. Until then it shows
   "No road to the gate" and does nothing but wait. A gate never joins the road in a junction's mouth: within
   24 m of one (a road train's length) its drive runs along the kerb to a point that far down the road, so trucks
   waiting to turn in or pull out stand clear of the box.
+- **The gate finds the road (2026-11-10, play-test C1 and C8).** As played, a new site's gate faced the bottom of
+  the screen whatever stood round it: a mine 1.3 km from the only road had its back to it. Now a site put down
+  faces the nearest road a gate can join, however far: square to it, or in line with it past its end. The
+  player's turn counts from there (the preview shows it). A town's own street counts half as far again as the
+  company's roads (TOWN_STREET), both for facing and for the street the game lays from the gate (within 400 m):
+  the works' trucks go by the main road rather than a back street a little nearer. A site with no road yet takes
+  its gate to the **back** of its plot when that is where a road comes: the road tool, let go over the site from
+  behind, ends at the middle of the back fence and says "Connects to Iron Mine: its gate turns to this side", and
+  a road merely laid past the back does the same ("Iron Mine connected, its gate turned to the road"). Half
+  round is the same plot, so nothing else moves. A quarter turn is not offered: no plot is square, so it would be
+  another plot (its share of the deposit, its shore, its neighbours); a road aimed at a flank that would cut the
+  yard is still told "its gate faces the other way: draw the road round to it". A site that has a road keeps
+  its gate.
+- **A gate at the end of a street.** A street that ends at a gate (a few metres of dead end are enough) lets the
+  trucks straight out along it, their tails still in the yard, not sideways across the verge like a driveway
+  beside a road. Of two roads in reach of a gate, the nearest with room in front of the gate has it. Dragging the
+  road tool from a gate to the road it is on already says "Sawmill's gate is on this road already".
 - **Four levels, growing by themselves (like TF2).** Level 1 is the core plant by the gate with its truck yard,
   about a fifth of the plot; levels 2-4 fill the plot to roughly 45%, 70% and full. A site grows one level when
   it has run near its capacity for a sustained stretch (most of a few in-game days) with its output being
@@ -184,6 +212,28 @@ Our own names, look and art throughout.
     a heavy fleet moved in the balance run).
   - Trucks queued in a yard behind the first wait their turn; only the first's wait for a gap counts toward
     "blocked driveway" (90 s).
+  - no truck pulls out of a gate while the body of the one before it, its front already in the junction, is
+    still across the mouth (2026-11-10; trucks were drawn through each other in their first seconds out);
+  - a trailer rides the rear axle of the piece ahead of it and is never drawn folded more than 75 degrees
+    against it (MAX_BEND). Round any corner the road tool can make the trailers bend 65 degrees at most, so the
+    limit only shows on a road doubled back on itself.
+- **A works' gate never seizes its road (2026-11-10, play-test A1, A2, A17, E1).** As played, a sawmill with
+  four building sites on one dirt road locked its own gate junction: over a hundred vehicles stood for half a
+  game day, the panel read "28/42 trucks out" for 1.3 loads an hour, and neither lights nor a roundabout cured
+  it. Reproduced in tests/gatejam.scenario.ts. What holds now:
+  - **Dispatch matches what can move.** A works keeps two trucks at most waiting at its gate to pull out
+    (GATE_QUEUE); the rest stay at the dock with their loads in the yard, and count as at home. It sends none to
+    a customer whose trucks already stand in traffic on the way (two or more standing 30 s, and half of those
+    bound there), nor while its own empty trucks stand in traffic on their way home. A truck waiting out a red
+    light is not "standing in traffic".
+  - **The gate street cannot lock itself.** A truck bound for a gate at the end of a stub does not hold the
+    junction box against the truck coming out, and nobody yields to a vehicle that stands blocked at its own
+    line. A dead-end street meeting a road sideways gives way to it. A road that carries straight on through a
+    junction ranks the same on both sides, under lights too (paving that ends at a gate no longer starves the
+    dirt arm, and a left turn off the paved side yields to oncoming).
+  - No vehicle is moved or removed to get there, and routes are chosen as before. In the scenario (six game
+    days): nobody stands five game minutes (longest stand under 50 s, where it was 34 game minutes with 103 of
+    137 vehicles standing), the mill lands 3 loads an hour, the jam breaker and "gave up" never fire.
 - **Giving up.** A driver gives up ("gave up in traffic": the load goes back to its yard) only after standing
   240 s without getting 8 m further on, the last resort against a broken layout (see the jam breaker under Roads),
   and only the one at the front of the frozen queue: it shrinks away where it stands, and the rest move up
@@ -990,6 +1040,14 @@ as soon as that ground is on screen or under the building. Edge pointers stay cl
   moment of all red, as drivers do (a "sneaker"): before, on a one-lane street it stood round after round with the
   queue behind it backed up through the next junction. At a four-way at 900 cars an hour per arm: 294 through in
   10 min where it was 254, and the longest wait 39 s where it was 106 s.
+- **The cures for a jam at a works' gate work (2026-11-10, play-test A2).** Lights on a gate junction give the
+  gate arm its own 24 s green like any arm, and it clears. A roundabout on a junction with a works' gate, or on
+  a works' own street, keeps the works joined: a stub of the gate street too short to be a road goes with the
+  junction and the gate sits on the ring; trucks on their way home follow the gate to its new road; a long road
+  is cut within 0.75 m of the ring whatever its length (a kilometre of dirt road ended 3 m short and was no
+  arm). If the works would still be left with no road, the ring is refused before any money is spent, and says
+  why. As with any road edit, a vehicle standing where the ring's circle goes is taken off the road ("road
+  removed": its load goes back to the yard).
 - **Cars drive briskly through junctions (2026-11-08: "cars feel painfully slow, especially in intersections").**
   Measured against real driving, they were timid: pulling away at 1.8 m/s² (0 to 29 km/h in 5.6 s), a queue
   crossing the line every 3.0 s, turns at 15-18 km/h, braking for a junction from 40 m out. Now they pull away at
@@ -1151,7 +1209,11 @@ height levels shown while drawing, and the instant upgrade preview.
 **Panels:**
 - P: progression; Z: economy; C: city info; V: statistics; X: transportation, as those panels
   arrive.
-- F5/F9: quicksave and quickload.
+- F5/F9: quicksave and quickload. A save keeps the traffic (2026-11-10, play-test A3 and A4): every vehicle on
+  its lane or junction path with its speed, load, route and state, the trips waiting in yards, the lights'
+  clocks, and the game's speed and pause. Loads on the road stay on the road (they used to go back to their
+  yards, and the roads came back empty). A save made from the pause menu is of a running game. Saves from before
+  this load with empty roads that fill again.
 - ` (backtick): hide the UI.
 - Ctrl+Z / Ctrl+Y: undo and redo. CS2 has none; this is kept from Trafficity.
 

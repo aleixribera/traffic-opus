@@ -111,7 +111,7 @@ export class Router {
         const nk = dkey(c.to.seg, c.to.dir);
         if (seen.has(nk)) continue;
         seen.add(nk);
-        out.push({ k: nk, turn: c.turn, signal: !!this.net.nodes.get(c.node)?.signal, stop: c.prio < 0 });
+        out.push({ k: nk, turn: c.turn, signal: !!this.net.nodes.get(c.node)?.signal, stop: c.prio <= -1 });
       }
     }
     this.succCache.set(k, out);

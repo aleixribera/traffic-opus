@@ -155,6 +155,28 @@ const SEND_FIRST = 800;
 /** A load on its way still counts for the send-ahead line (never for what the town shows) until this share of its
  *  trip past when it was due: a truck stuck in a jam well past that is no longer counted on. */
 const DUE_GRACE = 0.5;
+/**
+ * Trucks a works keeps waiting at its own gate to pull out, at most (its own and the empty ones heading home from
+ * it): the rest stay at the dock with their loads still in the yard, counted as at home. Before, every free truck
+ * with a load joined the queue at a gate that could not let them out, was counted as out on the road, and after a
+ * minute and a half gave up and put its load back, to be sent again (docs/playtest-2026-11-09.md, A1 and A17).
+ */
+export const GATE_QUEUE = 2;
+/**
+ * A customer is choked when this many trucks on their way to it stand in traffic (30 s and more), and they are at
+ * least half of those on their way there: no more are sent into the same queue until they move. A town's shops count
+ * together (their trucks share its roads).
+ */
+export const CHOKED = 2;
+/**
+ * The share of a works' output that goes to works' building sites while a town on its roads is short of the product
+ * (below "Enough", or about to be before a truck could land): one load in four. A town's needs come first, and its
+ * growth is the company's income; but a site is never left waiting for a town that is always short, so it gets this
+ * share whatever happens. With no town short of it, the sites take all of it.
+ */
+export const SITE_SHARE = 0.25;
+/** Game hours of deliveries a building site remembers (what its "about N hours at this rate" is worked out on). */
+export const SITE_HOURS = 12;
 
 export const PLANTS: Record<PlantKind, PlantDef> = {
   farm: {
@@ -179,32 +201,32 @@ export const PLANTS: Record<PlantKind, PlantDef> = {
   },
   ironmine: {
     kind: "ironmine", tier: 2, deposit: { field: F.ore, name: "iron ore" }, inputs: {}, outputs: { ore: 1 },
-    cycle: HOUR * 1.5, cost: 24000, upkeep: 30, trucks: 4, store: 8, power: 6, site: { planks: 30 }, supplies: { explosives: 3 },
+    cycle: HOUR * 1.5, cost: 24000, upkeep: 30, trucks: 4, store: 8, power: 6, site: { planks: 12 }, supplies: { explosives: 3 },
     blurb: "Digs iron ore. Its trucks take it to your smelters.",
   },
   coalmine: {
     kind: "coalmine", tier: 2, deposit: { field: F.coal, name: "coal" }, inputs: {}, outputs: { coal: 1 },
-    cycle: HOUR * 1.2, cost: 24000, upkeep: 30, trucks: 4, store: 8, power: 6, site: { planks: 30 }, supplies: { explosives: 3 },
+    cycle: HOUR * 1.2, cost: 24000, upkeep: 30, trucks: 4, store: 8, power: 6, site: { planks: 12 }, supplies: { explosives: 3 },
     blurb: "Digs coal for your smelters, cement works and power plants.",
   },
   quarry: {
     kind: "quarry", tier: 2, deposit: { field: F.lime, name: "limestone" }, inputs: {}, outputs: { lime: 1 },
-    cycle: HOUR * 1.5, cost: 20000, upkeep: 26, trucks: 4, store: 8, power: 6, site: { planks: 30 }, supplies: { explosives: 3 },
+    cycle: HOUR * 1.5, cost: 20000, upkeep: 26, trucks: 4, store: 8, power: 6, site: { planks: 12 }, supplies: { explosives: 3 },
     blurb: "Quarries limestone. Its trucks take it to your cement works.",
   },
   smelter: {
     kind: "smelter", tier: 2, inputs: { ore: 1, coal: 1 }, outputs: { steel: 1, slag: 1 }, byproduct: "slag",
-    cycle: HOUR * 1.5, cost: 45000, upkeep: 50, trucks: 2, store: 8, power: 14, site: { planks: 50 },
+    cycle: HOUR * 1.5, cost: 45000, upkeep: 50, trucks: 2, store: 8, power: 14, site: { planks: 24 },
     blurb: "Smelts iron ore with coal into steel, for the construction plants to come. Its slag goes to your cement works, which grind it in place of limestone.",
   },
   cementworks: {
     kind: "cementworks", tier: 2, inputs: { lime: 1, coal: 1 }, alt: { lime: "slag" }, outputs: { cement: 1 },
-    cycle: HOUR, cost: 40000, upkeep: 45, trucks: 3, store: 8, power: 10, site: { planks: 50 },
+    cycle: HOUR, cost: 40000, upkeep: 45, trucks: 3, store: 8, power: 10, site: { planks: 24 },
     blurb: "Burns limestone (or the smelters' slag in its place) with coal into cement. Its trucks sell it to villages that are building in concrete.",
   },
   coalplant: {
     kind: "coalplant", tier: 2, inputs: { coal: 1 }, alt: { coal: "chips" }, outputs: {},
-    cycle: HOUR * 3, cost: 32000, upkeep: 35, trucks: 0, store: 8, makes: 40, reach: 4000, site: { planks: 40 },
+    cycle: HOUR * 3, cost: 32000, upkeep: 35, trucks: 0, store: 8, makes: 40, reach: 4000, site: { planks: 20 },
     blurb: "Burns coal (or the sawmills' wood chips) for power. It powers your tier 2 buildings on its roads within 4 km; without power they work at 40%.",
   },
   // tier 3: the building sites wait for planks and cement
@@ -270,12 +292,12 @@ export const PLANTS: Record<PlantKind, PlantDef> = {
   // creamery's cheese keeps about three times as long
   dairyfarm: {
     kind: "dairyfarm", tier: 2, deposit: { field: F.fert, name: "fertile soil" }, inputs: {}, outputs: { milk: 1 },
-    cycle: HOUR * 1.2, cost: 16000, upkeep: 16, trucks: 2, store: 6, site: { planks: 30 }, supplies: { fertilizer: 3 },
+    cycle: HOUR * 1.2, cost: 16000, upkeep: 16, trucks: 2, store: 6, site: { planks: 12 }, supplies: { fertilizer: 3 },
     blurb: "Milks a herd on fertile pasture. Its refrigerated trucks sell the milk to villages and towns, or take it to your creameries; it spoils if the trip runs long.",
   },
   creamery: {
     kind: "creamery", tier: 2, inputs: { milk: 1 }, outputs: { cheese: 1 },
-    cycle: HOUR, cost: 30000, upkeep: 32, trucks: 2, store: 8, power: 8, site: { planks: 40 },
+    cycle: HOUR, cost: 30000, upkeep: 32, trucks: 2, store: 8, power: 8, site: { planks: 16 },
     blurb: "Turns milk into cheese, which keeps about three times as long: its refrigerated trucks sell it further afield.",
   },
   // tier 5 (docs/design.md "Motor Works"): the refinery's plastics with coal make rubber; steel, glass, rubber and
@@ -294,7 +316,7 @@ export const PLANTS: Record<PlantKind, PlantDef> = {
   // depot takes fuel from the refineries and fills the company's trucks that pass it at cost
   warehouse: {
     kind: "warehouse", tier: 2, inputs: {}, outputs: {}, logistics: "warehouse",
-    cycle: HOUR, cost: 18000, upkeep: 18, trucks: 12, store: 60, site: { planks: 30 },
+    cycle: HOUR, cost: 18000, upkeep: 18, trucks: 12, store: 60, site: { planks: 12 },
     blurb: "Stores any product your buildings send it and re-ships it with its own trucks: it takes the overflow, or splits a long haul into two legs as a feeder.",
   },
   fueldepot: {
@@ -379,7 +401,16 @@ export interface PlantState {
   trucks?: number;
   bought?: number;
   /** a construction site: the materials it waits for, and what has arrived */
-  site?: { need: Partial<Record<Product, number>>; got: Partial<Record<Product, number>> };
+  site?: {
+    need: Partial<Record<Product, number>>; got: Partial<Record<Product, number>>;
+    /** loads that landed this game hour, and in each of the last SITE_HOURS full hours, oldest first (see siteEta) */
+    hour?: number; hours?: number[];
+  };
+  /**
+   * per product, the loads it has sent to works' building sites and to towns short of it since both wanted it at
+   * once (the fair share: SITE_SHARE); unset while only one of the two does
+   */
+  split?: Partial<Record<Product, { site: number; town: number }>>;
   /** this hour's and the last full hour's books */
   now: PlantBooks;
   last: PlantBooks;
@@ -480,6 +511,10 @@ export interface IndustryHost {
   /** the trips held up now: in a yard whose first truck out can't find a gap in the traffic ("gate"), or standing in
    *  traffic 30 s and more ("road") */
   held?(): Map<Trip, "gate" | "road">;
+  /** the share of a need a town reads as supplied on what has landed (0..1; its panel's figure) */
+  supply?(town: number, p: Product): number;
+  /** per building, the company's trucks waiting in its yard to pull out of its gate (none: not listed) */
+  queued?(): Map<number, number>;
   earn(v: number): void;
   spend(v: number, what: "wages" | "upkeep" | "fuel"): void;
   /** the level a kind of site may grow to now, and the goal that clears it for the next (none: it is at the top) */
@@ -509,6 +544,24 @@ export interface Customer {
   b: Building; value: number; /** loads it can take */ room: number;
   /** a town about to dip below "Enough": its load goes without waiting at the dock for a full truck */
   urgent?: boolean;
+  /** a works' building site (not a landmark's): it shares the output with towns short of the product (SITE_SHARE) */
+  site?: boolean;
+  /** a town short of the product: below "Enough", or about to be before a truck could land */
+  need?: boolean;
+  /** (a town short of it) the share of the need it reads as supplied, 0..1: the shortest comes first on the towns' turn */
+  has?: number;
+  /** both a works' site and a town short of it want this product now: the load counts toward the fair share */
+  shared?: boolean;
+}
+
+/** How far along a building site's deliveries are (Industry.siteEta). */
+export interface SiteEta {
+  /** loads landed, and loads its bill asks for (all materials together) */
+  got: number; need: number;
+  /** loads an hour it has been getting (over the game hours it remembers, up to SITE_HOURS) */
+  perHour: number;
+  /** game hours until the last load lands at that rate (0: all in; null: nothing has landed lately) */
+  hours: number | null;
 }
 
 export class Industry {
@@ -521,6 +574,34 @@ export class Industry {
   /** Loads of `p` for `dest` that `from` has waiting behind its own jammed gate (counted on by it alone). */
   private stuckFor(from: number, dest: number, p: Product): number {
     return this.gated.get(from)?.get(`${dest}:${p}`) ?? 0;
+  }
+  /** Per customer, this tick: the company's loaded trucks on their way to it, and those of them standing in traffic. */
+  private inbound = new Map<number, { on: number; held: number }>();
+  /** Per building, this tick: trucks waiting in its yard to pull out of its gate. */
+  private queue = new Map<number, number>();
+  /** A customer's key in `inbound`: a works by its id; a town's shops together (their trucks share its roads). */
+  private destKey(o: Building): number {
+    const t = o.plant ? null : this.h.townOf(o);
+    return t === null ? o.id : -1 - t;
+  }
+  /** Are the trucks on their way to a customer held up in traffic (see CHOKED)? One more would only join the queue. */
+  choked(o: Building): boolean {
+    const i = this.inbound.get(this.destKey(o));
+    return !!i && i.held >= CHOKED && i.held * 2 >= i.on;
+  }
+  /** Per works, this tick: its empty trucks on their way home, and those of them standing in traffic. */
+  private homing = new Map<number, { on: number; held: number }>();
+  /**
+   * Are a works' own trucks held up in traffic on their way home (see CHOKED)? The way to its gate is full: the
+   * trucks at the dock wait, rather than pull out into the same junction and add to it.
+   */
+  homeChoked(b: Building): boolean {
+    const i = this.homing.get(b.id);
+    return !!i && i.held >= CHOKED && i.held * 2 >= i.on;
+  }
+  /** Trucks waiting in a works' yard to pull out of its gate now (GATE_QUEUE of them at most are sent to wait there). */
+  atGate(b: Building): number {
+    return this.queue.get(b.id) ?? 0;
   }
   private jamOf(id: number) {
     let j = this.jam.get(id);
@@ -765,6 +846,9 @@ export class Industry {
     this.jam.clear();
     this.due.clear();
     this.gated.clear();
+    this.inbound.clear();
+    this.homing.clear();
+    this.queue = this.h.queued?.() ?? new Map();
     for (const t of this.h.trips()) {
       const r = t.haul;
       // (a convoy with an oversized piece is not one of its works' trucks: convoys.ts keeps its own count)
@@ -783,11 +867,25 @@ export class Industry {
       if (!by) busyBy.set(r.plant, (by = {}));
       const c = r.cls ?? "light";
       by[c] = (by[c] ?? 0) + 1;
-      if (r.leg !== "out") continue;
+      if (r.leg !== "out") {
+        let i = this.homing.get(r.plant);
+        if (!i) this.homing.set(r.plant, (i = { on: 0, held: 0 }));
+        i.on++;
+        if (h === "road") i.held++;
+        continue;
+      }
+      const dest = this.h.buildings.byId.get(r.dest);
+      if (dest) {
+        const k = this.destKey(dest);
+        let i = this.inbound.get(k);
+        if (!i) this.inbound.set(k, (i = { on: 0, held: 0 }));
+        i.on++;
+        if (h === "road") i.held++;
+      }
       // (a load for a works' building site still in its yard behind a jammed gate isn't counted on there: another
       // plant whose trucks can get out sends it, or the site's last loads wait on that one gate for days; its own
       // plant still counts it, so it doesn't pile more into the same queue: see stuckFor)
-      if (h === "gate" && this.h.buildings.byId.get(r.dest)?.plant?.site) {
+      if (h === "gate" && dest?.plant?.site) {
         let s = this.gated.get(r.plant);
         if (!s) this.gated.set(r.plant, (s = new Map()));
         const k = `${r.dest}:${r.product}`;
@@ -923,7 +1021,8 @@ export class Industry {
     const j = this.jam.get(b.id);
     if (!j || out <= 0) return null;
     const many = (n: number) => n >= 2 && n >= out / 4;
-    if (many(j.gate)) return "the road at its gate is jammed, its trucks can't get out";
+    // (the queue at the gate is GATE_QUEUE long at most: full and not moving, the rest are held at the dock behind it)
+    if (j.gate >= GATE_QUEUE || many(j.gate)) return "the road at its gate is jammed, its trucks can't get out";
     if (many(j.road)) return "its trucks are stuck in traffic on the haul (a jammed road)";
     return null;
   }
@@ -1055,7 +1154,9 @@ export class Industry {
       // after the chains and the towns' growth: it takes what is left over, see megaValue)
       if (o.plant.site) {
         const room = Industry.siteLeft(o, product) - on(o.id) - this.stuckFor(from.id, o.id, product);
-        if (room >= 1) out.push({ b: o, value: PLANTS[o.kind as PlantKind].mega ? megaValue(price, km(o)) : 20000 + room * 100 - km(o) * FUEL_PER_KM * 2, room });
+        // (the site nearest done first: one works finished and running is worth more than four half supplied)
+        const mega = !!PLANTS[o.kind as PlantKind].mega;
+        if (room >= 1) out.push({ b: o, value: mega ? megaValue(price, km(o)) : 20000 - room * 100 - km(o) * FUEL_PER_KM * 2, room, ...(mega ? {} : { site: true }) });
         continue;
       }
       // a warehouse takes what nobody else wants now (after the plants and towns), unless it is a feeder for the
@@ -1117,13 +1218,31 @@ export class Industry {
         // (on its slowest trucks, till one has made the run)
         const trip = soon < Infinity ? this.tripTo(from, o, slowest()) : 0;
         const ahead = soon > 0 && soon <= trip * (1 + SEND_SPARE) + SEND_PAD;
+        // (short of it: below "Enough" on what has landed, or about to be; with no supply line to read, short of its day's)
+        const need = t !== null && short >= 1 && (this.h.dipIn ? ahead || soon <= 0 : true);
         out.push({
           b: o, value: price - km(o) * FUEL_PER_KM * 2 + (short >= 1 ? 400 : 0) + (ahead ? SEND_FIRST : 0) + Math.min(3, l) * 15 - (product === "food" ? o.stock * 15 : 0),
-          room: Math.ceil(l), ...(ahead ? { urgent: true } : {}),
+          room: Math.ceil(l), ...(ahead ? { urgent: true } : {}), ...(need ? { need: true, has: this.h.supply?.(t!, product) ?? 0 } : {}),
         });
       }
     }
     out.sort((a, b) => b.value - a.value);
+    // A town's needs come first on what a works makes, and its building sites take the rest: all of it while no town
+    // on its roads is short, one load in four (SITE_SHARE) while one is, so neither waits for the other for ever.
+    // Before, every load went to the sites until the last was built, and a town went from "Enough" to "None"
+    // (docs/playtest-2026-11-09.md, B2).
+    // (on the towns' turn the one that reads shortest goes first, not the nearest: with the sites taking their share
+    // there may not be enough for every town, and the far one must not be the one left with none)
+    const site = out.find((c) => c.site);
+    let town: Customer | undefined;
+    if (site) for (const c of out) if (c.need && (!town || (c.has ?? 0) < (town.has ?? 0) - 0.02)) town = c;
+    if (site && town) {
+      site.shared = town.shared = true;
+      const sp = from.plant?.split?.[product];
+      const sitesTurn = !!sp && sp.site < (sp.site + sp.town) * SITE_SHARE;
+      // (the town's turn: its load goes just ahead of the sites')
+      if (!sitesTurn) { out.splice(out.indexOf(town), 1); out.splice(out.indexOf(site), 0, town); }
+    }
     // a feeder only takes from buildings it is nearer to than where the load would go otherwise (a mine beside its
     // smelter doesn't send its ore round by a feeder kilometres away)
     if (feeders.length) {
@@ -1144,6 +1263,11 @@ export class Industry {
     if (!b.access || P.site) return;
     let free = this.trucksOf(b) - (busy.get(b.id) ?? 0);
     if (free <= 0) { P.hold = undefined; return; }
+    // (its gate has a queue already: the next truck stays at the dock, its load in the yard, till one has pulled out)
+    // (nor while its own trucks stand in traffic on their way home: the way to its gate is full)
+    if (this.homeChoked(b)) return;
+    let gate = this.atGate(b);
+    const gateRoom = this.h.queued ? GATE_QUEUE : Infinity;
     const hold = (P.hold ??= {});
     const mix = this.mixOf(b);
     let by = busyBy.get(b.id);
@@ -1160,12 +1284,16 @@ export class Industry {
       const side = !store && outs.length > 1 && p !== outs[0][0];
       // (the main product with nowhere to go says why, as a one-output plant's does: the smelter's steel, not its slag)
       if (side && !this.wants(p)) continue;
-      while (free > 0 && (src[p] ?? 0) >= 1) {
-        const c = this.customers(b, p, coming)[0];
-        if (!c) {
+      while (free > 0 && gate < gateRoom && (src[p] ?? 0) >= 1) {
+        const all = this.customers(b, p, coming);
+        if (!all.length) {
           if (!store && !side && (src[p] ?? 0) >= 2 && b.access && !b.problem?.startsWith("Full of")) b.problem = this.noBuyer(b, p);
+          if (P.split) delete P.split[p];
           break;
         }
+        // (not to a customer whose trucks stand in traffic on the way: the load waits at the dock, or goes to the next)
+        const c = all.find((x) => !this.choked(x.b));
+        if (!c) break;
         const cls = Industry.nextClass(mix, by);
         if (!cls) { free = 0; break; }
         const load = this.capOf(b, cls);
@@ -1178,8 +1306,16 @@ export class Industry {
         const r = this.send(b, c.b, p, n, cls);
         this.expect(c.b.id, p, n, this.h.time, r.eta);
         delete hold[p];
+        // (the fair share between works' sites and towns short of it, counted while both want it)
+        if (c.shared) {
+          const sp = ((P.split ??= {})[p] ??= { site: 0, town: 0 });
+          if (c.site) sp.site += n; else if (c.need) sp.town += n;
+          // (only the recent run counts: an old lead isn't paid back in one go)
+          if (sp.site + sp.town > 24) { sp.site /= 2; sp.town /= 2; }
+        } else if (P.split?.[p] && !all.some((x) => x.shared)) delete P.split[p];
         src[p]! -= n;
         free--;
+        gate++;
         by[cls] = (by[cls] ?? 0) + 1;
         busy.set(b.id, (busy.get(b.id) ?? 0) + 1);
         let m = coming.get(c.b.id);
@@ -1344,6 +1480,7 @@ export class Industry {
         // (dispatch never sends more than is left; should two trucks still race, the spare load is left on the ground)
         const take = Math.min(n, Math.max(0, Industry.siteLeft(to, product)));
         s.got[product] = (s.got[product] ?? 0) + take;
+        s.hour = (s.hour ?? 0) + take;
         Industry.finishSite(to);
         return;
       }
@@ -1390,10 +1527,45 @@ export class Industry {
     return true;
   }
 
+  /**
+   * How a works' building site is doing: loads landed of those its bill asks for, the rate they have been landing at
+   * (over the last game hours, up to SITE_HOURS; the hour under way counts once it beats that), and the game hours the
+   * rest would take at that rate. Null when it is not a site. For the panel's "12 of 30 loads, about 9 hours at this
+   * rate".
+   */
+  static siteEta(b: Building): SiteEta | null {
+    const s = b.plant?.site;
+    if (!s) return null;
+    let got = 0, need = 0;
+    for (const [p, n] of entries(s.need)) { need += n; got += Math.min(n, s.got[p] ?? 0); }
+    const hs = s.hours ?? [];
+    const past = hs.length ? hs.reduce((a, v) => a + v, 0) / hs.length : 0;
+    // (the first loads of a site that has no full hour behind it yet: the hour under way stands in)
+    const perHour = Math.max(past, hs.length ? (hs.reduce((a, v) => a + v, 0) + (s.hour ?? 0)) / (hs.length + 1) : s.hour ?? 0);
+    const left = need - got;
+    return { got, need, perHour, hours: left <= 0 ? 0 : perHour > 0 ? left / perHour : null };
+  }
+
+  /** siteEta in words, for the site's panel: "12 of 30 loads, about 9 hours at this rate" (game hours). */
+  static siteReport(b: Building): string {
+    const e = Industry.siteEta(b);
+    if (!e) return "";
+    const n = `${Math.floor(e.got)} of ${e.need} loads`;
+    if (e.hours === null) return e.got > 0 ? `${n}, none in the last hours` : `${n} so far`;
+    if (e.hours <= 0) return n;
+    return `${n}, about ${e.hours < 1.5 ? "an hour" : `${Math.round(e.hours)} hours`} at this rate`;
+  }
+
   /** Wages and upkeep, and the hour's books (a building site costs nothing to keep). */
   hourly() {
     for (const b of this.plants()) {
       const P = b.plant!;
+      if (P.site) {
+        // (its deliveries, hour by hour, from the first load on: an empty site has no rate to speak of)
+        const s = P.site;
+        if (s.hours || s.hour) { (s.hours ??= []).push(s.hour ?? 0); if (s.hours.length > SITE_HOURS) s.hours.splice(0, s.hours.length - SITE_HOURS); }
+        s.hour = 0;
+      }
       if (!P.site) {
         const wages = this.h.workersAt(b.id) * WAGE, up = PLANTS[b.kind as PlantKind].upkeep * levelMult(P.level);
         this.h.spend(wages, "wages");

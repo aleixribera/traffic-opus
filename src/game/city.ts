@@ -8,10 +8,10 @@ import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/
 import {
   applyPave, applyTrim, chainPoints, cubicClosest, planRoad, snap, strokeProfile, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type LanePlan, type Plan, type PlanError,
 } from "../roads/planner";
-import { Traffic, type Trip, type Vehicle } from "../sim/traffic";
+import { fromLot, Traffic, type TrafficSave, type Trip, type Vehicle } from "../sim/traffic";
 import { SITE_LEVELS, siteFrame } from "./sites";
 import { Terrain } from "../world/terrain";
-import { Buildings, obbOverlap, type Building, type BuildingMove } from "./buildings";
+import { Buildings, TOWN_STREET, obbOverlap, type Building, type BuildingMove } from "./buildings";
 import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, type LotTemplate } from "./growables";
 import { Progress, levelBy, levelCap, type Feature, type Milestone, type ProgressView } from "./progression";
 import { DAY, HOUR, Society } from "./society";
@@ -158,6 +158,10 @@ export class Game {
       fail: (trip, reason) => this.onFail(trip, reason),
       busAt: (v) => this.transit.busAt(v),
     });
+    this.traffic.whereIs = (id) => {
+      const b = this.buildings.byId.get(id);
+      return b?.access ? { ...b.access, side: b.side } : null;
+    };
     this.money = START_MONEY;
     const t = this.terrain;
     // (towns grow on any land, never inside the fence of one of the company's sites)
@@ -183,6 +187,8 @@ export class Game {
       request: (sp) => this.traffic.request(sp),
       trips: () => this.trips(),
       held: () => this.heldTrips(),
+      queued: () => this.gateQueues(),
+      supply: (t, p) => this.towns.byId.get(t)?.supply[p] ?? 0,
       earn: (v) => { this.money += v; this.budgetNow.income.sales += v; this.progress.onEarned(v); },
       spend: (v, what) => { this.money -= v; this.budgetNow.expense[what] += v; },
       levelCap: (kind, at) => {
@@ -318,10 +324,18 @@ export class Game {
    */
   private heldTrips(): Map<Trip, "gate" | "road"> {
     const m = new Map<Trip, "gate" | "road">();
-    for (const v of this.traffic.vehicles) if (v.trip.haul && v.stuck > 30) m.set(v.trip, "road");
+    // (standing in traffic half a minute and more; at lights, that much longer than a red lasts)
+    for (const v of this.traffic.vehicles) if (v.trip.haul && v.stuck > 30 && v.stuck > 30 + this.traffic.redTime(v)) m.set(v.trip, "road");
     const blocked = new Set<number>();
     for (const p of this.traffic.pending) if (p.trip.haul && p.wait > 20) blocked.add(p.trip.from);
     if (blocked.size) for (const p of this.traffic.pending) if (p.trip.haul && blocked.has(p.trip.from)) m.set(p.trip, "gate");
+    return m;
+  }
+
+  /** Per building, the company's trucks waiting in its yard to pull out of its gate (convoys keep their own count). */
+  private gateQueues(): Map<number, number> {
+    const m = new Map<number, number>();
+    for (const p of this.traffic.pending) if (p.trip.haul && !p.trip.haul.big && fromLot(p)) m.set(p.trip.from, (m.get(p.trip.from) ?? 0) + 1);
     return m;
   }
 
@@ -527,11 +541,37 @@ export class Game {
 
   private afterRoads(cs: ChangeSet) {
     for (const b of this.buildings.reattach()) this.toast(`${BUILDING_TYPES[b.kind].name} connected: its trucks can start`);
+    this.faceRoads();
     this.transit.afterRoads();
     this.traffic.onNetworkChange(cs);
     this.rezone(cs);
     this.emit({ t: "roads", cs });
     this.emit({ t: "zones" });
+  }
+
+  /**
+   * A site with no road at its gate, and a road now at the back of its plot (it ends there, or runs past): the gate
+   * goes to that side, the site turned half round where it stands (docs/playtest-2026-11-09.md, C1: a road drawn to
+   * the back of a mine was refused, "its gate faces the other way: draw the road round to it"). Half round is the
+   * same plot. A site that has a road keeps its gate.
+   */
+  private faceRoads() {
+    let any = false;
+    for (const b of this.buildings.sites) {
+      if (b.access) continue;
+      for (const rot of this.buildings.turnsOf(b)) {
+        const ga = this.buildings.gateAccess(b.c, rot, b.side, b.hd, isPlantKind(b.kind));
+        if (!ga) continue;
+        for (const c of this.lotCells(b)) if (c.lot === b.id) c.lot = 0;
+        this.buildings.turn(b, ga);
+        for (const c of this.lotCells(b)) c.lot ||= b.id;
+        this.candVersion = -1;
+        this.toast(`${BUILDING_TYPES[b.kind].name} connected, its gate turned to the road: its trucks can start`);
+        any = true;
+        break;
+      }
+    }
+    if (any) this.emit({ t: "buildings" });
   }
 
   /** The zone map after a road edit, and the lots of the buildings whose street was laid out again. */
@@ -679,6 +719,13 @@ export class Game {
     // (the homes and shops it clears are paid for: the ones the preview showed, before anything is built)
     const owed = this.demolishCost(this.lotsUnder(plan));
     if (plan.cost + owed > this.money + 0.5) return false;
+    if (plan.kind === "roundabout") {
+      const cut = this.ringStrands(plan);
+      if (cut) {
+        this.toast(`Not built: a roundabout there would leave the ${BUILDING_TYPES[cut.kind].name} with no road to its gate. Try it a little further from the gate`);
+        return false;
+      }
+    }
     const was = new Set(this.buildings.sites.filter((b) => b.access).map((b) => b.id));
     const ops = this.applyRoads(() => {
       if (plan.kind === "roundabout") commitRoundabout(this.net, plan);
@@ -710,6 +757,13 @@ export class Game {
         }
       }
     });
+    // a works whose gate street the ring took, with the ring out of its gate's reach, gets the street laid again to
+    // the ring (the company's own street: no charge, and one Undo takes ring and street away together)
+    if (plan.kind === "roundabout") for (const b of this.buildings.sites) {
+      if (b.access || !was.has(b.id)) continue;
+      const link = this.gateLink(b.kind as PlacedKind, b.c, b.rot, b.side);
+      if (link) ops.push(...this.applyRoads(() => { for (const st of link.strokes) commitStrokes(this.net, [st]); }));
+    }
     const gone = this.clearRoadsOverLots(ops);
     const moved = this.setBackJoined(was);
     const paid = plan.cost + owed;
@@ -718,6 +772,27 @@ export class Game {
     this.emit({ t: "money" });
     if (gone.length || moved.length) this.emit({ t: "buildings" });
     return true;
+  }
+
+  /**
+   * A works a roundabout would cut off its road for good (docs/playtest-2026-11-09.md, A2: a Small one on the
+   * sawmill's gate junction left it with "No road to the gate", and only Undo saved it). A ring that takes the road
+   * at a gate is tried on the network and taken back, nothing else told of it: the gate is fine if the ring itself, or
+   * what is left of its street, passes in front of it, or if its street can be laid again to the ring. Null: no works
+   * is left stranded.
+   */
+  private ringStrands(plan: Plan): Building | null {
+    const cut = new Set(plan.removeSegs ?? []);
+    const at = this.buildings.sites.filter((b) => b.access && cut.has(b.access.seg));
+    if (!at.length) return null;
+    const net = this.net;
+    net.begin();
+    commitRoundabout(net, plan);
+    net.rebuild();
+    const bad = at.find((b) => !this.buildings.gateAccess(b.c, b.rot, b.side, b.hd, isPlantKind(b.kind)) && !this.gateLink(b.kind as PlacedKind, b.c, b.rot, b.side)) ?? null;
+    net.undo(net.commit());
+    this.afterRoads(net.rebuild());
+    return bad;
   }
 
   /**
@@ -1062,18 +1137,20 @@ export class Game {
     const S = add(f.gate, scale(out, GATE_LINK_OUT));
     const ahead = add(f.gate, scale(out, 30));
     const net = this.net, R = GATE_LINK_REACH;
-    const cands: { p: V2; d: number }[] = [];
+    // (a town's own street counts half as far again as the company's roads: the works' trucks go by the main road
+    // rather than through the back streets a little nearer)
+    const cands: { p: V2; d: number; k: number }[] = [];
     for (const id of net.segsNear(S.x - R, S.y - R, S.x + R, S.y + R)) {
       const s = net.segs.get(id)!;
       if (!takesGate(ROAD_TYPES[s.type])) continue; // (a boulevard too: the street meets it at a junction)
       const r = cubicClosest(s.c, ahead);
       if (net.heightOnSeg(id, r.t) > 0.5) continue;
-      const d = dist(r.p, S);
-      if (d <= R) cands.push({ p: r.p, d });
+      const d = dist(r.p, S), k = s.town ? TOWN_STREET : 1;
+      if (d <= R) cands.push({ p: r.p, d: d * k, k });
     }
     cands.sort((a, b) => a.d - b.d);
     const world: BuildWorld = { ...this.world, money: () => Infinity };
-    let best: Plan | null = null;
+    let best: Plan | null = null, bestCost = Infinity;
     for (const cd of cands.slice(0, 6)) {
       const end = snap(net, cd.p, { mpp: 0.4, level: 0, type: "street" });
       if (end.seg === undefined && end.node === undefined) continue;
@@ -1083,7 +1160,7 @@ export class Game {
       if (pts.some((q) => rectDistance(q, c, hw, hd, rot) < 6)) continue;
       // (never through a town's homes and shops: the company's street goes round them, or waits for the player)
       if (this.lotsUnder(plan).length) continue;
-      if (!best || plan.cost < best.cost) best = plan;
+      if (plan.cost * cd.k < bestCost) { best = plan; bestCost = plan.cost * cd.k; }
     }
     return best;
   }
@@ -1945,8 +2022,14 @@ export class Game {
       v: SAVE_V,
       seed: this.seed,
       net: this.net.toJSON(),
-      // (trucks on the road aren't saved: a load out on delivery goes back to its plant's yard)
-      buildings: this.buildings.list.map((b) => ({ ...b, access: null, plant: b.plant && this.plantSaved(b) })),
+      buildings: this.buildings.list.map((b) => ({ ...b, access: null })),
+      // every vehicle on the road and every trip waiting to set off, with its load (see Traffic.toJSON). Saves from
+      // before v0.0.83 have none: there a load out on delivery had gone back to its plant's yard, and the roads
+      // started empty
+      traffic: this.traffic.toJSON() as TrafficSave | undefined,
+      // the clock as the player had it: the speed, and stopped or not
+      speed: this.speed as number | undefined,
+      paused: this.paused as boolean | undefined,
       nextBuilding: this.buildings.nextId,
       zones: [...this.zones.allCells()].filter((c) => c.zone).map((c) => [Math.round(c.c.x * 10) / 10, Math.round(c.c.y * 10) / 10, c.zone]),
       zoneAges: this.zones.agesJSON(),
@@ -2027,6 +2110,16 @@ export class Game {
     // (a save from before the town orders has none: its towns are dealt their sets and start rolling them)
     g.orders.load(data.orders);
     g.utilities.tick(0);
+    if (data.traffic) {
+      // the traffic it was saved with: the people driving are on their way again (everyone else is at home), each
+      // bus is its line's again (its riders are among those at home), then every vehicle goes back on its lane
+      const trips = [...data.traffic.vehicles, ...data.traffic.pending].map((x) => x.trip);
+      g.people.onRoad(trips);
+      for (const t of trips) if (t.bus) { t.bus.pax = []; g.transit.runs.add(t.bus); }
+      g.traffic.load(data.traffic);
+    }
+    g.speed = data.speed ?? 1;
+    g.paused = !!data.paused;
     return g;
   }
 
@@ -2103,20 +2196,6 @@ export class Game {
     B.version++;
     this.zones.version++;
     return moved;
-  }
-
-  /** A plant's state as saved: loads its trucks are carrying count as still in its yard. */
-  private plantSaved(b: Building) {
-    const P = structuredClone(b.plant!);
-    for (const t of this.trips()) {
-      const r = t.haul;
-      if (!r || r.done || r.leg !== "out" || r.plant !== b.id) continue;
-      // (an oversized piece on its way goes back to the works' yard, to be sent again)
-      if (r.big) { const B = (P.big ??= { prog: 0, n: 0 }); B.n++; continue; }
-      // (a warehouse's loads go back into store, where it ships from)
-      const s = Industry.logisticsOf(b) === "warehouse" ? P.stock : P.out; s[r.product] = (s[r.product] ?? 0) + r.n;
-    }
-    return P;
   }
 
   segCost(id: number) {
