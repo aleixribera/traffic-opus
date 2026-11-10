@@ -126,7 +126,10 @@ export class GameAudio {
     if (!ctx || typeof AudioContext === "undefined" || !(ctx instanceof AudioContext)) return;
     clearTimeout(this.sleepT);
     if (!this.silent) { if (ctx.state === "suspended" && typeof document !== "undefined" && !document.hidden) void ctx.resume(); return; }
-    this.sleepT = setTimeout(() => { if (this.silent && ctx.state === "running") void ctx.suspend(); }, 250);
+    // (unmuted again while it was going to sleep: wake it once it has)
+    this.sleepT = setTimeout(() => {
+      if (this.silent && ctx.state === "running") void ctx.suspend().then(() => { if (!this.silent && !document.hidden) void ctx.resume(); });
+    }, 250);
   }
 
   /** Build the engine on a context (the page's own, or one handed in). */

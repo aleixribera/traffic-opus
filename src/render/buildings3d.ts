@@ -278,7 +278,7 @@ export class Buildings3D {
   private v3 = new THREE.Vector3();
   private tintFn: ((b: Building) => number | null) | null = null;
   /** Pieces still going up: zoned buildings under construction, and a site's newest buildings after it grows. */
-  private building: { p: Piece; i: number }[] = [];
+  private building: { p: Piece; i: number; fin?: boolean }[] = [];
 
   /**
    * `clock` gives the sim time (a site's new buildings rise for a while after it grows); `net`, the roads the front
@@ -972,7 +972,8 @@ export class Buildings3D {
     if (!this.building.length) return false;
     let done = false;
     const touched = new Set<THREE.InstancedMesh>();
-    const still: { p: Piece; i: number }[] = [];
+    const still: { p: Piece; i: number; fin?: boolean }[] = [];
+    const regrow = new Set<THREE.InstancedMesh>();
     for (const it of this.building) {
       const mesh = this.meshes.get(it.p.model);
       if (!mesh) continue;
@@ -987,14 +988,18 @@ export class Buildings3D {
         nm.setColorAt(it.p.ni!, c);
         if (nm.instanceColor) nm.instanceColor.needsUpdate = true;
         touched.add(nm);
+        // (a square's mesh is culled by its bounds: a building going up grows out of the ones it had. Once more
+        // when it is up, then not again while it waits on the list for the next rebuild)
+        if (!it.fin) regrow.add(nm);
+        it.fin = this.rise(it.p) >= 1 && it.p.b.built >= 1;
       }
       // (zoned buildings stay on the list till the next rebuild: they finish with a change of colour)
       if (it.p.b.built < 1 || this.rise(it.p) < 1 || !it.p.slot) still.push(it);
       else done = true;
     }
     this.building = still;
-    // (a square's mesh is culled by its bounds: a building going up grows out of the ones it had)
-    for (const m of touched) { m.instanceMatrix.needsUpdate = true; if (m.userData.near) m.computeBoundingSphere(); }
+    for (const m of touched) m.instanceMatrix.needsUpdate = true;
+    for (const m of regrow) m.computeBoundingSphere();
     return done;
   }
 
@@ -1365,16 +1370,16 @@ export class Buildings3D {
     if (got && got.x === b.c.x && got.y === b.c.y && got.rot === b.rot && got.H === H && got.seg === seg) {
       if (got.v === v) return got.e;
       // (the roads changed somewhere: still good if none near it did, as most of a big map's lots find after an edit)
-      if (net && this.depsHold(got.deps)) { got.v = v; return got.e; }
+      if (net && got.deps && this.depsHold(got.deps)) { got.v = v; return got.e; }
     }
     const e = [1, -1].map((s) => {
       const dir = scale(along, s);
       return this.kerbOut(add(b.c, scale(dir, H)), dir, SIDE_REACH, b.access?.seg) ?? 0;
     }) as [number, number];
-    this.sideCache.set(b.id, { v, x: b.c.x, y: b.c.y, rot: b.rot, H, seg, e, deps: this.depsNear(b.c, H) });
+    this.sideCache.set(b.id, { v, x: b.c.x, y: b.c.y, rot: b.rot, H, seg, e, deps: net ? this.depsNear(b.c, H) : null });
     return e;
   }
-  private sideCache = new Map<number, { v: number; x: number; y: number; rot: number; H: number; seg: number; e: [number, number]; deps: SegDeps }>();
+  private sideCache = new Map<number, { v: number; x: number; y: number; rot: number; H: number; seg: number; e: [number, number]; deps: SegDeps | null }>();
 
   /**
    * The roads kerbOut can see from both sides of a lot (H either way of c): their ids and their geometry as it is now
