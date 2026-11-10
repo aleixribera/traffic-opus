@@ -23,7 +23,7 @@ import type { GameAudio } from "../audio";
 import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId } from "../app";
 import { ROUNDABOUTS, type RoundaboutSize } from "../roads/planner";
 import { ICON, buildingIcon, placedIcon, productIcon, roadIcon } from "./icons";
-import { TradeLedger, approaches, extractorFor, modelOf, sameSel, signedMoney, waitTone, worksStatus, type FlowChip, type PanelModel, type Sel } from "./inspect";
+import { TradeLedger, approaches, extractorFor, fmtRate, modelOf, sameSel, signedMoney, waitTone, worksStatus, type FlowChip, type PanelModel, type Sel } from "./inspect";
 import { comingNeeds, growthOf, townNeeds, type NeedView } from "./needs";
 import type { Lane } from "../roads/network";
 import { CHANGELOG } from "../changelog";
@@ -37,7 +37,7 @@ import { companyName } from "../game/names";
 import { landmarkDone, landmarkSite, parkSection, seasonLine, specialRows } from "./specials";
 import { MEGAS, isMega } from "../game/megaprojects";
 import { TipPrefs, joinedUp, tipFor } from "./tips";
-import { blockWords, buildOrder, shortfalls } from "./bottleneck";
+import { blockWords, buildOrder, shortfalls, shownRate } from "./bottleneck";
 import { goalNow, goalNowSay } from "./goalNow";
 import { STUCK_RAISE, stuckSpots } from "./stuckAlerts";
 import { nextTown } from "./nextTown";
@@ -205,7 +205,7 @@ const KEYS: [string, string][] = [
   ["Alt (hold)", "Ignore snapping and guides for a moment"],
   ["B", "Bulldozer"],
   ["L", "Add lane (Shift or right click removes)"],
-  ["P / Z / C / X", "Progression / Economy / Towns / Transport"],
+  ["P / Z / C / X", "Goals / Economy / Towns / Traffic"],
   ["Space, 1 2 3", "Pause (a tap of Space), game speed"],
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
   ["F5 / F9", "Quicksave / quickload"],
@@ -247,7 +247,7 @@ export class Hud {
   /** the company's name and herald, top left by the menu (click: rename it) */
   private companyEl = h("button", "company");
   private companyKey = "";
-  private compass = h("button", "btn icon-btn compass");
+  private compass = h("button", "tlb compass");
   private compassRot = NaN;
   /** the camera control: a small block seen as the camera sees the map (turned, tilted); click for the Map view, drag to turn and tilt */
   private viewBtn = h("button", "tlb viewgiz");
@@ -297,27 +297,29 @@ export class Hud {
     // ---- top left: the menu and the city's info buttons
     const tl = h("div", "corner tl");
     const row = h("div", "tl-row");
-    const tlb = (k: WinId | "menu", icon: string, title: string, fn: () => void) => {
-      const b = h("button", "tlb", icon);
+    // (each with its name under its picture, like the bottom bar: design audit 2026-11-10, F28. The tooltip keeps the
+    // longer say and the key)
+    const tlb = (k: WinId | "menu", icon: string, label: string, title: string, fn: () => void) => {
+      const b = h("button", "tlb", `${icon}<span class="tlb-l">${label}</span>`);
       b.title = title;
       b.setAttribute("aria-label", title);
       b.onclick = () => { fn(); this.sfx.play("click"); };
       this.tlBtns.set(k, b);
       row.appendChild(b);
     };
-    tlb("menu", ICON.menu, "Pause menu (Esc)", () => this.openPause());
+    tlb("menu", ICON.menu, "Menu", "Pause menu (Esc)", () => this.openPause());
     this.companyEl.title = "Your company: rename it, change its badge";
     this.companyEl.onclick = () => { this.sfx.play("click"); this.openCompany(); };
     row.appendChild(this.companyEl);
     row.appendChild(h("span", "tl-sep"));
-    tlb("info", ICON.layers, "Info views", () => this.toggleWin("info"));
-    tlb("progression", ICON.flag, "Progression (P)", () => this.toggleWin("progression"));
-    tlb("economy", ICON.coins, "Economy (Z)", () => this.toggleWin("economy"));
-    tlb("city", ICON.townGlyph, "Towns (C)", () => this.toggleWin("city"));
-    tlb("transport", ICON.car, "Transportation overview (X)", () => this.toggleWin("transport"));
-    tlb("camera", ICON.camera, "Camera: follow a truck, Tour, Vehicle cam (G, T, Shift+T)", () => this.toggleWin("camera"));
+    tlb("info", ICON.layers, "Views", "Map views: traffic flow, power, soil and more", () => this.toggleWin("info"));
+    tlb("progression", ICON.flag, "Goals", "Goals (P): every goal, reached and to come", () => this.toggleWin("progression"));
+    tlb("economy", ICON.coins, "Economy", "Economy (Z): money in and out, and what your works made", () => this.toggleWin("economy"));
+    tlb("city", ICON.townGlyph, "Towns", "Towns (C)", () => this.toggleWin("city"));
+    tlb("transport", ICON.car, "Traffic", "Traffic (X): how the roads are flowing, and your bus lines", () => this.toggleWin("transport"));
+    tlb("camera", ICON.camera, "Camera", "Camera: follow a truck, Tour, Vehicle cam (G, T, Shift+T)", () => this.toggleWin("camera"));
     this.buildViewBtn(row);
-    this.compass.innerHTML = ICON.north;
+    this.compass.innerHTML = `${ICON.north}<span class="tlb-l">North</span>`;
     this.compass.title = "North up (the map is turned: Q / E or middle-drag)";
     this.compass.setAttribute("aria-label", "Turn the map north up");
     this.compass.onclick = () => { app.resetNorth(); this.compassAngle(0); };
@@ -336,7 +338,7 @@ export class Hud {
     // city block (left)
     const city = h("div", "bb-city");
     this.cityName.onclick = () => this.toggleWin("progression");
-    this.cityName.title = "Progression (P)";
+    this.cityName.title = "Goals (P)";
     this.moneyBtn.onclick = () => this.toggleWin("economy");
     this.moneyBtn.title = "Economy (Z)";
     this.popEl.title = "People living in all your towns together";
@@ -795,7 +797,7 @@ export class Hud {
   private buildViewBtn(row: HTMLElement) {
     const app = this.app, b = this.viewBtn;
     b.type = "button";
-    b.innerHTML = `<span class="vg" aria-hidden="true"><span class="vg-cube"><i class="vg-top"></i><i class="vg-n"></i><i class="vg-s"></i><i class="vg-e"></i><i class="vg-w"></i></span></span>`;
+    b.innerHTML = `<span class="vg" aria-hidden="true"><span class="vg-cube"><i class="vg-top"></i><i class="vg-n"></i><i class="vg-s"></i><i class="vg-e"></i><i class="vg-w"></i></span></span><span class="tlb-l">Map</span>`;
     let drag: { x: number; y: number; moved: boolean } | null = null;
     let dragged = false;
     b.onpointerdown = (e) => {
@@ -981,15 +983,19 @@ export class Hud {
     const [have, need] = m.measure(g.progressView());
     const now = goalNow(g, m, have);
     const k = now?.key ?? "Now";
-    const text = now ? `${now.who ? `${now.who}: ${now.text[0].toLowerCase()}${now.text.slice(1)}` : now.text}.` : "";
+    // (a missing link of the chain says the whole of it, recipe and all, wrapping as it needs: design audit
+    // 2026-11-10, F01)
+    const text = !now ? "" : now.link ? goalNowSay(now) : `${now.who ? `${now.who}: ${now.text[0].toLowerCase()}${now.text.slice(1)}` : now.text}.`;
     const full = `${m.name}: ${m.goal}, ${measureText(m, have, need)}.${now ? ` ${k}: ${goalNowSay(now)}` : ""}`;
-    const nowRow = now ? `<span class="gl-now-k">${k}</span><span class="gl-strip-t ${now.tone}">${escapeHtml(text)}</span>` : "";
+    const nowRow = now ? `<span class="gl-now-k">${k}</span><span class="gl-strip-t ${now.tone}${now.link ? " wrap" : ""}">${escapeHtml(text)}</span>` : "";
     const html = `<button type="button" class="gl-strip" title="${escapeHtml(full)} Click to see your goals." aria-label="${escapeHtml(full)} Show the goals"><span class="gl-now-k">Goal</span><span class="gl-strip-t"><b>${escapeHtml(m.goal)}</b></span><span class="num">${measureText(m, have, need)}</span>${nowRow}</button>`;
     this.tut.hidden = false;
     if (this.tut.dataset.html === html) return;
     this.tut.dataset.html = html;
     this.tut.innerHTML = html;
     this.tut.querySelector<HTMLButtonElement>(".gl-strip")!.onclick = () => { this.sfx.play("click"); this.closeSelection(); };
+    // (the panel under it gives up the strip's height, whatever it wraps to)
+    this.tut.parentElement?.style.setProperty("--strip-h", `${this.tut.offsetHeight}px`);
   }
 
   /**
@@ -1613,23 +1619,24 @@ export class Hud {
       return `<li><button class="ec-row" data-id="${b.id}" title="Show this ${escapeHtml(BUILDING_TYPES[b.kind].name)} on the map"><span class="ec-ic" aria-hidden="true">${iconFor(b.kind)}</span><span class="ec-name"><b>${BUILDING_TYPES[b.kind].name}</b><span class="small muted">${escapeHtml(whereIs(g, b))}</span>${word}</span><span class="num ${moneyTone(net)}">${signed(net)}</span></button></li>`;
     }).join("");
     // what the company made over the last day, per product, against what its plants can make
+    // (each works' own pace, the very figure its panel shows, added up: on a young save a 24-hour total read "1 of 3"
+    // beside a works panel's "10 loads a day", two windows for one thing. Design audit 2026-11-10, F05)
     const made = new Map<Product, { made: number; can: number }>();
     for (const b of g.industry.plants()) {
       if (b.built < 1 || b.plant!.site) continue;
       for (const p of Object.keys(PLANTS[b.kind as PlantKind].outputs) as Product[]) {
-        const m = Industry.madeLately(b, p), e = made.get(p) ?? { made: 0, can: 0 };
-        // (a plant not a day old yet: what it could make in the hours it has worked)
-        e.made += m.made; e.can += Industry.perDay(b, p) * Math.min(1, m.hours / HIST_HOURS);
+        const { rate, can } = shownRate(g, b, p), e = made.get(p) ?? { made: 0, can: 0 };
+        e.made += (rate ?? 0) * 24; e.can += can * 24;
         made.set(p, e);
       }
     }
     // (a bar filled to made of can make, in the product's colour: design audit 2026-11-10, F16 and F17. The hour by
     // hour picture is the works' own Details chart)
-    const prodRows = [...made].map(([p, e]) => `<li><span class="pd-name">${productIcon(p)}${PRODUCTS[p].name}</span>${ratioBar(e.made, e.can, PRODUCTS[p].color)}<span class="num"><b>${fmtNum(Math.round(e.made))}</b><span class="muted"> of ${fmtNum(Math.round(e.can))}</span></span></li>`).join("");
+    const prodRows = [...made].map(([p, e]) => `<li><span class="pd-name">${productIcon(p)}${PRODUCTS[p].name}</span>${ratioBar(e.made, e.can, PRODUCTS[p].color)}<span class="num"><b>${e.made < 0.05 ? "0" : fmtRate(e.made)}</b><span class="muted"> of ${fmtRate(e.can)}</span></span></li>`).join("");
     const html = `<p class="win-sub">${n === 1 ? "Last hour" : `Average hour, last ${n} hours`}</p>
       <dl class="facts money-rows">${rows.filter(([, v, always]) => always || Math.abs(v) >= 0.5).map(([k, v]) => `<dt>${k}</dt><dd class="${moneyTone(v)}">${signed(v)}</dd>`).join("")}
       <dt class="tot">Balance</dt><dd class="tot ${moneyTone(total)}">${signed(total)}</dd></dl>
-      ${prodRows ? `<h3 class="sub-h">Made, last 24 hours <span class="muted">· loads, of what your works can make</span></h3><ul class="pd-list">${prodRows}</ul>` : ""}
+      ${prodRows ? `<h3 class="sub-h">Made a day, lately <span class="muted">· loads, of what your works can make</span></h3><ul class="pd-list">${prodRows}</ul>` : ""}
       ${plants ? `<h3 class="sub-h">Your works, last hour <span class="muted">· click one to go there</span></h3><ul class="ec-list">${plants}</ul>` : ""}
       ${sparkline(g.history.map((x) => x.money), "Money")}`;
     if (!this.setWin("Economy", html)) return;
@@ -1657,7 +1664,7 @@ export class Hud {
         ${cur ? `<span class="bar"><i style="width:${Math.max(2, p * 100)}%"></i></span>` : ""}
         <p class="small muted">${unlockList(M.unlocks, (g.progress.spawned[M.id] ?? []).map((id) => g.towns.byId.get(id)?.name).filter((n): n is string => !!n)).map(escapeHtml).join(" · ")}</p></li>`;
     }).join("");
-    this.setWin("Progression", `<p class="win-sub">${g.progress.done.length} of ${MILESTONES.length} reached · up to three open at once, reach one to open the next</p><ul class="ms-list">${rows}</ul>`);
+    this.setWin("Goals", `<p class="win-sub">${g.progress.done.length} of ${MILESTONES.length} reached · up to three open at once, reach one to open the next</p><ul class="ms-list">${rows}</ul>`);
   }
 
   /** The Towns window: every town, how big it is and which way it's heading. */
@@ -1721,11 +1728,11 @@ export class Hud {
       </dl>
       <p class="small muted">The map shows the Traffic flow view while this is open: red roads are jammed.</p>
       ${this.linesHtml()}`;
-    if (!this.setWin("Transportation", html)) return;
+    if (!this.setWin("Traffic", html)) return;
     this.bindLines();
   }
 
-  /** The bus lines list in the Transportation window. */
+  /** The bus lines list in the Traffic window. */
   private linesHtml(): string {
     const g = this.app.game, tr = g.transit;
     if (!g.featureUnlocked("transit")) {
@@ -1908,7 +1915,7 @@ export class Hud {
    * a status line with its mark, three key numbers, the flow in and out as chips, the level bar, then whatever else
    * there is to read tucked under Details (open or shut per kind, remembered).
    */
-  private anatomy(m: PanelModel, o: { actions?: string; danger?: string; lead?: string; body?: string; details?: string; kind: string }): string {
+  private anatomy(m: PanelModel, o: { actions?: string; danger?: string; lead?: string; body?: string; details?: string; kind: string; summaryFirst?: boolean }): string {
     const st = m.status;
     const keys = m.keys.length ? `<div class="ip-keys" style="--n:${m.keys.length}">${m.keys.map((k) => `<div class="ip-key"${k.title ? ` title="${escapeHtml(k.title)}"` : ""}><b class="${k.tone ?? ""}">${escapeHtml(k.value)}${k.unit ? `<small>${escapeHtml(k.unit)}</small>` : ""}</b><span>${escapeHtml(k.label)}</span></div>`).join("")}</div>` : "";
     const chip = (c: FlowChip) => {
@@ -1929,7 +1936,7 @@ export class Hud {
     return `<header class="ip-head"><span class="svc-tag${/^(junction|roundabout|road:)/.test(m.icon) ? " lit" : ""}">${iconFor(m.icon)}</span><span class="ip-t"><span class="ip-tn">${escapeHtml(m.title)}</span>${m.sub ? `<small class="ip-ts">${escapeHtml(m.sub)}</small>` : ""}</span>${m.badge ? `<span class="lv-badge" title="Site level">${m.badge}</span>` : ""}${o.actions ?? ""}</header>
       <p class="ip-st ${st.tone}"><i aria-hidden="true"></i><span class="ip-st-t">${escapeHtml(st.text)}</span>${st.tag ? `<span class="ip-tag">${escapeHtml(st.tag)}</span>` : ""}</p>
       ${st.fix ? `<p class="ip-fix${st.show ? " has-show" : ""}"><span>${escapeHtml(st.fix)}</span>${st.show ? `<button class="fchip" data-k="building" data-id="${st.show.id}" title="Select your ${escapeHtml(BUILDING_TYPES[st.show.kind as BuildingKind]?.name ?? "works")} and fly to it">${iconFor(st.show.kind)}<span class="fc-t">Show it</span></button>` : ""}</p>` : ""}
-      ${o.lead ?? ""}${keys}${flow}${lv}${o.body ?? ""}${details}${o.danger ? `<footer class="ip-foot">${o.danger}</footer>` : ""}`;
+      ${o.summaryFirst ? `${keys}${lv}${o.lead ?? ""}${flow}` : `${o.lead ?? ""}${keys}${flow}${lv}`}${o.body ?? ""}${details}${o.danger ? `<footer class="ip-foot">${o.danger}</footer>` : ""}`;
   }
 
   /** The small icon buttons in a panel's header: follow. */
@@ -2083,7 +2090,9 @@ export class Hud {
       <p class="small muted">Its shops buy up to ${MARKET}× what it needs to grow, so extra loads still sell.</p>
       <h3 class="sub-h">Delivered yesterday</h3>
       ${deliveries}`;
-    this.setPanel(this.anatomy(m, { kind: "town", lead, details }));
+    // (its size, needs met and the track to the next size first, under the status: below the needs they fell past the
+    // panel's foot on a big town at 900 px tall. Design audit 2026-11-10, F26)
+    this.setPanel(this.anatomy(m, { kind: "town", lead, details, summaryFirst: true }));
   }
 
   private fillBuilding(b: Building, m: PanelModel) {
@@ -2664,7 +2673,7 @@ function siteLevel(b: Building, next: Product[] = []): string {
 
 const km = (m: number) => `${(m / 1000).toFixed(1)} km`;
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
-/** Seconds without moving before a vehicle counts as standing still in the Transportation window. */
+/** Seconds without moving before a vehicle counts as standing still in the Traffic window. */
 const STANDING_S = 15;
 
 /** Where a works stands, to tell it from the others of its kind: "600 m north-east of Alder Run". */

@@ -998,7 +998,8 @@ question: nothing of yours makes it (build one), your works are at full output (
 held up (look at it). The advice goes a step up the chain when the works that feeds the town's supplier is the one
 flat out. A new works starting up beside others flat out is counted in ("Build about 3 more. Your new Food Plant
 is starting up."); one in real trouble is named before one only starting up. A town no road reaches says only that.
-A town's panel says it once: one status line, one piece of advice with Show it, then the figures per need.
+A town's panel says it once: one status line, one piece of advice with Show it, then its size, needs met and the
+track to the next size (high, so a big town's long list never pushes them out of view), then the figures per need.
 
 **The goal line.** Under the goal being worked on, one line in the same voice as the panels: WHERE (the soil for the
 first farm, with its distance and direction) until there is a works to talk about, then NOW (the works the goal
@@ -1007,9 +1008,21 @@ are quiet by design; the line counts them down, so the wait reads as a wait. Whi
 NOW line sit in a strip above the panel, so the next step never leaves the screen; a click on the strip closes the
 panel and shows the Goals card. With every goal reached there is no strip.
 
+**The missing link.** Every goal that waits on a first load (food, planks, steel, cement, fuel, household goods,
+machinery, cars) reads its chain off the recipes. When a works that makes an input stands but nothing turns it into
+the goal's goods, or the works that makes them stands but nothing makes one of its inputs, the NOW line says which
+and gives the chain: "Your Farm: no Food Plant to take its crops. Build a Food Plant: crops → Food Plant → food."
+"Your Smelter: waiting for iron ore, which nothing of yours makes. Build an Iron Mine: iron ore and coal → Smelter
+→ steel." It shows in full in the strip too (src/ui/goalNow.ts missingLink, tests/goalchain.test.ts).
+
+**The top bar** names every button under its picture, as the bottom bar does: Menu, Views, Goals, Economy, Towns,
+Traffic, Camera, Map (and North while the map is turned). Each window's title is the name on its button.
+
 **One unit for goods: loads a day.** Every place a player sees an amount of goods says it in loads a day: the
-town's needs, a works' output ("10 loads, iron ore a day, can 10"), the Economy window ("Crops 4 of 6": made in the
-last 24 hours against what the works can make, with a bar for the ratio) and the hourly chart's full-pace line.
+town's needs, a works' output ("10 loads, iron ore a day, can 10"), the Economy window ("Crops 4 of 6", with a bar
+for the ratio) and the hourly chart's full-pace line. Economy's "Made a day, lately" adds up each works' own pace,
+the very figure its panel shows, so the two never disagree (a 24-hour total read "1 of 3" on a young save beside a
+works' "10 a day").
 
 **Type scale.** Four steps (src/ui/theme.css): 12 px only for short UPPERCASE kickers (and chart axis labels), body
 14 px at 1600 wide rising to 16 px, titles 18 to 20 px, headlines 24 px. No lower-case sentence is under 14 px.
@@ -1043,7 +1056,7 @@ in equal columns, and a tab too long for a row splits into even rows (src/ui/cat
 joins it to somewhere a load can come from, until its first load lands.
 
 **Held in traffic.** A vehicle's panel says why in words ("the road past the junction is full, so it waits for
-room"), never the sim's name for it. The Transport window counts the vehicles standing still.
+room"), never the sim's name for it. The Traffic window counts the vehicles standing still.
 
 **Marks on the map.** A trouble roundel stands only on what the company can fix: every trouble of its own works,
 and a town building out of goods or cut off from the roads. A shop short of staff or customers gets none.

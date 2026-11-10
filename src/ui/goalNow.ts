@@ -7,7 +7,7 @@ import { BUILDING_TYPES } from "../config";
 import type { Building } from "../game/buildings";
 import type { Game } from "../game/city";
 import { PLANTS, PRODUCTS, type PlantKind, type Product } from "../game/industry";
-import type { Milestone } from "../game/progression";
+import { unlockedBy, type Milestone } from "../game/progression";
 import type { V2 } from "../core/math";
 import { compassWords } from "../game/settlements";
 import { makerKind } from "./bottleneck";
@@ -19,6 +19,11 @@ export const FIRST_LOAD: Record<string, { p: Product; sold: boolean }> = {
   food10: { p: "food", sold: true },
   planks10: { p: "planks", sold: false },
   steel: { p: "steel", sold: false },
+  cement: { p: "cement", sold: false },
+  fuel1: { p: "fuel", sold: false },
+  goods1: { p: "goods", sold: false },
+  machinery1: { p: "machinery", sold: false },
+  cars1: { p: "cars", sold: true },
 };
 
 export interface GoalNow {
@@ -35,14 +40,69 @@ export interface GoalNow {
   spot?: V2;
   /** the word before it when it is not about now: "Where" */
   key?: string;
+  /** a missing link of the chain: the advice (which names the chain) belongs on the line even where space is short */
+  link?: boolean;
 }
 
 const far = (m: number) => (m < 950 ? `${Math.max(50, Math.round(m / 50) * 50)} m` : `${(m / 1000).toFixed(1)} km`);
 
+const rank = (b: Building) => (b.plant!.site ? 0 : b.built < 1 ? 1 + b.built : 3);
+
 /** The works of a kind furthest along: open before going up before a bare site, the most built first. */
 function furthest(g: Game, k: PlantKind): Building | undefined {
-  const rank = (b: Building) => (b.plant!.site ? 0 : b.built < 1 ? 1 + b.built : 3);
   return g.industry.plants().filter((b) => b.kind === k).sort((a, b) => rank(b) - rank(a))[0];
+}
+
+/** The company's works furthest along that makes p, of any kind (a Sawmill's wood chips count as wood chips). */
+function maker(g: Game, p: Product): Building | undefined {
+  return g.industry.plants().filter((b) => (PLANTS[b.kind as PlantKind].outputs[p] ?? 0) > 0).sort((a, b) => rank(b) - rank(a))[0];
+}
+
+const lower = (p: Product) => PRODUCTS[p].name.toLowerCase();
+const andList = (xs: string[]) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+const aName = (k: PlantKind) => { const n = BUILDING_TYPES[k].name; return `${/^[AEIOU]/.test(n) ? "an" : "a"} ${n}`; };
+
+/** "Build a Farm", or for works not open to build yet the goal that opens them (up to three goals are open at once). */
+function buildSay(g: Game, ks: PlantKind[]): string {
+  const can = ks.filter((k) => g.placedUnlocked(k)), not = ks.filter((k) => !g.placedUnlocked(k));
+  const later = not.map((k) => { const m = unlockedBy((u) => u.buildings?.includes(k)); return `${aName(k)}${m ? ` opens with the goal “${m.name}”` : " is not open yet"}`; });
+  const say = [can.length ? `Build ${andList(can.map(aName))}` : "", ...later].filter(Boolean).join("; ");
+  return say[0].toUpperCase() + say.slice(1);
+}
+
+/**
+ * The missing link in a two-step chain, read off the recipes (owner, 2026-11-10: "name the missing link, crops ->
+ * Food Plant -> food"): a works that makes an input stands but nothing turns it into p, or the works that makes p
+ * stands but nothing of the company makes one of its inputs. The chain itself is said as the recipe goes:
+ * "iron ore and coal → Smelter → steel".
+ */
+export function missingLink(g: Game, p: Product): GoalNow | null {
+  const k = makerKind(p);
+  if (!k) return null;
+  const ins = Object.keys(PLANTS[k].inputs) as Product[];
+  if (!ins.length) return null;
+  // (no break inside the works' name or before the product, so the chain wraps whole: "crops →" / "Food Plant → food")
+  const chain = `${andList(ins.map(lower))} → ${BUILDING_TYPES[k].name.replace(/ /g, " ")} → ${lower(p)}`;
+  const mk = furthest(g, k);
+  if (!mk) {
+    // (a feeder stands with nowhere to send its goods: build the works in the middle)
+    for (const q of ins) {
+      const f = maker(g, q);
+      if (f) return { who: `Your ${BUILDING_TYPES[f.kind].name}`, text: `No ${BUILDING_TYPES[k].name} to take its ${lower(q)}`, fix: `${buildSay(g, [k])}: ${chain}.`, tone: "", works: f.id, link: true };
+    }
+    return null;
+  }
+  const missing = ins.filter((q) => !maker(g, q));
+  if (!missing.length) return null;
+  const kinds = [...new Set(missing.map((q) => makerKind(q)).filter((x): x is PlantKind => !!x))];
+  return {
+    who: `Your ${BUILDING_TYPES[k].name}`,
+    text: `Waiting for ${andList(missing.map(lower))}, which nothing of yours makes`,
+    fix: `${buildSay(g, kinds)}: ${chain}.`,
+    tone: "",
+    works: mk.id,
+    link: true,
+  };
 }
 
 /**
@@ -61,7 +121,10 @@ export function goalNow(g: Game, m: Milestone, have: number): GoalNow | null {
     const t = g.towns.byId.get(g.buildings.byId.get(h.dest)?.town ?? -1);
     if (t) return { text: `The first ${name} is on the road to ${t.name}`, tone: "good", works: h.plant };
   }
-  // the works that makes it, or failing that the works that feeds that one (a farm with no food plant yet)
+  // a link of the chain missing: say which, by the recipe
+  const gap = missingLink(g, f.p);
+  if (gap) return gap;
+  // the works that makes it, or failing that the works that feeds that one (further up the chain)
   let k = makerKind(f.p);
   for (let step = 0; k && step < 3; step++) {
     const b = furthest(g, k);
