@@ -16,7 +16,7 @@ import type { Town } from "../src/game/settlements";
 import {
   FULL_OUTPUT, START_HOURS, aboutHours, atFullOutput, batchHours, blockFix, blockWords, buildOrder, canPerDay, ceilingFix, ceilingOf, flatOut, hasMade,
   needHelp, needHelpSay, nextLoad, shortOf, shortfalls, shownRate, siteHours, siteLine, siteStatus, startUp, steadyProblem, tally, townAdvice, townWants,
-  powerFix, waitsForSite, worksFor, worstCeiling,
+  powerFix, staffSay, staffing, waitsForSite, worksFor, worstCeiling,
 } from "../src/ui/bottleneck";
 import { noBuyer, powerCeiling, signedMoney, siteModel, takenBy, townModel, worksCalm, worksStatus } from "../src/ui/inspect";
 import { goalNow, goalNowSay } from "../src/ui/goalNow";
@@ -188,6 +188,8 @@ describe("read off the game", () => {
     g = new Game(7);
     ({ t, farm, foodplant } = chain(g));
     for (const b of [farm, foodplant]) { b.built = 1; b.problem = null; if (b.plant) b.plant.site = undefined; }
+    // (the town's adults take the jobs, as the sim's hiring does a quarter hour in: a works short of them reads so)
+    g.people.matchJobs();
   }, 120000);
 
   it("a new town with nothing coming would take its whole day's food", () => {
@@ -409,6 +411,8 @@ describe("read off the game", () => {
   });
 
   it("what a works shows it makes is its one pace, never above what it can make (owner, 2026-11-10: \"0.7/h, can 0.6\")", () => {
+    // (fully staffed: a works short of workers shows no more than its staff allows, tests/powerrate.test.ts)
+    const staffed = vi.spyOn(g.people, "workersAt").mockReturnValue(farm.cap);
     const can = canPerDay(g, farm, "crops") / 24;
     // a camp or a farm ships whole batches: three hours read can hold one more than its pace allows
     farm.plant!.hist = [{ crops: can * 3 * 0.6 }, {}, { crops: can * 3 * 0.6 }];
@@ -425,9 +429,11 @@ describe("read off the game", () => {
     // nothing made yet: no figure at all, not "0.0/h"
     farm.plant!.hist = [{}, {}];
     expect(shownRate(g, farm, "crops").rate).toBeNull();
+    staffed.mockRestore();
   });
 
   it("a works short of power never reads as making all it can, nor in the good green (design audit 2026-11-10: a green 0.4/h under 'No power')", () => {
+    const staffed = vi.spyOn(g.people, "workersAt").mockReturnValue(farm.cap);
     const can = canPerDay(g, farm, "crops") / 24;
     // lumpy hours a flat-out reading would round up to what it can make
     farm.plant!.hist = [{ crops: can * 3 * 0.8 }, {}, {}, {}];
@@ -442,6 +448,7 @@ describe("read off the game", () => {
     expect(siteModel(g, farm).level?.line).toBe("held back: No power");
     farm.problem = null;
     farm.plant!.why = null;
+    staffed.mockRestore();
   });
 
   it("a works that has made nothing yet is starting up, and says when its first truck leaves (owner, 2026-11-10)", () => {
@@ -546,7 +553,8 @@ describe("read off the game", () => {
     expect(a.say).toMatch(/^Start with food\. Your Food Plant is at full output\. Build /);
     expect(a.works).toBe(foodplant.id);
     const m = townModel(g, t);
-    expect(m.status.text).toBe("Not growing, needs food and planks");
+    // (its growth line, townGrowth's: nothing has come, so it is at 0% of its worst-supplied need)
+    expect(m.status.text).toBe("Short of supplies: 0% supplied with food, holds from 60%");
     expect(m.status.fix).toBe(a.say);
     expect(m.status.show).toEqual({ id: foodplant.id, kind: "foodplant" });
     // food in full, planks still none: the advice moves on to planks, with nothing to show (no sawmill yet)
@@ -616,6 +624,9 @@ describe("read off the game", () => {
     foodplant.problem = null;
     made(foodplant, "food", 1);
     expect(startUp(g, second)).not.toBeNull();
+    // (it went up on the town's grid where homes stood, and the town is left short of adults: fully staffed here, as
+    // this is about counting the new one in; a works short of workers is the next describe)
+    const staffed = vi.spyOn(g.people, "workersAt").mockImplementation((id) => g.buildings.byId.get(id)?.cap ?? 0);
     expect(flatOut(g, foodplant, "food")).toBe(true);
     // (a town short of more than the new one will make: a town of 3,000 wants about 69 loads of food a day, more than
     // the two works make, 48; at 1,500, 46 since the demand rework of 2026-11-10, it no longer is)
@@ -636,5 +647,104 @@ describe("read off the game", () => {
     made(foodplant, "food", 0.2);
     expect(needHelp(g, t, "food")!.say.startsWith("Your Food Plant is starting up. ")).toBe(true);
     t.pop = pop;
+    staffed.mockRestore();
+  });
+});
+
+// A works short of workers (owner, 2026-11-10: a Sawmill with 6 of its 12 jobs filled read "At full output", and the
+// Goals card said "Build about 18 more"). The sim hires for the company's works first, from any home on their roads
+// however far, and a town job is given up for one (society.ts matchJobs). So a works stays short only once every
+// adult on its roads works for the company: another works there would stand empty, and the way out is more people.
+describe("a works short of workers", () => {
+  let g: Game, t: Town, farm: Building, fp: Building;
+  const made = (b: Building, p: "food" | "crops", share: number, hours = 12) => {
+    b.plant!.hist = Array.from({ length: hours }, () => ({ [p]: (canPerDay(g, b, p) / 24) * share }));
+  };
+  beforeAll(() => {
+    g = new Game(7);
+    ({ t, farm, foodplant: fp } = chain(g));
+    for (const b of [farm, fp]) { b.built = 1; b.problem = null; if (b.plant) b.plant.site = undefined; }
+  }, 120000);
+
+  it("the words: who its staff come from, and the way out the sim offers", () => {
+    expect(staffSay({ towns: [], spare: 0 })).toBe("No town is on its roads, so nobody can get to work there. Link it to a town by road.");
+    expect(staffSay({ towns: ["Alder Run"], spare: 5 })).toBe("People from Alder Run are taking its jobs.");
+    expect(staffSay({ towns: ["Alder Run"], spare: 0 })).toBe("Alder Run needs to grow to fill it, or link another town.");
+    expect(staffSay({ towns: ["Alder Run", "Elton"], spare: 0 })).toBe("Alder Run and Elton need to grow to fill it, or link another town.");
+    // (two named at most)
+    expect(staffSay({ towns: ["A", "B", "C"], spare: 0 })).toBe("A, B and 1 more need to grow to fill it, or link another town.");
+    expect(staffSay({ towns: ["A", "B", "C", "D"], spare: 0 })).toMatch(/^A, B and 2 more need to grow /);
+  });
+
+  it("just opened, before the hiring: its staff are coming from the town on its roads", () => {
+    expect(g.people.workersAt(fp.id)).toBe(0);
+    expect(staffing(g, fp)).toMatchObject({ have: 0, jobs: fp.cap, towns: [t] });
+    expect(staffing(g, fp).spare).toBeGreaterThan(0);
+    // (a works that has made something: one that has not is starting up, and says its first workers are coming)
+    made(fp, "food", 0.5);
+    fp.problem = "No workers";
+    expect(siteModel(g, fp).status).toMatchObject({ text: "No workers", tone: "bad", fix: `People from ${t.name} are taking its jobs.` });
+    fp.problem = null;
+    // (with no line of its own yet, it is taking them on: not in the red, and never at full output)
+    expect(siteModel(g, fp).status).toMatchObject({ text: "Taking on workers", tone: "", fix: `People from ${t.name} are taking its jobs.` });
+    g.people.matchJobs();
+    expect(g.people.workersAt(fp.id)).toBe(fp.cap);
+    expect(staffing(g, fp)).toMatchObject({ have: fp.cap, jobs: fp.cap });
+  });
+
+  it("two jobs short with every adult at work: never 'At full output', and the advice is the town, not more works", () => {
+    // (more jobs than Alder Run has adults left: the hiring fills all it can and stops two short)
+    const have = g.people.workersAt(fp.id), spare = staffing(g, fp).spare;
+    fp.cap = have + spare + 2;
+    g.people.matchJobs();
+    expect(g.people.workersAt(fp.id)).toBe(fp.cap - 2);
+    expect(staffing(g, fp).spare).toBe(0);
+    // flat out at the pace its staff allow: that read "At full output" with "Build another Food Plant"
+    made(fp, "food", (fp.cap - 2) / fp.cap);
+    expect(flatOut(g, fp, "food")).toBe(false);
+    expect(ceilingOf(g, fp)).toBeNull();
+    const st = siteModel(g, fp).status;
+    const pct = Math.floor(((fp.cap - 2) / fp.cap) * 100);
+    expect(st).toMatchObject({ text: "Short of workers", tone: "" });
+    expect(st.fix).toBe(`${fp.cap - 2} of ${fp.cap} jobs filled, so it works at ${pct}%. ${t.name} needs to grow to fill it, or link another town.`);
+    // the town's advice, the Goals card's list and the tip say the same, and never to build more
+    const h = needHelp(g, t, "food")!;
+    expect(h).toMatchObject({ kind: "held", works: fp.id });
+    expect(h.say).toBe(`Your Food Plant has ${fp.cap - 2} of ${fp.cap} workers. ${t.name} needs to grow to fill it, or link another town.`);
+    expect(townAdvice(g, t, true)!.say).toContain("Your Food Plant has ");
+    expect(shortfalls(g)[0].say).toContain(`Your Food Plant has ${fp.cap - 2} of ${fp.cap} workers.`);
+    for (const s of [st.fix!, h.say, shortfalls(g)[0].say, tipFor(g)?.html ?? ""]) expect(s).not.toMatch(/full output|Build (another|about)/);
+    // a town on other roads is not told about it: this works' staffing says nothing of that town's (review, 2026-11-10)
+    const other = { ...t, id: t.id + 999, name: "Elsewhere" } as Town;
+    const ho = needHelp(g, other, "food");
+    expect(ho?.say ?? "").not.toContain(`has ${fp.cap - 2} of ${fp.cap} workers`);
+    // fully staffed again, it is at full output as before
+    fp.cap -= 2;
+    expect(siteModel(g, fp).status.text).toBe("At full output");
+  });
+
+  it("a chain held back further up: the food plant waits for crops, and the farm short of workers is named", () => {
+    farm.cap = g.people.workersAt(farm.id) + 2;
+    expect(staffing(g, farm).spare).toBe(0);
+    made(farm, "crops", 0.8);
+    made(fp, "food", 0.5);
+    fp.problem = "Waiting for crops";
+    const yard = fp.plant!.stock.crops;
+    fp.plant!.stock.crops = 0;
+    const h = needHelp(g, t, "food")!;
+    expect(h).toMatchObject({ kind: "held", works: farm.id });
+    expect(h.say).toMatch(new RegExp(`^Your Food Plant is short of crops\. Your Farm has ${farm.cap - 2} of ${farm.cap} workers\. ${t.name} needs to grow to fill it\.`));
+    // the food plant's own panel names it too
+    expect(siteModel(g, fp).status.fix).toContain(`It is short of workers: ${farm.cap - 2} of ${farm.cap} jobs filled.`);
+    fp.problem = null;
+    fp.plant!.stock.crops = yard;
+  });
+
+  it("the sim's own 'Not enough workers' says the same, not to let a town grow nearer", () => {
+    farm.problem = "Not enough workers";
+    const fix = siteModel(g, farm).status.fix!;
+    expect(fix).toContain(`${t.name} needs to grow to fill it, or link another town.`);
+    expect(fix).not.toMatch(/nearer/);
+    farm.problem = null;
   });
 });

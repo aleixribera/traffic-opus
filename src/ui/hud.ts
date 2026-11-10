@@ -2078,7 +2078,7 @@ export class Hud {
       <dl class="facts">
         <dt>People</dt><dd>${fmtNum(t.pop)}</dd>
         <dt>Households</dt><dd>${fmtNum(t.households)} <span class="muted">of ${fmtNum(t.homes)} homes</span></dd>
-        <dt>Growth</dt><dd class="${growthOf(t).tone}">${growthOf(t).word}</dd>
+        <dt>Growth</dt><dd class="${growthOf(t).tone}">${escapeHtml(growthOf(t).line)}</dd>
         <dt>Shops and offices</dt><dd>${t.shops} <span class="muted">· ${fmtNum(jobs)} jobs</span></dd>
         <dt>Hall</dt><dd>${hallLine}</dd>
         ${rebuilding ? `<dt>Rebuilding</dt><dd>${plural(rebuilding, "site")}</dd>` : ""}
@@ -2765,7 +2765,7 @@ function siteText(o: Partial<Record<Product, number>>): string {
   return (Object.entries(o) as [Product, number][]).map(([p, n]) => `${plural(n, "load")} of ${PRODUCTS[p].name.toLowerCase()}`).join(" and ");
 }
 
-/** Which way a town is heading, in a word (the Towns list): no numbers, as in its panel (needs.ts growthOf). */
+/** Which way a town is heading, in the word that leads its panel's growth line (the Towns list: needs.ts growthOf). */
 function trendOf(t: Town): { short: string; cls: string } {
   const gr = growthOf(t);
   return { short: gr.word, cls: gr.tone };

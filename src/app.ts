@@ -48,7 +48,7 @@ const FINE_TURN = Math.PI / 180;
 import { ZONES } from "./game/zones";
 import { MIN_DEPOSIT, PLANTS, PRODUCTS, UNPOWERED, isPlantKind, type Product } from "./game/industry";
 import { CIVICS } from "./game/civics";
-import { labelNeeds, labelSummary, type LabelNeeds } from "./ui/needs";
+import { growthOf, labelNeeds, labelSummary, type LabelNeeds } from "./ui/needs";
 import { steadyProblem, tally } from "./ui/bottleneck";
 import { dearShare } from "./ui/cost";
 import { productIcon } from "./ui/icons";
@@ -2360,13 +2360,13 @@ export class App {
     const sig = (ln: LabelNeeds) => (ln.kind === "calm" ? "" : ln.kind === "noroad" ? `x${ln.joined ? "j" : ""}${ln.needs.join(",")}` : ln.needs.map((n) => `${n.p}.${n.state}`).join(","));
     // (a town with an open order wears a tag saying what for: owner, 2026-11-08)
     const ord = (id: number) => g.orders.openIn(id).map((o) => CIVICS[o.kind].fair ? CIVICS[o.kind].fair!.event : CIVICS[o.kind].name).join(" · ");
-    const key = hide ? "" : info.map(({ t, ln }) => `${t.id}:${t.name}:${g.towns.sizeName(t)}:${t.pop}:${sig(ln)}:${ord(t.id)}`).join("|");
+    const key = hide ? "" : info.map(({ t, ln }) => `${t.id}:${t.name}:${g.towns.sizeName(t)}:${t.pop}:${sig(ln)}:${ord(t.id)}:${growthOf(t).line}`).join("|");
     if (key === this.labelKey) return;
     this.labelKey = key;
     this.labels.set(hide ? [] : info.map(({ t, ln }) => {
       const size = g.towns.sizeName(t);
       const pop = t.pop.toLocaleString("en-US");
-      const words = (ps: Product[]) => ps.map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ");
+      const words = (ps: Product[]) => ps.map((p) => PRODUCTS[p].name.toLowerCase()).join(", ").replace(/, ([^,]*)$/, " and $1");
       let say = "";
       if (ln.kind === "noroad") say = ln.joined ? ", joined by road, waiting for its first load" : ", no road reaches it yet";
       else if (ln.kind === "needs") {
@@ -2377,7 +2377,8 @@ export class App {
       const hall = g.towns.hallOf(t);
       return {
         p: t.c, h: hall ? this.buildings3d.topOf(hall) + 4 : 0, name: t.name, sub: `${size} · ${pop}`, minHalfH: 160, rank: t.pop,
-        title: `${t.name}, ${size} of ${pop} people${say}${ord(t.id) ? `, with an order open: ${ord(t.id)}` : ""}. Open the town`,
+        // (its growth in its panel's own line: settlements.ts townGrowth)
+        title: `${t.name}, ${size} of ${pop} people. ${growthOf(t).line}${say ? `. ${say[2].toUpperCase()}${say.slice(3)}` : ""}${ord(t.id) ? `. An order is open: ${ord(t.id)}` : ""}. Open the town`,
         order: ord(t.id) || undefined,
         icons: ln.kind === "calm" ? undefined
           : ln.kind === "noroad" ? ln.needs.map((p) => ({ svg: productIcon(p), cls: "noroad" }))

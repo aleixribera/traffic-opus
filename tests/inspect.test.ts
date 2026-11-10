@@ -20,6 +20,7 @@ import { dkDir, dkSeg } from "../src/sim/router";
 import { junctionAt, pickAt, pickRadius, poseOf, vehicleAt } from "../src/ui/pick";
 import { placeAlong, road } from "./helpers";
 import { shownRate } from "../src/ui/bottleneck";
+import { townGrowth } from "../src/game/settlements";
 
 const compass = () => "N";
 
@@ -109,7 +110,8 @@ describe("The inspector's panels", () => {
     // (each need is read out in the panel's "What it needs" rows: tests/needs.test.ts)
     expect(m.keys[1].label).toBe("needs met");
     expect(m.keys[1].value).toMatch(/^\d+$/);
-    expect(m.status.text).not.toMatch(/\d/);
+    // (how it grows: the sim's own line, settlements.ts townGrowth)
+    expect(m.status.text.split(":")[0]).toBe(townGrowth(t).line.split(":")[0]);
     expect(m.related.self).toContain(t.hall);
   });
 

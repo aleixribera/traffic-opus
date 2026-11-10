@@ -21,7 +21,7 @@ import { TRUCK_CLASSES } from "../game/trucks";
 import { served, type Town } from "../game/settlements";
 import { growthOf, townNeeds } from "./needs";
 import { joinedUp } from "./tips";
-import { aboutHours, afterOpening, blockFix, blockWords, ceilingOf, makersFlatOut, needHelpSay, nextLoad, powerFix, shortOf, shownRate, siteStatus, startUp, townAdvice, waitsForSite } from "./bottleneck";
+import { aboutHours, afterOpening, blockFix, blockWords, ceilingOf, jobsFilled, makersFlatOut, needHelpSay, nextLoad, powerFix, shortOf, shownRate, siteStatus, staffPace, staffSay, staffing, startUp, townAdvice, understaffed, waitsForSite } from "./bottleneck";
 import { buildTime } from "../game/construction";
 import type { Lane } from "../roads/network";
 import { dkDir, dkSeg } from "../sim/router";
@@ -197,7 +197,7 @@ const powerCause = (p: string): string => {
 const FIXES: [RegExp, string][] = [
   [/^No road to the gate/, "Draw a road to its gate (the marker on the map)"],
   [/^No road access/, "Connect it to a road"],
-  [/^No workers|^Not enough workers/, "Its staff commute from your towns: link it to one by road, or let a town grow nearer"],
+  [/^No workers|^Not enough workers/, "Its staff come from the towns on its roads: link it to one by road, or let them grow"],
   [/^No power|^Short of power/, "Build a power plant within reach, and keep its coal coming"],
   [/^Idle: /, "Build plants within its reach"],
   [/^Out of food$/, "Your food plant's trucks stock the shops"],
@@ -289,9 +289,21 @@ function waitingFor(g: Game, b: Building): PanelModel["status"] | null {
   // (a power plant whose coal mine waits on this very plant's power: the two hold each other up, so name the way out)
   const loop = slow && D.makes && next.from && g.utilities.reaches(b, next.from);
   const chips = loop && D.alt?.coal === "chips" ? nextLoad(g, b, "chips") : null;
-  const held = !pr || next.building ? "" : loop ? ` It works at ${slow![2]}: it waits for this plant's own power. ${chips?.from ? `${chips.say}, and that gets both going.` : "Wood chips from a Sawmill on its roads would get both going."}`
+  // (its maker short of workers with nobody left to hire: no problem line of its own, but that is what holds it)
+  const lean = !pr && next.from && !next.building && understaffed(g, next.from) ? staffing(g, next.from) : null;
+  const held = lean ? ` It is short of workers: ${jobsFilled(lean)}.` : !pr || next.building ? "" : loop ? ` It works at ${slow![2]}: it waits for this plant's own power. ${chips?.from ? `${chips.say}, and that gets both going.` : "Wood chips from a Sawmill on its roads would get both going."}`
     : slow ? ` It works at ${slow[2]} without full power, so its loads come slowly.` : ` It is held up: ${pr.split(": ")[0].toLowerCase()}.`;
   return { text, tone: "bad", fix: `${next.say}.${held}` };
+}
+
+/**
+ * A works short of workers: how many of its jobs are filled, what that costs it, and where more would come from
+ * (bottleneck.ts staffing). The sim's own line keeps its red; one only slowed by it is not in the red.
+ */
+function staffStatus(g: Game, b: Building, text: string, tone: Tone): PanelModel["status"] {
+  const s = staffing(g, b);
+  const say = staffSay({ towns: s.towns.map((t) => t.name), spare: s.spare });
+  return { text, tone, fix: s.have > 0 ? `${jobsFilled(s)}, so it works at ${Math.floor(staffPace(g, b) * 100)}%. ${say}` : say };
 }
 
 /**
@@ -328,13 +340,16 @@ export function worksStatus(g: Game, b: Building): PanelModel["status"] {
       const pf = powerFix(g, b);
       status = pf?.back ? { text: "Power back on", tone: "", fix: pf.fix, show: ref(pf.show) }
         : pf ? { text: splitProblem(b.problem).text, tone: "bad", fix: `${powerCause(b.problem)}${pf.fix}`, show: ref(pf.show) }
+        : /^(No workers|Not enough workers)/.test(b.problem) ? staffStatus(g, b, splitProblem(b.problem).text, "bad")
         : waitingFor(g, b) ?? noBuyer(g, b) ?? { ...splitProblem(b.problem), tone: "bad" };
     }
     else {
       // (at the top of what it can make while somebody would take more: the one state "Working normally" hid)
-      const c = D.logistics ? null : powerCeiling(g, b) ?? ceilingOf(g, b);
+      // (short of workers it is never at full output: owner, 2026-11-10, a Sawmill with half its jobs filled said so)
+      const thin = !D.logistics && staffPace(g, b) < 1;
+      const c = D.logistics || thin ? null : powerCeiling(g, b) ?? ceilingOf(g, b);
       status = c ? { text: "At full output", tone: "", fix: c.fix }
-        : (D.logistics ? null : waitingFor(g, b)) ?? { text: D.logistics === "depot" ? "Filling your trucks" : D.logistics === "warehouse" ? "Storing and shipping" : "Working normally", tone: "good" };
+        : (D.logistics ? null : waitingFor(g, b)) ?? (thin ? staffStatus(g, b, staffing(g, b).spare > 0 ? "Taking on workers" : "Short of workers", "") : null) ?? { text: D.logistics === "depot" ? "Filling your trucks" : D.logistics === "warehouse" ? "Storing and shipping" : "Working normally", tone: "good" };
     }
   }
   if (SEASONAL[b.kind] && !P.site && b.built >= 1) {
@@ -581,9 +596,9 @@ export function townStatus(t: Town, joined = false): PanelModel["status"] {
     ? { text: "Joined by road", tone: "", fix: "It waits for its first load of food. Your food plants send to it as soon as they have some to spare" }
     : { text: "No road yet", tone: "", fix: "Lay a road out to it and send it food: a new market, and a longer drive for your trucks" };
   if (t.pop < 60) return { text: "Settling in", tone: "", fix: "Its first homes go up on their own" };
-  // (in words, no numbers: the figure is under Details; what to bring is in the "What it needs" rows)
+  // (the sim's own band and line, the need that holds it named: settlements.ts townGrowth via needs.ts growthOf)
   const gr = growthOf(t);
-  return { text: gr.why ? `${gr.word}, ${gr.why}` : gr.word, tone: gr.tone };
+  return { text: gr.line, tone: gr.tone };
 }
 
 export function townModel(g: Game, t: Town, led?: TradeLedger): PanelModel {
