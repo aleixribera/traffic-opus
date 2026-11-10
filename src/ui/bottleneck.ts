@@ -149,14 +149,18 @@ export function canPerDay(g: Game, b: Building, p: Product): number {
  */
 export function shownRate(g: Game, b: Building, p: Product): { rate: number | null; can: number } {
   const can = canPerDay(g, b, p) / 24;
+  // (short of power the sim works it at powerPace of its pace (industry.ts), so it shows no more than that: the late
+  // save's Iron Mine read "No power, working at 40%" over "10 loads a day, can 10", one early load over one hour. `can`
+  // stays the full-power figure, so the gap shows)
+  const top = can * (PLANTS[b.kind as PlantKind]?.power ? powerPace(g.utilities.supplyOf(b)) : 1);
   const x = paceOf(b, p);
   // (short of power it is not making all it can, whatever a lumpy few hours say)
-  if (x) return { rate: flatOut(g, b, p) && !/^(No power|Short of power)/.test(b.problem ?? "") ? can : Math.min(can, x.made / x.hours), can };
+  if (x) return { rate: flatOut(g, b, p) && top >= can && !/^(No power|Short of power)/.test(b.problem ?? "") ? can : Math.min(top, x.made / x.hours), can };
   // (no pace yet: over the hours since its first load, fewer than PACE_HOURS of them)
   const by = Industry.madeLately(b, p).byHour, first = by.findIndex((v) => v > 0);
   if (first < 0) return { rate: null, can };
   const w = by.slice(first);
-  return { rate: Math.min(can, w.reduce((a, v) => a + v, 0) / w.length), can };
+  return { rate: Math.min(top, w.reduce((a, v) => a + v, 0) / w.length), can };
 }
 
 /** The main product of a works (not its side product). */
