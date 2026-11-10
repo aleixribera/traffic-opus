@@ -611,22 +611,20 @@ export class Game {
   /**
    * What a works whose gate just got a road is told: its trucks can start (its roads reach somewhere that takes what
    * it makes), connected but with nobody on its roads to sell to yet (an Iron Mine before any steel works), or that
-   * the road leads nowhere yet. `turned`: its gate was turned to the road. Not yet able to start, it is watched and
-   * told again when it can.
+   * the road leads nowhere yet (its gate turned to the road or not: the map shows the gate). Not yet able to start,
+   * it is watched and told again when it can.
    */
-  private sayJoined(b: Building, turned = false) {
+  private sayJoined(b: Building) {
     const name = BUILDING_TYPES[b.kind].name;
     if (!b.plant || this.roadsLeadOut(b, true)) {
       this.dangling.delete(b.id);
-      this.toast(`${name} connected${turned ? ", its gate turned to the road" : ""}: its trucks can start`);
+      this.toast(`${name} connected: its trucks can start`);
     } else if (this.roadsLeadOut(b)) {
       this.dangling.set(b.id, "joined");
-      this.toast(`${name} connected${turned ? ", its gate turned to the road" : ""}. Nothing on your roads takes its ${this.makesSay(b)} yet`);
+      this.toast(`${name} connected. Nothing on your roads takes its ${this.makesSay(b)} yet`);
     } else {
       this.dangling.set(b.id, "loose");
-      this.toast(turned
-        ? `${name}'s gate turned to the road. Join that road to your others and its trucks can start`
-        : `${name} has a road at its gate. Join it to your other roads and its trucks can start`);
+      this.toast(`${name} has a road at its gate. Join it to your other roads`);
     }
   }
 
@@ -676,7 +674,7 @@ export class Game {
         this.buildings.turn(b, ga);
         for (const c of this.lotCells(b)) c.lot ||= b.id;
         this.candVersion = -1;
-        this.sayJoined(b, true);
+        this.sayJoined(b);
         any = true;
         break;
       }
@@ -832,7 +830,7 @@ export class Game {
     if (plan.kind === "roundabout") {
       const cut = this.ringStrands(plan);
       if (cut) {
-        this.toast(`Not built: a roundabout there would leave the ${BUILDING_TYPES[cut.kind].name} with no road to its gate. Try it a little further from the gate`);
+        this.toast(`Not built: a roundabout there would leave the ${BUILDING_TYPES[cut.kind].name}'s gate with no road`);
         return false;
       }
     }

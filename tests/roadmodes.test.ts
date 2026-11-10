@@ -256,7 +256,7 @@ describe("parallel pairs (review fixes)", () => {
       const plan = planRoad(net, w, { start: a, end: free(v2(200, endY)), mode: "straight", type: "one2", startTangent: p1.endTangent, parallel: { offset: parallelSpacing("one2") } });
       if (endY < 0) {
         // left turn: the twin (on the left) would start on the old road
-        expect(plan.errors.map((e) => e.msg).join()).toContain("would start on top of this road");
+        expect(plan.errors.map((e) => e.msg).join()).toContain("would start on this road");
       } else {
         commit(net, plan);
         for (const n of net.nodes.keys()) expect(net.segsAt(n).length).toBeLessThanOrEqual(2);

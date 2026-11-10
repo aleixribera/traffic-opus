@@ -241,18 +241,16 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .asset.locked .as-flow { opacity: 0.6; }
 .asset.locked b { color: var(--cream-2); }
 .asset.locked .as-sub { color: var(--cream-2); }
-/* the line: the card under the pointer in words, else the one in hand. One row, always the same height */
+/* the line: the card under the pointer in a sentence, else the one in hand; empty with neither. One row, always the same height */
 .as-read { display: flex; align-items: baseline; gap: 0; margin: 0 14px; padding: 7px 0 6px; height: 34px; border-top: 1px solid var(--rule); white-space: nowrap; overflow: hidden; color: var(--cream-2); font-size: var(--t-sm); line-height: 20px; }
 .assets.folded .as-read { border-top: 0; margin-top: 2px; }
 .as-read b { color: var(--cream); font-weight: 700; font-size: var(--t-md); margin-right: 12px; flex: none; }
 .as-read span { flex: none; }
 .as-read span + span::before { content: ""; display: inline-block; width: 1px; height: 11px; background: var(--rule-2); margin: 0 10px; vertical-align: -1px; }
 .as-read .num { color: var(--cream); font-variant-numeric: tabular-nums; }
-.as-read .as-lock { color: var(--cream-2); flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.as-read .as-lock { color: var(--cream-2); flex: none; }
 .as-read .as-lock svg { width: 10px; height: 12px; vertical-align: -1px; margin-right: 4px; }
-.as-read .as-hand { margin-left: auto; padding-left: 12px; color: var(--ochre-hi); font: 600 var(--t-xs)/20px var(--f-text); text-transform: uppercase; letter-spacing: 0.1em; }
-.as-read .as-hand::before { display: none; }
-.as-read .as-hint { color: var(--cream-2); }
+.as-read .as-say { color: var(--cream); flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 /* ------------------------------------------------------------ tool options (left, above the bar) */
 .toolopts { position: absolute; left: 10px; bottom: calc(var(--bar-h) + 12px); width: 248px; padding: 0 0 16px; overflow: hidden; }
@@ -261,7 +259,8 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .to-sec { display: flex; flex-direction: column; gap: 5px; padding: 8px 14px 0; }
 .to-sec > .seg + .stepper { margin-top: 2px; }
 .to-label { color: var(--ochre-hi); font-size: var(--t-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; }
-.to-text { margin: 10px 14px 0; color: var(--cream-2); line-height: 1.45; }
+.to-keys { margin: 0; display: flex; align-items: center; gap: 4px; color: var(--cream); line-height: 1.4; }
+.to-keys span { margin-left: 4px; color: var(--cream-2); }
 /* the notes about the click under the pointer that the pointer's one line leaves out: length, climb, bridge, angle */
 .to-read { list-style: none; margin: 12px 14px 0; padding: 7px 0 0; border-top: 1px solid var(--rule); display: flex; flex-direction: column; gap: 3px; color: var(--cream-2); font-size: var(--t-sm); line-height: 1.35; font-variant-numeric: tabular-nums lining-nums; }
 .to-read[hidden] { display: none; }

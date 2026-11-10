@@ -29,7 +29,7 @@ import { comingNeeds, growthOf, townNeeds, type NeedView } from "./needs";
 import type { Lane } from "../roads/network";
 import { CHANGELOG } from "../changelog";
 import { PLACED, PLACED_TABS, type PlacedKind } from "../game/placed";
-import { GATE_LINK_REACH, SAVE_V, type Game } from "../game/city";
+import { SAVE_V, type Game } from "../game/city";
 import { BUS_UPKEEP, STOP_COST } from "../game/transit";
 import { WirelessControl, soundHtml, soundSummary, wireSound } from "./soundPanel";
 import { heraldSvg } from "./herald";
@@ -51,6 +51,7 @@ import { SeasonCard } from "./seasonCard";
 import { escLayer, type EscState } from "./escape";
 import { pointerLine, type PointerChip } from "./pointer";
 import { catalogLayout } from "./catalog";
+import { lockShort } from "./lockText";
 
 /** Something a tool says about a click: the pointer shows the one that matters, the tool options the rest (pointer.ts). */
 export interface Chip extends PointerChip {
@@ -86,7 +87,7 @@ const CATS: Record<CatId, { label: string; tabs: Tab[] }> = {
       { id: "medium", label: "Medium roads", assets: [{ kind: "road", id: "one2" }, { kind: "road", id: "avenue" }, { kind: "road", id: "avenueM" }] },
       { id: "large", label: "Large roads", assets: [{ kind: "road", id: "boulevard" }, { kind: "road", id: "boulevardM" }] },
       { id: "highways", label: "Highways", assets: [{ kind: "road", id: "hw1" }, { kind: "road", id: "hw2" }, { kind: "road", id: "one3" }, { kind: "road", id: "one4" }] },
-      { id: "junctions", label: "Intersections", assets: [1, 2, 3, 4].map((s) => ({ kind: "roundabout", size: s as RoundaboutSize }) as Asset).concat([{ kind: "lane" }, { kind: "junction" }]) },
+      { id: "junctions", label: "Junctions", assets: [1, 2, 3, 4].map((s) => ({ kind: "roundabout", size: s as RoundaboutSize }) as Asset).concat([{ kind: "lane" }, { kind: "junction" }]) },
     ],
   },
   industry: {
@@ -237,6 +238,8 @@ export class Hud {
   private chipBox = h("div", "chips");
   /** the notes a tool has about the click under the pointer, beyond the one line shown there */
   private readEl = h("ul", "to-read");
+  /** the tool options card has no options for the tool in hand, only the notes about the click (shown while there are some) */
+  private toolNotesOnly = false;
   private readKey = "";
   /** "Following · Heavy truck · Coal to the Smelter · Stop", above the bar while the camera follows a vehicle */
   private followEl = h("div", "card follow-chip");
@@ -506,24 +509,23 @@ export class Hud {
 
   /**
    * One catalog card: its icon and name, the row under the name that says what it is in pictures (`flow`: what a
-   * works takes and makes, a road's lanes and speed), its price, and the one line the catalog reads out for it
-   * (`read`: the same in words, with what it costs to build and to run).
+   * works takes and makes, a road's lanes and speed), its price (`sub`), what it is in one sentence (`desc`), and the
+   * facts the card has no room for (`more`: what its building site needs, the power it draws or makes).
    */
-  private assetInfo(a: Asset): { key: string; icon: string; name: string; flow: string; sub: string; read: string; title: string; desc: string; locked?: Milestone } {
+  private assetInfo(a: Asset): { key: string; icon: string; name: string; flow: string; sub: string; desc: string; more: string[]; title: string; locked?: Milestone } {
     const g = this.app.game;
     if (a.kind === "road") {
       const T = ROAD_TYPES[a.id];
       const locked = g.roadsUnlocked.has(a.id) ? undefined : unlockedBy((u) => u.roads?.includes(a.id));
       const n = (k: number) => ["no", "one", "two", "three", "four"][k] ?? String(k);
-      const lanes = T.bwd ? `${cap(n(T.fwd))} lane${T.fwd > 1 ? "s" : ""} each way` : `${cap(n(T.fwd))} lane${T.fwd > 1 ? "s" : ""}, one way`;
+      const lanes = T.bwd ? `${n(T.fwd)} lane${T.fwd > 1 ? "s" : ""} each way` : `${n(T.fwd)} lane${T.fwd > 1 ? "s" : ""}, one way`;
       const kmh = Math.round(T.speed * 3.6);
       const cost = `${formatMoney(T.costPerM * 10)}/10 m`;
       return {
         key: "road:" + a.id, icon: roadIcon(a.id), name: T.name, sub: cost, locked,
         flow: `<span class="fl-spec">${laneArrows(T.fwd, T.bwd)}${kmh} km/h</span>`,
-        read: `<span>${lanes}, ${kmh} km/h</span><span>${escapeHtml(ROAD_USE[a.id])}</span><span class="num">${cost}</span>`,
-        title: `${T.name} · ${lanes.toLowerCase()} · ${kmh} km/h. ${T.hint}`,
-        desc: T.hint,
+        title: `${T.name}: ${lanes}, ${kmh} km/h. ${T.hint}`,
+        desc: T.hint, more: [],
       };
     }
     if (a.kind === "roundabout") {
@@ -533,9 +535,8 @@ export class Hud {
       return {
         key: "rb:" + a.size, icon: rbIcon(a.size), name: `${R.name} roundabout`, sub: `${R.r * 2} m across`, locked,
         flow: `<span class="fl-spec">${ring}</span>`,
-        read: `<span>${R.r * 2} m across, ${ring}</span><span>Drop it on a junction or a road</span>`,
         title: `${R.name} roundabout: ${R.r * 2} m across, ${ring}. Drop it on a junction or a road.`,
-        desc: "Drop it on a junction or a road.",
+        desc: "Drop it on a junction or a road.", more: [],
       };
     }
     if (a.kind === "placed") {
@@ -544,32 +545,35 @@ export class Hud {
       const locked = g.placedUnlocked(a.id) ? undefined : unlockedBy((u) => u.buildings?.includes(a.id));
       const site = D.site ? ` Starts as a building site: it needs ${siteText(D.site)} trucked to it.` : "";
       const power = D.power ? ` Draws ${D.power} MW: without power it works at ${Math.round(UNPOWERED * 100)}%.` : D.makes ? ` Makes ${D.makes} MW for the buildings on its roads within ${D.reach! / 1000} km that draw power.` : "";
-      // (the hourly figure is upkeep: "$8,000 · $12/h" did not say whether it was earned or spent)
-      const price = `${formatMoney(S.cost)} · upkeep ${formatMoney(S.upkeep)}/h`;
+      // (the card says the price alone: with the upkeep beside it, it wrapped onto two lines on a narrow card; the
+      // upkeep is named on the line, since "$8,000 · $12/h" did not say whether it was earned or spent)
+      const price = formatMoney(S.cost);
+      const more: string[] = [`Upkeep ${formatMoney(S.upkeep)}/h`];
+      if (D.site) more.push(`Site needs ${siteShort(D.site)}`);
+      if (D.power) more.push(`Draws ${D.power} MW`);
+      else if (D.makes) more.push(`Makes ${D.makes} MW`);
       return {
         key: "placed:" + a.id, icon: placedIcon(a.id), name: T.name, sub: price, locked,
         flow: flowIcons(a.id),
-        read: `<span>${escapeHtml(chainText(a.id))}</span>${D.site ? `<span>Site needs ${escapeHtml(siteShort(D.site))}</span>` : ""}${D.power ? `<span>Draws ${D.power} MW</span>` : D.makes ? `<span>Makes ${D.makes} MW</span>` : ""}<span class="num">${price}</span>`,
-        title: `${T.name}: ${chainText(a.id)}. ${T.blurb}${site}${power} Costs ${formatMoney(S.cost)}; upkeep ${formatMoney(S.upkeep)} an hour plus its ${T.jobs} workers' wages.`,
-        desc: T.blurb,
+        title: `${T.name}: ${chainText(a.id)}. ${T.blurb}${site}${power} Costs ${formatMoney(S.cost)}, upkeep ${formatMoney(S.upkeep)} an hour plus its ${T.jobs} workers' wages.`,
+        desc: T.blurb, more,
       };
     }
     if (a.kind === "lane") {
       return {
         key: "lane", icon: ICON.lane, name: "Add lane", sub: "Free", flow: `<span class="fl-spec">Turn and slip lanes</span>`,
-        read: `<span>Click a road just before a junction for a turn lane</span><span>Shift or right click removes one</span>`,
-        title: "Add lane (L): click a road just before a junction for a turn lane, nearer the middle for left turns, nearer the kerb for right turns. On a motorway, click before an exit or after an entry to lengthen its slip lane. Shift or right click removes a turn lane.",
-        desc: "Click a road just before a junction for a turn lane. Shift or right click removes one.",
+        title: "Add lane (L): click a road just before a junction for a turn lane, nearer the middle for left turns, nearer the kerb for right turns. On a highway, click before an exit or after an entry to lengthen its slip lane. Shift or right click removes a turn lane.",
+        desc: "Click a road just before a junction for a turn lane.", more: ["Shift or right click removes one"],
       };
     }
     if (a.kind === "busstop" || a.kind === "busline") {
       const locked = g.featureUnlocked("transit") ? undefined : unlockedBy((u) => u.features?.includes("transit"));
       return a.kind === "busstop"
-        ? { key: "busstop", icon: ICON.busStop, name: "Bus stop", sub: formatMoney(STOP_COST), flow: `<span class="fl-spec">On a kerb</span>`, read: `<span>Put it on the kerb of a street, on the side the buses will stop</span><span class="num">${formatMoney(STOP_COST)}</span>`, title: `Bus stop: put it on the kerb of a street, on the side the buses will stop. ${formatMoney(STOP_COST)}.`, desc: "Put it on the kerb of a street, on the side the buses will stop.", locked }
-        : { key: "busline", icon: ICON.busLine, name: "Bus line", sub: `${formatMoney(BUS_UPKEEP)}/h a bus`, flow: `<span class="fl-spec">Stop to stop</span>`, read: `<span>Click stops in the order the buses visit them, then the first again</span><span class="num">${formatMoney(BUS_UPKEEP)}/h a bus</span>`, title: `Bus line: click stops in the order the buses visit them, then the first again to close the loop. Each bus costs ${formatMoney(BUS_UPKEEP)} an hour; riders pay a fare.`, desc: "Click stops in the order the buses visit them, then the first again to close the loop. Riders pay a fare.", locked };
+        ? { key: "busstop", icon: ICON.busStop, name: "Bus stop", sub: formatMoney(STOP_COST), flow: `<span class="fl-spec">On a kerb</span>`, title: `Bus stop: put it on the kerb of a street, on the side the buses will stop. ${formatMoney(STOP_COST)}.`, desc: "Goes on a street's kerb, on the side the buses stop.", more: [], locked }
+        : { key: "busline", icon: ICON.busLine, name: "Bus line", sub: `${formatMoney(BUS_UPKEEP)}/h a bus`, flow: `<span class="fl-spec">Stop to stop</span>`, title: `Bus line: click stops in the order the buses visit them, then the first again to close the loop. Each bus costs ${formatMoney(BUS_UPKEEP)} an hour, and riders pay a fare.`, desc: "Click the stops in order, then the first again to close the loop.", more: [], locked };
     }
     const locked = g.featureUnlocked("signals") ? undefined : unlockedBy((u) => u.features?.includes("signals"));
-    return { key: "junction", icon: ICON.junction, name: "Traffic lights", sub: formatMoney(SIGNAL_COST), flow: `<span class="fl-spec">At a junction</span>`, read: `<span>Click a junction to add lights or edit their phases</span><span class="num">${formatMoney(SIGNAL_COST)}</span>`, title: "Traffic lights: click a junction to add lights or edit their phases", desc: "Click a junction to add lights or edit their phases.", locked };
+    return { key: "junction", icon: ICON.junction, name: "Traffic lights", sub: formatMoney(SIGNAL_COST), flow: `<span class="fl-spec">At a junction</span>`, title: "Traffic lights: click a junction to add lights or edit their phases", desc: "Click a junction to add lights or edit their phases.", more: [], locked };
   }
 
   /**
@@ -603,7 +607,12 @@ export class Hud {
     el.innerHTML = "";
     el.classList.toggle("folded", folded);
     this.hoverKey = "";
-    // ---- the line: what the card under the pointer is, else the one in hand, else what to do
+    // ---- the line: the card under the pointer, else the one in hand, in one sentence and what the card can't show
+    // (nothing in hand and nothing under the pointer: the line stays empty. It used to say how to use the catalog)
+    const lay = catalogLayout(infos.length);
+    // (wide plates say what each is on the card: the line only adds what they leave out, or stands down)
+    const showDesc = folded || !lay.wide;
+    const hasLine = showDesc || infos.some((x) => x.more.length || x.locked);
     const read = h("p", "as-read");
     const held = inHand ? this.assetInfo(inHand) : null;
     const say = () => {
@@ -611,13 +620,17 @@ export class Hud {
       if (!i) {
         // (a category still locked says what opens it, on the line: the Transport button used to do nothing at all)
         const lk = infos.every((x) => x.locked) ? infos[0]?.locked : undefined;
-        read.innerHTML = lk ? `<span class="as-lock">${ICON.lock} ${C.label === "Transport" ? "Buses unlock" : "Unlocks"} with the goal ${escapeHtml(lk.name)}: ${escapeHtml(lk.goal)}</span>`
-          : `<span class="as-hint">Nothing in hand. ${c === "roads" ? "Pick a road, then click the map to draw it." : c === "industry" ? "Pick a works, then click the map to build it." : "Pick a stop or a line."}</span>`;
+        read.innerHTML = lk ? `<span class="as-lock">${ICON.lock} ${C.label === "Transport" ? "Buses unlock" : "Unlocks"} with the goal ${escapeHtml(lk.name)}</span>` : "";
         return;
       }
-      const lock = i.locked ? `<span class="as-lock">${ICON.lock} Unlocks with ${escapeHtml(i.locked.name)}: ${escapeHtml(i.locked.goal)}</span>` : "";
-      const hand = !i.locked && i.key === curKey ? `<span class="as-hand">In hand</span>` : "";
-      read.innerHTML = `<b>${escapeHtml(i.name)}</b>${i.read}${lock}${hand}`;
+      // (what opens a locked card comes straight after its name: last on the line, a narrow screen cut it off)
+      const bits = [
+        ...(i.locked ? [`<span class="as-lock">${ICON.lock} Unlocks with the goal ${escapeHtml(i.locked.name)}</span>`] : []),
+        ...(showDesc ? [`<span class="as-say" title="${escapeHtml(i.desc)}">${escapeHtml(i.desc)}</span>`] : []),
+        ...(folded ? [`<span class="num">${i.sub}</span>`] : []),
+        ...i.more.map((m) => `<span>${escapeHtml(m)}</span>`),
+      ];
+      read.innerHTML = `<b>${escapeHtml(i.name)}</b>${bits.join("")}`;
     };
     // ---- the strip: the category, its tabs, close
     const head = h("header", "as-head");
@@ -657,11 +670,10 @@ export class Hud {
     if (!folded) {
       // (the cards are fitted to the window: a few become wide plates that say what each is, more share the row,
       // and a long tab is split into even rows. catalog.ts; a short tab left most of the window empty)
-      const lay = catalogLayout(infos.length);
       const cards = h("div", "as-cards" + (lay.wide ? " wide" : ""));
       cards.style.setProperty("--cols", String(lay.cols));
       for (const i of infos) {
-        const sub = `<span class="as-sub">${i.locked ? `${ICON.lock} ${i.locked.name}` : i.sub}</span>`;
+        const sub = `<span class="as-sub">${i.locked ? `${ICON.lock} ${escapeHtml(lockShort(i.locked))}` : i.sub}</span>`;
         const b = h("button", "asset", lay.wide
           ? `<span class="as-top"><span class="as-icon">${i.icon}</span><b>${i.name}</b></span><span class="as-desc">${escapeHtml(i.desc)}</span><span class="as-foot"><span class="as-flow">${i.flow}</span>${sub}</span>`
           : `<span class="as-icon">${i.icon}</span><b>${i.name}</b><span class="as-flow">${i.flow}</span>${sub}`);
@@ -670,7 +682,7 @@ export class Hud {
         b.classList.toggle("on", on);
         b.classList.toggle("locked", !!i.locked);
         b.setAttribute("aria-pressed", String(on));
-        b.setAttribute("aria-label", i.locked ? `${i.name} · unlocks with the milestone ${i.locked.name}: ${i.locked.goal}` : i.title);
+        b.setAttribute("aria-label", i.locked ? `${i.name}, locked. Unlocks with the goal ${i.locked.name}: ${i.locked.goal}` : i.title);
         // (a locked card is not pressed, but it can still be read: the pointer and the keyboard reach it)
         b.setAttribute("aria-disabled", String(!!i.locked));
         const over = (k: string) => { if (this.hoverKey !== k) { this.hoverKey = k; say(); } };
@@ -684,7 +696,7 @@ export class Hud {
       el.append(cards);
     }
     say();
-    el.append(read, head);
+    el.append(...(hasLine ? [read] : []), head);
     if (focusKey) el.querySelector<HTMLElement>(`[data-key="${focusKey}"]`)?.focus();
   }
   private followKey = "";
@@ -815,22 +827,23 @@ export class Hud {
       }
     } else if (st.tool === "place" && isPlantKind(st.placed)) {
       const D = PLANTS[st.placed];
-      // (one line: the rest is on the cursor's chips as the building moves, and in the catalog's line)
-      // (and where its road comes from: the tip that said so steps aside while it is in hand)
-      items.push(h("p", "to-text", `Turn it with <kbd>,</kbd> and <kbd>.</kbd> or Shift + wheel.${D.deposit ? ` It needs ${D.deposit.name} under at least ${Math.round(MIN_DEPOSIT * 100)}% of its plot.` : ""} Within ${GATE_LINK_REACH} m of a road it lays its own street to it.`));
+      // (the keys to turn it, and the ground it needs: the rest is at the pointer as it moves, and in the catalog's
+      // line. Its own street to the road is said at the pointer, with its length)
+      items.push(sec("Turn", h("p", "to-keys", `<kbd>,</kbd><kbd>.</kbd><span>or Shift + wheel</span>`)));
+      if (D.deposit) items.push(sec("Needs", h("p", "to-keys", `${cap(D.deposit.name)} on ${Math.round(MIN_DEPOSIT * 100)}% of its plot or more`)));
     } else if (st.tool === "roundabout") {
       items.push(elevation());
     } else if (st.tool === "bulldoze") {
       items.push(sec("Elevation", seg([null, 0, 1, 2, 3].map((l) => ({
         html: l === null ? "All" : l === 0 ? "Ground" : `${l * LEVEL_H} m`, on: st.bdzLevel === l, title: l === null ? "Remove roads at any height" : `Only remove roads at ${l === 0 ? "ground level" : `${l * LEVEL_H} m`}`, fn: () => app.setTool({ bdzLevel: l }),
       })), "wrap")));
-    } else if (st.tool === "junction") {
-      items.push(h("p", "to-text", "Click a junction to add traffic lights or edit their phases."));
-    } else if (st.tool === "lane") {
-      items.push(h("p", "to-text", "Click a road where the turn lane should start, back from the junction. Middle half: left turns, kerb half: right turns. On a motorway, click before an exit or after an entry. Shift or right click removes."));
     }
-    if (!items.length) { el.hidden = true; return; }
-    el.hidden = false;
+    // (traffic lights and turn lanes have no options: what to click is in the catalog's line. The card still shows
+    // for the notes about the click the pointer's one line leaves out, while there are some)
+    const notesOnly = !items.length && (st.tool === "junction" || st.tool === "lane");
+    this.toolNotesOnly = notesOnly;
+    if (!items.length && !notesOnly) { el.hidden = true; return; }
+    el.hidden = notesOnly && this.readEl.hidden;
     el.append(h("header", "to-head", "Tool options"), ...items, this.readEl);
     if (focusKey) [...el.querySelectorAll<HTMLElement>("[aria-label]")].find((e) => e.getAttribute("aria-label") === focusKey)?.focus();
   }
@@ -1119,6 +1132,7 @@ export class Hud {
     this.readKey = key;
     this.readEl.innerHTML = list.map((c) => `<li class="${c.kind}">${c.icon ? ICON[c.icon] : ""}<span>${c.text}</span></li>`).join("");
     this.readEl.hidden = !list.length;
+    if (this.toolNotesOnly) this.toolOpts.hidden = !list.length;
   }
 
   private hint(cat: string | null) {
@@ -2862,23 +2876,6 @@ function chainText(k: keyof typeof PLANTS): string {
 function siteShort(o: Partial<Record<Product, number>>): string {
   return (Object.entries(o) as [Product, number][]).map(([p, n]) => `${n} ${PRODUCTS[p].name.toLowerCase()}`).join(", ");
 }
-
-/** What each road is for, in a few words (the catalog's line; the lanes and the speed are said beside it). */
-const ROAD_USE: Record<RoadTypeId, string> = {
-  dirt: "Cheap and slow. Houses can face it",
-  street: "Houses and shops can face it",
-  avenue: "Buildings can still face it",
-  boulevard: "Too busy for driveways",
-  streetM: "Planted median: no turning across it",
-  avenueM: "A median: buildings get right in, right out",
-  boulevardM: "A city's main artery",
-  one1: "Runs the way you draw it. Houses and shops can face it",
-  one2: "Runs the way you draw it",
-  hw1: "A highway ramp",
-  hw2: "A motorway carriageway: build pairs, link them with ramps",
-  one3: "Build pairs for a motorway",
-  one4: "For the heaviest flows",
-};
 
 /** A road's lanes as small arrows, the way they run: one down and one up for a street, two up for a one-way. */
 function laneArrows(fwd: number, bwd: number): string {
