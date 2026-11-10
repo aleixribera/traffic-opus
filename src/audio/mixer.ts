@@ -60,12 +60,16 @@ export interface Scene {
   /** share of the ground near the middle of the view that is forest, and water (0..1) */
   forest: number;
   water: number;
+  /** the weather (game/weather.ts): rain or snow falling, and how wet the roads are (0..1) */
+  rain: number;
+  snow: number;
+  wet: number;
 }
 
 export function emptyScene(): Scene {
   return {
     halfH: 260, paused: false, speed: 1, hour: 12, season: 1, n: [0, 0, 0, 0], v: [0, 0, 0, 0], idle: 0, jam: 0, gate: 0,
-    works: new Array(NW).fill(0), logging: 0, dairy: 0, farm: 0, motor: 0, pit: 0, sites: 0, homes: 0, shops: 0, pop: 0, hall: 0, forest: 0, water: 0,
+    works: new Array(NW).fill(0), logging: 0, dairy: 0, farm: 0, motor: 0, pit: 0, sites: 0, homes: 0, shops: 0, pop: 0, hall: 0, forest: 0, water: 0, rain: 0, snow: 0, wet: 0,
   };
 }
 
@@ -85,6 +89,8 @@ export interface Mix {
   crickets: number;
   owl: number;
   water: number;
+  /** rain on the town (its bed's level) */
+  rain: number;
   /** engine beds by class, and their pitch (playback rate) */
   eng: number[];
   rate: number[];
@@ -120,7 +126,7 @@ export interface Mix {
 
 export function emptyMix(): Mix {
   return {
-    duck: 1, wind: 0, windHz: 500, air: 0, hum: 0, birds: 0, birdGain: 0, crickets: 0, owl: 0, water: 0, eng: [0, 0, 0, 0], rate: [1, 1, 1, 1],
+    duck: 1, wind: 0, windHz: 500, air: 0, hum: 0, birds: 0, birdGain: 0, crickets: 0, owl: 0, water: 0, rain: 0, eng: [0, 0, 0, 0], rate: [1, 1, 1, 1],
     tyres: 0, tyreHz: 1000, idle: 0, street: 0, horn: 0, gate: 0, works: new Array(NW).fill(0), clank: 0, steam: 0, blast: 0, axe: 0, rooster: 0, cow: 0,
     hornTest: 0, clink: 0, build: 0, murmur: 0, shopbell: 0, dog: 0, children: 0, clock: 0, near: 0,
   };
@@ -164,6 +170,12 @@ export function mixFor(s: Scene, m: Mix = emptyMix()): Mix {
   m.wind = (0.22 + 0.58 * far) * (winter ? 0.8 : 1) * (1 + 0.1 * night);
   m.windHz = (420 + 380 * far) * (winter ? 0.8 : 1);
   m.air = winter ? 0.55 : 0.12;
+  // the weather: a shower is heard over everything near in, and as a far wash from high up; the wind gets up with
+  // it; a snowfall hushes the world a little; birds, crickets and children go in out of the rain
+  const fall = Math.max(s.rain, s.snow);
+  m.rain = s.rain ** 0.8 * (0.3 + 0.7 * within(s.halfH, 150, 2600));
+  m.wind *= 1 + 0.3 * fall;
+  const hush = 1 - 0.25 * s.snow, shelter = 1 - 0.85 * clamp(s.rain * 1.6 + s.snow * 0.6);
   const total = s.n[0] + s.n[1] + s.n[2] + s.n[3];
   let worksAll = 0;
   for (let i = 0; i < NW; i++) worksAll += s.works[i];
@@ -178,6 +190,7 @@ export function mixFor(s: Scene, m: Mix = emptyMix()): Mix {
   m.crickets = CRICKET_SEASON[s.season] * night * rural * closeB;
   m.owl = 0.6 * night * (winter ? 0.4 : 1) * clamp(woods * 3) * closeB;
   m.water = sat(s.water * 5) * within(s.halfH, 200, 1800);
+  m.birds *= shelter; m.crickets *= shelter;
 
   // ---- traffic
   let vSum = 0;
@@ -188,8 +201,9 @@ export function mixFor(s: Scene, m: Mix = emptyMix()): Mix {
     vSum += s.n[c] * s.v[c];
   }
   const vAvg = total > 0 ? vSum / total : 0;
-  m.tyres = close ** 1.3 * sat(total / 14) * clamp(vAvg / 22) ** 1.5;
-  m.tyreHz = 800 + 900 * clamp(vAvg / 25);
+  // (on a wet road the tyres hiss: a little louder and higher; in snow, softer)
+  m.tyres = Math.min(1, close ** 1.3 * sat(total / 14) * clamp(vAvg / 22) ** 1.5 * (1 + 0.3 * s.wet)) * hush;
+  m.tyreHz = (800 + 900 * clamp(vAvg / 25)) * (1 + 0.35 * s.wet);
   m.idle = close ** 1.2 * sat(s.idle / 6);
   m.street = within(s.halfH, 90, 280);
   m.horn = s.jam > 2 ? live * close * Math.min(3, 0.5 + s.jam * 0.12) * dense : 0;
@@ -218,9 +232,11 @@ export function mixFor(s: Scene, m: Mix = emptyMix()): Mix {
   const size = sat(s.pop / 1500) ** 0.6, built = sat((s.homes + 2 * s.shops) / 25);
   m.murmur = closeT * awake * size * built;
   const open = smooth(7.5, 8.5, h) * (1 - smooth(17.5, 18.5, h));
-  m.shopbell = live * closeT * dense * 2.5 * sat(s.shops / 6) * open;
-  m.dog = live * closeT * dense * 0.8 * sat(s.homes / 15) * (0.3 + 0.7 * day);
-  m.children = live * closeT * 0.7 * sat(s.homes / 20) * smooth(14, 15, h) * (1 - smooth(17, 18, h)) * (winter ? 0.4 : 1);
+  const indoors = 1 - 0.5 * clamp(s.rain * 1.6);
+  m.murmur *= indoors * hush;
+  m.shopbell = live * closeT * dense * 2.5 * sat(s.shops / 6) * open * indoors;
+  m.dog = live * closeT * dense * 0.8 * sat(s.homes / 15) * (0.3 + 0.7 * day) * indoors;
+  m.children = live * closeT * 0.7 * sat(s.homes / 20) * smooth(14, 15, h) * (1 - smooth(17, 18, h)) * (winter ? 0.4 : 1) * shelter;
   m.clock = live * s.hall * within(s.halfH, 400, 4000);
   return m;
 }

@@ -27,7 +27,7 @@ export const DEFAULT_SETTINGS: AudioSettings = { ...DEFAULT_LEVELS, wireless: tr
 const KEY = "flowtown.audio";
 
 /** What the sound reads of the app: the game, the camera, the hour and day shown. */
-export interface AudioHost { game: Game; view: Ear; dayCycle: { hour: number; yday: number } }
+export interface AudioHost { game: Game; view: Ear; dayCycle: { hour: number; yday: number; weather?: { rain: number; snow: number; wet: number } } }
 
 /** The six sounds the old beeper had (ui/sfx.ts): its call sites still work. */
 type OldKind = "build" | "remove" | "place" | "error" | "level" | "click";
@@ -244,6 +244,8 @@ export class GameAudio {
       if (host && this.acc >= LOOK) {
         const g = host.game, day = host.dayCycle;
         const scene = this.reader.read(g, host.view, day.hour, Math.floor(day.yday / SEASON_DAYS) % 4, this.acc);
+        const wx = day.weather;
+        scene.rain = wx?.rain ?? 0; scene.snow = wx?.snow ?? 0; scene.wet = wx?.wet ?? 0;
         this.world!.apply(mixFor(scene, this.mix), scene, this.reader.where, this.acc, Math.floor(day.yday) % 7 === 6);
         this.acc = 0;
         // a driver who gave up in a jam (not more than one sigh every half minute)

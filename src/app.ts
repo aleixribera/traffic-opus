@@ -75,6 +75,7 @@ import { disposeTree, modelGeometries } from "./render/dispose";
 import { RoadsFar } from "./render/roadsFar";
 import { MapLabels } from "./ui/labels";
 import { ZoomRing } from "./ui/zoomRing";
+import { WeatherChip } from "./ui/weatherChip";
 import { edgePush, loadEdgeScroll, panRate } from "./ui/panning";
 import { MapIcons } from "./ui/mapIcons";
 import { Pops } from "./ui/pops";
@@ -84,6 +85,7 @@ import { clearShapes } from "./render/clearing";
 import { Forest } from "./render/forest";
 import { Trees3D } from "./render/trees3d";
 import { holdWind, setWind } from "./render/wind";
+import { Weather3D } from "./render/weather3d";
 import { Smoke } from "./render/smoke";
 import { Birds } from "./render/birds";
 import { Vehicles3D } from "./render/vehicles3d";
@@ -181,6 +183,8 @@ export class App {
   private smokeSig = -1;
   /** a few birds wheeling over the woods and the fields by day */
   birds = new Birds();
+  /** the weather over the map: rain or snow falling, the morning mist (render/weather3d.ts) */
+  weather3d = new Weather3D();
   /** money and moments rising off the map, and the shelf-time rings over refrigerated trucks */
   pops = new Pops();
   /** Shift + wheel scrolling not yet turned into a whole degree (px) */
@@ -270,6 +274,8 @@ export class App {
   private pointerAt: V2 | null = null;
   /** The ring each wheel notch leaves at the cursor. */
   private zoomRing = new ZoomRing(document.body);
+  /** the weather beside the clock */
+  private wxChip = new WeatherChip();
   /** A tilt key is held (the view settles when it is let go). */
   private pitching = false;
   /** A wheel zoom easing in: the pixel whose ground it holds still, and the zoom it is going to. */
@@ -345,7 +351,7 @@ export class App {
     (window as unknown as { __env: unknown }).__env = {
       set: (o: Parameters<DayCycle["set"]>[0]) => dc.set(o),
       clear: () => dc.clear(),
-      get: () => ({ hour: dc.hour, yday: dc.yday, mode: dc.mode, light: dc.light, look: dc.look }),
+      get: () => ({ hour: dc.hour, yday: dc.yday, mode: dc.mode, light: dc.light, look: dc.look, weather: { ...dc.weather } }),
       // (hold the wind: the bearing it blows toward in degrees, 0 east and 90 south, and its strength 0..1; no arguments lets it go)
       wind: (deg?: number, strength?: number) => holdWind(deg, strength),
     };
@@ -356,6 +362,7 @@ export class App {
 
   attachHud(h: Hud) {
     this.hud = h;
+    this.wxChip.mount(document.querySelector(".cb-clock"));
   }
 
   setMode(m: App["mode"]) {
@@ -769,6 +776,7 @@ export class App {
     this.smoke.reset();
     this.smokeSig = -1;
     this.birds.setWorld((x, y) => g.terrain.gen.at(x, y));
+    this.dayCycle.seed = g.seed;
     this.roads = new Roads3D(g.net, {
       props: this.models.props, isWater: (p) => g.terrain.isWater(p),
       // each driveway as a line from where it leaves the road to the lot (a home's middle, a site's gate): no street
@@ -811,7 +819,7 @@ export class App {
     this.highlight.set(null);
     this.highlight.hoverV = null;
     this.glide = null;
-    this.worldRoot.add(this.terrain3d.group, this.terrain3d.land.group, this.trees3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.greens3d.group, this.lamps.group, this.signals.group, this.fireworks.group, this.birds.mesh, this.smoke.mesh);
+    this.worldRoot.add(this.terrain3d.group, this.terrain3d.land.group, this.trees3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.greens3d.group, this.lamps.group, this.signals.group, this.fireworks.group, this.birds.mesh, this.smoke.mesh, this.weather3d.group);
     this.roads.rebuildAll();
     this.buildings3d.rebuild(g.buildings.list);
     { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }
@@ -2198,6 +2206,7 @@ export class App {
     this.view.setLight(L.amb, L.sun, L.dir);
     this.smoke.setLight(L.amb, L.sun, L.dir);
     this.birds.setLight(L.amb, L.sun, L.dir);
+    this.weather3d.setLight(L.amb, L.sun);
     // (no shadow map far out, where the ground draws its own hill shadows, nor once the direct light is too faint to
     // cast one)
     this.view.shadows(this.view.halfH < 2400 && L.shade >= 0.04);
@@ -2368,6 +2377,7 @@ export class App {
     }
     // (the clock counts every game minute; the rest of the bar every quarter second)
     this.hud?.clock();
+    { const hr = this.dayCycle.hour; this.wxChip.update(this.dayCycle.weather.kind, hr < 6 || hr >= 20.5); }
     this.buildings3d.frameConstruction();
     this.buildings3d.lod(this.view.mpp);
     this.hudT += dt;
@@ -2415,8 +2425,10 @@ export class App {
     }
     this.smoke.mesh.visible = this.terrain3d.shared.uOverlay.value < 0.5;
     this.smoke.update(this.view.camera, this.view.mpp, g.paused ? 0 : dt, g.time + g.alpha * SIM.dt, far ? null : g.traffic);
-    // and over the woods and the fields a few birds wheel
+    // and over the woods and the fields a few birds wheel (fewer in the rain: the birds' fade)
     this.birds.update(this.view.camera, this.view.mpp, g.paused ? 0 : dt);
+    // the rain or snow falling, the morning mist (not over the data maps)
+    this.weather3d.update(this.view, this.dayCycle.weather, g.paused ? 0 : dt, this.terrain3d.shared.uOverlay.value >= 0.5);
     // the townspeople about the squares and the pavements (walking at their own pace, whatever the game's speed)
     this.buildings3d.life.frame(this.view.camera, this.view.mpp, performance.now() / 1000, this.dayCycle.hour, this.dayCycle.yday);
     if (this.terrain3d.shared.uOverlay.value >= 0.5) this.birds.mesh.visible = false;

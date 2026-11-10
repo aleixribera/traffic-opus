@@ -4,6 +4,7 @@
 
 import * as THREE from "three";
 import type { Light, SeasonLook } from "./daylight";
+import type { Weather } from "../game/weather";
 import { LAND } from "./palette";
 
 /** The shared uniforms (the same objects in every material, so one write reaches all of them). */
@@ -24,7 +25,16 @@ export const ENV = {
   uGrade: { value: new THREE.Vector2(0, 0) },
   /** How far the view has gone over to the road atlas (0 the diorama .. 1 the far map; render/terrain3d.ts sets it). */
   uEnvAtlas: { value: 0 },
+  /** The weather (game/weather.ts): x how wet the ground is, y rain falling, z mist, w snow falling. */
+  uWeather: { value: new THREE.Vector4(0, 0, 0, 0) },
+  /** The rain's clock (s, wrapped): rings spreading on the puddles. */
+  uWetT: { value: 0 },
 };
+
+/** Write the weather into the shared uniforms. */
+export function setWeather(W: Weather) {
+  ENV.uWeather.value.set(W.wet, W.rain, W.mist, W.snow);
+}
 /**
  * The share of each kind's windows lit now (x home, y shop, z office, w hall): the buildings' lit glass and the light
  * it throws on the ground (render/lamps3d.ts, which sets it each frame) read the same numbers.
@@ -69,6 +79,8 @@ export const WOOD = 0x6d5f52;
 export const ENV_CORE_GLSL = /* glsl */ `
 uniform vec4 uSeasonA; uniform vec4 uSeasonB; uniform vec2 uSeasonC;
 uniform vec2 uSun; uniform vec2 uShade; uniform vec2 uNight; uniform vec2 uGrade; uniform float uEnvAtlas;
+uniform vec4 uWeather; uniform float uWetT;
+#define envWet uWeather.x
 #define envFresh uSeasonA.x
 #define envLush uSeasonA.y
 #define envDry uSeasonA.z
@@ -181,6 +193,41 @@ vec2 envSnowNoise(vec2 p, float mppS) {
 float envSnowOf(vec2 na, float shelter) {
   float k = envSnow * (1.0 - shelter);
   return smoothstep(1.0 - k * 0.72 - na.y, 1.0 - k * 0.72 + na.y + 0.04, na.x) * smoothstep(0.0, 0.2, envSnow);
+}
+/* Rain on a hard surface (p: a point on it, m; rough: 0 smooth asphalt .. 1 a rutted yard): how much of it is
+   standing water (0..1). The surface darkens as it wets, and puddles gather in its low spots; while rain falls,
+   rings spread on them. Returns the puddle share; c is darkened in place and given the sky's sheen in the puddles.
+   mpp: the size of a pixel on the ground (m; taken outside any branch, as fwidth must be). */
+float envPuddle(inout vec3 c, vec2 p, float rough, float mpp) {
+  float w = envWet;
+  // wet paving goes dark
+  c *= 1.0 - 0.4 * w;
+  // the sky in it: an overcast grey by day (the light dims it at night, and the lamps' pools brighten it)
+  vec3 sky = vec3(0.3, 0.33, 0.38);
+  // far out a puddle is smaller than a pixel: the wet road only takes a faint sheen of the sky
+  float near = 1.0 - smoothstep(0.35, 1.1, mpp);
+  c = mix(c, sky, 0.1 * w * (1.0 - near));
+  if (near < 0.001) return 0.0;
+  // (two octaves turned against each other, so no grid shows in the edges)
+  vec2 pr = mat2(0.8, -0.6, 0.6, 0.8) * p;
+  float n = envNoise(p * 0.15 + 3.7) * 0.68 + envNoise(pr * 0.47 - 1.3) * 0.32;
+  // (more of it standing as it gets wetter; a rough yard holds more than a crowned road)
+  float th = 0.8 - 0.14 * w - 0.08 * rough;
+  float aa = max(mpp * 0.5, 0.01);
+  float pud = smoothstep(th - aa, th + aa + 0.02, n) * smoothstep(0.25, 0.7, w) * near;
+  if (pud > 0.001) {
+    // rings spreading where drops land (only near in, while it rains)
+    float rings = 0.0;
+    if (uWeather.y > 0.01 && mpp < 0.35) {
+      vec2 q = p / 0.9, cell = floor(q), f = fract(q) - 0.5;
+      float h = envHash(cell);
+      float age = fract(uWetT * (0.9 + 0.5 * h) + h * 7.0);
+      float r = age * 0.42, d = length(f - (vec2(envHash(cell + 3.1), envHash(cell + 5.7)) - 0.5) * 0.3);
+      rings = (1.0 - smoothstep(0.0, 0.035, abs(d - r))) * (1.0 - age) * uWeather.y * (1.0 - smoothstep(0.15, 0.35, mpp));
+    }
+    c = mix(c, sky * (1.0 + 0.5 * rings), pud * 0.75);
+  }
+  return pud;
 }
 /* Snow's colour at a point: a little blue in the hollows. */
 vec3 envSnowCol(vec2 p) {
@@ -315,6 +362,17 @@ export function seasonal(mat: THREE.MeshLambertMaterial, opts: { roofs?: boolean
       float roof = ${opts.roofs ? "smoothstep(0.6, 1.6, vEnvW.y)" : "0.0"};
       float s = envSnowAt(vEnvW.xz, mix(${(opts.shelter ?? 0).toFixed(2)}, -0.05, roof)) * up * (1.0 - paved * 0.92);
       dc = mix(dc, envSnowCol(vEnvW.xz) * (0.95 + 0.05 * n.y), s);
+    }
+    // after rain whatever faces up is darker for a while, paving most (a yard, a car park holds puddles); green
+    // things a little
+    float wMpp = fwidth(vEnvW.x) + fwidth(vEnvW.z);
+    if (envWet > 0.001) {
+      float wsat = max(dc.r, max(dc.g, dc.b)) - min(dc.r, min(dc.g, dc.b));
+      float wl = dot(dc, vec3(0.2126, 0.7152, 0.0722));
+      float up = smoothstep(0.5, 0.9, normalize(vEnvN).y);
+      float pave = (1.0 - smoothstep(0.03, 0.07, wsat)) * (1.0 - smoothstep(0.15, 0.4, wl)) * (1.0 - smoothstep(0.3, 0.8, vEnvW.y));
+      if (pave > 0.5 && up > 0.5) envPuddle(dc, vEnvW.xz, 0.6, wMpp);
+      else dc *= 1.0 - envWet * up * mix(0.14, 0.08, green);
     }
     // far out the page is a road atlas (render/terrain3d.ts): a lot's lawn goes the built-up wash of its town, a
     // park its own pale green, paving near the paper, and whatever is built a warm block

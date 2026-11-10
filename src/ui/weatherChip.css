@@ -1,0 +1,9 @@
+/* the weather beside the clock (weatherChip.ts): its glyph on the clock's line, its word on the season's */
+.wx { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 3px; flex: none; width: 84px; padding: 4px 0; line-height: 1; color: var(--cream-2); cursor: default; }
+.wx svg { display: block; height: 22px; width: 22px; padding: 2px; }
+.wx span { white-space: nowrap; font-size: var(--t-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; }
+.wx[data-k="clear"] svg, .wx[data-k="fair"] svg, .wx[data-k="clearing"] svg { color: #f0b43a; }
+.wx[data-k="showers"] svg, .wx[data-k="rain"] svg { color: #9cc3e6; }
+.wx[data-k="snow"] svg { color: #e6eef6; }
+.wx[data-k="overcast"] svg, .wx[data-k="mist"] svg { color: var(--cream-2); }
+.wx.night[data-k="clear"] svg, .wx.night[data-k="fair"] svg, .wx.night[data-k="clearing"] svg { color: var(--info); }
