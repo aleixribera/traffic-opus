@@ -1,11 +1,14 @@
 // The goal's NOW line names the missing link of a two-step chain, read off the recipes (owner, 2026-11-10:
 // "crops → Food Plant → food"). missingLink only reads the company's works, so a stub game will do.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Game } from "../src/game/city";
 import type { Building } from "../src/game/buildings";
 import { MILESTONES } from "../src/game/progression";
 import { PLANTS, type PlantKind } from "../src/game/industry";
 import { FIRST_LOAD, goalNow, goalNowSay as say, missingLink } from "../src/ui/goalNow";
+
+// (the ground a first works goes on is found on the map: here, one place for it)
+vi.mock("../src/ui/goalPointer", () => ({ farmSpot: () => null, groundSpot: (_g: unknown, k: string) => (k === "loggingcamp" ? { x: 800, y: 0 } : null) }));
 
 // (the chain keeps its end together with no-break spaces; the tests read it with plain ones)
 const plain = (s: string | undefined) => s?.replace(/ /g, " ");
@@ -80,5 +83,45 @@ describe("the missing link of a goal's chain", () => {
       expect(now?.text, mid).toMatch(/^Waiting for /);
       expect(plain(now!.fix), mid).toMatch(/^Build an? [A-Z].*: .+ → .+ → .+\.$/);
     }
+  });
+});
+
+describe("a goal to grow a town says what holds it (review 2026-11-10, First hour)", () => {
+  // (the home hamlet, fed in full, its first food sold, past "First customers")
+  const hamlet = (pop: number, rate: Record<string, number>, bs: Building[] = [], sold: Record<string, number> = { food: 3 }) => {
+    const t = { id: 1, name: "Alder Run", pop, rate, c: { x: 0, y: 0 } };
+    const done = ["food10"];
+    const g = {
+      ...game(...bs), towns: { list: [t], byId: new Map([[1, t]]) }, buildings: { byId: new Map() },
+      progress: { sold, done, open: () => MILESTONES.filter((m) => !done.includes(m.id)).slice(0, 3) },
+    } as unknown as Game;
+    return g;
+  };
+  const growing = MILESTONES.find((m) => m.id === "hamlet150")!, village = MILESTONES.find((m) => m.id === "village")!;
+
+  it("held for want of planks with nothing of the chain placed: the town, the need and the chain to build", () => {
+    const g = hamlet(127, { food: 50 });
+    const n = goalNow(g, growing, 127)!;
+    expect(n.tone).toBe("bad");
+    // (and flies to the forest for the camp)
+    expect(n.spot).toEqual({ x: 800, y: 0 });
+    expect(goalNowSay(n)).toBe("Alder Run holds at 127 people, short of planks. Build a Logging Camp and a Sawmill: logs → Sawmill → planks.");
+    // (once, under the first goal that grows a town: the Village goal after it would only say it again)
+    expect(goalNow(g, village, 127)).toBeNull();
+  });
+
+  it("with part of the chain placed, the link it lacks", () => {
+    const n = goalNow(hamlet(127, { food: 50 }, [works("loggingcamp")]), growing, 127)!;
+    expect(goalNowSay(n)).toBe("Alder Run holds at 127 people, short of planks. Your Logging Camp: no Sawmill to take its logs. Build a Sawmill: logs → Sawmill → planks.");
+  });
+
+  it("growing toward the need, its first food in: planks named before they hold it", () => {
+    expect(goalNowSay(goalNow(hamlet(81, { food: 50 }), growing, 81)!)).toBe(
+      "Alder Run will want planks from 100 people. Without a supply it stops growing there. Build a Logging Camp and a Sawmill: logs → Sawmill → planks.",
+    );
+    // (not before its first food is sold: one chain at a time)
+    expect(goalNow(hamlet(81, { food: 50 }, [], {}), growing, 81)).toBeNull();
+    // (nor with a sawmill placed: it is on its way)
+    expect(goalNow(hamlet(81, { food: 50 }, [works("sawmill")]), growing, 81)).toBeNull();
   });
 });

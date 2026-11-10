@@ -1018,7 +1018,7 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .ip-road p { margin: 0 0 7px; line-height: 1.45; }
 .ip-road b { color: var(--cream); font-weight: 600; }
 p.ip-road { padding-bottom: 7px; }
-.ip-road .btn, .gl-act { background: var(--ochre); border-color: #f5cf73; color: var(--bar); font-weight: 700; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.18); }
+.ip-road .btn, .gl-act { min-height: 32px; background: var(--ochre); border-color: #f5cf73; color: var(--bar); font-weight: 700; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.18); }
 .ip-road .btn:hover:not(:disabled), .gl-act:hover:not(:disabled) { background: var(--ochre-hi); }
 .ip-road .btn:disabled, .gl-act:disabled { background: var(--plate-2); color: var(--cream-3); border-color: var(--rule-2); box-shadow: none; }
 .gl-act { display: flex; margin-top: 7px; font-variant-numeric: tabular-nums; }

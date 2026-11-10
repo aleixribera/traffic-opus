@@ -1005,7 +1005,7 @@ export class Hud {
           <span class="bar gl-bar" role="progressbar" aria-label="${m.name}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p * 100)}"><i style="width:${Math.max(2, p * 100)}%"></i></span>
           ${nowLine(now)}<p class="gl-gift">${unlockList(m.unlocks).join(" · ")}</p></li>`;
       }).join("");
-      const roadBtn = tip?.road ? ` <button type="button" class="btn gl-act" data-id="${tip.road.works}"${g.money < tip.road.cost ? " disabled" : ""}>Build this road · ${formatMoney(tip.road.cost)}</button>` : "";
+      const roadBtn = tip?.road ? ` <button type="button" class="btn gl-act" data-id="${tip.road.works}"${g.money < tip.road.cost ? ` disabled title="More than you have now"` : ""}>Build this road · ${formatMoney(tip.road.cost)}</button>` : "";
       body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : this.afterGoals()}${tip ? `<div class="gl-tip" data-tip="${tip.id}"><p>${tip.html}${roadBtn}</p><button class="gl-x" aria-label="Dismiss this tip" title="Dismiss this tip (Pause › Tips turns them all off)">${ICON.close}</button></div>` : ""}</div>`;
     }
     const html = head + body;

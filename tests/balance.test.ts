@@ -55,6 +55,13 @@ const MAX_DAYS = DAYS_CAP || (SHOWCASE ? 240 : T5 ? 170 : T4 ? 120 : 70);
  * more (the towns grow to thousands of people, all driving), so the everyday suite stops at first cement.
  */
 const T3 = !!process.env.BALANCE_T3 || T4;
+/**
+ * BALANCE_TIMBER=asked starts timber only once a town wants planks (at 100 people), as a player who waits for the town
+ * to ask; BALANCE_TIMBER=warned once the first food has landed and the Goals card says planks are coming (goalNow.ts,
+ * from 70 people), as a player who reads it. By default the company starts it at 80 people. The first hour's pace is
+ * judged on the first two (review 2026-11-10, First hour).
+ */
+const TIMBER = process.env.BALANCE_TIMBER;
 /** BALANCE_LIVE=1 prints the timeline as it happens too (a long run shows where it is). */
 const LIVE = !!process.env.BALANCE_LIVE;
 /**
@@ -318,7 +325,8 @@ function play() {
     if (count("farm") < 1) site("farm", F.fert, soil, "farm");
     if (roads.farm && has("farm") && !has("foodplant")) place("foodplant", ...roads.farm, 0.1, 0.5);
     joinTowns();
-    const timber = Math.max(...g.towns.list.map((t) => t.pop)) >= 80;
+    const top = Math.max(...g.towns.list.map((t) => t.pop));
+    const timber = TIMBER === "asked" ? top >= 100 : TIMBER === "warned" ? top >= 70 && (g.progress.sold.food ?? 0) >= 1 : top >= 80;
     if (has("foodplant") && timber && !has("loggingcamp")) site("loggingcamp", F.forest, wood, "wood");
     if (has("loggingcamp") && !has("sawmill")) place("sawmill", ...roads.wood, 0.15, 0.6);
     // a second farm as the hamlet grows or a second town joins, and more while the towns go short of food

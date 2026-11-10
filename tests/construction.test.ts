@@ -53,8 +53,8 @@ describe("construction stages", () => {
     expect(buildTime("apartments")).toBeGreaterThan(buildTime("terrace"));
     expect(buildTime("aptower")).toBeGreaterThan(buildTime("apartments"));
     expect(buildTime("aptower")).toBeGreaterThanOrEqual(12 * HOUR);
-    // a first-tier works in a few hours, deeper ones longer
-    expect(buildTime("farm")).toBe(3 * HOUR);
+    // a first-tier works in a couple of hours, deeper ones longer
+    expect(buildTime("farm")).toBe(2 * HOUR);
     expect(buildTime("smelter")).toBeGreaterThan(buildTime("farm"));
     expect(buildTime("motorworks")).toBeGreaterThan(buildTime("smelter"));
     // (every kind has a time)
