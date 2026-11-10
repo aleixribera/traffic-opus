@@ -98,11 +98,13 @@ export function townOrders(g: Game, t: Town): string {
   if (!open.length && waiting.length) {
     const now = waiting.length - later.length;
     more = !now
-      ? `Its next ${waiting.length === 1 ? "order comes" : "orders come"} once it is a ${TOWN_SIZES[nextSize].name}.`
+      ? `Next order when it is a ${TOWN_SIZES[nextSize].name}`
       : !g.orders.canTake(t)
-      ? `Orders come once your trucks have brought it something and a few families have settled.`
-      : `Another order comes when the town is ready: keep its needs coming.`;
-  } else if (later.length) more = `${plural(later.length, "more order")} once it is a ${TOWN_SIZES[nextSize].name}.`;
+      ? ""
+      : `Another order comes in time`;
+  } else if (later.length) more = `${plural(later.length, "more order")} when it is a ${TOWN_SIZES[nextSize].name}`;
+  // (nothing open and nothing filled: no section at all)
+  if (!open.length && !finished.length) return "";
   return `<h3 class="sub-h od-h">Orders <span class="num">${done} of ${of} filled</span></h3>
     ${open.length ? `<ul class="ods">${openHtml}</ul>` : ""}
     ${more ? `<p class="od-more">${esc(more)}</p>` : ""}

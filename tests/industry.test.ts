@@ -69,7 +69,7 @@ describe("Industry", () => {
     // out on the road, standing in traffic
     for (const p of out) w.held.set(p.trip, "road");
     w.ind.tick(1);
-    expect(farm.problem).toBe("Full of crops: its trucks are stuck in traffic on the haul (a jammed road)");
+    expect(farm.problem).toBe("Full of crops: its trucks are stuck in traffic on a jammed road");
     // moving again
     w.held.clear();
     w.ind.tick(1);
@@ -182,8 +182,13 @@ describe("Industry", () => {
     w.ind.tick(0);
     expect(w.pending.length).toBe(0);
     expect(mine.problem).toBe("The plants that will use iron ore are still building sites");
-    // built: the ore goes
+    // its yard full: still the smelter it waits for, never trucks that can't keep up (none is out)
+    mine.plant!.out.ore = PLANTS.ironmine.store;
+    w.ind.produce(mine, 1);
+    expect(mine.problem).toBe("Full of iron ore: the plants that will use iron ore are still building sites");
     sm.plant!.site = undefined;
+    mine.plant!.out.ore = 3;
+    // built: the ore goes
     w.ind.tick(0);
     expect(w.pending.length).toBeGreaterThan(0);
     expect(w.pending[0].trip.haul!.dest).toBe(sm.id);
@@ -325,7 +330,7 @@ describe("Industry", () => {
     sm.plant!.stock = { ore: 2, coal: 2 };
     w.ind.tick(HOUR);
     expect(w.pending.length).toBe(0);
-    expect(sm.problem).toBe("Full of steel: its trucks can't keep up (a long or jammed haul), or no construction plant, machine works or motor works on its roads");
+    expect(sm.problem).toBe("Full of steel: no construction plant, machine works or motor works on your roads takes steel");
     sm.plant!.out.steel = 2;
     sm.problem = null;
     w.ind.tick(0);

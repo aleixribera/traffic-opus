@@ -48,8 +48,8 @@ describe("the income rate after a load (B9)", () => {
 describe("a works whose goods are spoken for says where they are", () => {
   // a Coal Mine whose coal is all on its way to the Smelter: two loads on the road, the nearer due in 2 game hours
   const HOUR = 40;
-  const mine = { id: 1, kind: "coalmine", c: { x: 0, y: 0 }, access: { seg: 1 }, plant: { site: null, stock: {}, out: { coal: 3 } } } as unknown as Building;
-  const smelter = { id: 2, kind: "smelter", c: { x: 2000, y: 0 }, access: { seg: 2 }, plant: { site: null, stock: {}, out: {} } } as unknown as Building;
+  const mine = { id: 1, kind: "coalmine", built: 1, c: { x: 0, y: 0 }, access: { seg: 1 }, plant: { site: null, stock: {}, out: { coal: 3 } } } as unknown as Building;
+  const smelter = { id: 2, kind: "smelter", built: 1, c: { x: 2000, y: 0 }, access: { seg: 2 }, plant: { site: null, stock: {}, out: {} } } as unknown as Building;
   const trip = (n: number, eta: number) => ({ haul: { plant: 1, leg: "out", product: "coal", n, dest: 2, eta } });
   const host = (trips: unknown[]) => ({
     time: 1000, buildings: { list: [mine, smelter], byId: new Map([[1, mine], [2, smelter]]) },
@@ -58,8 +58,8 @@ describe("a works whose goods are spoken for says where they are", () => {
   const say = (trips: unknown[]) => (new Industry(host(trips)) as unknown as { noBuyer(b: Building, p: string): string }).noBuyer(mine, "coal");
 
   it("counts the loads on their way and says when the next lands", () => {
-    expect(say([trip(1, 1000 + 2 * HOUR), trip(1, 1000 + 5 * HOUR)])).toBe("2 loads on the way to the Smelter; the next lands in about 2 hours");
-    expect(say([trip(1, 1010)])).toBe("1 load on the way to the Smelter; the next lands within the hour");
+    expect(say([trip(1, 1000 + 2 * HOUR), trip(1, 1000 + 5 * HOUR)])).toBe("2 loads on the way to the Smelter. The next lands in about 2 hours");
+    expect(say([trip(1, 1010)])).toBe("1 load on the way to the Smelter. The next lands within the hour");
   });
 
   it("with none on the road the plain words stand", () => {
@@ -68,11 +68,11 @@ describe("a works whose goods are spoken for says where they are", () => {
 
   it("is not called a problem in its panel: nothing is wrong", () => {
     const g = { ...({} as Game) };
-    const b = { ...mine, built: 1, problem: "2 loads on the way to the Smelter; the next lands in about 2 hours", plant: { ...mine.plant!, level: 1 } } as unknown as Building;
+    const b = { ...mine, built: 1, problem: "2 loads on the way to the Smelter. The next lands in about 2 hours", plant: { ...mine.plant!, level: 1 } } as unknown as Building;
     const st = (worksStatus as (g: Game, b: Building) => ReturnType<typeof worksStatus>)(
       { ...g, people: { workersAt: () => 99 }, utilities: { supplyOf: () => 1, plants: new Map() }, industry: { plants: () => [b] }, trips: () => [], time: 1000, buildings: { list: [b], byId: new Map([[1, b]]) }, towns: { list: [] } } as unknown as Game, b);
     expect(st.tone).not.toBe("bad");
-    expect(st.fix).toBe("2 loads on the way to the Smelter; the next lands in about 2 hours.");
+    expect(st.fix).toBe("2 loads on the way to the Smelter. The next lands in about 2 hours.");
   });
 });
 

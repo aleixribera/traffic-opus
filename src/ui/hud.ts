@@ -10,7 +10,7 @@ import { MILESTONES, unlockedBy, type Milestone, type Unlocks } from "../game/pr
 import { buildTime } from "../game/construction";
 import { DEPOT_REACH, HIST_HOURS, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, SUPPLY_STORE, UNPOWERED, isPlantKind, powerPace, type PlantKind, type Product } from "../game/industry";
 import { TRUCK_CLASSES, TRUCK_CLASS_ORDER, type TruckClass } from "../game/trucks";
-import { LEVEL_MULT, SITE_LEVELS, growNeed } from "../game/sites";
+import { LEVEL_MULT, SITE_LEVELS } from "../game/sites";
 import { compassWords, served, type Town } from "../game/settlements";
 import { HALLS, TOWN_SIZES, needFrom, needsOf, sizeOf } from "../game/towns";
 import { HOUR } from "../game/society";
@@ -57,14 +57,14 @@ export interface Chip extends PointerChip {
   icon?: keyof typeof ICON;
 }
 
-const OVERLAYS: { id: OverlayId; label: string; blurb: string }[] = [
-  { id: "flow", label: "Traffic flow", blurb: "How fast each road moves compared with its speed limit" },
-  { id: "resources", label: "Resources", blurb: "Where each extractor can work, tagged on the map. Click a kind below to fly to its nearest deposit" },
+const OVERLAYS: { id: OverlayId; label: string; blurb: string; tip?: string }[] = [
+  { id: "flow", label: "Traffic flow", blurb: "Road speed against the limit" },
+  { id: "resources", label: "Resources", blurb: "Where extractors can work", tip: "Click a kind under the list to fly to its nearest deposit" },
   // (both drive how a town builds up, and the company moves them: a works beside homes, a town order filled)
-  { id: "landvalue", label: "Land value", blurb: "What a street is worth to live or shop on. Your works and power plants drag it down next door; shops close by and a town's civic buildings lift it" },
-  { id: "level", label: "Building level", blurb: "Homes and shops build up from level 1 to 5 where land value is high. Each level holds more people or more trade" },
-  { id: "problems", label: "Problems", blurb: "Plants and buildings with something holding them up" },
-  { id: "power", label: "Power", blurb: "Power plants in blue; buildings that draw power green with all they need, orange to red when short" },
+  { id: "landvalue", label: "Land value", blurb: "What a street is worth", tip: "Your works and power plants drag it down next door. Shops close by and a town's civic buildings lift it" },
+  { id: "level", label: "Building level", blurb: "Homes and shops, level 1 to 5", tip: "They build up where land value is high. Each level holds more people or more trade" },
+  { id: "problems", label: "Problems", blurb: "Works held up by something" },
+  { id: "power", label: "Power", blurb: "Who has power and who is short" },
 ];
 
 /** Build categories along the bottom bar, each with its asset tabs (the Towns button beside them opens the Towns window: towns spring up by themselves). */
@@ -1677,7 +1677,7 @@ export class Hud {
 
   private fillInfo() {
     const app = this.app;
-    const rows = OVERLAYS.map((o) => `<button class="iv ${app.overlay === o.id ? "on" : ""}" data-id="${o.id}" aria-pressed="${app.overlay === o.id}"><span class="ov-dot ov-${o.id}"></span><span><b>${o.label}</b><span class="small muted">${o.blurb}</span></span></button>`).join("");
+    const rows = OVERLAYS.map((o) => `<button class="iv ${app.overlay === o.id ? "on" : ""}" data-id="${o.id}" aria-pressed="${app.overlay === o.id}"${o.tip ? ` title="${o.tip}"` : ""}><span class="ov-dot ov-${o.id}"></span><span><b>${o.label}</b><span class="small muted">${o.blurb}</span></span></button>`).join("");
     if (!this.setWin("Info views", `<div class="iv-list">${rows}</div><div class="legend">${this.legendHtml()}</div>`)) return;
     for (const b of this.win.querySelectorAll<HTMLButtonElement>(".iv")) b.onclick = () => { app.setOverlay(b.dataset.id as OverlayId); this.sfx.play("click"); this.fillInfo(); };
     for (const b of this.win.querySelectorAll<HTMLButtonElement>(".lg-go")) b.onclick = () => { this.sfx.play("click"); app.flyTo({ x: Number(b.dataset.x), y: Number(b.dataset.y) }); };
@@ -1752,9 +1752,9 @@ export class Hud {
     const html = `<p class="win-sub">${n === 1 ? "Last hour" : `Average hour, last ${n} hours`}</p>
       <dl class="facts money-rows">${rows.filter(([, v, always]) => always || Math.abs(v) >= 0.5).map(([k, v]) => `<dt>${k}</dt><dd class="${moneyTone(v)}">${signed(v)}</dd>`).join("")}
       <dt class="tot">Balance</dt><dd class="tot ${moneyTone(total)}">${signed(total)}</dd></dl>
-      ${prodRows ? `<h3 class="sub-h">Made a day, lately <span class="muted">· loads, of what your works can make</span></h3><ul class="pd-list">${prodRows}</ul>` : ""}
-      ${plants ? `<h3 class="sub-h">Your works, last hour <span class="muted">· click one to go there</span></h3><ul class="ec-list">${plants}</ul>` : ""}
-      ${sparkline(g.history.map((x) => x.money), "Money")}`;
+      ${prodRows ? `<h3 class="sub-h" title="Loads a day lately, of what your works can make">Made per day</h3><ul class="pd-list">${prodRows}</ul>` : ""}
+      ${plants ? `<h3 class="sub-h" title="Profit over the last hour. Click one to go there">Your works, last hour</h3><ul class="ec-list">${plants}</ul>` : ""}
+      ${sparkline(g.history.map((x) => x.money), "Money", formatMoney)}`;
     if (!this.setWin("Economy", html)) return;
     for (const r of this.win.querySelectorAll<HTMLButtonElement>(".ec-row")) r.onclick = () => {
       const b = g.buildings.byId.get(+r.dataset.id!);
@@ -1786,32 +1786,31 @@ export class Hud {
   /** The Towns window: every town, how big it is and which way it's heading. */
   private fillCity() {
     const g = this.app.game;
-    const s = g.people.stats;
     const rows = g.towns.list.map((t) => {
       const tr = trendOf(t);
       // its worst-supplied need, in the panel's words ("Food · Running low")
       const worst = townNeeds(t).reduce<NeedView | null>((w, v) => (!w || v.got / v.want < w.got / w.want ? v : w), null);
       // (a town that sprang up and no road reaches yet says so: its needs mean nothing till one does)
+      // (its worst need only when it is short: a town doing well says so in its trend word alone)
       const need = t.spawned && !joinedUp(g, t)
         ? `<span class="tw-need low">No road yet</span>`
         : t.spawned && !served(t)
-        ? `<span class="tw-need">Joined · first load due</span>`
-        : worst && t.pop >= 60
-        ? `<span class="tw-need ${worst.state === "low" ? "mid" : worst.state === "none" ? "low" : ""}">${productIcon(worst.p)}${PRODUCTS[worst.p].name} · ${worst.word}</span>`
+        ? `<span class="tw-need">First load due</span>`
+        : worst && t.pop >= 60 && (worst.state === "low" || worst.state === "none")
+        ? `<span class="tw-need ${worst.state === "low" ? "mid" : "low"}">${productIcon(worst.p)}${PRODUCTS[worst.p].name} · ${worst.word}</span>`
         : "";
-      return `<li><button class="tw-row" data-id="${t.id}"><span class="tw-name"><b>${escapeHtml(t.name)}</b><span class="small muted">${g.towns.sizeName(t)} · ${fmtNum(t.pop)} people</span></span>${miniSpark(t.hist.pop.slice(-72))}<span class="tw-right"><span class="tw-trend ${tr.cls}">${tr.short}</span>${need}</span></button></li>`;
+      return `<li><button class="tw-row" data-id="${t.id}"><span class="tw-name"><b>${escapeHtml(t.name)}</b><span class="small muted">${g.towns.sizeName(t)} · ${fmtNum(t.pop)} people</span></span><span class="tw-right"><span class="tw-trend ${tr.cls}">${tr.short}</span>${need}</span></button></li>`;
     }).join("");
     // when the next town springs up: which goal brings it, and how far along that is
     const nt = nextTown(g);
     const next = nt
-      ? `<p class="tw-next"><span>Next town springs up at</span> <b>${escapeHtml(nt.m.name)}</b> · ${measureText(nt.m, nt.have, nt.need)}${nt.before ? ` <span class="muted">· opens after ${nt.before} more goal${nt.before === 1 ? "" : "s"}</span>` : ""}</p>`
-      : `<p class="tw-next muted">Every town the goals bring has sprung up.</p>`;
+      ? `<p class="tw-next" title="A new town springs up when this goal is reached${nt.before ? `. It opens after ${nt.before} more goal${nt.before === 1 ? "" : "s"}` : ""}"><span>Next town:</span> <b>${escapeHtml(nt.m.name)}</b> · ${measureText(nt.m, nt.have, nt.need)}</p>`
+      : "";
     const html = `${next}${openOrders(g)}<ul class="tw-list">${rows}</ul>
       <dl class="facts">
-        <dt>People in your towns</dt><dd>${fmtNum(s.population)}</dd>
-        <dt>Working at your plants</dt><dd>${fmtNum(g.industry.plants().reduce((a, b) => a + g.people.workersAt(b.id), 0))}</dd>
+        <dt>Working at your works</dt><dd>${fmtNum(g.industry.plants().reduce((a, b) => a + g.people.workersAt(b.id), 0))}</dd>
       </dl>
-      ${sparkline(g.history.map((x) => x.pop), "Population")}`;
+      ${sparkline(g.history.map((x) => x.pop), "People", fmtNum)}`;
     if (!this.setWin("Towns", html)) return;
     for (const b of this.win.querySelectorAll<HTMLButtonElement>(".tw-row, .tw-order")) b.onclick = () => { this.sfx.play("click"); this.showTown(+b.dataset.id!); };
   }
@@ -1837,12 +1836,11 @@ export class Hud {
     const html = `<dl class="facts">
         <dt title="How fast traffic is moving, against the speed limits of the roads it is on">Traffic flow</dt><dd class="${flow < 0.6 ? "bad" : flow > 0.85 ? "good" : ""}">${Math.round(flow * 100)}%</dd>
         <dt title="Vehicles that have not moved for ${STANDING_S} seconds or more">Standing still</dt><dd class="${all && standing / all > 0.25 ? "bad" : ""}">${fmtNum(standing)} <span class="muted">of ${fmtNum(all)} vehicles</span></dd>
-        ${jams ? `<dt>Stuck</dt><dd class="bad">${jams === 1 ? "one place" : `${jams} places`} <span class="muted">· the sign above the clock flies there</span></dd>` : ""}
+        ${jams ? `<dt title="The sign above the clock flies there">Stuck</dt><dd class="bad">${jams === 1 ? "1 place" : `${jams} places`}</dd>` : ""}
         <dt>Cars on the road</dt><dd>${fmtNum(cars)}</dd>
         <dt>Trucks on the road</dt><dd>${fmtNum(trucks)}</dd>
         <dt>Road network</dt><dd>${(len / 1000).toFixed(1)} km</dd>
       </dl>
-      <p class="small muted">The map shows the Traffic flow view while this is open: red roads are jammed.</p>
       ${this.linesHtml()}`;
     if (!this.setWin("Traffic", html)) return;
     this.bindLines();
@@ -1853,10 +1851,10 @@ export class Hud {
     const g = this.app.game, tr = g.transit;
     if (!g.featureUnlocked("transit")) {
       const m = unlockedBy((u) => u.features?.includes("transit"));
-      return `<h3 class="sub-h">Bus lines</h3><p class="small muted">${ICON.lock} Buses unlock with the milestone ${m?.name ?? "a later milestone"}${m ? `: ${m.goal.toLowerCase()}` : ""}.</p>`;
+      return `<h3 class="sub-h">Bus lines</h3><p class="small muted"${m ? ` title="${escapeHtml(m.goal)}"` : ""}>${ICON.lock} Buses unlock with ${escapeHtml(m?.name ?? "a later goal")}</p>`;
     }
     const lines = [...tr.lines.values()];
-    if (!lines.length) return `<h3 class="sub-h">Bus lines</h3><p class="small muted">No bus lines yet. Put down stops with Transport › Bus stop, then click them in order with Bus line.</p>`;
+    if (!lines.length) return `<h3 class="sub-h">Bus lines</h3><p class="small muted" title="Put down stops with Transport › Bus stop, then click them in order with Bus line">No bus lines yet</p>`;
     let riders = 0, buses = 0;
     const rows = lines.map((l) => {
       const n = tr.busesOn(l.id);
@@ -2012,8 +2010,7 @@ export class Hud {
   private fillGround(s: Extract<Sel, { k: "ground" }>, m: PanelModel) {
     const g = this.app.game;
     const k = s.id >= 0 ? extractorFor(g, s.id) : null;
-    const note = s.id >= 0 ? `<p class="small muted ip-note">The Resources view is on while this is selected: ${escapeHtml(m.title.replace(/ deposit$/, "").toLowerCase())} shows strong, the rest faint.</p>` : "";
-    const body = k ? `<button type="button" class="btn ip-place"><span aria-hidden="true">${placedIcon(k)}</span>Place a ${escapeHtml(BUILDING_TYPES[k].name.toLowerCase())} here</button>${note}` : note;
+    const body = k ? `<button type="button" class="btn ip-place"><span aria-hidden="true">${placedIcon(k)}</span>Place a ${escapeHtml(BUILDING_TYPES[k].name.toLowerCase())} here</button>` : "";
     if (!this.setPanel(this.anatomy(m, { kind: "ground", body }))) return;
     const b = this.panel.querySelector<HTMLButtonElement>(".ip-place");
     if (b && k) b.onclick = () => {
@@ -2025,7 +2022,7 @@ export class Hud {
 
   /** A stuck-traffic diamond: the vehicles standing there and the junctions holding them (all chips select). */
   private fillStuck(m: PanelModel) {
-    if (!this.setPanel(this.anatomy(m, { kind: "stuck", body: `<p class="small muted ip-note">Ringed on the map: the vehicles standing still, and the roads they are on.</p>` }))) return;
+    if (!this.setPanel(this.anatomy(m, { kind: "stuck" }))) return;
     // the one-click fix for a deadlock: lights on the junction it forms at (its whole cluster: Game.setSignal)
     const b = this.panel.querySelector<HTMLButtonElement>(".ip-act-fix");
     const act = m.status.act;
@@ -2035,7 +2032,7 @@ export class Hud {
       if (!plan || g.net.nodes.get(act.node)?.signal) { this.lastPanel = ""; this.fillSel(); return; }
       if (!g.setSignal(act.node, plan)) { this.toast("Not enough money", true); return; }
       this.sfx.play("build");
-      this.toast("Traffic lights up: the deadlock clears as they take turns");
+      this.toast("Traffic lights built");
       this.lastPanel = "";
       this.fillSel();
     };
@@ -2057,17 +2054,17 @@ export class Hud {
       const prod = pIcon && (c.kind || c.town) ? `<span class="fc-p">${pIcon}</span>` : "";
       const body = `${icon}${prod}<span class="fc-t">${escapeHtml(c.text)}</span>${c.note ? `<em class="${c.tone ?? ""}">${escapeHtml(c.note)}</em>` : ""}`;
       return c.ref
-        ? `<button class="fchip" data-k="${c.ref.k}" data-id="${c.ref.id}" title="Select ${escapeHtml(c.text)} and light it up on the map">${body}</button>`
-        : `<span class="fchip still">${body}</span>`;
+        ? `<button class="fchip" data-k="${c.ref.k}" data-id="${c.ref.id}" title="${escapeHtml(c.title ? `${c.title}. Click to select it` : `Select ${c.text} and light it up on the map`)}">${body}</button>`
+        : `<span class="fchip still"${c.title ? ` title="${escapeHtml(c.title)}"` : ""}>${body}</span>`;
     };
-    const flow = m.flow.length ? `<dl class="ip-flow">${m.flow.map((r) => `<dt class="fl-${r.label.toLowerCase().replace(/\s+/g, "-")}">${escapeHtml(r.label)}</dt><dd>${r.chips.map(chip).join("")}</dd>`).join("")}</dl>` : "";
+    const flow = m.flow.length ? `<dl class="ip-flow">${m.flow.map((r) => `<dt class="fl-${r.label.toLowerCase().replace(/\s+/g, "-")}"${r.title ? ` title="${escapeHtml(r.title)}"` : ""}>${escapeHtml(r.label)}</dt><dd>${r.chips.map(chip).join("")}</dd>`).join("")}</dl>` : "";
     const lv = m.level ? `<div class="ip-lvl">${levelRun(m.level.from, m.level.to, m.level.pct)}<span class="ip-lvl-t ${m.level.tone ?? ""}">${escapeHtml(m.level.line)}</span></div>` : "";
     const open = moreOpen(o.kind);
     const details = o.details ? `<details class="ip-more" data-k="${o.kind}"${open ? " open" : ""}><summary>Details</summary><div class="ip-more-body">${o.details}</div></details>` : "";
     return `<header class="ip-head"><span class="svc-tag${/^(junction|roundabout|road:)/.test(m.icon) ? " lit" : ""}">${iconFor(m.icon)}</span><span class="ip-t"><span class="ip-tn">${escapeHtml(m.title)}</span>${m.sub ? `<small class="ip-ts">${escapeHtml(m.sub)}</small>` : ""}</span>${m.badge ? `<span class="lv-badge" title="Site level">${m.badge}</span>` : ""}${o.actions ?? ""}</header>
-      <p class="ip-st ${st.tone}"><i aria-hidden="true"></i><span class="ip-st-t">${escapeHtml(st.text)}</span>${st.tag ? `<span class="ip-tag">${escapeHtml(st.tag)}</span>` : ""}</p>
+      <p class="ip-st ${st.tone}"${st.title ? ` title="${escapeHtml(st.title)}"` : ""}><i aria-hidden="true"></i><span class="ip-st-t">${escapeHtml(st.text)}</span>${st.tag ? `<span class="ip-tag">${escapeHtml(st.tag)}</span>` : ""}</p>
       ${st.fix ? `<p class="ip-fix${st.show ? " has-show" : ""}"><span>${escapeHtml(st.fix)}</span>${st.show ? `<button class="fchip" data-k="building" data-id="${st.show.id}" title="Select your ${escapeHtml(BUILDING_TYPES[st.show.kind as BuildingKind]?.name ?? "works")} and fly to it">${iconFor(st.show.kind)}<span class="fc-t">Show it</span></button>` : ""}</p>` : ""}
-      ${st.act ? `<p class="ip-fixit"><button type="button" class="btn primary ip-act-fix" data-node="${st.act.node}"${st.act.cost > this.app.game.money ? " disabled" : ""}>${escapeHtml(st.act.label)}${st.act.cost > this.app.game.money ? " (not enough money)" : ""}</button></p>` : ""}
+      ${st.act ? `<p class="ip-fixit"><button type="button" class="btn primary ip-act-fix" data-node="${st.act.node}"${st.act.cost > this.app.game.money ? " disabled" : ""}>${escapeHtml(st.act.label)}</button>${st.act.cost > this.app.game.money ? `<span class="small muted">Not enough money</span>` : ""}</p>` : ""}
       ${o.summaryFirst ? `${keys}${lv}${o.lead ?? ""}${flow}` : `${o.lead ?? ""}${keys}${flow}${lv}`}${o.body ?? ""}${details}${o.danger ? `<footer class="ip-foot">${o.danger}</footer>` : ""}`;
   }
 
@@ -2114,8 +2111,7 @@ export class Hud {
     const g = this.app.game, v = g.traffic.vehicles.find((x) => x.id === this.sel!.id)!;
     const tr = v.trip, h = tr.haul;
     const rows: [string, string][] = [];
-    if (h && !h.big) rows.push(["Truck", `${TRUCK_CLASSES[h.cls ?? "light"].name} · ${Math.round(v.len)} m`]);
-    if (h && h.leg === "back") rows.push(["Load", "Empty, on its way back"]);
+    if (h && !h.big) rows.push(["Length", `${Math.round(v.len)} m`]);
     // (a loaded truck's key numbers are its cargo: its speed goes here)
     if (h && h.leg === "out" && !h.big) rows.push(["Speed", `${Math.round(v.v * 3.6)} km/h <span class="muted">· limit ${Math.round(v.edge.speed * 3.6)}</span>`]);
     if (tr.bus) rows.push(["Aboard", plural(tr.bus.pax.length, "rider")]);
@@ -2126,9 +2122,8 @@ export class Hud {
     const on = v.edge.kind === "lane" ? g.net.segs.get((v.edge as Lane).seg) : undefined;
     if (on) rows.push(["On", `${ROAD_TYPES[on.type].name} · ${Math.round(ROAD_TYPES[on.type].speed * 3.6)} km/h`]);
     const details = `<dl class="facts">${rows.map(([k, x]) => `<dt>${k}</dt><dd>${x}</dd>`).join("")}</dl>`;
-    const body = `<p class="small muted ip-note">On the map: dashes run the way it will take, to the square at its end; the faded line is the way it came.</p>`;
     const following = this.app.following === v.id;
-    const html = this.anatomy(m, { kind: "vehicle", details, body, actions: this.actionBtn("follow", ICON.follow, "Follow with the camera", following) });
+    const html = this.anatomy(m, { kind: "vehicle", details, actions: this.actionBtn("follow", ICON.follow, "Follow with the camera", following) });
     if (!this.setPanel(html)) return;
     const f = this.panel.querySelector<HTMLButtonElement>(".ip-act.follow");
     if (f) f.onclick = () => { this.sfx.play("click"); this.app.followVehicle(this.app.following === v.id ? null : v.id); this.lastPanel = ""; this.fillSel(); };
@@ -2146,15 +2141,12 @@ export class Hud {
     const d = { x: b.x - a.x, y: b.y - a.y };
     const flowOn = this.app.overlay === "flow";
     const details = `<dl class="facts">
-        <dt>Type</dt><dd>${T.name} · ${T.short}</dd>
-        <dt>Speed limit</dt><dd>${Math.round(T.speed * 3.6)} km/h</dd>
+        <dt>Type</dt><dd>${T.name} · ${Math.round(T.speed * 3.6)} km/h</dd>
         <dt>Length</dt><dd>${Math.round(geo.center.length)} m</dd>
         ${dirRow(id * 2, `Toward ${compass(d)}`)}${dirRow(id * 2 + 1, `Toward ${compass({ x: -d.x, y: -d.y })}`)}
         ${s.town !== undefined ? `<dt>Laid by</dt><dd>${escapeHtml(g.towns.byId.get(s.town)?.name ?? "a town")} <span class="muted">· no upkeep</span></dd>` : ""}
       </dl>`;
-    const n = m.related.routes?.length ?? 0;
-    const routes = n ? `<p class="small muted ip-note">On the map: the whole routes of the ${plural(n, "vehicle")} on it now, thicker where more share a road; ochre is your freight, cream everyone else.</p>` : "";
-    const body = `${routes}<button class="btn quiet ip-flowbtn" aria-pressed="${flowOn}">${ICON.layers}${flowOn ? "Hide the traffic flow view" : "Show traffic flow on every road"}</button>`;
+    const body = `<button class="btn quiet ip-flowbtn" aria-pressed="${flowOn}" title="Traffic flow on every road">${ICON.layers}${flowOn ? "Hide traffic flow" : "Show traffic flow"}</button>`;
     const html = this.anatomy(m, { kind: "road", details, body });
     if (!this.setPanel(html)) return;
     const fb = this.panel.querySelector<HTMLButtonElement>(".ip-flowbtn");
@@ -2182,21 +2174,20 @@ export class Hud {
           <span class="nd-ic" aria-hidden="true">${productIcon(v.p)}</span>
           <span class="nd-top"><b>${PRODUCTS[v.p].name}</b><span class="nd-st">${v.word}</span></span>
           <span class="nd-bar" aria-hidden="true"><i style="width:${track.toFixed(1)}%"><s style="width:${(v.fill * 100).toFixed(1)}%"></s></i></span>
-          <span class="nd-fig"><b>${fmtLoads(v.got)}</b> of ${fmtLoads(v.want)} loads a day</span>
+          <span class="nd-fig"><b>${fmtLoads(v.got)}</b> of ${fmtLoads(v.want)} loads/day</span>
         </li>`;
     }).join("");
     const cn = comingNeeds(t.pop);
     const soon = cn
-      ? `<p class="nd-soon">${cn.products.map((p) => `<span class="nd-ic" aria-hidden="true">${productIcon(p)}</span>`).join("")}<span><b>Soon: ${cn.products.map((p) => PRODUCTS[p].name).join(" and ")}</b> <span class="muted">when it reaches ${fmtNum(cn.pop)} people</span></span></p>`
+      ? `<p class="nd-soon">${cn.products.map((p) => `<span class="nd-ic" aria-hidden="true">${productIcon(p)}</span>`).join("")}<span><b>Soon: ${cn.products.map((p) => PRODUCTS[p].name).join(" and ")}</b> <span class="muted">at ${fmtNum(cn.pop)} people</span></span></p>`
       : "";
     const lead = `<h3 class="sub-h nd-h">What it needs</h3><ul class="nds">${rows}</ul>${soon}${townOrders(g, t)}`;
-    const figures = views.map((v) => `<dt title="${buyer(v.p)} up to ${fmtLoads(g.towns.buysPerDay(t.id, v.p))} a day and no more">${PRODUCTS[v.p].name}</dt><dd>${fmtLoads(v.got)} <span class="muted">of ${fmtLoads(v.want)}</span></dd>`).join("");
     // what came, by product, and what it was worth
     const sold = (Object.entries(t.yesterday) as [Product, number][]).filter(([, n]) => n > 0);
     const worth = sold.reduce((a, [p, n]) => a + n * PRODUCTS[p].price, 0);
     const deliveries = sold.length
       ? `<dl class="facts">${sold.map(([p, n]) => `<dt>${PRODUCTS[p].name}</dt><dd>${fmtLoads(n)} ${Math.round(n) === 1 ? "load" : "loads"}</dd>`).join("")}<dt class="tot">Worth</dt><dd class="tot">${formatMoney(worth)}</dd></dl>`
-      : `<p class="small muted">Nothing delivered yesterday.</p>`;
+      : `<p class="small muted">Nothing</p>`;
     // homes and work, and the blocks waiting for construction parts
     let jobs = 0, rebuilding = 0, waiting = 0, partsLeft = 0;
     for (const b of mine) {
@@ -2206,20 +2197,18 @@ export class Hud {
     }
     const hall = g.buildings.byId.get(t.hall);
     const hallLine = hall ? `${BUILDING_TYPES[hall.kind].name}${hall.built < 1 ? ` <span class="muted">· building, ${Math.round(hall.built * 100)}%</span>` : ""}` : "None yet";
+    // (the status line says how it grows; here only the mark it moves at, "Grows from 85%")
+    const gl = growthOf(t).line, mark = gl.includes(" from ") ? gl.slice(gl.lastIndexOf(", ") + 2) : "";
     const details = `${townChart(t, next)}
       <dl class="facts">
-        <dt>People</dt><dd>${fmtNum(t.pop)}</dd>
         <dt>Households</dt><dd>${fmtNum(t.households)} <span class="muted">of ${fmtNum(t.homes)} homes</span></dd>
-        <dt>Growth</dt><dd class="${growthOf(t).tone}">${escapeHtml(growthOf(t).line)}</dd>
+        ${mark ? `<dt>Growth</dt><dd>${escapeHtml(cap(mark))}</dd>` : ""}
         <dt>Shops and offices</dt><dd>${t.shops} <span class="muted">· ${fmtNum(jobs)} jobs</span></dd>
         <dt>Hall</dt><dd>${hallLine}</dd>
         ${rebuilding ? `<dt>Rebuilding</dt><dd>${plural(rebuilding, "site")}</dd>` : ""}
         ${stations ? `<dt>Filling stations</dt><dd>${stations}</dd>` : ""}
         ${waiting ? `<dt>Waiting for parts</dt><dd class="${waiting > 3 ? "bad" : ""}">${plural(waiting, "block")}, ${plural(partsLeft, "load")}</dd>` : ""}
       </dl>
-      <h3 class="sub-h">Needs in figures <span class="muted">loads a day</span></h3>
-      <dl class="facts">${figures}</dl>
-      <p class="small muted">Its shops buy what it uses in a day and no more: loads beyond that wait at your works or go to a warehouse.</p>
       <h3 class="sub-h">Delivered yesterday</h3>
       ${deliveries}`;
     // (its size, needs met and the track to the next size first, under the status: below the needs they fell past the
@@ -2249,7 +2238,7 @@ export class Hud {
           const need = P.site!.need[p]!, got = Math.min(need, P.site!.got[p] ?? 0);
           return `<dt>${PRODUCTS[p].name}</dt><dd>${stockBar(got, need, PRODUCTS[p].color)}<span class="num">${Math.floor(got)} / ${need}</span></dd>`;
         }).join("");
-        const body = `<dl class="facts">${mats}</dl><p class="small muted">Once all are in it takes ${buildTime(b.kind) / HOUR} hours to build. No wages or upkeep until then.</p>`;
+        const body = `<dl class="facts">${mats}</dl><p class="small muted" title="No wages or upkeep until it is built">Then ${buildTime(b.kind) / HOUR} hours to build</p>`;
         if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, lead, body: chain + body }))) this.bindDemolishBtn(demolish);
         return;
       }
@@ -2275,8 +2264,8 @@ export class Hud {
       };
       const supRows = sup.map(({ p, stock: n, now }) => `<dt title="${now ? `Used up as it works at level ${lvl}` : `Needed in store to grow to level ${lvl + 1}`}">${PRODUCTS[p].name}${now ? "" : ` <span class="muted">(level ${lvl + 1})</span>`}</dt><dd>${stockBar(n, SUPPLY_STORE, PRODUCTS[p].color)}<span class="num">${n.toFixed(1)}</span></dd>${boost(p)}`).join("");
       const supNote = sup.some((s) => s.now)
-        ? `Drawn down as it works. Out of one, it slips back to the pace of a lower level (never below level 2) until your trucks bring more.`
-        : `Its next level works through these: it needs them in store to grow.`;
+        ? `Drawn down as it works. Out of one, it slips back to the pace of a lower level, never below level 2, until your trucks bring more`
+        : `Its next level works through these. It needs them in store to grow`;
       // perishables: what arrived fresh last hour (and all time), and the value lost on the way
       const pct = (a: number, n: number) => `${Math.round((100 * a) / Math.max(1e-9, n))}%`;
       const freshRows = P.last.perish || P.perish
@@ -2309,8 +2298,8 @@ export class Hud {
         ${b.built >= 1 ? outputDay(b) : ""}
         ${ins ? `<h3 class="sub-h">In the yard</h3><dl class="facts">${ins}</dl>` : ""}
         ${outs ? `<h3 class="sub-h">Ready to ship</h3><dl class="facts">${outs}</dl>` : ""}
-        ${flare ? `<p class="small muted">Its yard is full of ${PRODUCTS[flare].name.toLowerCase()}: ${g.industry.wants(flare) ? `your ${Industry.takers(flare)} can't take more for now` : Industry.usedBy(flare) ? `nothing of yours uses it until you build a ${Industry.takers(flare)}` : `nothing of yours uses it until tier ${Industry.laterTier(flare)}`}, so it burns off the rest and keeps making ${(Object.keys(D.outputs) as Product[]).filter((p) => p !== flare).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ")}.</p>` : ""}
-        ${supRows ? `<h3 class="sub-h">Supplies</h3><dl class="facts">${supRows}</dl><p class="small muted">${supNote}</p>` : ""}
+        ${flare ? `<p class="small muted" title="${escapeHtml(`${g.industry.wants(flare) ? `Your ${Industry.takers(flare)} can't take more for now` : Industry.usedBy(flare) ? `Nothing of yours uses it until you build a ${Industry.takers(flare)}` : `Nothing of yours uses it until tier ${Industry.laterTier(flare)}`}. It keeps making ${(Object.keys(D.outputs) as Product[]).filter((p) => p !== flare).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ")}`)}">Burning off spare ${PRODUCTS[flare].name.toLowerCase()}</p>` : ""}
+        ${supRows ? `<h3 class="sub-h" title="${escapeHtml(supNote)}">Supplies</h3><dl class="facts">${supRows}</dl>` : ""}
         ${isMega(b.kind) ? "" : siteLevel(b, sup.filter((s) => !s.now).map((s) => s.p))}
         <h3 class="sub-h">Running it</h3>
         <dl class="facts">
@@ -2356,10 +2345,9 @@ export class Hud {
     }
     // (a town's own building: the town puts it up, grows it and replaces it. No land value, level or demolish
     // button here, which were a city-builder's: the Bulldoze tool still clears one out of a road's way. D8)
-    const whose = b.town !== undefined ? `<p class="small muted ip-note">${escapeHtml(g.towns.byId.get(b.town)?.name ?? "The town")} builds and looks after it. It grows with the town.</p>` : "";
     const details = rows.length ? `<dl class="facts">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>` : undefined;
     const mine = b.town === undefined;
-    if (this.setPanel(this.anatomy(m, { kind: grp === "res" ? "home" : "shop", danger: mine ? act : undefined, body: whose, details })) && mine) this.bindDemolishBtn(demolish);
+    if (this.setPanel(this.anatomy(m, { kind: grp === "res" ? "home" : "shop", danger: mine ? act : undefined, details })) && mine) this.bindDemolishBtn(demolish);
   }
 
   /**
@@ -2369,9 +2357,9 @@ export class Hud {
   private roadOffer(b: Building): string {
     if (!b.placed || b.access) return "";
     const g = this.app.game, plan = g.roadTo(b);
-    if (!plan) return `<p class="ip-road small">No road can be laid to its gate from here by itself: draw one to it with Roads, or move it nearer your roads.</p>`;
+    if (!plan) return `<p class="ip-road small">No road reaches its gate. Draw one with Roads</p>`;
     const short = g.money < plan.cost;
-    return `<div class="ip-road"><p class="small">A dirt road from its gate to your roads, dashed on the map: <b>${distText(planLength(plan))}</b>, <b class="num">${formatMoney(plan.cost)}</b>.${short ? " More than you have now." : ""}</p><button type="button" class="btn ip-roadbtn" data-id="${b.id}"${short ? " disabled" : ""}>Build this road</button></div>`;
+    return `<div class="ip-road"><p class="small" title="A dirt road from its gate to your roads, dashed on the map">Road to its gate: <b>${distText(planLength(plan))}</b>, <b class="num">${formatMoney(plan.cost)}</b></p><button type="button" class="btn ip-roadbtn" data-id="${b.id}"${short ? " disabled" : ""}>${short ? "Not enough money" : "Build this road"}</button></div>`;
   }
 
   /** Lay the road offered to a works (its panel's button, or its tip's). */
@@ -2411,10 +2399,9 @@ export class Hud {
         <td><label class="wh-hit"><input type="checkbox" class="wh-take" data-p="${p}" aria-label="Take ${escapeHtml(PRODUCTS[p].name.toLowerCase())}" ${takes(p) ? "checked" : ""}></label></td>
         <td><label class="wh-hit"><input type="checkbox" class="wh-feed" data-p="${p}" aria-label="Feeder for ${escapeHtml(PRODUCTS[p].name.toLowerCase())}" ${feeds(p) ? "checked" : ""}></label></td></tr>`).join("");
     return `<h3 class="sub-h">In store <span class="muted num">${Math.floor(held)} / ${store}</span></h3>
-      ${rows ? `<dl class="facts">${rows}</dl>` : `<p class="small muted">Empty. Your buildings send it what no plant or town can take yet.</p>`}
-      <h3 class="sub-h">Products</h3>
-      <table class="wh-opts"><thead><tr><th scope="col"><span class="sr">Product</span></th><th scope="col" title="Your trucks may bring it here when nothing else will take it">Take</th><th scope="col" title="Sent here first, before plants and towns farther away: it splits a long haul into two legs">Feeder</th></tr></thead><tbody>${opts}</tbody></table>
-      <p class="small muted">Taken products come here only when no plant or town wants them. A feeder product comes here first when the warehouse is nearer than its buyers, and its own trucks carry it on.</p>`;
+      ${rows ? `<dl class="facts">${rows}</dl>` : `<p class="small muted" title="Your works send it what no works or town can take yet">Empty</p>`}
+      <h3 class="sub-h" title="Taken products come here only when no works or town wants them. A feeder product comes here first when the warehouse is nearer than its buyers, and its own trucks carry it on">Products</h3>
+      <table class="wh-opts"><thead><tr><th scope="col"><span class="sr">Product</span></th><th scope="col" title="Your trucks may bring it here when nothing else will take it">Take</th><th scope="col" title="Sent here first, before plants and towns farther away: it splits a long haul into two legs">Feeder</th></tr></thead><tbody>${opts}</tbody></table>`;
   }
 
   /** A fuel depot's panel: its fuel, the trucks it filled and what that saved. */
@@ -2422,12 +2409,11 @@ export class Hud {
     const P = b.plant!;
     const fuel = P.stock.fuel ?? 0;
     return `<dl class="facts">
-        <dt>Fuel</dt><dd>${stockBar(fuel, store, PRODUCTS.fuel.color)}<span class="num">${fuel.toFixed(1)}</span></dd>
+        <dt title="Your trucks whose run passes within ${(DEPOT_REACH / 1000).toFixed(1)} km fill up here at cost while it has fuel. Your refineries' tankers keep it stocked">Fuel</dt><dd>${stockBar(fuel, store, PRODUCTS.fuel.color)}<span class="num">${fuel.toFixed(1)}</span></dd>
         <dt>Trucks filled</dt><dd>${fmtNum(P.served ?? 0)}</dd>
         <dt>Saved on fuel</dt><dd class="${(P.saved ?? 0) > 0 ? "good" : ""}">${formatMoney(Math.round(P.saved ?? 0))}</dd>
         <dt>Last hour</dt><dd>${plural(P.last.served ?? 0, "truck")} · ${formatMoney(Math.round(P.last.saved ?? 0))}</dd>
-      </dl>
-      <p class="small muted">Your trucks whose run passes within ${(DEPOT_REACH / 1000).toFixed(1)} km of it fill up here at cost, not the market price, while it has fuel. Your refineries' tankers keep it stocked.</p>`;
+      </dl>`;
   }
 
 
@@ -2469,14 +2455,14 @@ export class Hud {
       const stops = node.stops ?? [];
       // (approaches only: not a roundabout's own ring, nor a one-way leading away)
       const stopArms = arms.filter((a) => !g.net.segs.get(a.seg)?.ring && ng.conns.some((c) => c.armIn === a.seg));
-      body = `<p class="small muted">Unsignalled: cars give way by road priority. A stop sign makes an approach stop and give way to all the others. Lights stop traffic in turns and help busy crossings.</p>
-        <div class="phase stops"><span class="ph-name">Stop signs</span><span class="ph-arms">${stopArms.map((a) => `<button class="arm stop-arm ${stops.includes(a.seg) ? "on stop" : ""}" data-seg="${a.seg}" aria-pressed="${stops.includes(a.seg)}" title="Stop sign on this approach">${compass(a.dir)}</button>`).join("")}</span></div>
+      body = `<div class="phase stops" title="Without lights, cars give way by road priority. A stop sign makes an approach stop and give way to all the others. Lights stop traffic in turns and help busy crossings"><span class="ph-name">Stop signs</span><span class="ph-arms">${stopArms.map((a) => `<button class="arm stop-arm ${stops.includes(a.seg) ? "on stop" : ""}" data-seg="${a.seg}" aria-pressed="${stops.includes(a.seg)}" title="Stop sign on this approach">${compass(a.dir)}</button>`).join("")}</span></div>
         <button class="btn primary add-sig" ${sigOn ? "" : "disabled"}>${sigOn ? `Add traffic lights · ${formatMoney(g.lightsCost(this.panelNode))}` : `Traffic lights unlock with ${unlockedBy((u) => u.features?.includes("signals"))!.name}`}</button>`;
     } else {
-      body = `<p class="muted small">The lights run on a fixed clock: ${GREEN} s of green for each phase (${LEFT_GREEN} s for a left-turn arrow), then amber and a moment of all red. Cars may turn right on red after stopping.</p>` + plan.phases.map((p, i) => `<div class="phase ${i === this.panelPhase ? "on" : ""}${live?.st === 0 && live.i === i ? " live" : ""}" data-i="${i}"${live?.st === 0 && live.i === i ? ` title="Green now"` : ""}>
-          <span class="ph-name">${i + 1}. ${p.left ? "Left turns" : "All turns"}<button class="ph-left ${p.left ? "on" : ""}" data-i="${i}" aria-pressed="${!!p.left}" title="Only left turns (and U-turns) go in this phase">Left only</button></span>
+      const clock = `A fixed clock: ${GREEN} s of green for each phase, ${LEFT_GREEN} s for a left-turn arrow, then amber and a moment of all red. Cars may turn right on red after stopping`;
+      body = plan.phases.map((p, i) => `<div class="phase ${i === this.panelPhase ? "on" : ""}${live?.st === 0 && live.i === i ? " live" : ""}" data-i="${i}"${live?.st === 0 && live.i === i ? ` title="Green now"` : ""}>
+          <span class="ph-name">${i + 1}. ${p.left ? "Left turns" : "All turns"}<button class="ph-left ${p.left ? "on" : ""}" data-i="${i}" aria-pressed="${!!p.left}" title="Only left turns and U-turns go in this phase">Left only</button></span>
           <span class="ph-arms">${arms.map((a) => `<button class="arm ${p.arms.includes(a.seg) ? "on" : ""}" data-i="${i}" data-seg="${a.seg}" title="Toggle this approach">${compass(a.dir)}</button>`).join("")}</span>
-          <span class="ph-dur"><b title="Green time">${greenFor(p)} s</b></span>
+          <span class="ph-dur"><b title="${clock}">${greenFor(p)} s</b></span>
           ${plan.phases.length > 1 ? `<button class="ph-del" data-i="${i}" aria-label="Remove phase">${ICON.close}</button>` : ""}
         </div>`).join("") + `<div class="row"><button class="btn add-ph">+ Add phase</button><button class="btn quiet danger rm-sig">Remove lights</button></div>`;
     }
@@ -2709,7 +2695,7 @@ function cubicLength(s: { c: { p0: V2; p1: V2; p2: V2; p3: V2 } }): number {
 /** A town's people over the last days (hourly), with the size it is heading for as a dashed line when it is near. */
 function townChart(t: Town, next: (typeof TOWN_SIZES)[number] | undefined): string {
   const vs = [...t.hist.pop, t.pop];
-  if (vs.length < 3) return "";
+  if (vs.length < 6) return "";
   const W = 248, H = 78, top = 12, bot = 62;
   const hi0 = Math.max(...vs);
   const goal = next && next.pop < Math.max(hi0, 40) * 1.6 ? next.pop : null;
@@ -2788,18 +2774,12 @@ function niceCeil(v: number): number {
 }
 
 /** A tiny line of a town's people (the Towns list). */
-function miniSpark(vs: number[]): string {
-  if (vs.length < 3) return `<span class="tw-spark"></span>`;
-  const lo = Math.min(...vs), hi = Math.max(...vs), span = Math.max(1, hi - lo);
-  const pts = vs.map((v, i) => `${((i / (vs.length - 1)) * 56).toFixed(1)},${(17 - ((v - lo) / span) * 14).toFixed(1)}`).join(" ");
-  return `<svg class="tw-spark" viewBox="0 0 56 20" aria-hidden="true" focusable="false"><polyline points="${pts}"/></svg>`;
-}
-
-function sparkline(vs: number[], what: string): string {
-  if (vs.length < 2) return "";
+/** A chart of the last hours, hidden until there are 6 of them; its ends in words under it: "People, last 30 hours: 120 → 450". */
+function sparkline(vs: number[], what: string, fmt: (n: number) => string): string {
+  if (vs.length < 6) return "";
   const lo = Math.min(...vs), hi = Math.max(...vs), span = Math.max(1, hi - lo);
   const pts = vs.map((v, i) => `${(i / (vs.length - 1)) * 220},${38 - ((v - lo) / span) * 34}`).join(" ");
-  return `<svg class="spark" viewBox="0 -2 220 42" preserveAspectRatio="none" role="img" aria-label="${what} over the last ${vs.length} hours"><polyline points="${pts}" fill="none" stroke="#2373c4" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg><p class="muted small">${what}, last ${vs.length} hours</p>`;
+  return `<svg class="spark" viewBox="0 -2 220 42" preserveAspectRatio="none" role="img" aria-label="${what} over the last ${vs.length} hours"><polyline points="${pts}" fill="none" stroke="#2373c4" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg><p class="muted small">${what}, last ${vs.length} hours: ${fmt(Math.round(vs[0]))} → ${fmt(Math.round(vs[vs.length - 1]))}</p>`;
 }
 
 function rbIcon(size: RoundaboutSize): string {
@@ -2831,15 +2811,11 @@ function siteLevel(b: Building, next: Product[] = []): string {
   if (!P || !b.placed || b.built < 1) return "";
   const L = P.level ?? 1;
   const mult = `×${LEVEL_MULT[L - 1]} output, jobs and trucks`;
-  if (L >= SITE_LEVELS) return `<h3 class="sub-h">Site level ${L} of ${SITE_LEVELS}</h3><p class="small muted">Fully grown: ${mult}.</p>`;
-  const k = Math.max(0, Math.min(1, (P.grow ?? 0) / growNeed(P.level)));
-  // (the reason it stalls is often the status line above already: no need to say it twice)
-  const why = !P.why ? "Growing: it works near capacity, ships its output and gets its inputs."
-    : P.why === b.problem ? "Not growing till that is fixed."
-    : `<span class="bad">Held back: ${P.why}.</span>`;
-  return `<h3 class="sub-h">Site level ${L} of ${SITE_LEVELS}</h3>
-    <dl class="facts"><dt>Growing</dt><dd><span class="lv-run">${levelRun(`Level ${L}`, `Level ${L + 1}`, k)}</span><span class="num">${Math.round(k * 100)}%</span></dd></dl>
-    <p class="small muted">${why} Now ${mult}; level ${L + 1} gives ×${LEVEL_MULT[L]}${next.length ? ` and works through ${productList(Object.fromEntries(next.map((p) => [p, 1])))}, so it grows once it has some in store` : ""}.</p>`;
+  if (L >= SITE_LEVELS) return `<h3 class="sub-h">Site level ${L} of ${SITE_LEVELS}</h3><p class="small muted">Fully grown, ${mult}</p>`;
+  // (its track to the next level is the panel's level line above, with what holds it: here only what a level gives)
+  const tip = "A works grows while it runs near capacity, ships its output and gets its inputs";
+  return `<h3 class="sub-h" title="${tip}">Site level ${L} of ${SITE_LEVELS}</h3>
+    <p class="small muted">Now ${mult}. Level ${L + 1} gives ×${LEVEL_MULT[L]}</p>${next.length ? `<p class="small muted">Grows once it has ${productList(Object.fromEntries(next.map((p) => [p, 1])))} in store</p>` : ""}`;
 }
 
 const km = (m: number) => `${(m / 1000).toFixed(1)} km`;

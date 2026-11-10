@@ -215,11 +215,12 @@ describe("a town's needs, read out", () => {
       return growthOf(t);
     };
     for (const p of [400, 2500, 8000]) {
-      expect(at(p, {})).toMatchObject({ band: "fast", word: "Growing", tone: "good", line: "Growing: fully supplied" });
+      expect(at(p, {})).toMatchObject({ band: "fast", word: "Growing", tone: "good", line: "Growing: fully supplied", share: "" });
       expect(at(p, { food: 0.92 })).toMatchObject({ band: "slow", word: "Growing slowly", tone: "", line: "Growing slowly: 92% supplied with food, full pace from 100%", by: "food" });
       // held by one need at 70%: it says which
       expect(at(p, { food: 0.7 })).toMatchObject({ band: "hold", word: "Holding steady", tone: "", line: "Holding steady: 70% supplied with food, grows from 85%", by: "food" });
-      expect(at(p, { food: 0.48 })).toMatchObject({ band: "hold", word: "Short of supplies", tone: "bad", line: "Short of supplies: 48% supplied with food, holds from 60%" });
+      // (short of one need, the word names it: the sim's own line can only say "supplies")
+      expect(at(p, { food: 0.48 })).toMatchObject({ band: "hold", word: "Short of food", tone: "bad", line: "Short of food: 48% supplied, holds from 60%", share: "48% supplied" });
       expect(at(p, { food: 0.48 }, SHRINK_AFTER)).toMatchObject({ band: "shrink", word: "Shrinking", tone: "bad", line: "Shrinking: 48% supplied with food, holds from 60%" });
     }
     // the worst-supplied need is the one named
@@ -228,11 +229,12 @@ describe("a town's needs, read out", () => {
     for (const share of [{}, { food: 0.92 }, { food: 0.7 }, { food: 0.3 }]) {
       const gr = at(2500, share), tg = townGrowth(t);
       expect(gr.band).toBe(tg.band);
-      expect(gr.word).toBe(tg.line.split(":")[0]);
+      expect(gr.word).toBe(tg.line.split(":")[0].replace("Short of supplies", "Short of food"));
     }
     // the panel's status line is that line
     at(400, { food: 0.7 });
-    expect(townModel(g, t).status).toMatchObject({ text: "Holding steady: 70% supplied with food, grows from 85%", tone: "" });
+    // the panel's status: the word, the need and its share beside it, the whole line in its tooltip
+    expect(townModel(g, t).status).toMatchObject({ text: "Holding steady", tag: "Food 70%", title: "Holding steady: 70% supplied with food, grows from 85%", tone: "" });
     t.pop = 40;
     expect(growthOf(t).word).toBe("Settling in");
     Object.assign(t, { pop, rate, lack });

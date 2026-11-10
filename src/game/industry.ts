@@ -782,6 +782,12 @@ export class Industry {
     return (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} or ${xs[xs.length - 1]}` : xs[0]) || (p === "machinery" ? "site of level 3 or more" : "plant");
   }
 
+  /** The plants that take a product, three at most: "smelter or power plant", "smelter, cement works or another works". */
+  static takersShort(p: Product): string {
+    const xs = Industry.takers(p).split(/, | or /);
+    return xs.length <= 3 ? Industry.takers(p) : `${xs[0]}, ${xs[1]} or another works`;
+  }
+
   /** Does any building of the company's take this product in (as an input, its alternate, a supply or a building material)? */
   static usedBy(p: Product): boolean {
     return PLANT_KINDS.some((k) => takesIn(k, p) || suppliedWith(k, p) || PLANTS[k].site?.[p]);
@@ -951,7 +957,7 @@ export class Industry {
   tick(span: number) {
     const { busy, busyBy, coming } = this.census();
     for (const b of this.plants()) {
-      this.produce(b, span, busy.get(b.id) ?? 0);
+      this.produce(b, span, busy.get(b.id) ?? 0, coming);
       this.dispatch(b, busy, busyBy, coming);
     }
   }
@@ -960,7 +966,7 @@ export class Industry {
    * Work through the current batch: staff, deposit, power and inputs on hand set the pace; a full store stops it.
    * A power plant's batch is the coal it burns, and it burns only while something within reach wants power.
    */
-  produce(b: Building, span: number, out = 0) {
+  produce(b: Building, span: number, out = 0, coming: Map<number, Map<Product, number>> = new Map()) {
     const P = b.plant!, d = PLANTS[b.kind as PlantKind];
     if (P.site) {
       const left = entries(P.site.need).map(([p, n]) => [p, n - (P.site!.got[p] ?? 0)] as [Product, number]).filter(([, n]) => n > 0);
@@ -1014,10 +1020,9 @@ export class Industry {
     const lack = pace < P.level ? this.lacking(b, pace + 1) : [];
     b.problem = !b.access ? (b.placed ? "No road to the gate" : "No road access")
       : f && this.jammed(b, out) ? `Full of ${fname}: ${this.jammed(b, out)}`
-      : f ? (PRODUCTS[f].price > 0 ? `Full of ${fname}: its trucks can't keep up (a long or jammed haul), or nobody to sell to`
-        : Industry.isSupply(f) && !this.wants(f) ? `Full of ${fname}: it goes to sites growing past level 2 (${Industry.takers(f)})`
-        : this.used(f) ? `Full of ${fname}: its trucks can't keep up (a long or jammed haul), or no ${Industry.takers(f)} on its roads`
-        : `Full of ${fname}: nothing uses it until tier ${Industry.laterTier(f)}`)
+      // (full with somewhere to send it: its trucks are too few for the haul; with nowhere, the reason why, in the
+      // words its trucks use when they find nobody: a town that has all it takes for now is a full buyer, not none)
+      : f ? `Full of ${fname}: ${this.fullWhy(b, f, coming)}`
       : staff <= 0 ? "No workers"
       : s ? `Waiting for ${sname}${this.stuckIn(b, s) ? ": the loads on their way are stuck in traffic" : ""}`
       : idle ? "Idle: no building within reach needs power"
@@ -1039,7 +1044,7 @@ export class Industry {
     const many = (n: number) => n >= 2 && n >= out / 4;
     // (the queue at the gate is GATE_QUEUE long at most: full and not moving, the rest are held at the dock behind it)
     if (j.gate >= GATE_QUEUE || many(j.gate)) return "the road at its gate is jammed, its trucks can't get out";
-    if (many(j.road)) return "its trucks are stuck in traffic on the haul (a jammed road)";
+    if (many(j.road)) return "its trucks are stuck in traffic on a jammed road";
     return null;
   }
 
@@ -1073,7 +1078,7 @@ export class Industry {
       : !working ? (b.problem ?? "Not working")
       : staff < 0.8 ? "Needs more workers"
       : d.power && pw < 0.9 ? "Short of power"
-      : piled ? "Output piling up: a long or jammed haul, or no buyers"
+      : piled ? (main && this.stocked(b, main) ? "Towns want no more for now" : "Output piling up")
       : lack.length ? (b.problem?.startsWith("Out of ") ? b.problem : `Needs ${listText(lack.map((p) => PRODUCTS[p].name.toLowerCase()))} to grow to level ${P.level + 1}`)
       : null;
     P.why = why;
@@ -1374,9 +1379,31 @@ export class Industry {
     const kinds = new Set(ids.map((id) => this.h.buildings.byId.get(id)!.kind));
     const where = kinds.size === 1 ? `the ${BUILDING_TYPES[[...kinds][0]].name}${ids.length > 1 ? "s" : ""}` : "your plants that use it";
     const h = Number.isFinite(next) ? Math.max(0, next - this.h.time) / HOUR : null;
-    const when = h === null ? "" : h > 0.75 ? `; the next lands in ${aboutHours(h)}` : "; the next lands within the hour";
+    const when = h === null ? "" : h > 0.75 ? `. The next lands in ${aboutHours(h)}` : ". The next lands within the hour";
     const k = Math.round(n);
     return `${k === 1 ? "1 load" : `${k} loads`} on the way to ${where}${when}`;
+  }
+
+  /**
+   * Why a full works' yard is full of p: its trucks can't keep up while somewhere takes it and loads of it are out on
+   * the road; the road to its buyers is jammed when every one of them is; else why nowhere takes it (noBuyer, in the
+   * words its trucks use). Never "can't keep up" beside a fleet that stands parked (review, v0.0.105).
+   */
+  private fullWhy(b: Building, p: Product, coming: Map<number, Map<Product, number>>): string {
+    const cs = this.customers(b, p, coming);
+    if (cs.length && cs.every((c) => this.choked(c.b))) return "the road to its buyers is jammed";
+    let hauling = false;
+    for (const t of this.h.trips()) if (t.haul && !t.haul.done && !t.haul.big && t.haul.leg === "out" && t.haul.plant === b.id && t.haul.product === p) { hauling = true; break; }
+    if (cs.length || (hauling && this.takersOn(b, p).length)) return "its trucks can't keep up";
+    return decap(this.noBuyer(b, p));
+  }
+
+  /** The works of the company's on `from`'s roads, built and open, that take p in, whether or not they have room now. */
+  takersOn(from: Building, p: Product): Building[] {
+    const seg = from.access?.seg;
+    if (seg === undefined) return [];
+    return this.h.buildings.list.filter((o) => o.plant && !o.plant.site && o.built >= 1 && o.id !== from.id && o.access && this.h.connected(seg, o.access.seg)
+      && (takesIn(o.kind as PlantKind, p) || Industry.wantsSupply(o).includes(p)));
   }
 
   /** Why a load has nowhere to go: no town on its roads uses it, or they all have enough for today. */
@@ -1388,7 +1415,8 @@ export class Industry {
       for (const o of this.h.buildings.list) {
         if (!o.plant || !o.access || !this.h.connected(seg, o.access.seg)) continue;
         if (!takesIn(o.kind as PlantKind, p) && !(o.plant.site ? false : Industry.wantsSupply(o).includes(p))) continue;
-        if (!o.plant.site) return this.spokenFor(seg, p) ?? `Your plants that use ${name} have all they can store, with the loads on their way`;
+        // (one still going up is a building site too: it takes nothing till it opens)
+        if (!o.plant.site && o.built >= 1) return this.spokenFor(seg, p) ?? `Your plants that use ${name} have all they can store, with the loads on their way`;
         site = true;
       }
       if (site) return `The plants that will use ${name} are still building sites`;
@@ -1396,21 +1424,38 @@ export class Industry {
     // (construction parts: towns build with them once they put up blocks, from Town size)
     if (p === "parts") return `No town on your roads is putting up a block: towns build with ${name} from Town size`;
     // (a City's needs: no town on its roads uses them yet)
-    if ((p === "electronics" || p === "machinery") && seg !== undefined && !this.h.shops.some((o) => {
-      const t = o.access && this.h.connected(seg, o.access.seg) ? this.h.townOf(o) : null;
-      return t !== null && Number.isFinite(this.h.want(t, p));
-    })) return `No town on your roads uses ${name} yet: towns want it from City size`;
-    if (PRODUCTS[p].price > 0 && seg !== undefined) {
-      for (const o of this.h.shops) {
-        if (!o.access || !this.h.connected(seg, o.access.seg)) continue;
-        const t = this.h.townOf(o);
-        if (t !== null && Number.isFinite(this.h.want(t, p))) return `Towns on your roads have all the ${name} they take for now`;
-      }
-    }
+    const towns = this.buyersOf(from, p).length > 0;
+    if ((p === "electronics" || p === "machinery") && seg !== undefined && !towns) return `No town on your roads uses ${name} yet: towns want it from City size`;
+    if (PRODUCTS[p].price > 0 && towns) return `Towns on your roads have all the ${name} they take for now`;
     if (!this.used(p) && PRODUCTS[p].price <= 0) return `Nothing uses ${name} until tier ${Industry.laterTier(p)}: it stays in the yard`;
-    if (Industry.isSupply(p)) return `No ${Industry.takers(p)} on your roads needs ${name} yet: sites take it as they grow past level 2`;
-    if (PRODUCTS[p].price <= 0) return `No ${Industry.takers(p)} on your roads takes ${name}`;
+    if (Industry.isSupply(p)) return `No ${Industry.takersShort(p)} on your roads needs ${name} yet: sites take it from level 3`;
+    if (PRODUCTS[p].price <= 0) return `No ${Industry.takersShort(p)} on your roads takes ${name}`;
     return `Nobody your roads reach buys ${name}`;
+  }
+
+  /**
+   * The shops on a works' roads whose towns buy p at all (TownSystem.want finite), one per town: its buyers, whether
+   * or not they want more today. A town that has all it takes for now (settlements.ts roomFor) is one of them: a full
+   * buyer, never "no buyer" (v0.0.105).
+   */
+  buyersOf(from: Building, p: Product): Building[] {
+    const seg = from.access?.seg;
+    if (seg === undefined || PRODUCTS[p].price <= 0) return [];
+    const seen = new Set<number>(), out: Building[] = [];
+    for (const o of this.h.shops) {
+      if (!o.access || !this.h.connected(seg, o.access.seg)) continue;
+      const t = this.h.townOf(o);
+      // (a shop still going up, or abandoned, takes nothing: customers() skips it too)
+      if (o.built < 1 || o.abandoned || t === null || seen.has(t) || !Number.isFinite(this.h.want(t, p))) continue;
+      seen.add(t);
+      out.push(o);
+    }
+    return out;
+  }
+
+  /** Has a works its towns' fill of p for now: they buy it, and nothing on its roads would take another load today? */
+  stocked(from: Building, p: Product): boolean {
+    return this.buyersOf(from, p).length > 0 && !this.customers(from, p, new Map()).length;
   }
 
   private send(from: Building, to: Building, product: Product, n: number, cls: TruckClass = this.fleetClass()): HaulRun {
@@ -1630,6 +1675,9 @@ function entries(o: Partial<Record<Product, number>>): [Product, number][] {
 }
 
 /** "a", "a and b", "a, b and c". */
+/** A sentence as the second half of a line: "Towns on your roads..." → "towns on your roads...". */
+const decap = (x: string) => x[0].toLowerCase() + x.slice(1);
+
 function listText(xs: string[]): string {
   return xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}` : xs[0] ?? "";
 }

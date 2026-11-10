@@ -69,9 +69,11 @@ describe("The inspector's panels", () => {
     expect(r).not.toBeNull();
     expect(r!).toBeLessThanOrEqual(can + 1e-9);
     // (in loads a day, the unit the town panel and the goals count in)
-    expect(m.keys[0]).toMatchObject({ value: fmtRate(r! * 24), unit: " loads", label: `crops a day, can ${fmtRate(can * 24)}` });
+    // (a caption that never wraps; what it counts in its tooltip)
+    expect(m.keys[0]).toMatchObject({ value: fmtRate(r! * 24), unit: `/${fmtRate(can * 24)}`, label: "loads/day" });
+    expect(m.keys[0].title).toMatch(/^Loads of crops made a day lately/);
     // crops only feed your own plants: no price, so it shows what it shipped, not a "profit" that's only costs
-    expect(m.keys[1].label).toMatch(/shipped, last hour$/);
+    expect(m.keys[1].label).toBe("shipped/h");
     expect(m.keys[1].value).toBe(String(farm.plant!.last.sent));
     const out = trucksOut(g, farm);
     expect(out.busy).toBeGreaterThan(0);
@@ -95,7 +97,7 @@ describe("The inspector's panels", () => {
   it("a product the towns pay for shows profit; the food plant's farm shows as its source", () => {
     const m = siteModel(g, foodplant, led);
     const P = foodplant.plant!;
-    expect(m.keys[1]).toMatchObject({ label: "profit, last hour", tone: P.last.earned - P.last.spent > 0 ? "good" : P.last.earned - P.last.spent < 0 ? "bad" : "" });
+    expect(m.keys[1]).toMatchObject({ label: "profit/h", tone: P.last.earned - P.last.spent > 0 ? "good" : P.last.earned - P.last.spent < 0 ? "bad" : "" });
     const from = m.flow.find((r) => r.label === "From")!;
     expect(from.chips.some((c) => c.ref?.k === "building" && c.ref.id === farm.id)).toBe(true);
     expect(m.related.from).toContain(farm.id);
@@ -110,8 +112,9 @@ describe("The inspector's panels", () => {
     // (each need is read out in the panel's "What it needs" rows: tests/needs.test.ts)
     expect(m.keys[1].label).toBe("needs met");
     expect(m.keys[1].value).toMatch(/^\d+$/);
-    // (how it grows: the sim's own line, settlements.ts townGrowth)
-    expect(m.status.text.split(":")[0]).toBe(townGrowth(t).line.split(":")[0]);
+    // (how it grows: the sim's own word, settlements.ts townGrowth, its whole line in the tooltip)
+    expect(m.status.text).toBe(townGrowth(t).line.split(":")[0].replace("Short of supplies", m.status.text));
+    expect(m.status.title!.split(":")[0]).toBe(m.status.text);
     expect(m.related.self).toContain(t.hall);
   });
 
@@ -138,17 +141,20 @@ describe("The inspector's panels", () => {
     const h = v.trip.haul!;
     const m = vehicleModel(g, v);
     expect(m.title).toMatch(/truck/i);
-    expect(m.sub).toMatch(/of crops$/);
+    // (its load is said once, in its first key number: no subtitle, no cargo row)
+    expect(m.sub).toBeUndefined();
     // crops feed your own food plant: nobody pays for them, so no cargo value
-    expect(m.keys.map((k) => k.label)).toEqual(["crops", "for your own plant", expect.stringMatching(/^arrives · [\d.]+ k?m to go$/)]);
+    expect(m.keys.map((k) => k.label)).toEqual(["crops", "worth", "arrives"]);
+    expect(m.keys[1].value).toBe("–");
+    expect(m.keys[2].title).toMatch(/^[\d.]+ k?m to go/);
     expect(m.keys[0].value).toBe(String(h.n));
     expect(metresLeft(g, v)).toBeGreaterThan(0);
     expect(m.keys[2].value).toMatch(/^\d\d:\d\d$/); // (to the minute, as the clock counts)
-    expect(m.flow.map((r) => r.label)).toEqual(["Cargo", "From", "To"]);
-    expect(m.flow[0].chips[0]).toMatchObject({ product: "crops", note: `${h.n} load${h.n === 1 ? "" : "s"}` });
-    expect(m.flow[1].chips[0].ref).toEqual({ k: "building", id: farm.id });
-    expect(m.flow[2].chips[0].ref).toEqual({ k: "building", id: h.dest });
-    expect(m.status.tag).toBe("Outbound");
+    expect(m.flow.map((r) => r.label)).toEqual(["From", "To"]);
+    expect(m.flow[0].chips[0].ref).toEqual({ k: "building", id: farm.id });
+    expect(m.flow[1].chips[0].ref).toEqual({ k: "building", id: h.dest });
+    // (loaded and on its way out is the usual: no tag; one on its way back says so)
+    expect(m.status.tag).toBeUndefined();
     expect(m.related).toMatchObject({ route: v.id, from: [farm.id], to: [h.dest] });
   });
 
@@ -274,7 +280,7 @@ describe("The inspector's panels", () => {
     expect(congestion(0.1, 12).tone).toBe("bad");
     const node = [...g.net.nodeGeom.entries()].find(([, ng]) => ng.kind === "junction" && ng.arms.length >= 3)![0];
     const j = junctionModel(g, node, compass)!;
-    expect(j.keys.map((k) => k.label)).toEqual(["vehicles queued", "longest wait", "crossing now"]);
+    expect(j.keys.map((k) => k.label)).toEqual(["queued", "longest wait", "crossing"]);
     // each approach: its vehicles, queued and the longest wait among them
     const ap = approaches(g, node);
     expect(ap.length).toBe(g.net.nodeGeom.get(node)!.arms.length);

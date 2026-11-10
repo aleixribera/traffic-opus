@@ -545,7 +545,7 @@ export function nextLoad(g: Game, b: Building, p: Product): { from: Building | n
     const k = makerKind(p);
     return { from: null, hours: null, building: false, say: `Nothing of yours makes ${name} yet${k ? `. Build ${an(nameOf(k))} ${nameOf(k)}` : ""}` };
   }
-  const where = (o: Building) => `${nameOf(o.kind)} (${d(o) < 950 ? `${Math.round(d(o) / 10) * 10} m` : `${(d(o) / 1000).toFixed(1)} km`})`;
+  const where = (o: Building) => `${nameOf(o.kind)} ${d(o) < 950 ? `${Math.round(d(o) / 10) * 10} m` : `${(d(o) / 1000).toFixed(1)} km`} away`;
   // a load already on the road to it
   let best: { o: Building; s: number } | null = null;
   const drive = (m: number) => (m * 1.35) / (ROAD_TYPES.street.speed * 0.8) + 30;
@@ -574,7 +574,7 @@ export function nextLoad(g: Game, b: Building, p: Product): { from: Building | n
 
 const where = (o: Building, from: Building) => {
   const d = Math.hypot(o.c.x - from.c.x, o.c.y - from.c.y);
-  return `${nameOf(o.kind)} (${d < 950 ? `${Math.round(d / 10) * 10} m` : `${(d / 1000).toFixed(1)} km`})`;
+  return `${nameOf(o.kind)} ${d < 950 ? `${Math.round(d / 10) * 10} m` : `${(d / 1000).toFixed(1)} km`} away`;
 };
 
 /** Does a kind of works take a product in (as an input, or in place of one)? */
@@ -664,7 +664,10 @@ export function afterOpening(g: Game, b: Building): string {
  */
 export function waitsForSite(g: Game, b: Building): { text: string; tone: "bad" | ""; fix: string; show?: number } | null {
   if (!working(b) || !b.problem) return null;
-  const m = /^Full of (.+?): its trucks can't keep up .*or no .+ on its roads$/.exec(b.problem) ?? /^The plants that will use (.+) are still building sites$/.exec(b.problem);
+  // (the sim's lines for it, full or not: "Full of iron ore: the plants that will use iron ore are still building
+  // sites", "Full of steel: no construction plant … on your roads takes steel", and the older full line)
+  const m = /^Full of (.+?): (?:its trucks can't keep up .*or no .+ on its roads|no .+ on your roads (?:takes|needs) .+|the plants that will use .+ are still building sites)$/.exec(b.problem)
+    ?? /^The plants that will use (.+) are still building sites$/.exec(b.problem);
   if (!m) return null;
   const p = (Object.keys(PLANTS[b.kind as PlantKind].outputs) as Product[]).find((q) => lower(q) === m[1]);
   if (!p || PRODUCTS[p].price > 0) return null;

@@ -973,7 +973,8 @@ export class App {
     }
     if (mode === "none" || mode === "flow" || mode === "resources") { this.buildings3d.tint(null); return; }
     this.buildings3d.tint((b) => {
-      if (mode === "problems" && b.plant) return b.problem ? 0xe5484d : 0x2f86e0;
+      // (red only for trouble its panel would show in red: a works whose towns are stocked is calm)
+      if (mode === "problems" && b.plant) return b.problem && !worksCalm(g, b) ? 0xe5484d : 0x2f86e0;
       if (!b.zone) return 0xb5b5b5;
       if (mode === "landvalue") return ramp(b.lv / 80);
       if (mode === "level") return ramp((b.level - 1) / 4);
@@ -2613,7 +2614,7 @@ export class App {
       return {
         p: t.c, h: hall ? this.buildings3d.topOf(hall) + 4 : 0, name: t.name, sub: `${size} · ${pop}`, minHalfH: 160, rank: t.pop,
         // (its growth in its panel's own line: settlements.ts townGrowth)
-        title: `${t.name}, ${size} of ${pop} people. ${growthOf(t).line}${say ? `. ${say[2].toUpperCase()}${say.slice(3)}` : ""}${ord(t.id) ? `. An order is open: ${ord(t.id)}` : ""}. Open the town`,
+        title: `${t.name}, ${size} of ${pop} people. ${growthOf(t).word}${growthOf(t).share ? `, ${growthOf(t).share}` : ""}${say ? `. ${say[2].toUpperCase()}${say.slice(3)}` : ""}${ord(t.id) ? `. An order is open: ${ord(t.id)}` : ""}. Open the town`,
         order: ord(t.id) || undefined,
         icons: ln.kind === "calm" ? undefined
           : ln.kind === "noroad" ? ln.needs.map((p) => ({ svg: productIcon(p), cls: "noroad" }))
