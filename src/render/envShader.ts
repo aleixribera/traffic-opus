@@ -97,11 +97,11 @@ vec3 envGrassAt(vec3 c, float dry) {
   // (the tints are worked out against the noon light, which lifts the palette's olive by nearly a half)
   vec3 t = vec3(0.38, 0.72, 0.44);
   t = mix(t, vec3(0.31, 0.66, 0.4), envLush);
-  t = mix(t, mix(vec3(0.43, 0.65, 0.48), vec3(0.93, 0.82, 0.76), dry * dry), envDry);
+  t = mix(t, mix(vec3(0.41, 0.66, 0.46), vec3(0.9, 0.8, 0.72), smoothstep(0.5, 0.95, dry)), envDry);
   t = mix(t, vec3(0.44, 0.77, 0.47), envFresh);
   // (autumn: the green holds in the low and grazed ground, the rest goes ochre, the driest rises rust)
-  vec3 fall = mix(vec3(0.36, 0.6, 0.4), vec3(0.6, 0.6, 0.56), smoothstep(0.16, 0.66, dry));
-  fall = mix(fall, vec3(0.68, 0.56, 0.54), smoothstep(0.66, 1.0, dry));
+  vec3 fall = mix(vec3(0.36, 0.6, 0.4), vec3(0.6, 0.6, 0.56), smoothstep(0.24, 0.74, dry));
+  fall = mix(fall, vec3(0.68, 0.56, 0.54), smoothstep(0.74, 1.0, dry));
   t = mix(t, fall, envFall * (1.0 - envDry * 0.5));
   t = mix(t, vec3(0.72, 0.66, 0.64), envBare * (1.0 - envFresh));
   c *= t;

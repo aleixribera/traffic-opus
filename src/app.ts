@@ -699,7 +699,7 @@ export class App {
     this.terrain3d?.dispose();
     this.landMask?.dispose();
     this.landMask = new LandMask();
-    this.terrain3d = new Terrain3D(g.terrain, this.forest, small, this.landMask);
+    this.terrain3d = new Terrain3D(g.terrain, this.forest, small, this.landMask, this.models.props);
     this.trees3d?.dispose();
     this.trees3d = new Trees3D(this.models.trees, this.forest);
     this.treeSig = "";
@@ -745,7 +745,7 @@ export class App {
     this.highlight.set(null);
     this.highlight.hoverV = null;
     this.glide = null;
-    this.worldRoot.add(this.terrain3d.group, this.trees3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.greens3d.group, this.lamps.group, this.signals.group, this.fireworks.group, this.birds.mesh, this.smoke.mesh);
+    this.worldRoot.add(this.terrain3d.group, this.terrain3d.land.group, this.trees3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.greens3d.group, this.lamps.group, this.signals.group, this.fireworks.group, this.birds.mesh, this.smoke.mesh);
     this.roads.rebuildAll();
     this.buildings3d.rebuild(g.buildings.list);
     { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }

@@ -2,6 +2,7 @@
 // ground shader, the hedges that stand on it and the atlas all draw from. The shader works the same cells out again
 // on the GPU, so what is pinned here is what both sides must agree on.
 
+import * as THREE from "three";
 import { describe, it, expect } from "vitest";
 import { F, Terrain, riverWater } from "../src/world/terrain";
 import {
@@ -9,6 +10,7 @@ import {
   encCell, encKindAlone, encLine, encUnwarp, encWarp, gateAt, type NodeAt,
 } from "../src/render/land";
 import { rasterPlots, type MaskPlot } from "../src/render/landmask";
+import { placeLand } from "../src/render/landprops";
 
 describe("the survey grid", () => {
   it("bends no point further than its reach, and the bend can be undone", () => {
@@ -136,5 +138,50 @@ describe("the mask of built land", () => {
     const r = rasterPlots([plot("res", -20000, -9000), plot("res", 20000, 9000)]);
     expect(Math.max(r.w, r.h)).toBeLessThanOrEqual(1024);
     expect(r.texel).toBeGreaterThan(30);
+  });
+});
+
+describe("what stands on the land", () => {
+  const terrain = new Terrain(7);
+  const count = (r: Record<string, unknown[]>) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v.length]));
+
+  it("is set out along the fields' hedge lines: hedgerow pieces, a gate a side, hay in the meadows, all on dry land", () => {
+    // (the half-kilometre round the hay meadows west of the first town)
+    const placed = placeLand(-3, 0, terrain, new Enclosures(), () => false);
+    const hedges = placed.land_hedgerow_a.length + placed.land_hedgerow_b.length;
+    expect(hedges).toBeGreaterThan(40);
+    expect(placed.land_hedgerow_a.length).toBeGreaterThan(placed.land_hedgerow_b.length);
+    expect(placed.land_gate.length).toBeGreaterThan(3);
+    expect(placed.land_gate.length).toBeLessThan(hedges / 4);
+    expect(placed.land_haystack.length + placed.haycock.length).toBeGreaterThan(10);
+    const p = new THREE.Vector3();
+    for (const list of Object.values(placed)) for (const m of list) {
+      p.setFromMatrixPosition(m);
+      expect(p.y).toBe(0);
+      // (in its own chunk, give or take the bend of the grid)
+      expect(p.x).toBeGreaterThan(-3 * 512 - 200);
+      expect(p.x).toBeLessThan(-2 * 512 + 200);
+      expect(terrain.water({ x: p.x, y: p.z })).toBeLessThan(0.56);
+    }
+    // (the same every time: nothing random but the map's own hashes)
+    expect(count(placeLand(-3, 0, terrain, new Enclosures(), () => false))).toEqual(count(placed));
+  });
+
+  it("makes way for whatever is built: nothing stands where the ground is taken", () => {
+    const placed = placeLand(-3, 0, terrain, new Enclosures(), () => true);
+    expect(Object.values(placed).every((l) => l.length === 0)).toBe(true);
+  });
+
+  it("puts reeds only along a shore", () => {
+    let reeds = 0;
+    for (let cj = 4; cj < 7; cj++) for (let ci = 0; ci < 3; ci++) {
+      for (const m of placeLand(ci, cj, terrain, new Enclosures(), () => false).land_reeds) {
+        const x = m.elements[12], y = m.elements[14];
+        reeds++;
+        // (within a few metres of the water's edge: the water's value there is near its shore's)
+        expect(Math.abs(terrain.water({ x, y }) - 0.5)).toBeLessThan(0.2);
+      }
+    }
+    expect(reeds).toBeGreaterThan(5);
   });
 });

@@ -4,6 +4,8 @@ import { CH, RES, type Terrain } from "../world/terrain";
 import { LAND, PAL } from "./palette";
 import { ENV, ENV_GLSL } from "./envShader";
 import { CANOPY, EVERGREEN, FOREST_R, TREE_CELL, TREE_HASH_GLSL, type Forest, type Rect } from "./forest";
+import { LandProps } from "./landprops";
+import type { MergedModel } from "./models";
 import { ENC, Enclosures, GATE_HW, HEDGE_HW, LAND_GLSL, LAND_K, type NodeAt } from "./land";
 import type { LandMask } from "./landmask";
 import type { View } from "./view";
@@ -77,8 +79,12 @@ export class Terrain3D {
   readonly enclosures = new Enclosures();
   private mask: LandMask["uniforms"];
 
-  constructor(private terrain: Terrain, private forest: Forest, _small: boolean, mask?: Pick<LandMask, "uniforms">) {
+  /** What stands on the open land near in: hedgerows, gates, hay, reeds (its group goes into the scene beside the ground's). */
+  readonly land: LandProps;
+
+  constructor(private terrain: Terrain, private forest: Forest, _small: boolean, mask?: Pick<LandMask, "uniforms"> & Partial<Pick<LandMask, "townAt" | "stamp">>, props?: Map<string, MergedModel>) {
     this.mask = mask?.uniforms ?? NO_MASK;
+    this.land = new LandProps(props ?? new Map(), terrain, forest, this.enclosures, mask?.townAt ? (mask as LandMask) : undefined);
     // far background under everything (the endless map never shows it, but the first frame might)
     const bg = new THREE.Mesh(new THREE.PlaneGeometry(1e6, 1e6).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: PAL.ground }));
     bg.position.y = -2;
@@ -103,6 +109,7 @@ export class Terrain3D {
     this.shared.uRot.value.set(Math.cos(view.rot), Math.sin(view.rot), Math.cos(view.tilt));
     // (the atlas takes over as the camera rises to straight down, over the same zooms)
     this.shared.uAtlas.value = ENV.uEnvAtlas.value = view.halfH > 0 ? 1 - riseShare(view.halfH) : 0;
+    this.land.update(view);
     this.queue.length = 0;
     // the wanted level, plus the next coarser one underneath while the fine chunks are still being made
     for (const lod of [L, Math.min(LODS - 1, L + 1)]) {
@@ -167,6 +174,7 @@ export class Terrain3D {
 
   /** Trees came or went on this ground (something was built or removed; null: anywhere): paint its crowns again. */
   invalidateTrees(rects: Rect[] | null) {
+    this.land.invalidate(rects);
     const S = CH * RES;
     for (const c of this.lods[0].values()) {
       if (!c.baked) continue;
@@ -298,6 +306,7 @@ export class Terrain3D {
    * else frees a chunk's textures: without this every load leaves them all behind.
    */
   dispose() {
+    this.land.dispose();
     for (const map of this.lods) {
       for (const c of map.values()) this.drop(c);
       map.clear();
@@ -489,7 +498,7 @@ vec3 groundColor(vec2 p) {
   float fk = smoothstep(0.485, 0.515, fert + (n3 - 0.5) * 0.02);
   float sd = scrubDensity(p);
   float heath = smoothstep(0.26, 0.48, sd) * (1.0 - fk);
-  float dryK = clamp(0.36 + (m - 0.2) * 3.2 + (n1 * 0.6 + n2 * 0.4 - 0.5) * 0.9 - wetK * 0.6 - lowK * 0.2 - fk * 0.22 + heath * 0.12, 0.0, 1.0);
+  float dryK = clamp(0.36 + (m - 0.2) * 2.4 + (n1 * 0.6 + n2 * 0.4 - 0.5) * 0.9 - wetK * 0.6 - lowK * 0.2 - fk * 0.22 + heath * 0.12, 0.0, 1.0);
   // the enclosures: which cell of the bent survey grid this is, what it is, and where its hedges run
   int cls = 0;
   vec2 ef = vec2(0.0);
@@ -567,7 +576,8 @@ vec3 groundColor(vec2 p) {
     c = mix(c, earth, smoothstep(0.25, 0.75, works + (n4 - 0.5) * 0.3) * 0.86);
     c = mix(c, mix(c, earth * 1.12, 0.5), smoothstep(0.3, 0.8, farm + (n4 - 0.5) * 0.3) * (0.12 + 0.5 * smoothstep(0.5, 0.8, rnoise(p / 26.0))));
     // the shore: a beach in places, wet at the water's edge; elsewhere the grass comes down to the water
-    float beach = smoothstep(0.38, 0.62, vnoise(p / 23.0 + 7.7) * 0.6 + n2 * 0.4);
+    // (which the reeds that stand in 3D read too: render/land.ts)
+    float beach = land < 16.0 ? beachAt(p) : 0.0;
     float bw = mix(1.3, 7.5, beach) * mix(0.55, 1.0, step(dR, dL));
     float sand = (1.0 - smoothstep(bw * 0.55, bw, land)) * step(0.0, land + 2.0);
     c = mix(c, mix(${c3(LAND.sandWet)}, ${c3(LAND.beach)}, smoothstep(0.2, 1.3, land)), sand * 0.92);
@@ -604,12 +614,11 @@ vec3 groundColor(vec2 p) {
         c = mix(c, fc, max(dot2 * seen * 0.9, dens * 0.13 * (1.0 - seen)) * fineK);
       }
       // reeds: dark blades standing in the shallows and on the bank where there is no beach
-      float reedK = (1.0 - beach) * (1.0 - smoothstep(1.5, 5.5 + 4.0 * n4, abs(land - 1.0))) * smoothstep(0.3, 0.6, vnoise(p / 17.0 + 3.3));
+      float reedK = (1.0 - beach) * (1.0 - smoothstep(1.5, 5.5 + 4.0 * n4, abs(land - 1.0))) * (abs(land - 1.0) < 10.0 ? smoothstep(0.3, 0.6, reedAt(p)) : 0.0);
       if (reedK > 0.0) {
-        vec2 g3 = vec2(p.x / 0.55, p.y / 1.5), gk = floor(g3);
-        float hr = hash12(gk + 15.9);
-        vec3 rc = mix(${c3(LAND.reed)}, ${c3(LAND.reedDry)}, clamp(envFall + envBare, 0.0, 1.0)) * (0.8 + 0.4 * hash12(gk + 4.2));
-        c = mix(c, rc, step(hr, reedK * 0.7) * (1.0 - smoothstep(0.25, 0.45, abs(g3.x - gk.x - 0.5))) * fineK * 0.85);
+        // (a reed bed from above: a rank, darker stand, flecked; the blades themselves stand in 3D, render/landprops.ts)
+        vec3 rc = mix(${c3(LAND.reed)}, ${c3(LAND.reedDry)}, clamp(envFall + envBare, 0.0, 1.0)) * (0.82 + 0.36 * hash12(floor(p / 0.6) + 4.2));
+        c = mix(c, rc, reedK * (0.35 + 0.3 * rnoise(p / 2.3)) * fineK);
       }
     }
     // shrubs and trees: round crowns, lit from the sun's side, each with a soft shadow down-right. Scrub is scattered
@@ -625,7 +634,7 @@ vec3 groundColor(vec2 p) {
     // snow: drifts with a lit and a shaded side, thin under the trees, on trodden and wind-scoured ground, and
     // gone from the water's edge; a hedge's shadow lies on it
     if (envSnow > 0.001) {
-      sn = envSnowAt(p, -0.3 + fo * 0.72 + works * 0.6 + heath * 0.34 + (1.0 - smoothstep(0.0, 2.5, land)) * 0.9 + smoothstep(0.6, 0.9, dryK) * 0.2);
+      sn = envSnowAt(p, -0.3 + fo * 0.72 + works * 0.6 + heath * 0.2 + (1.0 - smoothstep(0.0, 2.5, land)) * 0.9 + smoothstep(0.6, 0.9, dryK) * 0.2);
       float e = rnoise((p + uSun * 5.0) / 31.0) - rnoise((p - uSun * 5.0) / 31.0);
       vec3 sc = envSnowCol(p) * (1.0 + clamp(e * 0.45, -0.1, 0.06)) * mix(vec3(1.0), vec3(0.9, 0.94, 1.0), clamp(-e * 2.0, 0.0, 1.0));
       under = mix(under, sc, sn);
@@ -773,10 +782,11 @@ vec3 groundColor(vec2 p) {
       float ph = depth * 1.7 + t * 10.0 + n4 * 5.0 + vnoise(p / 3.3 + 9.1) * 5.0;
       float ring = smoothstep(0.82, 0.97, sin(ph)) * exp(-depth / 11.0) * smoothstep(0.35, 0.6, vnoise(p / 5.1 + vec2(t * 0.0, 2.2)));
       // (out in the open, short glints that come and go with the wind)
-      vec2 gq = vec2(dot(p, vec2(uWind.y, -uWind.x)) / 7.0, dot(p, uWind.xy) / 2.2), gqi = floor(gq);
+      vec2 gq = vec2(dot(p, vec2(uWind.y, -uWind.x)) / 11.0, dot(p, uWind.xy) / 3.4), gqi = floor(gq);
       float gh = hash12(gqi + 31.7);
-      vec2 gd = (gq - gqi - 0.5) * vec2(7.0, 2.2);
-      float glint = step(0.9, gh) * (1.0 - smoothstep(0.7, 1.6, abs(gd.x))) * (1.0 - smoothstep(0.08, 0.2, abs(gd.y)))
+      vec2 gd = (gq - gqi - 0.5) * vec2(11.0, 3.4);
+      // (a wavelet's crest: a few metres long across the wind, bent, thin)
+      float glint = step(0.88, gh) * (1.0 - smoothstep(1.6, 4.2, abs(gd.x))) * (1.0 - smoothstep(0.1, 0.26, abs(gd.y + sin(gd.x * 1.25 + gh * 20.0) * 0.5)))
         * smoothstep(0.5, 1.0, sin(t * (4.0 + floor(gh * 50.0)) + gh * 40.0)) * smoothstep(4.0, 14.0, depth);
       wc += (ring * 0.1 + glint * 0.06 * (0.5 + uWind.z)) * rippleK * (1.0 - envFrost);
       // a river's current: fine lines along its banks

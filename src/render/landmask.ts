@@ -35,6 +35,17 @@ export class LandMask {
   };
   private sig = -1;
   private at = -1e9;
+  private last: ReturnType<typeof rasterPlots> | null = null;
+  /** Counts the times the mask was drawn again. */
+  stamp = 0;
+
+  /** How near a town's lots a point is: 1 on a lot, falling to 0 over the reach of its ground (the alpha byte). */
+  townAt(x: number, y: number): number {
+    const r = this.last;
+    if (!r) return 0;
+    const i = Math.floor((x - r.x0) / r.texel), j = Math.floor((y - r.y0) / r.texel);
+    return i < 0 || j < 0 || i >= r.w || j >= r.h ? 0 : r.data[(j * r.w + i) * 4 + 3] / 255;
+  }
 
   constructor() {
     this.tex = new THREE.DataTexture(new Uint8Array(4), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
@@ -48,6 +59,8 @@ export class LandMask {
     this.sig = version;
     this.at = now;
     const r = rasterPlots(list);
+    this.last = r;
+    this.stamp++;
     this.tex.dispose();
     this.tex = new THREE.DataTexture(r.data, r.w, r.h, THREE.RGBAFormat, THREE.UnsignedByteType);
     this.tex.magFilter = THREE.LinearFilter;

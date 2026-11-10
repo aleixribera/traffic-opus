@@ -38,7 +38,7 @@ export const OPEN = 0, PASTURE = 1, MEADOW = 2;
 export const HEDGE_E = 4, HEDGE_N = 8, HEDGE_W = 16, HEDGE_S = 32;
 
 /** Hash slots (their own range, clear of the trees'). */
-const K = { warpX: 70, warpY: 71, warpX2: 72, warpY2: 73, district: 60, kind: 61, joinE: 62, joinN: 63, pick: 64, gate: 65, tint: 67, stack: 68, bare: 69, lineX: 74, lineY: 75 } as const;
+const K = { warpX: 70, warpY: 71, warpX2: 72, warpY2: 73, district: 60, kind: 61, joinE: 62, joinN: 63, pick: 64, gate: 65, tint: 67, stack: 68, bare: 69, lineX: 74, lineY: 75, beach: 76, reed: 130, hay: 110, piece: 120 } as const;
 export const LAND_K = K;
 
 function tnoise(x: number, y: number, k: number): number {
@@ -86,6 +86,8 @@ export function encCell(qx: number, qy: number): { ci: number; cj: number; fx: n
 
 /** The same in GLSL (needs TREE_HASH_GLSL's tnoise). */
 export const LAND_GLSL = /* glsl */ `
+float beachAt(vec2 p) { return smoothstep(0.38, 0.62, tnoise(p / 23.0, ${K.beach}u) * 0.6 + tnoise(p / 170.0, ${K.beach + 100}u) * 0.4); }
+float reedAt(vec2 p) { return tnoise(p / 17.0, ${K.reed}u); }
 float encLineOff(float i, uint k) { return (thashf(ivec2(int(i), 0), k) - 0.5) * ${(2 * ENC_JIT).toFixed(1)}; }
 /* one axis of the cell lookup: q along it; gives the cell's index, the distance in from its low line, its length */
 vec3 encAxis(float q, uint k) {
@@ -101,6 +103,12 @@ vec2 encWarp(vec2 p) {
     + (vec2(tnoise(b + vec2(-1.4, 5.2), ${K.warpX2}u), tnoise(b + vec2(7.6, -3.8), ${K.warpY2}u)) - 0.5) * ${(2 * ENC_WARP[1]).toFixed(1)};
 }
 `;
+
+const smooth = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+/** How much of a beach the shore has at a point (0 grass down to the water .. 1 a strand of sand). */
+export const beachAt = (x: number, y: number): number => smooth(0.38, 0.62, tnoise(x / 23, y / 23, K.beach) * 0.6 + tnoise(x / 170, y / 170, K.beach + 100) * 0.4);
+/** Where reeds grow along a shore with no beach: in stands, above about 0.4. */
+export const reedAt = (x: number, y: number): number => tnoise(x / 17, y / 17, K.reed);
 
 /** A field's byte at node (i, j) of the 64 m grid (every fourth field node). */
 export type NodeAt = (f: number, i: number, j: number) => number;
