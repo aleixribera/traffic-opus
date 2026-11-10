@@ -151,6 +151,8 @@ face toward +Z). Placed by `src/render/furniture.ts`.
 | fence | 9 × 0.28 | 2.3 | 80 | 0 |
 | hedge | 4 × 0.76 | 1.0 | 176 | 0 |
 | picket | 4.02 × 0.22 | 1.2 | 300 | 0 |
+| hedge_far | 4 × 0.76 | 1.0 | 30 | 0 |
+| picket_far | 4.02 × 0.22 | 1.2 | 54 | 0 |
 | streetlamp | 0.88 × 2.001 | 6.3 | 562 | 0 |
 | floodmast | 2.3 × 2.15 | 13.9 | 900 | 0 |
 | bridge_pier | 12 × 3.2 | 5.1 | 138 | 0 |

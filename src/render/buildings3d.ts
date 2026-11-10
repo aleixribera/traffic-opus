@@ -133,6 +133,24 @@ const PAVE_FORECOURT = [1.4, 0.8];
 const COURT_TREE = 9;
 /** Front gardens: a hedge or picket fence comes in runs of this length (m; the Blender models), scaled to fit. */
 const FRONT_RUN = 4;
+/** The roads round a lot as last seen (Buildings3D.sidesOf): which, and each one's geometry then. */
+interface SegDeps { c: V2; r: number; ids: number[]; geos: unknown[] }
+/**
+ * Past this many metres a pixel the garden hedges and picket fences are drawn as their far models (the same shapes in
+ * a fifth of the faces: a picket is then a third of a pixel wide). A big town has some twenty thousand of them.
+ */
+export const STRIP_FAR_FROM = 0.2;
+/** Near in, they are drawn by squares of the map this many metres a side, so only those on screen are drawn. */
+const STRIP_CHUNK = 256;
+/**
+ * The buildings likewise: up to this many metres a pixel each model is drawn by squares of BUILD_CHUNK metres (only
+ * the squares on screen, and in the sun's shadow box, are drawn: a few hundred of a big map's thousands of buildings);
+ * farther out, as one mesh for the whole map, which is then nearly all in view and far fewer draw calls. (On a late
+ * map, near in, the squares took a third to a half off the GPU's frame for a few hundred more draw calls; past about
+ * this zoom the calls cost more than the squares left undrawn save.)
+ */
+export const BUILD_NEAR_TO = 0.55;
+const BUILD_CHUNK = 512;
 /** How far a corner lot's side, and a town square's edges, reach out to a kerb (m). */
 const SIDE_REACH = 14, SQUARE_REACH = 16;
 
@@ -179,16 +197,20 @@ const FENCE_MESH = 0x5d605d;
 const SERVICE_ROAD = 0x85847c;
 const PAD = 0xd9d2b8;
 
-/** One model drawn for a building: a whole zoned building, or one slot of a company site. */
-interface Piece { b: Building; model: string; slot: SiteSlot | null }
+/**
+ * One model drawn for a building: a whole zoned building, or one slot of a company site. `m`: its matrix as laid out
+ * by the last rebuild (worked out once there, for the meshes, the lights and the parked cars); `nm`, `ni`: the mesh of
+ * its square of the map that draws it near in (BUILD_NEAR_TO), and its place in it.
+ */
+interface Piece { b: Building; model: string; slot: SiteSlot | null; m?: THREE.Matrix4; nm?: THREE.InstancedMesh; ni?: number }
 
 /** Flat and upright quads gathered into one geometry (fences, service roads, pads: one draw call for every site). */
 class Quads {
   pos: number[] = [];
   nrm: number[] = [];
   private quad(ps: number[][], n: number[]) {
-    const [a, b, c, d] = ps;
-    for (const p of [a, b, c, a, c, d]) { this.pos.push(...p); this.nrm.push(...n); }
+    const [a, b, c, d] = ps, P = this.pos, N = this.nrm;
+    for (const p of [a, b, c, a, c, d]) { P.push(p[0], p[1], p[2]); N.push(n[0], n[1], n[2]); }
   }
   /** A flat strip from a to b, w wide, at height y. */
   strip(a: V2, b: V2, w: number, y: number) {
@@ -224,6 +246,9 @@ class Quads {
 export class Buildings3D {
   readonly group = new THREE.Group();
   private meshes = new Map<string, THREE.InstancedMesh>();
+  /** The same buildings by squares of the map, drawn instead near in (see BUILD_NEAR_TO). */
+  private nearMeshes: THREE.InstancedMesh[] = [];
+  private nearOn = true;
   private yards: THREE.InstancedMesh | null = null;
   private yardMat = seasonal(new THREE.MeshLambertMaterial({ color: 0xffffff }));
   /** Town hall squares: their paving, and their trees. */
@@ -579,6 +604,8 @@ export class Buildings3D {
   rebuild(list: Building[]) {
     for (const m of this.meshes.values()) { this.group.remove(m); m.dispose(); }
     this.meshes.clear();
+    for (const m of this.nearMeshes) { this.group.remove(m); m.dispose(); }
+    this.nearMeshes = [];
     if (this.yards) { this.group.remove(this.yards); this.yards.dispose(); this.yards = null; }
     if (this.paving) { this.group.remove(this.paving); this.paving.geometry.dispose(); this.paving.dispose(); this.paving = null; }
     this.squareTrees = [];
@@ -683,12 +710,32 @@ export class Buildings3D {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       ps.forEach((p, i) => {
-        mesh.setMatrixAt(i, this.matrix(this.tmp, p));
+        mesh.setMatrixAt(i, (p.m = this.matrix(new THREE.Matrix4(), p)));
         if (this.rise(p) < 1 || p.b.built < 1) this.building.push({ p, i });
       });
       mesh.computeBoundingSphere();
+      mesh.visible = !this.nearOn;
       this.meshes.set(model, mesh);
       this.group.add(mesh);
+      // and again by squares of the map, for near in
+      const squares = new Map<number, Piece[]>();
+      for (const p of ps) {
+        const k = (Math.floor(p.b.c.x / BUILD_CHUNK) + 4096) * 8192 + Math.floor(p.b.c.y / BUILD_CHUNK) + 4096;
+        const a = squares.get(k);
+        if (a) a.push(p);
+        else squares.set(k, [p]);
+      }
+      for (const sq of squares.values()) {
+        const nm = new THREE.InstancedMesh(mm.geo, this.mat, sq.length);
+        nm.castShadow = true;
+        nm.receiveShadow = true;
+        nm.userData.near = true;
+        sq.forEach((p, i) => { nm.setMatrixAt(i, p.m!); p.nm = nm; p.ni = i; });
+        nm.computeBoundingSphere();
+        nm.visible = this.nearOn;
+        this.nearMeshes.push(nm);
+        this.group.add(nm);
+      }
     }
     this.applyColors();
     this.lights(list);
@@ -702,7 +749,7 @@ export class Buildings3D {
       for (const p of ps) {
         const b = p.b;
         if (b.built < 1 || b.abandoned || p.slot?.role === "yard" || this.rise(p) < 1) continue;
-        const M = this.matrix(this.tmp, p).clone();
+        const M = p.m ?? this.matrix(new THREE.Matrix4(), p);
         const s = b.zone ? b.fit : 1;
         const tall = b.zone ? b.tall : 1;
         inv.makeScale(1 / s, 1 / (s * tall), 1 / s);
@@ -766,7 +813,7 @@ export class Buildings3D {
       if (!f) continue;
       for (const p of ps) {
         const b = p.b;
-        const M = this.matrix(this.tmp, p);
+        const M = p.m ?? this.matrix(this.tmp, p);
         M.extractBasis(ax, ay, az);
         const sx = ax.length(), sz = az.length(), tall = f[4] * ay.length();
         if (!(sx > 0 && sz > 0 && tall > 0.5)) continue;
@@ -929,16 +976,25 @@ export class Buildings3D {
     for (const it of this.building) {
       const mesh = this.meshes.get(it.p.model);
       if (!mesh) continue;
-      mesh.setMatrixAt(it.i, this.matrix(this.tmp, it.p));
-      mesh.setColorAt(it.i, this.colorOf(it.p));
+      const M = this.matrix(this.tmp, it.p), c = this.colorOf(it.p);
+      mesh.setMatrixAt(it.i, M);
+      mesh.setColorAt(it.i, c);
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       touched.add(mesh);
+      const nm = it.p.nm;
+      if (nm) {
+        nm.setMatrixAt(it.p.ni!, M);
+        nm.setColorAt(it.p.ni!, c);
+        if (nm.instanceColor) nm.instanceColor.needsUpdate = true;
+        touched.add(nm);
+      }
       // (zoned buildings stay on the list till the next rebuild: they finish with a change of colour)
       if (it.p.b.built < 1 || this.rise(it.p) < 1 || !it.p.slot) still.push(it);
       else done = true;
     }
     this.building = still;
-    for (const m of touched) m.instanceMatrix.needsUpdate = true;
+    // (a square's mesh is culled by its bounds: a building going up grows out of the ones it had)
+    for (const m of touched) { m.instanceMatrix.needsUpdate = true; if (m.userData.near) m.computeBoundingSphere(); }
     return done;
   }
 
@@ -1050,7 +1106,8 @@ export class Buildings3D {
     for (const o of this.strips) {
       this.group.remove(o);
       if (!(o instanceof THREE.InstancedMesh)) continue;
-      if (o.geometry !== this.yardGeo) o.geometry.dispose();
+      // (the paving's own copy of the plane goes with it; the hedge and fence models are shared, and stay)
+      if (o.userData.ownGeo) o.geometry.dispose();
       o.dispose();
     }
     this.strips = [];
@@ -1191,6 +1248,7 @@ export class Buildings3D {
     }
     if (paved.length) {
       const m = new THREE.InstancedMesh(this.yardGeo.clone(), this.paveMat, paved.length);
+      m.userData.ownGeo = true;
       const pat = new THREE.InstancedBufferAttribute(new Float32Array(paved.length * 2), 2);
       m.geometry.setAttribute("aPat", pat);
       paved.forEach((q, i) => { m.setMatrixAt(i, q.m); m.setColorAt(i, this.col.setHex(q.c)); pat.setXY(i, q.pat[0], q.pat[1]); });
@@ -1199,19 +1257,62 @@ export class Buildings3D {
       m.computeBoundingSphere();
       this.strips.push(m);
     }
+    // the hedges and fences: near in, by squares of the map (only those on screen are drawn); farther out, every one
+    // at once as its far model (lod)
     for (const kind of ["hedge", "picket"] as const) {
-      const mm = this.models.props.get(kind);
+      const mm = this.models.props.get(kind), far = this.models.props.get(`${kind}_far`) ?? mm;
       for (const [list, shadow] of [[props[kind], true], [backs[kind], false]] as const) {
-        if (!mm || !list.length) continue;
-        const m = new THREE.InstancedMesh(mm.geo, this.mat, list.length);
-        list.forEach((x, i) => m.setMatrixAt(i, x));
-        m.castShadow = shadow;
-        m.receiveShadow = true;
-        m.computeBoundingSphere();
-        this.strips.push(m);
+        if (!mm || !far || !list.length) continue;
+        // (sorted by their square, and written out once: the far mesh takes them all, each near one its square's run)
+        // (each one's square and its place in the list packed into one number, and sorted as plain numbers: a sort
+        // with a compare function took some 25 ms over a big map's hundred thousand)
+        const n = list.length, sh = 2 ** Math.ceil(Math.log2(n + 1)), packed = new Float64Array(n), key = new Float64Array(n);
+        for (let i = 0; i < n; i++) {
+          const e = list[i].elements;
+          packed[i] = ((Math.floor(e[12] / STRIP_CHUNK) + 4096) * 8192 + Math.floor(e[14] / STRIP_CHUNK) + 4096) * sh + i;
+        }
+        packed.sort();
+        const all = new Float32Array(n * 16);
+        for (let i = 0; i < n; i++) {
+          const v = packed[i], at = v % sh;
+          key[i] = (v - at) / sh;
+          list[at].toArray(all, i * 16);
+        }
+        const add = (geo: THREE.BufferGeometry, from: number, to: number, lod: "near" | "far") => {
+          const m = new THREE.InstancedMesh(geo, this.mat, to - from);
+          (m.instanceMatrix.array as Float32Array).set(all.subarray(from * 16, to * 16));
+          m.castShadow = shadow;
+          m.receiveShadow = true;
+          m.userData.lod = lod;
+          m.visible = (lod === "far") === this.far;
+          m.computeBoundingSphere();
+          this.strips.push(m);
+        };
+        add(far.geo, 0, n, "far");
+        for (let i = 0, j = 1; i < n; i = j++) {
+          while (j < n && key[j] === key[i]) j++;
+          add(mm.geo, i, j, "near");
+        }
       }
     }
     for (const o of this.strips) this.group.add(o);
+  }
+
+  /** Drawing the garden hedges and fences as their far models (past STRIP_FAR_FROM metres a pixel). */
+  private far = false;
+
+  /** Every frame: the garden hedges and fences near in or far off, by how many metres a pixel is. */
+  lod(mpp: number) {
+    const near = mpp <= BUILD_NEAR_TO;
+    if (near !== this.nearOn) {
+      this.nearOn = near;
+      for (const m of this.meshes.values()) m.visible = !near;
+      for (const m of this.nearMeshes) m.visible = near;
+    }
+    const far = mpp > STRIP_FAR_FROM;
+    if (far === this.far) return;
+    this.far = far;
+    for (const o of this.strips) if (o.userData.lod) o.visible = (o.userData.lod === "far") === far;
   }
 
   /**
@@ -1259,18 +1360,40 @@ export class Buildings3D {
    * roads or the lot change: a growing town rebuilds its buildings often, its roads seldom.
    */
   private sidesOf(b: Building, along: V2, H: number): [number, number] {
-    const v = this.net?.version ?? 0;
-    const key = `${b.c.x},${b.c.y},${b.rot},${H},${b.access?.seg}`;
+    const net = this.net, v = net?.version ?? 0, seg = b.access?.seg ?? -1;
     const got = this.sideCache.get(b.id);
-    if (got && got.v === v && got.key === key) return got.e;
+    if (got && got.x === b.c.x && got.y === b.c.y && got.rot === b.rot && got.H === H && got.seg === seg) {
+      if (got.v === v) return got.e;
+      // (the roads changed somewhere: still good if none near it did, as most of a big map's lots find after an edit)
+      if (net && this.depsHold(got.deps)) { got.v = v; return got.e; }
+    }
     const e = [1, -1].map((s) => {
       const dir = scale(along, s);
       return this.kerbOut(add(b.c, scale(dir, H)), dir, SIDE_REACH, b.access?.seg) ?? 0;
     }) as [number, number];
-    this.sideCache.set(b.id, { v, key, e });
+    this.sideCache.set(b.id, { v, x: b.c.x, y: b.c.y, rot: b.rot, H, seg, e, deps: this.depsNear(b.c, H) });
     return e;
   }
-  private sideCache = new Map<number, { v: number; key: string; e: [number, number] }>();
+  private sideCache = new Map<number, { v: number; x: number; y: number; rot: number; H: number; seg: number; e: [number, number]; deps: SegDeps }>();
+
+  /**
+   * The roads kerbOut can see from both sides of a lot (H either way of c): their ids and their geometry as it is now
+   * (the network replaces a road's geometry whenever the road changes, its type included).
+   */
+  private depsNear(c: V2, H: number): SegDeps {
+    const net = this.net!, r = H + SIDE_REACH + 12;
+    const ids = [...net.segsNear(c.x - r, c.y - r, c.x + r, c.y + r)];
+    return { c: { x: c.x, y: c.y }, r, ids, geos: ids.map((id) => net.segGeom.get(id)) };
+  }
+
+  /** Whether the roads near a lot are just as they were. */
+  private depsHold(d: SegDeps): boolean {
+    const net = this.net!;
+    const now = net.segsNear(d.c.x - d.r, d.c.y - d.r, d.c.x + d.r, d.c.y + d.r);
+    if (now.size !== d.ids.length) return false;
+    for (let i = 0; i < d.ids.length; i++) if (!now.has(d.ids[i]) || net.segGeom.get(d.ids[i]) !== d.geos[i]) return false;
+    return true;
+  }
 
   /**
    * The way on down the road from p (a point in a lane), heading dir: the centreline ahead, kept at p's distance from
@@ -1442,9 +1565,14 @@ export class Buildings3D {
   private applyColors() {
     for (const [model, ps] of this.order) {
       const mesh = this.meshes.get(model)!;
-      ps.forEach((p, i) => mesh.setColorAt(i, this.colorOf(p)));
+      ps.forEach((p, i) => {
+        const c = this.colorOf(p);
+        mesh.setColorAt(i, c);
+        p.nm?.setColorAt(p.ni!, c);
+      });
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
+    for (const m of this.nearMeshes) if (m.instanceColor) m.instanceColor.needsUpdate = true;
   }
 
   /** Tint buildings (overlays). null = normal colours. */

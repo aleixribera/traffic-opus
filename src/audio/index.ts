@@ -80,6 +80,7 @@ export class GameAudio {
   private quitAt = -100;
   private idleT = 0;
   private faults = 0;
+  private sleepT: ReturnType<typeof setTimeout> | undefined;
   /** what update() costs: a running mean and the worst (ms), over `frames` frames; the worst look at the scene and the worst turn of the wireless */
   cost = { ms: 0, max: 0, frames: 0, look: 0, radio: 0 };
 
@@ -90,7 +91,7 @@ export class GameAudio {
         const ctx = this.ctx;
         if (!ctx) return;
         if (document.hidden) void ctx.suspend();
-        else void ctx.resume();
+        else if (!this.silent) void ctx.resume();
       });
     }
   }
@@ -108,7 +109,24 @@ export class GameAudio {
       try { this.start(new AC({ latencyHint: "interactive" })); } catch { return; }
     }
     const ctx = this.ctx;
-    if (ctx && ctx.state !== "running" && !document.hidden) void ctx.resume();
+    if (ctx && ctx.state !== "running" && !document.hidden && !this.silent) void ctx.resume();
+    this.sleep();
+  }
+
+  /** Sound off, or the master fader all the way down: nothing is heard, so nothing need be played. */
+  private get silent() { return this.settings.muted || this.settings.master <= 0; }
+
+  /**
+   * Muted, the context sleeps (once the master has faded out): the scene is not read, no sound is set down, the
+   * wireless waits, and the audio thread costs nothing. Unmuted, it wakes where it left off.
+   */
+  private sleep() {
+    const ctx = this.ctx;
+    // (only the page's own context: an offline one, rendering in the tests, suspends at set times only)
+    if (!ctx || typeof AudioContext === "undefined" || !(ctx instanceof AudioContext)) return;
+    clearTimeout(this.sleepT);
+    if (!this.silent) { if (ctx.state === "suspended" && typeof document !== "undefined" && !document.hidden) void ctx.resume(); return; }
+    this.sleepT = setTimeout(() => { if (this.silent && ctx.state === "running") void ctx.suspend(); }, 250);
   }
 
   /** Build the engine on a context (the page's own, or one handed in). */
@@ -133,6 +151,7 @@ export class GameAudio {
   set(patch: Partial<AudioSettings>) {
     Object.assign(this.settings, patch);
     this.eng?.setLevels(this.settings);
+    if (patch.muted !== undefined || patch.master !== undefined) this.sleep();
     if (patch.wireless !== undefined) this.radio?.setOn(patch.wireless);
     if (patch.old !== undefined) this.radio?.setOld(patch.old);
     try { localStorage.setItem(KEY, JSON.stringify(this.settings)); } catch { /* not kept */ }

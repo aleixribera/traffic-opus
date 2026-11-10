@@ -439,13 +439,19 @@ interface SegMeshes {
   extra: THREE.Object3D[];
 }
 
+/**
+ * Past this many metres a pixel the road ribbons are not drawn: the far map's inked lines (render/roadsFar.ts) lie
+ * over every one of them by then, and the ground is the atlas. Some seven hundred draws a frame saved for nothing seen.
+ */
+export const RIBBONS_SEE = 5.6;
+
 export class Roads3D {
   readonly group = new THREE.Group();
   private segs = new Map<number, SegMeshes>();
   private nodes = new Map<number, THREE.Object3D[]>();
   private bendFlow = new Map<number, { surface: THREE.Mesh; k1: number; k2: number }>(); // bend node -> overlay tint source
   /** every road and junction mesh, drawn merged by material a square of map at a time */
-  private batch = new MeshBatch();
+  private batch = new MeshBatch(512);
   readonly surface = makeRoadMaterial();
   private ringSurface = makeRoadMaterial({ arrows: false }); // roundabout arcs and bends: direction is obvious, chevrons only clip at the joins
   private plain = makeRoadMaterial({ markings: false });
