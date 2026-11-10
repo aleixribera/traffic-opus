@@ -33,8 +33,9 @@ const POST_BLOCK = 256;
 /** Window light by kind: the colour that spills out, and the window spacing along a wall (m). */
 const WIN: Record<WindowKind, { color: [number, number, number]; every: number }> = {
   home: { color: [1.0, 0.62, 0.28], every: 2.6 },
-  shop: { color: [1.0, 0.88, 0.7], every: 2.2 },
-  office: { color: [0.82, 0.9, 1.0], every: 2.0 },
+  // (the lamps of 1930 are all incandescent: a shop's show windows a full warm white, an office's a little paler)
+  shop: { color: [1.0, 0.8, 0.5], every: 2.2 },
+  office: { color: [1.0, 0.84, 0.6], every: 2.0 },
   hall: { color: [1.0, 0.8, 0.5], every: 2.4 },
 };
 /** How far window light reaches out from the walls (m). */

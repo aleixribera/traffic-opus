@@ -160,6 +160,22 @@ describe("placing furniture along a road", () => {
     expect(f.boards.length).toBe(0);
   });
 
+  it("hangs no wire across a lot: the line breaks there and takes up again beyond it", () => {
+    const roads = [line(600)];
+    const whole = placeFurniture(roads, at(roads), open);
+    const side = Math.sign(whole.poles[0].y);
+    // a lot 20 m long on the poles' verge, too short for a pole to be refused by it at every stand
+    const lot = (x: number, y: number, r: number) => x > 290 - r && x < 310 + r && Math.abs(y - side * (4 + POLE_OFF)) < 3 + r;
+    const f = placeFurniture(roads, at(roads), (x, y, r) => !lot(x, y, r), lot);
+    expect(f.poles.length).toBeGreaterThan(8);
+    for (const p of f.poles) expect(lot(p.x, p.y, 0)).toBe(false);
+    for (const s of f.spans) {
+      const a = f.poles[s.a], b = f.poles[s.b];
+      expect(Math.min(a.x, b.x) > 310 || Math.max(a.x, b.x) < 290, `a span from ${a.x} to ${b.x}`).toBe(true);
+    }
+    expect(f.spans.length).toBe(f.poles.length - 2);
+  });
+
   it("carries the wire on round a corner to the next road's first pole", () => {
     const a = line(300);
     const b: RoadLine = { ...line(300), id: 2, a: 2, b: 3, center: makePolyline([{ x: 300, y: 0 }, { x: 300, y: 150 }, { x: 300, y: 300 }]) };

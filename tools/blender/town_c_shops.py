@@ -53,8 +53,15 @@ def _shophouse(S, x0, x1, y0, y1, floors=2, brick="brick_r", trim="cream", awn="
         _wins(M, F["b"], 0.4, w - 0.4, gh - 0.75, floors - 1, fh, T["win_home"], cols=max(1, cols - 1), ww=1.0)
     _wq(M, F["b"], w * 0.3 - 0.5, w * 0.3 + 0.5, 0, 2.15, T["door"], 0.05)
     _wq(M, F["b"], w * 0.72 - 0.6, w * 0.72 + 0.6, 1.2, 2.5, T["win_shop"], 0.05)
+    if floors == 2 and not escape and w > 6.4 and S.yb - y1 > 2.2:
+        _backstair(S, F["b"], 0.5, gh - 0.1)
     for s in sides:
         dcols = max(2, int(d / 3.2))
+        # (the shop's show window carries on round the corner)
+        if not (ghost and s == ghost.get("side", "r") and floors == 1):
+            a0 = 0.5 if s == "r" else d - 3.1
+            _wq(M, F[s], a0, a0 + 2.6, 0.75, 2.75, T["win_shop"], 0.05)
+            _wq(M, F[s], a0 - 0.12, a0 + 2.72, 2.75, 3.0, T[sign], 0.07)
         if ghost and s == ghost.get("side", "r") and floors > 1:
             _ghost_sign(S, F[s], d * 0.18, d * 0.82, gh + 0.2, h - 0.5, ghost.get("ground", "cream"), ghost.get("ink", "navy"), seed)
         elif floors > 1:
@@ -287,14 +294,14 @@ def _dock(S, x0, x1, y, depth=2.0, doors=2, canopy="tar3"):
 
 def _dept_store(S, nbays=5, floors=3, wall="brick_r", base="lime", trim="cream", piers="lime", spandrel="terra",
                 awn="green", blade="win_sign_red", sign="win_sign_red", marquee="oxblood", yard=8.0, bay=4.2,
-                tanks=1, corner=None, seed=1, fh=3.9, cornice=None):
+                tanks=1, corner=None, seed=1, fh=3.9, cornice=None, tar="tar", lights="hip"):
     """The department store: display windows along the pavement under awnings, the entrance under a lit marquee,
     floors of wide showroom windows between stone piers, a blade sign down the corner and a sign on the roof,
     skylights, a tank and the lift house up there; the loading dock on the yard behind."""
     M, T = S.M, S.T
     x0, x1, y0, y1 = S.lot(front=1.8, alley=3.4, yard=yard, nbays=nbays)
     h, top = _block(S, x0, x1, y0, y1, floors, wall, base=base, trim=trim, piers=piers, spandrel=spandrel, bay=bay,
-                    win="win_shop", shops=dict(awn=awn, sides=True), entrance=dict(door="brass"), fh=fh, cornice=cornice)
+                    win="win_shop", shops=dict(awn=awn, sides=True), entrance=dict(door="brass"), fh=fh, cornice=cornice, tar=tar)
     w, d = x1 - x0, y1 - y0
     f = _faces(x0, x1, y0, y1)["f"]
     n = max(1, int(w / bay + 0.3))
@@ -328,9 +335,12 @@ def _dept_store(S, nbays=5, floors=3, wall="brick_r", base="lime", trim="cream",
         _tank(S, x0 + w * (0.78 - 0.5 * k), y0 + d * 0.72, h + 0.05, r=1.5, h=2.6, leg=1.8)
     _bulkhead(S, x0 + w * 0.5, y0 + d * 0.78, h + 0.05, w=3.4, d=3.4, h=3.2, wall=T[wall])
     ns = max(1, int(w / 9))
-    for i in range(ns):
-        sx = x0 + w * (i + 0.5) / ns
-        _skylight(S, sx - 1.6, sx + 1.6, y0 + d * 0.36, y0 + d * 0.36 + 3.4, h + 0.05)
+    if lights == "monitor":
+        _monitor(S, x0 + w * 0.16, x1 - w * 0.16, y0 + d * 0.3, y0 + d * 0.3 + 3.6, h + 0.05)
+    else:
+        for i in range(ns):
+            sx = x0 + w * (i + 0.5) / ns
+            _skylight(S, sx - 1.6, sx + 1.6, y0 + d * 0.36, y0 + d * 0.36 + 3.4, h + 0.05)
     _vent(S, x0 + 1.5, y0 + d * 0.6, h + 0.05)
     _dock(S, x0 + w * 0.5, x0 + w * 0.5 + min(9.0, w * 0.4), y1, doors=2)
     _cans(S, x0 + 1.0, y1 + 0.5, 3)
@@ -343,7 +353,7 @@ def _dime_row(S, nbays=5, seed=1, yard=8.0, units=None):
     M, T = S.M, S.T
     units = units or [
         dict(w=1.25, floors=2, brick="brick_y", trim="cream", awn="oxblood", sign="oxblood", ink="mustard", frame="black", parapet="flat", tar="tar2", door=0.5),
-        dict(w=0.8, floors=3, brick="brick_r2", trim="lime", awn="green", sign="cream", ink="green", frame="green", parapet="ped", escape=True, tank=True),
+        dict(w=0.8, floors=3, brick="brick_r2", trim="lime", awn="green", sign="cream", ink="green", frame="green", parapet="ped", escape=True),
         dict(w=0.7, floors=2, brick="brick_b", trim="cream", awn="mustard", sign="navy", ink="cream", frame="navy", parapet="step", ghost=dict(side="r")),
     ]
     _mainstreet(S, units, nbays=nbays, front=1.7, yard=yard, alley=3.4, seed=seed)
@@ -628,27 +638,32 @@ _town("shop_t", "shop", 0.65, 1.6, 1, _mainstreet, units=[
     dict(w=1, floors=4, brick="brick_r2", trim="cream", awn="oxblood", sign="cream", ink="oxblood", frame="black", parapet="flat", escape=True, tank=True)],
     yard=1.2, alley=2.8, tandem=True, seed=28)
 _town("shop_u", "shop", 0.65, 1.6, 1, _mainstreet, units=[
-    dict(w=1, floors=4, brick="brick_t", trim="lime", awn="green", sign="green", ink="cream", frame="green", parapet="step", tank=True, tar="tar2", ghost=dict(side="r", ink="green"))],
+    dict(w=1, floors=4, brick="brick_t", trim="lime", awn="green", sign="green", ink="cream", frame="green", parapet="step", tar="tar2", ghost=dict(side="r", ink="green"))],
     yard=1.2, alley=2.8, tandem=True, seed=29)
 
 # store (30 x 28): the department store, the five-and-dime row; on 3-cell lots the bank
 _town("store", "store", 1.0, 1.0, 5, _dept_store, floors=3, wall="brick_r", seed=31)
 _town("store_b", "store", 1.0, 1.0, 5, _dime_row, seed=32)
-_town("store_c", "store", 1.0, 1.0, 5, _dept_store, floors=2, wall="brick_b", base="lime2", spandrel="cream", awn="navy",
-      blade="win_sign_blue", sign=None, marquee="navy", tanks=0, fh=4.2, seed=35)
+_town("store_c", "store", 1.0, 1.0, 5, _dept_store, floors=2, wall="brick_b", base="lime2", piers="brick_b", spandrel="cream", awn="navy",
+      blade="win_sign_blue", sign=None, marquee="navy", tanks=0, fh=4.2, lights="monitor", seed=35)
+# (a limestone store of the thirties under a copper-roofed corner; a dark brick one with a gold sign)
+_town("store_d", "store", 1.0, 1.0, 5, _dept_store, floors=3, wall="lime", base="lime2", piers="lime2", spandrel="green", trim="lime2",
+      awn="green", blade="win_sign_green", sign=None, marquee="green", tanks=0, corner="copper", tar="tar2", seed=36)
+_town("store_e", "store", 1.0, 1.0, 5, _dept_store, floors=3, wall="brick_d", base="lime", piers="brick_d", spandrel="cream",
+      awn="mustard", blade=None, sign="win_sign_gold", marquee="oxblood", tanks=0, tar="tar2", fh=3.6, bay=4.9, seed=37)
 _town("store_m", "store", 0.75, 1.0, 3, _bank, seed=33)
 _town("store_n", "store", 0.75, 1.0, 3, _dept_store, floors=3, wall="brick_y", base="lime2", spandrel="green", awn="oxblood",
-      blade="win_sign_green", sign=None, marquee="green", yard=7.0, bay=3.8, tanks=1, seed=34)
+      blade="win_sign_green", sign=None, marquee="green", yard=7.0, bay=3.8, tanks=0, lights="monitor", seed=34)
 
 # office (20 x 22): the office block; a Deco savings bank; tall, six and seven storeys
-_town("office", "office", 0.955, 1.0, 3, _office_block, floors=4, wall="brick_r", seed=41)
+_town("office", "office", 0.955, 1.0, 3, _office_block, floors=4, wall="brick_r", tank=False, seed=41)
 _town("office_b", "office", 0.955, 1.0, 3, _deco_office, floors=3, seed=42)
 _town("office_c", "office", 0.955, 1.0, 3, _office_block, floors=4, wall="brick_y", base="lime2", spandrel="green", trim="lime",
-      sign="win_sign_blue", tank=False, seed=43)
+      sign="win_sign_gold", tank=False, seed=43)
 _town("office_t", "office", 0.955, 1.45, 3, _office_block, floors=6, wall="brick_b", base="lime", spandrel="cream", piers="brick_b",
       flag=True, seed=44)
 _town("office_u", "office", 0.955, 1.45, 3, _office_block, floors=6, wall="lime", base="lime2", spandrel="lime3", piers="lime2",
-      trim="lime2", cornice="terra", sign="win_sign_red", seed=45)
+      trim="lime2", cornice="terra", sign="win_sign_red", tank=False, seed=45)
 _town("office_s", "office", 0.59, 1.8, 1, _office_block, floors=5, wall="brick_r2", base="lime", spandrel="terra", yard=1.2,
       alley=2.8, tandem=True, bay=2.6, tank=True, seed=46)
 

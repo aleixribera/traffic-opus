@@ -680,7 +680,7 @@ export class Roads3D {
       if (LOTS.hit(x, y, r) || water?.(at)) return false;
       at.r = r / 0.8;
       return this.treeClear(own, at, drives);
-    });
+    }, (x, y, r) => LOTS.hit(x, y, r));
     this.furniture = placed;
     this.furn?.show(placed);
     // the wild trees keep off the billboards (render/forest.ts)

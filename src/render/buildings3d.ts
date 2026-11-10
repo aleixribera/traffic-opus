@@ -18,7 +18,7 @@ import { isMega, megaStage } from "../game/megaprojects";
 import { fieldLook, fieldModel } from "../game/calendar";
 import { seasonal } from "./envShader";
 import type { LampSpot, WindowSpot } from "./lamps3d";
-import { TOWN_MODELS, townModel } from "./townmodels";
+import { TOWN_MODELS, Variety, townChoices } from "./townmodels";
 import { LOTS } from "./furniture";
 import type { Solid } from "../ui/pick";
 import type { WindowKind } from "./daylight";
@@ -93,9 +93,13 @@ const TIMBER = new Set<string>(["house", "terrace", "highstreet", "shop", "fuels
 /** ...up to this height (m): a five-storey tenement on a row-house lot is a steel and brick job. */
 const TIMBER_TOP = 13;
 /** Tints multiplied over a model's own colours, picked per building. */
-const VARY = [0xffffff, 0xffffff, 0xf2ebe4, 0xe2dcd8, 0xfbf3e6, 0xdcdcdc, 0xf5f0f0];
+/** (fresh, sun-warmed, sooty, rosy, cool: brick and paint a shade apart from the same model next door) */
+// (never greener than it is red: the seasons' shader takes green for grass and leaves, and turns it in autumn)
+const VARY = [0xffffff, 0xffffff, 0xf6eadc, 0xe4dcd6, 0xfbf3e6, 0xd9d6d4, 0xf4ecec, 0xe9e6e4, 0xf0e2d2, 0xe2dcd4, 0xffffff];
 /** Ground of a grown lot: lawn for homes, paving for business. */
 const YARD: Record<string, number> = { res: 0x99994f, com: 0xb3ae9b, ind: 0xaaa490, off: 0xb3ae9b };
+/** A business paves this far behind its building (m); a lot with more than BACK_WILD m beyond that keeps it as grass. */
+const BACK_YARD = 1.2, BACK_WILD = 4;
 const ABANDONED = 0x77736b;
 /** A town hall's square (src/render/civic.ts): lawn, stone paving laid in slabs with a darker border, a path of setts. */
 const SQUARE_LAWN = 0x8f9a4c;
@@ -435,22 +439,25 @@ export class Buildings3D {
   private baseColor(b: Building): number | null {
     if (b.abandoned) return ABANDONED;
     // a street of the same model shouldn't look stamped: weathering and paint vary a little from one to the next
-    return VARY[(Math.imul(b.id, 2654435761) >>> 28) % VARY.length];
+    return VARY[(Math.imul(b.id, 2654435761) >>> 20) % VARY.length];
   }
 
   /**
    * The model a zoned building is drawn with: the one of its kind's models made for a lot and a height nearest its
-   * own (render/townmodels.ts), so its doors and storeys stand at their true size; among equals, by its id.
+   * own (render/townmodels.ts), so its doors and storeys stand at their true size; among equals, by its id, but not
+   * the one a building of its kind near it already has.
    */
   private modelOf(b: Building): string {
     if (!b.zone || !TOWN_MODELS[b.kind]) return b.kind;
     const got = this.picked.get(b.id);
     if (got && got.kind === b.kind && got.fit === b.fit && got.tall === b.tall) return got.model;
-    const model = townModel(b.kind, b.fit, b.tall, b.id, (m) => this.geoOf(m)?.design);
-    this.picked.set(b.id, { kind: b.kind, fit: b.fit, tall: b.tall, model: this.geoOf(model) ? model : b.kind });
-    return this.picked.get(b.id)!.model;
+    const choices = townChoices(b.kind, b.fit, b.tall, b.id, (m) => this.geoOf(m)?.design).filter((m) => this.geoOf(m));
+    const model = choices.length ? this.variety.pick(b.id, b.kind, b.c.x, b.c.y, Math.max(44, b.hw * 7), choices) : b.kind;
+    this.picked.set(b.id, { kind: b.kind, fit: b.fit, tall: b.tall, model });
+    return model;
   }
   private picked = new Map<number, { kind: string; fit: number; tall: number; model: string }>();
+  private variety = new Variety();
 
   /**
    * Where a town building's alley ends (model x, z): it stands on the pavement (owner, 2026-11-09: no car parks in
@@ -512,6 +519,7 @@ export class Buildings3D {
     for (const b of list) sig = (Math.imul(sig, 31) + b.id) | 0;
     LOTS.set("buildings", list.map((b) => rectCorners(b.c, b.hw, b.hd, b.rot)), sig);
     for (const id of this.layouts.keys()) if (!live.has(id)) this.layouts.delete(id);
+    for (const id of this.picked.keys()) if (!live.has(id)) { this.picked.delete(id); this.variety.drop(id); }
     const lots = list.filter((b) => b.zone);
     const squares = list.filter((b) => isHall(b.kind)).map((b) => ({ b, plan: this.squareOf(b) }));
     // lawns (and the lots' yards) in one instanced mesh, paving in another
@@ -527,7 +535,14 @@ export class Buildings3D {
       lots.forEach((b, i) => {
         lotMatrix(this.tmp, b.c, b.rot, b.side, 0.04);
         // the lot is hw along the road and hd deep; in lot space x runs along the road
-        ym.setMatrixAt(i, this.tmp.multiply(sc.makeScale(b.hw * 2 - 0.8, 1, b.hd * 2 - 0.8)));
+        const home = ZONE_GROUP[b.zone!] === "res";
+        // a business paves its lot edge to edge (two side by side share one yard, with no strip of grass between),
+        // but only as far back as it is built: a deep lot's back is left to the grass, not an empty paved field
+        const edge = home ? 0.8 : 0;
+        const spare = Math.max(0, b.hd * 2 - this.depth(b));
+        const used = home || b.built < 1 ? b.hd * 2 : b.hd * 2 - spare + this.setbackOf(b, spare) + BACK_YARD;
+        const deep = used < b.hd * 2 - BACK_WILD ? used : b.hd * 2;
+        ym.setMatrixAt(i, this.tmp.multiply(sc.makeScale(b.hw * 2 - edge, 1, deep - edge).setPosition(0, 0, b.hd - deep / 2)));
         ym.setColorAt(i, this.col.setHex(b.built < 1 ? SITE : YARD[ZONE_GROUP[b.zone!]]));
       });
       this.yards = ym;

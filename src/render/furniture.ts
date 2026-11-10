@@ -107,7 +107,7 @@ export interface Placed { poles: Pole[]; spans: Span[]; boards: Board[] }
 
 /** A pole about this often along a road (m), this far beyond its edge, and clear of its ends by this much. */
 export const POLE_EVERY = 46;
-export const POLE_OFF = 2.0;
+export const POLE_OFF = 2.6;
 const POLE_ENDS = 7;
 /** The longest span of wire (m). */
 export const SPAN_MAX = 98;
@@ -137,22 +137,27 @@ const wild = (r: RoadLine, s: number) => !townAt(r.runs, s) && heightAt(r, s) < 
 
 /**
  * The telegraph line and the billboards for these roads. `roadsAt` names the roads meeting at a node; `free` says
- * whether a spot of radius r is clear of everything but the road it stands by (other roads, driveways, lots, water).
+ * whether a spot of radius r is clear of everything but the road it stands by (other roads, driveways, lots, water);
+ * `taken` whether a spot is on a lot or a works site (no wire is strung across one).
  */
-export function placeFurniture(roads: RoadLine[], roadsAt: (node: number) => number[], free: (x: number, y: number, r: number, own: number) => boolean): Placed {
+export function placeFurniture(
+  roads: RoadLine[], roadsAt: (node: number) => number[], free: (x: number, y: number, r: number, own: number) => boolean,
+  taken: (x: number, y: number, r: number) => boolean = () => false,
+): Placed {
   const byId = new Map(roads.map((r) => [r.id, r]));
   const poles: Pole[] = [], spans: Span[] = [];
   /** each road's poles, in order along it */
   const along = new Map<number, number[]>();
 
-  // the poles: on one side of the road (the same side for roads running the same way, so the line keeps to it),
+  // the poles: on one side of the road (the same side for roads running the same way, so the line keeps to it; the
+  // north and west side, so that in the view as it opens the wires hang over the verge, not the dark of the road),
   // evenly along each piece of it
   for (const r of roads) {
     if (!r.carries) continue;
     const L = r.center.length, usable = r.to - r.from - POLE_ENDS * 2;
     if (usable < 18) continue;
     const mid = polyDirSmooth(r.center, L / 2, 6);
-    const side = dot(right(mid), { x: 0.39, y: 0.92 }) >= 0 ? 1 : -1;
+    const side = dot(right(mid), { x: 0.39, y: 0.92 }) >= 0 ? -1 : 1;
     const n = Math.max(1, Math.round(usable / POLE_EVERY));
     const mine: number[] = [];
     for (let k = 0; k < n; k++) {
@@ -176,7 +181,10 @@ export function placeFurniture(roads: RoadLine[], roadsAt: (node: number) => num
   const link = (a: number, b: number) => {
     if (a === b) return;
     const k = Math.min(a, b) * 1048576 + Math.max(a, b);
-    if (linked.has(k) || dist(poles[a], poles[b]) > SPAN_MAX || dist(poles[a], poles[b]) < 6) return;
+    const p = poles[a], q = poles[b], d = dist(p, q);
+    if (linked.has(k) || d > SPAN_MAX || d < 6) return;
+    // (not over a yard or a works: the line stops at its fence and takes up again past it)
+    for (let n = Math.ceil(d / 7), i = 1; i < n; i++) if (taken(p.x + ((q.x - p.x) * i) / n, p.y + ((q.y - p.y) * i) / n, 0.5)) return;
     linked.add(k);
     spans.push({ a, b });
   };
@@ -249,10 +257,13 @@ export function placeFurniture(roads: RoadLine[], roadsAt: (node: number) => num
       const rect = (front: number, back: number) => [[-BOARD_HW, -front], [BOARD_HW, -front], [BOARD_HW, back], [-BOARD_HW, back]]
         .map(([a, o]) => ({ x: c.x + u.x * a - f.x * o, y: c.y + u.y * a - f.y * o }));
       const poly = rect(BOARD_HD * 0.9, BOARD_HD * 1.9);
+      // (and the trees keep off it: a strip before each face, a little to either side)
+      const keep = [[-BOARD_HW - 2.5, -11], [BOARD_HW + 2.5, -11], [BOARD_HW + 2.5, 8], [-BOARD_HW - 2.5, 8]]
+        .map(([a, o]) => ({ x: c.x + u.x * a - f.x * o, y: c.y + u.y * a - f.y * o }));
       if (boards.some((b) => dist(b, c) < BOARD_APART)) return;
       const probes = [c, ...poly, { x: (poly[0].x + poly[1].x) / 2, y: (poly[0].y + poly[1].y) / 2 }, { x: (poly[2].x + poly[3].x) / 2, y: (poly[2].y + poly[3].y) / 2 }];
       if (probes.some((q) => polyClosest(r.center, q).d < r.halfW + 1.6 || !free(q.x, q.y, BOARD_CLEAR, r.id))) continue;
-      boards.push({ x: c.x, y: c.y, h: heightAt(r, s), fx: f.x, fy: f.y, art: Math.floor(hash(r.id, way + 2) * BOARD_ARTS) % BOARD_ARTS, road: r.id, poly, keep: rect(9, BOARD_HD * 1.9) });
+      boards.push({ x: c.x, y: c.y, h: heightAt(r, s), fx: f.x, fy: f.y, art: Math.floor(hash(r.id, way + 2) * BOARD_ARTS) % BOARD_ARTS, road: r.id, poly, keep });
       return;
     }
   };

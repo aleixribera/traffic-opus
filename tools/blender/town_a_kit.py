@@ -224,6 +224,38 @@ def _skylight(S, x0, x1, y0, y1, z, glass=None):
         taper(M, (x0 + 0.08, x1 - 0.08, y0 + 0.08, y1 - 0.08), (xm - 0.03, xm + 0.03, y0 + 0.5, y1 - 0.5), z + 0.3, z + 0.3 + (x1 - x0) * 0.32, glass or T["glass"])
 
 
+def _monitor(S, x0, x1, y0, y1, z, wall=None):
+    """A roof monitor: a long raised lantern lighting the floor below through the glass along its sides, under a
+    ridged tin roof."""
+    M, T = S.M, S.T
+    box(M, x0, x1, y0, y1, z, z + 1.0, wall or T["tar3"])
+    F = _faces(x0, x1, y0, y1)
+    long_ = "fb" if x1 - x0 >= y1 - y0 else "lr"
+    for s in long_:
+        _wq(M, F[s], 0.3, F[s].ln - 0.3, z + 0.3, z + 0.9, T["glass"], 0.03)
+    if long_ == "fb":
+        ym = (y0 + y1) / 2
+        extrude_profile(M, [(y0 - 0.15, z + 1.0), (y1 + 0.15, z + 1.0), (ym, z + 1.0 + (y1 - y0) * 0.22)], "x", x0 - 0.15, x1 + 0.15, T["tin"])
+    else:
+        xm = (x0 + x1) / 2
+        extrude_profile(M, [(x0 - 0.15, z + 1.0), (x1 + 0.15, z + 1.0), (xm, z + 1.0 + (x1 - x0) * 0.22)], "y", y0 - 0.15, y1 + 0.15, T["tin"])
+
+
+def _backstair(S, F, a, z, run=3.4, w=1.3):
+    """An outside stair up a back wall to the flat over the shop: a timber flight along the wall to a landing at
+    the door, a lean-to roof over it."""
+    M, T = S.M, S.T
+    wood = T["wood"]
+    _fbox(M, F, a, a + w, 0, 1.15, z - 0.12, z, wood)
+    for aa in (a + 0.08, a + w - 0.08):
+        _fbox(M, F, aa - 0.06, aa + 0.06, 1.03, 1.15, 0, z + 1.0, wood)
+    _fbox(M, F, a, a + w, 1.09, 1.15, z + 0.9, z + 1.0, wood)
+    _beam(M, F.p(a + w + run, 0.6, 0.1), F.p(a + w, 0.6, z - 0.06), 0.95, 0.14, T["wood2"])
+    _wq(M, F, a + 0.2, a + 1.1, z, z + 2.05, T["door"], 0.05)
+    _quad(M, [F.p(a - 0.15, 0, z + 2.75), F.p(a + w + 0.15, 0, z + 2.75), F.p(a + w + 0.15, 1.3, z + 2.3), F.p(a - 0.15, 1.3, z + 2.3)], T["tin"])
+    _quad(M, [F.p(a + w + 0.15, 0, z + 2.74), F.p(a - 0.15, 0, z + 2.74), F.p(a - 0.15, 1.3, z + 2.29), F.p(a + w + 0.15, 1.3, z + 2.29)], T["tar3"])
+
+
 def _chimney(S, x, y, z0, z1, m, w=0.7, d=0.7, smoke=True, cap=None):
     M = S.M
     box(M, x - w / 2, x + w / 2, y - d / 2, y + d / 2, z0, z1, m)
@@ -280,7 +312,8 @@ def _blade(S, F, a, o0, o1, z0, z1, m, letters=None, th=0.24):
 
 
 def _roofsign(S, x0, x1, y, z, h, m, letters, seed=3, legs=1.2):
-    """A sign standing on a roof on an iron frame, lettered to the street."""
+    """A sign standing on a roof on an iron frame, its letters showing on both faces (the street's, and the one the
+    view from behind the building sees)."""
     M, T = S.M, S.T
     n = max(2, int((x1 - x0) / 3.5) + 1)
     for i in range(n):
@@ -290,6 +323,7 @@ def _roofsign(S, x0, x1, y, z, h, m, letters, seed=3, legs=1.2):
     box(M, x0, x1, y - 0.16, y - 0.06, z + legs, z + legs + h, m)
     F = _Face(x0, y - 0.16, 1, 0, x1 - x0)
     _letters(M, F, 0.4, (x1 - x0) - 0.4, z + legs + h * 0.22, z + legs + h * 0.78, letters, 0.03, seed)
+    _letters(M, _Face(x1, y - 0.06, -1, 0, x1 - x0), 0.4, (x1 - x0) - 0.4, z + legs + h * 0.22, z + legs + h * 0.78, letters, 0.03, seed + 1)
 
 
 def _washline(S, x0, x1, y, z=2.0, seed=1):

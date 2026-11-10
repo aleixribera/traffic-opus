@@ -6,7 +6,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { BUILDING_TYPES, type BuildingKind } from "../src/config";
 import { ZONE_GROUP, ZONE_LOTS, modelFit } from "../src/game/growables";
 import type { ZoneId } from "../src/game/zones";
-import { TOWN_MODELS, TOWN_VARIANTS, townModel } from "../src/render/townmodels";
+import { TOWN_MODELS, TOWN_VARIANTS, Variety, townChoices, townModel } from "../src/render/townmodels";
 import { HOME_VARIANTS, LIT_KINDS, PROP_MODELS, litKind } from "../src/render/models";
 
 // (node's fs, untyped here: the project's types are the browser's)
@@ -189,13 +189,65 @@ describe("the model a lot is drawn with", () => {
     expect(townModel("factory", 1, 1, 5, design)).toBe("factory");
     expect(ZONE_GROUP.comMid).toBe("com");
   });
+
+  it("offers the building's own pick first, then the others made as near its lot", () => {
+    const fit = modelFit(ZONE_LOTS.comMid[0], 30, 28);
+    for (let id = 1; id < 60; id++) {
+      const c = townChoices("store", fit, 1, id, design);
+      expect(c[0]).toBe(townModel("store", fit, 1, id, design));
+      expect(new Set(c).size).toBe(c.length);
+      expect(c.length).toBeGreaterThanOrEqual(3);
+    }
+    expect(townChoices("factory", 1, 1, 5, design)).toEqual(["factory"]);
+  });
+});
+
+describe("a street of one kind", () => {
+  const fit = modelFit(ZONE_LOTS.comMid[0], 30, 28);
+  const row = (v: Variety, n: number, gap: number, y = 0) => {
+    const out: string[] = [];
+    for (let i = 0; i < n; i++) out.push(v.pick(i + 1 + y * 1000, "store", i * gap, y, 120, townChoices("store", fit, 1, i + 1 + y * 1000, design)));
+    return out;
+  };
+
+  it("never stands the same model twice running while there is another to take", () => {
+    const got = row(new Variety(), 40, 34);
+    for (let i = 1; i < got.length; i++) expect(got[i], `stores ${i - 1} and ${i}`).not.toBe(got[i - 1]);
+    // (nor the same one across the street)
+    const v = new Variety();
+    const north = row(v, 12, 34), south = row(v, 12, 34, 40);
+    for (let i = 0; i < 12; i++) expect(south[i], `across the street at ${i}`).not.toBe(north[i]);
+    // and it uses all of them
+    expect(new Set(got).size).toBeGreaterThanOrEqual(4);
+  });
+
+  it("is the same street every time it is built in the same order, and leaves other kinds alone", () => {
+    expect(row(new Variety(), 20, 34)).toEqual(row(new Variety(), 20, 34));
+    const v = new Variety();
+    expect(v.pick(1, "store", 0, 0, 120, ["a", "b"])).toBe("a");
+    expect(v.pick(2, "shop", 10, 0, 120, ["a", "b"])).toBe("a");
+    expect(v.pick(3, "store", 20, 0, 120, ["a", "b"])).toBe("b");
+    // out of reach: its own pick again
+    expect(v.pick(4, "store", 500, 0, 120, ["a", "b"])).toBe("a");
+  });
+
+  it("gives a building the same model when asked again, and frees a model when its building goes", () => {
+    const v = new Variety();
+    expect(v.pick(1, "store", 0, 0, 120, ["a", "b"])).toBe("a");
+    expect(v.pick(2, "store", 30, 0, 120, ["a", "b"])).toBe("b");
+    expect(v.pick(2, "store", 30, 0, 120, ["a", "b"])).toBe("b");
+    v.drop(1);
+    expect(v.pick(3, "store", 10, 0, 120, ["b", "a"])).toBe("a");
+    // all taken: the one whose twin is farthest
+    expect(v.pick(4, "store", 34, 0, 120, ["a", "b"])).toBe("a");
+  });
 });
 
 describe("the roadside furniture's models", () => {
   it("are there, light, and the billboards' posters are lit signs", () => {
     for (const m of ["telegraphpole", "telegraphwire", "billboard_a", "billboard_b", "billboard_c"]) {
       expect(PROP_MODELS as readonly string[]).toContain(m);
-      expect(glb(m).tris, m).toBeLessThanOrEqual(400);
+      expect(glb(m).tris, m).toBeLessThanOrEqual(560);
     }
     for (const m of ["billboard_a", "billboard_b", "billboard_c"]) {
       expect(glb(m).materials.filter((x) => LIT_KINDS[litKind(x)] === "sign").length, m).toBeGreaterThanOrEqual(3);

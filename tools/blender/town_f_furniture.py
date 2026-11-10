@@ -57,6 +57,7 @@ def b_telegraphwire(M, P):
 
 _BB_W, _BB_H, _BB_Z = 7.2, 3.0, 1.75   # the poster: width, height, its foot above the ground
 _BB_Y = -0.13                          # the hoarding's face
+_BB_YB = 0.43                          # its other face: a second poster, for the traffic going the other way
 
 
 def _bb_mats():
@@ -69,10 +70,12 @@ def _bb_mats():
 class _Poster:
     """The poster's sheet: x from 0 at its left edge, z from 0 at its foot, each layer a hair proud of the last."""
 
-    def __init__(self, M):
-        self.M, self.C = M, _bb_mats()
+    def __init__(self, M, back=False):
+        self.M, self.C, self.back = M, _bb_mats(), back
 
     def pt(self, x, z, layer):
+        if self.back:
+            return (_BB_W / 2 - x, _BB_YB + 0.02 + 0.022 * layer, _BB_Z + z)
         return (x - _BB_W / 2, _BB_Y - 0.02 - 0.022 * layer, _BB_Z + z)
 
     def rect(self, x0, x1, z0, z1, c, layer=1):
@@ -128,41 +131,48 @@ class _Poster:
 
 
 def _hoarding(M, P, lamps=3):
-    """The hoarding a poster is pasted to: a boarded panel in a painted frame on four timber posts, raked braces
-    behind it, a lattice apron under it, a stepped head and its gooseneck lamps."""
+    """The hoarding the posters are pasted to, one on each face: two boarded panels in painted frames either side of
+    four timber posts, knee braces at its ends, a lattice apron under each, a stepped head and gooseneck lamps over
+    both."""
     T = _td()
     hw, z0, z1 = _BB_W / 2 + 0.18, _BB_Z - 0.18, _BB_Z + _BB_H + 0.18
     frame, wood, iron = T["green"], T["board"], P["lp_iron"]
     box(M, -hw, hw, _BB_Y, 0.02, z0, z1, frame)
-    _quad(M, [(hw - 0.1, 0.04, z0 + 0.1), (-hw + 0.1, 0.04, z0 + 0.1), (-hw + 0.1, 0.04, z1 - 0.1), (hw - 0.1, 0.04, z1 - 0.1)], wood)
+    box(M, -hw, hw, 0.28, _BB_YB, z0, z1, frame)
     # the head: a stepped crest in the middle, a cap along the top
-    box(M, -hw - 0.08, hw + 0.08, _BB_Y - 0.06, 0.06, z1, z1 + 0.14, T["cream"])
-    box(M, -1.5, 1.5, _BB_Y - 0.03, 0.03, z1 + 0.14, z1 + 0.42, frame)
-    box(M, -0.8, 0.8, _BB_Y - 0.03, 0.03, z1 + 0.42, z1 + 0.62, T["cream"])
-    # posts and braces, rails across the back
+    box(M, -hw - 0.08, hw + 0.08, _BB_Y - 0.06, _BB_YB + 0.06, z1, z1 + 0.14, T["cream"])
+    box(M, -1.5, 1.5, _BB_Y - 0.03, _BB_YB + 0.03, z1 + 0.14, z1 + 0.42, frame)
+    box(M, -0.8, 0.8, _BB_Y - 0.03, _BB_YB + 0.03, z1 + 0.42, z1 + 0.62, T["cream"])
+    # the posts between the two faces, a knee brace out each way from the end ones
     for i, x in enumerate((-3.3, -1.1, 1.1, 3.3)):
         box(M, x - 0.1, x + 0.1, 0.04, 0.26, 0, z1 - 0.2, wood)
         if i in (0, 3):
-            _beam(M, (x, 0.2, z0 + 1.9), (x, 1.75, 0.08), 0.16, 0.16, T["wood"])
-    for z in (z0 + 0.5, z1 - 0.7):
-        box(M, -hw + 0.1, hw - 0.1, 0.04, 0.14, z, z + 0.14, T["wood"])
-    # the apron: lattice painted green, as a field of slats
+            _beam(M, (x, 0.0, z0 - 0.15), (x, -0.95, 0.08), 0.14, 0.14, T["wood"])
+            _beam(M, (x, 0.3, z0 - 0.15), (x, 1.25, 0.08), 0.14, 0.14, T["wood"])
+    # the aprons: lattice painted green, as a field of slats on the side the traffic into town comes by
     az0, az1 = 0.55, z0 - 0.04
     box(M, -hw + 0.1, hw - 0.1, _BB_Y + 0.05, -0.02, az0, az1, T["door_g"])
+    box(M, -hw + 0.1, hw - 0.1, 0.32, _BB_YB - 0.05, az0, az1, T["door_g"])
     n = 9
     for i in range(n):
         xa = -hw + 0.25 + (2 * hw - 0.5) * i / n
         xb = xa + (2 * hw - 0.5) / n
         _quad(M, [(xa, _BB_Y + 0.03, az0 + 0.08), ((xa + xb) / 2 - 0.05, _BB_Y + 0.03, az0 + 0.08),
                   (xb - 0.05, _BB_Y + 0.03, az1 - 0.08), ((xa + xb) / 2, _BB_Y + 0.03, az1 - 0.08)], frame)
-    # the lamps over the poster
-    for k in range(lamps):
-        x = (k - (lamps - 1) / 2) * 2.6
-        box(M, x - 0.03, x + 0.03, _BB_Y - 0.7, 0.0, z1 + 0.2, z1 + 0.26, iron)
-        taper(M, (x - 0.19, x + 0.19, _BB_Y - 0.94, _BB_Y - 0.56), (x - 0.07, x + 0.07, _BB_Y - 0.82, _BB_Y - 0.68), z1 + 0.02, z1 + 0.2, iron)
-        _quad(M, [(x - 0.13, _BB_Y - 0.62, z1 + 0.015), (x + 0.13, _BB_Y - 0.62, z1 + 0.015),
-                  (x + 0.13, _BB_Y - 0.88, z1 + 0.015), (x - 0.13, _BB_Y - 0.88, z1 + 0.015)], mat("win_sign_cream", "#f0e6c4"))
-    L = Lot(2 * hw + 0.16, 2.82)
+    # the lamps over each poster
+    lit = mat("win_sign_cream", "#f0e6c4")
+    for face, y0, sg in ((0, _BB_Y, -1), (1, _BB_YB, 1)):
+        nl = lamps if face == 0 else lamps - 1
+        for k in range(nl):
+            x = (k - (nl - 1) / 2) * (2.6 if face == 0 else 3.6)
+            ya, yb = sorted((y0 + sg * 0.7, y0))
+            box(M, x - 0.03, x + 0.03, ya, yb, z1 + 0.2, z1 + 0.26, iron)
+            ya, yb = sorted((y0 + sg * 0.94, y0 + sg * 0.56))
+            yc, yd = sorted((y0 + sg * 0.82, y0 + sg * 0.68))
+            taper(M, (x - 0.19, x + 0.19, ya, yb), (x - 0.07, x + 0.07, yc, yd), z1 + 0.02, z1 + 0.2, iron)
+            ya, yb = sorted((y0 + sg * 0.62, y0 + sg * 0.88))
+            _quad(M, [(x - 0.13, yb, z1 + 0.015), (x + 0.13, yb, z1 + 0.015), (x + 0.13, ya, z1 + 0.015), (x - 0.13, ya, z1 + 0.015)], lit)
+    L = Lot(2 * hw + 0.16, 2.44)
     L.bays = []
     return L
 
@@ -191,6 +201,16 @@ def b_billboard_a(M, P):
     S.rect(0.3, 1.9, H - 0.34, H - 0.16, "cream", 7)
     S.rect(W - 1.9, W - 0.3, H - 0.34, H - 0.16, "cream", 7)
     S.disc(W / 2, H - 0.25, 0.14, "mustard", 7, n=8)
+    # the other face: the diner down the road
+    B = _Poster(M, back=True)
+    B.rect(0, W, 0, H, "cream", 0)
+    B.rect(0, W, 0, 0.42, "ox", 1)
+    B.rect(0, W, H - 0.14, H, "ox", 1)
+    B.disc(1.45, 1.62, 0.95, "mustard", 1, n=12)
+    B.disc(1.45, 1.62, 0.6, "white", 2, n=10)
+    x = B.word("EAT", 2.95, 1.0, 1.3, "ox", 2)
+    B.rect(2.95, x - 0.3, 0.64, 0.78, "navy", 2)
+    B.word("ROAST PIES TEA", 2.97, 2.5, 0.22, "navy", 2)
     return L
 
 
@@ -212,6 +232,15 @@ def b_billboard_b(M, P):
     S.rect(2.95, x - 0.25, 0.6, 0.76, "mustard", 2)
     S.word("ICE", 2.98, 2.36, 0.34, "mustard", 2)
     S.disc(W - 0.62, 2.5, 0.3, "mustard", 2, n=8)
+    # the other face: the coal and ice dealer
+    B = _Poster(M, back=True)
+    B.rect(0, W, 0, H, "mustard", 0)
+    B.rect(0, W, 0, 0.2, "black", 1)
+    B.rect(0, W, H - 0.2, H, "black", 1)
+    B.word("COAL", 0.45, 0.85, 1.25, "black", 2)
+    B.poly([(5.05, 0.2), (W, 0.2), (W, H - 0.2), (5.45, H - 0.2)], "navy", 1)
+    B.word("ICE", 5.72, 1.3, 0.62, "white", 2, wide=0.6)
+    B.rect(5.72, W - 0.3, 1.02, 1.12, "sky", 2)
     return L
 
 
@@ -228,15 +257,24 @@ def b_billboard_c(M, P):
     # the tyre
     S.disc(5.45, 1.5, 1.2, "black", 2, n=14)
     S.disc(5.45, 1.5, 0.7, "cream", 3, n=12)
-    S.disc(5.45, 1.5, 0.3, "ox", 4, n=8)
+    S.disc(5.45, 1.5, 0.3, "black", 4, n=8)
     # the mustard flash
     S.poly([(3.2, 0.3), (4.3, 0.3), (4.75, 0.62), (3.42, 0.62)], "mustard", 2)
     S.poly([(3.95, 2.3), (4.35, 2.3), (4.2, 2.72), (3.8, 2.72)], "mustard", 2)
+    # the other face: the tyre shop
+    B = _Poster(M, back=True)
+    B.rect(0, W, 0, H, "green", 0)
+    B.rect(0, W, 0, 0.34, "cream", 1)
+    B.disc(1.4, 1.62, 1.05, "black", 1, n=14)
+    B.disc(1.4, 1.62, 0.6, "green", 2, n=10)
+    x = B.word("TIRES", 2.85, 1.1, 1.05, "cream", 2, wide=0.66)
+    B.rect(2.85, x - 0.25, 0.72, 0.86, "mustard", 2)
+    B.word("REPAIRS", 2.87, 2.42, 0.28, "mustard", 2)
     return L
 
 
 BUILDINGS["telegraphpole"] = (b_telegraphpole, 2.1, 0.34, 0)
 BUILDINGS["telegraphwire"] = (b_telegraphwire, 1.94, 1.0, 0)
 for _n, _f in (("billboard_a", b_billboard_a), ("billboard_b", b_billboard_b), ("billboard_c", b_billboard_c)):
-    BUILDINGS[_n] = (_f, _BB_W + 0.52, 2.82, 0)
+    BUILDINGS[_n] = (_f, _BB_W + 0.52, 2.44, 0)
 POST_ORIGIN.update(("telegraphpole", "telegraphwire", "billboard_a", "billboard_b", "billboard_c"))

@@ -235,10 +235,11 @@ export function seasonal(mat: THREE.MeshLambertMaterial, opts: { roofs?: boolean
         float occ = kind < 1.5 ? uLit.x : kind < 2.5 ? uLit.y : kind < 3.5 ? uLit.z : uLit.w;
         float on = step(rnd, occ) * smoothstep(0.08, 0.5, uNight.y);
         float r2 = fract(rnd * 7.13 + vLit.y * 3.7);
-        // homes: lamplight behind curtains, each its own; shops: bright and even; offices: a paler, steadier light
+        // homes: lamplight behind curtains, each its own; shops: bright show windows, one warmer or dimmer than the
+        // next; offices: a paler, steadier light
         vec3 glow = kind < 1.5 ? mix(vec3(1.0, 0.56, 0.2), vec3(1.0, 0.74, 0.4), r2) * (0.62 + 0.38 * fract(r2 * 5.3))
-          : kind < 2.5 ? vec3(1.0, 0.8, 0.46)
-          : kind < 3.5 ? mix(vec3(0.95, 0.78, 0.46), vec3(0.9, 0.84, 0.6), r2) * 0.85
+          : kind < 2.5 ? mix(vec3(1.0, 0.7, 0.34), vec3(1.0, 0.84, 0.52), r2) * (0.8 + 0.2 * fract(r2 * 5.3))
+          : kind < 3.5 ? mix(vec3(0.98, 0.72, 0.4), vec3(0.94, 0.82, 0.56), r2) * (0.68 + 0.2 * fract(r2 * 3.7))
           : vec3(1.0, 0.76, 0.42);
         totalEmissiveRadiance += glow * on;
         diffuseColor.rgb *= 1.0 - on;

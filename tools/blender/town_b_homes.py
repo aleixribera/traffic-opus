@@ -289,19 +289,19 @@ _town("terrace_c", "terrace", 0.85, 1.0, 2, _rowhouses, n=3, floors=3, bricks=("
       trim="green", step=(0, 0.5, 0.2), doors=("door_g", "door", "black"), bay=(1,), seed=3)
 _town("terrace_s", "terrace", 0.6, 1.0, 1, _rowhouses, n=2, bricks=("brick_r2", "brick_b"), trim="cream", front=1.6,
       yard=1.2, alley=2.8, bay=(1,), seed=4)
-_town("terrace_n", "terrace", 0.6, 1.65, 1, _tenements, blocks=[dict(w=1, floors=4, brick="brick_r2", trim="lime")],
+_town("terrace_n", "terrace", 0.6, 1.65, 1, _tenements, blocks=[dict(w=1, floors=4, brick="brick_r2", trim="lime", tank=False)],
       front=1.6, yard=1.2, alley=2.8, tandem=True, seed=5)
 _town("terrace_t", "terrace", 1.235, 1.65, 4, _tenements, blocks=[
     dict(w=1.0, floors=5, brick="brick_r", trim="lime", shop=dict(awn="green", ink="green")),
-    dict(w=1.1, floors=4, brick="brick_y", trim="cream", cornice="green", tar="tar2")], yard=7.0, seed=6)
+    dict(w=1.1, floors=4, brick="brick_y", trim="cream", cornice="green", tar="tar2", tank=False)], yard=7.0, seed=6)
 
 # apartments (30 x 30): walk-up tenements; a garden apartment house
 _town("apartments", "apartments", 0.95, 1.0, 5, _tenements, blocks=[
-    dict(w=1.0, floors=4, brick="brick_r", trim="lime"),
+    dict(w=1.0, floors=4, brick="brick_r", trim="lime", tank=False),
     dict(w=1.0, floors=5, brick="brick_b", trim="cream", tar="tar2", cornice="lime2")], front=1.6, yard=9.0, seed=7)
 _town("apartments_b", "apartments", 0.95, 1.0, 4, _garden_apts, brick="brick_y", trim="cream", roof="tile", yard=7.2, seed=8)
 _town("apartments_m", "apartments", 0.7, 1.0, 3, _tenements, blocks=[
-    dict(w=1, floors=4, brick="brick_d", trim="cream", cornice="mustard")], front=1.5, yard=7.0, seed=9)
+    dict(w=1, floors=4, brick="brick_d", trim="cream", cornice="mustard", tank=False)], front=1.5, yard=7.0, seed=9)
 _town("apartments_n", "apartments", 0.7, 1.0, 3, _garden_apts, brick="brick_r", trim="lime", roof="slate", yard=6.6, wing=5.2, seed=10)
 _town("apartments_s", "apartments", 0.433, 1.8, 1, _tenements, blocks=[
     dict(w=1, floors=5, brick="brick_r", trim="cream", tar="tar2")], front=1.6, yard=1.2, alley=2.8, tandem=True, seed=11)
