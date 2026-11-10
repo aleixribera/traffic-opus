@@ -15,6 +15,7 @@ import { F } from "../world/gen";
 import { MILESTONES } from "../game/progression";
 import { buildOrder, needHelp, shortfalls, worstCeiling } from "./bottleneck";
 import { STUCK_RAISE, stuckSpots } from "./stuckAlerts";
+import { distText, planLength } from "./distance";
 
 export interface Tip {
   /** which tip it is (what a dismissal remembers) */
@@ -22,6 +23,8 @@ export interface Tip {
   html: string;
   /** the bottom bar's category it leads to (its button gets a marker) */
   cat?: "roads" | "industry";
+  /** a works whose offered road the tip's own button lays (Game.roadTo), and what that costs */
+  road?: { works: number; cost: number };
 }
 
 export type TipId = "farm" | "noroad" | "foodplant" | "connect" | "jam" | "ceiling" | "planks" | "newtown" | "sitewait" | "deposits" | "power" | "parts" | "milk" | "supplies";
@@ -141,7 +144,11 @@ export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false, sign
     // a site placed out past its gate street's reach, with no road to anything yet
     () => {
       const b = plants.find((x) => cutOff(g, x));
-      return b ? { id: "noroad", cat: "roads", html: `<b>No road reaches your ${lower(b.kind as PlantKind)} yet.</b> Lay one from its gate to your roads: its trucks can't go anywhere till then. (A site placed within ${GATE_LINK_REACH} m of a road lays its own street to it.)` } : null;
+      if (!b) return null;
+      // (with no road at its gate at all, the game offers the dirt road to it: dashed on the map, one click here)
+      const plan = b.access ? null : g.roadTo(b);
+      if (plan) return { id: "noroad", cat: "roads", road: { works: b.id, cost: plan.cost }, html: `<b>No road reaches your ${lower(b.kind as PlantKind)} yet.</b> Its trucks can't go anywhere till one does. A dirt road from its gate to your roads is ${distText(planLength(plan))} long:` };
+      return { id: "noroad", cat: "roads", html: `<b>No road reaches your ${lower(b.kind as PlantKind)} yet.</b> Lay one from its gate to your roads: its trucks can't go anywhere till then. (A site placed within ${GATE_LINK_REACH} m of a road lays its own street to it.)` };
     },
     () => {
       if (!has("farm") || has("foodplant")) return null;

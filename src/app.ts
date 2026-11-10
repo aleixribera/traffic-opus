@@ -3,9 +3,9 @@ import { BUILDING_TYPES, LEVEL_H, MAX_LEVEL, ROAD_TYPES, SIM, roadWidth, type Ro
 import { clamp, cubicAt, cubicTangent, dist, dot, formatMoney, norm, rectCorners, right, sub, v2, wrapAngle, type V2 } from "./core/math";
 import { townStreets } from "./game/rural";
 import type { Building } from "./game/buildings";
-import { Game } from "./game/city";
+import { GATE_LINK_REACH, Game, ROAD_TO_REACH } from "./game/city";
 import {
-  parallelSpacing, planAddLane, planRoad, planRoundabout, removalRefund, snap,
+  chainPoints, parallelSpacing, planAddLane, planRoad, planRoundabout, removalRefund, snap,
   type CurveMode, type Plan, type RoundaboutSize, type Snap, type SnapOpts,
 } from "./roads/planner";
 import { toolSnap, type ToolSnap } from "./roads/snapping";
@@ -47,6 +47,7 @@ const GATE_SNAP = 7;
 const FINE_TURN = Math.PI / 180;
 import { ZONES } from "./game/zones";
 import { MIN_DEPOSIT, PLANTS, PRODUCTS, UNPOWERED, isPlantKind, type Product } from "./game/industry";
+import { wouldLink } from "./game/parks";
 import { CIVICS } from "./game/civics";
 import { growthOf, labelNeeds, labelSummary, type LabelNeeds } from "./ui/needs";
 import { steadyProblem, tally } from "./ui/bottleneck";
@@ -56,7 +57,7 @@ import { TownPings } from "./ui/townPings";
 import { STUCK_KEEP, StuckAlerts } from "./ui/stuckAlerts";
 import { DEPOSIT_KINDS, DepositMarks } from "./ui/depositMarks";
 import { GoalPointer, farmSpot, groundSpot } from "./ui/goalPointer";
-import { distFromText, distText } from "./ui/distance";
+import { distFromText, distText, planLength } from "./ui/distance";
 import { GateMark, type GateAsk } from "./ui/gateMark";
 import { served } from "./game/settlements";
 import { joinedUp } from "./ui/tips";
@@ -202,6 +203,14 @@ export class App {
   /** which lists of planted trees the 3D trees were last given */
   private treeSig = "";
   preview = new Preview3D();
+  /**
+   * The road offered to a works with no road (Game.roadTo), dashed on the map while its panel is open or its
+   * "Build this road" is under the pointer. Its own layer: it stays while the pointer is off the map, on that button.
+   */
+  private offer = new Preview3D();
+  private offerKey = "";
+  /** a works whose offered road the HUD is pointing at (its tip's button under the pointer) */
+  offerFor: number | null = null;
   saves = new Saves();
   hud!: Hud;
   st: ToolState = {
@@ -339,6 +348,7 @@ export class App {
       wind: (deg?: number, strength?: number) => holdWind(deg, strength),
     };
     this.view.scene.add(this.preview.group);
+    this.view.scene.add(this.offer.group);
   }
 
   // ---------------------------------------------------------------- setup
@@ -695,6 +705,7 @@ export class App {
     if (this.overlay !== "none") this.setOverlay(this.overlay);
     this.hasCursor = false;
     this.preview.group.visible = false;
+    this.offer.group.visible = false;
     this.hud?.chips(null);
     if (this.game.paused) this.togglePause();
     document.body.classList.add("cinema");
@@ -708,6 +719,7 @@ export class App {
     this.syncRise();
     this.keys.clear();
     this.preview.group.visible = true;
+    this.offer.group.visible = true;
     if (overlay !== "none") this.setOverlay(overlay);
     if (tool !== "inspect") this.setTool({ tool });
     if (paused && !this.game.paused) this.togglePause();
@@ -1598,7 +1610,9 @@ export class App {
       // Play-test 2026-11-10: the ghost said "Street to its gate", the town built on that street's way a moment later,
       // and the Sawmill went down with no road and not a word)
       const cut = !!pl.free && !pl.link && !b.access;
-      this.hud?.toast(`${BUILDING_TYPES[k].name} built for ${formatMoney(pl.cost)}${cut ? ". No road reaches its gate yet: draw one to it" : ""}`);
+      // (too far out for its own street: the dirt road the ghost showed waits in its panel, one click)
+      const far = cut ? g.roadTo(b) : null;
+      this.hud?.toast(`${BUILDING_TYPES[k].name} built for ${formatMoney(pl.cost)}${!cut ? "" : far ? `. No road reaches its gate yet: click it to build the dirt road to it (${formatMoney(far.cost)})` : ". No road reaches its gate yet: draw one to it"}`);
       this.dirtyPreview = true;
       return;
     }
@@ -2103,13 +2117,35 @@ export class App {
           pv.plan(pl.link, 0);
           chips.push({ text: `Street to its gate: ${Math.round(pl.link.length)} m`, kind: "info", lead: 2 });
         } else if (pl.free && pl.ok) {
-          // (a site turns its gate toward the nearest road by itself, so turning it is not the fix. Play-test 2026-11-10:
-          // "turn its gate toward one" sent the player turning a farm round and round beside a road its own fence stood
-          // in the way of)
-          const text = "No road it can reach: place it and draw a road to its gate, or move it nearer a road";
-          chips.push({ text, kind: "info", lead: 3 });
+          // (further out than its own street reaches: the dirt road the game would lay to it, dashed, and its price;
+          // built with one click from its panel once it is placed. Review 2026-11-10)
+          const far = this.farLink(k, pl);
+          if (far) {
+            this.offerRoad(pv, far);
+            if (this.gateGhost) this.gateGhost = { ...this.gateGhost, note: "dirt road offered", bad: false };
+            chips.push({ text: `No road within ${GATE_LINK_REACH} m: a dirt road to its gate, ${distText(planLength(far))}, ${formatMoney(far.cost)}. Its panel builds it`, kind: "info", lead: 3 });
+          } else {
+            // (a site turns its gate toward the nearest road by itself, so turning it is not the fix. Play-test
+            // 2026-11-10: "turn its gate toward one" sent the player turning a farm round and round beside a road its
+            // own fence stood in the way of)
+            const text = far === undefined ? "No road within reach of its gate" : "No road it can reach: place it and draw a road to its gate, or move it nearer a road";
+            chips.push({ text, kind: "info", lead: 3 });
+          }
         }
         else if (pl.faces) chips.push({ text: `Gate on a ${pl.faces.toLowerCase()}`, kind: "info", lead: 2 });
+        // (the belts and pipes it would make with the company's plants fence to fence with it, drawn from fence to
+        // fence and named: a park is planned, not found out after. Review 2026-11-10)
+        if (pl.ok && isPlantKind(k)) {
+          const said = new Set<string>();
+          for (const l of wouldLink(k, pl.c, pl.rot, g.industry.plants())) {
+            pv.path([l.a, l.b], 0xe0a833, Math.max(2.2, 1.8 * this.view.mpp));
+            pv.dot(l.a, 0xe0a833, 2.6);
+            pv.dot(l.b, 0xe0a833, 2.6);
+            const pipe = l.product === "crude" || l.product === "fuel";
+            const say = `${pipe ? "Pipe" : "Conveyor"} ${l.out ? "to" : "from"} your ${BUILDING_TYPES[l.other.kind].name}: ${PRODUCTS[l.product].name.toLowerCase()}`;
+            if (!said.has(say)) { said.add(say); chips.push({ text: say, kind: "info", lead: 4 }); }
+          }
+        }
         // (the deposit share; a lot refused for too little of it gives the share in its reason instead)
         this.powerPreview(pv, chips, k, pl.c, pl.access?.seg);
         this.depositMarks.here = !!pl.deposit && pl.deposit.share >= MIN_DEPOSIT;
@@ -2153,6 +2189,43 @@ export class App {
       } else if (b) chips.push({ text: b.zone ? `${ZONES[b.zone].short} · ${b.town !== undefined ? g.towns.byId.get(b.town)?.name ?? "" : "level " + b.level}` : BUILDING_TYPES[b.kind].name, kind: "info" });
     }
     this.hud?.chips(chips.length ? this.cursorPx : null, chips);
+  }
+
+  /**
+   * The dirt road the game would lay to a site placed here with no road in its own street's reach (Game.gateLink, out
+   * to ROAD_TO_REACH). Worked out at most every 150 ms while the ghost moves (undefined meanwhile: the frame after
+   * asks again), and kept while the site, its turn and the roads stay put.
+   */
+  private farLink(k: PlacedKind, pl: { c: V2; rot: number; side: 1 | -1 }): Plan | null | undefined {
+    const g = this.game, key = `${k}:${Math.round(pl.c.x)},${Math.round(pl.c.y)}:${pl.rot.toFixed(3)}:${pl.side}:${g.net.version}`;
+    if (this.farMemo?.key === key) return this.farMemo.plan;
+    const now = performance.now();
+    if (now - this.farAt < 150) { requestAnimationFrame(() => { this.dirtyPreview = true; }); return undefined; }
+    this.farAt = now;
+    const plan = g.gateLink(k, pl.c, pl.rot, pl.side, { reach: ROAD_TO_REACH, type: "dirt", tries: 3 });
+    this.farMemo = { key, plan };
+    return plan;
+  }
+  private farMemo: { key: string; plan: Plan | null } | null = null;
+  private farAt = 0;
+
+  /** The offered road of the works selected (or pointed at), redrawn only when it, the roads or the zoom change. */
+  private drawOffer() {
+    const g = this.game;
+    const id = this.offerFor ?? (this.sel?.k === "building" ? this.sel.id : null);
+    const b = id !== null && this.mode === "play" ? g.buildings.byId.get(id) : undefined;
+    const plan = b && b.placed && !b.access ? g.roadTo(b) : null;
+    const key = plan ? `${b!.id}:${g.net.version}:${Math.round(Math.log2(this.view.mpp) * 4)}` : "";
+    if (key === this.offerKey) return;
+    this.offerKey = key;
+    this.offer.clear();
+    if (plan) this.offerRoad(this.offer, plan);
+  }
+
+  /** A road offered, not built: dashed in ochre along its way, as wide as the zoom needs to see it. */
+  private offerRoad(pv: Preview3D, plan: Plan) {
+    const mpp = this.view.mpp;
+    for (const st of plan.strokes) pv.dashed(chainPoints(st.chain, 3), 0xe0a833, Math.max(3, 2.4 * mpp), Math.max(10, 9 * mpp), Math.max(7, 6 * mpp));
   }
 
   /** The gate to mark now: the works in hand's, else the selected works' (saying so when no road is at it yet). */
@@ -2302,6 +2375,7 @@ export class App {
     const flowOn = this.overlay === "flow";
     this.roads.update(g.traffic, flowOn && this.flowT > 0.5);
     if (this.flowT > 0.5) this.flowT = 0;
+    this.drawOffer();
     if (this.dirtyPreview && !this.camera.cinematic) {
       // (a preview that can't be drawn must never stop the game)
       try { this.refreshPreview(); } catch (e) { this.dirtyPreview = false; console.error(e); }

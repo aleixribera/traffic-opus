@@ -16,6 +16,8 @@ const SEG = 12, BELT_Y = 7.16, PIPE_Y = 6.77, PIPE_X = -0.75;
 const TOWER = 3;
 /** How fast the goods move (m/s): a belt's loads, a pipe's flow. */
 const BELT_V = 1.8, FLOW_V = 3.2;
+/** A link standing still (a plant at one end has no road): its towers and run greyed down to this. */
+const STOPPED = new THREE.Color(0.42, 0.42, 0.44), RUNNING = new THREE.Color(1, 1, 1);
 
 export class Parks3D {
   readonly group = new THREE.Group();
@@ -56,27 +58,29 @@ export class Parks3D {
   private rebuild(links: ParkLink[]) {
     for (const m of this.statics) { this.group.remove(m); m.dispose(); }
     this.statics = [];
-    const towers: THREE.Matrix4[] = [], belts: THREE.Matrix4[] = [], pipes: THREE.Matrix4[] = [];
+    type Piece = { m: THREE.Matrix4; off: boolean };
+    const towers: Piece[] = [], belts: Piece[] = [], pipes: Piece[] = [];
     // (two products between the same plants share one link's towers and run)
     const seen = new Set<string>();
     for (const l of links) {
       const k = `${Math.min(l.from, l.to)}-${Math.max(l.from, l.to)}:${l.pipe}`;
       if (seen.has(k)) continue;
       seen.add(k);
+      const off = l.stopped !== undefined;
       const { f, len, a } = this.run(l);
-      for (const p of [l.a, l.b]) towers.push(faceMatrix(new THREE.Matrix4(), p, f));
+      for (const p of [l.a, l.b]) towers.push({ m: faceMatrix(new THREE.Matrix4(), p, f), off });
       const n = Math.max(1, Math.round(len / SEG)), step = len / n;
       for (let i = 0; i < n; i++) {
         const c = { x: a.x + f.x * step * (i + 0.5), y: a.y + f.y * step * (i + 0.5) };
         const m = faceMatrix(new THREE.Matrix4(), c, f).multiply(this.s.makeScale(1, 1, step / SEG));
-        (l.pipe ? pipes : belts).push(m);
+        (l.pipe ? pipes : belts).push({ m, off });
       }
     }
     for (const [name, ms] of [["link_tower", towers], ["link_conveyor", belts], ["link_pipe", pipes]] as const) {
       const mm = this.models.sites.get(name);
       if (!mm || !ms.length) continue;
       const im = new THREE.InstancedMesh(mm.geo, this.mat, ms.length);
-      ms.forEach((m, i) => im.setMatrixAt(i, m));
+      ms.forEach((x, i) => { im.setMatrixAt(i, x.m); im.setColorAt(i, x.off ? STOPPED : RUNNING); });
       im.castShadow = true;
       im.receiveShadow = true;
       im.computeBoundingSphere();
@@ -87,12 +91,12 @@ export class Parks3D {
 
   /** Every frame: the goods move along each busy link (`time` in seconds; the sim's clock, so a pause stops them). */
   update(links: ParkLink[], time: number) {
-    const sig = links.map((l) => `${l.from}>${l.to}:${l.product}:${l.a.x.toFixed(1)},${l.a.y.toFixed(1)}`).join("|");
+    const sig = links.map((l) => `${l.from}>${l.to}:${l.product}:${l.a.x.toFixed(1)},${l.a.y.toFixed(1)}${l.stopped !== undefined ? "x" : ""}`).join("|");
     if (sig !== this.sig) { this.sig = sig; this.rebuild(links); }
     let nl = 0, nf = 0;
     for (const l of links) {
       const rate = Math.max(l.last, l.now);
-      if (rate <= 0) continue;
+      if (rate <= 0 || l.stopped !== undefined) continue;
       const out = l.pipe ? this.flows : this.loads;
       if (!out) continue;
       const { f, len, a } = this.run(l);

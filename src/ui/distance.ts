@@ -6,7 +6,10 @@
 import type { V2 } from "../core/math";
 import type { Game } from "../game/city";
 import type { Town } from "../game/settlements";
-import { cubicClosest } from "../roads/planner";
+import { cubicClosest, type Plan } from "../roads/planner";
+
+/** How long a planned road is (m), along its curves' chords. */
+export const planLength = (p: Plan): number => p.strokes.reduce((a, st) => a + st.chain.reduce((x, c) => x + Math.hypot(c.p3.x - c.p0.x, c.p3.y - c.p0.y), 0), 0);
 
 /** A distance in words: "350 m", "1.9 km", "12 km". */
 export const distText = (m: number): string => (m < 950 ? `${Math.max(50, Math.round(m / 50) * 50)} m` : m < 9950 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m / 1000)} km`);

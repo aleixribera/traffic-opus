@@ -219,6 +219,34 @@ export class Preview3D {
     this.add(m, 12);
   }
 
+  /**
+   * A dashed line on the ground (a road offered, not yet built): dashes `on` long with `off` between, along the
+   * points, the gaps showing the ground through so it never reads as a road already there.
+   */
+  dashed(pts: V2[], color: number, w: number, on: number, off: number) {
+    if (pts.length < 2) return;
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, depthTest: false });
+    let piece: V2[] = [pts[0]], left = on, drawing = true;
+    for (let i = 1; i < pts.length; i++) {
+      let a = pts[i - 1];
+      const b = pts[i];
+      let d = Math.hypot(b.x - a.x, b.y - a.y);
+      while (d > 1e-6) {
+        const step = Math.min(d, left), k = step / d;
+        const q = { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k };
+        if (drawing) piece.push(q);
+        a = q; d -= step; left -= step;
+        if (left <= 1e-6) {
+          if (drawing && piece.length >= 2) this.add(new THREE.Mesh(strip(piece, LIFT + 0.05, w), mat), 12);
+          drawing = !drawing;
+          left = drawing ? on : off;
+          piece = [q];
+        }
+      }
+    }
+    if (drawing && piece.length >= 2) this.add(new THREE.Mesh(strip(piece, LIFT + 0.05, w), mat), 12);
+  }
+
   /** A ring marker in a colour (bus stops on the line being drawn). */
   dot(p: V2, color: number, r = 3.2, h = 0) {
     const geo = new THREE.CircleGeometry(r, 20).rotateX(-Math.PI / 2);

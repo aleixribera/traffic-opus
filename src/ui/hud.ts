@@ -39,6 +39,7 @@ import { MEGAS, isMega } from "../game/megaprojects";
 import { TipPrefs, joinedUp, tipFor } from "./tips";
 import { blockWords, buildOrder, shortfalls, shownRate } from "./bottleneck";
 import { longProject, type LongProject } from "./longProject";
+import { distText, planLength } from "./distance";
 import { goalNow, goalNowSay } from "./goalNow";
 import { STUCK_RAISE, stuckSpots } from "./stuckAlerts";
 import { nextTown } from "./nextTown";
@@ -992,7 +993,8 @@ export class Hud {
         body = `<div id="gl-body" class="gl-one">${this.projNow(g, lp, true)}</div>`;
       }
     }
-    const head = `<button class="gl-head" aria-expanded="${!folded}" aria-controls="gl-body"><b>Goals</b>${fold}<span class="gl-caret">${ICON.caret}</span></button>`;
+    const foldName = folded ? /<b>([^<]*)<\/b>/.exec(fold)?.[1] : undefined;
+    const head = `<button class="gl-head" aria-expanded="${!folded}" aria-controls="gl-body"${foldName ? ` title="${foldName}. Click for the whole card."` : ""}><b>Goals</b>${fold}<span class="gl-caret">${ICON.caret}</span></button>`;
     if (!folded) {
       const items = open.map((m) => {
         const [have, need] = m.measure(v);
@@ -1003,7 +1005,8 @@ export class Hud {
           <span class="bar gl-bar" role="progressbar" aria-label="${m.name}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p * 100)}"><i style="width:${Math.max(2, p * 100)}%"></i></span>
           ${nowLine(now)}<p class="gl-gift">${unlockList(m.unlocks).join(" · ")}</p></li>`;
       }).join("");
-      body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : this.afterGoals()}${tip ? `<div class="gl-tip" data-tip="${tip.id}"><p>${tip.html}</p><button class="gl-x" aria-label="Dismiss this tip" title="Dismiss this tip (Pause › Tips turns them all off)">${ICON.close}</button></div>` : ""}</div>`;
+      const roadBtn = tip?.road ? ` <button type="button" class="btn gl-act" data-id="${tip.road.works}"${g.money < tip.road.cost ? " disabled" : ""}>Build this road · ${formatMoney(tip.road.cost)}</button>` : "";
+      body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : this.afterGoals()}${tip ? `<div class="gl-tip" data-tip="${tip.id}"><p>${tip.html}${roadBtn}</p><button class="gl-x" aria-label="Dismiss this tip" title="Dismiss this tip (Pause › Tips turns them all off)">${ICON.close}</button></div>` : ""}</div>`;
     }
     const html = head + body;
     if (this.tut.dataset.html !== html) {
@@ -1022,6 +1025,14 @@ export class Hud {
         this.app.glideTo(b.c, Math.min(this.app.view.halfH, CHIP_HALF_H), 1);
         this.openBuilding(b);
       };
+      const act = this.tut.querySelector<HTMLButtonElement>(".gl-act[data-id]");
+      if (act) {
+        const id = +act.dataset.id!;
+        act.onclick = () => this.buildRoadTo(id);
+        // (the road it would lay shows dashed on the map while the button is under the pointer)
+        act.onpointerenter = act.onfocus = () => { this.app.offerFor = id; };
+        act.onpointerleave = act.onblur = () => { if (this.app.offerFor === id) this.app.offerFor = null; };
+      }
       for (const n of this.tut.querySelectorAll<HTMLButtonElement>(".gl-now[data-spot]")) n.onclick = () => {
         const [x, y] = n.dataset.spot!.split(",").map(Number);
         this.sfx.play("click");
@@ -1924,6 +1935,8 @@ export class Hud {
     (this.panel.querySelector(".close") as HTMLButtonElement).onclick = () => { this.sfx.play("click"); this.closeSelection(); };
     const more = this.panel.querySelector<HTMLDetailsElement>(".ip-more");
     if (more) more.ontoggle = () => { setMoreOpen(more.dataset.k!, more.open); };
+    const rb = this.panel.querySelector<HTMLButtonElement>(".ip-roadbtn[data-id]");
+    if (rb) rb.onclick = () => this.buildRoadTo(+rb.dataset.id!);
     for (const c of this.panel.querySelectorAll<HTMLButtonElement>(".fchip[data-k]")) c.onclick = () => {
       this.sfx.play("click");
       const s = { k: c.dataset.k, id: +c.dataset.id! } as Sel;
@@ -2200,13 +2213,15 @@ export class Hud {
     const T = BUILDING_TYPES[b.kind];
     const demolish = () => { g.bulldoze([], [b.id]); this.closeSelection(); this.sfx.play("remove"); };
     const act = this.demolishBtn("demolish");
+    // (a works with no road to its gate: the road the game would lay to it, with its price and one click)
+    const lead = b.plant ? this.roadOffer(b) : "";
     if (b.plant && isPlantKind(b.kind)) {
       const D = PLANTS[b.kind], P = b.plant;
       const chain = `<p class="small muted ip-chain">${chainText(b.kind)}</p>`;
       // a landmark's site: its ring and stage, materials and pieces, and what it will do once open (it is the panel)
       const lmSite = landmarkSite(g, b);
       if (lmSite) {
-        if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, body: `${chain}${lmSite}` }))) this.bindDemolishBtn(demolish);
+        if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, lead, body: `${chain}${lmSite}` }))) this.bindDemolishBtn(demolish);
         return;
       }
       // a site: the materials trucked to it so far
@@ -2216,7 +2231,7 @@ export class Hud {
           return `<dt>${PRODUCTS[p].name}</dt><dd>${stockBar(got, need, PRODUCTS[p].color)}<span class="num">${Math.floor(got)} / ${need}</span></dd>`;
         }).join("");
         const body = `<dl class="facts">${mats}</dl><p class="small muted">Once all are in it takes ${buildTime(b.kind) / HOUR} hours to build. No wages or upkeep until then.</p>`;
-        if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, body: chain + body }))) this.bindDemolishBtn(demolish);
+        if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, lead, body: chain + body }))) this.bindDemolishBtn(demolish);
         return;
       }
       const pw = D.power && b.built >= 1 ? g.utilities.supplyOf(b) : null;
@@ -2268,7 +2283,7 @@ export class Hud {
         const held = Industry.stored(b);
         const body = logi === "warehouse" ? this.warehouseBody(b, store, held) : this.depotBody(b, store);
         const details = `${chain}${body}${D.trucks ? `<dl class="facts">${classRow}</dl>` : ""}`;
-        if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, details }))) this.bindDemolish(b, demolish);
+        if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, lead, details }))) this.bindDemolish(b, demolish);
         return;
       }
       const details = `${chain}
@@ -2294,7 +2309,7 @@ export class Hud {
           ${freshRows}
         </dl>`;
       const body = isMega(b.kind) ? landmarkDone(g, b) : "";
-      if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, body, details }))) this.bindDemolishBtn(demolish);
+      if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, lead, body, details }))) this.bindDemolishBtn(demolish);
       return;
     }
     if (!b.zone) {
@@ -2326,6 +2341,32 @@ export class Hud {
     const details = rows.length ? `<dl class="facts">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>` : undefined;
     const mine = b.town === undefined;
     if (this.setPanel(this.anatomy(m, { kind: grp === "res" ? "home" : "shop", danger: mine ? act : undefined, body: whose, details })) && mine) this.bindDemolishBtn(demolish);
+  }
+
+  /**
+   * The road offered to a placed works with no road to its gate (Game.roadTo, review 2026-11-10): how long and what it
+   * costs, dashed on the map while the panel is open, and the button that lays it. Empty with a road at its gate.
+   */
+  private roadOffer(b: Building): string {
+    if (!b.placed || b.access) return "";
+    const g = this.app.game, plan = g.roadTo(b);
+    if (!plan) return `<p class="ip-road small">No road can be laid to its gate from here by itself: draw one to it with Roads, or move it nearer your roads.</p>`;
+    const short = g.money < plan.cost;
+    return `<div class="ip-road"><p class="small">A dirt road from its gate to your roads, dashed on the map: <b>${distText(planLength(plan))}</b>, <b class="num">${formatMoney(plan.cost)}</b>.${short ? " More than you have now." : ""}</p><button type="button" class="btn ip-roadbtn" data-id="${b.id}"${short ? " disabled" : ""}>Build this road</button></div>`;
+  }
+
+  /** Lay the road offered to a works (its panel's button, or its tip's). */
+  buildRoadTo(id: number) {
+    const g = this.app.game, b = g.buildings.byId.get(id);
+    const plan = b ? g.roadTo(b) : null;
+    if (!b || !plan) return;
+    if (!g.buildRoadTo(b)) { this.sfx.play("error"); this.toast(g.money < plan.cost ? "Not enough money for that road" : "That road can't be laid now", true); return; }
+    this.sfx.play("build");
+    this.toast(`Dirt road to the ${BUILDING_TYPES[b.kind].name}'s gate built for ${formatMoney(plan.cost)}`);
+    this.app.offerFor = null;
+    this.lastPanel = "";
+    if (this.sel) this.fillSel();
+    this.renderTips();
   }
 
   /** A warehouse's panel: what it holds, and per product whether it takes it and whether it is a feeder for it. */
