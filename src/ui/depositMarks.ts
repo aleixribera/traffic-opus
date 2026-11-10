@@ -34,6 +34,11 @@ export class DepositMarks {
   readonly el = document.createElement("div");
   private marks = new Map<string, Mark>();
   private edges: { k: DepositKind; c: V2; el: HTMLButtonElement }[] = [];
+  /**
+   * How far a place is from the nearest town or road, in words ("3.4 km from a road"; set by the app, distance.ts).
+   * Never from the camera: that number changed as the view moved (review 2026-11-10, B10).
+   */
+  far: ((p: V2) => string) | null = null;
   /** what is marked: the kind being placed (pointers too), every kind (the Resources view), or nothing */
   private kinds: DepositKind[] = [];
   private focus = false;
@@ -127,7 +132,9 @@ export class DepositMarks {
       el.className = "tp-edge dm-edge";
       el.innerHTML = `<i class="tp-arrow" aria-hidden="true"></i><span class="tp-k">Nearest</span><b></b><span class="tp-km"></span>`;
       el.querySelector("b")!.textContent = k.name;
-      el.title = `Fly to the ${k.name.toLowerCase()} deposit`;
+      const far = this.far?.(at) ?? "";
+      el.querySelector(".tp-km")!.textContent = far;
+      el.title = `Fly to the ${k.name.toLowerCase()} deposit${far ? `, ${far}` : ""}`;
       el.setAttribute("aria-label", el.title);
       el.onclick = () => this.fly(at);
       this.el.append(el);
@@ -169,10 +176,6 @@ export class DepositMarks {
       while (f > 0.15 && under(cx + dx * k * f, cy + dy * k * f)) f -= 0.04;
       e.el.style.transform = `translate(${(cx + dx * k * f).toFixed(1)}px, ${(cy + dy * k * f).toFixed(1)}px) translate(-50%, -50%)`;
       (e.el.firstElementChild as HTMLElement).style.transform = `rotate(${Math.atan2(dy, dx).toFixed(3)}rad)`;
-      const km = Math.hypot(e.c.x - view.cx, e.c.y - view.cy) / 1000;
-      const txt = `${km < 10 ? km.toFixed(1) : Math.round(km)} km`;
-      const kmEl = e.el.querySelector(".tp-km")!;
-      if (kmEl.textContent !== txt) kmEl.textContent = txt;
     }
   }
 }

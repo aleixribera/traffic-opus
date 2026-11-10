@@ -6,13 +6,14 @@
 import { BUILDING_TYPES } from "../config";
 import type { Building } from "../game/buildings";
 import type { Game } from "../game/city";
-import { PLANTS, PRODUCTS, type PlantKind, type Product } from "../game/industry";
+import { PLANTS, PRODUCTS, takesIn, type PlantKind, type Product } from "../game/industry";
 import { unlockedBy, type Milestone } from "../game/progression";
 import type { V2 } from "../core/math";
 import { compassWords } from "../game/settlements";
 import { makerKind } from "./bottleneck";
 import { farmSpot, groundSpot } from "./goalPointer";
 import { worksStatus } from "./inspect";
+import { distText } from "./distance";
 
 /** The goals that wait on a first load, and the product each waits for (sold to a town, or just made). */
 export const FIRST_LOAD: Record<string, { p: Product; sold: boolean }> = {
@@ -44,7 +45,8 @@ export interface GoalNow {
   link?: boolean;
 }
 
-const far = (m: number) => (m < 950 ? `${Math.max(50, Math.round(m / 50) * 50)} m` : `${(m / 1000).toFixed(1)} km`);
+/** (the same words as the pointer on the map that points there: distance.ts) */
+const far = distText;
 
 const rank = (b: Building) => (b.plant!.site ? 0 : b.built < 1 ? 1 + b.built : 3);
 
@@ -85,11 +87,16 @@ export function missingLink(g: Game, p: Product): GoalNow | null {
   const chain = `${andList(ins.map(lower))} → ${BUILDING_TYPES[k].name.replace(/ /g, " ")} → ${lower(p)}`;
   const mk = furthest(g, k);
   if (!mk) {
-    // (a feeder stands with nowhere to send its goods: build the works in the middle)
+    // (a feeder stands with nowhere to send its goods: build the works in the middle. Not a feeder whose goods another
+    // of the company's works already takes: the Coal Mine feeding a Smelter and a Power Plant was told "no Cement
+    // Works to take its coal", a works not even open yet. Review 2026-11-10, B4)
+    const taken = (q: Product) => g.industry.plants().some((o) => o.kind !== k && takesIn(o.kind as PlantKind, q));
     for (const q of ins) {
       const f = maker(g, q);
-      if (f) return { who: `Your ${BUILDING_TYPES[f.kind].name}`, text: `No ${BUILDING_TYPES[k].name} to take its ${lower(q)}`, fix: `${buildSay(g, [k])}: ${chain}.`, tone: "", works: f.id, link: true };
+      if (f && !taken(q)) return { who: `Your ${BUILDING_TYPES[f.kind].name}`, text: `No ${BUILDING_TYPES[k].name} to take its ${lower(q)}`, fix: `${buildSay(g, [k])}: ${chain}.`, tone: "", works: f.id, link: true };
     }
+    // (part of the chain stands, its goods going elsewhere: the works in the middle is the gap, said as itself)
+    if (ins.some((q) => maker(g, q))) return { text: `No ${BUILDING_TYPES[k].name} yet`, fix: `${buildSay(g, [k])}: ${chain}.`, tone: "", link: true };
     return null;
   }
   const missing = ins.filter((q) => !maker(g, q));

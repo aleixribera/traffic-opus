@@ -112,10 +112,11 @@ export const JAM_CARS = 4;
 const makersOf = (p: Product) => (Object.keys(PLANTS) as PlantKind[]).filter((k) => PLANTS[k].outputs[p]);
 
 /**
- * The tip for the map as it is now, or null. `skip`: tips the player has dismissed. The first that applies wins,
- * in the order a company meets them.
+ * The tip for the map as it is now, or null. `skip`: tips the player has dismissed. `signed`: the places the
+ * Traffic stuck sign counts now (the jam tip says that number). The first that applies wins, in the order a company
+ * meets them.
  */
-export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false): Tip | null {
+export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false, signed?: number): Tip | null {
   const plants = g.buildings.list.filter((b) => b.plant);
   const has = (k: PlantKind) => plants.some((b) => b.kind === k);
   const built = (b: Building) => b.built >= 1 && !b.plant!.site;
@@ -157,7 +158,10 @@ export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false): Tip
     () => {
       const spots = stuckSpots(g.traffic.stuckCars(STUCK_RAISE)).filter((s) => s.cars >= JAM_CARS);
       if (!spots.length) return null;
-      const n = spots.length;
+      // (the count is the sign's, which it points at: "stuck in 5 places" stood beside a sign reading 14, counted
+      // another way. Review 2026-11-10, B8. With no sign up yet, there is nothing to point at)
+      if (signed !== undefined && signed < 1) return null;
+      const n = signed ?? spots.length;
       return { id: "jam", cat: "roads", html: `<b>Traffic is stuck in ${n === 1 ? "one place" : `${n} places`}.</b> The <b>Traffic stuck</b> sign above the clock flies you there. More works will not help till it moves: give that junction a turn lane or lights, or lay a second road past it.` };
     },
     // a works flat out with a town still asking for more (B1: "nothing said build a second Food Plant")

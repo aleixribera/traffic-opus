@@ -49,6 +49,18 @@ describe("the missing link of a goal's chain", () => {
     expect(plain(missingLink(g, "steel")!.fix)).toBe("A Smelter opens with the goal “Village”: iron ore and coal → Smelter → steel.");
   });
 
+  it("a feeder whose goods another works takes is not blamed for a works not built (review 2026-11-10, B4)", () => {
+    // a Coal Mine feeding a Smelter and a Power Plant, with the cement goal open and the Cement Works still locked
+    const coal = works("coalmine");
+    const locked = { ...game(coal, works("ironmine"), works("smelter"), works("coalplant")), placedUnlocked: (k: string) => k !== "cementworks" } as unknown as Game;
+    const n = missingLink(locked, "cement")!;
+    expect(n.who).toBeUndefined();
+    expect(n.works).toBeUndefined();
+    expect(goalNowSay(n)).toBe("No Cement Works yet. A Cement Works opens with the goal “Steady trade”: limestone and coal → Cement Works → cement.");
+    // a coal mine with nothing else to take its coal is still the one to name
+    expect(missingLink(game(coal), "cement")).toMatchObject({ who: "Your Coal Mine", works: coal.id });
+  });
+
   it("a site going up counts as there: no missing link while the chain is placed", () => {
     expect(missingLink(game(works("farm"), works("foodplant", 0.3)), "food")).toBeNull();
     expect(missingLink(game(works("ironmine"), works("coalmine"), works("smelter")), "steel")).toBeNull();

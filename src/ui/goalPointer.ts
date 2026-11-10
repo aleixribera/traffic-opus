@@ -124,8 +124,6 @@ export function inFrame(view: ViewLike, to: V2, f: Frame): boolean {
   return s.x > f.l && s.x < f.r && s.y > f.t && s.y < f.b;
 }
 
-const km = (m: number) => (m < 950 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(1)} km`);
-
 /** The first goal's pointer and pin (see the top of the file). */
 export class GoalPointer {
   readonly el = document.createElement("div");
@@ -137,6 +135,12 @@ export class GoalPointer {
   private placing = false;
   /** the pointer is at the screen's edge now (the smaller "nearest soil" pointers keep quiet while it is) */
   pointing = false;
+  /**
+   * How far the place is, in words, as the goal's own line measures it ("1.2 km from Alder Run"; set by the app).
+   * Never from the camera (review 2026-11-10, B10).
+   */
+  far: ((p: V2) => string) | null = null;
+  private farAt = "";
 
   constructor(private act: { fly: (c: V2) => void; pick: () => void }) {
     this.el.className = "goal-ptr-layer";
@@ -159,6 +163,13 @@ export class GoalPointer {
     this.at = at;
     this.placing = placing;
     if (!at) { this.edge.style.display = this.pin.style.display = "none"; this.pointing = false; return; }
+    const far = this.far?.(at) ?? "";
+    if (far !== this.farAt) {
+      this.farAt = far;
+      this.edge.querySelector(".gp-km")!.textContent = far;
+      this.edge.title = `Fertile soil for your first farm${far ? `, ${far}` : ""}. Fly there`;
+      this.edge.setAttribute("aria-label", this.edge.title);
+    }
     this.walls = [...document.querySelectorAll(".corner > *, .banner:not([hidden]), .bottom > .assets, .bottom > .toolopts")].map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0);
   }
 
@@ -187,12 +198,5 @@ export class GoalPointer {
     while (f > 0.2 && under(cx + (far.x - cx) * f, cy + (far.y - cy) * f)) f -= 0.04;
     this.edge.style.transform = `translate(${(cx + (far.x - cx) * f).toFixed(1)}px, ${(cy + (far.y - cy) * f).toFixed(1)}px) translate(-50%, -50%)`;
     (this.edge.firstElementChild as HTMLElement).style.transform = `rotate(${Math.atan2(way.dy, way.dx).toFixed(3)}rad)`;
-    const txt = km(way.dist);
-    const kmEl = this.edge.querySelector(".gp-km")!;
-    if (kmEl.textContent !== txt) {
-      kmEl.textContent = txt;
-      this.edge.title = `Fertile soil for your first farm, ${txt} away. Fly there`;
-      this.edge.setAttribute("aria-label", this.edge.title);
-    }
   }
 }

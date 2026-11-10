@@ -43,6 +43,8 @@ export class Preview3D {
   private keep = new Set<THREE.BufferGeometry>();
   private modelOk = new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.82 });
   private modelBad = new THREE.MeshLambertMaterial({ color: 0xe5484d, transparent: true, opacity: 0.6 });
+  /** held over one of the company's own sites on the way somewhere: its own colours, faded, not a refusal's red */
+  private modelHeld = new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.38 });
 
   constructor() {
     for (const m of [...this.okMats, this.badMat]) m.mat.depthTest = false;
@@ -200,10 +202,10 @@ export class Preview3D {
     this.add(m, under ? 5 : 9);
   }
 
-  /** A see-through building model where it would be placed. */
-  model(geo: THREE.BufferGeometry, m: THREE.Matrix4, ok: boolean) {
+  /** A see-through building model where it would be placed (`held`: over another of the company's sites). */
+  model(geo: THREE.BufferGeometry, m: THREE.Matrix4, ok: boolean | "held") {
     this.keep.add(geo);
-    const mesh = new THREE.Mesh(geo, ok ? this.modelOk : this.modelBad);
+    const mesh = new THREE.Mesh(geo, ok === "held" ? this.modelHeld : ok ? this.modelOk : this.modelBad);
     mesh.matrixAutoUpdate = false;
     mesh.matrix.copy(m);
     this.add(mesh, 6);

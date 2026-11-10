@@ -56,6 +56,7 @@ import { TownPings } from "./ui/townPings";
 import { STUCK_KEEP, StuckAlerts } from "./ui/stuckAlerts";
 import { DEPOSIT_KINDS, DepositMarks } from "./ui/depositMarks";
 import { GoalPointer, farmSpot, groundSpot } from "./ui/goalPointer";
+import { distFromText, distText } from "./ui/distance";
 import { GateMark, type GateAsk } from "./ui/gateMark";
 import { served } from "./game/settlements";
 import { joinedUp } from "./ui/tips";
@@ -316,6 +317,13 @@ export class App {
     this.view.scene.add(this.worldRoot);
     this.view.scene.add(this.highlight.group);
     this.audio.bind(this);
+    // (the pointers say how far a place is from the map, never from the camera: review 2026-11-10, B10)
+    this.depositMarks.far = (p) => distFromText(this.game, p);
+    this.goalPtr.far = (p) => {
+      // (as the first goal's own line says it: from the home town)
+      const home = this.game.towns.list[0];
+      return home ? `${distText(Math.hypot(p.x - home.c.x, p.y - home.c.y))} from ${home.name}` : "";
+    };
     // (a firework's crack comes from where its sparks open on screen)
     this.fireworks.onBurst = (x, y) => {
       const v = this.view, dx = x - v.cx, dy = y - v.cy;
@@ -2061,9 +2069,12 @@ export class App {
       } else {
         const corners = rectCorners(pl.c, T.w / 2, T.d / 2, pl.rot);
         const gh = this.buildings3d.ghost(k, pl.c, pl.rot, pl.side, g.buildings.nextId);
-        for (const p of gh) pv.model(p.geo, p.m, pl.ok);
-        pv.footprint(corners, pl.ok ? 0x34c25a : 0xe5484d, gh.length > 0);
-        this.siteOutline(pv, pl.c, pl.rot, pl.side, T.w / 2, T.d / 2, pl.ok);
+        // (over one of the company's own sites, the everyday hover on the way somewhere: said in amber and in plain
+        // words, not the loud red of a real refusal. Review 2026-11-10)
+        const over = !pl.ok && pl.reason === "Another site is here" ? g.buildings.byId.get(pl.blockers[0]) : undefined;
+        for (const p of gh) pv.model(p.geo, p.m, over ? "held" : pl.ok);
+        pv.footprint(corners, pl.ok ? 0x34c25a : over ? 0xf2a33a : 0xe5484d, gh.length > 0);
+        this.siteOutline(pv, pl.c, pl.rot, pl.side, T.w / 2, T.d / 2, pl.ok || !!over);
         // (and its gate by name: out past the arrow, saying so when no road can reach it from here)
         this.gateGhost = { f: siteFrame(pl.c, pl.rot, pl.side, T.d / 2), hw: T.w / 2, lead: 26, ...(pl.ok && pl.free && !pl.link ? { note: "no road in reach", bad: true } : {}) };
         for (const id of pl.clears ?? []) {
@@ -2088,7 +2099,8 @@ export class App {
         this.powerPreview(pv, chips, k, pl.c, pl.access?.seg);
         this.depositMarks.here = !!pl.deposit && pl.deposit.share >= MIN_DEPOSIT;
         if (pl.deposit && pl.deposit.share >= MIN_DEPOSIT) chips.push({ text: `${pl.deposit.name[0].toUpperCase()}${pl.deposit.name.slice(1)} ${Math.round(pl.deposit.share * 100)}%`, kind: "info" });
-        if (!pl.ok) chips.push({ text: pl.reason ?? "Can't build here", kind: "error" });
+        if (over) chips.push({ text: `Over your ${BUILDING_TYPES[over.kind].name}: move it clear`, kind: "info", lead: 9 });
+        else if (!pl.ok) chips.push({ text: pl.reason ?? "Can't build here", kind: "error" });
         else {
           chips.push(this.costChip(pl.cost));
           chips.push({ text: `${formatMoney(PLACED[k].upkeep)}/h upkeep`, kind: "info" });

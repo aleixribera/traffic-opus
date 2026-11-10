@@ -2276,6 +2276,9 @@ export class Game {
       towns: this.towns.toJSON(),
       orders: this.orders.toJSON() as ReturnType<OrderSystem["toJSON"]> | undefined,
       budget: this.budget as Budget | undefined,
+      // the last day's hours, which the bar's income per hour is the average of (review 2026-11-10, B9: with only the
+      // last hour saved, +$1,698/h read -$154/h after a quickload, one quiet hour standing for the whole day)
+      budgetLog: this.budgetLog as Budget[] | undefined,
       time: this.time,
       playtime: this.playtime,
       calStart: this.calStart,
@@ -2291,10 +2294,11 @@ export class Game {
     // (saves from before land was dropped carry a `tiles` list: ignored)
     g.progress.load(data.progress);
     g.money = data.money;
+    const full = (b: Budget): Budget => { const e = emptyBudget(); return { income: { ...e.income, ...b.income }, expense: { ...e.expense, ...b.expense } }; };
     if (data.budget) {
-      const e = emptyBudget();
-      g.budget = { income: { ...e.income, ...data.budget.income }, expense: { ...e.expense, ...data.budget.expense } };
-      g.budgetLog = [g.budget];
+      g.budget = full(data.budget);
+      // (saves from before the log was kept have the last hour only)
+      g.budgetLog = data.budgetLog?.length ? data.budgetLog.slice(-24).map(full) : [g.budget];
     }
     g.time = data.time;
     g.dayN = Math.floor(g.time / DAY); // (a loaded city carries on with the day it was saved in)

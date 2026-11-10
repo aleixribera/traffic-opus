@@ -933,7 +933,7 @@ export class Hud {
     // (with every goal reached the card lists the towns' shortfalls itself: the tip that says the same stands down)
     // (and a tip that says to take in hand the works already in hand: the tool options say how to place it)
     const st = this.app.st, inHand = (id: string) => st.tool === "place" && st.placed === id;
-    const tip = prefs.off ? null : tipFor(g, (id) => prefs.dismissed.has(id) || (id === "ceiling" && !open.length) || ((id === "farm" || id === "foodplant") && inHand(id)));
+    const tip = prefs.off ? null : tipFor(g, (id) => prefs.dismissed.has(id) || (id === "ceiling" && !open.length) || ((id === "farm" || id === "foodplant") && inHand(id)), this.app.stuckAlerts.count);
     this.tut.hidden = false;
     const v = g.progressView();
     const folded = this.tutHidden;
