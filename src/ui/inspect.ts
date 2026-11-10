@@ -3,7 +3,7 @@
 // (docs/ui-style.md "Inspector"), so a farm, a town, a truck and a road all read the same way at a glance.
 // Pure over the game state, so tests can check the numbers each kind picks.
 
-import { BUILDING_TYPES, ROAD_TYPES } from "../config";
+import { BUILDING_TYPES, ROAD_TYPES, SIGNAL_COST } from "../config";
 import { formatMoney, type V2 } from "../core/math";
 import type { Building } from "../game/buildings";
 import type { Game } from "../game/city";
@@ -75,6 +75,9 @@ export interface FlowChip {
 
 export interface FlowRow { label: string; chips: FlowChip[] }
 
+/** The one-click fix beside the advice: lights on junction `node` (and the rest of its cluster), at `cost`. */
+export interface StatusAct { kind: "lights"; node: number; label: string; cost: number }
+
 export interface PanelModel {
   /** the header's name and its small grey sub-name */
   title: string;
@@ -87,7 +90,7 @@ export interface PanelModel {
    * The one voice of the thing: what state it is in, and under it the one piece of advice (`fix`), with the works
    * to look at for it (`show`: a "Show it" button that flies there)
    */
-  status: { text: string; tone: Tone; fix?: string; tag?: string; show?: { id: number; kind: string } };
+  status: { text: string; tone: Tone; fix?: string; tag?: string; show?: { id: number; kind: string }; act?: StatusAct };
   keys: KeyNum[];
   flow: FlowRow[];
   /** the level bar: from this level toward `to` (none: the top level) */
@@ -1181,6 +1184,34 @@ export function stuckAt(g: Game, c: V2): Vehicle[] {
   return g.traffic.vehicles.filter((v) => stuckNow(v, STUCK_KEEP) && Math.hypot(v.x - c.x, v.y - c.y) <= STUCK_NEAR).sort((a, b) => b.stuck - a.stuck);
 }
 
+/**
+ * A deadlock among these standing vehicles: some of them wait on each other in a ring (Traffic.waitCycles), so none
+ * can move until one leaves. In plain words, and the one-click fix where there is one: lights on the junction most
+ * of the ring waits at, where it has none (they take turns, so the ring can't form). Null: no ring here.
+ */
+export function deadlockAt(g: Game, vs: Vehicle[]): Pick<PanelModel["status"], "text" | "fix" | "act"> | null {
+  const here = new Set(vs);
+  const ring = g.traffic.waitCycles(STUCK_KEEP).find((r) => r.some((v) => here.has(v)));
+  if (!ring) return null;
+  const at = new Map<number, number>();
+  for (const v of ring) {
+    const node = v.edge.kind === "conn" ? (v.edge as unknown as { node: number }).node : v.next?.node;
+    if (node !== undefined) at.set(node, (at.get(node) ?? 0) + 1);
+  }
+  const text = `Deadlock: ${ring.length} vehicles each waiting for another to move`;
+  const node = [...at].filter(([id]) => !g.net.nodes.get(id)?.signal && g.defaultSignal(id)).sort((a, b) => b[1] - a[1])[0]?.[0];
+  const later = "Left alone, one of them turns off another way, or gives up, within a minute or two.";
+  if (node === undefined) return { text, fix: `${later} A second way round, or a roundabout, stops it happening again.` };
+  if (!g.featureUnlocked("signals")) return { text, fix: `${later} Traffic lights here, once you have them, stop it happening again: they take turns.` };
+  const n = g.net.clusterOf(node).filter((m) => m === node || (!g.net.nodes.get(m)?.signal && g.defaultSignal(m))).length;
+  const cost = n * SIGNAL_COST;
+  return {
+    text,
+    fix: `Traffic lights here make them take turns, so it clears and doesn't come back.${n > 1 ? ` (These ${n} junctions are so close they work as one: they all get lights.)` : ""}`,
+    act: { kind: "lights", node, cost, label: `Add traffic lights · ${formatMoney(cost)}` },
+  };
+}
+
 export function stuckModel(g: Game, sel: Extract<Sel, { k: "stuck" }>): PanelModel {
   const c = { x: sel.x, y: sel.y };
   const vs = stuckAt(g, c);
@@ -1200,6 +1231,8 @@ export function stuckModel(g: Game, sel: Extract<Sel, { k: "stuck" }>): PanelMod
   const status: PanelModel["status"] = vs.length
     ? { text: `${plural(vs.length, "vehicle")} standing still`, tone: "bad", fix: why ? `The first is held at the junction ahead: ${blockWords(why)}. ${blockFix(why)}` : "Open the junction they wait at to see its queues" }
     : { text: "Moving again", tone: "good" };
+  const dl = deadlockAt(g, vs);
+  if (dl) Object.assign(status, dl);
   const flow: FlowRow[] = [];
   const held = [...nodes].sort((a, b) => b[1] - a[1]).slice(0, 3);
   if (held.length) flow.push({ label: "Held at", chips: held.map(([id, n]) => ({ kind: "junction", text: g.net.nodes.get(id)?.signal ? "Lights" : "Junction", note: plural(n, "vehicle"), ref: { k: "node", id } as Sel })) });

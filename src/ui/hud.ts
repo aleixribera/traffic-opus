@@ -1907,7 +1907,18 @@ export class Hud {
 
   /** A stuck-traffic diamond: the vehicles standing there and the junctions holding them (all chips select). */
   private fillStuck(m: PanelModel) {
-    this.setPanel(this.anatomy(m, { kind: "stuck", body: `<p class="small muted ip-note">Ringed on the map: the vehicles standing still, and the roads they are on.</p>` }));
+    if (!this.setPanel(this.anatomy(m, { kind: "stuck", body: `<p class="small muted ip-note">Ringed on the map: the vehicles standing still, and the roads they are on.</p>` }))) return;
+    // the one-click fix for a deadlock: lights on the junction it forms at (its whole cluster: Game.setSignal)
+    const b = this.panel.querySelector<HTMLButtonElement>(".ip-act-fix");
+    const act = m.status.act;
+    if (b && act) b.onclick = () => {
+      const g = this.app.game;
+      if (!g.setSignal(act.node, g.defaultSignal(act.node))) { this.toast("Not enough money", true); return; }
+      this.sfx.play("build");
+      this.toast("Traffic lights up: the deadlock clears as they take turns");
+      this.lastPanel = "";
+      this.fillSel();
+    };
   }
 
   /**
@@ -1936,6 +1947,7 @@ export class Hud {
     return `<header class="ip-head"><span class="svc-tag${/^(junction|roundabout|road:)/.test(m.icon) ? " lit" : ""}">${iconFor(m.icon)}</span><span class="ip-t"><span class="ip-tn">${escapeHtml(m.title)}</span>${m.sub ? `<small class="ip-ts">${escapeHtml(m.sub)}</small>` : ""}</span>${m.badge ? `<span class="lv-badge" title="Site level">${m.badge}</span>` : ""}${o.actions ?? ""}</header>
       <p class="ip-st ${st.tone}"><i aria-hidden="true"></i><span class="ip-st-t">${escapeHtml(st.text)}</span>${st.tag ? `<span class="ip-tag">${escapeHtml(st.tag)}</span>` : ""}</p>
       ${st.fix ? `<p class="ip-fix${st.show ? " has-show" : ""}"><span>${escapeHtml(st.fix)}</span>${st.show ? `<button class="fchip" data-k="building" data-id="${st.show.id}" title="Select your ${escapeHtml(BUILDING_TYPES[st.show.kind as BuildingKind]?.name ?? "works")} and fly to it">${iconFor(st.show.kind)}<span class="fc-t">Show it</span></button>` : ""}</p>` : ""}
+      ${st.act ? `<p class="ip-fixit"><button type="button" class="btn primary ip-act-fix" data-node="${st.act.node}"${st.act.cost > this.app.game.money ? " disabled" : ""}>${escapeHtml(st.act.label)}${st.act.cost > this.app.game.money ? " (not enough money)" : ""}</button></p>` : ""}
       ${o.summaryFirst ? `${keys}${lv}${o.lead ?? ""}${flow}` : `${o.lead ?? ""}${keys}${flow}${lv}`}${o.body ?? ""}${details}${o.danger ? `<footer class="ip-foot">${o.danger}</footer>` : ""}`;
   }
 

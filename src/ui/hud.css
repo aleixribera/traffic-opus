@@ -1176,3 +1176,6 @@ body.cinema #game { cursor: none; }
   font: 700 var(--t-xs)/19px var(--f-text); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ochre-hi);
   background: var(--plate); border: 1px solid var(--ochre); border-radius: 1px; box-shadow: 0 2px 5px rgba(3, 7, 14, 0.5); }
 .ml-plate > .ml-order i { width: 6px; height: 6px; background: var(--ochre); transform: rotate(45deg); flex: none; }
+/* a deadlock's one-click fix (lights on the junction it forms at), under the advice it answers */
+.ip-fixit { margin: 6px 0 4px 16px; }
+.ip-fixit .btn { min-height: 32px; }

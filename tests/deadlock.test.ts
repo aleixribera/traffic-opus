@@ -8,6 +8,7 @@ import { Game } from "../src/game/city";
 import { planRoad, snap } from "../src/roads/planner";
 import { RoadNetwork } from "../src/roads/network";
 import { SIGNAL_COST } from "../src/config";
+import { deadlockAt } from "../src/ui/inspect";
 import { Traffic, type PendingSpawn, type Vehicle } from "../src/sim/traffic";
 import { DT, acc, trip } from "./trafficWatch";
 
@@ -218,4 +219,48 @@ describe("a circular wait that has stood a long time", () => {
     expect(on.cycleT).toBeLessThan(off.cycleT);
     expect(on.quits).toBeLessThanOrEqual(off.quits);
   }, 300000);
+});
+
+describe("the Traffic stuck panel", () => {
+  it("names a ring of vehicles waiting on each other a deadlock, and offers lights on the junction where it forms", () => {
+    const g = new Game(7);
+    g.unlockAll();
+    g.money = 1e7;
+    const sn = (p: V2) => {
+      const s = snap(g.net, p, { mpp: 0.5, level: 0, type: "street" });
+      return s.node !== undefined || s.seg !== undefined ? s : { p, h: 0, guides: [] };
+    };
+    const lay = (a: V2, b: V2) => expect(g.build(planRoad(g.net, g.world, { start: sn(a), end: sn(b), mode: "straight", type: "street" }))).toBe(true);
+    lay(v2(0, 0), v2(300, 0));
+    lay(v2(120, -120), v2(120, 120));
+    lay(v2(142, -120), v2(142, 120));
+    const A = [...g.net.nodes.values()].find((n) => Math.hypot(n.p.x - 120, n.p.y) < 1)!.id;
+    // three cars at A, each held by the next, standing a minute (as Traffic.waitCycles finds them)
+    const ring = [0, 1, 2].map((i) => ({ id: -1 - i, x: 120, y: i * 3, v: 0, stuck: 60, edge: { kind: "lane" }, next: { node: A } }) as unknown as Vehicle);
+    ring.forEach((v, i) => { v.waitOn = ring[(i + 1) % 3]; });
+    (g.traffic.vehicles as Vehicle[]).push(...ring);
+    try {
+      const d = deadlockAt(g, ring)!;
+      expect(d.text).toMatch(/^Deadlock: 3 vehicles each waiting/);
+      // (the crossing 22 m along is so close it works as one with A: lights on both)
+      expect(d.act).toMatchObject({ kind: "lights", node: A, cost: 2 * SIGNAL_COST });
+      expect(d.fix).toContain("work as one");
+      expect(d.text + d.fix + d.act!.label).not.toMatch(/[—–]/); // (no dashes in the player's words)
+      // (the fake cars off the road while it changes: they have no real lanes to carry over)
+      const vs = g.traffic.vehicles as Vehicle[];
+      vs.splice(vs.length - 3, 3);
+      expect(g.setSignal(d.act!.node, g.defaultSignal(d.act!.node))).toBe(true);
+      vs.push(...ring);
+      // lit already: no button, the advice moves on
+      const lit = deadlockAt(g, ring)!;
+      expect(lit.act).toBeUndefined();
+      expect(lit.fix).toMatch(/roundabout/);
+      // nor is a queue that merely stands a deadlock
+      ring[2].waitOn = null;
+      expect(deadlockAt(g, ring)).toBeNull();
+    } finally {
+      const vs = g.traffic.vehicles as Vehicle[];
+      vs.splice(vs.length - 3, 3);
+    }
+  });
 });
