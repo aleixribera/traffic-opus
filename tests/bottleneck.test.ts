@@ -608,7 +608,7 @@ describe("read off the game", () => {
     foodplant.problem = null;
     // its first load made and at the dock: the truck is next
     foodplant.plant!.out.food = 1;
-    expect(goalNowSay(goalNow(g, food, 0)!)).toBe("Your Food Plant: its first food is at the dock. Its truck sets off within the hour.");
+    expect(goalNowSay(goalNow(g, food, 0)!)).toBe("Your Food Plant: its first load of food is at the dock. Its truck sets off within the hour.");
     foodplant.plant!.out.food = 0;
     // only the farm so far (no food plant): the goal follows the chain up to it
     const k = foodplant.kind;

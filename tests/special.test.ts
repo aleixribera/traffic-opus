@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import { Industry, PLANTS, type IndustryHost, type PlantKind } from "../src/game/industry";
-import { Parks, LINK_CAP, LINK_REACH, LINK_UPKEEP, fenceGap } from "../src/game/parks";
+import { Parks, LINK_CAP, LINK_REACH, LINK_UPKEEP, fenceGap, wouldLink } from "../src/game/parks";
 import { SEASONAL, SEASON_DAYS, START_YDAY, YEAR, YEAR_DAYS, fieldLook, seasonAvg, seasonDay, seasonMult, seasonOf, yearOf } from "../src/game/calendar";
 import { seasonLine } from "../src/ui/specials";
 import { LOADS_PER_PIECE, MAX_TURBINES, PIECE_YARD, TURBINE_BOOST } from "../src/game/convoys";
@@ -114,6 +114,39 @@ describe("Industrial parks", () => {
     const before = sm.plant!.out.steel!;
     for (let t = 0; t < HOUR; t += TICK) parks.tick(TICK);
     expect(sm.plant!.out.steel).toBe(before);
+  });
+
+  it("stands still, and says so, while a plant at one end has no road to its gate (review 2026-11-10)", () => {
+    const w = world();
+    const sm = w.plant("smelter", 0), cp = w.plant("constructionplant", 250);
+    const parks = new Parks({ buildings: { list: w.list, byId: w.byId } });
+    sm.plant!.out.steel = 8;
+    cp.access = null;
+    const TICK = HOUR / 8;
+    for (let t = 0; t < HOUR - 1e-6; t += TICK) parks.tick(TICK);
+    expect(cp.plant!.stock.steel ?? 0).toBe(0);
+    expect(parks.links[0].stopped).toBe(cp.id);
+    expect(parks.linesFor(sm.id)[0]).toMatchObject({ stopped: cp.id, text: "Conveyor to Construction Plant: stopped. The Construction Plant has no road to its gate; join it to a road and the belt runs" });
+    expect(parks.linesFor(cp.id)[0].text).toMatch(/^Conveyor from Smelter: stopped\. This works has no road to its gate/);
+    // the road joined: it runs again, with nothing banked from the wait
+    cp.access = { seg: 1, t: 0.5 } as unknown as Building["access"];
+    for (let t = 0; t < HOUR - 1e-6; t += TICK) parks.tick(TICK);
+    expect(parks.links[0].stopped).toBeUndefined();
+    expect(cp.plant!.stock.steel).toBe(LINK_CAP);
+  });
+
+  it("a plant being placed shows the links it would make, either way", () => {
+    const w = world();
+    const sm = w.plant("smelter", 0);
+    w.plant("ironmine", -250);
+    // a Construction Plant 50 m past the smelter's fence takes its steel; one further out takes nothing
+    const T = BUILDING_TYPES.constructionplant;
+    const near = wouldLink("constructionplant", { x: 100 + 50 + T.w / 2, y: 0 }, 0, w.list);
+    expect(near.map((l) => [l.other.id, l.product, l.out])).toEqual([[sm.id, "steel", false]]);
+    expect(wouldLink("constructionplant", { x: 100 + LINK_REACH + 20 + T.w / 2, y: 0 }, 0, w.list)).toEqual([]);
+    // a second smelter on the mine's far side: its ore comes in by belt
+    const S = BUILDING_TYPES.smelter;
+    expect(wouldLink("smelter", { x: -350 - 30 - S.w / 2, y: 0 }, 0, w.list).map((l) => [l.product, l.out])).toEqual([["ore", false]]);
   });
 
   it("the catalog has the parks' trade-off in the design doc's numbers: a few loads an hour, within 60 m", () => {

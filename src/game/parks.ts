@@ -46,6 +46,38 @@ export interface ParkLink {
   /** its two ends, world space (for the renderer) */
   a: V2;
   b: V2;
+  /**
+   * The plant at one end with no road to its gate, while there is one: the link stands still (review 2026-11-10: a
+   * belt to a works with no road looked busy while nothing moved; that works can't run, so its belt doesn't either)
+   */
+  stopped?: number;
+}
+
+/** A link a plant would make if it stood here (the placement ghost shows them): the other plant, what, which way. */
+export interface LinkPreview { other: Building; product: Product; out: boolean; a: V2; b: V2 }
+
+/**
+ * The links a plant of this kind would make standing at c (turned rot): to every running plant of the company's
+ * fence to fence with it that makes what it uses or uses what it makes.
+ */
+export function wouldLink(kind: PlantKind, c: V2, rot: number, plants: readonly Building[]): LinkPreview[] {
+  const d = PLANTS[kind];
+  if (!d || d.mega || d.logistics) return [];
+  const T = BUILDING_TYPES[kind], me = { c, rot, hw: T.w / 2, hd: T.d / 2 } as Building;
+  const out: LinkPreview[] = [];
+  for (const o of plants) {
+    if (!parkable(o)) continue;
+    if (dist(c, o.c) > Math.hypot(me.hw, me.hd) + Math.hypot(o.hw, o.hd) + LINK_REACH) continue;
+    const od = PLANTS[o.kind as PlantKind];
+    const give = (Object.keys(d.outputs) as Product[]).filter((p) => od.inputs[p]);
+    const take = (Object.keys(od.outputs) as Product[]).filter((p) => d.inputs[p]);
+    if (!give.length && !take.length) continue;
+    const g = fenceGap(me, o);
+    if (g.d > LINK_REACH) continue;
+    for (const product of give) out.push({ other: o, product, out: true, a: g.pa, b: g.pb });
+    for (const product of take) out.push({ other: o, product, out: false, a: g.pa, b: g.pb });
+  }
+  return out;
 }
 
 export interface ParkHost {
@@ -137,6 +169,9 @@ export class Parks {
       l.budget += (LINK_CAP * span) / HOUR;
       const A = by.get(l.from), B = by.get(l.to);
       if (!A?.plant || !B?.plant) continue;
+      // (a plant with no road can't run: the belt to or from it waits with it, and banks nothing meanwhile)
+      l.stopped = !A.access ? A.id : !B.access ? B.id : undefined;
+      if (l.stopped !== undefined) { l.budget = 0; continue; }
       while (l.budget >= 1) {
         const have = A.plant.out[l.product] ?? 0;
         const room = Industry.storeOf(B) - (B.plant.stock[l.product] ?? 0);
@@ -164,8 +199,8 @@ export class Parks {
   }
 
   /** A plant's links, for its panel: "Conveyor to Smelter: 2 loads/h". */
-  linesFor(id: number): { text: string; out: boolean }[] {
-    const out: { text: string; out: boolean }[] = [];
+  linesFor(id: number): { text: string; out: boolean; stopped?: number }[] {
+    const out: { text: string; out: boolean; stopped?: number }[] = [];
     const by = this.h.buildings.byId;
     for (const l of this.links) {
       if (l.from !== id && l.to !== id) continue;
@@ -175,6 +210,12 @@ export class Parks {
       const what = l.pipe ? "Pipe" : "Conveyor";
       const name = BUILDING_TYPES[other.kind].name;
       const rate = Math.max(l.last, l.now);
+      const lost = l.stopped !== undefined ? by.get(l.stopped) : undefined;
+      if (lost) {
+        const who = lost.id === id ? "this works" : `the ${name}`;
+        out.push({ text: `${what} ${mine ? "to" : "from"} ${name}: stopped. ${who[0].toUpperCase()}${who.slice(1)} has no road to its gate; join it to a road and the ${l.pipe ? "pipe" : "belt"} runs`, out: mine, stopped: lost.id });
+        continue;
+      }
       out.push({ text: `${what} ${mine ? "to" : "from"} ${name}: ${rate} of ${LINK_CAP} loads/h of ${PRODUCTS[l.product].name.toLowerCase()}`, out: mine });
     }
     return out;

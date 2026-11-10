@@ -15,6 +15,18 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.104", date: "2026-11-10", title: "Room to build",
+    notes: [
+      "Every build menu folds to a one-line strip while you place, and can be hidden without dropping the tool. The Goals card folds to the goal at hand and what's happening now.",
+      "Esc lets go of the road you're drawing first, then the tool, then the menu.",
+      "Milestone and new-town cards wait their turn and pause the game while you read them.",
+      "Once every goal is reached, the Goals card names one long project with a progress bar, and lists the towns' shortfalls as the way there.",
+      "A works placed too far from a road is offered a dirt road to it, priced, built in one click. Conveyor belts stop and say why while a plant has no road, and the ghost shows its belts before you build.",
+      "The messages agree with the game: distances from towns, not the camera; the stuck count matches the sign; income survives a load; coal advice names buyers that exist.",
+      "The goal tells you when a town is holding for want of planks, and first works go up in two hours instead of three: the first Village comes about four minutes sooner.",
+    ],
+  },
+  {
     v: "v0.0.103", date: "2026-11-10", title: "Steady hands",
     notes: [
       "Keyboard panning moves the same share of the screen at every zoom, starting gently and speeding up as you hold the key. A quick tap at far zoom no longer throws you kilometres away.",

@@ -9,7 +9,7 @@ import type { Building } from "../game/buildings";
 import { SEASONAL, seasonMult } from "../game/calendar";
 import type { Game } from "../game/city";
 import { buildTime } from "../game/construction";
-import { HIST_HOURS, Industry, PLANTS, PRODUCTS, powerPace, type PlantKind, type Product } from "../game/industry";
+import { HIST_HOURS, Industry, PLANTS, aboutHours, PRODUCTS, powerPace, type PlantKind, type Product } from "../game/industry";
 import { unlockedBy } from "../game/progression";
 import { served, type Town } from "../game/settlements";
 import { SITE_LEVELS } from "../game/sites";
@@ -29,12 +29,8 @@ export const atFullOutput = (madePerDay: number, canPerDay: number): boolean => 
 /** How many more works of a kind cover a shortfall (loads a day), each making `each` a day: at least one. */
 export const worksFor = (more: number, each: number): number => (each > 0 && more > 0 ? Math.max(1, Math.ceil(more / each - 0.15)) : 0);
 
-/** A wait in words: "under an hour", "about 6 hours", "about 2 days". */
-export function aboutHours(h: number): string {
-  if (h < 0.75) return "under an hour";
-  if (h < 36) { const n = Math.max(1, Math.round(h)); return `about ${n} hour${n === 1 ? "" : "s"}`; }
-  return `about ${Math.round(h / 24)} days`;
-}
+/** A wait in words (industry.ts: the works' own lines say waits too). */
+export { aboutHours };
 
 /**
  * Hours till a building site opens: the loads still to come at the pace they have been coming, then the build

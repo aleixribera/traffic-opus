@@ -85,6 +85,11 @@ export const START_MONEY = 250000;
 export const GATE_LINK_OUT = 7;
 /** ...and joins a road at most this far away (m); further out the site waits for the player's road. */
 export const GATE_LINK_REACH = 400;
+/**
+ * Further out, the game offers a dirt road from the gate to the nearest road it can reach within this (m): drawn
+ * dashed with its price while the site is placed and while it waits, built with one click (review 2026-11-10).
+ */
+export const ROAD_TO_REACH = 6000;
 
 export class Game {
   seed: number;
@@ -1249,13 +1254,13 @@ export class Game {
    * fence, then curving round to meet the road at a right angle. Never through the site's own fence, and never
    * through other buildings. Null: no road within reach can be joined that way (the site waits for one).
    */
-  gateLink(kind: PlacedKind, c: V2, rot: number, side: 1 | -1): Plan | null {
+  gateLink(kind: PlacedKind, c: V2, rot: number, side: 1 | -1, o: { reach?: number; type?: RoadTypeId; tries?: number } = {}): Plan | null {
     const T = BUILDING_TYPES[kind], hw = T.w / 2, hd = T.d / 2;
     const f = siteFrame(c, rot, side, hd);
     const out = scale(f.into, -1);
     const S = add(f.gate, scale(out, GATE_LINK_OUT));
     const ahead = add(f.gate, scale(out, 30));
-    const net = this.net, R = GATE_LINK_REACH;
+    const net = this.net, R = o.reach ?? GATE_LINK_REACH, type = o.type ?? "street";
     // (a town's own street counts half as far again as the company's roads: the works' trucks go by the main road
     // rather than through the back streets a little nearer)
     const cands: { p: V2; d: number; k: number }[] = [];
@@ -1270,10 +1275,10 @@ export class Game {
     cands.sort((a, b) => a.d - b.d);
     const world: BuildWorld = { ...this.world, money: () => Infinity };
     let best: Plan | null = null, bestCost = Infinity;
-    for (const cd of cands.slice(0, 6)) {
-      const end = snap(net, cd.p, { mpp: 0.4, level: 0, type: "street" });
+    for (const cd of cands.slice(0, o.tries ?? 6)) {
+      const end = snap(net, cd.p, { mpp: 0.4, level: 0, type });
       if (end.seg === undefined && end.node === undefined) continue;
-      const plan = planRoad(net, world, { start: { p: S, h: 0, guides: [] }, end, mode: "curve", squareEnd: true, type: "street", startTangent: out });
+      const plan = planRoad(net, world, { start: { p: S, h: 0, guides: [] }, end, mode: "curve", squareEnd: true, type, startTangent: out });
       if (plan.errors.length || !plan.strokes.length) continue;
       const pts = plan.strokes.flatMap((st) => chainPoints(st.chain, 3));
       if (pts.some((q) => rectDistance(q, c, hw, hd, rot) < 6)) continue;
@@ -1282,6 +1287,33 @@ export class Game {
       if (plan.cost * cd.k < bestCost) { best = plan; bestCost = plan.cost * cd.k; }
     }
     return best;
+  }
+
+  /**
+   * The road the game offers a site with no road to its gate, too far out for its own street (ROAD_TO_REACH): a dirt
+   * road from the gate to the nearest road it can be laid to. Worked out again only when the roads or the company's
+   * works change (a works placed on its way); a town's new homes are checked when it is built (buildRoadTo).
+   */
+  roadTo(b: Building): Plan | null {
+    if (b.access || !b.placed || !this.buildings.byId.has(b.id)) return null;
+    const s = this.buildings.sites, v = `${this.net.version}|${s.length}|${s[s.length - 1]?.id ?? 0}`;
+    const m = this.roadToMemo.get(b.id);
+    if (m && m.v === v) return m.plan;
+    const plan = this.gateLink(b.kind as PlacedKind, b.c, b.rot, b.side, { reach: ROAD_TO_REACH, type: "dirt", tries: 3 });
+    this.roadToMemo.set(b.id, { v, plan });
+    return plan;
+  }
+  private roadToMemo = new Map<number, { v: string; plan: Plan | null }>();
+
+  /**
+   * Lay the offered road (one Undo takes it away), worked out afresh so it goes round whatever stands on its way
+   * now: the plan laid, or null if there is none or it can't be paid for.
+   */
+  buildRoadTo(b: Building): Plan | null {
+    if (b.access || !b.placed || !this.buildings.byId.has(b.id)) return null;
+    this.roadToMemo.delete(b.id);
+    const plan = this.roadTo(b);
+    return plan && this.build(plan) ? plan : null;
   }
 
   /** Would a lot (centre c, turned rot, half sizes hw x hd) cover any of a town's square (kept for its hall)? */
@@ -1337,7 +1369,7 @@ export class Game {
     if (isPlantKind(kind)) {
       this.industry.init(b, kind, pl.deposit ? Math.min(1, pl.deposit.share / 0.8) : 1);
       // (a works with no materials to wait for, a first-tier one, goes up at once over its crew time: construction.ts
-      // buildTime, a first farm two minutes at 1x; one that waits for materials starts once they are in)
+      // buildTime, a first farm under a minute and a half at 1x; one that waits for materials starts once they are in)
       if (!b.plant!.site && !b.plant!.landmark) b.built = 0;
     }
     for (const c of this.lotCells(b)) c.lot = b.id;
@@ -2312,6 +2344,9 @@ export class Game {
       towns: this.towns.toJSON(),
       orders: this.orders.toJSON() as ReturnType<OrderSystem["toJSON"]> | undefined,
       budget: this.budget as Budget | undefined,
+      // the last day's hours, which the bar's income per hour is the average of (review 2026-11-10, B9: with only the
+      // last hour saved, +$1,698/h read -$154/h after a quickload, one quiet hour standing for the whole day)
+      budgetLog: this.budgetLog as Budget[] | undefined,
       time: this.time,
       playtime: this.playtime,
       calStart: this.calStart,
@@ -2327,10 +2362,11 @@ export class Game {
     // (saves from before land was dropped carry a `tiles` list: ignored)
     g.progress.load(data.progress);
     g.money = data.money;
+    const full = (b: Budget): Budget => { const e = emptyBudget(); return { income: { ...e.income, ...b.income }, expense: { ...e.expense, ...b.expense } }; };
     if (data.budget) {
-      const e = emptyBudget();
-      g.budget = { income: { ...e.income, ...data.budget.income }, expense: { ...e.expense, ...data.budget.expense } };
-      g.budgetLog = [g.budget];
+      g.budget = full(data.budget);
+      // (saves from before the log was kept have the last hour only)
+      g.budgetLog = data.budgetLog?.length ? data.budgetLog.slice(-24).map(full) : [g.budget];
     }
     g.time = data.time;
     g.dayN = Math.floor(g.time / DAY); // (a loaded city carries on with the day it was saved in)

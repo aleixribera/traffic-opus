@@ -10,7 +10,12 @@ export const ESC_ORDER = [
   "banner",
   /** the season popover on the clock */
   "popover",
-  /** the tool in hand (a road being drawn goes with it) */
+  /**
+   * what the tool has started and not finished: a road's first point placed, a bus line's stops so far (review
+   * 2026-11-10: one Esc cancels the road being drawn, the next puts the road tool down, the next closes the catalog)
+   */
+  "draft",
+  /** the tool in hand */
   "tool",
   /** the build catalog above the bar */
   "catalog",

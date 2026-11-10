@@ -15,6 +15,7 @@ import { F } from "../world/gen";
 import { MILESTONES } from "../game/progression";
 import { buildOrder, needHelp, shortfalls, worstCeiling } from "./bottleneck";
 import { STUCK_RAISE, stuckSpots } from "./stuckAlerts";
+import { distText, planLength } from "./distance";
 
 export interface Tip {
   /** which tip it is (what a dismissal remembers) */
@@ -22,6 +23,8 @@ export interface Tip {
   html: string;
   /** the bottom bar's category it leads to (its button gets a marker) */
   cat?: "roads" | "industry";
+  /** a works whose offered road the tip's own button lays (Game.roadTo), and what that costs */
+  road?: { works: number; cost: number };
 }
 
 export type TipId = "farm" | "noroad" | "foodplant" | "connect" | "jam" | "ceiling" | "planks" | "newtown" | "sitewait" | "deposits" | "power" | "parts" | "milk" | "supplies";
@@ -112,10 +115,11 @@ export const JAM_CARS = 4;
 const makersOf = (p: Product) => (Object.keys(PLANTS) as PlantKind[]).filter((k) => PLANTS[k].outputs[p]);
 
 /**
- * The tip for the map as it is now, or null. `skip`: tips the player has dismissed. The first that applies wins,
- * in the order a company meets them.
+ * The tip for the map as it is now, or null. `skip`: tips the player has dismissed. `signed`: the places the
+ * Traffic stuck sign counts now (the jam tip says that number). The first that applies wins, in the order a company
+ * meets them.
  */
-export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false): Tip | null {
+export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false, signed?: number): Tip | null {
   const plants = g.buildings.list.filter((b) => b.plant);
   const has = (k: PlantKind) => plants.some((b) => b.kind === k);
   const built = (b: Building) => b.built >= 1 && !b.plant!.site;
@@ -140,7 +144,11 @@ export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false): Tip
     // a site placed out past its gate street's reach, with no road to anything yet
     () => {
       const b = plants.find((x) => cutOff(g, x));
-      return b ? { id: "noroad", cat: "roads", html: `<b>No road reaches your ${lower(b.kind as PlantKind)} yet.</b> Lay one from its gate to your roads: its trucks can't go anywhere till then. (A site placed within ${GATE_LINK_REACH} m of a road lays its own street to it.)` } : null;
+      if (!b) return null;
+      // (with no road at its gate at all, the game offers the dirt road to it: dashed on the map, one click here)
+      const plan = b.access ? null : g.roadTo(b);
+      if (plan) return { id: "noroad", cat: "roads", road: { works: b.id, cost: plan.cost }, html: `<b>No road reaches your ${lower(b.kind as PlantKind)} yet.</b> Its trucks can't go anywhere till one does. A dirt road from its gate to your roads is ${distText(planLength(plan))} long:` };
+      return { id: "noroad", cat: "roads", html: `<b>No road reaches your ${lower(b.kind as PlantKind)} yet.</b> Lay one from its gate to your roads: its trucks can't go anywhere till then. (A site placed within ${GATE_LINK_REACH} m of a road lays its own street to it.)` };
     },
     () => {
       if (!has("farm") || has("foodplant")) return null;
@@ -157,7 +165,10 @@ export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false): Tip
     () => {
       const spots = stuckSpots(g.traffic.stuckCars(STUCK_RAISE)).filter((s) => s.cars >= JAM_CARS);
       if (!spots.length) return null;
-      const n = spots.length;
+      // (the count is the sign's, which it points at: "stuck in 5 places" stood beside a sign reading 14, counted
+      // another way. Review 2026-11-10, B8. With no sign up yet, there is nothing to point at)
+      if (signed !== undefined && signed < 1) return null;
+      const n = signed ?? spots.length;
       return { id: "jam", cat: "roads", html: `<b>Traffic is stuck in ${n === 1 ? "one place" : `${n} places`}.</b> The <b>Traffic stuck</b> sign above the clock flies you there. More works will not help till it moves: give that junction a turn lane or lights, or lay a second road past it.` };
     },
     // a works flat out with a town still asking for more (B1: "nothing said build a second Food Plant")

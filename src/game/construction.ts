@@ -35,8 +35,12 @@ const HOURS: Partial<Record<BuildingKind, number>> = {
   warehouse: 5, fueldepot: 4,
 };
 
-/** A company works: its tier's crew time (a first farm in an hour of play's first minutes, a motor works over a day). */
-const PLANT_HOURS = [0, 3, 6, 8, 10, 12];
+/**
+ * A company works: its tier's crew time (a first farm in under a minute and a half at 1x, a motor works over half a
+ * day). The first tier's is short so the first chains run soon after they are placed: the timber chain the hamlet asks
+ * for at 100 people held it there for most of its build (review 2026-11-10, First hour).
+ */
+const PLANT_HOURS = [0, 2, 6, 8, 10, 12];
 
 export function buildTime(kind: BuildingKind): number {
   // (a landmark has waited on its materials and its convoys: once they are in, it rises over a working day)

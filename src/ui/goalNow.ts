@@ -6,13 +6,15 @@
 import { BUILDING_TYPES } from "../config";
 import type { Building } from "../game/buildings";
 import type { Game } from "../game/city";
-import { PLANTS, PRODUCTS, type PlantKind, type Product } from "../game/industry";
+import { PLANTS, PRODUCTS, takesIn, type PlantKind, type Product } from "../game/industry";
 import { unlockedBy, type Milestone } from "../game/progression";
 import type { V2 } from "../core/math";
-import { compassWords } from "../game/settlements";
-import { makerKind } from "./bottleneck";
+import { compassWords, townGrowth, type Town } from "../game/settlements";
+import { needsOf, nextNeed } from "../game/towns";
+import { makerKind, needHelp } from "./bottleneck";
 import { farmSpot, groundSpot } from "./goalPointer";
 import { worksStatus } from "./inspect";
+import { distText } from "./distance";
 
 /** The goals that wait on a first load, and the product each waits for (sold to a town, or just made). */
 export const FIRST_LOAD: Record<string, { p: Product; sold: boolean }> = {
@@ -44,7 +46,8 @@ export interface GoalNow {
   link?: boolean;
 }
 
-const far = (m: number) => (m < 950 ? `${Math.max(50, Math.round(m / 50) * 50)} m` : `${(m / 1000).toFixed(1)} km`);
+/** (the same words as the pointer on the map that points there: distance.ts) */
+const far = distText;
 
 const rank = (b: Building) => (b.plant!.site ? 0 : b.built < 1 ? 1 + b.built : 3);
 
@@ -85,11 +88,16 @@ export function missingLink(g: Game, p: Product): GoalNow | null {
   const chain = `${andList(ins.map(lower))} → ${BUILDING_TYPES[k].name.replace(/ /g, " ")} → ${lower(p)}`;
   const mk = furthest(g, k);
   if (!mk) {
-    // (a feeder stands with nowhere to send its goods: build the works in the middle)
+    // (a feeder stands with nowhere to send its goods: build the works in the middle. Not a feeder whose goods another
+    // of the company's works already takes: the Coal Mine feeding a Smelter and a Power Plant was told "no Cement
+    // Works to take its coal", a works not even open yet. Review 2026-11-10, B4)
+    const taken = (q: Product) => g.industry.plants().some((o) => o.kind !== k && takesIn(o.kind as PlantKind, q));
     for (const q of ins) {
       const f = maker(g, q);
-      if (f) return { who: `Your ${BUILDING_TYPES[f.kind].name}`, text: `No ${BUILDING_TYPES[k].name} to take its ${lower(q)}`, fix: `${buildSay(g, [k])}: ${chain}.`, tone: "", works: f.id, link: true };
+      if (f && !taken(q)) return { who: `Your ${BUILDING_TYPES[f.kind].name}`, text: `No ${BUILDING_TYPES[k].name} to take its ${lower(q)}`, fix: `${buildSay(g, [k])}: ${chain}.`, tone: "", works: f.id, link: true };
     }
+    // (part of the chain stands, its goods going elsewhere: the works in the middle is the gap, said as itself)
+    if (ins.some((q) => maker(g, q))) return { text: `No ${BUILDING_TYPES[k].name} yet`, fix: `${buildSay(g, [k])}: ${chain}.`, tone: "", link: true };
     return null;
   }
   const missing = ins.filter((q) => !maker(g, q));
@@ -111,33 +119,19 @@ export function missingLink(g: Game, p: Product): GoalNow | null {
  * first goal says where the soil for its farm lies).
  */
 export function goalNow(g: Game, m: Milestone, have: number): GoalNow | null {
+  const size = POP_GOAL[m.id];
+  if (size) {
+    // (under the first open one only: the goals after it would say the same, and not about a need whose first load an
+    // open goal before it already follows, the first food under "First customers")
+    const open = g.progress.open(), at = open.indexOf(m);
+    if (have >= size || open.findIndex((x) => POP_GOAL[x.id]) !== at) return null;
+    const n = townNow(g, size);
+    return n?.need && open.slice(0, Math.max(0, at)).some((x) => FIRST_LOAD[x.id]?.p === n.need) ? null : n;
+  }
   const f = FIRST_LOAD[m.id];
   if (!f || have > 0) return null;
-  const name = PRODUCTS[f.p].name.toLowerCase();
-  // a load of it on the road to a town: the last stage
-  if (f.sold) for (const tr of g.trips()) {
-    const h = tr.haul;
-    if (!h || h.done || h.leg !== "out" || h.product !== f.p) continue;
-    const t = g.towns.byId.get(g.buildings.byId.get(h.dest)?.town ?? -1);
-    if (t) return { text: `The first ${name} is on the road to ${t.name}`, tone: "good", works: h.plant };
-  }
-  // a link of the chain missing: say which, by the recipe
-  const gap = missingLink(g, f.p);
-  if (gap) return gap;
-  // the works that makes it, or failing that the works that feeds that one (further up the chain)
-  let k = makerKind(f.p);
-  for (let step = 0; k && step < 3; step++) {
-    const b = furthest(g, k);
-    if (b) {
-      const P = b.plant!, who = `Your ${BUILDING_TYPES[b.kind].name}`;
-      // (made and waiting at the dock: its truck sets off with a full load, or within the hour)
-      if (f.sold && !P.site && b.built >= 1 && (P.out[f.p] ?? 0) >= 1) return { who, text: `Its first ${name} is at the dock`, fix: "Its truck sets off within the hour.", tone: "good", works: b.id };
-      const st = worksStatus(g, b);
-      return { who, text: st.text, fix: st.fix, tone: st.tone, works: b.id };
-    }
-    const q: Product | undefined = (Object.keys(PLANTS[k].inputs) as Product[])[0];
-    k = q ? makerKind(q) : undefined;
-  }
+  const c = chainNow(g, f.p, f.sold);
+  if (c) return c;
   // nothing of the chain placed: the first goal says where its ground is (the pointer on the map flies there too)
   if (m.id === "food10") {
     const at = farmSpot(g), home = g.towns.list[0];
@@ -150,6 +144,89 @@ export function goalNow(g: Game, m: Milestone, have: number): GoalNow | null {
     if (at && home) return { key: "Where", text: `Forest for a logging camp lies ${far(Math.hypot(at.x - home.c.x, at.y - home.c.y))} ${compassWords(home.c, at)} of ${home.name}`, tone: "", spot: at };
   }
   return null;
+}
+
+/**
+ * What the chain toward a product's first load is doing now, or null with nothing of it placed: a load on the road
+ * to a town (when it is sold there), a missing link of the chain, or the status of the works furthest along.
+ */
+function chainNow(g: Game, p: Product, sold: boolean): GoalNow | null {
+  const name = lower(p);
+  // a load of it on the road to a town: the last stage
+  if (sold) for (const tr of g.trips()) {
+    const h = tr.haul;
+    if (!h || h.done || h.leg !== "out" || h.product !== p) continue;
+    const t = g.towns.byId.get(g.buildings.byId.get(h.dest)?.town ?? -1);
+    if (t) return { text: `The first load of ${name} is on the road to ${t.name}`, tone: "good", works: h.plant };
+  }
+  // a link of the chain missing: say which, by the recipe
+  const gap = missingLink(g, p);
+  if (gap) return gap;
+  // the works that makes it, or failing that the works that feeds that one (further up the chain)
+  let k = makerKind(p);
+  for (let step = 0; k && step < 3; step++) {
+    const b = furthest(g, k);
+    if (b) {
+      const P = b.plant!, who = `Your ${BUILDING_TYPES[b.kind].name}`;
+      // (made and waiting at the dock: its truck sets off with a full load, or within the hour)
+      if (sold && !P.site && b.built >= 1 && (P.out[p] ?? 0) >= 1) return { who, text: `Its first load of ${name} is at the dock`, fix: "Its truck sets off within the hour.", tone: "good", works: b.id };
+      const st = worksStatus(g, b);
+      return { who, text: st.text, fix: st.fix, tone: st.tone, works: b.id };
+    }
+    const q: Product | undefined = (Object.keys(PLANTS[k].inputs) as Product[])[0];
+    k = q ? makerKind(q) : undefined;
+  }
+  return null;
+}
+
+/** The goals that grow a town to a size, and the size. */
+const POP_GOAL: Record<string, number> = { hamlet150: 150, village: 300, pop1000: 1000, town: 1500, pop4000: 4000, city: 6000 };
+
+/** The works a product's chain still needs, the makers of its inputs first: "Build a Logging Camp and a Sawmill: logs → Sawmill → planks." */
+function chainToBuild(g: Game, p: Product): string {
+  return chainKinds(g, p).say;
+}
+
+function chainKinds(g: Game, p: Product): { say: string; kinds: PlantKind[] } {
+  const k = makerKind(p);
+  if (!k) return { say: "", kinds: [] };
+  const ins = Object.keys(PLANTS[k].inputs) as Product[];
+  const kinds = [...new Set([...ins.filter((q) => !maker(g, q)).map((q) => makerKind(q)).filter((x): x is PlantKind => !!x), k])];
+  const chain = ins.length ? `: ${andList(ins.map(lower))} → ${BUILDING_TYPES[k].name.replace(/ /g, " ")} → ${lower(p)}` : "";
+  return { say: `${buildSay(g, kinds)}${chain}.`, kinds };
+}
+
+/**
+ * Under a goal to grow a town (measured on the biggest): what holds it, and the way out (review 2026-11-10, First
+ * hour: the hamlet stood at 127 people for twelve minutes waiting for planks while its goal, "Grow a town to 150
+ * people", said nothing). Held or shrinking for want of a need: the need, and the chain toward its first load, or the
+ * town's own advice for it. Growing, with a need coming before the goal's size that nothing of the company makes yet:
+ * that need, before it opens, once the town has had a first load of everything it needs now (one chain at a time).
+ */
+function townNow(g: Game, size: number): (GoalNow & { need?: Product }) | null {
+  const t = g.towns.list.reduce<Town | null>((a, x) => (!a || x.pop > a.pop ? x : a), null);
+  if (!t) return null;
+  const gr = townGrowth(t);
+  if ((gr.band === "hold" || gr.band === "shrink") && gr.by) {
+    const p = gr.by;
+    const text = gr.band === "shrink" ? `${t.name} is shrinking, short of ${lower(p)}` : `${t.name} holds at ${t.pop.toLocaleString("en-US")} people, short of ${lower(p)}`;
+    // (none of it sold yet: the chain toward its first load, as the first-load goals say it)
+    if ((g.progress.sold[p] ?? 0) < 1) {
+      const c = chainNow(g, p, true);
+      if (c) return { text, fix: goalNowSay(c), tone: c.tone === "bad" ? "bad" : "", works: c.works, link: c.link, need: p };
+      // (nothing of it placed: the line flies to the ground for the first of it, the forest for a logging camp)
+      const { say, kinds } = chainKinds(g, p);
+      const k = kinds.find((x): x is "farm" | "loggingcamp" => x === "farm" || x === "loggingcamp");
+      const spot = (k && groundSpot(g, k)) || undefined;
+      return { text, fix: say, tone: "bad", link: true, need: p, ...(spot ? { spot } : {}) };
+    }
+    const h = needHelp(g, t, p);
+    return { text, fix: h?.say ?? "Your works are still getting up to pace.", tone: h?.kind === "none" ? "bad" : "", need: p };
+  }
+  const nn = nextNeed(t.pop);
+  if (!nn || nn.pop > size || t.pop < nn.pop * 0.7 || maker(g, nn.p)) return null;
+  if (needsOf(t.pop).some((q) => (g.progress.sold[q] ?? 0) < 1)) return null;
+  return { text: `${t.name} will want ${lower(nn.p)} from ${nn.pop.toLocaleString("en-US")} people`, fix: `Without a supply it stops growing there. ${chainToBuild(g, nn.p)}`, tone: "", link: true };
 }
 
 /** The goal line as one sentence (for the screen reader, and the tests): "Your Farm: starting up. Its first ...". */

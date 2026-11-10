@@ -39,6 +39,8 @@ import { landmarkDone, landmarkSite, parkSection, seasonLine, specialRows } from
 import { MEGAS, isMega } from "../game/megaprojects";
 import { TipPrefs, joinedUp, tipFor } from "./tips";
 import { blockWords, buildOrder, shortfalls, shownRate } from "./bottleneck";
+import { longProject, type LongProject } from "./longProject";
+import { distText, planLength } from "./distance";
 import { goalNow, goalNowSay } from "./goalNow";
 import { STUCK_RAISE, stuckSpots } from "./stuckAlerts";
 import { nextTown } from "./nextTown";
@@ -186,7 +188,7 @@ const SNAP_HELP = {
 } as const;
 
 const KEYS: [string, string][] = [
-  ["Esc", "Back, one thing at a time: the tool in hand, then the catalog, a panel, a window, an info view. With nothing open: the pause menu"],
+  ["Esc", "Back, one thing at a time: the road being drawn, the tool in hand, then the catalog, a panel, a window, an info view. With nothing open: the pause menu"],
   ["Right click", "Undo the last click of a road; again to drop the tool (a touchpad: click with two fingers)"],
   ["W A S D / drag", "Move the camera (drag with the right button, or with the left when nothing is in hand)"],
   ["Space + drag", "Move the camera with any tool in hand"],
@@ -265,6 +267,10 @@ export class Hud {
   private lastDraw: RoadMode = "curve";
   /** the catalog asked open while a building is in hand (it folds to its strip by itself, out of the map's way) */
   private catPeek = false;
+  /** a card picked (or the tool used on the map) since the catalog opened: its cards have done their job and fold */
+  private handPicked = false;
+  /** the catalog put out of sight with its tool still in hand (the strip's Hide; the category's button brings it back) */
+  private catHidden = false;
   /** the card under the pointer or the keyboard focus: the catalog's line reads it out */
   private hoverKey = "";
   private winKind: WinId | null = null;
@@ -276,7 +282,10 @@ export class Hud {
   private armed = 0;
   private panelNode = -1;
   private panelPhase = 0;
-  private tutHidden = false;
+  /** the Goals card folded to its one line (remembered per browser: a player who folds it wants it folded) */
+  private get tutHidden(): boolean { try { return localStorage.getItem("flowtown.goals.folded") === "1"; } catch { return this.tutFold; } }
+  private set tutHidden(v: boolean) { this.tutFold = v; try { localStorage.setItem("flowtown.goals.folded", v ? "1" : "0"); } catch { /* private window: for the session */ } }
+  private tutFold = false;
   /** tips off, and the ones dismissed (kept per browser) */
   private tipPrefs = new TipPrefs();
   private lastPanel = "";
@@ -416,27 +425,42 @@ export class Hud {
   catKey(c: CatId) { this.toggleCat(c); }
 
   /**
-   * The catalog folds to its strip while a building is in hand, and Roads while a road is being drawn, so the map
-   * under the cursor is free (play-test 2026-11-10: the road cards hid the town a road was being drawn to).
+   * Every catalog folds to its one-line strip (what is in hand, the tabs) while its tool is held and in use, so the
+   * map under the cursor is free (play-test 2026-11-10: the road cards hid the town a road was being drawn to;
+   * review 2026-11-10: and the bus cards the street a stop was going on). A works is in use as soon as it is in
+   * hand: a click on the map builds it. Roads and Transport put a tool in hand when they open, so theirs is in use
+   * once a card is picked or the map clicked. A tab or the category's button brings the cards back for a look.
    */
   private folded(): boolean {
     if (this.catPeek) return false;
-    const st = this.app.st;
-    return (this.cat === "industry" && st.tool === "place") || (this.cat === "roads" && st.tool === "road" && this.app.drawingRoad);
+    const c = this.cat, app = this.app;
+    if (!c || catOf(app.st) !== c) return false;
+    return c === "industry" || this.handPicked || app.hasDraft || app.drawingRoad;
   }
 
-  /** A road's first point placed (the cards fold away), or the road done with (they come back). */
+  /** A road's first point placed or a bus line begun (the cards fold away), or the draft done with. */
   drawing(on: boolean) {
     if (on) this.catPeek = false;
-    if (this.cat === "roads") this.refresh();
+    if (this.cat) this.refresh();
+  }
+
+  /** The catalog's tool used on the map (a stop put down): from now on its cards fold away. */
+  used() {
+    if (this.handPicked) return;
+    this.handPicked = true;
+    this.catPeek = false;
+    this.refresh();
   }
 
   private toggleCat(c: CatId) {
     const app = this.app;
     const inHand = catOf(app.st) === c;
-    // (folded with a building in hand: the button brings the cards back)
+    // (hidden with its tool in hand: the button brings the strip back; folded: the cards)
+    if (this.cat === c && this.catHidden) { this.catHidden = false; this.sfx.play("open"); this.refresh(); return; }
     if (this.cat === c && this.folded()) { this.catPeek = true; this.refresh(); return; }
     this.catPeek = false;
+    this.catHidden = false;
+    this.handPicked = false;
     if (this.cat === c) {
       this.cat = null;
       this.sfx.play("close");
@@ -457,6 +481,7 @@ export class Hud {
   private pick(a: Asset) {
     const app = this.app;
     this.catPeek = false;
+    this.handPicked = true;
     // (a road card is for drawing that road: out of Upgrade, back to the drawing mode last used)
     if (a.kind === "road") { this.lastRoad = a.id; app.setTool({ tool: "road", roadType: a.id, mode: this.lastDraw }); }
     else if (a.kind === "roundabout") app.setTool({ tool: "roundabout", rbSize: a.size });
@@ -557,9 +582,9 @@ export class Hud {
    */
   private renderAssets() {
     const c = this.cat, el = this.assets;
-    if (!c) { el.hidden = true; this.lastAssets = ""; this.hoverKey = ""; return; }
     const cur = this.current();
-    const inHand = cur && catOf(this.app.st) === c ? cur : null;
+    const inHand = c && cur && catOf(this.app.st) === c ? cur : null;
+    if (!c || (inHand && this.catHidden)) { el.hidden = true; this.lastAssets = ""; this.hoverKey = ""; return; }
     const curKey = inHand ? this.assetInfo(inHand).key : "";
     const C = CATS[c];
     // follow the tool to its tab (keyboard, right click, loading)
@@ -621,7 +646,16 @@ export class Hud {
       if (catOf(this.app.st) === c) this.app.setTool({ tool: "inspect" });
       else this.refresh();
     };
-    head.append(h("b", "as-title", C.label), tabs, close);
+    // (put the catalog out of sight and keep the tool: the category's button or key brings it back)
+    const key = c === "roads" ? "R" : c === "industry" ? "I" : "";
+    const hide = inHand ? h("button", "as-hide", `Hide ${ICON.caret}`) : null;
+    if (hide) {
+      hide.dataset.key = "hide";
+      hide.title = `Hide the catalog; the ${held!.name} stays in hand${key ? ` (${key} brings it back)` : ""}`;
+      hide.setAttribute("aria-label", `Hide ${C.label}, keep the ${held!.name} in hand`);
+      hide.onclick = () => { this.catHidden = true; this.catPeek = false; this.sfx.play("close"); this.refresh(); };
+    }
+    head.append(h("b", "as-title", C.label), tabs, ...(hide ? [hide] : []), close);
     if (!folded) {
       // (the cards are fitted to the window: a few become wide plates that say what each is, more share the row,
       // and a long tab is split into even rows. catalog.ts; a short tab left most of the window empty)
@@ -663,8 +697,12 @@ export class Hud {
     const app = this.app, g = app.game, st = app.st;
     if (!g) return;
     const tc = catOf(st);
+    // (another catalog's tool taken up by key: its cards start open, as from its button)
+    if (tc && this.cat !== tc) { this.handPicked = false; this.catHidden = false; this.catPeek = false; }
     if (tc) this.cat = tc;
     else if (st.tool !== "inspect") this.cat = null;
+    // (nothing of the catalog's in hand: nothing to fold for or to hide behind)
+    if (!tc) { this.handPicked = false; this.catHidden = false; }
     if (st.tool === "road") this.lastRoad = st.roadType;
     if (st.tool === "road" && st.mode !== "replace") this.lastDraw = st.mode;
     for (const [k, b] of this.catBtns) {
@@ -934,26 +972,46 @@ export class Hud {
     // (with every goal reached the card lists the towns' shortfalls itself: the tip that says the same stands down)
     // (and a tip that says to take in hand the works already in hand: the tool options say how to place it)
     const st = this.app.st, inHand = (id: string) => st.tool === "place" && st.placed === id;
-    const tip = prefs.off ? null : tipFor(g, (id) => prefs.dismissed.has(id) || (id === "ceiling" && !open.length) || ((id === "farm" || id === "foodplant") && inHand(id)));
+    const tip = prefs.off ? null : tipFor(g, (id) => prefs.dismissed.has(id) || (id === "ceiling" && !open.length) || ((id === "farm" || id === "foodplant") && inHand(id)), this.app.stuckAlerts.count);
     this.tut.hidden = false;
     const v = g.progressView();
     const folded = this.tutHidden;
-    const head = `<button class="gl-head" aria-expanded="${!folded}" aria-controls="gl-body"><b>Goals</b><span class="gl-count">${g.progress.done.length} of ${MILESTONES.length} reached</span><span class="gl-caret">${ICON.caret}</span></button>`;
+    // (a goal that waits on a first load says what the chain is doing now and when its first truck leaves: the
+    // works' own status, so the wait counts down here as it does in its panel. Owner, 2026-11-10)
+    const nowLine = (now: ReturnType<typeof goalNow>, one = false) => now ? `<button type="button" class="gl-now ${now.tone}"${now.works !== undefined ? ` data-id="${now.works}"` : now.spot ? ` data-spot="${Math.round(now.spot.x)},${Math.round(now.spot.y)}"` : " disabled"} title="${now.works !== undefined ? "Show it on the map" : now.spot ? "Fly there" : ""}" aria-label="${now.key ?? "Now"}: ${escapeHtml(goalNowSay(now))}"><span class="gl-now-k">${now.key ?? "Now"}</span><span class="gl-now-t"><b>${escapeHtml(now.who ? `${now.who}: ${now.text[0].toLowerCase()}${now.text.slice(1)}` : now.text)}.</b>${now.fix ? ` ${escapeHtml(now.fix)}` : ""}</span></button>`.replace('class="gl-now ', `class="gl-now${one ? " gl-now-one" : ""} `) : "";
+    // (folded, the card is its header and one line under it: the goal at hand, how far along, and what its chain is
+    // doing now, cut to two lines and whole on hover. Review 2026-11-10: the full card stood over the map all game,
+    // and folding it hid the goal too)
+    let fold = `<span class="gl-count">${g.progress.done.length} of ${MILESTONES.length} reached</span>`;
     let body = `<div id="gl-body" hidden></div>`;
+    if (folded && open[0]) {
+      const m = open[0], [have, need] = m.measure(v), now = goalNow(g, m, have);
+      fold = `<span class="gl-fold"><b>${escapeHtml(m.name)}</b><span class="num">${measureText(m, have, need)}</span></span>`;
+      body = `<div id="gl-body" class="gl-one">${now ? nowLine(now, true).replace(/ title="[^"]*"/, ` title="${escapeHtml(`${now.key ?? "Now"}: ${goalNowSay(now)}`)}"`) : `<p class="gl-goal">${escapeHtml(m.goal)}</p>`}</div>`;
+    } else if (folded) {
+      // (every goal reached: the long project, and how it is going)
+      const lp = longProject(g);
+      if (lp) {
+        fold = `<span class="gl-fold"><b>${escapeHtml(lp.name)}</b><span class="num">${escapeHtml(lp.measure)}</span></span>`;
+        body = `<div id="gl-body" class="gl-one">${this.projNow(g, lp, true)}</div>`;
+      }
+    }
+    const foldName = folded ? /<b>([^<]*)<\/b>/.exec(fold)?.[1] : undefined;
+    const head = `<button class="gl-head" aria-expanded="${!folded}" aria-controls="gl-body"${foldName ? ` title="${foldName}. Click for the whole card."` : ""}><b>Goals</b>${fold}<span class="gl-caret">${ICON.caret}</span></button>`;
     if (!folded) {
       const items = open.map((m) => {
         const [have, need] = m.measure(v);
         const p = Math.max(0, Math.min(1, have / need));
-        // (a goal that waits on a first load says what the chain is doing now and when its first truck leaves: the
-        // works' own status, so the wait counts down here as it does in its panel. Owner, 2026-11-10)
         const now = goalNow(g, m, have);
-        const nowLine = now ? `<button type="button" class="gl-now ${now.tone}"${now.works !== undefined ? ` data-id="${now.works}"` : now.spot ? ` data-spot="${Math.round(now.spot.x)},${Math.round(now.spot.y)}"` : " disabled"} title="${now.works !== undefined ? "Show it on the map" : now.spot ? "Fly there" : ""}" aria-label="${now.key ?? "Now"}: ${escapeHtml(goalNowSay(now))}"><span class="gl-now-k">${now.key ?? "Now"}</span><span class="gl-now-t"><b>${escapeHtml(now.who ? `${now.who}: ${now.text[0].toLowerCase()}${now.text.slice(1)}` : now.text)}.</b>${now.fix ? ` ${escapeHtml(now.fix)}` : ""}</span></button>` : "";
         return `<li><div class="gl-top"><b>${m.name}</b><span class="num">${measureText(m, have, need)}</span></div>
           <p class="gl-goal">${m.goal}</p>
           <span class="bar gl-bar" role="progressbar" aria-label="${m.name}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p * 100)}"><i style="width:${Math.max(2, p * 100)}%"></i></span>
-          ${nowLine}<p class="gl-gift">${unlockList(m.unlocks).join(" · ")}</p></li>`;
+          ${nowLine(now)}<p class="gl-gift">${unlockList(m.unlocks).join(" · ")}</p></li>`;
       }).join("");
-      body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : this.afterGoals()}${tip ? `<div class="gl-tip" data-tip="${tip.id}"><p>${tip.html}</p><button class="gl-x" aria-label="Dismiss this tip" title="Dismiss this tip (Pause › Tips turns them all off)">${ICON.close}</button></div>` : ""}</div>`;
+      // (the road offered under the pointer stays drawn only while its button is still there, for that works)
+      if (this.app.offerFor !== null && tip?.road?.works !== this.app.offerFor) this.app.offerFor = null;
+      const roadBtn = tip?.road ? ` <button type="button" class="btn gl-act" data-id="${tip.road.works}"${g.money < tip.road.cost ? ` disabled title="More than you have now"` : ""}>Build this road · ${formatMoney(tip.road.cost)}</button>` : "";
+      body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : this.afterGoals()}${tip ? `<div class="gl-tip" data-tip="${tip.id}"><p>${tip.html}${roadBtn}</p><button class="gl-x" aria-label="Dismiss this tip" title="Dismiss this tip (Pause › Tips turns them all off)">${ICON.close}</button></div>` : ""}</div>`;
     }
     const html = head + body;
     if (this.tut.dataset.html !== html) {
@@ -972,6 +1030,14 @@ export class Hud {
         this.app.glideTo(b.c, Math.min(this.app.view.halfH, CHIP_HALF_H), 1);
         this.openBuilding(b);
       };
+      const act = this.tut.querySelector<HTMLButtonElement>(".gl-act[data-id]");
+      if (act) {
+        const id = +act.dataset.id!;
+        act.onclick = () => this.buildRoadTo(id);
+        // (the road it would lay shows dashed on the map while the button is under the pointer)
+        act.onpointerenter = act.onfocus = () => { this.app.offerFor = id; };
+        act.onpointerleave = act.onblur = () => { if (this.app.offerFor === id) this.app.offerFor = null; };
+      }
       for (const n of this.tut.querySelectorAll<HTMLButtonElement>(".gl-now[data-spot]")) n.onclick = () => {
         const [x, y] = n.dataset.spot!.split(",").map(Number);
         this.sfx.play("click");
@@ -1015,11 +1081,28 @@ export class Hud {
    * are short of, the biggest first, each turned into works to build.
    */
   private afterGoals(): string {
-    const jobs = shortfalls(this.app.game);
+    const g = this.app.game, lp = longProject(g);
+    if (lp) {
+      const means = lp.means.map((j) => `<li><div class="gl-top"><b>${escapeHtml(j.head)}</b></div><p class="gl-goal gl-job">${escapeHtml(j.say)}</p></li>`).join("");
+      return `<ol class="gl-list gl-proj"><li><p class="gl-proj-k">Every goal reached. The long project</p>
+        <div class="gl-top"><b>${escapeHtml(lp.name)}</b><span class="num">${escapeHtml(lp.measure)}</span></div>
+        <span class="bar gl-bar" role="progressbar" aria-label="${escapeHtml(lp.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(lp.p * 100)}"><i style="width:${Math.max(2, lp.p * 100)}%"></i></span>
+        ${this.projNow(g, lp)}</li></ol>
+        ${means ? `<p class="gl-means-k">To get there</p><ol class="gl-list gl-means">${means}</ol>` : `<p class="gl-done">Nothing holds it back: it gets there by itself, a little every day.</p>`}
+        ${lp.ahead ? `<p class="gl-ahead">${escapeHtml(lp.ahead)}</p>` : ""}`;
+    }
+    const jobs = shortfalls(g);
     if (!jobs.length) return `<p class="gl-done">Every goal reached, and every town has what it needs. Grow them on: the next size asks for more.</p>`;
     const items = jobs.map((j) => `<li><div class="gl-top"><b>${PRODUCTS[j.p].name}</b><span class="num">${fmtNum(j.more)} more ${j.more === 1 ? "load" : "loads"} a day</span></div>
       <p class="gl-goal gl-job">${escapeHtml(j.say)}</p></li>`).join("");
     return `<p class="gl-done">Every goal reached. Now the towns set the work:</p><ol class="gl-list">${items}</ol>`;
+  }
+
+  /** The long project's line under its bar: how it is going; a click flies to the town or the site. */
+  private projNow(g: Game, lp: LongProject, one = false): string {
+    const t = lp.town !== undefined ? g.towns.byId.get(lp.town) : undefined;
+    const at = lp.works !== undefined ? ` data-id="${lp.works}" title="Show it on the map"` : t ? ` data-spot="${Math.round(t.c.x)},${Math.round(t.c.y)}" title="Fly there"` : " disabled";
+    return `<button type="button" class="gl-now${one ? " gl-now-one" : ""}${lp.bad ? " bad" : ""}"${at} aria-label="Now: ${escapeHtml(lp.state)}"><span class="gl-now-k">Now</span><span class="gl-now-t">${escapeHtml(lp.state)}.</span></button>`;
   }
 
   /** The notes at the foot of the tool options card (only redrawn when they change: the pointer moves every frame). */
@@ -1110,6 +1193,16 @@ export class Hud {
   /** Milestones reached (and towns grown) not yet shown: several can come at once, each gets its banner in turn. */
   private bannerQ: Banner[] = [];
   private bannerT = 0;
+  /**
+   * The clock was stopped for a card that waits to be read, and starts again once the last is put away (review
+   * 2026-11-10, B7: at speed 4 two milestones stacked in the middle of the screen while the trucks ran on behind
+   * them). Queued and paused rather than a ribbon: a milestone's card introduces new works one by one, which is
+   * reading, and a game day at speed 4 passes in seconds. The player's own pause or speed change takes over.
+   */
+  private bannerHeld = false;
+
+  /** The player set the clock: a card that stopped it no longer starts it again. */
+  clockSet() { this.bannerHeld = false; }
 
   /** A milestone was reached: what it unlocks (with the towns it brought), and the grant. */
   milestone(M: Milestone, towns?: number[]) {
@@ -1199,6 +1292,7 @@ export class Hud {
   clearBanners() {
     clearTimeout(this.bannerT);
     this.bannerQ = [];
+    this.bannerHeld = false;
     this.banner.hidden = true;
     this.orderNoteAway(0);
     this.seasons.clear();
@@ -1214,8 +1308,14 @@ export class Hud {
   private nextBanner() {
     clearTimeout(this.bannerT);
     const X = this.bannerQ.shift();
-    if (!X) { this.banner.hidden = true; return; }
     const g = this.app.game;
+    // (the cards that wait to be read stop the clock; the town's news that steps aside by itself does not)
+    const read = !!X && ("m" in X || "landmark" in X || "spawned" in X);
+    if (!read && this.bannerHeld) {
+      this.bannerHeld = false;
+      if (g.paused) { g.paused = false; this.refresh(); }
+    }
+    if (!X) { this.banner.hidden = true; return; }
     const t = "town" in X ? g.towns.byId.get(X.town) : "spawned" in X ? g.towns.byId.get(X.spawned) : "order" in X ? g.towns.byId.get(X.order) : undefined;
     if (("town" in X || "spawned" in X || "order" in X) && !t) { this.nextBanner(); return; }
     const civ = "order" in X && X.b !== undefined ? g.buildings.byId.get(X.b) : undefined;
@@ -1284,6 +1384,9 @@ export class Hud {
         <p class="gifts">${what[0].toUpperCase() + what.slice(1)}</p>
         <div class="banner-btns"><button class="btn" data-k="town">Open ${escapeHtml(t!.name)}</button><button class="btn primary" data-k="ok">Continue</button></div>`;
     }
+    if (read && !g.paused && this.app.mode === "play") { g.paused = true; this.bannerHeld = true; this.refresh(); }
+    // (said beside the button that starts it again)
+    if (this.bannerHeld) this.banner.querySelector(".banner-btns")?.insertAdjacentHTML("afterbegin", `<span class="bn-held">Paused while you read</span>`);
     this.banner.hidden = false;
     this.seasons.yieldTo();
     this.banner.classList.remove("in");
@@ -1398,7 +1501,7 @@ export class Hud {
   /** What is open now, for Esc (ui/escape.ts has the order they go in). */
   private escState(): EscState {
     return {
-      dialog: !this.modal.hidden, banner: !this.banner.hidden, popover: this.seasons.popOpen,
+      dialog: !this.modal.hidden, banner: !this.banner.hidden, popover: this.seasons.popOpen, draft: this.app.hasDraft,
       tool: this.app.st.tool !== "inspect", catalog: !!this.cat, selection: !!this.sel, window: !!this.winKind,
       view: this.app.overlay !== "none",
     };
@@ -1414,6 +1517,7 @@ export class Hud {
     if (layer === "dialog") this.closeModal();
     else if (layer === "banner") this.nextBanner();
     else if (layer === "popover") this.seasons.closePop();
+    else if (layer === "draft") this.app.cancelDraft();
     // (the catalog it came from stays open, its list unfolded again: the next press closes that)
     else if (layer === "tool") { this.catPeek = false; this.app.setTool({ tool: "inspect" }); }
     else if (layer === "catalog") { this.cat = null; this.sfx.play("close"); this.refresh(); }
@@ -1836,6 +1940,8 @@ export class Hud {
     (this.panel.querySelector(".close") as HTMLButtonElement).onclick = () => { this.sfx.play("click"); this.closeSelection(); };
     const more = this.panel.querySelector<HTMLDetailsElement>(".ip-more");
     if (more) more.ontoggle = () => { setMoreOpen(more.dataset.k!, more.open); };
+    const rb = this.panel.querySelector<HTMLButtonElement>(".ip-roadbtn[data-id]");
+    if (rb) rb.onclick = () => this.buildRoadTo(+rb.dataset.id!);
     for (const c of this.panel.querySelectorAll<HTMLButtonElement>(".fchip[data-k]")) c.onclick = () => {
       this.sfx.play("click");
       const s = { k: c.dataset.k, id: +c.dataset.id! } as Sel;
@@ -2126,13 +2232,15 @@ export class Hud {
     const T = BUILDING_TYPES[b.kind];
     const demolish = () => { g.bulldoze([], [b.id]); this.closeSelection(); this.sfx.play("remove"); };
     const act = this.demolishBtn("demolish");
+    // (a works with no road to its gate: the road the game would lay to it, with its price and one click)
+    const lead = b.plant ? this.roadOffer(b) : "";
     if (b.plant && isPlantKind(b.kind)) {
       const D = PLANTS[b.kind], P = b.plant;
       const chain = `<p class="small muted ip-chain">${chainText(b.kind)}</p>`;
       // a landmark's site: its ring and stage, materials and pieces, and what it will do once open (it is the panel)
       const lmSite = landmarkSite(g, b);
       if (lmSite) {
-        if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, body: `${chain}${lmSite}` }))) this.bindDemolishBtn(demolish);
+        if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, lead, body: `${chain}${lmSite}` }))) this.bindDemolishBtn(demolish);
         return;
       }
       // a site: the materials trucked to it so far
@@ -2142,7 +2250,7 @@ export class Hud {
           return `<dt>${PRODUCTS[p].name}</dt><dd>${stockBar(got, need, PRODUCTS[p].color)}<span class="num">${Math.floor(got)} / ${need}</span></dd>`;
         }).join("");
         const body = `<dl class="facts">${mats}</dl><p class="small muted">Once all are in it takes ${buildTime(b.kind) / HOUR} hours to build. No wages or upkeep until then.</p>`;
-        if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, body: chain + body }))) this.bindDemolishBtn(demolish);
+        if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, lead, body: chain + body }))) this.bindDemolishBtn(demolish);
         return;
       }
       const pw = D.power && b.built >= 1 ? g.utilities.supplyOf(b) : null;
@@ -2194,7 +2302,7 @@ export class Hud {
         const held = Industry.stored(b);
         const body = logi === "warehouse" ? this.warehouseBody(b, store, held) : this.depotBody(b, store);
         const details = `${chain}${body}${D.trucks ? `<dl class="facts">${classRow}</dl>` : ""}`;
-        if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, details }))) this.bindDemolish(b, demolish);
+        if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, lead, details }))) this.bindDemolish(b, demolish);
         return;
       }
       const details = `${chain}
@@ -2220,7 +2328,7 @@ export class Hud {
           ${freshRows}
         </dl>`;
       const body = isMega(b.kind) ? landmarkDone(g, b) : "";
-      if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, body, details }))) this.bindDemolishBtn(demolish);
+      if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, lead, body, details }))) this.bindDemolishBtn(demolish);
       return;
     }
     if (!b.zone) {
@@ -2252,6 +2360,41 @@ export class Hud {
     const details = rows.length ? `<dl class="facts">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>` : undefined;
     const mine = b.town === undefined;
     if (this.setPanel(this.anatomy(m, { kind: grp === "res" ? "home" : "shop", danger: mine ? act : undefined, body: whose, details })) && mine) this.bindDemolishBtn(demolish);
+  }
+
+  /**
+   * The road offered to a placed works with no road to its gate (Game.roadTo, review 2026-11-10): how long and what it
+   * costs, dashed on the map while the panel is open, and the button that lays it. Empty with a road at its gate.
+   */
+  private roadOffer(b: Building): string {
+    if (!b.placed || b.access) return "";
+    const g = this.app.game, plan = g.roadTo(b);
+    if (!plan) return `<p class="ip-road small">No road can be laid to its gate from here by itself: draw one to it with Roads, or move it nearer your roads.</p>`;
+    const short = g.money < plan.cost;
+    return `<div class="ip-road"><p class="small">A dirt road from its gate to your roads, dashed on the map: <b>${distText(planLength(plan))}</b>, <b class="num">${formatMoney(plan.cost)}</b>.${short ? " More than you have now." : ""}</p><button type="button" class="btn ip-roadbtn" data-id="${b.id}"${short ? " disabled" : ""}>Build this road</button></div>`;
+  }
+
+  /** Lay the road offered to a works (its panel's button, or its tip's). */
+  buildRoadTo(id: number) {
+    const g = this.app.game, b = g.buildings.byId.get(id);
+    if (!b || !g.roadTo(b)) return;
+    const built = g.buildRoadTo(b);
+    if (!built) {
+      // (worked out afresh: the way may be blocked now, or dearer than the money there is)
+      const now = g.roadTo(b);
+      this.sfx.play("error");
+      this.toast(now && g.money < now.cost ? "Not enough money for that road" : "That road can't be laid now", true);
+      this.lastPanel = "";
+      if (this.sel) this.fillSel();
+      this.renderTips();
+      return;
+    }
+    this.sfx.play("build");
+    this.toast(`Dirt road to the ${BUILDING_TYPES[b.kind].name}'s gate built for ${formatMoney(built.cost)}`);
+    this.app.offerFor = null;
+    this.lastPanel = "";
+    if (this.sel) this.fillSel();
+    this.renderTips();
   }
 
   /** A warehouse's panel: what it holds, and per product whether it takes it and whether it is a feeder for it. */

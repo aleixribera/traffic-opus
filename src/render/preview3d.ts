@@ -43,6 +43,8 @@ export class Preview3D {
   private keep = new Set<THREE.BufferGeometry>();
   private modelOk = new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.82 });
   private modelBad = new THREE.MeshLambertMaterial({ color: 0xe5484d, transparent: true, opacity: 0.6 });
+  /** held over one of the company's own sites on the way somewhere: its own colours, faded, not a refusal's red */
+  private modelHeld = new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.38 });
 
   constructor() {
     for (const m of [...this.okMats, this.badMat]) m.mat.depthTest = false;
@@ -200,10 +202,10 @@ export class Preview3D {
     this.add(m, under ? 5 : 9);
   }
 
-  /** A see-through building model where it would be placed. */
-  model(geo: THREE.BufferGeometry, m: THREE.Matrix4, ok: boolean) {
+  /** A see-through building model where it would be placed (`held`: over another of the company's sites). */
+  model(geo: THREE.BufferGeometry, m: THREE.Matrix4, ok: boolean | "held") {
     this.keep.add(geo);
-    const mesh = new THREE.Mesh(geo, ok ? this.modelOk : this.modelBad);
+    const mesh = new THREE.Mesh(geo, ok === "held" ? this.modelHeld : ok ? this.modelOk : this.modelBad);
     mesh.matrixAutoUpdate = false;
     mesh.matrix.copy(m);
     this.add(mesh, 6);
@@ -215,6 +217,34 @@ export class Preview3D {
     const y = typeof h === "number" ? h + LIFT : h.map((v) => v + LIFT);
     const m = new THREE.Mesh(strip(pts, y, w), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthTest: false }));
     this.add(m, 12);
+  }
+
+  /**
+   * A dashed line on the ground (a road offered, not yet built): dashes `on` long with `off` between, along the
+   * points, the gaps showing the ground through so it never reads as a road already there.
+   */
+  dashed(pts: V2[], color: number, w: number, on: number, off: number) {
+    if (pts.length < 2) return;
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, depthTest: false });
+    let piece: V2[] = [pts[0]], left = on, drawing = true;
+    for (let i = 1; i < pts.length; i++) {
+      let a = pts[i - 1];
+      const b = pts[i];
+      let d = Math.hypot(b.x - a.x, b.y - a.y);
+      while (d > 1e-6) {
+        const step = Math.min(d, left), k = step / d;
+        const q = { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k };
+        if (drawing) piece.push(q);
+        a = q; d -= step; left -= step;
+        if (left <= 1e-6) {
+          if (drawing && piece.length >= 2) this.add(new THREE.Mesh(strip(piece, LIFT + 0.05, w), mat), 12);
+          drawing = !drawing;
+          left = drawing ? on : off;
+          piece = [q];
+        }
+      }
+    }
+    if (drawing && piece.length >= 2) this.add(new THREE.Mesh(strip(piece, LIFT + 0.05, w), mat), 12);
   }
 
   /** A ring marker in a colour (bus stops on the line being drawn). */

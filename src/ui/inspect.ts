@@ -344,6 +344,8 @@ export function worksStatus(g: Game, b: Building): PanelModel["status"] {
       status = pf?.back ? { text: "Power back on", tone: "", fix: pf.fix, show: ref(pf.show) }
         : pf ? { text: splitProblem(b.problem).text, tone: "bad", fix: `${powerCause(b.problem)}${pf.fix}`, show: ref(pf.show) }
         : /^(No workers|Not enough workers)/.test(b.problem) ? staffStatus(g, b, splitProblem(b.problem).text, "bad")
+        // (its goods spoken for by the loads already on their way: nothing is wrong, so nothing is red)
+        : /^\d+ loads? on the way to /.test(b.problem) ? { text: "Loads on the way", tone: "", fix: `${b.problem[0].toUpperCase()}${b.problem.slice(1)}.` }
         : waitingFor(g, b) ?? noBuyer(g, b) ?? { ...splitProblem(b.problem), tone: "bad" };
     }
     else {

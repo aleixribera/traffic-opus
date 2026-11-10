@@ -1,11 +1,12 @@
 // A town that has just sprung up (a milestone's reward, settlements.ts spawn) is marked on the map until the company
 // first delivers to it: a ring of ochre pulses round its hall, and, while it is off screen, a pointer held at the
-// screen's edge with the way and the distance ("NEW TOWN · Fort Pryor · 3.2 km"). Click the pointer to fly the
+// screen's edge with the way and the distance from the nearest other town ("NEW TOWN · Fort Pryor · 3.2 km from
+// Alder Run"). Click the pointer to fly the
 // camera there; click the ring to open the town. Once the town has been on screen the pointer stops (the ring stays).
 
-import type { V2 } from "../core/math";
 import type { Town } from "../game/settlements";
 import type { View } from "../render/view";
+import { distText } from "./distance";
 
 /** How long a new town keeps its marker if nobody delivers to it (s of game time: three game days). */
 export const PING_FOR = 3 * 24 * 40;
@@ -16,6 +17,8 @@ interface Ping {
   edge: HTMLButtonElement;
   /** it has been on screen (or flown to): no more pointer */
   seen: boolean;
+  /** how far it is from the nearest other town: "1.9 km from Alder Run" (never from the camera: review 2026-11-10, B10) */
+  far: string;
 }
 
 export class TownPings {
@@ -53,7 +56,10 @@ export class TownPings {
       edge.setAttribute("aria-label", edge.title);
       edge.onclick = () => { const p = this.pings.get(t.id); if (p) p.seen = true; this.on.fly(t.id); };
       this.el.append(ring, edge);
-      this.pings.set(t.id, { t, ring, edge, seen: false });
+      const far = farText(t, towns);
+      edge.querySelector(".tp-km")!.textContent = far;
+      if (far) { edge.title = `Fly to ${t.name}, ${far}`; edge.setAttribute("aria-label", edge.title); }
+      this.pings.set(t.id, { t, ring, edge, seen: false, far });
     }
     for (const [id, p] of this.pings) if (!live.has(id)) { p.ring.remove(); p.edge.remove(); this.pings.delete(id); }
     this.walls = this.pings.size ? [...document.querySelectorAll(".corner > *, .banner:not([hidden]), .bottom > .assets")].map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0) : [];
@@ -91,11 +97,17 @@ export class TownPings {
       const x = cx + dx * k * f, y = cy + dy * k * f;
       p.edge.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -50%)`;
       (p.edge.firstElementChild as HTMLElement).style.transform = `rotate(${Math.atan2(dy, dx).toFixed(3)}rad)`;
-      const c: V2 = { x: view.cx, y: view.cy };
-      const km = Math.hypot(p.t.c.x - c.x, p.t.c.y - c.y) / 1000;
-      const kmEl = p.edge.querySelector(".tp-km")!;
-      const txt = `${km < 10 ? km.toFixed(1) : Math.round(km)} km`;
-      if (kmEl.textContent !== txt) kmEl.textContent = txt;
     }
   }
+}
+
+/** How far a new town is from the nearest other town, as its banner and tip measure it: "1.9 km from Alder Run". */
+export function farText(t: Town, towns: readonly Town[]): string {
+  let from: Town | null = null, d = Infinity;
+  for (const o of towns) {
+    if (o.id === t.id) continue;
+    const m = Math.hypot(o.c.x - t.c.x, o.c.y - t.c.y);
+    if (m < d) { d = m; from = o; }
+  }
+  return from ? `${distText(d)} from ${from.name}` : "";
 }

@@ -88,7 +88,7 @@ export function specialRows(g: Game, b: Building, bar: Bar, season = true): stri
 export function parkSection(g: Game, b: Building): string {
   const lines = g.parks.linesFor(b.id);
   if (!lines.length) return "";
-  return `<h3 class="sub-h">Industrial park</h3><ul class="park-lines">${lines.map((l) => `<li class="${l.out ? "out" : "in"}">${esc(l.text)}</li>`).join("")}</ul>
+  return `<h3 class="sub-h">Industrial park</h3><ul class="park-lines">${lines.map((l) => `<li class="${l.out ? "out" : "in"}${l.stopped !== undefined ? " stopped" : ""}">${esc(l.text)}</li>`).join("")}</ul>
     <p class="small muted">The belt carries a few loads an hour on its own; trucks take the rest. Linked plants pollute further.</p>`;
 }
 

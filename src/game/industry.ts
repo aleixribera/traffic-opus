@@ -328,7 +328,18 @@ export const PLANTS: Record<PlantKind, PlantDef> = {
   ...MEGA_PLANTS,
 };
 
+/** A wait in words: "under an hour", "about 6 hours", "about 2 days". */
+export function aboutHours(h: number): string {
+  if (h < 0.75) return "under an hour";
+  if (h < 36) { const n = Math.max(1, Math.round(h)); return `about ${n} hour${n === 1 ? "" : "s"}`; }
+  return `about ${Math.round(h / 24)} days`;
+}
+
 export const PLANT_KINDS = Object.keys(PLANTS) as PlantKind[];
+// One voice for what a works does (review 2026-11-10, B5: the Power Plant's card said "Burns coal" while its banner
+// and the hand bar said "coal or wood chips"): the catalog card, the panel and the tooltip read BUILDING_TYPES, and
+// a works' line there is its recipe's own, set here from PLANTS (config.ts leaves it empty).
+for (const k of PLANT_KINDS) BUILDING_TYPES[k].blurb = PLANTS[k].blurb;
 export const isPlantKind = (k: BuildingKind | string): k is PlantKind => k in PLANTS;
 /** What each worker is paid per hour. */
 export const WAGE = 1;
@@ -1339,6 +1350,34 @@ export class Industry {
     }
   }
 
+  /**
+   * A works whose goods are all spoken for by the loads already on their way to the works that use them, said as
+   * those loads (review 2026-11-10: the Smelter read "waiting for coal" beside the Coal Mine's "your plants have all
+   * they can store", which read as a contradiction): "3 loads on the way to the Smelter; the next lands in about 2
+   * hours". Null when none are on the road (then they are full, and the plain words are right).
+   */
+  private spokenFor(seg: number, p: Product): string | null {
+    let n = 0, next = Infinity;
+    const to = new Map<number, number>();
+    for (const t of this.h.trips()) {
+      const r = t.haul;
+      if (!r || r.done || r.big || r.leg !== "out" || r.product !== p) continue;
+      const o = this.h.buildings.byId.get(r.dest);
+      if (!o?.plant || o.plant.site || !o.access || !this.h.connected(seg, o.access.seg)) continue;
+      n += r.n;
+      to.set(o.id, (to.get(o.id) ?? 0) + r.n);
+      if (r.eta !== undefined) next = Math.min(next, r.eta);
+    }
+    if (n < 1) return null;
+    const ids = [...to.keys()];
+    const kinds = new Set(ids.map((id) => this.h.buildings.byId.get(id)!.kind));
+    const where = kinds.size === 1 ? `the ${BUILDING_TYPES[[...kinds][0]].name}${ids.length > 1 ? "s" : ""}` : "your plants that use it";
+    const h = Number.isFinite(next) ? Math.max(0, next - this.h.time) / HOUR : null;
+    const when = h === null ? "" : h > 0.75 ? `; the next lands in ${aboutHours(h)}` : "; the next lands within the hour";
+    const k = Math.round(n);
+    return `${k === 1 ? "1 load" : `${k} loads`} on the way to ${where}${when}`;
+  }
+
   /** Why a load has nowhere to go: no town on its roads uses it, or they all have enough for today. */
   private noBuyer(from: Building, p: Product): string {
     const name = PRODUCTS[p].name.toLowerCase();
@@ -1348,7 +1387,7 @@ export class Industry {
       for (const o of this.h.buildings.list) {
         if (!o.plant || !o.access || !this.h.connected(seg, o.access.seg)) continue;
         if (!takesIn(o.kind as PlantKind, p) && !(o.plant.site ? false : Industry.wantsSupply(o).includes(p))) continue;
-        if (!o.plant.site) return `Your plants that use ${name} have all they can store, with the loads on their way`;
+        if (!o.plant.site) return this.spokenFor(seg, p) ?? `Your plants that use ${name} have all they can store, with the loads on their way`;
         site = true;
       }
       if (site) return `The plants that will use ${name} are still building sites`;
