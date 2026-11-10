@@ -21,7 +21,7 @@ import { isMega, megaStage } from "../game/megaprojects";
 import { fieldLook, fieldModel } from "../game/calendar";
 import { seasonal } from "./envShader";
 import type { LampSpot, WindowSpot } from "./lamps3d";
-import { TOWN_MODELS, Variety, townChoices } from "./townmodels";
+import { TOWN_MODELS, Variety, townChoices, wallChoices } from "./townmodels";
 import { LOTS } from "./furniture";
 import type { Solid } from "../ui/pick";
 import type { WindowKind } from "./daylight";
@@ -86,8 +86,15 @@ function parkedHow(look: number, out: THREE.Matrix4): THREE.Matrix4 {
   return out.makeRotationY(s.yaw).setPosition(s.across, 0, s.along);
 }
 
-/** Front yard depth (m) for a lot with this much depth to spare around its model. */
-const setback = (spare: number) => Math.min(spare * 0.68, 5);
+/** How far out from the kerb a car stands that has pulled up at a front of the street wall (m). */
+const KERB_STOP = 1.3;
+
+/**
+ * How far behind its lot's front line a model stands (m), on a lot with this much depth to spare around it: hardly
+ * at all. Its front garden is the front strip before the lot (config ZONE_SETBACK) and its model's own front yard;
+ * the depth to spare is its back garden, so a street of homes stands along its street, not lost behind it.
+ */
+const setback = (spare: number) => Math.min(spare * 0.68, 1.2);
 
 const SITE = 0xb59d6a; // construction site: bare earth
 /** A building getting its roof on: raw timber, brick and concrete before the paint. */
@@ -119,6 +126,11 @@ const PAVE_FIELD = [2, 1.4], PAVE_RECT = [1.4, 0.8], PAVE_PATH = [0.7, 0.4], PAV
 /** A shop's apron, between its lot and the pavement: concrete flags a shade warmer than the pavement's. */
 const APRON = 0xc2b9a1;
 const PAVE_APRON = [1.2, 0.25];
+/** The pavement before a front of the street wall, from its doors to the kerb: flagstones. */
+const FORECOURT = 0xc9c2ae;
+const PAVE_FORECOURT = [1.4, 0.8];
+/** A court behind a front of the street wall has a tree for about every square of this side (m). */
+const COURT_TREE = 9;
 /** Front gardens: a hedge or picket fence comes in runs of this length (m; the Blender models), scaled to fit. */
 const FRONT_RUN = 4;
 /** How far a corner lot's side, and a town square's edges, reach out to a kerb (m). */
@@ -427,8 +439,7 @@ export class Buildings3D {
       return out;
     }
     // the model stands near the street; deep lots keep the rest as a back yard
-    const spare = Math.max(0, b.hd * 2 - this.depth(b));
-    this.tmp2.makeScale(b.fit, b.fit * b.tall * grow, b.fit).setPosition(0, 0, spare / 2 - this.setbackOf(b, spare));
+    this.tmp2.makeScale(b.fit, b.fit * b.tall * grow, b.fit).setPosition(0, 0, this.zOf(b));
     return out.multiply(this.tmp2);
   }
 
@@ -438,9 +449,47 @@ export class Buildings3D {
     if (p.slot) return this.slotMatrix(out, siteFrame(b.c, b.rot, b.side, b.hd), p.slot, 1);
     lotMatrix(out, b.c, b.rot, b.side);
     if (!b.zone) return out;
-    const spare = Math.max(0, b.hd * 2 - this.depth(b));
-    this.tmp2.makeScale(b.fit, b.fit * b.tall, b.fit).setPosition(0, 0, spare / 2 - this.setbackOf(b, spare));
+    this.tmp2.makeScale(b.fit, b.fit * b.tall, b.fit).setPosition(0, 0, this.zOf(b));
     return out.multiply(this.tmp2);
+  }
+
+  /**
+   * A model of the street wall, if this building is drawn with one (townmodels.ts WALL_MODELS): it then stands with
+   * its front wall on the lot's front line, as wide as the lot, wall to wall with its neighbours.
+   */
+  private wallOf(b: Building): MergedModel | undefined {
+    if (!b.wall || !b.zone) return undefined;
+    const mm = this.geoOf(this.modelOf(b));
+    return mm?.body && this.walled.has(b.id) ? mm : undefined;
+  }
+  /** the buildings drawn with a wall model (modelOf) */
+  private walled = new Set<number>();
+
+  /**
+   * Where a zoned building's model stands on its lot (lot z of its middle): near the street, a deep lot keeping the
+   * rest as a back yard; a front of the street wall, its front wall on the lot's front line.
+   */
+  private zOf(b: Building): number {
+    const w = this.wallOf(b);
+    if (w) return b.hd - w.body![3] * b.fit;
+    const spare = Math.max(0, b.hd * 2 - this.depth(b));
+    return spare / 2 - this.setbackOf(b, spare);
+  }
+
+  /** How deep a zoned building's lot is in use (m, from its front line): the model, its front yard and its own yard. */
+  private usedDepth(b: Building): number {
+    const w = this.wallOf(b);
+    if (w) return (w.body![3] - w.geo.boundingBox!.min.z) * b.fit;
+    const spare = Math.max(0, b.hd * 2 - this.depth(b));
+    return b.hd * 2 - spare + this.setbackOf(b, spare) + BACK_YARD;
+  }
+
+  /** Which side of a lot a side street passes (-1: its left, lot -x; 1: its right; 0: neither), for corner buildings. */
+  private cornerOf(b: Building): -1 | 0 | 1 {
+    if (!b.access) return 0;
+    const toward = scale(right(fromAngle(b.rot)), -b.side);
+    const e = this.sidesOf(b, { x: toward.y, y: -toward.x }, b.hw - 0.4);
+    return e[1] > 0.2 ? -1 : e[0] > 0.2 ? 1 : 0;
   }
 
   private baseColor(b: Building): number | null {
@@ -456,14 +505,22 @@ export class Buildings3D {
    */
   private modelOf(b: Building): string {
     if (!b.zone || !TOWN_MODELS[b.kind]) return b.kind;
+    // (a front of the street wall: a model made for a lot of its width; a corner building where a side street passes)
+    const corner = b.wall ? this.cornerOf(b) : 0;
     const got = this.picked.get(b.id);
-    if (got && got.kind === b.kind && got.fit === b.fit && got.tall === b.tall) return got.model;
-    const choices = townChoices(b.kind, b.fit, b.tall, b.id, (m) => this.geoOf(m)?.design).filter((m) => this.geoOf(m));
+    if (got && got.kind === b.kind && got.fit === b.fit && got.tall === b.tall && got.corner === corner) return got.model;
+    const design = (m: string) => this.geoOf(m)?.design;
+    let choices = b.wall ? wallChoices(b.kind, b.fit, b.tall, b.id, corner, design).filter((m) => this.geoOf(m)?.body) : [];
+    if (choices.length) this.walled.add(b.id);
+    else {
+      this.walled.delete(b.id);
+      choices = townChoices(b.kind, b.fit, b.tall, b.id, design).filter((m) => this.geoOf(m));
+    }
     const model = choices.length ? this.variety.pick(b.id, b.kind, b.c.x, b.c.y, Math.max(44, b.hw * 7), choices) : b.kind;
-    this.picked.set(b.id, { kind: b.kind, fit: b.fit, tall: b.tall, model });
+    this.picked.set(b.id, { kind: b.kind, fit: b.fit, tall: b.tall, corner, model });
     return model;
   }
-  private picked = new Map<number, { kind: string; fit: number; tall: number; model: string }>();
+  private picked = new Map<number, { kind: string; fit: number; tall: number; corner: number; model: string }>();
   private variety = new Variety();
 
   /**
@@ -471,7 +528,7 @@ export class Buildings3D {
    * front), its yard and parking behind it down an alley beside it. Undefined: a home, a filling station, a hall.
    */
   private viaOf(b: Building): [number, number] | undefined {
-    return b.zone ? this.geoOf(this.modelOf(b))?.via : undefined;
+    return b.zone && !this.wallOf(b) ? this.geoOf(this.modelOf(b))?.via : undefined;
   }
 
   /** A zoned building's front yard: none for one that stands on the pavement. */
@@ -500,6 +557,7 @@ export class Buildings3D {
    */
   private reachOf(b: Building): number {
     if (!b.zone) return isHall(b.kind) ? this.halfDepth(b) : b.hd;
+    if (this.wallOf(b)) return b.hd;
     return b.hd - this.setbackOf(b, Math.max(0, b.hd * 2 - this.depth(b))) + (DRIVE_X[b.kind] !== undefined || this.viaOf(b) ? -0.3 : 0.5);
   }
 
@@ -524,7 +582,7 @@ export class Buildings3D {
     for (const b of list) sig = (Math.imul(sig, 31) + b.id) | 0;
     LOTS.set("buildings", list.map((b) => rectCorners(b.c, b.hw, b.hd, b.rot)), sig);
     for (const id of this.layouts.keys()) if (!live.has(id)) this.layouts.delete(id);
-    for (const id of this.picked.keys()) if (!live.has(id)) { this.picked.delete(id); this.variety.drop(id); }
+    for (const id of this.picked.keys()) if (!live.has(id)) { this.picked.delete(id); this.walled.delete(id); this.variety.drop(id); }
     const lots = list.filter((b) => b.zone);
     const squares = list.filter((b) => isHall(b.kind)).map((b) => ({ b, plan: this.squareOf(b) }));
     // lawns (and the lots' yards) in one instanced mesh, paving in another
@@ -544,9 +602,10 @@ export class Buildings3D {
         // a business paves its lot edge to edge (two side by side share one yard, with no strip of grass between),
         // but only as far back as it is built: a deep lot's back is left to the grass, not an empty paved field
         const edge = home ? 0.8 : 0;
-        const spare = Math.max(0, b.hd * 2 - this.depth(b));
-        const used = home || b.built < 1 ? b.hd * 2 : b.hd * 2 - spare + this.setbackOf(b, spare) + BACK_YARD;
-        const deep = used < b.hd * 2 - BACK_WILD ? used : b.hd * 2;
+        const used = home || (b.built < 1 && !b.wall) ? b.hd * 2 : this.usedDepth(b);
+        // (the blocks and towers of a centre pave their courts to the back of the lot; a row of shop-houses keeps
+        // the grass behind its yards)
+        const deep = used < b.hd * 2 - BACK_WILD && !(b.wall && b.zone !== "comLow") ? used : b.hd * 2;
         ym.setMatrixAt(i, this.tmp.multiply(sc.makeScale(b.hw * 2 - edge, 1, deep - edge).setPosition(0, 0, b.hd - deep / 2)));
         ym.setColorAt(i, this.col.setHex(b.built < 1 ? SITE : YARD[ZONE_GROUP[b.zone!]]));
       });
@@ -883,6 +942,13 @@ export class Buildings3D {
     const u = fromAngle(b.rot);
     const away = right(u);
     const into = { x: away.x * b.side, y: away.y * b.side };
+    if (this.wallOf(b)) {
+      // a front of the street wall has no driveway: its customers and its deliveries pull up at the kerb before it,
+      // along the street the way its traffic runs
+      const go = scale(u, b.side);
+      const kerb = { x: b.front.x - into.x * KERB_STOP, y: b.front.y - into.y * KERB_STOP };
+      return { kerb, drive: add(kerb, scale(go, 2.1)), into: go, h: 0, bays: [] };
+    }
     const reach = this.reachOf(b);
     // (a home's driveway runs down the side of its lot: the way in shifts along the street with it)
     const dx = this.driveX(b), al = { x: -into.y * dx, y: into.x * dx };
@@ -945,6 +1011,7 @@ export class Buildings3D {
         continue;
       }
       if (isHall(b.kind) || isCivic(b.kind)) continue; // a hall's path is its square's (rebuild); a civic building's, its apron's
+      if (this.wallOf(b)) continue; // a front of the street wall stands on the pavement: no driveway
       const u = fromAngle(b.rot);
       const away = right(u); // * side points away from the road
       const reach = this.reachOf(b);
@@ -1005,23 +1072,42 @@ export class Buildings3D {
       const grp = ZONE_GROUP[b.zone!];
       const home = grp === "res";
       const site = b.built < 1;
-      const H = b.hw - 0.4, z0 = b.hd - 0.4;
+      // (a front of the street wall: the pavement runs from its doors to the kerb, the whole width of the lot, and
+      // is there before the building is)
+      const wall = !!this.wallOf(b);
+      const H = b.hw - 0.4, z0 = wall ? b.hd - 0.05 : b.hd - 0.4, Hs = wall ? b.hw : H;
       // the strip itself: lawn (or a construction site's bare earth) for a home, a paved apron for business
       const put = (m: THREE.Matrix4) => {
-        if (home || site) lawns.push({ m, c: site ? SITE : YARD.res });
+        if (wall) paved.push({ m, c: FORECOURT, pat: PAVE_FORECOURT });
+        else if (home || site) lawns.push({ m, c: site ? SITE : YARD.res });
         else paved.push({ m, c: APRON, pat: PAVE_APRON });
       };
-      if (kd - z0 > 0.2) put(rect(b, -H, H, z0, kd, 0.04));
+      if (kd - z0 > 0.2) put(rect(b, -Hs, Hs, z0, kd, 0.04));
       // a corner lot: its side on to the side street's kerb (a hair lower, so a neighbour's lot or strip wins)
       const sides = this.sidesOf(b, along, H);
-      for (const [s, e] of [[1, sides[0]], [-1, sides[1]]] as const) if (e > 0.2) put(rect(b, s * H, s * (H + e), -z0, kd, 0.03));
+      for (const [s, e] of [[1, sides[0]], [-1, sides[1]]] as const) if (e > 0.2) put(rect(b, s * Hs, s * (H + e), wall ? -b.hd : -z0, kd, 0.03));
+      if (wall && !site) {
+        // behind a front of the street wall, the rest of a deep lot is its court: a tree or two stand in it
+        const back = b.hd * 2 - this.usedDepth(b);
+        const nz = Math.floor((back - 2) / COURT_TREE), nx = Math.max(1, Math.floor((b.hw * 2 - 2) / COURT_TREE));
+        lotMatrix(L, b.c, b.rot, b.side, 0);
+        for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
+          const hh = Math.imul(b.id * 31 + i * 7 + j * 13 + 5, 2654435761) >>> 0;
+          if (hh % 10 >= 6) continue;
+          const x = -b.hw + ((i + 0.5) * b.hw * 2) / nx + (((hh >>> 8) % 100) / 100 - 0.5) * 2.4;
+          const z = -b.hd + ((j + 0.5) * back) / nz + (((hh >>> 16) % 100) / 100 - 0.5) * 2.4;
+          const w = this.v3.set(x, 0, z).applyMatrix4(L);
+          trees.push({ x: w.x, y: w.z, r: 1.7 + ((hh >>> 4) % 10) * 0.12, style: "park" });
+        }
+      }
       if (!home || site || b.abandoned) continue;
       // the front garden: from the lot's edge to the back of the pavement
       const garden = kd - pave - b.hd;
       const h = Math.imul(b.id, 2654435761) >>> 0;
       const small = b.zone === "resLow" || b.zone === "resRow";
       const pick = h % 10;
-      const kind = small ? (pick < 3 ? "picket" : pick < 6 ? "hedge" : null) : pick < 5 ? "hedge" : null;
+      // (most front gardens are fenced or hedged along the pavement; the rest are open lawn)
+      const kind = small ? (pick < 4 ? "picket" : pick < 8 ? "hedge" : null) : pick < 7 ? "hedge" : null;
       const dw = b.hw > 14 ? 2.6 : 1.7;
       if (kind && garden > (kind === "hedge" ? 1.0 : 0.6)) {
         const z = kd - pave - (kind === "hedge" ? 0.5 : 0.25);
@@ -1043,7 +1129,7 @@ export class Buildings3D {
       const r = Math.min(lawn / 2 - 0.2, 1.7 + ((h >>> 12) % 8) * 0.1);
       const off = dw + r + 0.6;
       const x = Math.abs(xd - off) <= Math.abs(xd + off) ? xd - off : xd + off;
-      if (lawn >= 3.6 && ((h >>> 8) % 10) < 4 && Math.abs(x) <= H - r * 0.5) {
+      if (lawn >= 3.6 && ((h >>> 8) % 10) < 6 && Math.abs(x) <= H - r * 0.5) {
         const w = this.v3.set(x, 0, b.hd + lawn / 2 - 0.3).applyMatrix4(lotMatrix(L, b.c, b.rot, b.side, 0));
         trees.push({ x: w.x, y: w.z, r, style: "park" });
       }
@@ -1288,7 +1374,7 @@ export class Buildings3D {
       lotMatrix(base, b.c, b.rot, b.side);
       room = { x0: -b.hw, x1: b.hw, z0: -b.hd, z1: b.hd };
       if (b.zone) {
-        const spare = Math.max(0, b.hd * 2 - this.depth(b)), dz = spare / 2 - this.setbackOf(b, spare), s = b.fit;
+        const dz = this.zOf(b), s = b.fit;
         x0 *= s; x1 *= s; z0 = z0 * s + dz; z1 = z1 * s + dz; top *= s * b.tall;
       }
     }

@@ -23,11 +23,10 @@ describe("zoning by size", () => {
   it("each size brings its era into the middle: terraces, then blocks, then flats and towers", () => {
     expect(ringZone(1, 2)).toBe("resRow");
     expect(ringZone(2, 2)).toBe("resMed");
-    expect(ringZone(2, 1)).toBe("comMid");
     expect(ringZone(3, 2)).toBe("resTower");
     expect(ringZone(3, 3)).toBe("resHigh");
-    expect(ringZone(3, 1)).toBe("comHigh");
-    expect(ringZone(4, 1)).toBe("comTower");
+    // (from a Village on the rings are homes: shops and offices stand in the street wall, tests/commerce.test.ts)
+    for (let s = 1; s < RINGS.length; s++) for (const [, z] of RINGS[s]) expect(ZONE_GROUP[z]).toBe("res");
     // and the edge keeps growing houses
     for (let s = 0; s < RINGS.length; s++) expect(ringZone(s, 12)).toBe("resLow");
   });
