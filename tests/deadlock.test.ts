@@ -89,7 +89,7 @@ function twoClose(d: number, rate: number, T = 1500) {
       let k = Math.floor(rnd() * ends.length);
       if (k === a) k = (k + 1) % ends.length;
       const far = ends[a] === wf || ends[a] === ef;
-      tr.request({ from: acc(net, ends[a], far ? 0.95 : 0.15), fromSide: far ? 2 : 1, to: acc(net, ends[k], 0.5), toSide: 1, trip: trip(), truck: rnd() < 0.2, tries: 0, wait: 0, through: true } as PendingSpawn);
+      tr.request({ from: acc(net, ends[a], far ? 0.95 : 0.15), fromSide: far ? -1 : 1, to: acc(net, ends[k], 0.5), toSide: 1, trip: trip(), truck: rnd() < 0.2, tries: 0, wait: 0, through: true } as PendingSpawn);
       asked++;
       next[a] += (-Math.log(1 - rnd()) * 3600) / rate;
     }
@@ -104,7 +104,7 @@ function twoClose(d: number, rate: number, T = 1500) {
 
 describe("junctions closer than a couple of car lengths work as one", () => {
   it("a car goes into the short link between them only with room on its way out beyond the far one", () => {
-    // (without the look-through: 147 s of circular waits, a jam break, a car waiting 156 s and 96 cars left queueing at the end)
+    // (without the look-through: 85 s of circular waits)
     const r = twoClose(22, 240);
     expect(r.close).toBe(true);
     expect(r.cycleT).toBeLessThan(3); // (a moment of one, while the waits change hands)
@@ -169,4 +169,53 @@ describe("junctions closer than a couple of car lengths work as one", () => {
     expect(g.towns.closeJunctions(plan(v2(140, 120), v2(140, -120)))).toBe(true);
     expect(g.towns.closeJunctions(plan(v2(240, 120), v2(120, 0)))).toBe(false);
   });
+});
+
+/**
+ * Gridlock round a block: four street crossings `L` m apart in a square, two roads out from each corner, and from
+ * each of those `rate` cars/h to the far side of the square, two sides of it along. Far more than it can carry:
+ * the sides fill, the car at the head of each waits for room on the next side, and the ring locks.
+ */
+function gridlock(L: number, rate: number, release: boolean, T = 1200) {
+  const net = new RoadNetwork();
+  net.begin();
+  const P = (x: number, y: number) => net.addNode(v2(x, y), 0);
+  const mk = (a: number, b: number) => net.addSeg(a, b, "street", straightCubic(net.nodes.get(a)!.p, net.nodes.get(b)!.p));
+  const c = [P(300, 300), P(300 + L, 300), P(300 + L, 300 + L), P(300, 300 + L)];
+  for (let i = 0; i < 4; i++) mk(c[i], c[(i + 1) % 4]);
+  const out = [
+    [mk(P(0, 300), c[0]), mk(P(300, 0), c[0])], [mk(P(300 + L, 0), c[1]), mk(P(600 + L, 300), c[1])],
+    [mk(P(600 + L, 300 + L), c[2]), mk(P(300 + L, 600 + L), c[2])], [mk(P(300, 600 + L), c[3]), mk(P(0, 300 + L), c[3])],
+  ];
+  net.commit();
+  net.rebuild();
+  const rnd = rng(99);
+  let cycleT = 0, step = 0;
+  const tr = new Traffic(net, { arrive: () => {}, fail: () => {} });
+  if (!release) (tr as unknown as { releaseCycles: () => void }).releaseCycles = () => {};
+  const srcs = out.flat();
+  const next = srcs.map(() => (rnd() * 3600) / rate);
+  for (let t = 0; t < T; t += DT) {
+    for (let a = 0; a < srcs.length; a++) while (next[a] <= t) {
+      const to = out[((a >> 1) + 2) % 4][a & 1];
+      tr.request({ from: acc(net, srcs[a], 0.3), fromSide: 1, to: acc(net, to, 0.5), toSide: -1, trip: trip(), truck: rnd() < 0.2, tries: 0, wait: 0, through: true } as PendingSpawn);
+      next[a] += (-Math.log(1 - rnd()) * 3600) / rate;
+    }
+    tr.step(DT);
+    if (++step % 15 === 0 && tr.waitCycles(10).length) cycleT += 15 * DT;
+  }
+  return { cycleT, quits: tr.jamQuits, releases: tr.cycleReleases };
+}
+
+describe("a circular wait that has stood a long time", () => {
+  it("lets one car out of it by another way (its trip runs late), so fewer drivers give up; rarely", () => {
+    // (a jam this heavy is the player's to fix: the release only keeps it from freezing solid. Measured: circular
+    // waits 218 -> 139 s, drivers giving up 10 -> 0, 8 cars let out by another way in 20 minutes)
+    const off = gridlock(80, 300, false), on = gridlock(80, 300, true);
+    expect(off.cycleT).toBeGreaterThan(60); // (the scenario does lock)
+    expect(on.releases).toBeGreaterThan(0);
+    expect(on.releases).toBeLessThan(30);
+    expect(on.cycleT).toBeLessThan(off.cycleT);
+    expect(on.quits).toBeLessThanOrEqual(off.quits);
+  }, 300000);
 });

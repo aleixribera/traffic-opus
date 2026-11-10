@@ -259,6 +259,13 @@ export const JAM_BREAK = 120;
 const JAM_BREAK_AGAIN = 15;
 /** A driver gives up after this long (s) standing in traffic without getting PROGRESS m further on (see JAM_BREAK). */
 export const GIVE_UP = 240;
+/**
+ * A circular wait (see Traffic.waitCycles: a ring of cars each held by the next, gridlock round a block) that has
+ * stood this long (s): the one at a junction that has stood longest takes another way out that has room, and finds
+ * its way on from there (its trip runs late). One slot opens and the ring moves. Before the jam breaker, which
+ * would only push a car into a box with no room beyond it; counted in cycleReleases, and rare.
+ */
+export const CYCLE_RELEASE = 90;
 /** How long (s) a driver giving up takes to fade off the road. */
 const QUIT_FADE = 0.4;
 const PROGRESS = 8;
@@ -370,6 +377,10 @@ export class Traffic {
   /** How often the jam breaker let a car in, and how many drivers gave up in a frozen jam (see JAM_BREAK). */
   jamBreaks = 0;
   jamQuits = 0;
+  /** How often a car left a circular wait by another way (see CYCLE_RELEASE). */
+  cycleReleases = 0;
+  private cycleLook = 0; // s since the last look for circular waits
+  private releasedAt = new Map<number, number>(); // node -> when a car last left a circular wait there
   private ringCaps = new Map<number, number>(); // ring id -> how many car slots it has
   private forks = new Map<number, number>(); // connector pair -> where they part (see forkAt)
   private gates = new Map<number, { v: Vehicle; at: V2 }>(); // building -> its last long truck out, till its tail clears the gate
@@ -644,6 +655,8 @@ export class Traffic {
       const b = this.breakFor.get(v.next.node);
       if (!b || v.wait > b.wait) this.breakFor.set(v.next.node, v);
     }
+    // a circular wait that has stood a long time (see CYCLE_RELEASE): looked for once a second
+    if ((this.cycleLook += dt) >= 1) { this.cycleLook = 0; this.releaseCycles(); }
     // junction permissions (only the front vehicle of each lane asks)
     for (const v of vs) this.planJunction(v);
     // accelerations
@@ -2382,6 +2395,33 @@ export class Traffic {
     return out;
   }
 
+  /** See CYCLE_RELEASE: in each ring that has stood that long, one car at a junction takes another way out. */
+  private releaseCycles() {
+    for (const ring of this.waitCycles(CYCLE_RELEASE)) {
+      for (const v of ring) {
+        if (v.edge.kind !== "lane" || !v.next || v.granted || v.units) continue; // (a road train can't swing out)
+        const lane = v.edge as Lane;
+        // (and at one junction once in a while: the ring needs time to move up into the slot it opened)
+        if (lane.pl.length - v.s > 3 || this.time < (this.releasedAt.get(v.next.node) ?? -Infinity) + CYCLE_RELEASE / 3) continue;
+        const alt = lane.outs.find((c) => {
+          if (c.to === v.next!.to || c.turn === "U" || this.holdersInto(c.to).length) return false;
+          const first = (c.to.occ as Vehicle[])[0];
+          if ((first ? first.s - first.len : c.to.pl.length) < v.len + 3) return false;
+          return !!this.router.routeFromKey(dkey(c.to.seg, c.to.dir), v.dest);
+        });
+        if (!alt) continue;
+        if (this.roomClaim.get(v.next.to) === v) this.roomClaim.delete(v.next.to);
+        this.releasedAt.set(v.next.node, this.time);
+        v.route = [dkey(lane.seg, lane.dir), dkey(alt.to.seg, alt.to.dir)];
+        v.ri = 0;
+        v.next = alt;
+        this.rerouteFrom(v, 1);
+        this.cycleReleases++;
+        break;
+      }
+    }
+  }
+
   /** Keep route[0..from] and plan the rest from route[from]. */
   private rerouteFrom(v: Vehicle, from: number) {
     const k = v.route[from];
@@ -2399,6 +2439,7 @@ export class Traffic {
     this.courtesy.clear();
     this.courtesyRest.clear();
     this.breakHot.clear();
+    this.releasedAt.clear();
     this.wishes.clear();
     this.tapers = null;
     const lost: Vehicle[] = [];
