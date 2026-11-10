@@ -1,0 +1,8 @@
+{
+  "browser": {
+    "launchOptions": {
+      "headless": true,
+      "args": ["--mute-audio"]
+    }
+  }
+}

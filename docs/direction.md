@@ -78,6 +78,9 @@ days apart). Seasons last 16 days and autumn is a freight rush. PC only (mouse a
   - **At integration only:** `npm run test:full` adds the long traffic and town scenarios (about 3 minutes on all
     cores). `npm run test:balance` plays whole games, so run it only when you need a balance measurement.
   - Never leave a test run or dev server going when you finish.
+- **Browsers are always headless and muted** (the owner works on this PC): never pass `--headed`.
+  `.playwright/cli.config.json` adds `--mute-audio` and is the default when `playwright-cli` runs from the repo
+  root; from anywhere else pass `--config <repo>/.playwright/cli.config.json`.
 - **Done means you watched it work**: `npx vite --port <your own port> --strictPort`, drive it with
   `playwright-cli -s=<your own session>` at 1600×900, and look at the screenshots. `window.app` is the game
   (`app.game`, `app.view`, `app.lookAt(p, halfH)`, `app.setSpeed(n)`); `__env.set({hour, season, day})` fixes the
