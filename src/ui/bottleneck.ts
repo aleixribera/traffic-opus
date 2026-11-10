@@ -171,7 +171,7 @@ export function makerKind(p: Product): PlantKind | undefined {
   return ks.find((k) => mainOf(k) === p) ?? ks.find((k) => (PLANTS[k].outputs[p] ?? 0) > 0);
 }
 
-/** Loads of p a day a town would still take to fill every crate (0: it has plenty, or does not buy it yet). */
+/** Loads of p a day a town would still take to have plenty (0: it has plenty, or does not buy it yet). */
 export function townWants(t: Town, p: Product): number {
   if (!needsOf(t.pop).includes(p)) return 0;
   const want = demandPerDay(p, t.pop), got = loadsLately(t, p);

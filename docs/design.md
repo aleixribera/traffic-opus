@@ -680,15 +680,16 @@ A town should visibly turn from a hamlet into a city over a playthrough: bigger,
   The map shows each town's label with an icon for any need in shortage.
 - **Needs a child can read (owner, 2026-11-08: "I don't understand this part. Can you make it easier to see, like
   for children almost, and also add icons to the town").** Each need in the town panel is its picture, its name, one
-  word ("Plenty", "Enough", "Running low", "None!") and a row of crates: the loads a day coming, filled, against the
-  loads a day it wants (at most ten crates; past ten loads each crate stands for a round number of them, said under
-  the row). Under that, one sentence of what to do ("Bring 4 more loads of food a day", "Food is fine"). The words
+  word ("Plenty", "Enough", "Running low", "None!") and a bar: the loads a day coming, filled, against the loads a
+  day it wants, with the figure under it ("0 of 518 loads a day"). The bars share one scale: a track's length is its
+  want against the town's biggest want, so a small need draws a short track. Under that, one sentence of what to do ("Bring 4 more loads of food a day", "Food is fine"). The words
   follow the sim: "Enough" from 80% of a day's need (where growthPerDay grows a town at full pace), "Plenty" from
-  all of it, "None!" while not one crate's worth is coming. The need still to come shows greyed: "Soon: Planks, when
-  it reaches 100 people". The figures (loads a day, what the shops buy at most, today's tally) sit in the row's
+  all of it, "None!" while not one step's worth (a tenth of the want, rounded) is coming. The need still to come shows greyed: "Soon: Planks, when
+  it reaches 100 people". The rest (what the shops buy at most, today's tally) sits in the row's
   tooltip and under Details. On the map, a town's nameplate shows its needs only while one wants seeing to: each
-  picture on a disc ringed green, ochre or brick (with a "!" for none), the fine ones smaller; zoomed far out only the
-  needs in trouble stay. A town no road reaches yet shows its needs greyed with "No road yet". The supply bar is gone.
+  picture on a disc ringed green, ochre or brick (with a "!" for none at its bottom right), the fine ones smaller.
+  Zoomed far out the discs give way to one chip ("Short of 5 needs", or "Needs food and planks" for one or two), so
+  they never pile on each other or the plate. A town no road reaches yet shows its needs greyed with "No road yet". The supply bar is gone.
 - **Growth in words, no numbers (owner, 2026-11-08: "remove the numbers and just tell the player 'growing' and
   'growing a lot'").** A town's panel, the Towns list and its status say "Shrinking", "Not growing", "Growing
   slowly", "Growing" or "Growing fast", with the reason when it is held back ("Not growing, needs food"). The word is
@@ -958,7 +959,21 @@ A town's panel says it once: one status line, one piece of advice with Show it, 
 **The goal line.** Under the goal being worked on, one line in the same voice as the panels: WHERE (the soil for the
 first farm, with its distance and direction) until there is a works to talk about, then NOW (the works the goal
 waits on and its status line, with when its first truck leaves). A click flies to it. The first ten game hours
-are quiet by design; the line counts them down, so the wait reads as a wait.
+are quiet by design; the line counts them down, so the wait reads as a wait. While a panel is open the goal and its
+NOW line sit in a strip above the panel, so the next step never leaves the screen; a click on the strip closes the
+panel and shows the Goals card. With every goal reached there is no strip.
+
+**One unit for goods: loads a day.** Every place a player sees an amount of goods says it in loads a day: the
+town's needs, a works' output ("10 loads, iron ore a day, can 10"), the Economy window ("Crops 4 of 6": made in the
+last 24 hours against what the works can make, with a bar for the ratio) and the hourly chart's full-pace line.
+
+**Type scale.** Four steps (src/ui/theme.css): 12 px only for short UPPERCASE kickers (and chart axis labels), body
+14 px at 1600 wide rising to 16 px, titles 18 to 20 px, headlines 24 px. No lower-case sentence is under 14 px.
+
+**Demolish** sits alone in a footer at the bottom of a works panel, away from Close, and still takes two clicks.
+
+**The radio** in the status bar says what it is: a RADIO kicker over the tune in quotes, "Tuning in", "Off" or
+"Sound muted".
 
 **The first goal's pointer.** Until a farm is placed, a brass plate at the screen edge points at the fertile soil
 with its distance, at any turn and tilt, and flies there on a click; with the soil on screen it becomes a pin on

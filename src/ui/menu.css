@@ -15,7 +15,7 @@
 .mm-item:hover, .mm-item:focus-visible { background: var(--plate-2); box-shadow: inset 3px 0 0 var(--ochre); }
 .mm-item:focus-visible { outline: 2px solid var(--ochre); outline-offset: -2px; }
 .mm-l { font-size: 16px; font-weight: 600; }
-.mm-s { font-size: var(--t-xs); line-height: 1.35; color: var(--cream-2); }
+.mm-s { font-size: var(--t-sm); line-height: 1.35; color: var(--cream-2); }
 .mm-item.primary .mm-l { font: 700 21px/1.1 var(--f-display); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ochre-hi); }
 .mm-item[data-a="explore"] { margin-top: 6px; border-top: 1px solid var(--rule); border-radius: 0 0 var(--r) var(--r); padding-top: 12px; }
 .mm-item[data-a="keys"] { padding-top: 8px; padding-bottom: 8px; }
@@ -52,7 +52,7 @@
 .mm-news:hover .mm-news-t { text-decoration-color: var(--ochre); }
 
 /* the version, in the bottom-right corner in every mode: a small stamped tab */
-.ver-tag { position: fixed; right: 0; bottom: 0; z-index: 4; background: var(--bar); border: 1px solid var(--rule-2); border-right: 0; border-bottom: 0; border-radius: var(--r) 0 0 0; padding: 2px 8px; font: 600 var(--t-xs)/16px var(--f-text); letter-spacing: 0.04em; color: var(--cream-3); font-variant-numeric: tabular-nums lining-nums; cursor: pointer; }
+.ver-tag { position: fixed; right: 0; bottom: 0; z-index: 4; background: var(--bar); border: 1px solid var(--rule-2); border-right: 0; border-bottom: 0; border-radius: var(--r) 0 0 0; padding: 2px 8px; font: 600 var(--t-sm)/18px var(--f-text); letter-spacing: 0.04em; color: var(--cream-3); font-variant-numeric: tabular-nums lining-nums; cursor: pointer; }
 .ver-tag:hover, .ver-tag:focus-visible { color: var(--ochre-hi); text-decoration: underline; text-underline-offset: 2px; }
 .ver-tag:focus-visible { outline: 2px solid var(--ochre); outline-offset: 1px; }
 /* (in play it sits on the bottom bar's top rule, clear of the speed buttons) */

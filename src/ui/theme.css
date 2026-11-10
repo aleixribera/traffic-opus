@@ -47,11 +47,14 @@
   /* ---- type */
   --f-display: "Big Shoulders Display", "Arial Narrow", "Roboto Condensed", sans-serif;
   --f-text: "Barlow", "Segoe UI", system-ui, sans-serif;
-  --t-xs: 12px;    /* the floor: units, captions */
-  --t-sm: 13px;    /* body, rows */
-  --t-md: 14px;    /* menu items, emphasised rows */
-  --t-plate: 18px; /* panel titles (display caps) */
-  --t-big: 18px;   /* money and clock readouts */
+  /* four steps (design audit 2026-11-10, F24, F29, F34): a label, body, a title and a headline. Body and title grow
+     with the screen, so 1920 wide reads larger than 1440: 14px at 1600 and under, 15px at 1920, 16px at most. */
+  --t-xs: 12px;    /* labels: short UPPERCASE kickers only, never a sentence */
+  --t-sm: clamp(14px, calc(9px + 0.3125vw), 16px); /* body: rows, captions, advice, every sentence */
+  --t-md: var(--t-sm); /* (emphasised rows: body size, a heavier weight) */
+  --t-plate: clamp(18px, calc(8px + 0.625vw), 20px); /* titles: panel titles, names, money and clock */
+  --t-big: var(--t-plate);
+  --t-head: 24px;  /* headlines: a dialog's title, the first goal's pointer */
   --t-banner: 30px;
   --t-title: 52px;
 

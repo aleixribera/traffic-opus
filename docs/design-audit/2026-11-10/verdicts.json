@@ -1,11 +1,117 @@
 {
-  "F04": { "verdict": "PASS", "note": "The plant now names the loop and the way out: 'it waits for this plant's own power. A load of wood chips is on the way from your Sawmill (3.1 km): about 8 hours, and that gets both going.'", "evidence": "after/late-powerplant@desktop" },
-  "F10": { "verdict": "PASS", "note": "With the Farm in hand the 'Start a food chain' tip steps aside; Tool options say how to place it", "evidence": "after/farm-in-hand@desktop" },
-  "F11": { "verdict": "PASS", "note": "Both placement rules now sit together in Tool options: 35% fertile soil, and within 400 m of a road it lays its own street", "evidence": "after/farm-in-hand@desktop" },
-  "F15": { "verdict": "PASS", "note": "font-variant-numeric: tabular-nums restored on the cash and clock values (the font shorthand on <b> had reset it)", "evidence": "hud.css .cb-money b, .cb-clock b" },
-  "F20": { "verdict": "PASS", "note": "The rate under a red status is no longer green, and a works short of power is never promoted to 'all it can'. 'can' is already the full-power figure", "evidence": "after/late-works@desktop: 0.4/h in cream" },
-  "F21": { "verdict": "PASS", "note": "One phrase for the state: the level line now reads 'held back: No power' under 'No power'", "evidence": "after/late-works@desktop" },
-  "F22": { "verdict": "PASS", "note": "No good green under a red status", "evidence": "after/late-works@desktop" },
-  "F23": { "verdict": "PASS", "note": "Level track now a plate-3 fill with a brass pinstripe, 5 px", "evidence": "after/late-works@desktop, after/late-powerplant@desktop" },
-  "F33": { "verdict": "PASS", "note": "Price reads '$8,000 · upkeep $12/h'", "evidence": "after/farm-in-hand@desktop" }
+  "F01": {
+    "verdict": "PASS",
+    "note": "With a panel open, a GOAL strip sits above it: the goal in full and a NOW line with the next step ('Your Farm: under construction'). Clicking it closes the panel and shows the full Goals card. Still open: nothing yet says the farm's crops become the food the goal asks for",
+    "evidence": "after/farm-no-road@desktop"
+  },
+  "F04": {
+    "verdict": "PASS",
+    "note": "The plant now names the loop and the way out: 'it waits for this plant's own power. A load of wood chips is on the way from your Sawmill (3.1 km): about 8 hours, and that gets both going.'",
+    "evidence": "after/late-powerplant@desktop"
+  },
+  "F05": {
+    "verdict": "PASS",
+    "note": "One unit everywhere a player sees goods: loads a day. Crates are gone from the town panel; the works key reads '10 loads, iron ore a day, can 10'; Economy rows are loads; the chart caption says 'full pace, N loads a day'",
+    "evidence": "after/late-town@desktop, after/late-works@wide, after/late-economy@desktop"
+  },
+  "F10": {
+    "verdict": "PASS",
+    "note": "With the Farm in hand the 'Start a food chain' tip steps aside; Tool options say how to place it",
+    "evidence": "after/farm-in-hand@desktop"
+  },
+  "F11": {
+    "verdict": "PASS",
+    "note": "Both placement rules now sit together in Tool options: 35% fertile soil, and within 400 m of a road it lays its own street",
+    "evidence": "after/farm-in-hand@desktop"
+  },
+  "F15": {
+    "verdict": "PASS",
+    "note": "font-variant-numeric: tabular-nums restored on the cash and clock values (the font shorthand on <b> had reset it)",
+    "evidence": "hud.css .cb-money b, .cb-clock b"
+  },
+  "F16": {
+    "verdict": "PASS",
+    "note": "Each Economy row is a ratio bar of made against what your works can make, with the figure as 'X of Y'. Steel 0 of 4 is empty, Crops 4 of 6 is two thirds",
+    "evidence": "after/late-economy@desktop"
+  },
+  "F17": {
+    "verdict": "PASS",
+    "note": "The 24 hourly strips are gone; the section header says what the bar means: 'Made, last 24 hours · loads, of what your works can make'",
+    "evidence": "after/late-economy@desktop"
+  },
+  "F19": {
+    "verdict": "PASS",
+    "note": "Demolish moved out of the header into a footer at the bottom of every works panel, far from Close, still two clicks",
+    "evidence": "after/late-works@desktop, after/farm-no-road@desktop"
+  },
+  "F20": {
+    "verdict": "PASS",
+    "note": "The rate under a red status is no longer green, and a works short of power is never promoted to 'all it can'. 'can' is already the full-power figure",
+    "evidence": "after/late-works@desktop: 0.4/h in cream"
+  },
+  "F21": {
+    "verdict": "PASS",
+    "note": "One phrase for the state: the level line now reads 'held back: No power' under 'No power'",
+    "evidence": "after/late-works@desktop"
+  },
+  "F22": {
+    "verdict": "PASS",
+    "note": "No good green under a red status",
+    "evidence": "after/late-works@desktop"
+  },
+  "F23": {
+    "verdict": "PASS",
+    "note": "Level track now a plate-3 fill with a brass pinstripe, 5 px",
+    "evidence": "after/late-works@desktop, after/late-powerplant@desktop"
+  },
+  "F24": {
+    "verdict": "PASS",
+    "note": "Body text is a fluid token: 14 px at 1600 wide, 15 px at 1920. The status sentences now follow it",
+    "evidence": "after/late-works@wide.dom.json: 15 px (was 13)"
+  },
+  "F25": {
+    "verdict": "PASS",
+    "note": "Need bars share one scale: each track's length is the want against the town's biggest want, so Food (518) runs full width and Fuel (69) is a short track",
+    "evidence": "after/late-town@desktop"
+  },
+  "F27": {
+    "verdict": "PASS",
+    "note": "At far zoom a town shows one summary chip ('Short of 5 needs', or 'Needs food and planks' for one or two) with a single alarm disc; the icon row only shows closer in. Industry map badges went from 13 to 16 px",
+    "evidence": "after/late-far@wide"
+  },
+  "F28": {
+    "verdict": "FAIL",
+    "note": "The radio is labelled now (RADIO kicker over the tune, new radio icon). The seven top-bar icons still have no visible labels; that part was not in this task",
+    "evidence": "after/fresh@desktop"
+  },
+  "F29": {
+    "verdict": "PASS",
+    "note": "Every lower-case run is 14 px or more; 12 px is kept only for short uppercase kickers and the SVG chart axis labels",
+    "evidence": "after/*.dom.json"
+  },
+  "F31": {
+    "verdict": "PASS",
+    "note": "The ticker reads as a radio: RADIO kicker, the tune in quotes ('“Alder Run Rag”') or 'Tuning in', 'Off', 'Sound muted'",
+    "evidence": "after/late-economy@desktop, after/fresh@desktop"
+  },
+  "F33": {
+    "verdict": "PASS",
+    "note": "Price reads '$8,000 · upkeep $12/h'",
+    "evidence": "after/farm-in-hand@desktop"
+  },
+  "F34": {
+    "verdict": "PASS",
+    "note": "Sizes are now 12 (kickers), 14 body, 18 titles, 24 headlines; at 1920 the body and titles step to 15 and 20. Was 12, 13, 13.7, 14, 16, 16, 17, 18, 19, 20, 21",
+    "evidence": "after/*.dom.json"
+  },
+  "F41": {
+    "verdict": "PASS",
+    "note": "No overlap at far zoom: one chip under each plate",
+    "evidence": "after/late-far@desktop"
+  },
+  "F42": {
+    "verdict": "PASS",
+    "note": "Quimbyton's five icons give way to 'Short of 5 needs' at far zoom; at mid zoom the discs are spaced 10 px with the '!' tucked bottom-right",
+    "evidence": "after/late-far@desktop, after/late-town@desktop"
+  }
 }

@@ -409,9 +409,10 @@ export function siteModel(g: Game, b: Building, led?: TradeLedger): PanelModel {
     // now, the season's harvest swing included)
     const { rate: r, can } = shownRate(g, b, p0);
     keys.push(r === null
-      ? { value: "–", label: "no output yet", title: `Can make ${fmtRate(can)} ${lower(p0)} an hour` }
-      // (never the good green under a red status: a mine with no power read a green "0.4/h")
-      : { value: fmtRate(r), unit: "/h", label: `${lower(p0)}, can ${fmtRate(can)}`, tone: can > 0 ? (status.tone === "bad" && toneOf(r / can, 0.75, 0.35) === "good" ? "" : toneOf(r / can, 0.75, 0.35)) : "", title: `${PRODUCTS[p0].name} made an hour lately, against ${fmtRate(can)} an hour fully staffed and supplied` });
+      ? { value: "–", label: "no output yet", title: `Can make ${fmtRate(can * 24)} loads of ${lower(p0)} a day` }
+      // (never the good green under a red status: a mine with no power read a green "0.4/h". In loads a day, the one
+      // unit goods are counted in wherever a player sees them: design audit 2026-11-10, F05)
+      : { value: fmtRate(r * 24), unit: " loads", label: `${lower(p0)} a day, can ${fmtRate(can * 24)}`, tone: can > 0 ? (status.tone === "bad" && toneOf(r / can, 0.75, 0.35) === "good" ? "" : toneOf(r / can, 0.75, 0.35)) : "", title: `Loads of ${lower(p0)} made a day lately, against ${fmtRate(can * 24)} a day fully staffed and supplied` });
     // a product the towns pay for: what it earns; one that only feeds your plants: what it ships
     if (outs.some((p) => PRODUCTS[p].price > 0)) {
       const net = P.last.earned - P.last.spent;

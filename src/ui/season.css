@@ -103,9 +103,9 @@
 .season-pop header { display: flex; align-items: center; gap: 8px; padding: 8px 14px 7px; background: var(--plate-2);
   border-bottom: 1px solid var(--ochre); box-shadow: 0 1px 0 var(--edge), 0 3px 0 var(--plate), 0 4px 0 var(--pin); }
 .season-pop header .season-glyph { width: 16px; height: 16px; color: var(--sc); }
-.season-pop header span { font: 800 22px/1 var(--f-display); letter-spacing: 0.1em; text-transform: uppercase; color: var(--cream); }
+.season-pop header span { font: 800 var(--t-head)/1 var(--f-display); letter-spacing: 0.1em; text-transform: uppercase; color: var(--cream); }
 .season-pop .sp-motto { margin: 11px 14px 0; color: var(--sc); font-size: var(--t-md); font-weight: 600; line-height: 18px; }
-.season-pop .sp-when { margin: 2px 14px 10px; color: var(--cream-2); font-size: var(--t-xs); font-variant-numeric: tabular-nums lining-nums; }
+.season-pop .sp-when { margin: 2px 14px 10px; color: var(--cream-2); font-size: var(--t-sm); font-variant-numeric: tabular-nums lining-nums; }
 .season-pop .sc-fx, .season-pop .sc-general, .season-pop .sc-hint { margin-left: 14px; margin-right: 14px; }
 .season-pop .sc-fx li { font-size: var(--t-sm); }
 .season-pop .sc-general { text-align: left; font-size: var(--t-sm); }

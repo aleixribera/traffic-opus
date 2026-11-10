@@ -20,6 +20,8 @@ export interface MapLabel {
   icons?: { svg: string; cls: string }[];
   /** a few words beside the pictograms ("No road yet") */
   note?: string;
+  /** zoomed out past compactHalfH, one chip in place of the pictograms: "Needs food", "Short of 3 needs" (needs.ts labelSummary) */
+  summary?: { text: string; tone: string };
   compactHalfH?: number;
   /** an open order: a tag hung beside the nameplate with what it is for ("Schoolhouse") */
   order?: string;
@@ -126,8 +128,9 @@ export class MapLabels {
         icons = document.createElement("span");
         icons.className = "ml-icons";
         icons.setAttribute("aria-hidden", "true");
-        icons.innerHTML = l.icons.map((x) => `<i class="${x.cls}">${x.svg}</i>`).join("") + (l.note ? "<em></em>" : "");
+        icons.innerHTML = l.icons.map((x) => `<i class="${x.cls}">${x.svg}</i>`).join("") + (l.note ? "<em></em>" : "") + (l.summary ? `<b class="ml-sum ${l.summary.tone}"></b>` : "");
         if (l.note) icons.querySelector("em")!.textContent = l.note;
+        if (l.summary) icons.querySelector(".ml-sum")!.textContent = l.summary.text;
         e.appendChild(icons);
       }
       this.el.appendChild(e);

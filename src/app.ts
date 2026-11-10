@@ -48,7 +48,7 @@ const FINE_TURN = Math.PI / 180;
 import { ZONES } from "./game/zones";
 import { MIN_DEPOSIT, PLANTS, PRODUCTS, UNPOWERED, isPlantKind, type Product } from "./game/industry";
 import { CIVICS } from "./game/civics";
-import { labelNeeds, type LabelNeeds } from "./ui/needs";
+import { labelNeeds, labelSummary, type LabelNeeds } from "./ui/needs";
 import { steadyProblem, tally } from "./ui/bottleneck";
 import { dearShare } from "./ui/cost";
 import { productIcon } from "./ui/icons";
@@ -2383,6 +2383,7 @@ export class App {
           : ln.kind === "noroad" ? ln.needs.map((p) => ({ svg: productIcon(p), cls: "noroad" }))
           : ln.needs.map((n) => ({ svg: productIcon(n.p), cls: n.state })),
         note: ln.kind === "noroad" ? (ln.joined ? "First load due" : "No road yet") : undefined,
+        summary: labelSummary(ln) ?? undefined,
         compactHalfH: 9000,
         onClick: () => { this.setTool({ tool: "inspect" }); this.hud?.openTown(t.id); },
       };

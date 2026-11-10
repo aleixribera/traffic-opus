@@ -913,7 +913,8 @@ export class Hud {
    */
   private renderTips() {
     const g = this.app.game;
-    if (this.sel || this.app.mode !== "play") { this.tut.hidden = true; this.hint(null); return; }
+    if (this.app.mode !== "play") { this.tut.hidden = true; this.hint(null); return; }
+    if (this.sel) { this.goalStrip(); return; }
     const prefs = this.tipPrefs;
     const open = g.progress.open();
     // (with every goal reached the card lists the towns' shortfalls itself: the tip that says the same stands down)
@@ -965,6 +966,30 @@ export class Hud {
       if (hadFocus && !this.tut.contains(document.activeElement)) btn.focus({ preventScroll: true });
     }
     this.hint(folded ? null : tip?.cat ?? null);
+  }
+
+  /**
+   * While a panel stands where the Goals card was, the goal stays in view as one line over it (design audit
+   * 2026-11-10, F01: the first farm's panel took the card's place, and with it the goal and the next step): the goal
+   * and how far along it is, and under it what the chain is doing now when there is something (the goal line's own
+   * words, cut to one line). Click it to put the panel away and see the card.
+   */
+  private goalStrip() {
+    const g = this.app.game, m = g.progress.open()[0];
+    this.hint(null);
+    if (!m) { this.tut.hidden = true; this.tut.dataset.html = ""; return; }
+    const [have, need] = m.measure(g.progressView());
+    const now = goalNow(g, m, have);
+    const k = now?.key ?? "Now";
+    const text = now ? `${now.who ? `${now.who}: ${now.text[0].toLowerCase()}${now.text.slice(1)}` : now.text}.` : "";
+    const full = `${m.name}: ${m.goal}, ${measureText(m, have, need)}.${now ? ` ${k}: ${goalNowSay(now)}` : ""}`;
+    const nowRow = now ? `<span class="gl-now-k">${k}</span><span class="gl-strip-t ${now.tone}">${escapeHtml(text)}</span>` : "";
+    const html = `<button type="button" class="gl-strip" title="${escapeHtml(full)} Click to see your goals." aria-label="${escapeHtml(full)} Show the goals"><span class="gl-now-k">Goal</span><span class="gl-strip-t"><b>${escapeHtml(m.goal)}</b></span><span class="num">${measureText(m, have, need)}</span>${nowRow}</button>`;
+    this.tut.hidden = false;
+    if (this.tut.dataset.html === html) return;
+    this.tut.dataset.html = html;
+    this.tut.innerHTML = html;
+    this.tut.querySelector<HTMLButtonElement>(".gl-strip")!.onclick = () => { this.sfx.play("click"); this.closeSelection(); };
   }
 
   /**
@@ -1588,22 +1613,23 @@ export class Hud {
       return `<li><button class="ec-row" data-id="${b.id}" title="Show this ${escapeHtml(BUILDING_TYPES[b.kind].name)} on the map"><span class="ec-ic" aria-hidden="true">${iconFor(b.kind)}</span><span class="ec-name"><b>${BUILDING_TYPES[b.kind].name}</b><span class="small muted">${escapeHtml(whereIs(g, b))}</span>${word}</span><span class="num ${moneyTone(net)}">${signed(net)}</span></button></li>`;
     }).join("");
     // what the company made over the last day, per product, against what its plants can make
-    const made = new Map<Product, { made: number; can: number; byHour: number[] }>();
+    const made = new Map<Product, { made: number; can: number }>();
     for (const b of g.industry.plants()) {
       if (b.built < 1 || b.plant!.site) continue;
       for (const p of Object.keys(PLANTS[b.kind as PlantKind].outputs) as Product[]) {
-        const m = Industry.madeLately(b, p), e = made.get(p) ?? { made: 0, can: 0, byHour: Array(HIST_HOURS).fill(0) };
+        const m = Industry.madeLately(b, p), e = made.get(p) ?? { made: 0, can: 0 };
         // (a plant not a day old yet: what it could make in the hours it has worked)
         e.made += m.made; e.can += Industry.perDay(b, p) * Math.min(1, m.hours / HIST_HOURS);
-        m.byHour.forEach((v, i) => { e.byHour[HIST_HOURS - m.byHour.length + i] += v; });
         made.set(p, e);
       }
     }
-    const prodRows = [...made].map(([p, e]) => `<li><span class="pd-name">${productIcon(p)}${PRODUCTS[p].name}</span>${hourTicks(e.byHour, PRODUCTS[p].color)}<span class="num"><b>${fmtNum(Math.round(e.made))}</b><span class="muted"> / ${fmtNum(Math.round(e.can))}</span></span></li>`).join("");
+    // (a bar filled to made of can make, in the product's colour: design audit 2026-11-10, F16 and F17. The hour by
+    // hour picture is the works' own Details chart)
+    const prodRows = [...made].map(([p, e]) => `<li><span class="pd-name">${productIcon(p)}${PRODUCTS[p].name}</span>${ratioBar(e.made, e.can, PRODUCTS[p].color)}<span class="num"><b>${fmtNum(Math.round(e.made))}</b><span class="muted"> of ${fmtNum(Math.round(e.can))}</span></span></li>`).join("");
     const html = `<p class="win-sub">${n === 1 ? "Last hour" : `Average hour, last ${n} hours`}</p>
       <dl class="facts money-rows">${rows.filter(([, v, always]) => always || Math.abs(v) >= 0.5).map(([k, v]) => `<dt>${k}</dt><dd class="${moneyTone(v)}">${signed(v)}</dd>`).join("")}
       <dt class="tot">Balance</dt><dd class="tot ${moneyTone(total)}">${signed(total)}</dd></dl>
-      ${prodRows ? `<h3 class="sub-h">Made, last 24 hours <span class="muted">· made / can make</span></h3><ul class="pd-list">${prodRows}</ul>` : ""}
+      ${prodRows ? `<h3 class="sub-h">Made, last 24 hours <span class="muted">· loads, of what your works can make</span></h3><ul class="pd-list">${prodRows}</ul>` : ""}
       ${plants ? `<h3 class="sub-h">Your works, last hour <span class="muted">· click one to go there</span></h3><ul class="ec-list">${plants}</ul>` : ""}
       ${sparkline(g.history.map((x) => x.money), "Money")}`;
     if (!this.setWin("Economy", html)) return;
@@ -1882,7 +1908,7 @@ export class Hud {
    * a status line with its mark, three key numbers, the flow in and out as chips, the level bar, then whatever else
    * there is to read tucked under Details (open or shut per kind, remembered).
    */
-  private anatomy(m: PanelModel, o: { actions?: string; lead?: string; body?: string; details?: string; kind: string }): string {
+  private anatomy(m: PanelModel, o: { actions?: string; danger?: string; lead?: string; body?: string; details?: string; kind: string }): string {
     const st = m.status;
     const keys = m.keys.length ? `<div class="ip-keys" style="--n:${m.keys.length}">${m.keys.map((k) => `<div class="ip-key"${k.title ? ` title="${escapeHtml(k.title)}"` : ""}><b class="${k.tone ?? ""}">${escapeHtml(k.value)}${k.unit ? `<small>${escapeHtml(k.unit)}</small>` : ""}</b><span>${escapeHtml(k.label)}</span></div>`).join("")}</div>` : "";
     const chip = (c: FlowChip) => {
@@ -1903,23 +1929,28 @@ export class Hud {
     return `<header class="ip-head"><span class="svc-tag${/^(junction|roundabout|road:)/.test(m.icon) ? " lit" : ""}">${iconFor(m.icon)}</span><span class="ip-t"><span class="ip-tn">${escapeHtml(m.title)}</span>${m.sub ? `<small class="ip-ts">${escapeHtml(m.sub)}</small>` : ""}</span>${m.badge ? `<span class="lv-badge" title="Site level">${m.badge}</span>` : ""}${o.actions ?? ""}</header>
       <p class="ip-st ${st.tone}"><i aria-hidden="true"></i><span class="ip-st-t">${escapeHtml(st.text)}</span>${st.tag ? `<span class="ip-tag">${escapeHtml(st.tag)}</span>` : ""}</p>
       ${st.fix ? `<p class="ip-fix${st.show ? " has-show" : ""}"><span>${escapeHtml(st.fix)}</span>${st.show ? `<button class="fchip" data-k="building" data-id="${st.show.id}" title="Select your ${escapeHtml(BUILDING_TYPES[st.show.kind as BuildingKind]?.name ?? "works")} and fly to it">${iconFor(st.show.kind)}<span class="fc-t">Show it</span></button>` : ""}</p>` : ""}
-      ${o.lead ?? ""}${keys}${flow}${lv}${o.body ?? ""}${details}`;
+      ${o.lead ?? ""}${keys}${flow}${lv}${o.body ?? ""}${details}${o.danger ? `<footer class="ip-foot">${o.danger}</footer>` : ""}`;
   }
 
-  /** The small icon buttons in a panel's header: demolish (two clicks), follow. */
+  /** The small icon buttons in a panel's header: follow. */
   private actionBtn(cls: string, icon: string, label: string, on?: boolean): string {
     // (`on` given: a toggle, whose state screen readers hear either way)
     return `<button class="ip-act ${cls}${on ? " on" : ""}" aria-label="${label}" title="${label}"${on === undefined ? "" : ` aria-pressed="${on}"`}>${icon}</button>`;
   }
 
+  /**
+   * Demolish, at the foot of the panel with its name on it, far from Close in the header (design audit 2026-11-10,
+   * F19: the two sat 1 px apart, so a slip on the way to shut the panel pulled down a working site).
+   */
   private demolishBtn(what: string): string {
     const armed = this.armed && performance.now() - this.armed < 3000;
-    return this.actionBtn(`demolish${armed ? " armed" : ""}`, ICON.bulldoze, armed ? `Click again to ${what}` : cap(what));
+    const say = armed ? `Click again to ${what}` : cap(what);
+    return `<button class="btn quiet ip-del demolish${armed ? " armed" : ""}" title="${say}. Two clicks, so a slip cannot do it">${ICON.bulldoze}<span>${say}</span></button>`;
   }
 
   /** Two clicks to pull something down: the first arms the button (it turns brick), the second within 3 s does it. */
   private bindDemolishBtn(fn: () => void) {
-    const btn = this.panel.querySelector<HTMLButtonElement>(".ip-act.demolish");
+    const btn = this.panel.querySelector<HTMLButtonElement>(".ip-del.demolish");
     if (!btn) return;
     btn.onclick = () => {
       if (this.armed && performance.now() - this.armed < 3000) { this.armed = 0; fn(); return; }
@@ -1935,7 +1966,7 @@ export class Hud {
     const tr = this.app.game.transit, st = tr.stops.get(this.sel!.id)!;
     const lines = [...tr.lines.values()].filter((l) => l.stops.includes(st.id));
     const ls = lines.length ? `<ul class="bus-lines">${lines.map((l) => `<li class="bl"><i class="bl-sw" style="background:${hex(l.color)}"></i><span class="bl-name"><b>${l.name}</b><span class="small muted">${tr.busesOn(l.id)} buses · ${fmtNum(l.riders)} riders/h</span></span></li>`).join("")}</ul>` : "";
-    const html = this.anatomy(m, { kind: "stop", actions: this.demolishBtn("remove the stop"), body: ls });
+    const html = this.anatomy(m, { kind: "stop", danger: this.demolishBtn("remove the stop"), body: ls });
     if (!this.setPanel(html)) return;
     this.bindDemolishBtn(() => { tr.removeStop(st.id); this.sfx.play("remove"); this.closeSelection(); });
   }
@@ -1995,8 +2026,8 @@ export class Hud {
     const g = this.app.game, t = g.towns.byId.get(this.sel!.id)!;
     const si = sizeOf(t.pop), next = TOWN_SIZES[si + 1];
     // its needs, readable by a child (docs/design.md, 2026-11-08): per product its picture, one word for how it is
-    // doing, a row of crates (loads a day coming against loads a day wanted) and what to do. The figures sit in each
-    // row's tooltip and under Details.
+    // doing, a bar of loads a day coming against loads a day wanted, and the figure. Every bar is drawn on one scale
+    // (the biggest need is the full width), so the need that matters most looks biggest (design audit 2026-11-10, F25).
     const mine = g.towns.buildingsOf(t);
     const stations = mine.filter((b) => BUILDING_TYPES[b.kind].fuel).length;
     const offices = mine.some((b) => Industry.isOffice(b) && b.built >= 1 && !b.abandoned);
@@ -2004,14 +2035,14 @@ export class Hud {
     const joined = !t.spawned || joinedUp(g, t);
     const views = townNeeds(t, t.spawned && joined);
     // (figures only: the status line and the one piece of advice above them do the talking. Owner, 2026-11-10)
+    const most = Math.max(1e-6, ...views.map((v) => v.want));
     const rows = views.map((v) => {
       const tip = `${fmtLoads(v.got)} loads a day coming, of the ${fmtLoads(v.want)} it needs to grow. ${buyer(v.p)} up to ${fmtLoads(v.want * MARKET)} a day; ${fmtLoads(t.today[v.p] ?? 0)} so far today.`;
-      const crates = Array.from({ length: v.crates.n }, (_, i) => `<i class="cr${i < v.crates.full ? " on" : ""}"></i>`).join("");
-      const each = v.crates.per > 1 ? `<span class="nd-each">1 crate = ${fmtNum(v.crates.per)} loads</span>` : "";
+      const track = Math.max(6, (v.want / most) * 100);
       return `<li class="nd ${v.state}" title="${escapeHtml(tip)}">
           <span class="nd-ic" aria-hidden="true">${productIcon(v.p)}</span>
           <span class="nd-top"><b>${PRODUCTS[v.p].name}</b><span class="nd-st">${v.word}</span></span>
-          <span class="nd-crates" role="img" aria-label="${v.crates.full} of ${v.crates.n} crates filled">${crates}${each}</span>
+          <span class="nd-bar" aria-hidden="true"><i style="width:${track.toFixed(1)}%"><s style="width:${(v.fill * 100).toFixed(1)}%"></s></i></span>
           <span class="nd-fig"><b>${fmtLoads(v.got)}</b> of ${fmtLoads(v.want)} loads a day</span>
         </li>`;
     }).join("");
@@ -2066,7 +2097,7 @@ export class Hud {
       // a landmark's site: its ring and stage, materials and pieces, and what it will do once open (it is the panel)
       const lmSite = landmarkSite(g, b);
       if (lmSite) {
-        if (this.setPanel(this.anatomy(m, { kind: b.kind, actions: act, body: `${chain}${lmSite}` }))) this.bindDemolishBtn(demolish);
+        if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, body: `${chain}${lmSite}` }))) this.bindDemolishBtn(demolish);
         return;
       }
       // a site: the materials trucked to it so far
@@ -2076,7 +2107,7 @@ export class Hud {
           return `<dt>${PRODUCTS[p].name}</dt><dd>${stockBar(got, need, PRODUCTS[p].color)}<span class="num">${Math.floor(got)} / ${need}</span></dd>`;
         }).join("");
         const body = `<dl class="facts">${mats}</dl><p class="small muted">Once all are in it takes ${buildTime(b.kind) / HOUR} hours to build. No wages or upkeep until then.</p>`;
-        if (this.setPanel(this.anatomy(m, { kind: b.kind, actions: act, body: chain + body }))) this.bindDemolishBtn(demolish);
+        if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, body: chain + body }))) this.bindDemolishBtn(demolish);
         return;
       }
       const pw = D.power && b.built >= 1 ? g.utilities.supplyOf(b) : null;
@@ -2128,7 +2159,7 @@ export class Hud {
         const held = Industry.stored(b);
         const body = logi === "warehouse" ? this.warehouseBody(b, store, held) : this.depotBody(b, store);
         const details = `${chain}${body}${D.trucks ? `<dl class="facts">${classRow}</dl>` : ""}`;
-        if (this.setPanel(this.anatomy(m, { kind: b.kind, actions: act, details }))) this.bindDemolish(b, demolish);
+        if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, details }))) this.bindDemolish(b, demolish);
         return;
       }
       const details = `${chain}
@@ -2154,11 +2185,11 @@ export class Hud {
           ${freshRows}
         </dl>`;
       const body = isMega(b.kind) ? landmarkDone(g, b) : "";
-      if (this.setPanel(this.anatomy(m, { kind: b.kind, actions: act, body, details }))) this.bindDemolishBtn(demolish);
+      if (this.setPanel(this.anatomy(m, { kind: b.kind, danger: act, body, details }))) this.bindDemolishBtn(demolish);
       return;
     }
     if (!b.zone) {
-      if (this.setPanel(this.anatomy(m, { kind: "other", actions: act, details: `<p class="muted">${T.blurb}</p>` }))) this.bindDemolishBtn(demolish);
+      if (this.setPanel(this.anatomy(m, { kind: "other", danger: act, details: `<p class="muted">${T.blurb}</p>` }))) this.bindDemolishBtn(demolish);
       return;
     }
     const grp = ZONE_GROUP[b.zone];
@@ -2185,7 +2216,7 @@ export class Hud {
     const whose = b.town !== undefined ? `<p class="small muted ip-note">${escapeHtml(g.towns.byId.get(b.town)?.name ?? "The town")} builds and looks after it. It grows with the town.</p>` : "";
     const details = rows.length ? `<dl class="facts">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>` : undefined;
     const mine = b.town === undefined;
-    if (this.setPanel(this.anatomy(m, { kind: grp === "res" ? "home" : "shop", actions: mine ? act : undefined, body: whose, details })) && mine) this.bindDemolishBtn(demolish);
+    if (this.setPanel(this.anatomy(m, { kind: grp === "res" ? "home" : "shop", danger: mine ? act : undefined, body: whose, details })) && mine) this.bindDemolishBtn(demolish);
   }
 
   /** A warehouse's panel: what it holds, and per product whether it takes it and whether it is a feeder for it. */
@@ -2543,11 +2574,10 @@ function outputDay(b: Building): string {
   return `<h3 class="sub-h">${head}</h3><dl class="facts">${rows}</dl>${chart}`;
 }
 
-/** A tiny row of 24 hourly bars (the Economy window's production list). */
-function hourTicks(vs: number[], color: number): string {
-  const hi = Math.max(1, ...vs), W = 72, H = 16, bw = W / vs.length;
-  const bars = vs.map((v, i) => v > 0 ? `<rect x="${(i * bw).toFixed(1)}" y="${(H - (v / hi) * H).toFixed(1)}" width="${(bw - 0.6).toFixed(1)}" height="${((v / hi) * H).toFixed(1)}"/>` : "").join("");
-  return `<svg class="pd-ticks" style="--pc:${onPlate(color)}" viewBox="0 0 ${W} ${H}" aria-hidden="true">${bars}</svg>`;
+/** A bar filled to n of max, in a product's colour, on a dim track. */
+function ratioBar(n: number, max: number, color: number): string {
+  const k = max > 0 ? Math.max(0, Math.min(1, n / max)) : 0;
+  return `<span class="pd-bar" style="--pc:${onPlate(color)}" aria-hidden="true"><i style="width:${(k * 100).toFixed(1)}%"></i></span>`;
 }
 
 /** Bars of loads made each hour (oldest left), with the full pace as a dashed line. */
@@ -2565,7 +2595,7 @@ function hourBars(vs: number[], pace: number, P: { name: string; color: number }
     <line class="tc-base" x1="0" x2="${W}" y1="${bot}" y2="${bot}"/>
     ${bars}
     <line class="tc-goal" x1="0" x2="${W}" y1="${pl.toFixed(1)}" y2="${pl.toFixed(1)}"/>
-    <text class="tc-t" x="${W}" y="9" text-anchor="end">dashed: full pace, ${pace < 10 ? pace.toFixed(1) : Math.round(pace)} an hour</text>
+    <text class="tc-t" x="${W}" y="9" text-anchor="end">dashed: full pace, ${fmtNum(Math.round(pace * 24))} loads a day</text>
     <text class="tc-t" x="0" y="${H - 2}">${n} hours ago</text><text class="tc-t" x="${W}" y="${H - 2}" text-anchor="end">now</text>
   </svg>`;
 }
