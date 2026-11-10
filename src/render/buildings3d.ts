@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { BUILDING_TYPES, ROAD_TYPES, SIDEWALK, roadGroup, type BuildingKind } from "../config";
-import { add, dot, fromAngle, pointSegDist2, right, scale, type V2 } from "../core/math";
+import { add, dot, fromAngle, pointSegDist2, rectCorners, right, scale, type V2 } from "../core/math";
 import type { RoadNetwork } from "../roads/network";
 import type { Building } from "../game/buildings";
 import { ZONE_GROUP } from "../game/growables";
@@ -19,6 +19,7 @@ import { fieldLook, fieldModel } from "../game/calendar";
 import { seasonal } from "./envShader";
 import type { LampSpot, WindowSpot } from "./lamps3d";
 import { TOWN_MODELS, townModel } from "./townmodels";
+import { LOTS } from "./furniture";
 import type { Solid } from "../ui/pick";
 import type { WindowKind } from "./daylight";
 import { stageAt, stageOf, type StageInfo } from "../game/construction";
@@ -506,6 +507,10 @@ export class Buildings3D {
     this.squareTrees = [];
     this.treeVersion++;
     const live = new Set(list.map((b) => b.id));
+    // what is built, for the roadside furniture to keep off (render/furniture.ts): every lot and works site
+    let sig = list.length;
+    for (const b of list) sig = (Math.imul(sig, 31) + b.id) | 0;
+    LOTS.set("buildings", list.map((b) => rectCorners(b.c, b.hw, b.hd, b.rot)), sig);
     for (const id of this.layouts.keys()) if (!live.has(id)) this.layouts.delete(id);
     const lots = list.filter((b) => b.zone);
     const squares = list.filter((b) => isHall(b.kind)).map((b) => ({ b, plan: this.squareOf(b) }));

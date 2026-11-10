@@ -112,7 +112,7 @@ export const VEHICLE_MODELS = [
   "carrier", "heavy_carrier", "rt_carrier_a", "rt_carrier_b", "motorcar",
 ] as const;
 /** Street furniture, drawn on its own (not a lot). */
-export const PROP_MODELS = ["busstop", "fence", "hedge", "picket", "bridge_pier", "bridge_abutment", "bridge_pylon", "bridge_truss", "streetlamp", "floodmast", ...CON_MODELS] as const;
+export const PROP_MODELS = ["busstop", "fence", "hedge", "picket", "bridge_pier", "bridge_abutment", "bridge_pylon", "bridge_truss", "streetlamp", "floodmast", "telegraphpole", "telegraphwire", "billboard_a", "billboard_b", "billboard_c", ...CON_MODELS] as const;
 export type VehicleKind = (typeof VEHICLE_MODELS)[number];
 
 /**

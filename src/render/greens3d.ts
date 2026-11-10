@@ -5,6 +5,7 @@ import * as THREE from "three";
 import type { Green } from "../game/settlements";
 import type { PlantedTree } from "./trees3d";
 import { seasonal } from "./envShader";
+import { LOTS } from "./furniture";
 
 /** A green's lawn: the hall squares' lawn colour, a touch fresher. */
 const LAWN = 0x93a050;
@@ -26,6 +27,8 @@ export class Greens3D {
     if (this.lawn) { this.group.remove(this.lawn); this.lawn.geometry.dispose(); this.lawn = null; }
     this.trees = list.flatMap((g) => g.trees.map((t): PlantedTree => ({ x: t.p.x, y: t.p.y, r: t.r, style: "park" })));
     this.treeVersion++;
+    // (no roadside furniture on a green: render/furniture.ts)
+    LOTS.set("greens", list.map((g) => g.pts));
     if (!list.length) return;
     // every lawn in one mesh (the map's x and y are the scene's x and z)
     const geos = list.map((g) => new THREE.ShapeGeometry(new THREE.Shape(g.pts.map((p) => new THREE.Vector2(p.x, p.y)))).rotateX(Math.PI / 2));

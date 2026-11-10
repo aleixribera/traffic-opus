@@ -1588,6 +1588,7 @@ def b_bridge_pylon(M, P):
 
 # Models whose origin is the foot of a post (the lamps layer stands them there), not their footprint's middle.
 POST_ORIGIN = {"streetlamp", "floodmast", "con_crane"}
+HUNG = {"telegraphwire"}   # models that do not stand on the ground
 
 
 def b_streetlamp(M, P):
@@ -6063,7 +6064,8 @@ def verify(names):
             for o in meshes:
                 if o.matrix_world.translation.length > 1e-4:
                     st["issues"].append(f"{o.name} origin not at vehicle origin")
-        if abs(lo.z) > 1e-3:
+        # (a span of telegraph wire hangs between two poles)
+        if abs(lo.z) > 1e-3 and name not in HUNG:
             st["issues"].append(f"lowest point z={lo.z:.3f}")
         stats[name] = st
     return stats
