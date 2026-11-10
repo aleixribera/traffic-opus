@@ -409,6 +409,8 @@ describe("read off the game", () => {
   });
 
   it("what a works shows it makes is its one pace, never above what it can make (owner, 2026-11-10: \"0.7/h, can 0.6\")", () => {
+    // (fully staffed: a works short of workers shows no more than its staff allows, tests/powerrate.test.ts)
+    const staffed = vi.spyOn(g.people, "workersAt").mockReturnValue(farm.cap);
     const can = canPerDay(g, farm, "crops") / 24;
     // a camp or a farm ships whole batches: three hours read can hold one more than its pace allows
     farm.plant!.hist = [{ crops: can * 3 * 0.6 }, {}, { crops: can * 3 * 0.6 }];
@@ -425,9 +427,11 @@ describe("read off the game", () => {
     // nothing made yet: no figure at all, not "0.0/h"
     farm.plant!.hist = [{}, {}];
     expect(shownRate(g, farm, "crops").rate).toBeNull();
+    staffed.mockRestore();
   });
 
   it("a works short of power never reads as making all it can, nor in the good green (design audit 2026-11-10: a green 0.4/h under 'No power')", () => {
+    const staffed = vi.spyOn(g.people, "workersAt").mockReturnValue(farm.cap);
     const can = canPerDay(g, farm, "crops") / 24;
     // lumpy hours a flat-out reading would round up to what it can make
     farm.plant!.hist = [{ crops: can * 3 * 0.8 }, {}, {}, {}];
@@ -442,6 +446,7 @@ describe("read off the game", () => {
     expect(siteModel(g, farm).level?.line).toBe("held back: No power");
     farm.problem = null;
     farm.plant!.why = null;
+    staffed.mockRestore();
   });
 
   it("a works that has made nothing yet is starting up, and says when its first truck leaves (owner, 2026-11-10)", () => {

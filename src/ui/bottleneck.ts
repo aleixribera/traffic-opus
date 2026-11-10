@@ -149,10 +149,11 @@ export function canPerDay(g: Game, b: Building, p: Product): number {
  */
 export function shownRate(g: Game, b: Building, p: Product): { rate: number | null; can: number } {
   const can = canPerDay(g, b, p) / 24;
-  // (short of power the sim works it at powerPace of its pace (industry.ts), so it shows no more than that: the late
-  // save's Iron Mine read "No power, working at 40%" over "10 loads a day, can 10", one early load over one hour. `can`
-  // stays the full-power figure, so the gap shows)
-  const top = can * (PLANTS[b.kind as PlantKind]?.power ? powerPace(g.utilities.supplyOf(b)) : 1);
+  // (short of power or of workers the sim works it at powerPace of its pace times its share of staff (industry.ts
+  // produce), so it shows no more than that: the late save's Iron Mine read "No power, working at 40%" over "10 loads
+  // a day, can 10", one early load over one hour. `can` stays the full figure, so the gap shows)
+  const staff = b.cap ? Math.min(1, g.people.workersAt(b.id) / b.cap) : 1;
+  const top = can * staff * (PLANTS[b.kind as PlantKind]?.power ? powerPace(g.utilities.supplyOf(b)) : 1);
   const x = paceOf(b, p);
   // (short of power it is not making all it can, whatever a lumpy few hours say)
   if (x) return { rate: flatOut(g, b, p) && top >= can && !/^(No power|Short of power)/.test(b.problem ?? "") ? can : Math.min(top, x.made / x.hours), can };
