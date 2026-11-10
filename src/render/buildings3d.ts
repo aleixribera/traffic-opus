@@ -484,6 +484,13 @@ export class Buildings3D {
     return b.hd * 2 - spare + this.setbackOf(b, spare) + BACK_YARD;
   }
 
+  /** How deep the garden behind a building is (m, from its back wall to the lot's back line). */
+  private lotBack(b: Building): number {
+    if (!this.geoOf(b.kind)) return 0;
+    const spare = Math.max(0, b.hd * 2 - this.depth(b));
+    return Math.max(0, spare - this.setbackOf(b, spare));
+  }
+
   /** Which side of a lot a side street passes (-1: its left, lot -x; 1: its right; 0: neither), for corner buildings. */
   private cornerOf(b: Building): -1 | 0 | 1 {
     if (!b.access) return 0;
@@ -603,9 +610,8 @@ export class Buildings3D {
         // but only as far back as it is built: a deep lot's back is left to the grass, not an empty paved field
         const edge = home ? 0.8 : 0;
         const used = home || (b.built < 1 && !b.wall) ? b.hd * 2 : this.usedDepth(b);
-        // (the blocks and towers of a centre pave their courts to the back of the lot; a row of shop-houses keeps
-        // the grass behind its yards)
-        const deep = used < b.hd * 2 - BACK_WILD && !(b.wall && b.zone !== "comLow") ? used : b.hd * 2;
+        // (a front of the street wall too: a short yard behind it, then its court is grass with a tree or two)
+        const deep = used < b.hd * 2 - BACK_WILD ? used : b.hd * 2;
         ym.setMatrixAt(i, this.tmp.multiply(sc.makeScale(b.hw * 2 - edge, 1, deep - edge).setPosition(0, 0, b.hd - deep / 2)));
         ym.setColorAt(i, this.col.setHex(b.built < 1 ? SITE : YARD[ZONE_GROUP[b.zone!]]));
       });
@@ -1053,8 +1059,10 @@ export class Buildings3D {
     const lawns: { m: THREE.Matrix4; c: number }[] = [];
     const paved: { m: THREE.Matrix4; c: number; pat: number[] }[] = [];
     const props: Record<"hedge" | "picket", THREE.Matrix4[]> = { hedge: [], picket: [] };
+    // (the back gardens' are drawn apart, casting no shadow: behind the house it would hardly show, and they are many)
+    const backs: Record<"hedge" | "picket", THREE.Matrix4[]> = { hedge: [], picket: [] };
     const trees = this.stripTrees;
-    const L = new THREE.Matrix4(), T = new THREE.Matrix4(), S = new THREE.Matrix4();
+    const L = new THREE.Matrix4(), T = new THREE.Matrix4(), S = new THREE.Matrix4(), R = new THREE.Matrix4().makeRotationY(Math.PI / 2);
     /** A rect in a lot's frame (x along the road, z toward it), at height y (turned rot about its centre). */
     const rect = (b: Building, x0: number, x1: number, z0: number, z1: number, y: number, rot = 0) =>
       lotMatrix(L, b.c, b.rot, b.side, y).clone()
@@ -1133,6 +1141,41 @@ export class Buildings3D {
         const w = this.v3.set(x, 0, b.hd + lawn / 2 - 0.3).applyMatrix4(lotMatrix(L, b.c, b.rot, b.side, 0));
         trees.push({ x: w.x, y: w.z, r, style: "park" });
       }
+      // the back garden: most are hedged or fenced across the lot some way behind the house (so a block's middle reads
+      // as rows of gardens, not one lawn; a deep lot's far end is left to the field), and one deep enough has a tree
+      // or two in it
+      const backLen = this.lotBack(b);
+      const gd = Math.min(backLen, 7 + ((h >>> 20) % 5));
+      const zf = -b.hd + backLen - gd;
+      const bk = small ? ((h >>> 16) % 10 < 5 ? "hedge" : (h >>> 16) % 10 < 8 ? "picket" : null) : (h >>> 16) % 10 < 6 ? "hedge" : null;
+      if (bk && backLen >= 3) {
+        // (in runs twice as long as a front's: seen past the house, it need not be as fine, and it is half the pieces)
+        const len = H * 2, n = Math.max(1, Math.round(len / (2 * FRONT_RUN))), z = zf + (bk === "hedge" ? 0.6 : 0.3);
+        for (let k = 0; k < n; k++) {
+          const x = -H + ((k + 0.5) * len) / n;
+          backs[bk].push(lotMatrix(L, b.c, b.rot, b.side, 0).clone().multiply(T.makeTranslation(x, 0, z)).multiply(S.makeScale(len / n / FRONT_RUN, 1, 1)));
+        }
+        // and up its one side to the back of the house (the other side is the next lot's, so a row of them shares
+        // one fence between each two gardens)
+        const side = backLen - (zf - -b.hd) - (bk === "hedge" ? 0.6 : 0.3);
+        if (side >= 2) {
+          backs[bk].push(lotMatrix(L, b.c, b.rot, b.side, 0).clone().multiply(T.makeTranslation(-H, 0, z + side / 2)).multiply(R).multiply(S.makeScale(side / FRONT_RUN, 1, 1)));
+        }
+      }
+      if (gd >= 4.5) {
+        const nb = gd >= 9 && H > 5 ? 2 : 1;
+        for (let k = 0; k < nb; k++) {
+          const hh = Math.imul(b.id * 17 + k * 101 + 3, 2654435761) >>> 0;
+          if (hh % 10 >= 7) continue;
+          const rb = Math.min(gd / 2 - 0.4, 1.8 + ((hh >>> 8) % 8) * 0.12);
+          if (rb < 1.2) continue;
+          const span = Math.max(0, H - rb - 0.4);
+          const x = nb === 1 ? (((hh >>> 4) % 100) / 100 - 0.5) * 2 * span : (k ? 1 : -1) * span * (0.4 + ((hh >>> 4) % 60) / 100);
+          const zt = zf + (bk ? 1 : 0.4) + rb + ((hh >>> 12) % 100) / 100 * Math.max(0, gd - 2 * rb - 1.4);
+          const w = this.v3.set(x, 0, zt).applyMatrix4(lotMatrix(L, b.c, b.rot, b.side, 0));
+          trees.push({ x: w.x, y: w.z, r: rb, style: "park" });
+        }
+      }
     }
     if (this.sideCache.size > list.length + 64) {
       const live = new Set(list.map((b) => b.id));
@@ -1158,13 +1201,15 @@ export class Buildings3D {
     }
     for (const kind of ["hedge", "picket"] as const) {
       const mm = this.models.props.get(kind);
-      if (!mm || !props[kind].length) continue;
-      const m = new THREE.InstancedMesh(mm.geo, this.mat, props[kind].length);
-      props[kind].forEach((x, i) => m.setMatrixAt(i, x));
-      m.castShadow = true;
-      m.receiveShadow = true;
-      m.computeBoundingSphere();
-      this.strips.push(m);
+      for (const [list, shadow] of [[props[kind], true], [backs[kind], false]] as const) {
+        if (!mm || !list.length) continue;
+        const m = new THREE.InstancedMesh(mm.geo, this.mat, list.length);
+        list.forEach((x, i) => m.setMatrixAt(i, x));
+        m.castShadow = shadow;
+        m.receiveShadow = true;
+        m.computeBoundingSphere();
+        this.strips.push(m);
+      }
     }
     for (const o of this.strips) this.group.add(o);
   }
