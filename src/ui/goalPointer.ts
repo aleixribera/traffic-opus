@@ -149,7 +149,7 @@ export class GoalPointer {
     this.edge.innerHTML = `<i class="gp-arrow" aria-hidden="true"><s class="gp-ring"></s></i><b>Fertile soil</b><span class="gp-km"></span>`;
     this.edge.onclick = () => { if (this.at) this.act.fly(this.at); };
     this.pin.className = "goal-pin";
-    this.pin.innerHTML = `<i aria-hidden="true"><s class="gp-ring"></s>${productIcon("crops")}</i><span><b>Fertile soil</b><em>Place your farm here</em></span>`;
+    this.pin.innerHTML = `<i aria-hidden="true"><s class="gp-ring"></s>${productIcon("crops")}</i><span><b>Fertile soil</b></span>`;
     this.pin.title = "Take the Farm in hand to place it here";
     this.pin.setAttribute("aria-label", "Fertile soil for your first farm. Take the Farm in hand");
     this.pin.onclick = () => this.act.pick();

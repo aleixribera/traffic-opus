@@ -28,7 +28,7 @@ export function soundHtml(a: GameAudio): string {
       <input type="range" min="0" max="100" step="5" value="${Math.round(s[k] * 100)}" data-k="${k}" aria-label="${name} volume">
       <output class="num">${Math.round(s[k] * 100)}</output></label>`).join("")}
     <button class="pm snd-sw mute" role="switch" aria-checked="${s.muted}">Mute<span class="muted">N</span><span class="pm-v">${s.muted ? "On" : "Off"}</span></button>
-    <button class="pm snd-sw old" role="switch" aria-checked="${s.old}" title="Old set: the band through a 1930s wireless, a narrow, warm sound with a faint crackle. Off: the band as it is.">Old radio tone<span class="pm-v">${s.old ? "On" : "Off"}</span></button>
+    <button class="pm snd-sw old" role="switch" aria-checked="${s.old}" title="Old set: the band through a 1930s radio, a narrow, warm sound with a faint crackle. Off: the band as it is.">Old radio tone<span class="pm-v">${s.old ? "On" : "Off"}</span></button>
   </div>`;
 }
 

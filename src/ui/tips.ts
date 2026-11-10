@@ -140,8 +140,8 @@ export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false, sign
       const t = biggest(reached.filter((x) => wants(x, "food")));
       const who = t ? `${esc(t.name)} needs food.` : "Start a food chain.";
       return soilInReach(g)
-        ? { id: "farm", cat: "industry", p: "food", html: `<b>${who}</b> Place a <b>Farm</b> on fertile soil within ${GATE_LINK_REACH} m of a road. It lays its own street to it.` }
-        : { id: "farm", cat: "roads", p: "food", html: `<b>${who}</b> No fertile soil lies near your roads. Lay a road out to some, then place a <b>Farm</b> on it.` };
+        ? { id: "farm", cat: "industry", p: "food", html: `<b>${who}</b> Place a <b>Farm</b> on fertile soil within ${GATE_LINK_REACH} m of a road, and it lays its own street to it.` }
+        : { id: "farm", cat: "roads", p: "food", html: `<b>${who}</b> Lay a road out to fertile soil, then place a <b>Farm</b> on it.` };
     },
     // a site placed out past its gate street's reach, with no road to anything yet
     () => {
@@ -149,7 +149,7 @@ export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false, sign
       if (!b) return null;
       // (with no road at its gate at all, the game offers the dirt road to it: dashed on the map, one click here)
       const plan = b.access ? null : g.roadTo(b);
-      if (plan) return { id: "noroad", cat: "roads", road: { works: b.id, cost: plan.cost }, html: `<b>No road reaches your ${lower(b.kind as PlantKind)}.</b> A dirt road from its gate to yours is ${distText(planLength(plan))}.` };
+      if (plan) return { id: "noroad", cat: "roads", road: { works: b.id, cost: plan.cost }, html: `<b>No road reaches your ${lower(b.kind as PlantKind)}.</b> A dirt road to it is ${distText(planLength(plan))}.` };
       return { id: "noroad", cat: "roads", html: `<b>No road reaches your ${lower(b.kind as PlantKind)}.</b> Lay one from its gate to your roads.` };
     },
     () => {
@@ -171,7 +171,7 @@ export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false, sign
       // another way. Review 2026-11-10, B8. With no sign up yet, there is nothing to point at)
       if (signed !== undefined && signed < 1) return null;
       const n = signed ?? spots.length;
-      return { id: "jam", cat: "roads", html: `<b>Traffic is stuck in ${n === 1 ? "one place" : `${n} places`}.</b> The <b>Traffic stuck</b> sign flies you there. Give the junction a turn lane or lights, or a second road.` };
+      return { id: "jam", cat: "roads", html: `<b>Traffic is stuck in ${n === 1 ? "one place" : `${n} places`}.</b> Give the junction a turn lane or lights, or lay a second road past it.` };
     },
     // a works flat out with a town still asking for more (B1: "nothing said build a second Food Plant")
     () => {
@@ -200,8 +200,8 @@ export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false, sign
       let from: Town | null = null;
       const d = (a: Town) => Math.hypot(a.c.x - t.c.x, a.c.y - t.c.y);
       for (const o of g.towns.list) if (o !== t && (!from || d(o) < d(from))) from = o;
-      const where = from ? `It lies ${km(d(from))} ${compassWords(from.c, t.c)} of ${esc(from.name)}. ` : "";
-      return { id: "newtown", cat: "roads", html: `<b>No road reaches ${esc(t.name)} yet.</b> ${where}Lay one out to sell it food.` };
+      const where = from ? `It lies ${km(d(from))} ${compassWords(from.c, t.c)} of ${esc(from.name)}: lay` : "Lay";
+      return { id: "newtown", cat: "roads", html: `<b>No road reaches ${esc(t.name)} yet.</b> ${where} one out to sell it food.` };
     },
     // a building site waiting for something none of the company's plants makes
     () => {
@@ -221,7 +221,7 @@ export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false, sign
       const b = plants.find((x) => built(x) && PLANTS[x.kind as PlantKind].power);
       // (none of them built yet, and the goal that opened the power plant only just reached: say it before the mines
       // go down, as the goal's banner does)
-      if (!b) return lately().includes("coalplant") ? { id: "power", cat: "industry", html: `<b>Build a Power plant first.</b> Mines and the smelter run at ${Math.round(UNPOWERED * 100)}% without power. It burns coal or wood chips.` } : null;
+      if (!b) return lately().includes("coalplant") ? { id: "power", cat: "industry", html: `<b>Build a Power plant first.</b> Mines and the smelter run at ${Math.round(UNPOWERED * 100)}% without one.` } : null;
       return { id: "power", cat: "industry", html: `<b>Your ${lower(b.kind as PlantKind)} runs at ${Math.round(UNPOWERED * 100)}% without power.</b> Build a <b>Power plant</b> within ${PLANTS.coalplant.reach! / 1000} km of it, on the same roads.` };
     },
     // a mined deposit just opened: where to find it. Only for the works a goal reached lately opened, in the order
@@ -234,7 +234,7 @@ export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false, sign
       if (!k) return null;
       const dep = PLANTS[k].deposit!, home = g.towns.list[0];
       const near = home ? g.terrain.gen.depositsNear(dep.field, home.c.x, home.c.y, 24000)[0] : undefined;
-      const where = near && home ? ` The nearest lies ${km(Math.hypot(near.x - home.c.x, near.y - home.c.y))} ${compassWords(home.c, near)} of ${esc(home.name)}.` : "";
+      const where = near && home ? ` The nearest lies ${km(Math.hypot(near.x - home.c.x, near.y - home.c.y))} ${compassWords(home.c, near)} of ${esc(home.name)}, and` : "";
       return { id: "deposits", cat: "industry", html: `<b>The ${lower(k)} goes on ${dep.name.toLowerCase()}.</b>${where} <b>Views › Resources</b> shows every deposit.` };
     },
     // towns' new blocks waiting for construction parts
@@ -250,7 +250,7 @@ export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false, sign
     // milk, which spoils on the way
     () => {
       if (!g.placedUnlocked("dairyfarm") || has("dairyfarm")) return null;
-      return { id: "milk", cat: "industry", html: `<b>Villages buy fresh milk and grow faster for it.</b> Place a <b>Dairy farm</b> a short drive away. Milk spoils after about ${Math.round((SHELF.milk! * 12) / 1000)} km.` };
+      return { id: "milk", cat: "industry", html: `<b>Villages buy fresh milk and grow faster for it.</b> Place a <b>Dairy farm</b> on fertile soil within about ${Math.round((SHELF.milk! * 12) / 1000)} km of them, or the milk spoils.` };
     },
     // farms and mines held at level 2 for want of supplies
     () => {

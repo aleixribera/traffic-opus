@@ -225,7 +225,7 @@ function townNow(g: Game, size: number): (GoalNow & { need?: Product }) | null {
       // (a missing link: what to build, and the chain; else what the chain is doing, its timing in the tooltip)
       if (c) return c.link
         ? { text, fix: c.fix, chain: c.chain, tone: c.tone === "bad" ? "bad" : "", works: c.works, link: true, need: p, p }
-        : { text, fix: lineOf(c), more: goalNowSay(c), tone: c.tone === "bad" ? "bad" : "", works: c.works, need: p, p };
+        : { text, fix: lineOf(c), ...(c.fix ? { more: goalNowSay(c) } : {}), tone: c.tone === "bad" ? "bad" : "", works: c.works, need: p, p };
       // (nothing of it placed: the line flies to the ground for the first of it, the forest for a logging camp)
       const { say, chain, kinds } = chainKinds(g, p);
       const k = kinds.find((x): x is "farm" | "loggingcamp" => x === "farm" || x === "loggingcamp");
@@ -252,7 +252,10 @@ export function lineOf(n: GoalNow): string {
 /** The goal line as one sentence (for the screen reader, and the tests): "Your Farm: starting up. Its first ...". */
 export function goalNowSay(n: GoalNow): string {
   const end = (x: string) => (/[.!?]$/.test(x) ? x : `${x}.`);
-  // (the chain runs on from the fix after a colon: "Build a Sawmill: logs → Sawmill → planks.")
-  const how = n.fix && n.chain ? `${n.fix.replace(/\.$/, "")}: ${n.chain}` : (n.fix ?? n.chain);
+  // (the chain runs on from a one-sentence fix after a colon, "Build a Sawmill: logs → Sawmill → planks."; after a
+  // longer one it stands as its own sentence, so it is not read as what the last sentence names)
+  const cap = (x: string) => x[0].toUpperCase() + x.slice(1);
+  const one = n.fix && !/[.!?] /.test(n.fix.replace(/\.$/, ""));
+  const how = n.fix && n.chain ? (one ? `${n.fix.replace(/\.$/, "")}: ${n.chain}` : `${end(n.fix)} ${cap(n.chain)}`) : (n.fix ?? n.chain);
   return [lineOf(n), how, n.where].filter((x): x is string => !!x).map(end).join(" ");
 }

@@ -17,7 +17,6 @@
 .snd { display: flex; flex-direction: column; }
 .snd-row { display: grid; grid-template-columns: 110px 1fr 30px; align-items: center; gap: 12px; padding: 9px 2px; border-bottom: 1px solid var(--rule); }
 .snd-n { display: flex; flex-direction: column; gap: 2px; font-size: var(--t-sm); font-weight: 600; color: var(--cream); line-height: 1.1; }
-.snd-n .muted { font: 400 var(--t-sm)/1.2 var(--f-text); color: var(--cream-3); }
 .snd-row output { text-align: right; color: var(--cream-2); font-size: var(--t-sm); }
 /* a slider as a gauge: an ink track filled in ochre up to a square brass knob */
 .snd-row input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 22px; margin: 0; background: transparent; cursor: pointer; }

@@ -67,7 +67,7 @@ const OVERLAYS: { id: OverlayId; label: string; blurb: string }[] = [
   { id: "power", label: "Power", blurb: "Power plants in blue; buildings that draw power green with all they need, orange to red when short" },
 ];
 
-/** Build categories along the bottom bar, each with its asset tabs (the Towns button beside them opens the Towns window: towns spring up by themselves). */
+/** Build categories along the bottom bar, each with its asset tabs (towns spring up by themselves: the Towns window is in the top bar). */
 type CatId = "roads" | "industry" | "transport";
 type Asset =
   | { kind: "road"; id: RoadTypeId }
@@ -704,7 +704,6 @@ export class Hud {
     if (st.tool === "road") this.lastRoad = st.roadType;
     if (st.tool === "road" && st.mode !== "replace") this.lastDraw = st.mode;
     for (const [k, b] of this.catBtns) {
-      // (Towns opens the Towns window: lit while that is open)
       const on = k === "bulldoze" ? st.tool === "bulldoze" : this.cat === k;
       b.classList.toggle("on", on);
       b.setAttribute(k === "bulldoze" ? "aria-pressed" : "aria-expanded", String(on));
@@ -971,7 +970,7 @@ export class Hud {
       if (!now) return "";
       const say = goalNowSay(now);
       const go = now.works !== undefined ? ` data-id="${now.works}"` : now.spot ? ` data-spot="${Math.round(now.spot.x)},${Math.round(now.spot.y)}"` : " disabled";
-      const tip = [one ? say : now.more, now.works !== undefined ? "Click to show it" : now.spot ? "Click to fly there" : ""].filter(Boolean).join(" ");
+      const tip = [one ? [say, now.more].filter(Boolean).join(" ") : now.more, now.works !== undefined ? "Click to show it" : now.spot ? "Click to fly there" : ""].filter(Boolean).join(" ");
       return `<button type="button" class="gl-now${one ? " gl-now-one" : ""} ${now.tone}"${go}${tip ? ` title="${escapeHtml(tip)}"` : ""} aria-label="${escapeHtml(say)}"><span class="gl-now-t">${now.key === "Where" ? `${escapeHtml(now.text).replace(/^(Place an? )(.+?)( on | in )/, "$1<b>$2</b>$3")}.` : `<b>${escapeHtml(lineOf(now))}.</b>`}${now.fix ? ` ${escapeHtml(now.fix)}${/[.!?]$/.test(now.fix) ? "" : "."}` : ""}${now.where ? ` ${escapeHtml(now.where)}.` : ""}${now.chain && !one ? `<span class="gl-chain">${escapeHtml(now.chain)}</span>` : ""}</span></button>`;
     };
     // (folded, the card is its header and one line under it: the goal at hand, how far along, and what its chain is
@@ -1055,6 +1054,7 @@ export class Hud {
       };
       if (hadFocus && !this.tut.contains(document.activeElement)) btn.focus({ preventScroll: true });
     }
+    // (a tip that stands down for a goal line still lights its category: the goal line says what to build there)
     this.hint(folded ? null : tip?.cat ?? null);
   }
 
@@ -1109,7 +1109,7 @@ export class Hud {
   private projNow(g: Game, lp: LongProject, one = false): string {
     const t = lp.town !== undefined ? g.towns.byId.get(lp.town) : undefined;
     const at = lp.works !== undefined ? ` data-id="${lp.works}" title="Show it on the map"` : t ? ` data-spot="${Math.round(t.c.x)},${Math.round(t.c.y)}" title="Fly there"` : " disabled";
-    return `<button type="button" class="gl-now${one ? " gl-now-one" : ""}${lp.bad ? " bad" : ""}"${at} ><span class="gl-now-t">${escapeHtml(lp.state)}.</span></button>`;
+    return `<button type="button" class="gl-now${one ? " gl-now-one" : ""}${lp.bad ? " bad" : ""}"${at}><span class="gl-now-t">${escapeHtml(lp.state)}.</span></button>`;
   }
 
   /** The notes at the foot of the tool options card (only redrawn when they change: the pointer moves every frame). */
@@ -1371,6 +1371,7 @@ export class Hud {
       }).join("");
       const rest = unlockList({ ...M.unlocks, buildings: [] }, names);
       this.banner.innerHTML = `<header class="banner-co">${heraldSvg(co.herald, co.name, 26)}<span>${M.name}</span></header>
+        <p class="sub">Goal reached: ${escapeHtml(M.goal[0].toLowerCase() + M.goal.slice(1))}</p>
         ${works.length ? `<p class="bn-lead">${works.length > 1 ? "New in Industry, in build order" : "New in Industry"}</p><ol class="bn-new${works.length > 1 ? " num" : ""}">${intro}</ol>` : ""}
         ${rest.length ? `<p class="gifts">${works.length ? "Also" : "Unlocked"}: ${rest.map(escapeHtml).join(" · ")}</p>` : ""}
         <div class="banner-btns">${works.length ? `<button class="btn" data-k="industry">Open Industry</button>` : ""}<button class="btn primary" data-k="ok">Continue</button></div>`;

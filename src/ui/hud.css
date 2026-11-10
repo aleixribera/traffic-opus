@@ -140,17 +140,12 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .bb-city { justify-self: start; display: flex; align-items: center; gap: 10px; min-width: 0; }
 .bb-time { justify-self: end; display: flex; align-items: center; gap: 10px; }
 
-.cb-city { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; background: none; border: 1px solid transparent; border-radius: var(--r); padding: 4px 8px; min-width: 0; max-width: 220px; text-align: left; }
-.cb-city:hover, .cb-money:hover { background: var(--plate); border-color: var(--rule); }
-.cb-city > b { font: 700 var(--t-plate)/1 var(--f-display); letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.cb-ms { display: flex; align-items: center; gap: 7px; color: var(--cream-2); font-size: var(--t-sm); white-space: nowrap; }
-.cb-ms i { width: 64px; height: 6px; border-radius: 1px; background: linear-gradient(90deg, var(--ochre) calc(var(--p) * 100%), var(--plate-3) 0); box-shadow: 0 0 0 1px var(--edge); flex: none; }
+.cb-money:hover { background: var(--plate); border-color: var(--rule); }
 .cb-pop { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: var(--t-md); color: var(--cream); padding: 0 6px; }
 .cb-pop svg { color: var(--cream-2); width: 15px; height: 15px; }
 .cb-pop-n { display: flex; flex-direction: column; gap: 3px; line-height: 1; }
 .cb-pop-n b { font-weight: 600; }
 .cb-pop-n small { font-size: var(--t-sm); font-weight: 400; color: var(--cream-2); white-space: nowrap; }
-.cb-city > b small { font-size: var(--t-xs); letter-spacing: 0.06em; color: var(--cream-2); }
 /* money: a stamped readout, like a cash register's window */
 .cb-money { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; background: none; border: 1px solid transparent; border-radius: var(--r); padding: 4px 6px; }
 .cb-money b { font: 600 var(--t-big)/22px var(--f-text); font-variant-numeric: tabular-nums lining-nums; letter-spacing: 0.02em; padding: 0 8px; min-width: 104px; background: var(--ink); border: 1px solid var(--edge); box-shadow: inset 0 0 0 1px var(--rule), inset 0 1px 3px rgba(0, 0, 0, 0.6); color: var(--cream); border-radius: 1px; }
@@ -554,7 +549,6 @@ kbd { font: 600 var(--t-sm)/1 var(--f-text); padding: 3px 6px; border: 1px solid
 
 /* ------------------------------------------------------------ narrower desktop windows */
 @media (max-width: 1100px) {
-  .cb-city .cb-ms span { display: none; }
   .cat { width: 62px; }
   .bb-city { gap: 6px; }
 }
@@ -935,7 +929,6 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .goal-pin i svg { width: 22px; height: 22px; }
 .goal-pin span { display: flex; flex-direction: column; gap: 1px; }
 .goal-pin b { font: 700 var(--t-plate)/1.1 var(--f-display); letter-spacing: 0.04em; text-transform: uppercase; }
-.goal-pin em { font-style: normal; font-size: var(--t-xs); font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ochre-hi); }
 .goal-pin:hover { background: var(--plate-2); border-color: var(--cream); }
 .goal-pin:focus-visible { outline: 2px solid var(--cream); outline-offset: 5px; }
 

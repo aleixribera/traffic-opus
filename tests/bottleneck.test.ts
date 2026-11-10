@@ -613,7 +613,7 @@ describe("read off the game", () => {
     // only the farm so far (no food plant): the goal follows the chain up to it
     const k = foodplant.kind;
     (foodplant as { kind: string }).kind = "sawmill";
-    expect(goalNow(g, food, 0)).toMatchObject({ who: "Your Farm", works: farm.id });
+    expect(goalNow(g, food, 0)).toMatchObject({ text: expect.stringMatching(/^Your Farm has no Food Plant/), works: farm.id });
     (foodplant as { kind: string }).kind = k;
   });
 

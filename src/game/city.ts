@@ -430,8 +430,7 @@ export class Game {
       this.emit({ t: "milestone", m, ...(towns.length ? { towns: towns.map((s) => s.town.id) } : {}) });
       for (const s of towns) {
         this.emit({ t: "townSpawned", town: s.town.id, from: s.from?.id ?? null, dist: s.dist, dir: s.dir });
-        const where = s.from ? `${(s.dist / 1000).toFixed(1)} km ${s.dir} of ${s.from.name}` : "on the map";
-        this.toast(`${s.town.name} has sprung up ${where}`);
+        // (no toast: the banner names it, with how far and which way, and the town ping points to it)
       }
       if (towns.length) { this.emit({ t: "zones" }); this.emit({ t: "buildings" }); }
       this.emit({ t: "money" });
@@ -459,7 +458,7 @@ export class Game {
     const town = d.to.town !== undefined ? this.towns.byId.get(d.to.town) : undefined;
     const where = town?.name ?? `the ${BUILDING_TYPES[d.to.kind].name}`;
     if (d.lost >= 1 && d.from && once(`spoiled:${d.from.id}`)) {
-      this.toast(`${PRODUCTS[d.product].name} from the ${BUILDING_TYPES[d.from.kind].name} spoiled on the way to ${where}: ${money(d.lost)} lost`);
+      this.toast(`${PRODUCTS[d.product].name} from the ${BUILDING_TYPES[d.from.kind].name} reached ${where} at ${Math.round(d.fresh * 100)}%: ${money(d.lost)} spoiled`);
     }
     if (d.product === "cars" && town && once(`cars:${town.id}`)) {
       this.toast(`${town.name} took delivery of ${d.n * CARS_PER_LOAD} new Motor Works cars`);
