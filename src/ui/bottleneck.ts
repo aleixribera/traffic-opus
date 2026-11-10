@@ -13,7 +13,7 @@ import { HIST_HOURS, Industry, PLANTS, PRODUCTS, powerPace, type PlantKind, type
 import { unlockedBy } from "../game/progression";
 import { served, type Town } from "../game/settlements";
 import { SITE_LEVELS } from "../game/sites";
-import { HOUR } from "../game/society";
+import { Age, HOUR } from "../game/society";
 import { SETTLING, demandPerDay, needsOf } from "../game/towns";
 import { loadsLately, townNeeds } from "./needs";
 
@@ -93,6 +93,32 @@ export function needHelpSay(o: { kind: "none"; works: string; product: string } 
   return `Your ${o.works} is held up: ${o.problem[0].toLowerCase()}${o.problem.slice(1)}.`;
 }
 
+/** Towns by name: "Alder Run", "Alder Run and Elton", "Alder Run, Elton and Ashby", "Alder Run, Elton and 2 more towns". */
+const townList = (ns: readonly string[]): string =>
+  ns.length <= 3 ? ns.join(", ").replace(/, ([^,]*)$/, " and $1") : `${ns[0]}, ${ns[1]} and ${ns.length - 2} more towns`;
+
+/**
+ * What holds a works short of workers, and the way out the sim offers (staffing): a town on its roads, the people
+ * there still free taking its jobs, or the towns there growing. `works`: its name, where the advice would otherwise be
+ * to build another.
+ */
+export function staffSay(o: { towns: readonly string[]; spare: number; works?: string }): string {
+  if (!o.towns.length) return "No town is on its roads, so nobody can get to work there. Link it to a town by road.";
+  const who = townList(o.towns);
+  if (o.spare > 0) return `People from ${who} are taking its jobs.`;
+  const empty = o.works ? `, so another ${o.works} on these roads would stand empty` : "";
+  return `Every adult in ${who} already works for you${empty}. ${o.towns.length === 1 ? `${who} needs` : o.towns.length === 2 ? "Both need" : "Those towns need"} to grow, or link another town to its roads.`;
+}
+
+/** "6 of 12 jobs filled". */
+export const jobsFilled = (s: Staffing): string => `${s.have} of ${s.jobs} jobs filled`;
+
+/** A works short of workers, for the town's advice: "Your Sawmill is short of workers: 6 of 12 jobs filled. Every ...". */
+export function workersSay(g: Game, b: Building): string {
+  const s = staffing(g, b), name = nameOf(b.kind);
+  return `Your ${name} is short of workers: ${jobsFilled(s)}. ${staffSay({ towns: s.towns.map((t) => t.name), spare: s.spare, works: name })}`;
+}
+
 // ------------------------------------------------------------------------------------------- reading the game
 
 const nameOf = (k: string) => BUILDING_TYPES[k as PlantKind].name;
@@ -130,9 +156,16 @@ export const FLAT_FLOOR = 0.6;
  * that one batch alone: a Sawmill at a third of its pace, read over its first few hours, is not at full output.
  */
 export function flatOut(g: Game, b: Building, p: Product): boolean {
+  // (short of workers it is not making all it can, whatever its hours say: owner, 2026-11-10, a Sawmill with half its
+  // jobs filled read "At full output")
+  return staffPace(g, b) >= 1 && fullPace(g, b, p, 1);
+}
+
+/** Is a works making all that `share` of its pace allows (give or take the batch that fell outside the hours read)? */
+function fullPace(g: Game, b: Building, p: Product, share: number): boolean {
   const x = paceOf(b, p);
   if (!x) return false;
-  const can = canPerDay(g, b, p);
+  const can = canPerDay(g, b, p) * share;
   return (x.made / x.hours) * 24 >= can * FLAT_FLOOR && atFullOutput(((x.made + x.lump) / x.hours) * 24, can);
 }
 
@@ -140,6 +173,60 @@ export function flatOut(g: Game, b: Building, p: Product): boolean {
 export function canPerDay(g: Game, b: Building, p: Product): number {
   return Industry.perDay(b, p) * (SEASONAL[b.kind] ? seasonMult(b.kind, g.time) : 1);
 }
+
+/**
+ * The share of its pace a works' staff allow, as the sim reckons it: its share of jobs filled (industry.ts produce);
+ * a power plant runs full from four fifths of them (utilities.ts output).
+ */
+export function staffPace(g: Game, b: Building): number {
+  if (!b.cap) return 1;
+  const s = g.people.workersAt(b.id) / b.cap;
+  return PLANTS[b.kind as PlantKind]?.makes ? (s <= 0 ? 0 : Math.max(0.25, Math.min(1, s * 1.25))) : Math.min(1, s);
+}
+
+/** Who a works' staff are: how many of its jobs are filled, the towns on its roads and the adults there still free. */
+export interface Staffing {
+  have: number; jobs: number;
+  /** the towns on its roads: the ones its staff live in first, most of them first */
+  towns: Town[];
+  /** adults on its roads with no job, or a town job: the next hiring brings them to it */
+  spare: number;
+}
+
+// (read once a quarter hour, the sim's hiring pace, or when its staff change: a census of every adult is not per frame)
+const staffSeen = new WeakMap<Building, { t: number; have: number; s: Staffing }>();
+
+/**
+ * Where a works' staff come from, as the sim hires them (society.ts matchJobs, every quarter hour): any adult whose
+ * home is on its roads, however far, for the company's works before any town job, and a town job is given up for one.
+ * So a works stays short only once every adult on its roads works for the company: then nothing but more people on
+ * those roads fills it, and another works there would stand empty.
+ */
+export function staffing(g: Game, b: Building): Staffing {
+  const have = g.people.workersAt(b.id), jobs = b.cap ?? 0;
+  const seen = staffSeen.get(b);
+  const q = Math.floor(g.time / (HOUR / 4));
+  if (seen && seen.t === q && seen.have === have && seen.s.jobs === jobs) return seen.s;
+  const sends = new Map<Town, number>(), reach = new Set<Town>(), seg = b.access?.seg;
+  let spare = 0;
+  for (const c of g.people.citizens.values()) {
+    if (c.age !== Age.Adult) continue;
+    const home = g.buildings.byId.get(c.home);
+    const t = home?.town === undefined ? undefined : g.towns.byId.get(home.town);
+    if (c.job === b.id) { if (t) sends.set(t, (sends.get(t) ?? 0) + 1); continue; }
+    if (seg === undefined || !home?.access || !g.connected(home.access.seg, seg)) continue;
+    if (t) reach.add(t);
+    if (c.job < 0 || !g.buildings.byId.get(c.job)?.placed) spare++;
+  }
+  const towns = [...sends].sort((x, y) => y[1] - x[1]).map(([t]) => t);
+  for (const t of reach) if (!towns.includes(t)) towns.push(t);
+  const s = { have, jobs, towns, spare };
+  staffSeen.set(b, { t: q, have, s });
+  return s;
+}
+
+/** Is a works short of workers with nobody left on its roads to hire: the thing holding it back. */
+export const understaffed = (g: Game, b: Building): boolean => staffPace(g, b) < 1 && staffing(g, b).spare === 0;
 
 /**
  * Loads an hour a works reads as making, beside what it can make: the one pace its panel, its status and the town's
@@ -152,8 +239,7 @@ export function shownRate(g: Game, b: Building, p: Product): { rate: number | nu
   // (short of power or of workers the sim works it at powerPace of its pace times its share of staff (industry.ts
   // produce), so it shows no more than that: the late save's Iron Mine read "No power, working at 40%" over "10 loads
   // a day, can 10", one early load over one hour. `can` stays the full figure, so the gap shows)
-  const staff = b.cap ? Math.min(1, g.people.workersAt(b.id) / b.cap) : 1;
-  const top = can * staff * (PLANTS[b.kind as PlantKind]?.power ? powerPace(g.utilities.supplyOf(b)) : 1);
+  const top = can * staffPace(g, b) * (PLANTS[b.kind as PlantKind]?.power ? powerPace(g.utilities.supplyOf(b)) : 1);
   const x = paceOf(b, p);
   // (short of power it is not making all it can, whatever a lumpy few hours say)
   if (x) return { rate: flatOut(g, b, p) && top >= can && !/^(No power|Short of power)/.test(b.problem ?? "") ? can : Math.min(top, x.made / x.hours), can };
@@ -197,8 +283,10 @@ export function hungryFor(g: Game, o: Building, p: Product): boolean {
   if ((o.plant!.stock[p] ?? 0) >= need * 2) return false;
   // (held up by something else: that is its own story)
   if (o.problem && !o.problem.startsWith(`Waiting for ${lower(p)}`)) return false;
-  const q = mainOf(o.kind as PlantKind);
-  return !q || !flatOut(g, o, q);
+  // (making all its staff allow, it is short of workers, not of this: its yard runs low because it uses all that comes)
+  // (and with nobody at work, that is what holds it)
+  const q = mainOf(o.kind as PlantKind), sp = staffPace(g, o);
+  return !q || (sp > 0 && !fullPace(g, o, q, sp));
 }
 
 /**
@@ -306,6 +394,10 @@ export function needHelp(g: Game, t: Town, p: Product): NeedHelp | null {
   // (one new works starting up beside others flat out: the advice is still how many more, the new one counted in.
   // The late save's Food row talked about the new Food Plant's first load with 1,055 loads a day still short)
   const rest = up.filter((b) => !starting.includes(b));
+  // (one short of workers with nobody left to hire: another works on those roads would stand empty, so the advice is
+  // the towns, never to build more)
+  const thin = held ? undefined : rest.find((b) => understaffed(g, b));
+  if (thin) return { kind: "held", works: thin.id, say: workersSay(g, thin) };
   if (!held && starting.length && rest.length && up.length === mine.length && rest.every((b) => flatOut(g, b, p))) {
     const each = rest.reduce((a, b) => a + canPerDay(g, b, p), 0) / rest.length;
     const n = worksFor(Math.max(0, total - starting.reduce((a, b) => a + canPerDay(g, b, p), 0)), each);
@@ -319,6 +411,7 @@ export function needHelp(g: Game, t: Town, p: Product): NeedHelp | null {
   }
   if (held) {
     const problem = steadyProblem(g, held)!;
+    if (/^(No workers|Not enough workers)/.test(problem)) return { kind: "held", works: held.id, say: workersSay(g, held) };
     // (short of an input whose makers are all flat out: the works to build is one of those, a step up the chain)
     const q = problem.includes("stuck in traffic") ? undefined : (Object.keys(PLANTS[held.kind as PlantKind].inputs) as Product[]).find((x) => problem.startsWith(`Waiting for ${lower(x)}`));
     const full = q ? makersFlatOut(g, q, held) : null;
@@ -330,6 +423,9 @@ export function needHelp(g: Game, t: Town, p: Product): NeedHelp | null {
       const n = Math.max(1, worksFor((Math.min(total, spare) * (D.inputs[q] ?? 1)) / (D.outputs[p] ?? 1), each));
       return { kind: "full", build: k, n, works: full.works[0].id, say: `Your ${nameOf(held.kind)} is short of ${lower(q)}. ${needHelpSay({ kind: "full", works: nameOf(k), have: full.works.length, n })}` };
     }
+    // (short of an input whose maker is short of workers: that maker's staff are the way on, not another of either)
+    const lean = q ? g.industry.plants().find((o) => working(o) && mainOf(o.kind as PlantKind) === q && understaffed(g, o)) : undefined;
+    if (q && lean) return { kind: "held", works: lean.id, say: `Your ${nameOf(held.kind)} is short of ${lower(q)}. ${workersSay(g, lean)}` };
     return { kind: "held", works: held.id, say: needHelpSay({ kind: "held", works: nameOf(held.kind), problem: problem.split(": ")[0] }) };
   }
   if (up.length && up.length === mine.length && up.every((b) => flatOut(g, b, p))) {

@@ -16,7 +16,7 @@ import type { Town } from "../src/game/settlements";
 import {
   FULL_OUTPUT, START_HOURS, aboutHours, atFullOutput, batchHours, blockFix, blockWords, buildOrder, canPerDay, ceilingFix, ceilingOf, flatOut, hasMade,
   needHelp, needHelpSay, nextLoad, shortOf, shortfalls, shownRate, siteHours, siteLine, siteStatus, startUp, steadyProblem, tally, townAdvice, townWants,
-  powerFix, waitsForSite, worksFor, worstCeiling,
+  powerFix, staffSay, staffing, waitsForSite, worksFor, worstCeiling,
 } from "../src/ui/bottleneck";
 import { noBuyer, powerCeiling, signedMoney, siteModel, takenBy, townModel, worksCalm, worksStatus } from "../src/ui/inspect";
 import { goalNow, goalNowSay } from "../src/ui/goalNow";
@@ -188,6 +188,8 @@ describe("read off the game", () => {
     g = new Game(7);
     ({ t, farm, foodplant } = chain(g));
     for (const b of [farm, foodplant]) { b.built = 1; b.problem = null; if (b.plant) b.plant.site = undefined; }
+    // (the town's adults take the jobs, as the sim's hiring does a quarter hour in: a works short of them reads so)
+    g.people.matchJobs();
   }, 120000);
 
   it("a new town with nothing coming would take its whole day's food", () => {
@@ -621,6 +623,9 @@ describe("read off the game", () => {
     foodplant.problem = null;
     made(foodplant, "food", 1);
     expect(startUp(g, second)).not.toBeNull();
+    // (it went up on the town's grid where homes stood, and the town is left short of adults: fully staffed here, as
+    // this is about counting the new one in; a works short of workers is the next describe)
+    const staffed = vi.spyOn(g.people, "workersAt").mockImplementation((id) => g.buildings.byId.get(id)?.cap ?? 0);
     expect(flatOut(g, foodplant, "food")).toBe(true);
     // (a town short of more than the new one will make)
     const pop = t.pop;
@@ -640,5 +645,101 @@ describe("read off the game", () => {
     made(foodplant, "food", 0.2);
     expect(needHelp(g, t, "food")!.say.startsWith("Your Food Plant is starting up. ")).toBe(true);
     t.pop = pop;
+    staffed.mockRestore();
+  });
+});
+
+// A works short of workers (owner, 2026-11-10: a Sawmill with 6 of its 12 jobs filled read "At full output", and the
+// Goals card said "Build about 18 more"). The sim hires for the company's works first, from any home on their roads
+// however far, and a town job is given up for one (society.ts matchJobs). So a works stays short only once every
+// adult on its roads works for the company: another works there would stand empty, and the way out is more people.
+describe("a works short of workers", () => {
+  let g: Game, t: Town, farm: Building, fp: Building;
+  const made = (b: Building, p: "food" | "crops", share: number, hours = 12) => {
+    b.plant!.hist = Array.from({ length: hours }, () => ({ [p]: (canPerDay(g, b, p) / 24) * share }));
+  };
+  beforeAll(() => {
+    g = new Game(7);
+    ({ t, farm, foodplant: fp } = chain(g));
+    for (const b of [farm, fp]) { b.built = 1; b.problem = null; if (b.plant) b.plant.site = undefined; }
+  }, 120000);
+
+  it("the words: who its staff come from, and the way out the sim offers", () => {
+    expect(staffSay({ towns: [], spare: 0 })).toBe("No town is on its roads, so nobody can get to work there. Link it to a town by road.");
+    expect(staffSay({ towns: ["Alder Run"], spare: 5 })).toBe("People from Alder Run are taking its jobs.");
+    expect(staffSay({ towns: ["Alder Run"], spare: 0 })).toBe("Every adult in Alder Run already works for you. Alder Run needs to grow, or link another town to its roads.");
+    expect(staffSay({ towns: ["Alder Run", "Elton"], spare: 0, works: "Sawmill" })).toBe(
+      "Every adult in Alder Run and Elton already works for you, so another Sawmill on these roads would stand empty. Both need to grow, or link another town to its roads.",
+    );
+    expect(staffSay({ towns: ["A", "B", "C"], spare: 0 })).toMatch(/^Every adult in A, B and C already works for you\. Those towns need to grow/);
+    expect(staffSay({ towns: ["A", "B", "C", "D"], spare: 0 })).toMatch(/^Every adult in A, B and 2 more towns already works for you\. Those towns need to grow/);
+  });
+
+  it("just opened, before the hiring: its staff are coming from the town on its roads", () => {
+    expect(g.people.workersAt(fp.id)).toBe(0);
+    expect(staffing(g, fp)).toMatchObject({ have: 0, jobs: fp.cap, towns: [t] });
+    expect(staffing(g, fp).spare).toBeGreaterThan(0);
+    // (a works that has made something: one that has not is starting up, and says its first workers are coming)
+    made(fp, "food", 0.5);
+    fp.problem = "No workers";
+    expect(siteModel(g, fp).status).toMatchObject({ text: "No workers", tone: "bad", fix: `People from ${t.name} are taking its jobs.` });
+    fp.problem = null;
+    // (with no line of its own yet, it is taking them on: not in the red, and never at full output)
+    expect(siteModel(g, fp).status).toMatchObject({ text: "Taking on workers", tone: "", fix: `People from ${t.name} are taking its jobs.` });
+    g.people.matchJobs();
+    expect(g.people.workersAt(fp.id)).toBe(fp.cap);
+    expect(staffing(g, fp)).toMatchObject({ have: fp.cap, jobs: fp.cap });
+  });
+
+  it("two jobs short with every adult at work: never 'At full output', and the advice is the town, not more works", () => {
+    // (more jobs than Alder Run has adults left: the hiring fills all it can and stops two short)
+    const have = g.people.workersAt(fp.id), spare = staffing(g, fp).spare;
+    fp.cap = have + spare + 2;
+    g.people.matchJobs();
+    expect(g.people.workersAt(fp.id)).toBe(fp.cap - 2);
+    expect(staffing(g, fp).spare).toBe(0);
+    // flat out at the pace its staff allow: that read "At full output" with "Build another Food Plant"
+    made(fp, "food", (fp.cap - 2) / fp.cap);
+    expect(flatOut(g, fp, "food")).toBe(false);
+    expect(ceilingOf(g, fp)).toBeNull();
+    const st = siteModel(g, fp).status;
+    const pct = Math.floor(((fp.cap - 2) / fp.cap) * 100);
+    expect(st).toMatchObject({ text: "Short of workers", tone: "" });
+    expect(st.fix).toBe(`${fp.cap - 2} of ${fp.cap} jobs filled, so it works at ${pct}%. Every adult in ${t.name} already works for you. ${t.name} needs to grow, or link another town to its roads.`);
+    // the town's advice, the Goals card's list and the tip say the same, and never to build more
+    const h = needHelp(g, t, "food")!;
+    expect(h).toMatchObject({ kind: "held", works: fp.id });
+    expect(h.say).toBe(`Your Food Plant is short of workers: ${fp.cap - 2} of ${fp.cap} jobs filled. Every adult in ${t.name} already works for you, so another Food Plant on these roads would stand empty. ${t.name} needs to grow, or link another town to its roads.`);
+    expect(townAdvice(g, t, true)!.say).toContain("Your Food Plant is short of workers");
+    expect(shortfalls(g)[0].say).toContain("Your Food Plant is short of workers");
+    for (const s of [st.fix!, h.say, shortfalls(g)[0].say, tipFor(g)?.html ?? ""]) expect(s).not.toMatch(/full output|Build (another|about)/);
+    // fully staffed again, it is at full output as before
+    fp.cap -= 2;
+    expect(siteModel(g, fp).status.text).toBe("At full output");
+  });
+
+  it("a chain held back further up: the food plant waits for crops, and the farm short of workers is named", () => {
+    farm.cap = g.people.workersAt(farm.id) + 2;
+    expect(staffing(g, farm).spare).toBe(0);
+    made(farm, "crops", 0.8);
+    made(fp, "food", 0.5);
+    fp.problem = "Waiting for crops";
+    const yard = fp.plant!.stock.crops;
+    fp.plant!.stock.crops = 0;
+    const h = needHelp(g, t, "food")!;
+    expect(h).toMatchObject({ kind: "held", works: farm.id });
+    expect(h.say).toMatch(new RegExp(`^Your Food Plant is short of crops\. Your Farm is short of workers: ${farm.cap - 2} of ${farm.cap} jobs filled\. Every adult in ${t.name} already works for you, so another Farm on these roads would stand empty\.`));
+    // the food plant's own panel names it too
+    expect(siteModel(g, fp).status.fix).toContain(`It is short of workers: ${farm.cap - 2} of ${farm.cap} jobs filled.`);
+    fp.problem = null;
+    fp.plant!.stock.crops = yard;
+  });
+
+  it("the sim's own 'Not enough workers' says the same, not to let a town grow nearer", () => {
+    farm.problem = "Not enough workers";
+    const fix = siteModel(g, farm).status.fix!;
+    expect(fix).toContain(`Every adult in ${t.name} already works for you.`);
+    expect(fix).not.toMatch(/nearer/);
+    farm.problem = null;
   });
 });
