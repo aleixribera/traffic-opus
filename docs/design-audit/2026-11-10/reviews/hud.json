@@ -1,0 +1,126 @@
+{
+  "lens": "hud",
+  "findings": [
+    {
+      "screen": "late-town",
+      "viewport": "desktop",
+      "rule": "NEW",
+      "severity": "high",
+      "title": "\"Load\" means two different sizes, so demand can't be compared with production",
+      "detail": "NEW: one unit per quantity across every readout. The town panel and Goals card count demand in tiny 'loads' (1 crate = 60 loads), while the Iron Mine and Power Plant use 'load' for one truck's worth, and the Economy window gives food output with no unit at all. A player can't tell whether 2 food made today is close to or nowhere near a town needing 518, so 'build about 43 more' looks arbitrary.",
+      "evidence": "Town: 'Food … 1 crate = 60 loads … 0 of 518 loads a day'. Goals card: 'Food 1,055 more loads a day … Build about 43 more'. Iron Mine: '1 load shipped, last hour'. Power Plant (DOM): 'Made 0 loads'. Economy: 'Food 2 / 12' under 'Made, last 24 hours'.",
+      "fix": "Pick one counting unit (the truck load or the crate) and use it everywhere: town needs, Goals card, Economy rows and works stats. Drop the 'crate = N loads' conversion line, and show Economy production in the same unit as the town demand, e.g. 'Food 2 of 12 crates made · towns want 18'.",
+      "box": [1351, 209, 224, 78]
+    },
+    {
+      "screen": "late-powerplant",
+      "viewport": "desktop",
+      "rule": "HUD-05",
+      "severity": "high",
+      "title": "The Power Plant headline says it's waiting for coal while showing coal in the yard, and flips to 'Working normally' moments later",
+      "detail": "The screenshot shows the red alarm 'Waiting for coal or wood chips' and '0 MW made, of 40' next to '1/8 coal in the yard'. The DOM, sampled moments later, reads 'Working normally · 40 MW made, of 40 · 4 buildings powered'. A player can't tell whether the plant is broken, and the Iron Mine panel blames the same plant at the same time.",
+      "evidence": "PNG: 'Waiting for coal or wood chips', '0 MW made, of 40', '4 buildings in reach, unpowered', '1 /8 coal in the yard', '0% · then ×2 output'. DOM same capture: 'Working normally' (green 147,201,122), '40 MW made, of 40', '4 buildings powered', '1% · then ×2 output'.",
+      "fix": "Treat the plant as running while it has coal in the yard or burned a load within the last in-game hour, and show the alarm only after an empty yard persists for a while (hysteresis). When a load is in the yard, say 'Burning its last coal: next from Coal Mine in about 4 hours' rather than 'Waiting'.",
+      "box": [1305, 69, 272, 170]
+    },
+    {
+      "screen": "late-works",
+      "viewport": "desktop",
+      "rule": "COL-03",
+      "severity": "medium",
+      "title": "The output stat is green and says it is at its maximum on a mine that is crippled by no power",
+      "detail": "The headline reads 'No power · Working at 40%' in alarm red, but the first stat underneath is a green '0.4/h' with 'can 0.4', which says the mine is at full output. The 'can' figure already includes the power cut, so the 60% the player is losing is never shown as a number. The same happens at wide and small.",
+      "evidence": "'No power' (239,138,108) at [1321,69]; '0.4' at 20 px in green (147,201,122) [1305,201,27,24]; 'iron ore, can 0.4' [1305,226]; Details: 'dashed: full pace, 0.4 an hour'.",
+      "fix": "Show 'can' as the full-power rate (e.g. '0.4/h, can 1.0') and colour the value with the alarm or warning colour whenever the works is held back. Keep green only for a works running at or near its unrestricted rate.",
+      "box": [1305, 201, 85, 40]
+    },
+    {
+      "screen": "late-economy",
+      "viewport": "desktop",
+      "rule": "NEW",
+      "severity": "medium",
+      "title": "The Economy 'made / can make' bars look like full progress bars when output is a sixth of capacity",
+      "detail": "NEW: a bar next to a ratio must fill in proportion to that ratio. Each row has a bar whose only marks are thin ticks at the far right end, so Food at 2 / 12 and Crops at 4 / 6 both look nearly full. Players will read the bars as 'almost at capacity' when most rows are at 0–33%.",
+      "evidence": "Food '2 / 12', Planks '2 / 6' and Wood chips '2 / 6' each show two coloured ticks at x≈323–330 of a 259–330 px bar. Steel and Cement '0 / 4', '0 / 6' are empty. The header says only 'Made, last 24 hours · made / can make'.",
+      "fix": "Fill each bar to made ÷ can make (2/12 = 17%), or, if the ticks are a 24 h timeline of shipments, label it ('24 h ago … now') like the works panel does and move the ratio into a separate fill.",
+      "box": [259, 320, 156, 290]
+    },
+    {
+      "screen": "farm-no-road",
+      "viewport": "desktop",
+      "rule": "HUD-02",
+      "severity": "medium",
+      "title": "Opening any works or town panel removes the Goals card and its NOW/WHERE line",
+      "detail": "The works panel opens in the same top-right slot as the Goals card and replaces it, so the moment the player inspects their new farm the current objective disappears. All that is left is the bottom-left 'GOALS 0 OF 20 · None reached yet', which doesn't say what to do next. The same happens on late-works, late-powerplant and late-town.",
+      "evidence": "fresh: Goals card at [1290,10,300,530]. farm-no-road: Farm panel at [1290,10,300,218], with no Goals text in the DOM; the only goal text is 'Goals 0' 'of 20' 'None reached yet' at [21,847].",
+      "fix": "Stack the works or town panel below a collapsed one-line goal strip (goal name, progress and the NOW line), or open inspection panels in a different anchor (e.g. left of the Goals card), so the objective stays in one fixed place.",
+      "box": [1290, 10, 300, 218]
+    },
+    {
+      "screen": "farm-in-hand",
+      "viewport": "desktop",
+      "rule": "HUD-04",
+      "severity": "medium",
+      "title": "The tip and WHERE line still give the step the player has just done",
+      "detail": "With Industry open, the Farm in hand and the soil pin on screen, the tip still says 'Open Industry and place a Farm on fertile soil…' and the Goals card still says the soil 'lies 700 m north of Alder Run'. The same stale text is on drawing-road. The instructions don't follow the player's progress, so they learn to ignore the card.",
+      "evidence": "farm-in-hand DOM: tip [1307,429,230,91] 'Start a food chain. Alder Run needs food. Open Industry and place a Farm on fertile soil within 400 m of a road…'; WHERE [1368,120] 'Fertile soil for your farm lies 700 m north of Alder Run.'; catalog strip 'Farm … IN HAND'.",
+      "fix": "Make the NOW/WHERE line and tip follow the state: with a Farm in hand, 'Click on the yellow soil to place it (needs 35% soil under the plot)'; once it is placed, 'Farm opens in about 3 h, then trucks take crops to …'. Hide the tip once its action is done.",
+      "box": [1307, 429, 230, 91]
+    },
+    {
+      "screen": "fresh",
+      "viewport": "desktop",
+      "rule": "HUD-04",
+      "severity": "medium",
+      "title": "The first screen says the same instruction three times and buries it among future goals",
+      "detail": "A new player gets the edge pointer ('FIRST GOAL 700 m FERTILE SOIL'), the WHERE line ('…lies 700 m north of Alder Run') and the tip ('Open Industry and place a Farm on fertile soil within 400 m of a road'). These sit in a 300x530 px card that also lists two later goals with six-item unlock lists. The bottom bar repeats '0 of 20'. The one action, open Industry and place a Farm, is not the loudest thing on screen.",
+      "evidence": "Goals card [1290,10,300,530] holds 3 goals and 3 UNLOCKS lines (e.g. 'Power Plant · Coal Mine · Iron Mine · Smelter · Heavy trucks · $80,000 grant'). The tip mixes '400 m of a road' with the '700 m' of the pointer and the WHERE line. The header '0 of 20 reached' duplicates the bottom-left 'GOALS 0 OF 20 None reached yet'.",
+      "fix": "Show only the current goal expanded, with one NOW line ('Open Industry › Farm, place it on the yellow soil 700 m north'). Collapse the later goals to a single 'Next: Growing hamlet 79/150' row and fold the tip into the NOW line, or drop it.",
+      "box": [1290, 10, 300, 530]
+    },
+    {
+      "screen": "drawing-road",
+      "viewport": "desktop",
+      "rule": "HUD-01",
+      "severity": "medium",
+      "title": "While drawing, the road catalog stays open over the lower-centre third of the map",
+      "detail": "Once a road type is in hand, the 920x300 px catalog of four cards stays open over the map just south of the town, where the player is drawing. With Tool options on the left and the Goals card on the right, only about 1030x470 px of the 1600x840 play area is clear. The 'Too short' readout sits right on the catalog's top edge.",
+      "evidence": "Catalog cards [340,525,920,300]; Tool options [10,430,248,395]; Goals card [1290,10,300,530]; 'Too short: drag further from the start' [846,494,215,16]; length/cost readout '0 m' '$0' at [25,771] in the far-left panel.",
+      "fix": "Collapse the catalog to its one-line 'Street … IN HAND' strip (as Industry already does with a Farm in hand) once a road is picked or a drag starts. Show the length and cost next to the pointer with the 'Too short' message instead of in the bottom-left panel.",
+      "box": [340, 525, 920, 300]
+    },
+    {
+      "screen": "late",
+      "viewport": "desktop",
+      "rule": "HUD-05",
+      "severity": "medium",
+      "title": "A shrinking town is reported only inside its panel; the persistent Goals card stays calm",
+      "detail": "Quimbyton is 'Shrinking, short of 5 needs', but the always-visible Goals card only says 'Food 1,055 more loads a day' in the same calm cream as every other line. The map marker shows five identical red '!' badges whatever the severity. Nothing on the persistent HUD tells the player a town is losing people right now.",
+      "evidence": "late-town: 'Shrinking, short of 5 needs' (239,138,108) at [1321,74]. late Goals card: 'Food' / '1,055 more loads a day' (243,234,214), 'Quimbyton and 2 more towns. Your Food Plant is at full output…', with no 'shrink' text anywhere in the card. Map: 5 red '!' badges under 'Town · 1,620'.",
+      "fix": "When any town is shrinking, add an alarm line to the top of the Goals card ('Quimbyton is shrinking: no food, planks, cement …' with Show it). Give the town marker one stronger 'shrinking' state, such as a red plate band or a pulse, distinct from the per-need badges.",
+      "box": [1305, 109, 270, 73]
+    },
+    {
+      "screen": "late-far",
+      "viewport": "desktop",
+      "rule": "NEW",
+      "severity": "low",
+      "title": "At far zoom, the need badges overlap each other and the town plate",
+      "detail": "NEW: map labels keep a fixed gap from each other after decluttering. Quimbyton's five need circles overlap one another, and their '!' dots sit on the bottom of the 'TOWN · 1,620' plate. New Bixby's badge row nearly touches Quimbyton's name plate, so at the zoom where the player compares towns, the two labels read as one cluster.",
+      "evidence": "Zoomed crop of [690,380,210,160]: badge circles under Quimbyton overlap by ~4 px each, '!' dots cover the plate's lower edge at y≈500. New Bixby badges end at y≈446 and the Quimbyton plate starts at y≈466.",
+      "fix": "At far zoom, collapse the badges to one 'short of 5' chip beside the plate, or space them at their full diameter below the plate. Include the badge row in the declutter bounds so neighbouring towns keep a gap.",
+      "box": [727, 463, 122, 68]
+    },
+    {
+      "screen": "fresh",
+      "viewport": "desktop",
+      "rule": "ONB-03",
+      "severity": "low",
+      "title": "An unexplained 'Tuning in' ticker takes the status slot next to the clock",
+      "detail": "The framed slot between the tools and the clock shows 'Tuning in', then 'Alder Run Hop' and 'Payday in Quimbyton' on other shots, with a skip button. Nothing says it's a radio. 'Payday in Quimbyton' reads like a game event the player should act on, in a spot where they would expect alerts.",
+      "evidence": "'Tuning in' [1131,862,52,14] at 12 px in (169,159,138) on fresh, late, late-works and late-town. 'Alder Run Hop' on drawing-road; 'Payday in Quimbyton' (240,194,90) on late-economy.",
+      "fix": "Label it as the radio (a 'Radio' caption or a speaker icon plus 'Now playing:'), or move it out of the status band. Keep that slot for game alerts such as 'Quimbyton is shrinking'.",
+      "box": [1088, 850, 206, 38]
+    }
+  ]
+}

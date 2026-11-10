@@ -2,20 +2,24 @@
 // short town and a building site say, and the sums under them. The wording is checked as plain strings so a change
 // to it is a choice; the readings are checked against a real first chain on seed 7.
 
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { Game } from "../src/game/city";
 import { HOUR } from "../src/game/society";
+import { buildTime } from "../src/game/construction";
+import { MILESTONES } from "../src/game/progression";
 import { BLOCK, demandPerDay, gridPt } from "../src/game/towns";
-import { Industry } from "../src/game/industry";
+import { HIST_HOURS, Industry, PLANTS } from "../src/game/industry";
 import { F } from "../src/world/gen";
 import type { V2 } from "../src/core/math";
 import type { Building } from "../src/game/buildings";
 import type { Town } from "../src/game/settlements";
 import {
-  FULL_OUTPUT, aboutHours, atFullOutput, blockFix, blockWords, buildOrder, canPerDay, ceilingFix, ceilingOf, flatOut, hasMade, needHelp, needHelpSay,
-  nextLoad, shortOf, shortfalls, siteHours, siteLine, sitePace, siteStatus, steadyProblem, tally, townWants, watchSites, worksFor, worstCeiling,
+  FULL_OUTPUT, START_HOURS, aboutHours, atFullOutput, batchHours, blockFix, blockWords, buildOrder, canPerDay, ceilingFix, ceilingOf, flatOut, hasMade,
+  needHelp, needHelpSay, nextLoad, shortOf, shortfalls, shownRate, siteHours, siteLine, siteStatus, startUp, steadyProblem, tally, townAdvice, townWants,
+  powerFix, waitsForSite, worksFor, worstCeiling,
 } from "../src/ui/bottleneck";
-import { noBuyer, siteModel, takenBy } from "../src/ui/inspect";
+import { noBuyer, powerCeiling, signedMoney, siteModel, takenBy, townModel, worksCalm, worksStatus } from "../src/ui/inspect";
+import { goalNow, goalNowSay } from "../src/ui/goalNow";
 import { DEAR_MIN, DEAR_SHARE, dearShare } from "../src/ui/cost";
 import { tipFor } from "../src/ui/tips";
 import { placeAlong, road } from "./helpers";
@@ -100,7 +104,17 @@ describe("the words", () => {
   });
 
   it("newly unlocked works are listed in the order to build them: what feeds another comes first (B5)", () => {
-    expect(buildOrder(["smelter", "coalplant", "coalmine", "ironmine"])).toEqual(["coalmine", "coalplant", "ironmine", "smelter"]);
+    // the works that powers the others first (they stand at 40% without it; it burns the sawmills' wood chips till
+    // the coal comes), then what feeds it, then the rest feeder first (owner, 2026-11-10: it was listed third)
+    expect(buildOrder(["smelter", "coalplant", "coalmine", "ironmine"])).toEqual(["coalplant", "coalmine", "ironmine", "smelter"]);
+    expect(buildOrder(MILESTONES.find((m) => m.id === "village")!.unlocks.buildings!)).toEqual(["coalplant", "coalmine", "ironmine", "smelter"]);
+    // (the goal's own list is kept in that order, so the Goals card and the banner say the same)
+    expect(MILESTONES.find((m) => m.id === "village")!.unlocks.buildings).toEqual(["coalplant", "coalmine", "ironmine", "smelter"]);
+    // every goal's new works: a power plant never listed after a works that draws power, a feeder never after its taker
+    for (const m of MILESTONES) {
+      const ks = buildOrder(m.unlocks.buildings ?? []);
+      expect([...ks].sort()).toEqual([...(m.unlocks.buildings ?? [])].sort());
+    }
     expect(buildOrder(["cementworks", "quarry"])).toEqual(["quarry", "cementworks"]);
     expect(buildOrder(["farm"])).toEqual(["farm"]);
   });
@@ -136,6 +150,34 @@ function chain(g: Game) {
   return { t, farm, foodplant };
 }
 
+describe("a power plant at its limit", () => {
+  // (the late save read "Working normally" on a plant beside three works short of its power)
+  const plant = { id: 1, plant: { level: 1 } } as unknown as Building;
+  const works = [2, 3, 4].map((id) => ({ id }) as unknown as Building);
+  const game = (made: number, used: number, short: number[]) => ({
+    buildings: { list: [plant, ...works] },
+    utilities: { plants: new Map([[1, { made, used, users: 3 }]]), supplyOf: (o: Building) => (short.includes(o.id) ? 0.4 : 1), reaches: () => true },
+  }) as unknown as Game;
+  it("says how much its reach wants against what it makes, and the way out", () => {
+    expect(powerCeiling(game(60, 90, [2, 3, 4]), plant)!.fix).toBe("The 3 works in its reach want 90 MW. It makes 60. Build another Power Plant nearby, or wait for level 2.");
+    expect(powerCeiling(game(60, 70, [4]), plant)!.fix).toMatch(/^The works in its reach want 70 MW\./);
+  });
+  it("a works whose power came back since its hourly line says so, not that the plant is short", () => {
+    const pp = { id: 1, kind: "coalplant", built: 1, c: { x: 0, y: 0 }, plant: { stock: { coal: 5 } } } as unknown as Building;
+    const mine = { id: 2, kind: "coalmine", built: 1, c: { x: 300, y: 0 }, plant: {}, problem: "No power: working at 40%" } as unknown as Building;
+    const at = (supply: number) => ({
+      buildings: { list: [pp, mine] },
+      utilities: { plants: new Map([[1, { made: 40, used: 50, users: 2 }]]), supplyOf: () => supply, reaches: () => true, outputOf: () => 40 },
+    }) as unknown as Game;
+    expect(powerFix(at(1), mine)).toEqual({ fix: "It is up to pace again within the hour.", show: 1, back: true });
+    expect(powerFix(at(0.4), mine)).toEqual({ fix: "Your Power Plant (300 m) cannot power everything in its reach. Build another Power Plant nearby.", show: 1 });
+  });
+  it("makes no such claim with power to spare, or with none made (that is its coal's line)", () => {
+    expect(powerCeiling(game(60, 60, []), plant)).toBeNull();
+    expect(powerCeiling(game(0, 90, [2, 3, 4]), plant)).toBeNull();
+  });
+});
+
 describe("read off the game", () => {
   let g: Game, t: Town, farm: Building, foodplant: Building;
   /** Its last hours of output, as a share of what it can make. */
@@ -146,7 +188,7 @@ describe("read off the game", () => {
     g = new Game(7);
     ({ t, farm, foodplant } = chain(g));
     for (const b of [farm, foodplant]) { b.built = 1; b.problem = null; if (b.plant) b.plant.site = undefined; }
-  });
+  }, 120000);
 
   it("a new town with nothing coming would take its whole day's food", () => {
     expect(townWants(t, "food")).toBe(Math.max(1, Math.ceil(demandPerDay("food", t.pop) - 1e-6)));
@@ -231,7 +273,11 @@ describe("read off the game", () => {
     const st = siteModel(g, foodplant).status;
     expect(st.text).toBe("Starting up");
     expect(st.tone).toBe("");
-    expect(st.fix).toBe(`${n.say}.`);
+    // (where its load is, and how long its own first batch takes after that: when its first truck leaves)
+    expect(st.fix!.startsWith(`${n.say}. Its first load of food follows `)).toBe(true);
+    expect(st.fix).toMatch(/follows (under an hour|about \d+ hours?) after that\.$/);
+    // the town's advice does not call it "held up" either
+    expect(needHelp(g, t, "food")!.say.startsWith("Your Food Plant is starting up. ")).toBe(true);
     // once it has made something, the same wait is a problem again, and a Farm flat out is named as the answer
     made(foodplant, "food", 0.3);
     made(farm, "crops", 1);
@@ -283,19 +329,21 @@ describe("read off the game", () => {
     expect(nextLoad(g, foodplant, "planks").say).toBe("Nothing of yours makes planks yet. Build a Sawmill");
   });
 
-  it("a building site counts its loads and guesses its hours from the pace they come at (D4)", () => {
+  it("a building site counts its loads and guesses its hours from the pace the sim counted them at (D4)", () => {
     const P = foodplant.plant!;
     P.site = { need: { planks: 50 }, got: { planks: 10 } } as NonNullable<typeof P.site>;
-    watchSites(g);
-    // no pace yet: the count alone
-    expect(siteStatus(g, foodplant).line).toBe("10 of 50 loads delivered");
-    // two hours on, eight more loads in: four an hour, thirty-two to go, then the build
-    g.time += 2 * HOUR;
+    // no load has landed in an hour it remembers: the count alone
+    expect(siteStatus(foodplant).line).toBe("10 of 50 loads delivered");
+    // two full hours on, eight more loads in: four an hour, thirty-two to go, then the build
     P.site!.got.planks = 18;
-    watchSites(g);
-    expect(sitePace(foodplant, g.time)).toBeCloseTo(4);
-    const s = siteStatus(g, foodplant);
-    expect(s.hours!).toBeGreaterThan(8);
+    P.site!.hours = [4, 4];
+    P.site!.hour = 0;
+    // (the figures are the sim's own: the interface keeps no count of its own beside them)
+    const e = Industry.siteEta(foodplant)!;
+    expect(e).toMatchObject({ got: 18, need: 50, perHour: 4, hours: 8 });
+    const s = siteStatus(foodplant);
+    expect(s).toMatchObject({ got: e.got, need: e.need });
+    expect(s.hours!).toBeCloseTo(e.hours! + buildTime("foodplant") / HOUR);
     expect(s.line).toMatch(/^18 of 50 loads delivered, about \d+ hours to go$/);
     expect(s.slow).toBe(false);
     const st = siteModel(g, foodplant).status;
@@ -304,5 +352,288 @@ describe("read off the game", () => {
     expect(st.fix).toContain("Nothing of yours makes planks yet. Build a Sawmill.");
     P.site = undefined;
     expect(Industry.madeLately(foodplant, "food").hours).toBeGreaterThan(0);
+  });
+
+  it("a site or a works going up with no road to its gate says so first: nothing can come till it has one", () => {
+    const P = foodplant.plant!, acc = foodplant.access;
+    foodplant.access = null;
+    P.site = { need: { planks: 50 }, got: { planks: 10 } } as NonNullable<typeof P.site>;
+    const st = siteModel(g, foodplant).status;
+    expect(st).toMatchObject({ text: "Building site", tone: "bad" });
+    expect(st.fix).toBe("No road reaches its gate, so no loads can come. Draw a road to the gate marker. 10 of 50 loads delivered.");
+    // (a red line, so the map marks it too)
+    expect(worksCalm(g, foodplant)).toBe(false);
+    P.site = undefined;
+    foodplant.built = 0.5;
+    const uc = siteModel(g, foodplant).status;
+    expect(uc.text).toBe("Under construction · 50%");
+    expect(uc.fix).toMatch(/^Opens in .+\. It has no road to its gate yet: draw one to the gate marker before it opens\.$/);
+    foodplant.built = 1;
+    foodplant.access = acc;
+    expect(siteModel(g, foodplant).status.fix ?? "").not.toMatch(/no road/i);
+  });
+
+  it("a works a day open and still with nothing made is not starting up: its own problem line speaks (no 'starting up' for ever)", () => {
+    const P = foodplant.plant!, keep = { hist: P.hist, last: P.last.made, now: P.now.made };
+    P.last.made = 0;
+    P.now.made = 0;
+    foodplant.problem = "Waiting for crops";
+    P.hist = [];
+    expect(hasMade(foodplant)).toBe(false);
+    expect(startUp(g, foodplant)).not.toBeNull();
+    P.hist = Array.from({ length: HIST_HOURS }, () => ({}));
+    expect(hasMade(foodplant)).toBe(false);
+    expect(startUp(g, foodplant)).toBeNull();
+    expect(siteModel(g, foodplant).status.text).not.toBe("Starting up");
+    Object.assign(P, { hist: keep.hist });
+    P.last.made = keep.last;
+    P.now.made = keep.now;
+    foodplant.problem = null;
+  });
+
+  it("a works short of power says where its power would come from: the plant to build, feed or reach", () => {
+    // no power plant anywhere: build one, within its reach, on its roads
+    expect(g.buildings.list.some((o) => o.kind === "coalplant")).toBe(false);
+    foodplant.problem = "No power: working at 50%";
+    const pf = powerFix(g, foodplant)!;
+    expect(pf.fix).toBe(`Build a Power Plant within ${PLANTS.coalplant.reach! / 1000} km of it, on its roads. It burns coal, or your sawmills' wood chips.`);
+    expect(pf.show).toBeUndefined();
+    const st = siteModel(g, foodplant).status;
+    expect(st).toMatchObject({ text: "No power", tone: "bad" });
+    expect(st.fix).toBe(`Working at 50%. ${pf.fix}`);
+    // any other trouble is not this one
+    foodplant.problem = "Waiting for crops";
+    expect(powerFix(g, foodplant)).toBeNull();
+    foodplant.problem = null;
+    expect(powerFix(g, foodplant)).toBeNull();
+  });
+
+  it("what a works shows it makes is its one pace, never above what it can make (owner, 2026-11-10: \"0.7/h, can 0.6\")", () => {
+    const can = canPerDay(g, farm, "crops") / 24;
+    // a camp or a farm ships whole batches: three hours read can hold one more than its pace allows
+    farm.plant!.hist = [{ crops: can * 3 * 0.6 }, {}, { crops: can * 3 * 0.6 }];
+    const r = shownRate(g, farm, "crops");
+    expect(r.can).toBeCloseTo(can);
+    expect(r.rate!).toBeLessThanOrEqual(can + 1e-9);
+    // flat out by the status: the figure is what it can make, the same number twice
+    made(farm, "crops", 1, 12);
+    expect(flatOut(g, farm, "crops")).toBe(true);
+    expect(shownRate(g, farm, "crops").rate).toBeCloseTo(can);
+    // at half pace it says half
+    made(farm, "crops", 0.5, 12);
+    expect(shownRate(g, farm, "crops").rate).toBeCloseTo(can / 2);
+    // nothing made yet: no figure at all, not "0.0/h"
+    farm.plant!.hist = [{}, {}];
+    expect(shownRate(g, farm, "crops").rate).toBeNull();
+  });
+
+  it("a works short of power never reads as making all it can, nor in the good green (design audit 2026-11-10: a green 0.4/h under 'No power')", () => {
+    const can = canPerDay(g, farm, "crops") / 24;
+    // lumpy hours a flat-out reading would round up to what it can make
+    farm.plant!.hist = [{ crops: can * 3 * 0.8 }, {}, {}, {}];
+    expect(flatOut(g, farm, "crops")).toBe(true);
+    farm.problem = "No power: working at 40%";
+    expect(shownRate(g, farm, "crops").rate!).toBeCloseTo(can * 0.6);
+    const m = siteModel(g, farm);
+    expect(m.status.tone).toBe("bad");
+    expect(m.keys[0].tone).not.toBe("good");
+    // its level line in the status's own words
+    farm.plant!.why = "Short of power";
+    expect(siteModel(g, farm).level?.line).toBe("held back: No power");
+    farm.problem = null;
+    farm.plant!.why = null;
+  });
+
+  it("a works that has made nothing yet is starting up, and says when its first truck leaves (owner, 2026-11-10)", () => {
+    const fresh = (b: Building) => { b.plant!.hist = []; b.plant!.last.made = 0; b.plant!.now.made = 0; b.problem = null; };
+    fresh(farm); fresh(foodplant);
+    // no staff in its first hours: its workers are on their way, not "No workers" in red
+    farm.problem = "No workers";
+    expect(startUp(g, farm)!.fix).toMatch(/^Its first workers are on their way from town\. Once they start, its first load of crops takes (under an hour|about \d+ hours?)\.$/);
+    expect(siteModel(g, farm).status).toMatchObject({ text: "Starting up", tone: "" });
+    expect(worksCalm(g, farm)).toBe(true);
+    // (and its key number claims no pace: it read "Working normally, 0.0/h")
+    expect(siteModel(g, farm).keys[0]).toMatchObject({ value: "–", label: "no output yet" });
+    // at work on its first batch: how long that has to go at the staff it has, and where the load goes
+    farm.problem = null;
+    farm.plant!.prog = 0.5;
+    const staff = vi.spyOn(g.people, "workersAt").mockReturnValue(farm.cap);
+    const bh = batchHours(g, farm, "crops");
+    expect(bh.left!).toBeCloseTo(bh.whole / 2);
+    const st = siteModel(g, farm).status;
+    expect(st.text).toBe("Starting up");
+    expect(st.fix).toMatch(new RegExp(`^Its first load of crops is ready in ${aboutHours(bh.left!)}\\. Then its first truck leaves for your Food Plant \\(\\d+(\\.\\d)? k?m\\)\\.$`));
+    // half its staff: the batch takes twice as long; nobody at work: no guess
+    staff.mockReturnValue(farm.cap / 2);
+    expect(batchHours(g, farm, "crops").left!).toBeCloseTo(bh.whole);
+    staff.mockReturnValue(0);
+    expect(batchHours(g, farm, "crops").left).toBeNull();
+    staff.mockRestore();
+    // still no staff after START_HOURS game hours: that is trouble now, and it says so
+    farm.problem = "No workers";
+    const was = g.time;
+    g.time += (START_HOURS + 1) * HOUR;
+    expect(startUp(g, farm)).toBeNull();
+    expect(siteModel(g, farm).status).toMatchObject({ text: "No workers", tone: "bad" });
+    expect(worksCalm(g, farm)).toBe(false);
+    g.time = was;
+    // nothing of the company's makes its input: that is the thing to build, not a wait
+    farm.problem = null;
+    foodplant.problem = "Waiting for crops: the loads on their way are stuck in traffic";
+    expect(startUp(g, foodplant)).toBeNull();
+    foodplant.problem = null;
+    // going up: when it opens, and when its first load follows
+    farm.built = 0.5;
+    const up = worksStatus(g, farm);
+    expect(up.text).toBe("Under construction · 50%");
+    expect(up.fix).toMatch(/^Opens in (under an hour|about \d+ hours?)\. Its first load of crops follows (under an hour|about \d+ hours?) later\.$/);
+    foodplant.built = 0.5;
+    expect(worksStatus(g, foodplant).fix).toMatch(/^Opens in (under an hour|about \d+ hours?)\. Your Farm \(\d+(\.\d)? k?m\) is still being built\. It sends crops once it opens\.$/);
+    farm.built = 1;
+    expect(worksStatus(g, foodplant).fix).toMatch(/\. Then it takes crops from your Farm \(\d+(\.\d)? k?m\)\.$/);
+    foodplant.built = 1;
+    // once it has made something it is a works like any other
+    made(farm, "crops", 0.5);
+    expect(startUp(g, farm)).toBeNull();
+  });
+
+  it("a works whose buyer is still being built waits for it, and says how far along that is (owner, 2026-11-10)", () => {
+    made(farm, "crops", 0.5);
+    const full = `Full of crops: its trucks can't keep up (a long or jammed haul), or no ${Industry.takers("crops")} on its roads`;
+    farm.problem = full;
+    // its Food Plant open: the haul is the story, as the sim says it
+    expect(waitsForSite(g, farm)).toBeNull();
+    expect(siteModel(g, farm).status).toMatchObject({ text: "Full of crops", tone: "bad" });
+    // its Food Plant a building site: it waits for that, and points at it
+    const P = foodplant.plant!;
+    P.site = { need: { planks: 12 }, got: { planks: 3 } } as NonNullable<typeof P.site>;
+    const w = waitsForSite(g, farm)!;
+    expect(w.text).toBe("Waiting for your Food Plant to open");
+    expect(w.tone).toBe("");
+    expect(w.fix).toMatch(/^Your Food Plant \(\d+(\.\d)? k?m\) is a building site: 3 of 12 loads delivered\. It takes crops once it opens\. Until then this yard fills\.$/);
+    expect(w.show).toBe(foodplant.id);
+    const st = siteModel(g, farm).status;
+    expect(st).toMatchObject({ text: w.text, tone: "", fix: w.fix, show: { id: foodplant.id, kind: "foodplant" } });
+    // (no mark on the map for it: nothing to fix, the site has to finish)
+    expect(worksCalm(g, farm)).toBe(true);
+    // the sim's other line for the same wait reads the same way
+    farm.problem = "The plants that will use crops are still building sites";
+    expect(waitsForSite(g, farm)!.text).toBe("Waiting for your Food Plant to open");
+    // its materials in and the crews at work: when it opens
+    P.site = undefined;
+    foodplant.built = 0.25;
+    expect(waitsForSite(g, farm)!.fix).toMatch(/is going up: it opens in (under an hour|about \d+ hours?)\. It takes crops once it opens\./);
+    foodplant.built = 1;
+    farm.problem = null;
+    // a product the towns buy is never this story
+    foodplant.problem = "Full of food: its trucks can't keep up (a long or jammed haul), or nobody to sell to";
+    expect(waitsForSite(g, foodplant)).toBeNull();
+    foodplant.problem = null;
+  });
+
+  it("a town's panel says one thing: its status, one piece of advice with the works to show, then figures (owner, 2026-11-10)", () => {
+    const pop = t.pop, hours = t.hours, trend = t.trend, supply = t.supply;
+    t.pop = 400;
+    t.trend = 0;
+    t.hours = Array.from({ length: 24 }, () => ({}));
+    t.hourNow = {};
+    t.supply = {};
+    made(foodplant, "food", 1);
+    foodplant.plant!.stock.crops = 8;
+    // food and planks both short: one piece of advice, about the first, and it says which
+    const a = townAdvice(g, t, true)!;
+    expect(a.p).toBe("food");
+    expect(a.say).toMatch(/^Start with food\. Your Food Plant is at full output\. Build /);
+    expect(a.works).toBe(foodplant.id);
+    const m = townModel(g, t);
+    expect(m.status.text).toBe("Not growing, needs food and planks");
+    expect(m.status.fix).toBe(a.say);
+    expect(m.status.show).toEqual({ id: foodplant.id, kind: "foodplant" });
+    // food in full, planks still none: the advice moves on to planks, with nothing to show (no sawmill yet)
+    t.hours = Array.from({ length: 24 }, () => ({ food: demandPerDay("food", t.pop) / 24 }));
+    const b = townAdvice(g, t, true)!;
+    expect(b).toMatchObject({ p: "planks", say: "Nothing of yours makes planks yet. Build a Sawmill." });
+    expect(b.works).toBeUndefined();
+    expect(townModel(g, t).status.show).toBeUndefined();
+    // everything it needs coming in full: no advice at all
+    t.hours = Array.from({ length: 24 }, () => ({ food: demandPerDay("food", t.pop) / 24, planks: demandPerDay("planks", t.pop) / 24 }));
+    t.trend = 5;
+    expect(townAdvice(g, t, true)).toBeNull();
+    expect(townModel(g, t).status.fix).toBeUndefined();
+    // a hamlet still settling in keeps its own line
+    t.pop = 30;
+    expect(townAdvice(g, t, true)).toBeNull();
+    Object.assign(t, { pop, hours, trend, supply });
+  });
+
+  it("the first goal says what the chain is doing now, in the works' own words (owner, 2026-11-10: the quiet first hours)", () => {
+    const food = MILESTONES.find((m) => m.id === "food10")!;
+    // a goal that does not wait on a first load, or has it already: nothing under it
+    expect(goalNow(g, MILESTONES.find((m) => m.id === "village")!, 0)).toBeNull();
+    expect(goalNow(g, food, 1)).toBeNull();
+    // nothing of the chain placed yet: the tip says what to build, and the first goal where its ground lies
+    // (goalpointer.test.ts); a later goal says nothing
+    const none = new Game(7);
+    none.start();
+    expect(goalNow(none, food, 0)?.key).toBe("Where");
+    expect(goalNow(none, MILESTONES.find((m) => m.id === "planks10")!, 0)).toBeNull();
+    // the food plant starting up: its panel's very status and advice
+    foodplant.plant!.hist = []; foodplant.plant!.last.made = 0; foodplant.plant!.now.made = 0; foodplant.problem = null;
+    foodplant.plant!.out.food = 0;
+    const st = worksStatus(g, foodplant);
+    const now = goalNow(g, food, 0)!;
+    expect(now).toMatchObject({ who: "Your Food Plant", text: st.text, fix: st.fix, tone: st.tone, works: foodplant.id });
+    expect(st.text).toBe("Starting up");
+    expect(goalNowSay(now)).toBe(`Your Food Plant: starting up. ${st.fix}`);
+    // trouble there shows as trouble here
+    foodplant.problem = "No road to the gate";
+    expect(goalNow(g, food, 0)!.tone).toBe("bad");
+    foodplant.problem = null;
+    // its first load made and at the dock: the truck is next
+    foodplant.plant!.out.food = 1;
+    expect(goalNowSay(goalNow(g, food, 0)!)).toBe("Your Food Plant: its first food is at the dock. Its truck sets off within the hour.");
+    foodplant.plant!.out.food = 0;
+    // only the farm so far (no food plant): the goal follows the chain up to it
+    const k = foodplant.kind;
+    (foodplant as { kind: string }).kind = "sawmill";
+    expect(goalNow(g, food, 0)).toMatchObject({ who: "Your Farm", works: farm.id });
+    (foodplant as { kind: string }).kind = k;
+  });
+
+  it("no money is $0, not a gain: the Economy window read +$0 in green", () => {
+    expect(signedMoney(0)).toBe("$0");
+    expect(signedMoney(0.3)).toBe("$0");
+    expect(signedMoney(1200)).toMatch(/^\+\$/);
+    expect(signedMoney(-1200)).toMatch(/^[-−]\$/);
+  });
+
+  // (last: it places a second Food Plant in the shared game)
+  it("a new works starting up beside one flat out: the advice is still how many more, the new one counted in (late save's Food row)", () => {
+    const second = placeAlong(g, "foodplant", gridPt(t.c, t.ang, 1, 0), gridPt(t.c, t.ang, 1 + 320 / BLOCK, 0), 90);
+    Object.assign(second, { built: 1, problem: "Waiting for crops" });
+    second.plant!.site = undefined;
+    second.plant!.hist = [];
+    foodplant.problem = null;
+    made(foodplant, "food", 1);
+    expect(startUp(g, second)).not.toBeNull();
+    expect(flatOut(g, foodplant, "food")).toBe(true);
+    // (a town short of more than the new one will make)
+    const pop = t.pop;
+    t.pop = 1500;
+    expect(townWants(t, "food")).toBeGreaterThan(canPerDay(g, second, "food") + canPerDay(g, foodplant, "food"));
+    const h = needHelp(g, t, "food")!;
+    expect(h).toMatchObject({ kind: "full", build: "foodplant", works: foodplant.id });
+    if (h.kind === "full") {
+      expect(h.n).toBe(worksFor(townWants(t, "food") - canPerDay(g, second, "food"), canPerDay(g, foodplant, "food")));
+      expect(h.say).toBe(`Your Food Plant is at full output. Build ${h.n === 1 ? "another" : `about ${h.n} more`}. Your new Food Plant is starting up.`);
+    }
+    // short of no more than the new one will make: it says when its first load comes
+    t.pop = pop;
+    expect(needHelp(g, t, "food")!.say.startsWith("Your Food Plant is starting up. ")).toBe(true);
+    // nor while the old one still has room: the new one is the news
+    t.pop = 1500;
+    made(foodplant, "food", 0.2);
+    expect(needHelp(g, t, "food")!.say.startsWith("Your Food Plant is starting up. ")).toBe(true);
+    t.pop = pop;
   });
 });

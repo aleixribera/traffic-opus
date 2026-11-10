@@ -15,6 +15,18 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.92", date: "2026-11-10", title: "One voice",
+    notes: [
+      "A town's panel says one thing: how it is doing, what to fix first with a button to show it, then the figures.",
+      "Numbers agree everywhere. A works short of power never shows its full rate, a new works counts toward the advice while it starts up, and arrival times come from one place.",
+      "Power and road messages name the cause and the fix: which plant is dark, which is at its limit and what to build, and a site with no road says so first.",
+      "The road pointer reads as one short line. The catalog fills its bands. A works shows its gate when you place it and when you select it.",
+      "An arrow at the screen edge points to fertile soil, and the goal pointer pulses.",
+      "Far out, town names thin out instead of piling up. Money and the clock no longer jitter.",
+      "Tips step aside while you place the building they talk about, and the wrong tips for the moment are gone.",
+    ],
+  },
+  {
     v: "v0.0.91", date: "2026-11-10", title: "The lie of the land",
     notes: [
       "The seasons read as seasons: a green spring, a summer that dries only the driest ground, a gold and red autumn, and snow that lies evenly.",

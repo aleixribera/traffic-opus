@@ -49,12 +49,14 @@ import { ZONES } from "./game/zones";
 import { MIN_DEPOSIT, PLANTS, PRODUCTS, UNPOWERED, isPlantKind, type Product } from "./game/industry";
 import { CIVICS } from "./game/civics";
 import { labelNeeds, type LabelNeeds } from "./ui/needs";
-import { hasMade, steadyProblem, tally } from "./ui/bottleneck";
+import { steadyProblem, tally } from "./ui/bottleneck";
 import { dearShare } from "./ui/cost";
 import { productIcon } from "./ui/icons";
 import { TownPings } from "./ui/townPings";
 import { STUCK_KEEP, StuckAlerts } from "./ui/stuckAlerts";
 import { DEPOSIT_KINDS, DepositMarks } from "./ui/depositMarks";
+import { GoalPointer, farmSpot } from "./ui/goalPointer";
+import { GateMark, type GateAsk } from "./ui/gateMark";
 import { served } from "./game/settlements";
 import { joinedUp } from "./ui/tips";
 import type { ModelSet } from "./render/models";
@@ -64,7 +66,7 @@ import { buildingOn, deckOn, heightsOn, junctionOn, pickOn, straightDown } from 
 import { frameFit, rayAt, riseShare, TILT_MAP, TILT_MAX, type GroundRay } from "./render/viewmath";
 import { newOrbit, orbitStep, type OrbitDrag } from "./ui/orbit";
 import { TILT_MIN, loadCameraView, loadTilt, loadTurn, saveCameraView, saveTilt, saveTurn, type CameraView } from "./ui/cameraSetting";
-import { groundAt, isMined, modelOf, noBuyer } from "./ui/inspect";
+import { groundAt, isMined, modelOf, worksCalm } from "./ui/inspect";
 import type { Sel } from "./ui/inspect";
 import { Roads3D } from "./render/roads3d";
 import { RoadsFar } from "./render/roadsFar";
@@ -151,6 +153,14 @@ export class App {
     this.flyTo(c, 140);
     if (id !== undefined && this.st.tool === "inspect") this.hud?.openSel({ k: "stuck", id, x: Math.round(c.x), y: Math.round(c.y) });
   });
+  /** the first goal's ground: a pointer at the screen's edge to where the first farm can go, a pin once it is in view */
+  goalPtr = new GoalPointer({
+    fly: (c) => { this.audio.play("click"); this.flyTo(c, Math.max(this.view.halfH, 420)); },
+    pick: () => { this.audio.play("click"); this.setTool({ tool: "place", placed: "farm", placeTurn: 0 }); },
+  });
+  /** the gate of the works in hand, or of the works selected, marked plainly */
+  gateMark = new GateMark();
+  private gateGhost: GateAsk | null = null;
   townPings = new TownPings({ fly: (id) => this.flyToTown(id), open: (id) => { this.setTool({ tool: "inspect" }); this.hud?.openTown(id); } });
   /** the camera gliding to a place (a finished landmark): from, to, start and length (s) */
   /** a camera glide under way; `lift`: how much further out (m of half height) it pulls at the middle of the way */
@@ -771,8 +781,10 @@ export class App {
     this.icons.boostOf = (b) => g.industry.boosts(b);
     // (a new works waiting for its first loads is starting up, not in trouble: no roundel yet)
     this.icons.troubleOf = (b) => steadyProblem(g, b);
-    // (nor is one whose goods no town is big enough to buy yet: nothing to fix, the town has to grow)
-    this.icons.quiet = (b) => !!b.plant && ((!!b.problem?.startsWith("Waiting for") && !hasMade(b)) || noBuyer(g, b)?.tone === "");
+    // (nor is one whose goods no town is big enough to buy yet, or whose buyer is still being built: nothing to
+    // fix. The same reading as its panel's status line, so the map and the panel cannot disagree)
+    this.icons.quiet = (b) => worksCalm(g, b);
+    this.icons.avoid = () => this.labels.rects();
     // what is pinned over a building stands over its roof; a jam's pin on its road's deck
     this.icons.topOf = this.pops.topOf = (b) => this.buildings3d.topOf(b);
     this.stuckAlerts.heightAt = (p) => deckOn(g.net, straightDown(p), 8)?.h ?? 0;
@@ -1056,7 +1068,7 @@ export class App {
     for (const b of lots) this.preview.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
     if (!lots.length) return;
     const comp = this.game.demolishCost(lots), what = `${lots.length} building${lots.length === 1 ? "" : "s"}`;
-    chips.push({ text: this.confirmKey === this.planKey(plan, lots) ? `Click again to demolish ${what} (${formatMoney(comp)})` : `Demolishes ${what}: ${formatMoney(comp)} compensation`, kind: "error" });
+    chips.push({ text: this.confirmKey === this.planKey(plan, lots) ? `Click again to demolish ${what} (${formatMoney(comp)})` : `Demolishes ${what}: ${formatMoney(comp)} compensation`, kind: "error", warn: true });
   }
 
   private onMove(e: PointerEvent) {
@@ -1849,6 +1861,7 @@ export class App {
     this.dirtyPreview = false;
     const pv = this.preview;
     pv.clear();
+    this.gateGhost = null;
     if (this.hasCursor) this.aimCursor();
     const t0 = this.st.tool;
     if (t0 !== "inspect" || !this.hasCursor) { this.highlight.hoverV = null; this.view.canvas.style.cursor = ""; }
@@ -1881,7 +1894,7 @@ export class App {
               if (b) pv.footprint(rectCorners(m.c1, b.hw, b.hd, b.rot), 0x58c8e6);
             }
             if (u.moves.length) chips.push({ text: u.moves.length === 1 ? "1 building moves back" : `${u.moves.length} buildings move back`, kind: "info" });
-            chips.push({ text: `${ROAD_TYPES[s.type].name} → ${ROAD_TYPES[this.st.roadType].name}`, kind: "info" });
+            chips.push({ text: `${ROAD_TYPES[s.type].name} → ${ROAD_TYPES[this.st.roadType].name}`, kind: "info", lead: 1 });
             chips.push(this.costChip(u.cost));
           }
         }
@@ -1897,7 +1910,7 @@ export class App {
         pv.target(g.net, s);
         chips.push({ text: `${T.name}: ${this.st.mode === "straight" ? "straight" : "curve"}`, kind: "info" });
         const joins = s.site ? s.label : s.node !== undefined ? (g.net.segsAt(s.node).length === 1 ? "Carries on the road" : "From the junction") : s.seg !== undefined ? `From the ${ROAD_TYPES[g.net.segs.get(s.seg)!.type].name.toLowerCase()}` : s.label;
-        if (joins) chips.push({ text: joins, kind: "info" });
+        if (joins) chips.push({ text: joins, kind: "info", lead: 2 });
         if (this.st.level > 0) chips.push({ text: `Elevation ${this.st.level * LEVEL_H} m`, kind: "info" });
         if (this.keys.has("Alt")) chips.push({ text: "No snapping (Alt)", kind: "info" });
       } else {
@@ -1932,11 +1945,16 @@ export class App {
           // "↗ 11.0%" was never explained (play-test 2026-11-09, C6)
           const grade = lead ? this.maxGrade(plan) : 0;
           if (grade > 0.5) chips.push({ text: `Steepest climb ${grade.toFixed(1)}%`, kind: "info" });
-          for (const sp of plan.bridges ?? []) chips.push({ text: `Bridge ${Math.round(sp.length)} m over ${sp.over === "water" ? "water" : sp.over === "road" ? "the road" : "water and road"} · ${formatMoney(sp.cost)}`, kind: "info", icon: "bridge" });
+          // (the bridge by name at the pointer, beside the whole price; what the bridge alone costs in the notes, so the
+          // pointer never shows two prices side by side)
+          for (const sp of plan.bridges ?? []) {
+            chips.push({ text: `Bridge ${Math.round(sp.length)} m over ${sp.over === "water" ? "water" : sp.over === "road" ? "the road" : "water and road"}`, kind: "info", icon: "bridge", lead: 1 });
+            chips.push({ text: `The bridge costs ${formatMoney(sp.cost)} of it`, kind: "info" });
+          }
           // (to or from a company site: which one it connects; ending at its gate, that says it all)
-          if (plan.connects) chips.push({ text: plan.connects, kind: "info" });
-          if (plan.joins && !end.site) chips.push({ text: plan.endAngleDeg !== undefined && plan.joins.startsWith("Joins the") && !plan.joins.includes("junction") ? `${plan.joins} at ${Math.round(plan.endAngleDeg)}°` : plan.joins, kind: "info" });
-          else if (end.label && !end.site) chips.push({ text: end.label, kind: "info" });
+          if (plan.connects) chips.push({ text: plan.connects, kind: "info", lead: 3 });
+          if (plan.joins && !end.site) chips.push({ text: plan.endAngleDeg !== undefined && plan.joins.startsWith("Joins the") && !plan.joins.includes("junction") ? `${plan.joins} at ${Math.round(plan.endAngleDeg)}°` : plan.joins, kind: "info", lead: 2 });
+          else if (end.label && !end.site) chips.push({ text: end.label, kind: "info", lead: 2 });
           if (plan.angleDeg !== undefined && L > 3 && !plan.joins) chips.push({ text: plan.angleToRoad ? `${plan.angleDeg.toFixed(1)}° to the road` : `${plan.angleDeg.toFixed(1)}°`, kind: "info", icon: "angle" });
           // right angles: where it leaves the road it starts on and where it meets the one it ends on
           if (lead?.chain.length && !plan.errors.length) this.squareMarks(plan, end);
@@ -1947,7 +1965,7 @@ export class App {
             for (const b of lots) pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
             const key = this.planKey(plan, lots);
             const what = `${lots.length} building${lots.length === 1 ? "" : "s"}`;
-            chips.push({ text: this.confirmKey === key ? `Click again to demolish ${what} (${formatMoney(comp)})` : `Demolishes ${what}: ${formatMoney(comp)} compensation`, kind: "error" });
+            chips.push({ text: this.confirmKey === key ? `Click again to demolish ${what} (${formatMoney(comp)})` : `Demolishes ${what}: ${formatMoney(comp)} compensation`, kind: "error", warn: true });
           }
           if (this.keys.has("Alt")) chips.push({ text: "No snapping (Alt)", kind: "info" });
         }
@@ -1999,7 +2017,7 @@ export class App {
         else if (!lp.errors.length && !removing) {
           const lots = g.lotsUnderOutline(lp.widen ?? lp.outline);
           for (const b of lots) pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
-          if (lots.length) chips.push({ text: `${lots.length} building${lots.length === 1 ? "" : "s"} demolished`, kind: "error" });
+          if (lots.length) chips.push({ text: `${lots.length} building${lots.length === 1 ? "" : "s"} demolished`, kind: "error", warn: true });
         }
       } else chips.push({ text: "Click a road just before a junction", kind: "info" });
     } else if (t === "junction") {
@@ -2024,6 +2042,8 @@ export class App {
         for (const p of gh) pv.model(p.geo, p.m, pl.ok);
         pv.footprint(corners, pl.ok ? 0x34c25a : 0xe5484d, gh.length > 0);
         this.siteOutline(pv, pl.c, pl.rot, pl.side, T.w / 2, T.d / 2, pl.ok);
+        // (and its gate by name: out past the arrow, saying so when no road can reach it from here)
+        this.gateGhost = { f: siteFrame(pl.c, pl.rot, pl.side, T.d / 2), hw: T.w / 2, lead: 26, ...(pl.ok && pl.free && !pl.link ? { note: "no road in reach", bad: true } : {}) };
         for (const id of pl.clears ?? []) {
           const o = g.buildings.byId.get(id);
           if (o) pv.footprint(rectCorners(o.c, o.hw, o.hd, o.rot), 0xf2a33a, gh.length > 0);
@@ -2033,9 +2053,9 @@ export class App {
         if (deg) chips.push({ text: `Turned ${deg}°`, kind: "info" });
         if (pl.link) {
           pv.plan(pl.link, 0);
-          chips.push({ text: `Street to its gate: ${Math.round(pl.link.length)} m`, kind: "info" });
-        } else if (pl.free && pl.ok) chips.push({ text: "No road it can reach: turn its gate toward one, or draw one to it", kind: "info" });
-        else if (pl.faces) chips.push({ text: `Gate on a ${pl.faces.toLowerCase()}`, kind: "info" });
+          chips.push({ text: `Street to its gate: ${Math.round(pl.link.length)} m`, kind: "info", lead: 2 });
+        } else if (pl.free && pl.ok) chips.push({ text: "No road it can reach: turn its gate toward one, or draw one to it", kind: "info", lead: 3 });
+        else if (pl.faces) chips.push({ text: `Gate on a ${pl.faces.toLowerCase()}`, kind: "info", lead: 2 });
         // (the deposit share; a lot refused for too little of it gives the share in its reason instead)
         this.powerPreview(pv, chips, k, pl.c, pl.access?.seg);
         this.depositMarks.here = !!pl.deposit && pl.deposit.share >= MIN_DEPOSIT;
@@ -2047,7 +2067,7 @@ export class App {
           const site = PLANTS[k].site;
           if (site) chips.push({ text: `Site: needs ${Object.entries(site).map(([p, q]) => `${q} load${q === 1 ? "" : "s"} of ${PRODUCTS[p as Product].name.toLowerCase()}`).join(", ")}`, kind: "info" });
           const n = pl.clears?.length ?? 0;
-          if (n) chips.push({ text: `${n} building${n === 1 ? "" : "s"} replaced`, kind: "error" });
+          if (n) chips.push({ text: `${n} building${n === 1 ? "" : "s"} replaced`, kind: "error", warn: true });
         }
       }
     } else if (t === "inspect") {
@@ -2078,6 +2098,15 @@ export class App {
       } else if (b) chips.push({ text: b.zone ? `${ZONES[b.zone].short} · ${b.town !== undefined ? g.towns.byId.get(b.town)?.name ?? "" : "level " + b.level}` : BUILDING_TYPES[b.kind].name, kind: "info" });
     }
     this.hud?.chips(chips.length ? this.cursorPx : null, chips);
+  }
+
+  /** The gate to mark now: the works in hand's, else the selected works' (saying so when no road is at it yet). */
+  private gateAsk(): GateAsk | null {
+    if (this.bare || this.mode !== "play") return null;
+    if (this.st.tool === "place") return this.hasCursor ? this.gateGhost : null;
+    const b = this.sel?.k === "building" ? this.game.buildings.byId.get(this.sel.id) : undefined;
+    if (!b || !b.placed || !b.plant) return null;
+    return { f: siteFrame(b.c, b.rot, b.side, b.hd), hw: b.hw, ...(b.access ? {} : { note: "no road yet", bad: true }) };
   }
 
   /** A site's fence (open at the gate) and an arrow out of its gate, for the placement preview. */
@@ -2279,6 +2308,9 @@ export class App {
     this.convoyTags.update(this.view, g.alpha);
     this.townPings.update(this.view);
     this.depositMarks.update(this.view);
+    this.goalPtr.update(this.view);
+    this.gateMark.set(this.gateAsk());
+    this.gateMark.update(this.view);
     this.stuckAlerts.update(this.view);
     if (this.groundField() !== this.groundKey) { this.groundOverlay(); this.iconT = 1; }
     this.highlight.group.visible = this.mode !== "menu";
@@ -2294,6 +2326,10 @@ export class App {
       const dm = this.markedDeposits();
       this.depositMarks.show(dm.kinds, dm.focus);
       this.depositMarks.inView = dm.focus && this.fieldInView(dm.kinds[0].field);
+      // the first goal's soil: pointed at till the first farm is placed
+      const farming = this.st.tool === "place" && this.st.placed === "farm";
+      this.goalPtr.set(!this.bare && this.mode === "play" && !g.progress.done.includes("food10") ? farmSpot(g) : null, farming);
+      this.depositMarks.mute = this.goalPtr.pointing;
     }
     else this.icons.update(this.view);
     this.pops.update(this.view, this.bare || far ? null : g.traffic, g.alpha);
@@ -2340,7 +2376,7 @@ export class App {
       // (the name stands over its hall's roof)
       const hall = g.towns.hallOf(t);
       return {
-        p: t.c, h: hall ? this.buildings3d.topOf(hall) + 4 : 0, name: t.name, sub: `${size} · ${pop}`, minHalfH: 160,
+        p: t.c, h: hall ? this.buildings3d.topOf(hall) + 4 : 0, name: t.name, sub: `${size} · ${pop}`, minHalfH: 160, rank: t.pop,
         title: `${t.name}, ${size} of ${pop} people${say}${ord(t.id) ? `, with an order open: ${ord(t.id)}` : ""}. Open the town`,
         order: ord(t.id) || undefined,
         icons: ln.kind === "calm" ? undefined

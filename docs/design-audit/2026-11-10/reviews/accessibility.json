@@ -1,0 +1,82 @@
+{
+  "lens": "accessibility",
+  "findings": [
+    {
+      "screen": "late-works",
+      "viewport": "wide",
+      "rule": "TYP-01",
+      "severity": "medium",
+      "title": "The sentences that say what a works is short of are 13 px, and they stay 13 px at 1920x1080",
+      "detail": "The game's main message, the paragraph under the status line that says why a works is held back and what to build, is set in 13 px regular cream-grey in a 300 px panel. That size does not change between 1440, 1600 and 1920 wide, so on a 1080p monitor at desk distance the most important text in the game is the smallest body text on screen. The same 13 px body is used for the Goals card descriptions and tip (fresh, late), the town panel's 'Start with food...' advice (late-town), the road-type descriptions (drawing-road) and the farm's 'Opens in about 3 hours...' (farm-no-road).",
+      "evidence": "late-works@wide.dom.json: 'Working at 40%. Your Power Plant (6.9 km) is too far: power reaches 4 km. Build a Power Plant within 4 km of this works, on its roads.' is 13 px / weight 400 at box [1641,93,158,89] on a 1920x1080 viewport. contrast.md lists 51 size warnings out of 78 texts on late-works@wide and the same font sizes (12, 13, 13.68, 14...) on every viewport, so nothing scales with width. Contrast is fine (declared 9.44:1); size is the problem.",
+      "fix": "Raise the panel and card body text to 15 px (14 px minimum) and the status headline to 16 px, and scale the HUD root font with viewport width (e.g. clamp(14px, 0.78vw, 16px) for body) so 1920 wide gets larger text than 1440; widen the works/town panel from ~300 px to ~340 px to keep line lengths.",
+      "box": [1641, 93, 158, 89]
+    },
+    {
+      "screen": "fresh",
+      "viewport": "desktop",
+      "rule": "TYP-01",
+      "severity": "low",
+      "title": "Lower-case sentences and lists are set at 12 px, below the size the rule only allows for short uppercase labels",
+      "detail": "Several runs that are full phrases, not labels, use 12 px regular: the Goals card UNLOCKS lists wrap to two lines at 12 px, the works panel's red 'held back: Short of power' is 12 px regular, and the Power Plant's Details paragraph is three lines of 12 px. Players have to lean in to read what a goal unlocks or why a works is not levelling.",
+      "evidence": "fresh@desktop.dom.json: 'Power Plant · Coal Mine · Iron Mine · Smelter · Heavy trucks · $80,000 grant' 12 px/400 at [1305,374,240,31]; 'Divided street · Roundabouts · A new town springs up' 12 px at [1305,263,249,31]. late-works@desktop: 'held back: Short of power' 12 px/400 at [1305,380,132,14]; late-powerplant@desktop: 'Growing: it works near capacity, ships its output and gets its inputs.' 12 px at [1305,527,269,46]. Stat captions 'load shipped, last hour' and 'iron ore, can 0.4' are also 12 px.",
+      "fix": "Keep 12 px only for short uppercase kickers (WHERE, UNLOCKS, RUNNING IT). Set the unlock lists, the 'held back' line, stat captions and Details prose at 14 px.",
+      "box": [1305, 374, 240, 31]
+    },
+    {
+      "screen": "late-works",
+      "viewport": "desktop",
+      "rule": "NEW",
+      "severity": "medium",
+      "title": "The Level 1 to Level 2 progress bar is a near-black track on navy, so how far the site is from its next level can't be seen",
+      "detail": "Non-text contrast: the bar that should show progress toward Level 2 is a 4 px track of #070D17 on the #122036 panel, with a 4x4 px brass dot as its fill at 0%. The track is effectively invisible, so the line reads as an empty gap between 'Level 1' and 'Level 2' and the player gets no sense of distance to go. The same near-black track is used by the Economy window's 'Made, last 24 hours' bars, where only thin coloured ticks show on an invisible track.",
+      "evidence": "Pixel samples in late-works@desktop.png at y 365-368: track (7,13,23) between a (37,41,48) 1 px border, panel (18,32,54): about 1.19:1, far below the 3:1 needed for a graphic that carries meaning. Fill at x 1351-1353 only, (224,168,51). Economy bars in late-economy@desktop.png x 260-330 are the same (7,13,23) track with 2 px ticks.",
+      "fix": "Give progress tracks a visible empty state of at least 3:1 against the panel (e.g. a 1 px cream-grey #8E8672 outline or a #2A3A55 fill) and make them 6 px tall; show the fill as a solid brass bar from the left edge, with the percentage ('0% to Level 2') next to it rather than only in Details.",
+      "box": [1349, 363, 182, 8]
+    },
+    {
+      "screen": "late-far",
+      "viewport": "wide",
+      "rule": "NEW",
+      "severity": "medium",
+      "title": "At far zoom the town need chips and the industry warning marks shrink to icons about 10 px across, and the red '!' badges cover their neighbours",
+      "detail": "Legibility of map symbols: the far view is where a player scans which towns and works need attention, but each need chip is about 24 px wide with a goods icon of roughly 10 px, the chips overlap each other, and every red '!' badge sits on top of the next chip and on the TOWN · 1,620 strip. The industry warning tags are a ~10 px cream square with a red '!'. Telling food from planks or cement means zooming back in. The same overlap is visible at closer zoom on late@desktop and late-town@desktop, at a larger size.",
+      "evidence": "late-far@wide.png, Quimbyton chips span about x 886-1006, y 599-629 (five chips in 120 px, so ~24 px each including overlap); badges overlap the label strip and adjacent chips. The industry '!' text in late-far@desktop.dom.json is a 4x16 px box at [722,426] and [876,481]. Contrast of the plates themselves is fine (13.65:1 cream on navy, 8.55:1 ink on brass; the script's 1.1 p10 fails come from map pixels outside the plates).",
+      "fix": "Hold need chips at a minimum of 28 px with 16 px icons whatever the zoom, space them 2-4 px apart instead of overlapping, and put the '!' inside the chip's lower-right rim (or replace the five badges with one '5 short' tag beside the label). Give industry warning tags a 16 px minimum.",
+      "box": [884, 597, 124, 34]
+    },
+    {
+      "screen": "drawing-road",
+      "viewport": "desktop",
+      "rule": "MENU-03",
+      "severity": "low",
+      "title": "Road tool mode and elevation buttons are 32x30 px and sit 3 px apart",
+      "detail": "The Curve / Straight / Upgrade mode buttons and the elevation − / + buttons are icon-only squares under the 32 px height guideline, with almost no gap between them, so switching mode mid-drag invites misclicks on the neighbour. These are the buttons a player uses constantly while drawing roads.",
+      "evidence": "drawing-road@desktop.dom.json controls: 'Curve mode' [25,501,32,30], 'Straight mode' [60,501,32,30], 'Upgrade mode' [95,501,32,30] (3 px gaps); 'Parallel' [25,560,32,30]; '−' [25,619,32,30], '+' [133,619,32,30].",
+      "fix": "Make these buttons 36x36 px with 8 px between them; the 230 px Tool options panel has room for three 36 px buttons plus gaps.",
+      "box": [25, 501, 102, 30]
+    },
+    {
+      "screen": "drawing-road",
+      "viewport": "desktop",
+      "rule": "COL-01",
+      "severity": "low",
+      "title": "The locked road card dims its speed to 4.26:1 at 12 px",
+      "detail": "On the locked Divided street card the speed line is dimmed with the rest of the card, so a player comparing road speeds across the four cards reads '50 km/h' noticeably fainter than on the others. The lock is already shown by the dashed border, the padlock and 'Growing hamlet', so the dimming adds nothing the player needs.",
+      "evidence": "contrast.md drawing-road@desktop: '50 km/h' box [1058,716,42,14], 12 px, declared 4.26, p50 4.26, p10 4.26 (needs 4.5). It is the only panel text in the audit whose own colour on its own plate fails.",
+      "fix": "Keep the locked card's text at the normal secondary colour (#CFC4AB, 9.4:1) and mark it locked with the dashed border, padlock and requirement only; if dimming is wanted, dim the icon, not the text.",
+      "box": [1058, 716, 42, 14]
+    },
+    {
+      "screen": "late-economy",
+      "viewport": "desktop",
+      "rule": "NEW",
+      "severity": "low",
+      "title": "The Economy window's works list is cut through a line of text, hiding the Power Plant's status",
+      "detail": "The 'Your works, last hour' list ends mid-row: 'Power Plant' shows, its location line is sliced by the panel edge and its status ('Waiting for coal or wood chips') is hidden, with no visible scrollbar or fade to say there is more. A player reading down the list for problems sees Iron Mine 'No power' and Sawmill 'Waiting for logs' and stops, missing the Power Plant and Coal Mine below.",
+      "evidence": "late-economy@desktop.png: the panel ends at about y 810; late-economy@desktop.dom.json has '2.7 km south of New Bixby' at [61,805,135,14] (half visible), 'Waiting for coal or wood chips' at [61,822,158,14] and the Coal Mine row at y 851-887 (hidden). The contrast script's 1.67:1 fail on 'Waiting for coal or wood chips' is this clipping, not the text colour.",
+      "fix": "Show a visible scroll affordance (a cream scrollbar thumb or a bottom fade with 'and 2 more'), snap the list height to whole rows, and sort works with a problem to the top so the first rows are the ones to act on.",
+      "box": [24, 780, 400, 30]
+    }
+  ]
+}

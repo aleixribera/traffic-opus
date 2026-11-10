@@ -10,6 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 import { GATE_QUEUE, Industry } from "../src/game/industry";
+import { siteStatus } from "../src/ui/bottleneck";
 import { buildGateJam, runGateJam } from "./gatejam.scenario";
 
 describe("one sawmill, two towns and eight building sites on one road", () => {
@@ -28,8 +29,10 @@ describe("one sawmill, two towns and eight building sites on one road", () => {
         expect(e.got).toBeLessThan(e.need);
         if (!(e.perHour > 0 && e.hours !== null && e.hours > 0 && e.hours < 24 * 6)) continue;
         timed++;
-        // (what its panel says)
-        expect(Industry.siteReport(b)).toMatch(new RegExp(`^${e.got} of ${e.need} loads, about (an hour|[0-9]+ hours) at this rate$`));
+        // (what its panel says: the same count, in the interface's words, with the build added to the wait)
+        const st = siteStatus(b);
+        expect(st.line).toMatch(new RegExp(`^${e.got} of ${e.need} loads delivered, (under an hour|about [0-9]+ (hours?|days)) to go$`));
+        expect(st.hours!).toBeGreaterThan(e.hours!);
       }
     });
     // no vehicle stands five game minutes (it was 25 by the end of the first day and 98 and more by the fourth);

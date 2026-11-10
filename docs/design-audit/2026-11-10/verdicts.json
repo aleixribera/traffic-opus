@@ -1,0 +1,11 @@
+{
+  "F04": { "verdict": "PASS", "note": "The plant now names the loop and the way out: 'it waits for this plant's own power. A load of wood chips is on the way from your Sawmill (3.1 km): about 8 hours, and that gets both going.'", "evidence": "after/late-powerplant@desktop" },
+  "F10": { "verdict": "PASS", "note": "With the Farm in hand the 'Start a food chain' tip steps aside; Tool options say how to place it", "evidence": "after/farm-in-hand@desktop" },
+  "F11": { "verdict": "PASS", "note": "Both placement rules now sit together in Tool options: 35% fertile soil, and within 400 m of a road it lays its own street", "evidence": "after/farm-in-hand@desktop" },
+  "F15": { "verdict": "PASS", "note": "font-variant-numeric: tabular-nums restored on the cash and clock values (the font shorthand on <b> had reset it)", "evidence": "hud.css .cb-money b, .cb-clock b" },
+  "F20": { "verdict": "PASS", "note": "The rate under a red status is no longer green, and a works short of power is never promoted to 'all it can'. 'can' is already the full-power figure", "evidence": "after/late-works@desktop: 0.4/h in cream" },
+  "F21": { "verdict": "PASS", "note": "One phrase for the state: the level line now reads 'held back: No power' under 'No power'", "evidence": "after/late-works@desktop" },
+  "F22": { "verdict": "PASS", "note": "No good green under a red status", "evidence": "after/late-works@desktop" },
+  "F23": { "verdict": "PASS", "note": "Level track now a plate-3 fill with a brass pinstripe, 5 px", "evidence": "after/late-works@desktop, after/late-powerplant@desktop" },
+  "F33": { "verdict": "PASS", "note": "Price reads '$8,000 · upkeep $12/h'", "evidence": "after/farm-in-hand@desktop" }
+}
