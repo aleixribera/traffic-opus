@@ -28,7 +28,7 @@ export interface ConJob {
 
 export const CON_MODELS = [
   "con_stake", "con_slab", "con_trench", "con_string", "con_deck_wood", "con_frame_wood", "con_frame_steel", "con_wall_wood", "con_wall_brick", "con_scaffold",
-  "con_lumber", "con_bricks", "con_steel", "con_gravel", "con_hut", "con_crane", "con_mixer", "con_lumbertruck",
+  "con_lumber", "con_bricks", "con_steel", "con_gravel", "con_hut", "con_crane", "con_mixer", "con_lumbertruck", "con_hoarding",
 ] as const;
 type ConModel = (typeof CON_MODELS)[number];
 
@@ -36,6 +36,8 @@ type ConModel = (typeof CON_MODELS)[number];
 const PILE: Partial<Record<ConModel, [number, number]>> = { con_lumber: [4.0, 1.4], con_bricks: [3.15, 1.2], con_steel: [6.2, 1.6], con_gravel: [3.35, 3.15] };
 const TRUCK_L = 8.3, TRUCK_W = 2.3;
 const WOOD_BAY = 3, STEEL_BAY = 6, STOREY = 4;
+/** The gate left open in a site's hoarding (m). */
+const HOARD_GATE = 5;
 /** Sim seconds a truck takes to pull in off the street or away again. */
 const DRIVE = 9;
 
@@ -171,6 +173,9 @@ export class Construction3D {
         for (let i = 0; i < n; i++) this.put(j, "con_stake", ax + ((ex - ax) * i) / n, 0, az + ((ez - az) * i) / n, yaw);
       }
     }
+    // a block's plot waiting on its materials is boarded up along its lot's edges, bills pasted on the boards, a gate
+    // left open in front: a town redeveloping shows it from the street (the hoarding comes down for the slab's pour)
+    if (order === 0 && j.room && (j.heavy || area > 250)) this.hoarding(j, j.room, cx);
     // the slab: poured through its step, then the floor everything stands on
     if (order >= 1) this.put(j, "con_slab", cx, 0, cz, 0, W + 0.4, order === 1 ? 0.25 + 0.75 * k : 1, D + 0.4);
     const y0 = order >= 1 ? 0.3 : 0;
@@ -263,6 +268,28 @@ export class Construction3D {
         // (on a fresh load of a save, a truck already partway through its step is simply there)
         const t0 = k > 0.08 ? now - DRIVE : now;
         this.trucks.set(j.id, { model: want2, ...spot, t0, out: false, base: j.base });
+      }
+    }
+  }
+
+  /**
+   * Hoarding round the lot r, a 4 m run at a time, its boards facing out; a gate's width open in the front at gx.
+   * (Each edge from (ax, az) to (ex, ez); `out` the way its boards face.)
+   */
+  private hoarding(j: ConJob, r: { x0: number; x1: number; z0: number; z1: number }, gx: number) {
+    const i = 0.35, x0 = r.x0 + i, x1 = r.x1 - i, z0 = r.z0 + i, z1 = r.z1 - i;
+    const g0 = Math.max(x0 + 1, gx - HOARD_GATE / 2), g1 = Math.min(x1 - 1, gx + HOARD_GATE / 2);
+    const runs: [number, number, number, number, number][] = [
+      [x0, z1, g0, z1, 0], [g1, z1, x1, z1, 0], // the front, either side of the gate
+      [x1, z1, x1, z0, Math.PI / 2], [x1, z0, x0, z0, Math.PI], [x0, z0, x0, z1, -Math.PI / 2],
+    ];
+    for (const [ax, az, ex, ez, out] of runs) {
+      const len = Math.hypot(ex - ax, ez - az);
+      if (len < 1) continue;
+      const n = Math.max(1, Math.round(len / 4));
+      for (let k = 0; k < n; k++) {
+        const t = (k + 0.5) / n;
+        this.put(j, "con_hoarding", ax + (ex - ax) * t, 0, az + (ez - az) * t, out, len / n / 4, 1, 1);
       }
     }
   }

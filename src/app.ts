@@ -2311,6 +2311,8 @@ export class App {
     this.smoke.update(this.view.camera, this.view.mpp, g.paused ? 0 : dt, g.time + g.alpha * SIM.dt, far ? null : g.traffic);
     // and over the woods and the fields a few birds wheel
     this.birds.update(this.view.camera, this.view.mpp, g.paused ? 0 : dt);
+    // the townspeople about the squares and the pavements (walking at their own pace, whatever the game's speed)
+    this.buildings3d.life.frame(this.view.camera, this.view.mpp, performance.now() / 1000, this.dayCycle.hour, this.dayCycle.yday);
     if (this.terrain3d.shared.uOverlay.value >= 0.5) this.birds.mesh.visible = false;
     this.landMask.update(g.buildings.list, this.buildings3d.version);
     this.terrain3d.update(this.view);

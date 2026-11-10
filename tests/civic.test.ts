@@ -66,4 +66,48 @@ describe("a town hall's square", () => {
     expect(b.z).toBeCloseTo(HALF - 0.4, 6);
     expect(b.x).toBeGreaterThan(0);
   });
+
+  it("is furnished as it grows: a memorial on the green, a market on the village's square, fountains in a city's", () => {
+    const ps = [0, 1, 2, 3].map((t) => plan(t));
+    const has = (p: SquarePlan, m: string) => p.props.filter((q) => q.model === m).length;
+    expect(has(ps[0], "life_memorial")).toBe(1);
+    expect(has(ps[1], "life_stall_a") + has(ps[1], "life_stall_b")).toBeGreaterThanOrEqual(4);
+    expect(has(ps[2], "life_fountain") + has(ps[2], "life_memorial")).toBeGreaterThanOrEqual(1);
+    expect(has(ps[3], "life_fountain")).toBeGreaterThanOrEqual(1);
+    for (const p of ps) {
+      expect(has(p, "life_bench")).toBeGreaterThanOrEqual(2);
+      expect(p.folk.length).toBeGreaterThanOrEqual(3);
+      expect(p.folk.some((f) => f.to)).toBe(true);
+    }
+  });
+
+  it("keeps its furniture and its people off the hall, the path and the trees, and on the square", () => {
+    // (a deep front strip: the open ground runs on past the lot to the pavement)
+    for (let tier = 0; tier < 4; tier++) for (const seed of [1, 7, 42]) for (const [kerbX, front] of [[0, HALF - 0.4], [-6, HALF + 20], [9, HALF + 4]]) {
+      const [mx, mz] = HALLS[tier];
+      const p = squarePlan(tier, HALF, { x0: -mx, x1: mx, z0: -mz, z1: mz }, { x: 0, z: mz }, { x: kerbX, z: front + 3 }, seed, front);
+      const path = p.rects.find((r) => r.kind === "path")!;
+      const F = Math.max(HALF - 0.4, front);
+      const ux = Math.sin(path.rot), uz = Math.cos(path.rot);
+      for (const q of p.props) {
+        const where = `tier ${tier} seed ${seed} kerb ${kerbX} front ${front}: ${q.model} at ${q.x.toFixed(1)},${q.z.toFixed(1)}`;
+        expect(Math.abs(q.x), where).toBeLessThan(HALF);
+        expect(q.z, where).toBeLessThan(F);
+        expect(Math.abs(q.x) >= mx + 1.5 || Math.abs(q.z) >= mz + 1.5, where).toBe(true);
+        const along = (q.x - path.x) * ux + (q.z - path.z) * uz, across = Math.abs((q.x - path.x) * uz - (q.z - path.z) * ux);
+        if (Math.abs(along) <= path.d / 2) expect(across, where).toBeGreaterThan(path.w / 2);
+        for (const t of p.trees) expect(Math.hypot(t.x - q.x, t.z - q.z), where).toBeGreaterThan(1);
+        for (const o of p.props) if (o !== q) expect(Math.hypot(o.x - q.x, o.z - q.z), where).toBeGreaterThan(1.2);
+      }
+      for (const f of p.folk) {
+        const where = `tier ${tier} seed ${seed} kerb ${kerbX}: someone at ${f.x.toFixed(1)},${f.z.toFixed(1)}`;
+        for (const e of [f, f.to ?? f]) {
+          expect(Math.abs(e.x) >= mx || Math.abs(e.z) >= mz, where).toBe(true);
+          expect(Math.abs(e.x), where).toBeLessThan(HALF);
+          expect(e.z, where).toBeLessThanOrEqual(F + 1e-9);
+        }
+        if (!f.to) for (const q of p.props) expect(Math.hypot(q.x - f.x, q.z - f.z), where).toBeGreaterThan(0.5);
+      }
+    }
+  });
 });

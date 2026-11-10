@@ -29,6 +29,7 @@ import { stageAt, stageOf, type StageInfo } from "../game/construction";
 import { Construction3D, type ConJob } from "./construction3d";
 import { Stockpiles3D, type YardJob } from "./stockpiles3d";
 import { YARDS, pileFills } from "../game/stockpiles";
+import { TownLife, type LifeFront, type LifeSquare } from "./townlife";
 
 /**
  * The model a site's slot is drawn with now: a landmark's core by how far its building has got (foundations, the
@@ -289,7 +290,11 @@ export class Buildings3D {
     this.group.add(this.con.group);
     this.piles = new Stockpiles3D(models, this.mat);
     this.group.add(this.piles.group);
+    this.life = new TownLife(models.props);
+    this.group.add(this.life.group);
   }
+  /** The squares' furniture and the townspeople on them and on the pavements (laid out with the front strips). */
+  readonly life: TownLife;
   /** The stakes, slabs, frames, walls, scaffolds, piles, cranes and trucks of everything going up. */
   private con: Construction3D;
   /** The heaps and log stacks in the works' yards, and the works that have yards (set on rebuild). */
@@ -377,7 +382,9 @@ export class Buildings3D {
     // the path runs from the door (the model's front, +z) to the kerb in front of the square
     const inv = lotMatrix(this.tmp, b.c, b.rot, b.side, 0).invert();
     const k = this.v3.set(b.front.x, 0, b.front.y).applyMatrix4(inv);
-    return squarePlan(HALL_TIER[b.kind] ?? 0, b.hw, fp, { x: 0, z: fp.z1 }, { x: k.x, z: k.z }, b.id);
+    // (the open ground in front runs on to the pavement: a deep front strip is paved as part of the square)
+    const pave = b.access ? this.paveOf(b.access.seg) : 0;
+    return squarePlan(HALL_TIER[b.kind] ?? 0, b.hw, fp, { x: 0, z: fp.z1 }, { x: k.x, z: k.z }, b.id, k.z - pave - 0.5);
   }
 
   /** Models and matrices for a building that isn't placed yet (the placement ghost): a site shows its first level. */
@@ -1125,6 +1132,10 @@ export class Buildings3D {
     const backs: Record<"hedge" | "picket", THREE.Matrix4[]> = { hedge: [], picket: [] };
     const trees = this.stripTrees;
     const L = new THREE.Matrix4(), T = new THREE.Matrix4(), S = new THREE.Matrix4(), R = new THREE.Matrix4().makeRotationY(Math.PI / 2);
+    // the town life: each hall's square, and the pavements in front of the shops and homes, busier near the hall
+    const lifeSquares: LifeSquare[] = [], lifeFronts: LifeFront[] = [];
+    const halls = new Map<number, V2>();
+    for (const b of list) if (isHall(b.kind) && b.town !== undefined) halls.set(b.town, b.c);
     /** A rect in a lot's frame (x along the road, z toward it), at height y (turned rot about its centre). */
     const rect = (b: Building, x0: number, x1: number, z0: number, z1: number, y: number, rot = 0) =>
       lotMatrix(L, b.c, b.rot, b.side, y).clone()
@@ -1138,6 +1149,18 @@ export class Buildings3D {
       // (xd: where the driveway crosses the strip, along the street from the lot's middle)
       const kd = dot(rel, toward), xd = dot(rel, along) + this.driveX(b);
       const pave = this.paveOf(b.access.seg);
+      if (b.built >= 1 && !b.abandoned) {
+        if (isHall(b.kind)) lifeSquares.push({ base: lotMatrix(new THREE.Matrix4(), b.c, b.rot, b.side, 0), plan: this.squareOf(b) });
+        else if (pave > 0) {
+          const hall = b.town !== undefined ? halls.get(b.town) : undefined;
+          const d = hall ? Math.hypot(hall.x - b.c.x, hall.y - b.c.y) : 250;
+          const shop = !b.zone || ZONE_GROUP[b.zone] !== "res" || !!b.wall;
+          lifeFronts.push({
+            base: lotMatrix(new THREE.Matrix4(), b.c, b.rot, b.side, 0), hw: b.hw, z0: kd - pave, z1: kd, kind: shop ? "shop" : "home",
+            centre: Math.max(0.12, Math.min(1, 1 - (d - 50) / 350)), seed: b.id,
+          });
+        }
+      }
       if (isHall(b.kind)) { this.squareStrip(b, kd, toward, along, rect, lawns, paved); continue; }
       const grp = ZONE_GROUP[b.zone!];
       const home = grp === "res";
@@ -1239,6 +1262,7 @@ export class Buildings3D {
         }
       }
     }
+    this.life.set(lifeSquares, lifeFronts);
     if (this.sideCache.size > list.length + 64) {
       const live = new Set(list.map((b) => b.id));
       for (const id of this.sideCache.keys()) if (!live.has(id)) this.sideCache.delete(id);
@@ -1560,6 +1584,7 @@ export class Buildings3D {
   disposeExtras() {
     this.con.dispose();
     this.piles.dispose();
+    this.life.dispose();
   }
 
   /** The construction pieces' moving parts (trucks, cranes), every frame. */
