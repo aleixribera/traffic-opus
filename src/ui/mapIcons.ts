@@ -30,6 +30,11 @@ export function fixable(b: Pick<Building, "town" | "zone">, problem: string | nu
   return true;
 }
 
+/** Half a works' plate with its rim (px), and whether one standing at a point would touch any of some boxes. */
+export const PLATE_HALF = 14;
+export const underAny = (boxes: readonly { l: number; t: number; r: number; b: number }[], x: number, y: number): boolean =>
+  boxes.some((r) => x + PLATE_HALF > r.l && x - PLATE_HALF < r.r && y + PLATE_HALF > r.t && y - PLATE_HALF < r.b);
+
 /** A company site with no road to its gate yet: its icon stands on the gate, where the road has to come. */
 const GATE_PROBLEM = "No road to the gate";
 /** How high over a works' gate its icons float (m): clear of the fence and the trucks waiting there. */
@@ -65,6 +70,11 @@ export class MapIcons {
    * site working past its level-2 pace on fertilizer, explosives or machinery (set by the app).
    */
   boostOf: ((b: Building) => { p: Product; pct: number }[]) | null = null;
+  /**
+   * Boxes on the screen a works' plate keeps out from under (set by the app: the towns' names). A name is worth more
+   * than a plate where both want the same spot, and a plate half under one reads as neither.
+   */
+  avoid: (() => readonly { l: number; t: number; r: number; b: number }[]) | null = null;
   /** How high a building stands (m): a home's or a shop's icon floats over its roof, not over its doorstep. */
   topOf: ((b: Building) => number) | null = null;
 
@@ -92,8 +102,10 @@ export class MapIcons {
       }
       cand.sort((a, b) => Number(b.bad) - Number(a.bad));
       const put: { x: number; y: number }[] = [];
+      const names = this.avoid?.() ?? [];
       for (const c of cand) {
         if (put.some((p) => Math.abs(p.x - c.x) < 22 && Math.abs(p.y - c.y) < 22)) continue;
+        if (underAny(names, c.x, c.y)) continue;
         put.push(c);
         let el = this.marks[nm];
         if (!el) { el = document.createElement("div"); this.el.appendChild(el); this.marks.push(el); }

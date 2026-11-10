@@ -6,7 +6,7 @@
 import { PRODUCTS, type Product } from "../game/industry";
 import { served, type Town } from "../game/settlements";
 import { ENOUGH, deliveredLately } from "../game/supply";
-import { SETTLING, demandPerDay, growthPerDay, needFrom, needsOf, nextNeed } from "../game/towns";
+import { SETTLING, SUPPLY_HOURS, SUPPLY_WARMUP, demandPerDay, growthPerDay, needFrom, needsOf, nextNeed } from "../game/towns";
 
 export type NeedState = "plenty" | "enough" | "low" | "none";
 
@@ -55,11 +55,33 @@ export function loadsPerCrate(want: number): number {
 }
 
 /**
+ * Loads a day a supply comes to, read over the hours since its first load in the two days kept (never fewer than
+ * SUPPLY_WARMUP), the hour under way included: the way the town's growth reads it (towns.ts averageSupply: "the
+ * hours before there was any are no shortfall"). 0 when nothing has landed in that time.
+ */
+export function sinceFirstLoad(t: Town, p: Product): number {
+  const hs = (t.hours ?? []).slice(-SUPPLY_HOURS), now = t.hourNow?.[p] ?? 0;
+  let n = now, since = now > 0 ? 1 : 0;
+  // (oldest first: the first hour with a load sets how long the supply has been coming, the hour under way included)
+  for (let i = hs.length - 1; i >= 0; i--) {
+    const k = hs[i][p] ?? 0;
+    if (k > 0) { n += k; since = hs.length - i + 1; }
+  }
+  return since ? (n * 24) / Math.max(since, SUPPLY_WARMUP) : 0;
+}
+
+/**
  * Loads of a product a town is getting a day at the moment, as its people see it: what has landed lately (supply.ts
  * deliveredLately), or, while a need that has just fallen below "Enough" is in its grace, what it read before.
+ *
+ * A supply less than two days old is read over the hours since its first load (sinceFirstLoad), as the town's growth
+ * reads it. Before, the panel spread a new plant's first loads over the whole day gone by: a hamlet with a Food
+ * Plant sending 24 loads a day against the 10 it wants read "Running low, bring 7 more", was told to build a second
+ * plant, and said "Growing fast" on the line above, because its growth already counted the supply in full (owner,
+ * 2026-11-10: "numbers that disagree side by side").
  */
 export function loadsLately(t: Town, p: Product): number {
-  return t.grace?.[p]?.got ?? deliveredLately(t, p);
+  return Math.max(t.grace?.[p]?.got ?? deliveredLately(t, p), sinceFirstLoad(t, p));
 }
 
 export interface NeedView {
@@ -126,6 +148,10 @@ export function comingNeeds(pop: number): { products: Product[]; pop: number } |
 
 export type GrowthWord = "Settling in" | "Shrinking" | "Not growing" | "Growing slowly" | "Growing" | "Growing fast";
 
+/** "food is running low", "food and planks are running low", and past two "3 needs are running low". */
+const runningLow = (names: string[]): string =>
+  names.length > 2 ? `${names.length} needs are running low` : names.length === 2 ? `${names[0]} and ${names[1]} are running low` : `${names[0]} ${isAre(names[0])} running low`;
+
 /** Its pace against its best (every need met in full) at or above which a town is "Growing fast", and "Growing". */
 export const GROW_FAST = 0.95, GROW_OK = 0.5;
 
@@ -138,12 +164,16 @@ export const GROW_FAST = 0.95, GROW_OK = 0.5;
 export function growthOf(t: Town): { word: GrowthWord; tone: "good" | "bad" | ""; why: string } {
   if (t.pop < SETTLING) return { word: "Settling in", tone: "", why: "" };
   const short = townNeeds(t).filter((v) => v.state === "low" || v.state === "none").map((v) => v.name.toLowerCase());
-  const why = short.length ? `needs ${short.length > 1 ? `${short.slice(0, -1).join(", ")} and ${short[short.length - 1]}` : short[0]}` : "";
+  // (one or two short: named. More: counted, the rows under the line name them, and the line stays one line)
+  const why = short.length > 2 ? `short of ${short.length} needs` : short.length ? `needs ${short.join(" and ")}` : "";
   if (t.trend <= -0.5) return { word: "Shrinking", tone: "bad", why };
   // (stood still with every need at "Enough" or better: what its supply runs out on first, settlements.ts limit)
   if (t.trend < 0.5) return { word: "Not growing", tone: short.length ? "bad" : "", why: why || (t.limit ? `needs more ${PRODUCTS[t.limit].name.toLowerCase()}` : "") };
   const best = growthPerDay(t.pop);
   const k = best > 0 ? t.trend / best : 1;
+  // (still growing on the two days behind it while a need has run short over the last one: it says both, so the
+  // line never reads "Growing fast" over a row that reads "Running low")
+  if (k >= GROW_OK && short.length) return { word: "Growing", tone: "", why: `but ${runningLow(short)}` };
   if (k >= GROW_FAST) return { word: "Growing fast", tone: "good", why: "" };
   if (k >= GROW_OK) return { word: "Growing", tone: "good", why: "" };
   return { word: "Growing slowly", tone: "", why: short.length ? why.replace(/^needs /, "needs more ") : "" };

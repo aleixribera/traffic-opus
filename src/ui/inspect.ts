@@ -21,7 +21,7 @@ import { TRUCK_CLASSES } from "../game/trucks";
 import { served, type Town } from "../game/settlements";
 import { growthOf, townNeeds } from "./needs";
 import { joinedUp } from "./tips";
-import { aboutHours, blockFix, blockWords, ceilingOf, hasMade, makersFlatOut, needHelpSay, nextLoad, shortOf, siteStatus } from "./bottleneck";
+import { aboutHours, afterOpening, blockFix, blockWords, ceilingOf, makersFlatOut, needHelpSay, nextLoad, shortOf, shownRate, siteStatus, startUp, townAdvice, waitsForSite } from "./bottleneck";
 import { buildTime } from "../game/construction";
 import type { Lane } from "../roads/network";
 import { dkDir, dkSeg } from "../sim/router";
@@ -83,7 +83,11 @@ export interface PanelModel {
   icon: string;
   /** "Lv 1/4" */
   badge?: string;
-  status: { text: string; tone: Tone; fix?: string; tag?: string };
+  /**
+   * The one voice of the thing: what state it is in, and under it the one piece of advice (`fix`), with the works
+   * to look at for it (`show`: a "Show it" button that flies there)
+   */
+  status: { text: string; tone: Tone; fix?: string; tag?: string; show?: { id: number; kind: string } };
   keys: KeyNum[];
   flow: FlowRow[];
   /** the level bar: from this level toward `to` (none: the top level) */
@@ -166,7 +170,8 @@ export class TradeLedger {
 export const fmtNum = (n: number) => (n >= 10000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : Math.round(n).toLocaleString("en-US"));
 /** A rate: one decimal under 10 ("0.7"), whole above. */
 export const fmtRate = (n: number) => (n < 9.95 ? n.toFixed(1) : Math.round(n).toLocaleString("en-US"));
-export const signedMoney = (n: number) => `${n >= 0 ? "+" : "−"}${formatMoney(Math.abs(Math.round(n)))}`;
+/** Money with its sign; nothing at all is "$0", never "+$0" (a plus on nothing read as income: owner, 2026-11-10). */
+export const signedMoney = (n: number) => (Math.round(n) === 0 ? formatMoney(0) : `${n > 0 ? "+" : "−"}${formatMoney(Math.abs(Math.round(n)))}`);
 const km = (m: number) => (m < 950 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(1)} km`);
 const lower = (p: Product) => PRODUCTS[p].name.toLowerCase();
 const plural = (n: number, one: string, many = one + "s") => `${n} ${n === 1 ? one : many}`;
@@ -229,14 +234,6 @@ export function trucksOut(g: Game, b: Building): { busy: number; ids: number[] }
   return { busy, ids };
 }
 
-/** Loads of p made an hour, over the last few hours it remembers (null: no full hour yet). */
-export function rateLately(b: Building, p: Product, hours = 3): number | null {
-  const m = Industry.madeLately(b, p);
-  if (!m.hours) return null;
-  const last = m.byHour.slice(-hours);
-  return last.reduce((a, v) => a + v, 0) / last.length;
-}
-
 /** Who would take a product, short enough for a chip: "a power plant takes it" (play-test 2026-11-09, D7). */
 export function takenBy(p: Product): string {
   const them = /[^s]s$/i.test(PRODUCTS[p].name) ? "them" : "it";
@@ -267,8 +264,8 @@ export function noBuyer(g: Game, b: Building): PanelModel["status"] | null {
 
 /**
  * A works waiting for an input says where its next load is, and what would end the wait (play-test 2026-11-09, A13,
- * D3): one that has never made anything is starting up, not in trouble; with its loads stuck in traffic the answer
- * is the jam, never another plant; and when the works that feeds it is at full output, that is the thing to build.
+ * D3): with its loads stuck in traffic the answer is the jam, never another plant; and when the works that feeds it
+ * is at full output, that is the thing to build. (One that has never made anything is starting up: worksStatus.)
  */
 function waitingFor(g: Game, b: Building): PanelModel["status"] | null {
   const D = PLANTS[b.kind as keyof typeof PLANTS];
@@ -278,13 +275,59 @@ function waitingFor(g: Game, b: Building): PanelModel["status"] | null {
   const text = b.problem?.split(": ")[0] ?? `Waiting for ${lower(p)}`;
   if (b.problem?.includes("stuck in traffic")) return { text, tone: "bad", fix: "The loads on their way are stuck in traffic. Clear that jam: the Traffic stuck sign on the map shows where. Another plant would only add trucks to it" };
   const next = nextLoad(g, b, p);
-  if (!hasMade(b) && next.from) return { text: "Starting up", tone: "", fix: `${next.say}.` };
   // (the works that feeds it, flat out: more of them is the way on)
   const full = makersFlatOut(g, p, b);
   if (full) return { text, tone: "bad", fix: `${needHelpSay({ kind: "full", works: BUILDING_TYPES[full.works[0].kind].name, have: full.works.length, n: 1 })}${full.nextLevel ? ` Or wait: it grows to level ${full.nextLevel}.` : ""}` };
   const held = next.from?.problem && !next.building ? ` It is held up: ${next.from.problem.split(": ")[0].toLowerCase()}.` : "";
   return { text, tone: "bad", fix: `${next.say}.${held}` };
 }
+
+/**
+ * The state of one of the company's works, in one voice: the line its panel leads with, the advice under it, and
+ * the works to look at. Its panel, its mark on the map, the Economy window's row and the goal line all read this
+ * one function, so they cannot say different things about the same works (owner, 2026-11-10).
+ */
+export function worksStatus(g: Game, b: Building): PanelModel["status"] {
+  const D = PLANTS[b.kind as keyof typeof PLANTS], P = b.plant!;
+  const ref = (id: number | undefined) => {
+    const o = id === undefined ? undefined : g.buildings.byId.get(id);
+    return o ? { id: o.id, kind: o.kind } : undefined;
+  };
+  let status: PanelModel["status"];
+  if (P.site) {
+    // how far along, how long to go at the pace the loads have been coming, and where the next ones come from
+    const left = (Object.keys(P.site.need) as Product[]).filter((p) => (P.site!.got[p] ?? 0) < P.site!.need[p]!);
+    const s = siteStatus(b);
+    const next = left.length ? nextLoad(g, b, left[0]) : null;
+    const slow = s.slow && next?.from ? ` At this pace that is days: another ${BUILDING_TYPES[next.from.kind].name} would bring ${lower(left[0])} faster.` : "";
+    status = { text: "Building site", tone: "", fix: `${s.line}.${next ? ` ${next.say}.` : ""}${slow}`, show: ref(next?.from?.id) };
+  } else if (b.built < 1) status = { text: `Under construction · ${Math.round(b.built * 100)}%`, tone: "", fix: `Opens in ${aboutHours(((1 - b.built) * buildTime(b.kind)) / HOUR)}.${afterOpening(g, b)}` };
+  else {
+    // (open and nothing made yet: starting up, with when its first truck leaves; its yard filling for a works that is
+    // not open yet: waiting for that one)
+    const su = D.logistics ? null : startUp(g, b);
+    const ws = su ? null : waitsForSite(g, b);
+    if (su) status = { text: "Starting up", tone: "", fix: su.fix };
+    else if (ws) status = { text: ws.text, tone: ws.tone, fix: ws.fix, show: ref(ws.show) };
+    else if (b.problem) status = waitingFor(g, b) ?? noBuyer(g, b) ?? { ...splitProblem(b.problem), tone: "bad" };
+    else {
+      // (at the top of what it can make while somebody would take more: the one state "Working normally" hid)
+      const c = D.logistics ? null : ceilingOf(g, b);
+      status = c ? { text: "At full output", tone: "", fix: c.fix }
+        : (D.logistics ? null : waitingFor(g, b)) ?? { text: D.logistics === "depot" ? "Filling your trucks" : D.logistics === "warehouse" ? "Storing and shipping" : "Working normally", tone: "good" };
+    }
+  }
+  if (SEASONAL[b.kind] && !P.site && b.built >= 1) {
+    const m = seasonMult(b.kind, g.time);
+    // the season is one small tag ("Autumn harvest ×1.6"), never rows of its own
+    const se = seasonOf(g.time), word = SEASON_WORD[b.kind]?.[se];
+    status.tag = `${SEASON_NAME[se]}${word ? ` ${word}` : ""} ×${m.toFixed(1)}`;
+  }
+  return status;
+}
+
+/** Is a works fine to leave alone (no mark on the map, no red in a list)? Anything its status does not call bad. */
+export const worksCalm = (g: Game, b: Building): boolean => !!b.plant && isPlantKind(b.kind) && worksStatus(g, b).tone !== "bad";
 
 export function siteModel(g: Game, b: Building, led?: TradeLedger): PanelModel {
   const D = PLANTS[b.kind as keyof typeof PLANTS], P = b.plant!;
@@ -296,29 +339,7 @@ export function siteModel(g: Game, b: Building, led?: TradeLedger): PanelModel {
   rel.vehicles = out.ids;
   const fleet = D.trucks ? g.industry.trucksOf(b) : 0;
 
-  // ---- status
-  let status: PanelModel["status"];
-  if (P.site) {
-    // how far along, how long to go at the pace the loads have been coming, and where the next ones come from
-    const left = (Object.keys(P.site.need) as Product[]).filter((p) => (P.site!.got[p] ?? 0) < P.site!.need[p]!);
-    const s = siteStatus(g, b);
-    const next = left.length ? nextLoad(g, b, left[0]) : null;
-    const slow = s.slow && next?.from ? ` At this pace that is days: another ${BUILDING_TYPES[next.from.kind].name} would bring ${lower(left[0])} faster.` : "";
-    status = { text: "Building site", tone: "", fix: `${s.line}.${next ? ` ${next.say}.` : ""}${slow}` };
-  } else if (b.built < 1) status = { text: `Under construction · ${Math.round(b.built * 100)}%`, tone: "", fix: `Opens in ${aboutHours(((1 - b.built) * buildTime(b.kind)) / HOUR)}` };
-  else if (b.problem) status = waitingFor(g, b) ?? noBuyer(g, b) ?? { ...splitProblem(b.problem), tone: "bad" };
-  else {
-    // (at the top of what it can make while somebody would take more: the one state "Working normally" hid)
-    const c = D.logistics ? null : ceilingOf(g, b);
-    status = c ? { text: "At full output", tone: "", fix: c.fix }
-      : (D.logistics ? null : waitingFor(g, b)) ?? { text: D.logistics === "depot" ? "Filling your trucks" : D.logistics === "warehouse" ? "Storing and shipping" : "Working normally", tone: "good" };
-  }
-  if (SEASONAL[b.kind] && !P.site && b.built >= 1) {
-    const m = seasonMult(b.kind, g.time);
-    // the season is one small tag ("Autumn harvest ×1.6"), never rows of its own
-    const se = seasonOf(g.time), word = SEASON_WORD[b.kind]?.[se];
-    status.tag = `${SEASON_NAME[se]}${word ? ` ${word}` : ""} ×${m.toFixed(1)}`;
-  }
+  const status = worksStatus(g, b);
 
   // ---- key numbers
   const keys: KeyNum[] = [];
@@ -350,8 +371,9 @@ export function siteModel(g: Game, b: Building, led?: TradeLedger): PanelModel {
     if (fuel) keys.push({ value: String(Math.floor(P.stock[fuel] ?? 0)), unit: `/${Industry.storeOf(b)}`, label: `${lower(fuel)} in the yard`, tone: (P.stock[fuel] ?? 0) < 1 ? "bad" : "" });
   } else if (b.built >= 1 && outs.length) {
     const p0 = outs[0];
-    // ("can" is its pace now: the season's harvest swing included, as the plant itself makes it)
-    const r = rateLately(b, p0), can = (Industry.perDay(b, p0) / 24) * (SEASONAL[b.kind] ? seasonMult(b.kind, g.time) : 1);
+    // (one pace for the figure, the status and the town's advice: never above what it can make. "can" is its pace
+    // now, the season's harvest swing included)
+    const { rate: r, can } = shownRate(g, b, p0);
     keys.push(r === null
       ? { value: "–", label: "no output yet", title: `Can make ${fmtRate(can)} ${lower(p0)} an hour` }
       : { value: fmtRate(r), unit: "/h", label: `${lower(p0)}, can ${fmtRate(can)}`, tone: can > 0 ? toneOf(r / can, 0.75, 0.35) : "", title: `${PRODUCTS[p0].name} made an hour lately, against ${fmtRate(can)} an hour fully staffed and supplied` });
@@ -514,7 +536,7 @@ function nearest(list: Building[], to: Building): Building | null {
 
 // ------------------------------------------------------------------------------------------- towns
 
-export function townStatus(t: Town, joined = false): { text: string; tone: Tone; fix?: string } {
+export function townStatus(t: Town, joined = false): PanelModel["status"] {
   // (a town that sprang up stands cut off till the company's trucks first reach it; once a road joins it, it is
   // waiting for that first load, and says so: play-test 2026-11-09, A10)
   if (t.spawned && !served(t)) return joined
@@ -556,7 +578,16 @@ export function townModel(g: Game, t: Town, led?: TradeLedger): PanelModel {
   const flow: FlowRow[] = [];
   if (from.length) flow.push({ label: "From", chips: from.slice(0, 5) });
   const level = next ? { from: TOWN_SIZES[si].name, to: next.name, pct: Math.min(1, t.pop / next.pop), line: `${Math.min(99, Math.floor((t.pop / next.pop) * 100))}% · at ${fmtNum(next.pop)} people` } : undefined;
-  return { title: t.name, sub: TOWN_SIZES[si].name, icon: "town", status: townStatus(t, joined), keys, flow, level, related: rel };
+  // one voice (owner, 2026-11-10: "a joined town says the same thing three times"): the status line, then the one
+  // piece of advice for the need that matters most, with the works to look at; the rows under it are figures only
+  const status = townStatus(t, joined);
+  const adv = status.fix ? null : townAdvice(g, t, !t.spawned || joinedUp(g, t));
+  if (adv) {
+    status.fix = adv.say;
+    const o = adv.works === undefined ? undefined : g.buildings.byId.get(adv.works);
+    if (o) status.show = { id: o.id, kind: o.kind };
+  }
+  return { title: t.name, sub: TOWN_SIZES[si].name, icon: "town", status, keys, flow, level, related: rel };
 }
 
 // ------------------------------------------------------------------------------------------- town buildings

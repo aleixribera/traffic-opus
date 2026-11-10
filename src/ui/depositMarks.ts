@@ -47,6 +47,8 @@ export class DepositMarks {
    * the pointers know, and "Nearest forest 9 km" over a screen half full of forest was wrong.
    */
   inView = false;
+  /** the first goal's own pointer is at the screen's edge (set by the app): these smaller ones would say it twice */
+  mute = false;
   /** where the lists were last gathered round, and for what: gathered again when the view moves on */
   private at: V2 | null = null;
   private atKey = "";
@@ -147,7 +149,7 @@ export class DepositMarks {
     for (const e of order) {
       const s = view.worldToScreen(e.c.x, e.c.y);
       const off = !(s.x > 0 && s.y > 0 && s.x < W && s.y < H);
-      const show = off && !anyOn && !this.here && !this.inView && shown < POINTERS;
+      const show = off && !anyOn && !this.here && !this.inView && !this.mute && shown < POINTERS;
       e.el.style.display = show ? "" : "none";
       if (!show) continue;
       shown++;

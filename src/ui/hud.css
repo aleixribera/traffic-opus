@@ -200,8 +200,9 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .as-tab:focus-visible { outline-offset: -2px; }
 .as-head .close { top: 50%; right: 16px; transform: translateY(-50%); }
 /* (a tab with more cards than fit wraps to a second row instead of hiding the last ones off the edge) */
-.as-cards { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 12px 8px; max-height: min(340px, 42vh); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--plate-3) transparent; }
-.asset { width: 106px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 9px 4px 7px; background: var(--plate-2); border: 1px solid var(--rule); border-radius: var(--r); position: relative; color: var(--cream); }
+/* the cards share the window's width in equal columns (catalog.ts sets --cols), so a short tab leaves no empty band */
+.as-cards { display: grid; grid-template-columns: repeat(var(--cols, 8), minmax(0, 1fr)); gap: 6px; padding: 12px 12px 8px; max-height: min(340px, 42vh); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--plate-3) transparent; }
+.asset { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 9px 4px 7px; background: var(--plate-2); border: 1px solid var(--rule); border-radius: var(--r); position: relative; color: var(--cream); }
 .asset:hover:not(.locked):not(.on) { border-color: var(--cream-3); background: var(--plate-3); }
 .asset:active:not(.locked) { background: var(--plate); }
 .asset.on { border-color: var(--ochre); background: var(--plate-3); box-shadow: inset 0 0 0 1px var(--ochre); }
@@ -221,6 +222,18 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .fl-lanes { flex: none; color: var(--cream); }
 .as-sub { color: var(--cream-2); font-size: var(--t-xs); display: block; text-align: center; line-height: 1.3; font-variant-numeric: tabular-nums; }
 .as-sub svg { vertical-align: -1px; margin-right: 3px; width: 10px; height: 12px; }
+/* a tab of a few cards: wide plates, the icon beside the name, what it is in a sentence, then what it takes and costs */
+.as-cards.wide .asset { align-items: stretch; gap: 6px; padding: 9px 12px 8px 10px; text-align: left; min-height: 132px; }
+.as-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.as-cards.wide .as-icon { flex: none; width: 40px; height: 40px; }
+.as-cards.wide .as-icon svg { width: 38px; height: 38px; }
+.as-cards.wide .asset b { text-align: left; font-size: var(--t-md); line-height: 1.2; min-width: 0; }
+.as-desc { color: var(--cream-2); font-size: var(--t-sm); line-height: 1.4; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; }
+.as-foot { margin-top: auto; padding-top: 5px; border-top: 1px solid var(--rule); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 10px; min-width: 0; }
+.as-cards.wide .as-flow { width: auto; height: 18px; margin: 0; padding: 0; border: 0; justify-content: flex-start; min-width: 0; }
+.as-cards.wide .as-sub { flex: none; text-align: right; color: var(--cream); }
+.as-cards.wide .asset.locked .as-sub { color: var(--cream-2); }
+
 /* locked: a plain stamped blank, still legible so the player can plan */
 .asset.locked { background: var(--plate); border-style: dashed; border-color: var(--rule-2); cursor: default; }
 .asset.locked .as-icon { opacity: 0.4; filter: grayscale(0.7); }
@@ -248,6 +261,13 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .to-sec > .seg + .stepper { margin-top: 2px; }
 .to-label { color: var(--ochre-hi); font-size: var(--t-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; }
 .to-text { margin: 10px 14px 0; color: var(--cream-2); line-height: 1.45; }
+/* the notes about the click under the pointer that the pointer's one line leaves out: length, climb, bridge, angle */
+.to-read { list-style: none; margin: 12px 14px 0; padding: 7px 0 0; border-top: 1px solid var(--rule); display: flex; flex-direction: column; gap: 3px; color: var(--cream-2); font-size: var(--t-sm); line-height: 1.35; font-variant-numeric: tabular-nums lining-nums; }
+.to-read[hidden] { display: none; }
+.to-read li { display: flex; align-items: baseline; gap: 6px; }
+.to-read li svg { flex: none; width: 12px; height: 12px; align-self: center; color: var(--cream-3); }
+.to-read li.cost, .to-read li.dear { color: var(--ochre-hi); }
+.to-read li.error { color: var(--bad); }
 .seg { display: flex; gap: 3px; flex-wrap: wrap; }
 .seg-btn { min-width: 30px; height: 30px; padding: 0 7px; border: 1px solid var(--rule-2); border-radius: var(--r); background: var(--plate-2); display: grid; place-items: center; color: var(--cream-2); font-weight: 600; }
 .seg-btn svg { width: 20px; height: 20px; }
@@ -294,6 +314,17 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .gl-x { flex: none; display: grid; place-items: center; width: 32px; height: 32px; margin: -7px -6px -4px 0; padding: 0; background: none; border: 0; border-radius: var(--r); color: var(--cream-3); }
 .gl-x:hover, .gl-x:focus-visible { color: var(--cream); background: var(--plate); }
 .gl-tip b { color: var(--cream); font-weight: 700; }
+/* what the chain toward a goal is doing now: a brass rule down its left, the works' own status and when its first
+   truck leaves; the whole line flies to that works */
+.gl-now { display: flex; align-items: baseline; gap: 8px; width: 100%; margin: 2px 0 7px; padding: 5px 8px 6px 9px; background: var(--plate-2); border: 0; border-left: 2px solid var(--ochre); border-radius: 0; color: var(--cream-2); font: 400 var(--t-sm)/1.4 var(--f-text); text-align: left; cursor: pointer; }
+.gl-now:disabled { cursor: default; }
+.gl-now:not(:disabled):hover { background: var(--plate-3); color: var(--cream); }
+.gl-now:focus-visible { outline: 2px solid var(--ochre); outline-offset: 1px; }
+.gl-now-k { flex: none; font: 700 var(--t-xs)/1.4 var(--f-text); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ochre-hi); }
+.gl-now-t { flex: 1; min-width: 0; }
+.gl-now-t b { color: var(--cream); font-weight: 600; }
+.gl-now.bad { border-left-color: var(--bad); }
+.gl-now.bad .gl-now-t b { color: var(--bad); }
 .gl-done { margin: 0; padding: 10px 14px; color: var(--cream-2); }
 .gl-done + .gl-list { margin-top: -4px; }
 .gl-goal.gl-job { margin-bottom: 0; }
@@ -387,7 +418,9 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .row { display: flex; gap: 6px; justify-content: space-between; margin-top: 10px; }
 
 /* ------------------------------------------------------------ cursor chips, toasts, selection rectangle */
-.chips { position: absolute; left: 0; top: 0; display: flex; gap: 3px; pointer-events: none !important; will-change: transform; }
+/* one line at the pointer: the thing that matters now, and the price joined to it as a second cell (pointer.ts) */
+.chips { position: absolute; left: 0; top: 0; display: flex; gap: 0; pointer-events: none !important; will-change: transform; }
+.chip + .chip { margin-left: -1px; }
 .chips[hidden] { display: none; }
 .chip { background: var(--bar); border: 1px solid var(--edge); box-shadow: inset 0 0 0 1px var(--rule-2), 0 2px 6px rgba(3, 7, 14, 0.45); border-radius: 1px; padding: 3px 7px; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; color: var(--cream); font-weight: 600; }
 .chip:first-child { font-weight: 700; }
@@ -506,6 +539,9 @@ kbd { font: 600 var(--t-xs)/1 var(--f-text); padding: 3px 6px; border: 1px solid
 .map-label.click:hover .ml-plate > b { background: var(--plate-2); box-shadow: inset 0 0 0 1px var(--ochre), 0 2px 5px rgba(3, 7, 14, 0.5); }
 .map-label.click:focus-visible { outline: 2px solid var(--ochre); outline-offset: 2px; }
 .map-labels.passive .map-label.click { pointer-events: none; }
+/* a smaller town's label where a bigger one stands in its way: its name alone (labels.ts declutter) */
+.map-label.brief .ml-plate > span, .map-label.brief .ml-icons { display: none; }
+.map-label.brief .ml-plate > b { font-size: 14px; line-height: 17px; padding: 1px 7px 0; }
 /* its needs, only while one wants seeing to: each picture on a disc ringed by how it is doing, as in its panel */
 .map-label .ml-icons { display: flex; align-items: center; gap: 4px; margin-top: 5px; }
 .map-label .ml-icons i { width: 26px; height: 26px; border-radius: 50%; background: var(--plate); box-shadow: 0 0 0 2px var(--bar-ok), 0 2px 4px rgba(3, 7, 14, 0.55); display: grid; place-items: center; }
@@ -621,19 +657,14 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .nd.low .cr.on { background: var(--bar-mid); }
 .nd.none .cr { border-color: var(--bad); }
 .nd-each { flex-basis: 100%; font-size: var(--t-xs); line-height: 1.2; color: var(--cream-3); font-variant-numeric: tabular-nums; }
-.nd-say { line-height: 1.35; color: var(--cream-2); }
-.nd.low .nd-say, .nd.none .nd-say { color: var(--cream); font-weight: 600; }
-/* what to do about a short need, and the works to look at */
-.nd-fix { display: flex; align-items: center; gap: 8px; padding-top: 5px; border-top: 1px solid var(--rule); line-height: 1.35; color: var(--cream-2); }
-.nd-fix > span { flex: 1; min-width: 0; }
-.nd-fix .fchip { flex: none; }
+/* the figure under the crates: loads a day coming, of the loads a day it wants (the advice is said once, above) */
+.nd-fig { font-size: var(--t-sm); line-height: 1.3; color: var(--cream-2); font-variant-numeric: tabular-nums lining-nums; }
+.nd-fig b { color: var(--cream); font-weight: 600; }
 /* a need still to come: greyed, friendly, no lock */
 .nd-soon { display: flex; align-items: center; gap: 10px; margin: 12px 0 0; padding-top: 10px; border-top: 1px dashed var(--rule-2); color: var(--cream-2); line-height: 1.35; }
 .nd-soon .nd-ic { grid-row: auto; width: 30px; height: 30px; flex: none; box-shadow: 0 0 0 1.5px var(--rule-2); }
 .nd-soon .nd-ic svg { width: 18px; height: 18px; opacity: 0.8; filter: grayscale(1) brightness(1.5); }
 .nd-soon b { font-weight: 600; color: var(--cream); }
-.tn-cost { margin: 12px 0 0; line-height: 1.45; color: var(--cream-2); padding: 8px 10px; background: rgba(156, 58, 40, 0.18); border-left: 3px solid var(--brick); }
-.tn-cost b { color: var(--bad); font-weight: 700; }
 .tw-spark { width: 56px; height: 20px; flex: none; }
 .tw-spark polyline { fill: none; stroke: var(--ochre); stroke-width: 1.5; stroke-linejoin: round; }
 .tw-right { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 88px; }
@@ -824,6 +855,48 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .dm-tag:hover { opacity: 1; border-color: var(--ochre-hi); background: var(--plate-2); }
 .dm-tag:focus-visible { outline: 2px solid var(--ochre-hi); outline-offset: 3px; }
 
+/* the first goal's ground (goalPointer.ts): a big brass pointer at the screen's edge while the soil is off screen,
+   its roundel beating so nobody misses it, and a pin on the spot once it is in view */
+.goal-ptr-layer { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
+.goal-ptr { position: absolute; left: 0; top: 0; pointer-events: auto; display: grid; grid-template-columns: auto auto auto; grid-template-rows: auto auto; column-gap: 12px; row-gap: 1px;
+  align-items: center; padding: 9px 16px 9px 10px; text-align: left; white-space: nowrap; will-change: transform; cursor: pointer;
+  background: var(--plate); color: var(--cream); border: 2px solid var(--ochre-hi); border-radius: 3px; font-family: var(--f-text); line-height: 1.15;
+  box-shadow: 0 0 0 3px var(--plate), 0 0 0 4px var(--ochre), 0 6px 18px rgba(0, 0, 0, 0.5); }
+.goal-ptr .gp-arrow { grid-row: 1 / 3; width: 42px; height: 42px; border-radius: 50%; background: var(--ochre-hi); position: relative; animation: gp-beat 1.6s ease-out infinite; }
+.goal-ptr .gp-arrow::before { content: ""; position: absolute; left: 8px; top: 19px; width: 14px; height: 4px; background: var(--ink); }
+.goal-ptr .gp-arrow::after { content: ""; position: absolute; left: 20px; top: 12px; border-style: solid; border-color: transparent transparent transparent var(--ink); border-width: 9px 0 9px 15px; }
+@keyframes gp-beat { 0% { box-shadow: 0 0 0 0 rgba(240, 194, 90, 0.75); } 100% { box-shadow: 0 0 0 16px rgba(240, 194, 90, 0); } }
+.goal-ptr .gp-k { grid-column: 2; grid-row: 1; font-size: var(--t-xs); font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ochre-hi); }
+.goal-ptr b { grid-column: 2 / 4; grid-row: 2; font: 700 21px/1.1 var(--f-display); letter-spacing: 0.04em; text-transform: uppercase; }
+.goal-ptr .gp-km { grid-column: 3; grid-row: 1; justify-self: end; font-size: var(--t-sm); font-weight: 600; color: var(--cream); font-variant-numeric: tabular-nums; }
+.goal-ptr:hover { background: var(--plate-2); border-color: var(--cream); }
+.goal-ptr:focus-visible { outline: 2px solid var(--cream); outline-offset: 5px; }
+.goal-pin { position: absolute; left: 0; top: 0; pointer-events: auto; display: flex; align-items: center; gap: 9px; margin-top: -16px; padding: 6px 13px 6px 6px; text-align: left; white-space: nowrap;
+  will-change: transform; cursor: pointer; background: var(--plate); color: var(--cream); border: 2px solid var(--ochre-hi); border-radius: 3px; font-family: var(--f-text); line-height: 1.15;
+  box-shadow: 0 0 0 3px var(--plate), 0 0 0 4px var(--ochre), 0 6px 18px rgba(0, 0, 0, 0.5); }
+/* (its foot: a brass point down to the spot itself) */
+.goal-pin::after { content: ""; position: absolute; left: 50%; top: 100%; margin: 4px 0 0 -8px; border-style: solid; border-width: 12px 8px 0 8px; border-color: var(--ochre-hi) transparent transparent transparent; filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.5)); }
+.goal-pin i { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 50%; background: var(--plate-2); box-shadow: inset 0 0 0 1px var(--ochre); animation: gp-beat 1.6s ease-out infinite; }
+.goal-pin i svg { width: 22px; height: 22px; }
+.goal-pin span { display: flex; flex-direction: column; gap: 1px; }
+.goal-pin b { font: 700 16px/1.1 var(--f-display); letter-spacing: 0.04em; text-transform: uppercase; }
+.goal-pin em { font-style: normal; font-size: var(--t-xs); font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ochre-hi); }
+.goal-pin:hover { background: var(--plate-2); border-color: var(--cream); }
+.goal-pin:focus-visible { outline: 2px solid var(--cream); outline-offset: 5px; }
+
+/* a works' gate (gateMark.ts): a brass ring on the gate, a stem out the way its road comes, and a plate that says so */
+.gate-mark { position: fixed; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 1; will-change: transform; }
+.gate-mark .gm-ring { position: absolute; left: -9px; top: -9px; width: 18px; height: 18px; border-radius: 50%; background: var(--plate); border: 3px solid var(--ochre-hi); box-shadow: 0 0 0 2px var(--plate), 0 2px 6px rgba(0, 0, 0, 0.5); }
+.gate-mark .gm-stem { position: absolute; left: 0; top: -1.5px; height: 3px; transform-origin: 0 50%; background: var(--ochre-hi); box-shadow: 0 0 0 1px var(--plate); }
+.gate-mark .gm-plate { position: absolute; left: 0; top: 0; display: flex; align-items: baseline; gap: 7px; padding: 3px 9px 3px; white-space: nowrap; background: var(--ochre-hi); color: var(--ink); border-radius: 2px;
+  box-shadow: 0 0 0 2px var(--plate), 0 3px 8px rgba(0, 0, 0, 0.45); }
+.gate-mark .gm-plate b { font: 700 13px/1.2 var(--f-display); letter-spacing: 0.14em; text-transform: uppercase; }
+.gate-mark .gm-plate em { font: 600 var(--t-xs)/1.2 var(--f-text); font-style: normal; }
+.gate-mark.bad .gm-plate { background: var(--plate); color: var(--cream); box-shadow: 0 0 0 1px var(--bad), 0 0 0 3px var(--plate), 0 3px 8px rgba(0, 0, 0, 0.45); }
+.gate-mark.bad .gm-plate em { color: var(--bad); }
+.gate-mark.bad .gm-ring { border-color: var(--bad); }
+.gate-mark.bad .gm-stem { background: var(--bad); }
+
 /* traffic that is really stuck (stuckAlerts.ts): a small amber warning diamond on the map at the spot, and one chip
    above the clock while any spot is stuck */
 .stuck-alerts { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
@@ -878,6 +951,10 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .ip-st-t { min-width: 0; }
 .ip-tag { margin-left: auto; padding-left: 8px; font: 500 var(--t-xs)/1.35 var(--f-text); color: var(--cream-2); white-space: nowrap; }
 .ip-fix { margin: 0 0 4px 16px; color: var(--cream-2); line-height: 1.4; }
+/* the one piece of advice, with the works to look at beside it */
+.ip-fix.has-show { display: flex; align-items: flex-start; gap: 8px; }
+.ip-fix.has-show > span { flex: 1; min-width: 0; }
+.ip-fix.has-show .fchip { flex: none; }
 .ip-st + .ip-keys, .ip-fix + .ip-keys { margin-top: 10px; }
 
 /* the three key numbers: big tabular figures over a small caption, hairline columns */
