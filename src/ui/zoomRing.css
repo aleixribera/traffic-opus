@@ -1,5 +1,5 @@
-/* The wheel's ring at the cursor (ui/zoomRing.ts): a cream ring with a dark rim, so it reads on grass, roads and the
-   pale Map view alike. Zooming in it closes on the cursor, out it opens away; at the end of the zoom it only pulses. */
+/* The wheel's ring at the cursor (ui/zoomRing.ts, which animates it): a cream ring with a dark rim, so it reads on
+   grass, roads and the pale Map view alike; grey when the zoom has reached its end. */
 .zoom-ring {
   position: fixed;
   left: 0;
@@ -9,8 +9,7 @@
   pointer-events: none;
   z-index: 1;
 }
-.zoom-ring::before {
-  content: "";
+.zoom-ring > div {
   position: absolute;
   left: -22px;
   top: -22px;
@@ -22,13 +21,4 @@
   box-shadow: 0 0 0 1px rgba(5, 10, 18, 0.55), inset 0 0 0 1px rgba(5, 10, 18, 0.55);
   opacity: 0;
 }
-.zoom-ring.on[data-kind="in"]::before { animation: zoom-ring-in 0.32s ease-out; }
-.zoom-ring.on[data-kind="out"]::before { animation: zoom-ring-out 0.32s ease-out; }
-.zoom-ring.on[data-kind="stop"]::before { animation: zoom-ring-stop 0.36s ease-out; border-color: var(--cream-3, #a99f8a); }
-@keyframes zoom-ring-in { from { transform: scale(1.35); opacity: 0.9; } to { transform: scale(0.45); opacity: 0; } }
-@keyframes zoom-ring-out { from { transform: scale(0.45); opacity: 0.9; } to { transform: scale(1.35); opacity: 0; } }
-@keyframes zoom-ring-stop { 0% { transform: scale(0.8); opacity: 0.8; } 50% { transform: scale(0.9); opacity: 0.7; } 100% { transform: scale(0.8); opacity: 0; } }
-@media (prefers-reduced-motion: reduce) {
-  .zoom-ring.on[data-kind]::before { animation: zoom-ring-fade 0.3s linear; transform: none; }
-  @keyframes zoom-ring-fade { from { opacity: 0.8; } to { opacity: 0; } }
-}
+.zoom-ring > div[data-kind="stop"] { border-color: var(--cream-3, #a99f8a); }
