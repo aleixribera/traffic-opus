@@ -38,6 +38,7 @@ import { landmarkDone, landmarkSite, parkSection, seasonLine, specialRows } from
 import { MEGAS, isMega } from "../game/megaprojects";
 import { TipPrefs, joinedUp, tipFor } from "./tips";
 import { blockWords, buildOrder, shortfalls, shownRate } from "./bottleneck";
+import { longProject, type LongProject } from "./longProject";
 import { goalNow, goalNowSay } from "./goalNow";
 import { STUCK_RAISE, stuckSpots } from "./stuckAlerts";
 import { nextTown } from "./nextTown";
@@ -983,6 +984,13 @@ export class Hud {
       const m = open[0], [have, need] = m.measure(v), now = goalNow(g, m, have);
       fold = `<span class="gl-fold"><b>${escapeHtml(m.name)}</b><span class="num">${measureText(m, have, need)}</span></span>`;
       body = `<div id="gl-body" class="gl-one">${now ? nowLine(now, true).replace(/ title="[^"]*"/, ` title="${escapeHtml(`${now.key ?? "Now"}: ${goalNowSay(now)}`)}"`) : `<p class="gl-goal">${escapeHtml(m.goal)}</p>`}</div>`;
+    } else if (folded) {
+      // (every goal reached: the long project, and how it is going)
+      const lp = longProject(g);
+      if (lp) {
+        fold = `<span class="gl-fold"><b>${escapeHtml(lp.name)}</b><span class="num">${escapeHtml(lp.measure)}</span></span>`;
+        body = `<div id="gl-body" class="gl-one">${this.projNow(g, lp, true)}</div>`;
+      }
     }
     const head = `<button class="gl-head" aria-expanded="${!folded}" aria-controls="gl-body"><b>Goals</b>${fold}<span class="gl-caret">${ICON.caret}</span></button>`;
     if (!folded) {
@@ -1057,11 +1065,28 @@ export class Hud {
    * are short of, the biggest first, each turned into works to build.
    */
   private afterGoals(): string {
-    const jobs = shortfalls(this.app.game);
+    const g = this.app.game, lp = longProject(g);
+    if (lp) {
+      const means = lp.means.map((j) => `<li><div class="gl-top"><b>${escapeHtml(j.head)}</b></div><p class="gl-goal gl-job">${escapeHtml(j.say)}</p></li>`).join("");
+      return `<ol class="gl-list gl-proj"><li><p class="gl-proj-k">Every goal reached. The long project</p>
+        <div class="gl-top"><b>${escapeHtml(lp.name)}</b><span class="num">${escapeHtml(lp.measure)}</span></div>
+        <span class="bar gl-bar" role="progressbar" aria-label="${escapeHtml(lp.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(lp.p * 100)}"><i style="width:${Math.max(2, lp.p * 100)}%"></i></span>
+        ${this.projNow(g, lp)}</li></ol>
+        ${means ? `<p class="gl-means-k">To get there</p><ol class="gl-list gl-means">${means}</ol>` : `<p class="gl-done">Nothing holds it back: it gets there by itself, a little every day.</p>`}
+        ${lp.ahead ? `<p class="gl-ahead">${escapeHtml(lp.ahead)}</p>` : ""}`;
+    }
+    const jobs = shortfalls(g);
     if (!jobs.length) return `<p class="gl-done">Every goal reached, and every town has what it needs. Grow them on: the next size asks for more.</p>`;
     const items = jobs.map((j) => `<li><div class="gl-top"><b>${PRODUCTS[j.p].name}</b><span class="num">${fmtNum(j.more)} more ${j.more === 1 ? "load" : "loads"} a day</span></div>
       <p class="gl-goal gl-job">${escapeHtml(j.say)}</p></li>`).join("");
     return `<p class="gl-done">Every goal reached. Now the towns set the work:</p><ol class="gl-list">${items}</ol>`;
+  }
+
+  /** The long project's line under its bar: how it is going; a click flies to the town or the site. */
+  private projNow(g: Game, lp: LongProject, one = false): string {
+    const t = lp.town !== undefined ? g.towns.byId.get(lp.town) : undefined;
+    const at = lp.works !== undefined ? ` data-id="${lp.works}" title="Show it on the map"` : t ? ` data-spot="${Math.round(t.c.x)},${Math.round(t.c.y)}" title="Fly there"` : " disabled";
+    return `<button type="button" class="gl-now${one ? " gl-now-one" : ""}${lp.bad ? " bad" : ""}"${at} aria-label="Now: ${escapeHtml(lp.state)}"><span class="gl-now-k">Now</span><span class="gl-now-t">${escapeHtml(lp.state)}.</span></button>`;
   }
 
   /** The notes at the foot of the tool options card (only redrawn when they change: the pointer moves every frame). */

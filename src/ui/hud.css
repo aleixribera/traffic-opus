@@ -355,6 +355,13 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .gl-done { margin: 0; padding: 10px 14px; color: var(--cream-2); }
 .gl-done + .gl-list { margin-top: -4px; }
 .gl-goal.gl-job { margin-bottom: 0; }
+/* the long project once every goal is reached: its name and bar like a goal's, what to do under it */
+.gl-proj-k, .gl-means-k { margin: 0 0 4px; font: 700 var(--t-xs)/1.4 var(--f-text); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ochre-hi); }
+.gl-proj .gl-bar { margin: 6px 0 8px; }
+.gl-proj .gl-now { margin-bottom: 0; }
+.gl-means-k { margin: 2px 14px 0; padding-top: 9px; border-top: 1px solid var(--rule); }
+.gl-means { margin-top: 0; }
+.gl-ahead { margin: 0 14px; padding: 8px 0 4px; border-top: 1px solid var(--rule); color: var(--cream-2); font-size: var(--t-sm); line-height: 1.45; }
 @media (prefers-reduced-motion: reduce) { .gl-caret { transition: none; } }
 .panel { position: relative; width: 100%; padding: 0 14px 20px; max-height: calc(100vh - var(--bar-h) - 40px); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--plate-3) transparent; }
 .panel[hidden] { display: none; }
