@@ -1514,6 +1514,7 @@ export class App {
       if (!pl) { this.reject("Put stops beside a street"); return; }
       if (!pl.ok) { this.reject(pl.why ?? "Can't put a stop here"); return; }
       tr.addStop(c);
+      this.hud?.used();
       this.hud?.sound("build");
       this.hud?.toast(`Bus stop built for ${formatMoney(STOP_COST)}`);
       this.dirtyPreview = true;
@@ -1534,6 +1535,7 @@ export class App {
     else {
       if (d.length && !tr.routeKeys(tr.stops.get(d[d.length - 1])!.access, tr.stops.get(id)!.access)) { this.reject("Buses can't drive there from the last stop"); return; }
       d.push(id);
+      this.hud?.used();
       this.hud?.sound("place");
     }
     this.dirtyPreview = true;

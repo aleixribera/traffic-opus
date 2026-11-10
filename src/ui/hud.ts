@@ -264,6 +264,10 @@ export class Hud {
   private lastDraw: RoadMode = "curve";
   /** the catalog asked open while a building is in hand (it folds to its strip by itself, out of the map's way) */
   private catPeek = false;
+  /** a card picked (or the tool used on the map) since the catalog opened: its cards have done their job and fold */
+  private handPicked = false;
+  /** the catalog put out of sight with its tool still in hand (the strip's Hide; the category's button brings it back) */
+  private catHidden = false;
   /** the card under the pointer or the keyboard focus: the catalog's line reads it out */
   private hoverKey = "";
   private winKind: WinId | null = null;
@@ -275,7 +279,10 @@ export class Hud {
   private armed = 0;
   private panelNode = -1;
   private panelPhase = 0;
-  private tutHidden = false;
+  /** the Goals card folded to its one line (remembered per browser: a player who folds it wants it folded) */
+  private get tutHidden(): boolean { try { return localStorage.getItem("flowtown.goals.folded") === "1"; } catch { return this.tutFold; } }
+  private set tutHidden(v: boolean) { this.tutFold = v; try { localStorage.setItem("flowtown.goals.folded", v ? "1" : "0"); } catch { /* private window: for the session */ } }
+  private tutFold = false;
   /** tips off, and the ones dismissed (kept per browser) */
   private tipPrefs = new TipPrefs();
   private lastPanel = "";
@@ -415,27 +422,42 @@ export class Hud {
   catKey(c: CatId) { this.toggleCat(c); }
 
   /**
-   * The catalog folds to its strip while a building is in hand, and Roads while a road is being drawn, so the map
-   * under the cursor is free (play-test 2026-11-10: the road cards hid the town a road was being drawn to).
+   * Every catalog folds to its one-line strip (what is in hand, the tabs) while its tool is held and in use, so the
+   * map under the cursor is free (play-test 2026-11-10: the road cards hid the town a road was being drawn to;
+   * review 2026-11-10: and the bus cards the street a stop was going on). A works is in use as soon as it is in
+   * hand: a click on the map builds it. Roads and Transport put a tool in hand when they open, so theirs is in use
+   * once a card is picked or the map clicked. A tab or the category's button brings the cards back for a look.
    */
   private folded(): boolean {
     if (this.catPeek) return false;
-    const st = this.app.st;
-    return (this.cat === "industry" && st.tool === "place") || (this.cat === "roads" && st.tool === "road" && this.app.drawingRoad);
+    const c = this.cat, app = this.app;
+    if (!c || catOf(app.st) !== c) return false;
+    return c === "industry" || this.handPicked || app.hasDraft || app.drawingRoad;
   }
 
-  /** A road's first point placed (the cards fold away), or the road done with (they come back). */
+  /** A road's first point placed or a bus line begun (the cards fold away), or the draft done with. */
   drawing(on: boolean) {
     if (on) this.catPeek = false;
-    if (this.cat === "roads") this.refresh();
+    if (this.cat) this.refresh();
+  }
+
+  /** The catalog's tool used on the map (a stop put down): from now on its cards fold away. */
+  used() {
+    if (this.handPicked) return;
+    this.handPicked = true;
+    this.catPeek = false;
+    this.refresh();
   }
 
   private toggleCat(c: CatId) {
     const app = this.app;
     const inHand = catOf(app.st) === c;
-    // (folded with a building in hand: the button brings the cards back)
+    // (hidden with its tool in hand: the button brings the strip back; folded: the cards)
+    if (this.cat === c && this.catHidden) { this.catHidden = false; this.sfx.play("open"); this.refresh(); return; }
     if (this.cat === c && this.folded()) { this.catPeek = true; this.refresh(); return; }
     this.catPeek = false;
+    this.catHidden = false;
+    this.handPicked = false;
     if (this.cat === c) {
       this.cat = null;
       this.sfx.play("close");
@@ -456,6 +478,7 @@ export class Hud {
   private pick(a: Asset) {
     const app = this.app;
     this.catPeek = false;
+    this.handPicked = true;
     // (a road card is for drawing that road: out of Upgrade, back to the drawing mode last used)
     if (a.kind === "road") { this.lastRoad = a.id; app.setTool({ tool: "road", roadType: a.id, mode: this.lastDraw }); }
     else if (a.kind === "roundabout") app.setTool({ tool: "roundabout", rbSize: a.size });
@@ -556,9 +579,9 @@ export class Hud {
    */
   private renderAssets() {
     const c = this.cat, el = this.assets;
-    if (!c) { el.hidden = true; this.lastAssets = ""; this.hoverKey = ""; return; }
     const cur = this.current();
-    const inHand = cur && catOf(this.app.st) === c ? cur : null;
+    const inHand = c && cur && catOf(this.app.st) === c ? cur : null;
+    if (!c || (inHand && this.catHidden)) { el.hidden = true; this.lastAssets = ""; this.hoverKey = ""; return; }
     const curKey = inHand ? this.assetInfo(inHand).key : "";
     const C = CATS[c];
     // follow the tool to its tab (keyboard, right click, loading)
@@ -620,7 +643,16 @@ export class Hud {
       if (catOf(this.app.st) === c) this.app.setTool({ tool: "inspect" });
       else this.refresh();
     };
-    head.append(h("b", "as-title", C.label), tabs, close);
+    // (put the catalog out of sight and keep the tool: the category's button or key brings it back)
+    const key = c === "roads" ? "R" : c === "industry" ? "I" : "";
+    const hide = inHand ? h("button", "as-hide", `Hide ${ICON.caret}`) : null;
+    if (hide) {
+      hide.dataset.key = "hide";
+      hide.title = `Hide the catalog; the ${held!.name} stays in hand${key ? ` (${key} brings it back)` : ""}`;
+      hide.setAttribute("aria-label", `Hide ${C.label}, keep the ${held!.name} in hand`);
+      hide.onclick = () => { this.catHidden = true; this.catPeek = false; this.sfx.play("close"); this.refresh(); };
+    }
+    head.append(h("b", "as-title", C.label), tabs, ...(hide ? [hide] : []), close);
     if (!folded) {
       // (the cards are fitted to the window: a few become wide plates that say what each is, more share the row,
       // and a long tab is split into even rows. catalog.ts; a short tab left most of the window empty)
@@ -664,6 +696,8 @@ export class Hud {
     const tc = catOf(st);
     if (tc) this.cat = tc;
     else if (st.tool !== "inspect") this.cat = null;
+    // (nothing of the catalog's in hand: nothing to fold for or to hide behind)
+    if (!tc) { this.handPicked = false; this.catHidden = false; }
     if (st.tool === "road") this.lastRoad = st.roadType;
     if (st.tool === "road" && st.mode !== "replace") this.lastDraw = st.mode;
     for (const [k, b] of this.catBtns) {
@@ -937,20 +971,29 @@ export class Hud {
     this.tut.hidden = false;
     const v = g.progressView();
     const folded = this.tutHidden;
-    const head = `<button class="gl-head" aria-expanded="${!folded}" aria-controls="gl-body"><b>Goals</b><span class="gl-count">${g.progress.done.length} of ${MILESTONES.length} reached</span><span class="gl-caret">${ICON.caret}</span></button>`;
+    // (a goal that waits on a first load says what the chain is doing now and when its first truck leaves: the
+    // works' own status, so the wait counts down here as it does in its panel. Owner, 2026-11-10)
+    const nowLine = (now: ReturnType<typeof goalNow>, one = false) => now ? `<button type="button" class="gl-now ${now.tone}"${now.works !== undefined ? ` data-id="${now.works}"` : now.spot ? ` data-spot="${Math.round(now.spot.x)},${Math.round(now.spot.y)}"` : " disabled"} title="${now.works !== undefined ? "Show it on the map" : now.spot ? "Fly there" : ""}" aria-label="${now.key ?? "Now"}: ${escapeHtml(goalNowSay(now))}"><span class="gl-now-k">${now.key ?? "Now"}</span><span class="gl-now-t"><b>${escapeHtml(now.who ? `${now.who}: ${now.text[0].toLowerCase()}${now.text.slice(1)}` : now.text)}.</b>${now.fix ? ` ${escapeHtml(now.fix)}` : ""}</span></button>`.replace('class="gl-now ', `class="gl-now${one ? " gl-now-one" : ""} `) : "";
+    // (folded, the card is its header and one line under it: the goal at hand, how far along, and what its chain is
+    // doing now, cut to two lines and whole on hover. Review 2026-11-10: the full card stood over the map all game,
+    // and folding it hid the goal too)
+    let fold = `<span class="gl-count">${g.progress.done.length} of ${MILESTONES.length} reached</span>`;
     let body = `<div id="gl-body" hidden></div>`;
+    if (folded && open[0]) {
+      const m = open[0], [have, need] = m.measure(v), now = goalNow(g, m, have);
+      fold = `<span class="gl-fold"><b>${escapeHtml(m.name)}</b><span class="num">${measureText(m, have, need)}</span></span>`;
+      body = `<div id="gl-body" class="gl-one">${now ? nowLine(now, true).replace(/ title="[^"]*"/, ` title="${escapeHtml(`${now.key ?? "Now"}: ${goalNowSay(now)}`)}"`) : `<p class="gl-goal">${escapeHtml(m.goal)}</p>`}</div>`;
+    }
+    const head = `<button class="gl-head" aria-expanded="${!folded}" aria-controls="gl-body"><b>Goals</b>${fold}<span class="gl-caret">${ICON.caret}</span></button>`;
     if (!folded) {
       const items = open.map((m) => {
         const [have, need] = m.measure(v);
         const p = Math.max(0, Math.min(1, have / need));
-        // (a goal that waits on a first load says what the chain is doing now and when its first truck leaves: the
-        // works' own status, so the wait counts down here as it does in its panel. Owner, 2026-11-10)
         const now = goalNow(g, m, have);
-        const nowLine = now ? `<button type="button" class="gl-now ${now.tone}"${now.works !== undefined ? ` data-id="${now.works}"` : now.spot ? ` data-spot="${Math.round(now.spot.x)},${Math.round(now.spot.y)}"` : " disabled"} title="${now.works !== undefined ? "Show it on the map" : now.spot ? "Fly there" : ""}" aria-label="${now.key ?? "Now"}: ${escapeHtml(goalNowSay(now))}"><span class="gl-now-k">${now.key ?? "Now"}</span><span class="gl-now-t"><b>${escapeHtml(now.who ? `${now.who}: ${now.text[0].toLowerCase()}${now.text.slice(1)}` : now.text)}.</b>${now.fix ? ` ${escapeHtml(now.fix)}` : ""}</span></button>` : "";
         return `<li><div class="gl-top"><b>${m.name}</b><span class="num">${measureText(m, have, need)}</span></div>
           <p class="gl-goal">${m.goal}</p>
           <span class="bar gl-bar" role="progressbar" aria-label="${m.name}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p * 100)}"><i style="width:${Math.max(2, p * 100)}%"></i></span>
-          ${nowLine}<p class="gl-gift">${unlockList(m.unlocks).join(" · ")}</p></li>`;
+          ${nowLine(now)}<p class="gl-gift">${unlockList(m.unlocks).join(" · ")}</p></li>`;
       }).join("");
       body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : this.afterGoals()}${tip ? `<div class="gl-tip" data-tip="${tip.id}"><p>${tip.html}</p><button class="gl-x" aria-label="Dismiss this tip" title="Dismiss this tip (Pause › Tips turns them all off)">${ICON.close}</button></div>` : ""}</div>`;
     }

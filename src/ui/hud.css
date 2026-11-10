@@ -201,6 +201,10 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .as-tab.on { color: var(--cream); border-top-color: var(--ochre); }
 .as-tab:focus-visible { outline-offset: -2px; }
 .as-head .close { top: 50%; right: 16px; transform: translateY(-50%); }
+/* Hide: the catalog out of sight, the tool still in hand (said like the tabs: a word, not an icon) */
+.as-hide { margin-left: auto; flex: none; display: flex; align-items: center; gap: 6px; background: none; border: 0; padding: 7px 10px 8px; min-height: 36px; color: var(--cream-2); font: 600 var(--t-xs)/16px var(--f-text); text-transform: uppercase; letter-spacing: 0.08em; }
+.as-hide:hover { color: var(--cream); background: var(--plate-3); }
+.as-hide:focus-visible { outline-offset: -2px; }
 /* (a tab with more cards than fit wraps to a second row instead of hiding the last ones off the edge) */
 /* the cards share the window's width in equal columns (catalog.ts sets --cols), so a short tab leaves no empty band */
 .as-cards { display: grid; grid-template-columns: repeat(var(--cols, 8), minmax(0, 1fr)); gap: 6px; padding: 12px 12px 8px; max-height: min(340px, 42vh); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--plate-3) transparent; }
@@ -300,6 +304,15 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .gl-count { color: var(--cream-2); font: 600 var(--t-sm)/1 var(--f-text); letter-spacing: 0.04em; text-transform: none; font-variant-numeric: tabular-nums; }
 .gl-caret { margin-left: auto; align-self: center; color: var(--cream-2); display: grid; transition: transform .15s; }
 .gl-head[aria-expanded="false"] .gl-caret { transform: rotate(-90deg); }
+/* folded: the goal at hand and how far along on the header, what its chain is doing now under it (two lines at most,
+   whole on hover) */
+.gl-fold { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; white-space: nowrap; color: var(--cream-2); font: 400 var(--t-sm)/1.3 var(--f-text); text-transform: none; letter-spacing: 0; }
+.gl-fold b { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--cream); font-weight: 600; }
+.gl-fold .num { flex: none; margin-left: auto; font-variant-numeric: tabular-nums lining-nums; }
+#gl-body.gl-one { padding: 6px 12px 0; }
+#gl-body.gl-one .gl-goal { margin: 0 2px 2px; }
+.gl-now-one { margin: 0; }
+.gl-now-one .gl-now-t { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 .gl-list { list-style: none; margin: 4px 0 0; padding: 0 14px; }
 .gl-list li { padding: 9px 0 10px; }
 .gl-list li + li { border-top: 1px solid var(--rule); }
