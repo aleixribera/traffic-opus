@@ -1945,7 +1945,12 @@ export class App {
           // "↗ 11.0%" was never explained (play-test 2026-11-09, C6)
           const grade = lead ? this.maxGrade(plan) : 0;
           if (grade > 0.5) chips.push({ text: `Steepest climb ${grade.toFixed(1)}%`, kind: "info" });
-          for (const sp of plan.bridges ?? []) chips.push({ text: `Bridge ${Math.round(sp.length)} m over ${sp.over === "water" ? "water" : sp.over === "road" ? "the road" : "water and road"} · ${formatMoney(sp.cost)}`, kind: "info", icon: "bridge", lead: 1 });
+          // (the bridge by name at the pointer, beside the whole price; what the bridge alone costs in the notes, so the
+          // pointer never shows two prices side by side)
+          for (const sp of plan.bridges ?? []) {
+            chips.push({ text: `Bridge ${Math.round(sp.length)} m over ${sp.over === "water" ? "water" : sp.over === "road" ? "the road" : "water and road"}`, kind: "info", icon: "bridge", lead: 1 });
+            chips.push({ text: `The bridge costs ${formatMoney(sp.cost)} of it`, kind: "info" });
+          }
           // (to or from a company site: which one it connects; ending at its gate, that says it all)
           if (plan.connects) chips.push({ text: plan.connects, kind: "info", lead: 3 });
           if (plan.joins && !end.site) chips.push({ text: plan.endAngleDeg !== undefined && plan.joins.startsWith("Joins the") && !plan.joins.includes("junction") ? `${plan.joins} at ${Math.round(plan.endAngleDeg)}°` : plan.joins, kind: "info", lead: 2 });

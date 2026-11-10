@@ -21,7 +21,7 @@ import { TRUCK_CLASSES } from "../game/trucks";
 import { served, type Town } from "../game/settlements";
 import { growthOf, townNeeds } from "./needs";
 import { joinedUp } from "./tips";
-import { aboutHours, afterOpening, blockFix, blockWords, ceilingOf, makersFlatOut, needHelpSay, nextLoad, shortOf, shownRate, siteStatus, startUp, townAdvice, waitsForSite } from "./bottleneck";
+import { aboutHours, afterOpening, blockFix, blockWords, ceilingOf, makersFlatOut, needHelpSay, nextLoad, powerFix, shortOf, shownRate, siteStatus, startUp, townAdvice, waitsForSite } from "./bottleneck";
 import { buildTime } from "../game/construction";
 import type { Lane } from "../roads/network";
 import { dkDir, dkSeg } from "../sim/router";
@@ -187,6 +187,12 @@ export function splitProblem(p: string): { text: string; fix?: string } {
   return { text, fix: [cause, fix].filter(Boolean).join(". ") || undefined };
 }
 
+/** "No power: working at 40%" → "Working at 40%. ", the cause before the advice. */
+const powerCause = (p: string): string => {
+  const i = p.indexOf(": ");
+  return i > 0 ? `${p[i + 2].toUpperCase()}${p.slice(i + 3)}. ` : "";
+};
+
 /** What to do for the problems whose line says only what is wrong. */
 const FIXES: [RegExp, string][] = [
   [/^No road to the gate/, "Draw a road to its gate (the marker on the map)"],
@@ -278,7 +284,9 @@ function waitingFor(g: Game, b: Building): PanelModel["status"] | null {
   // (the works that feeds it, flat out: more of them is the way on)
   const full = makersFlatOut(g, p, b);
   if (full) return { text, tone: "bad", fix: `${needHelpSay({ kind: "full", works: BUILDING_TYPES[full.works[0].kind].name, have: full.works.length, n: 1 })}${full.nextLevel ? ` Or wait: it grows to level ${full.nextLevel}.` : ""}` };
-  const held = next.from?.problem && !next.building ? ` It is held up: ${next.from.problem.split(": ")[0].toLowerCase()}.` : "";
+  // (a works short of power still works, slowly: it is not stopped, so it is not "held up")
+  const pr = next.from?.problem ?? "", slow = /^(No power|Short of power): working at (\d+%)/.exec(pr);
+  const held = !pr || next.building ? "" : slow ? ` It works at ${slow[2]} without full power, so its loads come slowly.` : ` It is held up: ${pr.split(": ")[0].toLowerCase()}.`;
   return { text, tone: "bad", fix: `${next.say}.${held}` };
 }
 
@@ -300,8 +308,11 @@ export function worksStatus(g: Game, b: Building): PanelModel["status"] {
     const s = siteStatus(b);
     const next = left.length ? nextLoad(g, b, left[0]) : null;
     const slow = s.slow && next?.from ? ` At this pace that is days: another ${BUILDING_TYPES[next.from.kind].name} would bring ${lower(left[0])} faster.` : "";
-    status = { text: "Building site", tone: "", fix: `${s.line}.${next ? ` ${next.say}.` : ""}${slow}`, show: ref(next?.from?.id) };
-  } else if (b.built < 1) status = { text: `Under construction · ${Math.round(b.built * 100)}%`, tone: "", fix: `Opens in ${aboutHours(((1 - b.built) * buildTime(b.kind)) / HOUR)}.${afterOpening(g, b)}` };
+    // (a site with no road gets nothing: that comes first, the rest after)
+    status = !b.access
+      ? { text: "Building site", tone: "bad", fix: `No road reaches its gate, so no loads can come. Draw a road to the gate marker. ${s.line}.` }
+      : { text: "Building site", tone: "", fix: `${s.line}.${next ? ` ${next.say}.` : ""}${slow}`, show: ref(next?.from?.id) };
+  } else if (b.built < 1) status = { text: `Under construction · ${Math.round(b.built * 100)}%`, tone: "", fix: `Opens in ${aboutHours(((1 - b.built) * buildTime(b.kind)) / HOUR)}.${b.access ? afterOpening(g, b) : " It has no road to its gate yet: draw one to the gate marker before it opens."}` };
   else {
     // (open and nothing made yet: starting up, with when its first truck leaves; its yard filling for a works that is
     // not open yet: waiting for that one)
@@ -309,7 +320,11 @@ export function worksStatus(g: Game, b: Building): PanelModel["status"] {
     const ws = su ? null : waitsForSite(g, b);
     if (su) status = { text: "Starting up", tone: "", fix: su.fix };
     else if (ws) status = { text: ws.text, tone: ws.tone, fix: ws.fix, show: ref(ws.show) };
-    else if (b.problem) status = waitingFor(g, b) ?? noBuyer(g, b) ?? { ...splitProblem(b.problem), tone: "bad" };
+    else if (b.problem) {
+      const pf = powerFix(g, b);
+      status = pf ? { text: splitProblem(b.problem).text, tone: "bad", fix: `${powerCause(b.problem)}${pf.fix}`, show: ref(pf.show) }
+        : waitingFor(g, b) ?? noBuyer(g, b) ?? { ...splitProblem(b.problem), tone: "bad" };
+    }
     else {
       // (at the top of what it can make while somebody would take more: the one state "Working normally" hid)
       const c = D.logistics ? null : ceilingOf(g, b);
@@ -367,7 +382,9 @@ export function siteModel(g: Game, b: Building, led?: TradeLedger): PanelModel {
     const made = pl?.made ?? 0;
     const fuel = (Object.keys(D.inputs) as Product[])[0];
     keys.push({ value: String(Math.round(made)), unit: ` MW`, label: `made, of ${D.makes}`, tone: toneOf(made / Math.max(1, D.makes), 0.8, 0.3) });
-    keys.push({ value: String(pl?.users ?? 0), label: `${(pl?.users ?? 0) === 1 ? "building" : "buildings"} powered`, title: `${Math.round(pl?.used ?? 0)} MW wanted in reach` });
+    // (with nothing made, the buildings in its reach are not powered: "4 buildings powered" beside "0 MW" disagreed)
+    const users = pl?.users ?? 0, things = users === 1 ? "building" : "buildings";
+    keys.push({ value: String(users), label: made > 0 ? `${things} powered` : `${things} in reach, unpowered`, tone: made > 0 || !users ? "" : "bad", title: `${Math.round(pl?.used ?? 0)} MW wanted in reach` });
     if (fuel) keys.push({ value: String(Math.floor(P.stock[fuel] ?? 0)), unit: `/${Industry.storeOf(b)}`, label: `${lower(fuel)} in the yard`, tone: (P.stock[fuel] ?? 0) < 1 ? "bad" : "" });
   } else if (b.built >= 1 && outs.length) {
     const p0 = outs[0];

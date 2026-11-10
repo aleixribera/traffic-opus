@@ -9,7 +9,7 @@ import type { Building } from "../game/buildings";
 import { SEASONAL, seasonMult } from "../game/calendar";
 import type { Game } from "../game/city";
 import { buildTime } from "../game/construction";
-import { Industry, PLANTS, PRODUCTS, powerPace, type PlantKind, type Product } from "../game/industry";
+import { HIST_HOURS, Industry, PLANTS, PRODUCTS, powerPace, type PlantKind, type Product } from "../game/industry";
 import { unlockedBy } from "../game/progression";
 import { served, type Town } from "../game/settlements";
 import { SITE_LEVELS } from "../game/sites";
@@ -293,7 +293,9 @@ export function needHelp(g: Game, t: Town, p: Product): NeedHelp | null {
   // (every town's shortfall of it: new works feed them all)
   const total = Math.max(more, markets(g).reduce((a, x) => a + townWants(x, p), 0));
   // (a jam or a missing input: that works is the thing to look at, not another one)
-  const held = up.find((b) => steadyProblem(g, b));
+  // (one in real trouble before one only starting up, so the advice does not flick between the two as loads land)
+  const helds = up.filter((b) => steadyProblem(g, b));
+  const held = helds.find((b) => !startUp(g, b)) ?? helds[0];
   if (held) {
     // (a works that has made nothing yet is starting up: it says when its first load comes, not that it is held up)
     const su = startUp(g, held);
@@ -497,6 +499,8 @@ function firstTruck(g: Game, b: Building, p: Product): string {
  */
 export function startUp(g: Game, b: Building): { fix: string; hours: number | null } | null {
   if (!working(b) || !b.placed || !b.access || hasMade(b)) return null;
+  // (a day on and still nothing made is no start-up any more, whatever holds it: its problem line says what)
+  if ((b.plant!.hist?.length ?? 0) >= HIST_HOURS) return null;
   const k = b.kind as PlantKind, D = PLANTS[k];
   if (D.logistics || D.mega || D.makes) return null;
   const p = mainOf(k);
@@ -557,6 +561,49 @@ export function waitsForSite(g: Game, b: Building): { text: string; tone: "bad" 
   const goal = ks.length ? unlockedBy((u) => u.buildings?.includes(ks[0])) : undefined;
   const a = ks.length ? an(nameOf(ks[0])) : "";
   return ks.length ? { text: `Nothing takes ${lower(p)} yet`, tone: "", fix: `${a[0].toUpperCase()}${a.slice(1)} ${nameOf(ks[0])} takes it${goal ? `: that opens with the goal “${goal.name}”` : ""}. Until then this yard fills.` } : null;
+}
+
+/**
+ * What to do about a works short of power, said for the map as it is (owner, 2026-11-10: a Coal Mine read "Build a
+ * power plant within reach" with one 290 m away, standing dark for want of coal). The power plant that reaches it
+ * and why it gives too little; else the one going up; else the one too far off; else build one. `show`: the power
+ * plant to look at. Null when it is not short of power.
+ */
+export function powerFix(g: Game, b: Building): { fix: string; show?: number } | null {
+  if (!b.problem || !/^(No power|Short of power)/.test(b.problem)) return null;
+  const d = (o: Building) => Math.hypot(o.c.x - b.c.x, o.c.y - b.c.y);
+  const makers = g.buildings.list.filter((o) => o.plant && (PLANTS[o.kind as PlantKind]?.makes ?? 0) > 0).sort((x, y) => d(x) - d(y));
+  const reach = (o: Building) => PLANTS[o.kind as PlantKind].reach ?? 0;
+  const near = makers.filter((o) => working(o) && g.utilities.reaches(o, b));
+  if (near.length) {
+    // (out of fuel: the trouble is its coal, so say where the next load is; making some but not enough: another)
+    const dark = near.find((o) => g.utilities.outputOf(o) <= 0);
+    if (dark) {
+      const P = dark.plant!, D = PLANTS[dark.kind as PlantKind];
+      if (!D.mega && (P.stock.coal ?? 0) < 1) {
+        const next = nextLoad(g, dark, "coal");
+        // (the coal it waits for is this very mine's, coming slowly for want of the power it would give back)
+        const then = !next.from ? "It burns coal, or your sawmills' wood chips: join one to it by road."
+          : next.from.id === b.id ? `This mine sends it coal${next.hours !== null ? `: the next load in ${aboutHours(next.hours)}` : ""}. Without power that comes slowly; wood chips from a sawmill would start it sooner.`
+          : `Its next coal comes from your ${nameOf(next.from.kind)}${next.hours !== null ? `: ${aboutHours(next.hours)}` : ""}.`;
+        return { fix: `Your ${where(dark, b)} has nothing to burn. ${then}`, show: dark.id };
+      }
+      return { fix: `Your ${where(dark, b)} makes no power: ${dark.problem ? dark.problem.split(": ")[0].toLowerCase() : "it has nobody at work"}.`, show: dark.id };
+    }
+    return { fix: `Your ${where(near[0], b)} cannot power everything in its reach. Build another Power Plant nearby.`, show: near[0].id };
+  }
+  const going = makers.find((o) => !working(o) && d(o) <= reach(o));
+  if (going) {
+    const how = going.plant!.site ? `is a building site: ${siteStatus(going).line}` : `is going up: it opens in ${aboutHours(((1 - going.built) * buildTime(going.kind)) / HOUR)}`;
+    return { fix: `Your ${where(going, b)} ${how}. It powers this works once it opens.`, show: going.id };
+  }
+  const far = makers.find(working);
+  if (far) {
+    const r = reach(far);
+    const why = d(far) > r ? `is too far: power reaches ${r / 1000} km` : "is not on the same roads";
+    return { fix: `Your ${where(far, b)} ${why}. Build a Power Plant within ${PLANTS.coalplant.reach! / 1000} km of this works, on its roads.`, show: far.id };
+  }
+  return { fix: `Build a Power Plant within ${PLANTS.coalplant.reach! / 1000} km of it, on its roads. It burns coal, or your sawmills' wood chips.` };
 }
 
 /** Has a works made anything yet (false: it is starting up, not in trouble)? */

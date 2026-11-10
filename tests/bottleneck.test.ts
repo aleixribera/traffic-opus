@@ -8,7 +8,7 @@ import { HOUR } from "../src/game/society";
 import { buildTime } from "../src/game/construction";
 import { MILESTONES } from "../src/game/progression";
 import { BLOCK, demandPerDay, gridPt } from "../src/game/towns";
-import { Industry } from "../src/game/industry";
+import { HIST_HOURS, Industry, PLANTS } from "../src/game/industry";
 import { F } from "../src/world/gen";
 import type { V2 } from "../src/core/math";
 import type { Building } from "../src/game/buildings";
@@ -16,7 +16,7 @@ import type { Town } from "../src/game/settlements";
 import {
   FULL_OUTPUT, START_HOURS, aboutHours, atFullOutput, batchHours, blockFix, blockWords, buildOrder, canPerDay, ceilingFix, ceilingOf, flatOut, hasMade,
   needHelp, needHelpSay, nextLoad, shortOf, shortfalls, shownRate, siteHours, siteLine, siteStatus, startUp, steadyProblem, tally, townAdvice, townWants,
-  waitsForSite, worksFor, worstCeiling,
+  powerFix, waitsForSite, worksFor, worstCeiling,
 } from "../src/ui/bottleneck";
 import { noBuyer, signedMoney, siteModel, takenBy, townModel, worksCalm, worksStatus } from "../src/ui/inspect";
 import { goalNow, goalNowSay } from "../src/ui/goalNow";
@@ -324,6 +324,60 @@ describe("read off the game", () => {
     expect(st.fix).toContain("Nothing of yours makes planks yet. Build a Sawmill.");
     P.site = undefined;
     expect(Industry.madeLately(foodplant, "food").hours).toBeGreaterThan(0);
+  });
+
+  it("a site or a works going up with no road to its gate says so first: nothing can come till it has one", () => {
+    const P = foodplant.plant!, acc = foodplant.access;
+    foodplant.access = null;
+    P.site = { need: { planks: 50 }, got: { planks: 10 } } as NonNullable<typeof P.site>;
+    const st = siteModel(g, foodplant).status;
+    expect(st).toMatchObject({ text: "Building site", tone: "bad" });
+    expect(st.fix).toBe("No road reaches its gate, so no loads can come. Draw a road to the gate marker. 10 of 50 loads delivered.");
+    // (a red line, so the map marks it too)
+    expect(worksCalm(g, foodplant)).toBe(false);
+    P.site = undefined;
+    foodplant.built = 0.5;
+    const uc = siteModel(g, foodplant).status;
+    expect(uc.text).toBe("Under construction · 50%");
+    expect(uc.fix).toMatch(/^Opens in .+\. It has no road to its gate yet: draw one to the gate marker before it opens\.$/);
+    foodplant.built = 1;
+    foodplant.access = acc;
+    expect(siteModel(g, foodplant).status.fix ?? "").not.toMatch(/no road/i);
+  });
+
+  it("a works a day open and still with nothing made is not starting up: its own problem line speaks (no 'starting up' for ever)", () => {
+    const P = foodplant.plant!, keep = { hist: P.hist, last: P.last.made, now: P.now.made };
+    P.last.made = 0;
+    P.now.made = 0;
+    foodplant.problem = "Waiting for crops";
+    P.hist = [];
+    expect(hasMade(foodplant)).toBe(false);
+    expect(startUp(g, foodplant)).not.toBeNull();
+    P.hist = Array.from({ length: HIST_HOURS }, () => ({}));
+    expect(hasMade(foodplant)).toBe(false);
+    expect(startUp(g, foodplant)).toBeNull();
+    expect(siteModel(g, foodplant).status.text).not.toBe("Starting up");
+    Object.assign(P, { hist: keep.hist });
+    P.last.made = keep.last;
+    P.now.made = keep.now;
+    foodplant.problem = null;
+  });
+
+  it("a works short of power says where its power would come from: the plant to build, feed or reach", () => {
+    // no power plant anywhere: build one, within its reach, on its roads
+    expect(g.buildings.list.some((o) => o.kind === "coalplant")).toBe(false);
+    foodplant.problem = "No power: working at 50%";
+    const pf = powerFix(g, foodplant)!;
+    expect(pf.fix).toBe(`Build a Power Plant within ${PLANTS.coalplant.reach! / 1000} km of it, on its roads. It burns coal, or your sawmills' wood chips.`);
+    expect(pf.show).toBeUndefined();
+    const st = siteModel(g, foodplant).status;
+    expect(st).toMatchObject({ text: "No power", tone: "bad" });
+    expect(st.fix).toBe(`Working at 50%. ${pf.fix}`);
+    // any other trouble is not this one
+    foodplant.problem = "Waiting for crops";
+    expect(powerFix(g, foodplant)).toBeNull();
+    foodplant.problem = null;
+    expect(powerFix(g, foodplant)).toBeNull();
   });
 
   it("what a works shows it makes is its one pace, never above what it can make (owner, 2026-11-10: \"0.7/h, can 0.6\")", () => {
