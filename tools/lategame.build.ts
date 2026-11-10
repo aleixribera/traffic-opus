@@ -11,7 +11,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { it } from "vitest";
 import { Game } from "../src/game/city";
 import { HOUR } from "../src/game/society";
-import { demandPerDay, gridPt, needsOf } from "../src/game/towns";
+import { blockOf, demandPerDay, gridPt, needsOf } from "../src/game/towns";
 import { TOWN_SPACING, type Town } from "../src/game/settlements";
 import { F } from "../src/world/gen";
 import type { PlacedKind } from "../src/game/placed";
@@ -55,9 +55,9 @@ function deposits(g: Game, field: number, p: V2, from: number, to: number): V2[]
 
 /** The town's grid corner nearest `toward` (where a road out of it starts). */
 function edgeTo(t: Town, toward: V2) {
-  let best = gridPt(t.c, t.ang, 1, 0), bd = Infinity;
+  let best = gridPt(t.c, t.ang, 1, 0, blockOf(t)), bd = Infinity;
   for (const [i, j] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
-    const q = gridPt(t.c, t.ang, i, j);
+    const q = gridPt(t.c, t.ang, i, j, blockOf(t));
     if (dist(q, toward) < bd) { bd = dist(q, toward); best = q; }
   }
   return best;

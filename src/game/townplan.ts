@@ -22,6 +22,9 @@ import { Noise2D, mulberry32 } from "../core/noise";
 import { chainPoints, makeChain } from "../roads/planner";
 import { BLOCK, edgeKey, type GridEdge } from "./towns";
 
+/** An open town (towns.ts OPEN_BLOCK) leaves this many times the greens, and of its house fronts as gardens. */
+const OPEN_PARKS = 1.25, OPEN_GARDENS = 1.4;
+
 /** The plain square grid (towns from older saves). */
 export const PLAN_GRID = 0;
 /** The rings-and-spokes plan of v0.0.69 (towns from its saves keep it). */
@@ -111,7 +114,11 @@ export class TownPlan {
   /** what the lean was last worked out from (settlements.ts) */
   leanKey = "";
 
-  constructor(readonly c: V2, readonly ang: number, readonly style: number, seed: number, private land: PlanLand) {
+  /**
+   * `block`: metres between its parallel streets (towns.ts blockOf). An open town's plan is the same plan drawn
+   * larger, with more greens and more gardens left between its houses.
+   */
+  constructor(readonly c: V2, readonly ang: number, readonly style: number, seed: number, private land: PlanLand, readonly block = BLOCK) {
     const rnd = mulberry32(seed);
     this.salt = (rnd() * 0x7fffffff) | 0;
     this.nx = new Noise2D(seed * 3 + 1);
@@ -133,8 +140,9 @@ export class TownPlan {
       const curve = () => (rnd() < 0.3 ? 0 : (rnd() - 0.5) * 0.09);
       this.curveE = curve();
       this.curveW = curve();
-      this.parks = 0.07 + rnd() * 0.05;
-      this.gardens = 0.14 + rnd() * 0.08;
+      const open = block > BLOCK;
+      this.parks = (0.07 + rnd() * 0.05) * (open ? OPEN_PARKS : 1);
+      this.gardens = (0.14 + rnd() * 0.08) * (open ? OPEN_GARDENS : 1);
       // its own lopsidedness: a few slow waves round the compass
       const w: [number, number][] = [[0.18 + rnd() * 0.22, rnd() * 6.283], [0.1 + rnd() * 0.18, rnd() * 6.283], [rnd() * 0.12, rnd() * 6.283]];
       for (let k = 0; k < LEAN_N; k++) {
@@ -355,7 +363,7 @@ export class TownPlan {
   /** Lattice point (i, j), fractional too, on the map (before any shift off water). */
   at(i: number, j: number): V2 {
     const q = this.local(i, j), u = this.u;
-    return { x: this.c.x + (u.x * q.x - u.y * q.y) * BLOCK, y: this.c.y + (u.y * q.x + u.x * q.y) * BLOCK };
+    return { x: this.c.x + (u.x * q.x - u.y * q.y) * this.block, y: this.c.y + (u.y * q.x + u.x * q.y) * this.block };
   }
 
   private clear(p: V2, r = NODE_CLEAR): boolean {
@@ -385,7 +393,7 @@ export class TownPlan {
       const back = norm(sub(this.c, p));
       let q: V2 | null = null;
       for (let f = 0.08; f <= 0.46 && !q; f += 0.06) {
-        const t = { x: p.x + back.x * f * BLOCK, y: p.y + back.y * f * BLOCK };
+        const t = { x: p.x + back.x * f * this.block, y: p.y + back.y * f * this.block };
         if (this.clear(t)) q = t;
       }
       p = q;
@@ -397,7 +405,7 @@ export class TownPlan {
   /** How far node (i, j) is from the centre, in blocks (Infinity where it can't stand). */
   r(i: number, j: number): number {
     const p = this.pt(i, j);
-    return p ? dist(p, this.c) / BLOCK : Infinity;
+    return p ? dist(p, this.c) / this.block : Infinity;
   }
 
   /**
@@ -408,7 +416,7 @@ export class TownPlan {
   growR(i: number, j: number): number {
     const p = this.pt(i, j);
     if (!p) return Infinity;
-    const d = dist(p, this.c) / BLOCK;
+    const d = dist(p, this.c) / this.block;
     if (this.style !== PLAN_TOWN) return d;
     let f = this.leanAt(Math.atan2(p.y - this.c.y, p.x - this.c.x));
     if (j === 0 && Math.abs(i) >= 2) f *= RIBBON_MAIN;

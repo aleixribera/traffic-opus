@@ -224,7 +224,9 @@ describe("the street wall's models (tools/blender/town_g_wall.py)", () => {
       // its front wall (the body's street side) stands inside the lot, and it has no alley: it is built to the pavement
       const body = empty(g, /^body_?\d+/)[0];
       expect(body, `${m} body`).toBeDefined();
-      expect(body.p[2] + body.s[2], `${m} front wall`).toBeLessThanOrEqual(T.d / 2 + 0.05);
+      // (in metres as it stands, fitted to its lot: inside the shallowest wall lot of its kind and width)
+      const deep = Math.min(...Object.values(WALL_LOTS).flat().filter((t) => t.model === k && t.w === Math.round(cells)).map((t) => t.d));
+      expect((body.p[2] + body.s[2]) * (Math.round(cells) * CELL) / T.w, `${m} front wall`).toBeLessThanOrEqual((deep * CELL) / 2 + 0.05);
       expect(body.p[2] + body.s[2], `${m} front wall`).toBeGreaterThan(0);
       expect(empty(g, /^via_?\d+/)[0], `${m} alley`).toBeUndefined();
       const lit = new Set(g.materials.map((x) => LIT_KINDS[litKind(x)]).filter((x) => x !== undefined));

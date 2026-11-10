@@ -34,11 +34,11 @@ export const ZONE_LOTS: Record<ZoneId, LotTemplate[]> = {
 };
 
 /**
- * The lots of a town's street wall (towns.ts WALL_ZONES; docs/design.md "The street wall"), widest first: fronts of
- * one to four cells built to the pavement, each as wide as its lot so that neighbours share a wall. Every zone has
- * every width down to a single cell, so a stretch of street of any length fills with no gap left in it. Shop-houses
- * on a village's main street; office blocks and department stores at a town's centre; towers on a podium by a
- * city's hall, taller in a metropolis. (The heights are those the wall's models are made at, town_g_wall.py, so a
+ * The lots of a town's street wall (towns.ts MAIN_STREET, WALL_ZONES; docs/design.md "Main Street"), widest first:
+ * fronts of one to four cells built to the pavement, each as wide as its lot so that neighbours share a wall. Every
+ * zone has every width down to a single cell, so a stretch of street of any length fills with no gap left in it.
+ * Shop-houses on a town's Main Street; office blocks and department stores further in, in a city; towers on a podium
+ * by a city's hall, taller in a metropolis. A front holds the jobs any lot of its size and zone holds (capacity). (The heights are those the wall's models are made at, town_g_wall.py, so a
  * storey is never stretched by more than a tenth.)
  */
 export const WALL_LOTS: Record<Exclude<ZoneId, `res${string}`>, LotTemplate[]> = {
@@ -75,19 +75,12 @@ export const ZONE_GROUP: Record<ZoneId, ZoneGroup> = {
   comLow: "com", comMid: "com", comHigh: "com", comTower: "com",
 };
 
-/**
- * A front of the street wall is built over its whole width, to the pavement, with no car park: it holds this many
- * times the jobs of a detached building on the same land. (Its lots are about half as wide as the detached lots they
- * took over from, and a town wants the same number of shops, so a town's jobs stay what they were.)
- */
-export const WALL_JOBS = 2;
-
-/** Households or jobs on a lot of w x d cells at a level (1-5); `wall`: a front of the street wall (WALL_JOBS). */
-export function capacity(zone: ZoneId, w: number, d: number, level: number, tall = 1, wall = false): number {
+/** Households (residential) or jobs (everything else) on a lot of w x d cells at a level (1-5). */
+export function capacity(zone: ZoneId, w: number, d: number, level: number, tall = 1): number {
   const lv = 1 + 0.18 * (level - 1);
   if (zone === "resLow") return 1;
   if (zone === "resRow") return w;
-  return Math.max(1, Math.round(w * d * PER_CELL[zone] * tall * lv * (wall ? WALL_JOBS : 1)));
+  return Math.max(1, Math.round(w * d * PER_CELL[zone] * tall * lv));
 }
 
 /** Land value needed to reach each level (index = level to reach). */

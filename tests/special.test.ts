@@ -14,7 +14,7 @@ import { PLACED_TABS } from "../src/game/placed";
 import { Game } from "../src/game/city";
 import { BUILDING_TYPES } from "../src/config";
 import { siteLayout, slotHalf } from "../src/game/sites";
-import { BLOCK, gridPt } from "../src/game/towns";
+import { blockOf, gridPt } from "../src/game/towns";
 import { DAY, HOUR } from "../src/game/society";
 import type { Building } from "../src/game/buildings";
 import type { PendingSpawn, Vehicle } from "../src/sim/traffic";
@@ -286,7 +286,7 @@ describe("Convoys and landmarks in the game", () => {
     g.money = 1e8;
     g.unlockAll();
     const t = g.towns.list[0];
-    const a = gridPt(t.c, t.ang, 1 + 320 / BLOCK, 0), b = gridPt(t.c, t.ang, 1 + 900 / BLOCK, 0);
+    const a = gridPt(t.c, t.ang, 1 + 320 / blockOf(t), 0, blockOf(t)), b = gridPt(t.c, t.ang, 1 + 900 / blockOf(t), 0, blockOf(t));
     road(g, a, b);
     return { g, a, b, t };
   }

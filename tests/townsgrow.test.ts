@@ -22,11 +22,20 @@ describe("zoning by size", () => {
 
   it("each size brings its era into the middle: terraces, then blocks, then flats and towers", () => {
     expect(ringZone(1, 2)).toBe("resRow");
-    expect(ringZone(2, 2)).toBe("resMed");
-    expect(ringZone(3, 2)).toBe("resTower");
-    expect(ringZone(3, 3)).toBe("resHigh");
-    // (from a Village on the rings are homes: shops and offices stand in the street wall, tests/commerce.test.ts)
-    for (let s = 1; s < RINGS.length; s++) for (const [, z] of RINGS[s]) expect(ZONE_GROUP[z]).toBe("res");
+    expect(ringZone(2, 1.5)).toBe("resMed");
+    expect(ringZone(2, 2.25)).toBe("resRow");
+    expect(ringZone(3, 1.4)).toBe("resHigh");
+    expect(ringZone(3, 1.75)).toBe("resHigh");
+    expect(ringZone(3, 2.5)).toBe("resMed");
+    // (the rings are thin, owner 2026-11-10: "less dense overall"): shops at the centre, then homes
+    for (let s = 0; s < RINGS.length; s++) {
+      expect(ZONE_GROUP[RINGS[s][0][1]]).toBe("com");
+      // (a Metropolis keeps two rings of commerce at its centre)
+      for (const [, z] of RINGS[s].slice(s < 4 ? 1 : 2)) expect(ZONE_GROUP[z], `size ${s} ${z}`).toBe("res");
+    }
+    // (a City's skyline is the handful of office towers by its hall: apartment towers wait for a Metropolis)
+    expect(RINGS[3].some(([, z]) => z === "resTower")).toBe(false);
+    expect(RINGS[4].some(([, z]) => z === "resTower")).toBe(true);
     // and the edge keeps growing houses
     for (let s = 0; s < RINGS.length; s++) expect(ringZone(s, 12)).toBe("resLow");
   });

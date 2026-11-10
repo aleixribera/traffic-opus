@@ -7,8 +7,17 @@ import { rectDistance, type V2 } from "../core/math";
 import type { Product } from "./industry";
 import type { ZoneId } from "./zones";
 
-/** Metres between neighbouring parallel streets of a town grid. */
+/** Metres between neighbouring parallel streets of a town grid: towns from saves before the open towns. */
 export const BLOCK = 96;
+/**
+ * Metres between neighbouring parallel streets of every town since (owner, 2026-11-10: "less dense overall, grow more
+ * outward, more empty space, the grids a bit more open"). Behind each street's front strip a block runs five rows of
+ * lots back (about 52 m from the centreline: zones.ts DEPTH), so at 128 m the two sides of a block no longer meet:
+ * their back gardens end on a strip of open grass down the middle of the block.
+ */
+export const OPEN_BLOCK = 128;
+/** A town's block (m): OPEN_BLOCK for a town of today, BLOCK for one from an older save. */
+export const blockOf = (t: { block?: number }) => t.block ?? BLOCK;
 
 // ------------------------------------------------------------------ smoke and noise
 
@@ -263,19 +272,19 @@ export const HALLS: BuildingKind[] = ["hamlethall", "villagehall", "townhall", "
 export const isHall = (k: BuildingKind) => HALLS.includes(k);
 
 /**
- * The rings of a town's homes at each size, from the centre out: [outer radius in blocks, zone]. Past the last ring
- * the edge grows detached houses, each with its garden. Each size brings its own era into the middle: terraces behind
- * a village's main street, walk-up flats round a town's centre, modern flats and apartment towers round a city's
- * core. A hamlet has a few shops at its crossroads and nothing else. From a Village on, shops and offices stand along
- * the main streets (WALL_ZONES), not in a ring: the rings are as wide as they were when the middle one was all
- * shops, since a town has to hold the people of its size inside its radius (townRadius).
+ * The rings of a town's land at each size, from the centre out: [outer radius in blocks, zone]. Past the last ring
+ * the edge grows detached houses, each with its garden. Each size brings its own era into the middle: a few shops at
+ * a hamlet's crossroads; shop-houses by a village's hall and row houses round them; stores and offices round a town's
+ * hall and walk-up flats round those; a handful of towers by a city's hall (its office towers: no ring of apartment
+ * towers until a Metropolis), courtyard flats round them. The rings are kept thin (owner, 2026-11-10: "less dense
+ * overall, more empty space"): most of a town, even a City, is houses with gardens, and its centre steps up to the hall.
  */
 export const RINGS: [number, ZoneId][][] = [
   [[0.75, "comLow"]],
-  [[3.5, "resRow"]],
-  [[3, "resMed"], [4.5, "resRow"]],
-  [[2.25, "resTower"], [3.25, "resHigh"], [4.25, "resMed"], [5.25, "resRow"]],
-  [[3.25, "resTower"], [4.5, "resHigh"], [5.5, "resMed"], [6.5, "resRow"]],
+  [[1, "comLow"], [2.25, "resRow"]],
+  [[1.25, "comMid"], [1.75, "resMed"], [2.5, "resRow"]],
+  [[1.25, "comHigh"], [2, "resHigh"], [2.75, "resMed"], [3.5, "resRow"]],
+  [[1.25, "comTower"], [1.75, "comHigh"], [2.25, "resTower"], [3.5, "resHigh"], [4.5, "resMed"], [5.5, "resRow"]],
 ];
 
 /** The zone of a town's land r blocks from its centre, at a size. */
@@ -284,74 +293,75 @@ export function ringZone(size: number, r: number): ZoneId {
   return "resLow";
 }
 
-// ------------------------------------------------------------------ the street wall (docs/design.md "The street wall")
+/**
+ * A town's high streets, from a Village on: detached shops and offices along the centre cross, and from a City along
+ * every fourth grid line too, out as far as the town wants shops (highStreetReach), so its commerce keeps pace with
+ * its homes instead of stopping at the centre ring. The zone along them at each size (none for a hamlet).
+ */
+export const HIGH_STREET: (ZoneId | null)[] = [null, "comLow", "comMid", "comMid", "comHigh"];
+/** Does grid line k (counted from the centre cross) carry a high street at a size? */
+export const highLine = (size: number, k: number) => k === 0 || (size >= 3 && k % 4 === 0);
+/** Shops on a block's length of high street, both sides (a lot is two to four cells wide, less the junctions). */
+export const SHOPS_PER_BLOCK = 6;
+/** Shops the centre ring holds at a size, about (the high streets take the rest). */
+const CORE_SHOPS = [2, 8, 12, 14, 22];
 
 /**
- * From a Village on, a town's shops and offices stand in a street wall: party-wall fronts built to the pavement
- * along its main streets, shoulder to shoulder from the hall outward, as far as it wants shops (wallReach). How tall
- * the wall is steps up toward the hall with the town's size: [outer radius in blocks, zone], the last one running
- * to the wall's end. Two and three storey shop-houses in a village; four to six storey blocks at a town's centre;
- * a handful of towers by a city's hall, blocks round them, shop-houses beyond; taller still in a metropolis.
+ * How far out (blocks from the centre) a town's high streets run for the shops it wants: their frontage, every
+ * high-street line inside that radius, holds what the centre ring can't. Grows in half blocks; 0 for a hamlet.
+ */
+export function highStreetReach(size: number, shopsWanted: number): number {
+  const s = Math.max(0, Math.min(HIGH_STREET.length - 1, size));
+  if (!HIGH_STREET[s]) return 0;
+  const core = RINGS[s][0][0];
+  const need = shopsWanted - CORE_SHOPS[s];
+  let R = core;
+  for (; R < 16; R += 0.5) {
+    // street length (blocks) of every high-street line inside R, both ways, outside the centre ring
+    let len = 0;
+    for (let k = 0; k < R; k++) {
+      if (!highLine(s, k)) continue;
+      const half = Math.sqrt(R * R - k * k), inner = k < core ? Math.sqrt(core * core - k * k) : 0;
+      len += (k === 0 ? 2 : 4) * 2 * (half - inner); // both axes; lines k and -k
+    }
+    if (len * SHOPS_PER_BLOCK >= need) break;
+  }
+  return R;
+}
+
+// ------------------------------------------------------------------ Main Street (docs/design.md "Main Street")
+
+/**
+ * From a Town on, the stretch of Main Street either side of the hall's crossroads is a street wall: party-wall
+ * fronts built to the pavement, shoulder to shoulder, with awnings in a row and corner buildings turning the corners.
+ * It is short (owner, 2026-11-10: "only along one short main street near the hall"): this many blocks each way from
+ * the crossroads, by size. Everywhere else a town's shops stand on their own lots, loose and green.
+ */
+export const MAIN_STREET = [0, 0, 1.25, 2, 2.5];
+
+/**
+ * How the wall steps up toward the hall at a size: [outer radius in blocks, zone], the last running to its end.
+ * Two and three storey shop-houses in a Town; in a City a handful of towers on podiums by the hall, four to six storey
+ * blocks past them, shop-houses at the ends; taller again in a Metropolis.
  */
 export const WALL_ZONES: ([number, ZoneId][] | null)[] = [
   null,
+  null,
   [[Infinity, "comLow"]],
-  [[0.8, "comMid"], [Infinity, "comLow"]],
-  [[1.1, "comHigh"], [2, "comMid"], [Infinity, "comLow"]],
-  [[1.25, "comTower"], [2.1, "comHigh"], [3.1, "comMid"], [Infinity, "comLow"]],
+  [[0.75, "comHigh"], [1.5, "comMid"], [Infinity, "comLow"]],
+  [[1, "comTower"], [1.75, "comHigh"], [Infinity, "comMid"]],
 ];
 
-/** The zone of a town's street wall r blocks from its centre, at a size (null: a hamlet has none). */
+/** The zone of Main Street's wall r blocks from the centre at a size (null: none there). */
 export function wallZone(size: number, r: number): ZoneId | null {
   const W = WALL_ZONES[Math.max(0, Math.min(WALL_ZONES.length - 1, size))];
-  if (!W) return null;
+  if (!W || r >= MAIN_STREET[Math.min(MAIN_STREET.length - 1, size)]) return null;
   for (const [out, z] of W) if (r < out) return z;
   return null;
 }
 
-/** How far out (lattice lines) a city's core runs: every street inside it is walled, not just the main streets. */
-export const wallCore = (size: number) => (size >= 4 ? 2 : size >= 3 ? 1 : 0);
-
-/**
- * Does the street on lattice edge `e` carry the wall at a size? A village's Main Street; a town's Main Street and
- * its cross street; a city's too, with every street of its core (the first ring of blocks round the hall) and every
- * fourth line out (the through streets, so its commerce keeps pace with its homes).
- */
-export function wallStreet(size: number, e: GridEdge): boolean {
-  if (size < 1) return false;
-  if (e[1] === 0 && e[3] === 0) return true;
-  if (size < 2) return false;
-  if (e[0] === 0 && e[2] === 0) return true;
-  if (size < 3) return false;
-  const core = wallCore(size);
-  if (Math.max(Math.abs(e[0]), Math.abs(e[1]), Math.abs(e[2]), Math.abs(e[3])) <= core) return true;
-  const line = e[1] === e[3] ? e[1] : e[0];
-  return line % 4 === 0;
-}
-
-/** Shops on a block's length of walled street, both sides, about (a front is one to four cells wide, less the junctions). */
-export const WALL_PER_BLOCK = 6;
-/** Fronts the hall's square and the green across from it take out of the wall. */
-const WALL_LOST = 4;
-
-/**
- * How far out (blocks from the centre) a town's street wall runs for the shops it wants: just far enough to hold
- * them, so the wall is always a full one and a village's is a short row by the hall. In quarter blocks; 0 for a
- * hamlet.
- */
-export function wallReach(size: number, shopsWanted: number): number {
-  if (size < 1) return 0;
-  const core = wallCore(size);
-  let R = 0.5;
-  for (; R < 16; R += 0.25) {
-    // street length (blocks) inside R: Main Street, the cross street, the core's own streets, every fourth line
-    let len = size >= 2 ? 4 * R : 2 * R;
-    for (let k = 1; k <= core; k++) if (R > k) len += 8 * Math.min(core, Math.sqrt(R * R - k * k));
-    if (size >= 3) for (let k = 4; k < R; k += 4) len += 8 * Math.sqrt(R * R - k * k);
-    if (len * WALL_PER_BLOCK - WALL_LOST >= shopsWanted) break;
-  }
-  return R;
-}
+/** Is lattice edge `e` part of Main Street (the plan's line 0 along it)? */
+export const onMain = (e: GridEdge) => e[1] === 0 && e[3] === 0;
 
 /** Old buildings a town pulls down for denser ones each day, at most (a few, more in a bigger town). */
 export const redevPerDay = (size: number, buildings: number) => 2 + size + Math.floor(buildings / 60);
@@ -362,16 +372,18 @@ export const REDEV_SHARE = 0.05;
  * Radius the streets may reach for a population. Towns spread out (owner, 2026-11-08: "less dense overall, more of
  * an outward expansion"): about a third further than the old packed grids for the same people.
  */
-export function townRadius(pop: number): number {
-  return Math.min(2200, 200 + 12 * Math.sqrt(pop));
+export function townRadius(pop: number, block = BLOCK): number {
+  // (an open town spreads further still: its streets are further apart, and it holds fewer homes to the hectare)
+  const k = block / BLOCK;
+  return Math.min(2200 * k, (200 + 12 * Math.sqrt(pop)) * k);
 }
 
 // ------------------------------------------------------------------ street grid
 
 /** Grid node (i, j) of a town at c turned to ang. */
-export function gridPt(c: V2, ang: number, i: number, j: number): V2 {
+export function gridPt(c: V2, ang: number, i: number, j: number, block = BLOCK): V2 {
   const u = { x: Math.cos(ang), y: Math.sin(ang) };
-  return { x: c.x + (u.x * i - u.y * j) * BLOCK, y: c.y + (u.y * i + u.x * j) * BLOCK };
+  return { x: c.x + (u.x * i - u.y * j) * block, y: c.y + (u.y * i + u.x * j) * block };
 }
 
 export type GridEdge = [number, number, number, number];
