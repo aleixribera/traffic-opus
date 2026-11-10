@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Game, START_MONEY } from "../src/game/city";
 import type { Trip } from "../src/sim/traffic";
 import { DAY, HOUR } from "../src/game/society";
-import { BLOCK, TOWN_SIZES, demandPerDay, gridPt, needsOf, sizeOf } from "../src/game/towns";
+import { TOWN_SIZES, blockOf, demandPerDay, gridPt, needsOf, sizeOf } from "../src/game/towns";
 import { type Town } from "../src/game/settlements";
 import { PLANTS, PRODUCTS, type PlantKind, type Product } from "../src/game/industry";
 import { MILESTONES, OPEN_AT_ONCE } from "../src/game/progression";
@@ -153,9 +153,9 @@ function play() {
    * player wouldn't).
    */
   const edge = (t: Town, toward: V2, built = false) => {
-    let best = gridPt(t.c, t.ang, 1, 0), bd = Infinity;
+    let best = gridPt(t.c, t.ang, 1, 0, blockOf(t)), bd = Infinity;
     for (const [i, j] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
-      const q = gridPt(t.c, t.ang, i, j);
+      const q = gridPt(t.c, t.ang, i, j, blockOf(t));
       const d = dist(q, toward) + (built && !isBuilt(q) ? 1e5 : 0);
       if (d < bd) { bd = d; best = q; }
     }
@@ -166,7 +166,7 @@ function play() {
 
   const A = g.towns.list[0];
   say(`start: ${A.name}, ${A.pop} people, $${START_MONEY.toLocaleString("en-US")}`);
-  const soil = deposit(F.fert, gridPt(A.c, A.ang, 1 + 320 / BLOCK, 0), 60, 1500)!;
+  const soil = deposit(F.fert, gridPt(A.c, A.ang, 1 + 320 / blockOf(A), 0, blockOf(A)), 60, 1500)!;
   const wood = deposit(F.forest, A.c, 400, 3000)!;
   /** Spots on a deposit field, nearest the start first (one per patch or so). */
   const spots = (field: number, from = 2500, to = 8000, need = 23): V2[] => {

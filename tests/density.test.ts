@@ -7,6 +7,8 @@
 // on), m² of it per resident, and the radius nine homes in ten stand within.
 //   v0.0.91   Village 280 / 1013 m² / 344 m   Town 353 / 728 / 605   City 6,500 423 / 585 / 1149   City 10,000 413 / 487 / 1229
 //   open      Village 218 / 1553 / 433        Town 324 / 971 / 802   City 6,500 355 / 850 / 1498   City 10,000 349 / 836 / 1891
+//   slower growth (2026-11-10), rebuilding one old building for every ten households grown: Town at 2,001 335 / 960 / 729
+//   (main at 1,977: 339 / 991 / 727; rebuilding by the calendar instead packed it to 808 m² a head with 478 homes)
 
 import { describe, expect, it } from "vitest";
 import { Game } from "../src/game/city";

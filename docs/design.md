@@ -705,7 +705,9 @@ A town should visibly turn from a hamlet into a city over a playthrough: bigger,
 - **Redevelopment, not just sprawl.** When a town reaches a size, its inner rings are rezoned denser. Old
   buildings in a denser ring are pulled down one at a time, centre first, and rebuilt (a construction site,
   then the new building). So the houses you saw at the start become terraces, then flats, then towers, while
-  the edge keeps growing new houses.
+  the edge keeps growing new houses. A town rebuilds as it grows, not by the calendar: one old building for every
+  ten households it grows by (REDEV_HOUSEHOLDS), so a town growing slowly spreads outward as a fast one does
+  rather than packing the same people into its centre, and one that holds rebuilds nothing.
 - **Each new size is a moment:** a banner ("Millbrook is now a Town"), the hall goes up as a building site,
   the label shows the new size.
 - **Towns are inspectable.** Click a town (label or hall) for its panel: population over time, supply per need

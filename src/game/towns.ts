@@ -474,6 +474,12 @@ export const onMain = (e: GridEdge) => e[1] === 0 && e[3] === 0;
 export const redevPerDay = (size: number, buildings: number) => 2 + size + Math.floor(buildings / 60);
 /** Share of a town's homes that may be building sites for redevelopment at once. */
 export const REDEV_SHARE = 0.05;
+/**
+ * Households a town grows by for each old building it may pull down for a denser one: it rebuilds as it grows, not
+ * by the calendar, so a town growing slowly spreads outward as one growing fast does, rather than packing the same
+ * people into its centre (about what towns rebuilt for their growth before the slower pace of 2026-11-10).
+ */
+export const REDEV_HOUSEHOLDS = 10;
 
 /**
  * Radius the streets may reach for a population. Towns spread out (owner, 2026-11-08: "less dense overall, more of

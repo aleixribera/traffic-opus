@@ -617,9 +617,10 @@ describe("read off the game", () => {
     made(foodplant, "food", 1);
     expect(startUp(g, second)).not.toBeNull();
     expect(flatOut(g, foodplant, "food")).toBe(true);
-    // (a town short of more than the new one will make)
-    const pop = t.pop;
-    t.pop = 1500;
+    // (a town short of more than the new one will make: a town of 3,000 wants about 69 loads of food a day, more than
+    // the two works make, 48; at 1,500, 46 since the demand rework of 2026-11-10, it no longer is)
+    const pop = t.pop, BIG = 3000;
+    t.pop = BIG;
     expect(townWants(t, "food")).toBeGreaterThan(canPerDay(g, second, "food") + canPerDay(g, foodplant, "food"));
     const h = needHelp(g, t, "food")!;
     expect(h).toMatchObject({ kind: "full", build: "foodplant", works: foodplant.id });
@@ -631,7 +632,7 @@ describe("read off the game", () => {
     t.pop = pop;
     expect(needHelp(g, t, "food")!.say.startsWith("Your Food Plant is starting up. ")).toBe(true);
     // nor while the old one still has room: the new one is the news
-    t.pop = 1500;
+    t.pop = BIG;
     made(foodplant, "food", 0.2);
     expect(needHelp(g, t, "food")!.say.startsWith("Your Food Plant is starting up. ")).toBe(true);
     t.pop = pop;

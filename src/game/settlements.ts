@@ -22,7 +22,7 @@ import { PARK_SMOKE } from "./parks";
 import { DAY, HOUR } from "./society";
 import { deliveredLately, dipIn, landedGrace, rollGrace, type Grace } from "./supply";
 import {
-  BLOCK, CAR_SCRAP, HALLS, OPEN_BLOCK, blockOf, NOISE, NUISANCE_HOMES, NUISANCE_SHOPS, NUISANCE_STREET, REDEV_SHARE, SEED_EDGES, TOWN_SIZES, buys, comfortOf,
+  BLOCK, CAR_SCRAP, HALLS, OPEN_BLOCK, blockOf, NOISE, NUISANCE_HOMES, NUISANCE_SHOPS, NUISANCE_STREET, REDEV_HOUSEHOLDS, REDEV_SHARE, SEED_EDGES, TOWN_SIZES, buys, comfortOf,
   demandPerDay, edgeKey, gridPt, growthPerDay, motoring, needsOf, nextEdge, nuisanceAt, redevPerDay, ringZone, sizeOf,
   smokeReach, supplyShare, townRadius, wallZone, onMain, HIGH_STREET, highLine, highStreetReach, MAIN_STREET, type GridEdge, type Nuisance,
   HOLD_FROM, PER_HOME, SETTLING, SHRINK_AFTER, SHRINK_RATE, SUPPLY_HOURS, averageSupply, countsForShrinking, growthShare, supplyLevel, supportOf,
@@ -184,6 +184,8 @@ export interface Town {
   /** sim time it last started pulling down an old building for a denser one, and how many it has today */
   redevAt: number;
   redevToday: number;
+  /** the rebuilds its growth has earned and it hasn't made yet (REDEV_HOUSEHOLDS: one for every ten households) */
+  redevDue?: number;
   /** motor cars the company has sold it (in loads; a few are scrapped each day): its people drive more (motoring) */
   cars?: number;
   /** it sprang up by itself when a milestone was reached (not the start town, nor one founded in an old save) */
@@ -1284,6 +1286,7 @@ export class TownSystem {
     const { block, col0, w } = best.lot;
     t.redevAt = this.g.time;
     t.redevToday++;
+    t.redevDue = Math.max(0, (t.redevDue ?? 0) - 1);
     this.g.rebuildLots(t.id, [best.id], best.zone, block, col0, col0 + w, "fuelstation");
   }
 
@@ -1320,9 +1323,12 @@ export class TownSystem {
   /** buildings whose last redevelopment found no room along their street, and when (not saved: they are looked at again after a load) */
   private stuck = new Map<number, number>();
 
-  /** May the town start another rebuild now: within its pace for the day, and not too many sites at once? */
+  /**
+   * May the town start another rebuild now: one its growth has earned, within its pace for the day, and not too many
+   * sites at once?
+   */
   private mayRebuild(t: Town, mine: Building[]): boolean {
-    if (!t.built.size || t.trend < 0 || t.size < 1) return false;
+    if (!t.built.size || t.trend < 0 || t.size < 1 || (t.redevDue ?? 0) < 1) return false;
     // (a new day's pace from its first moment: the last rebuild was on an earlier day, though the day's tallies are
     // only reset after this tick)
     if (Number.isFinite(t.redevAt) && Math.floor(t.redevAt / DAY) < Math.floor(this.g.time / DAY)) t.redevToday = 0;
@@ -1366,6 +1372,7 @@ export class TownSystem {
       this.stuck.delete(b.id);
       t.redevAt = this.g.time;
       t.redevToday++;
+      t.redevDue = Math.max(0, (t.redevDue ?? 0) - 1);
       this.g.rebuildLots(t.id, run.ids, z, run.block, run.lo, run.hi);
       return;
     }
@@ -1569,6 +1576,8 @@ export class TownSystem {
     // (the target never runs far ahead of the town: a dry spell isn't banked as growth for later)
     t.target = Math.max(0, Math.min(t.target, Math.max(t.households, START_HOUSEHOLDS) * 1.4 + 6));
     t.trend = (t.target - before) / share;
+    // (what it grew by earns it its rebuilds, a day's worth of them at most banked)
+    if (t.target > before) t.redevDue = Math.min(redevPerDay(t.size, 0), (t.redevDue ?? 0) + (t.target - before) / REDEV_HOUSEHOLDS);
     t.supports = Math.round(S.pop);
     t.level = L.level;
     // (what holds it back: its worst-supplied need, while it grows at under half its full pace)
@@ -1600,6 +1609,7 @@ export class TownSystem {
         id: t.id, name: t.name, c: t.c, ang: t.ang, built: [...t.built], failed: [...t.failed], target: t.target,
         today: t.today, yesterday: t.yesterday, supply: t.supply, trend: t.trend, founded: t.founded,
         size: t.size, hall: t.hall, sq: t.sq, hist: t.hist, redevToday: t.redevToday, ...(t.cars ? { cars: t.cars } : {}),
+        ...(t.redevDue ? { redevDue: t.redevDue } : {}),
         ...(t.spawned ? { spawned: true } : {}), hours: t.hours ?? [], hourNow: t.hourNow ?? {}, layout: t.layout,
         ...(t.block !== undefined ? { block: t.block } : {}),
         ...(t.widened ? { widened: t.widened } : {}), ...(t.outward !== undefined ? { outward: t.outward } : {}),
