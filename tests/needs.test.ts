@@ -9,7 +9,8 @@ import { SHRINK_AFTER, SUPPLY_WARMUP, averageSupply, demandPerDay, needsOf } fro
 import type { Product } from "../src/game/industry";
 import { deliveredLately } from "../src/game/supply";
 import { townModel } from "../src/ui/inspect";
-import { ENOUGH, STEPS, comingNeeds, growthOf, labelNeeds, labelSummary, loadsLately, loadStep, needState, needView, sinceFirstLoad, townNeeds } from "../src/ui/needs";
+import { ENOUGH, STEPS, comingNeeds, growthOf, labelNeeds, labelSummary, loadsLately, loadStep, needState, needView, sinceFirstLoad, townNeeds, warmingUp } from "../src/ui/needs";
+import { townWants } from "../src/ui/bottleneck";
 
 let g: Game, t: Town;
 
@@ -140,6 +141,23 @@ describe("a town's needs, read out", () => {
     t.hours = Array.from({ length: 48 }, (_, i) => (i === 0 || i === 20 || i === 40 ? { food: 2 } : {}));
     expect(sinceFirstLoad(t, "food")).toBeCloseTo((6 * 24) / 49);
     expect(loadsLately(t, "food")).toBeCloseTo(Math.max(deliveredLately(t, "food"), (6 * 24) / 49));
+  });
+
+  it("a supply's first hours: it says the first loads are coming in, and no advice asks for more works yet", () => {
+    // (first-hour play-test, 2026-11-10: a hamlet's first load of food read 3 loads a day against the 5 it wants, and
+    // the tip sent the player off to build a second farm the one farm was already three times enough for)
+    t.hours = Array.from({ length: 24 }, () => ({}));
+    t.hourNow = { food: 1 };
+    expect(loadsLately(t, "food")).toBeLessThan(demandPerDay("food", t.pop));
+    expect(warmingUp(t, "food")).toBe(true);
+    expect(needView(t, "food").say).toBe("The first food is coming in. It counts as a supply once it has kept coming a few hours.");
+    expect(townWants(t, "food")).toBe(0);
+    // a load an hour since: past the warm-up it is a supply like any other, and one short of the town's use says so
+    t.hours = [...Array.from({ length: 24 - SUPPLY_WARMUP }, () => ({})), ...Array.from({ length: SUPPLY_WARMUP }, () => ({ food: 0.1 }))];
+    t.hourNow = {};
+    expect(warmingUp(t, "food")).toBe(false);
+    expect(townWants(t, "food")).toBeGreaterThan(0);
+    expect(needView(t, "food").say).toMatch(/^(Bring|Almost no|No) /);
   });
 
   it("a big town's need: a trickle under a step reads None!, half reads Running low with a half bar", () => {

@@ -414,9 +414,20 @@ export class Hud {
   /** R and I, and the bar's buttons. */
   catKey(c: CatId) { this.toggleCat(c); }
 
-  /** The catalog folds to its strip while a building is in hand, so the map under the cursor is free. */
+  /**
+   * The catalog folds to its strip while a building is in hand, and Roads while a road is being drawn, so the map
+   * under the cursor is free (play-test 2026-11-10: the road cards hid the town a road was being drawn to).
+   */
   private folded(): boolean {
-    return this.cat === "industry" && this.app.st.tool === "place" && !this.catPeek;
+    if (this.catPeek) return false;
+    const st = this.app.st;
+    return (this.cat === "industry" && st.tool === "place") || (this.cat === "roads" && st.tool === "road" && this.app.drawingRoad);
+  }
+
+  /** A road's first point placed (the cards fold away), or the road done with (they come back). */
+  drawing(on: boolean) {
+    if (on) this.catPeek = false;
+    if (this.cat === "roads") this.refresh();
   }
 
   private toggleCat(c: CatId) {

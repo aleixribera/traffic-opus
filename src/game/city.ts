@@ -18,7 +18,7 @@ import { Progress, levelBy, levelCap, type Feature, type Milestone, type Progres
 import { DAY, HOUR, Society } from "./society";
 import { PLACED, SHORE_REACH, type PlacedKind } from "./placed";
 import { buildStep } from "./construction";
-import { Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, isPlantKind, type Delivery, type Product } from "./industry";
+import { Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, isPlantKind, perishable, type Delivery, type Product } from "./industry";
 import { TRUCK_CLASS_ORDER, type TruckClass } from "./trucks";
 import { PARTS_FOR, SQUARE_INSET, TownSystem, type Spawned } from "./settlements";
 import { BLOCK, CARS_PER_LOAD, blockOf, demandPerDay, gridPt, isHall, needsOf, smokeReach } from "./towns";
@@ -540,8 +540,90 @@ export class Game {
     return plan;
   }
 
+  /**
+   * Do a site's roads lead anywhere: from its gate to a town's streets or another works' gate? A stub of road at its
+   * gate that ends in the fields is not that (tips.ts cutOff). `buyer`: only somewhere that takes what it makes counts,
+   * for the toast that says its trucks can start (play-test 2026-11-10: a Sawmill joined only to its Logging Camp was
+   * told "its trucks can start", its planks with no town to go to): a works that uses it, a warehouse that stores it
+   * (industry.ts dispatch), or a town's streets if towns buy it (priced).
+   */
+  roadsLeadOut(b: Building, buyer = false): boolean {
+    const s0 = b.access ? this.net.segs.get(b.access.seg) : undefined;
+    if (!s0) return false;
+    // (a works that makes nothing to send, a power plant, is joined up by any road to a works or a town)
+    const makes = isPlantKind(b.kind) ? (Object.keys(PLANTS[b.kind].outputs) as Product[]) : [];
+    const any = !buyer || !makes.length;
+    const town = any || makes.some((p) => PRODUCTS[p].price > 0);
+    const takes = (o: Building): boolean => {
+      if (any) return true;
+      if (!isPlantKind(o.kind)) return false;
+      const D = PLANTS[o.kind], alts = Object.values(D.alt ?? {});
+      if (D.logistics === "warehouse") return makes.some((p) => !perishable(p) && (!o.plant!.takes || o.plant!.takes.includes(p)));
+      return makes.some((p) => !!D.inputs[p] || alts.includes(p));
+    };
+    const gates = new Set<number>();
+    for (const o of this.buildings.list) if (o.plant && o !== b && o.access && takes(o)) gates.add(o.access.seg);
+    const seen = new Set([s0.a, s0.b]), q = [s0.a, s0.b];
+    while (q.length) {
+      for (const s of this.net.segsAt(q.pop()!)) {
+        if ((town && s.town !== undefined) || gates.has(s.id)) return true;
+        for (const m of [s.a, s.b]) if (!seen.has(m)) { seen.add(m); q.push(m); }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Works with a road at the gate whose trucks can't start yet: "loose", the road leads nowhere yet (play-test
+   * 2026-11-10: "Farm connected: its trucks can start" came when the first leg of a road out to it reached the
+   * gate, still ending in the fields), or "joined" to other roads with nobody on them to take what it makes. Told
+   * again as that changes. Not saved: after a load nobody is waiting for the word.
+   */
+  private dangling = new Map<number, "loose" | "joined">();
+
+  /**
+   * What a works whose gate just got a road is told: its trucks can start (its roads reach somewhere that takes what
+   * it makes), connected but with nobody on its roads to sell to yet (an Iron Mine before any steel works), or that
+   * the road leads nowhere yet. `turned`: its gate was turned to the road. Not yet able to start, it is watched and
+   * told again when it can.
+   */
+  private sayJoined(b: Building, turned = false) {
+    const name = BUILDING_TYPES[b.kind].name;
+    if (!b.plant || this.roadsLeadOut(b, true)) {
+      this.dangling.delete(b.id);
+      this.toast(`${name} connected${turned ? ", its gate turned to the road" : ""}: its trucks can start`);
+    } else if (this.roadsLeadOut(b)) {
+      this.dangling.set(b.id, "joined");
+      this.toast(`${name} connected${turned ? ", its gate turned to the road" : ""}. Nothing on your roads takes its ${this.makesSay(b)} yet`);
+    } else {
+      this.dangling.set(b.id, "loose");
+      this.toast(turned
+        ? `${name}'s gate turned to the road. Join that road to your others and its trucks can start`
+        : `${name} has a road at its gate. Join it to your other roads and its trucks can start`);
+    }
+  }
+
+  /** What a works makes, in words: "planks", "steel and slag". */
+  private makesSay(b: Building): string {
+    const ps = isPlantKind(b.kind) ? (Object.keys(PLANTS[b.kind].outputs) as Product[]).map((p) => PRODUCTS[p].name.toLowerCase()) : [];
+    return ps.length > 1 ? `${ps.slice(0, -1).join(", ")} and ${ps[ps.length - 1]}` : ps[0] ?? "goods";
+  }
+
+  /** Works waiting on their roads: told once their roads join up, and again once they reach a buyer. */
+  private recheckDangling() {
+    for (const [id, was] of this.dangling) {
+      const b = this.buildings.byId.get(id);
+      if (!b?.access) { if (!b) this.dangling.delete(id); continue; }
+      if (this.roadsLeadOut(b, true)) {
+        this.dangling.delete(id);
+        this.toast(`${BUILDING_TYPES[b.kind].name} connected: its trucks can start`);
+      } else if (was === "loose" && this.roadsLeadOut(b)) this.sayJoined(b);
+    }
+  }
+
   private afterRoads(cs: ChangeSet) {
-    for (const b of this.buildings.reattach()) this.toast(`${BUILDING_TYPES[b.kind].name} connected: its trucks can start`);
+    for (const b of this.buildings.reattach()) this.sayJoined(b);
+    this.recheckDangling();
     this.faceRoads();
     this.transit.afterRoads();
     this.traffic.onNetworkChange(cs);
@@ -567,7 +649,7 @@ export class Game {
         this.buildings.turn(b, ga);
         for (const c of this.lotCells(b)) c.lot ||= b.id;
         this.candVersion = -1;
-        this.toast(`${BUILDING_TYPES[b.kind].name} connected, its gate turned to the road: its trucks can start`);
+        this.sayJoined(b, true);
         any = true;
         break;
       }
@@ -1226,6 +1308,8 @@ export class Game {
     this.candVersion = -1;
     this.money -= pl.cost;
     this.pushUndo({ label: "place", ops, money: pl.cost, added: [b], removed });
+    // (a works waiting for somewhere to send its goods may have just got it)
+    if (isPlantKind(kind)) this.recheckDangling();
     this.emit({ t: "money" });
     this.emit({ t: "buildings" });
     return b;

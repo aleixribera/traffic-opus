@@ -15,6 +15,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.100", date: "2026-11-10", title: "Off to a good start",
+    notes: [
+      "Your home town fills its first streets faster, so the first Village comes sooner. Towns that spring up later grow as before.",
+      "A town's first deliveries no longer set off advice to build another farm.",
+      "The forest pointer finds the nearest forest you can actually reach, and the timber goal says where it is.",
+      "A works only says its trucks can start once your roads reach something that takes its goods.",
+      "A site placed with no road at its gate tells you straight away.",
+      "The road cards fold away once you put down a road's first point, so you can see where you're drawing.",
+    ],
+  },
+  {
     v: "v0.0.99", date: "2026-11-10", title: "Lighter",
     notes: [
       "A big map draws about half as much at every zoom, so it runs smoother on the same machine.",

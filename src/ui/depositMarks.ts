@@ -49,6 +49,12 @@ export class DepositMarks {
   inView = false;
   /** the first goal's own pointer is at the screen's edge (set by the app): these smaller ones would say it twice */
   mute = false;
+  /**
+   * For soil and forest, which lie everywhere in patches the generator's big ones don't list: the place nearest the
+   * home town the works in hand fits, a road in reach of its gate (set by the app, goalPointer.ts groundSpot). It is
+   * the first pointer, ahead of the big patches.
+   */
+  private best: V2 | null = null;
   /** where the lists were last gathered round, and for what: gathered again when the view moves on */
   private at: V2 | null = null;
   private atKey = "";
@@ -59,9 +65,10 @@ export class DepositMarks {
     document.body.prepend(this.el);
   }
 
-  /** Mark these kinds (`focus`: the one being placed, with pointers); none to clear. A few times a second. */
-  show(kinds: DepositKind[], focus: boolean) {
-    const key = kinds.map((k) => k.field).join(",") + (focus ? "!" : "");
+  /** Mark these kinds (`focus`: the one being placed, with pointers; `best`, its nearest good place); none to clear. A few times a second. */
+  show(kinds: DepositKind[], focus: boolean, best: V2 | null = null) {
+    const key = kinds.map((k) => k.field).join(",") + (focus ? "!" : "") + (best ? `@${Math.round(best.x)},${Math.round(best.y)}` : "");
+    this.best = focus ? best : null;
     if (key !== this.atKey) { this.atKey = key; this.at = null; }
     this.kinds = kinds;
     this.focus = focus;
@@ -88,6 +95,7 @@ export class DepositMarks {
     const gen = this.gen();
     const live = new Set<string>();
     const nearest: { k: DepositKind; c: V2 }[] = [];
+    if (this.focus && this.best && this.kinds.length) nearest.push({ k: this.kinds[0], c: this.best });
     for (const k of this.kinds) {
       const found = gen.depositsNear(k.field, c.x, c.y, this.focus ? SEARCH : reach + 1500);
       for (const d of found) {

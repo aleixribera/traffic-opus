@@ -181,7 +181,7 @@ function openGame(): Game {
 }
 
 /** Open, dry, flat ground where a site of `kind` can stand (on its deposit), at least 400 m from the origin. */
-function openSpot(g: Game, kind: "foodplant" | "farm", opts = {}): V2 {
+function openSpot(g: Game, kind: "foodplant" | "farm" | "warehouse", opts = {}): V2 {
   for (let r = 400; r < 4000; r += 150) for (let k = 0; k < 24; k++) {
     const p = v2(Math.cos((k / 24) * 6.283) * r, Math.sin((k / 24) * 6.283) * r);
     if (g.placedPlan(kind, p, opts)?.ok) return p;
@@ -238,12 +238,49 @@ describe("free placement and the gate", () => {
     // ...but one passing just in front of the gate joins it
     road(g, across(GATE_REACH - 4, -160), across(GATE_REACH - 4, 160));
     expect(b.access).not.toBeNull();
-    expect(toasts.some((t) => t === "Food Plant connected: its trucks can start")).toBe(true);
+    // (a road at its gate that leads nowhere: it says so, not "connected", play-test 2026-11-10)
+    expect(toasts.some((t) => t === "Food Plant has a road at its gate. Join it to your other roads and its trucks can start")).toBe(true);
+    expect(toasts.some((t) => t === "Food Plant connected: its trucks can start")).toBe(false);
     // its kerb is on the road's edge in front of the gate
     expect(rectDistance(b.front, b.c, b.hw, b.hd, b.rot)).toBeLessThan(GATE_REACH);
     expect(rectDistance(b.front, b.c, b.hw, b.hd, b.rot)).toBeGreaterThan(1);
     run(g, 0.2);
     expect(b.problem).not.toBe("No road to the gate");
+  });
+
+  it("is told its trucks can start only once its roads reach somewhere that takes what it makes: a works, a warehouse, a town if towns buy it", () => {
+    // (play-test 2026-11-10: a Sawmill joined only to its Logging Camp was told "its trucks can start")
+    const g = openGame();
+    const farm = g.place("farm", openSpot(g, "farm"))!;
+    const plant = g.place("foodplant", openSpot(g, "foodplant"))!;
+    expect(farm && plant).toBeTruthy();
+    // one road out in the fields, both gates on it, no town anywhere
+    const before = new Set(g.net.segs.keys());
+    road(g, v2(-3000, 5200), v2(-2000, 5200));
+    const seg = [...g.net.segs.keys()].find((id) => !before.has(id))!;
+    for (const b of [farm, plant]) b.access = { seg, s: 0, p: v2(-3000, 5200) };
+    // the farm's crops go to the food plant: joined up
+    expect(g.roadsLeadOut(farm, true)).toBe(true);
+    // the food plant's food goes to towns, and none is on its roads: a road, but nowhere to sell
+    expect(g.roadsLeadOut(plant, true)).toBe(false);
+    // (the tips ask only whether it leads anywhere at all)
+    expect(g.roadsLeadOut(plant)).toBe(true);
+    // a warehouse on its roads stores food: somewhere to send it
+    g.unlockAll();
+    const store = g.place("warehouse", openSpot(g, "warehouse"))!;
+    expect(store).toBeTruthy();
+    store.access = { seg, s: 0, p: v2(-3000, 5200) };
+    expect(g.roadsLeadOut(plant, true)).toBe(true);
+    // ...unless it is told to take only other goods
+    store.plant!.takes = ["planks"];
+    expect(g.roadsLeadOut(plant, true)).toBe(false);
+    // the road made a town street: towns buy food, so the food plant can start; they don't buy crops, so with the
+    // food plant off its roads the farm still has nowhere to send them
+    g.net.segs.get(seg)!.town = 0;
+    expect(g.roadsLeadOut(plant, true)).toBe(true);
+    plant.access = null;
+    expect(g.roadsLeadOut(farm, true)).toBe(false);
+    expect(g.roadsLeadOut(farm)).toBe(true);
   });
 
   it("a first-tier works goes up over its crew time (a first farm: three game hours) before it makes anything", () => {

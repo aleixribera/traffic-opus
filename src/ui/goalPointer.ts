@@ -16,7 +16,13 @@ export const SOIL_SEARCH = 4000, SOIL_STEP = 100;
 /** A place with this share of its plot on soil is well on it; and how much further out (m) the search goes for one. */
 export const GOOD_SOIL = 0.8, SOIL_ON = 300;
 
-const spots = new WeakMap<Game, { v: string; at: V2 | null }>();
+/** A place found for a works: a road in reach of its gate, none in reach, or the middle of a far patch (nowhere it fits). */
+interface Spot { v: string; placed: number; found: "road" | "bare" | "far"; at: V2 | null }
+const spots = new WeakMap<Game, Map<string, Spot>>();
+
+/** The works the ground search knows: the ones that go on soil or forest, which lie everywhere in patches. */
+export type GroundKind = "farm" | "loggingcamp";
+const FIELD: Record<GroundKind, number> = { farm: F.fert, loggingcamp: F.forest };
 
 /**
  * Where the first farm can go: the place nearest the home town where a farm fits well on fertile soil with a road
@@ -24,13 +30,37 @@ const spots = new WeakMap<Game, { v: string; at: V2 | null }>();
  * nearest patch of soil. Null once the company has a farm, or with no town. Kept till the roads or the buildings change.
  */
 export function farmSpot(g: Game): V2 | null {
+  if (g.buildings.list.some((b) => b.kind === "farm")) return null;
+  return groundSpot(g, "farm");
+}
+
+/**
+ * The same for any works on soil or forest (farmSpot): the place nearest the home town it fits well, a road in reach
+ * of its gate. The "Nearest forest" pointer used to know only the big patches the map is generated with, and sent a
+ * first logging camp 2.4 km over the river past a wood on the town's own bank (first-hour play-test, 2026-11-10).
+ * Kept while it still takes the works (not the towns' houses or streets, which go up all the time).
+ */
+export function groundSpot(g: Game, kind: GroundKind): V2 | null {
   const home = g.towns.list[0];
-  if (!home || g.buildings.list.some((b) => b.kind === "farm")) return null;
-  const v = `${g.net.version}|${g.buildings.list.length}`;
-  const had = spots.get(g);
+  if (!home) return null;
+  const field = FIELD[kind];
+  const placed = g.buildings.list.reduce((n, b) => n + (b.placed ? 1 : 0), 0);
+  const v = `${g.net.version}|${placed}`;
+  const mine = spots.get(g) ?? new Map<string, Spot>();
+  spots.set(g, mine);
+  const had = mine.get(kind);
   if (had && had.v === v) return had.at;
-  // (ring by ring out from the town. The very first place a farm fits is on the soil's ragged edge, where a step to
-  // either side is refused: the search goes on a little for one well on the soil, and takes the best it has seen)
+  // (the towns lay streets all the time: a place found that still takes the works, a road in reach, stands; the
+  // search, a tenth of a second or more, runs again only once it doesn't. A place with no road in reach stands while
+  // it still takes the works, and the middle of a far patch (nowhere it fits) as it is, till the company places a
+  // works: a search on every street the towns lay would cost frames)
+  if (had?.at && (had.found === "road" || had.placed === placed)) {
+    const pl = had.found === "far" ? null : g.terrain.has(field, had.at) ? g.placedPlan(kind, had.at) : null;
+    const holds = had.found === "far" || (!!pl?.ok && (had.found === "bare" || !!(pl.access || pl.link)));
+    if (holds) { had.v = v; had.placed = placed; return had.at; }
+  } else if (had && !had.at && had.placed === placed) { had.v = v; return null; }
+  // (ring by ring out from the town. The very first place a site fits is on the ground's ragged edge, where a step to
+  // either side is refused: the search goes on a little for one well on it, and takes the best it has seen)
   let best: { c: V2; share: number; len: number; r: number } | null = null, bare: { c: V2; r: number } | null = null;
   for (let r = 200; r <= SOIL_SEARCH; r += SOIL_STEP) {
     // (the further out, the more places round the ring: about one every 100 m)
@@ -38,8 +68,8 @@ export function farmSpot(g: Game): V2 | null {
     for (let k = 0; k < n; k++) {
       const a = (k / n) * Math.PI * 2;
       const p = { x: home.c.x + Math.cos(a) * r, y: home.c.y + Math.sin(a) * r };
-      if (!g.terrain.has(F.fert, p)) continue;
-      const pl = g.placedPlan("farm", p);
+      if (!g.terrain.has(field, p)) continue;
+      const pl = g.placedPlan(kind, p);
       if (!pl?.ok) continue;
       if (!pl.access && !pl.link) { bare ??= { c: pl.c, r }; continue; }
       const share = pl.deposit?.share ?? 1, len = pl.link?.length ?? 0;
@@ -51,10 +81,10 @@ export function farmSpot(g: Game): V2 | null {
   }
   let at: V2 | null = best?.c ?? bare?.c ?? null;
   if (!at) {
-    const d = g.terrain.gen.depositsNear(F.fert, home.c.x, home.c.y, 24000)[0];
+    const d = g.terrain.gen.depositsNear(field, home.c.x, home.c.y, 24000)[0];
     at = d ? { x: d.x, y: d.y } : null;
   }
-  spots.set(g, { v, at });
+  mine.set(kind, { v, placed, found: best ? "road" : bare ? "bare" : "far", at });
   return at;
 }
 

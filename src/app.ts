@@ -55,7 +55,7 @@ import { productIcon } from "./ui/icons";
 import { TownPings } from "./ui/townPings";
 import { STUCK_KEEP, StuckAlerts } from "./ui/stuckAlerts";
 import { DEPOSIT_KINDS, DepositMarks } from "./ui/depositMarks";
-import { GoalPointer, farmSpot } from "./ui/goalPointer";
+import { GoalPointer, farmSpot, groundSpot } from "./ui/goalPointer";
 import { GateMark, type GateAsk } from "./ui/gateMark";
 import { served } from "./game/settlements";
 import { joinedUp } from "./ui/tips";
@@ -263,7 +263,16 @@ export class App {
   /** The title menu's backdrop: the place its camera sways round, and for how long it has (ui/menu.ts). */
   menuCam: { c: V2; rot: number; halfH: number; t: number } | null = null;
   // road tool state
-  private anchor: Snap | null = null;
+  private anchorAt: Snap | null = null;
+  /** Where the road being drawn starts: null till the first click. The Roads catalog folds while one is drawn. */
+  private get anchor(): Snap | null { return this.anchorAt; }
+  private set anchor(a: Snap | null) {
+    const was = this.anchorAt !== null;
+    this.anchorAt = a;
+    if (was !== (a !== null)) this.hud?.drawing(a !== null);
+  }
+  /** Is a road being drawn: its first point placed, the next click lays it. */
+  get drawingRoad(): boolean { return this.anchorAt !== null; }
   private startTangent: V2 | undefined;
   /** A curve begun on open ground (or mid-road): the way the cursor first moved off the start. */
   private freeDir: V2 | undefined;
@@ -1560,7 +1569,11 @@ export class App {
       const b = g.place(k, c, this.placeOpts());
       if (!b) { this.reject("Can't build here"); return; }
       this.hud?.sound("place");
-      this.hud?.toast(`${BUILDING_TYPES[k].name} built for ${formatMoney(pl.cost)}`);
+      // (a site placed with no road at its gate and no street of its own: said at once, not left to the goal line.
+      // Play-test 2026-11-10: the ghost said "Street to its gate", the town built on that street's way a moment later,
+      // and the Sawmill went down with no road and not a word)
+      const cut = !!pl.free && !pl.link && !b.access;
+      this.hud?.toast(`${BUILDING_TYPES[k].name} built for ${formatMoney(pl.cost)}${cut ? ". No road reaches its gate yet: draw one to it" : ""}`);
       this.dirtyPreview = true;
       return;
     }
@@ -2061,7 +2074,13 @@ export class App {
         if (pl.link) {
           pv.plan(pl.link, 0);
           chips.push({ text: `Street to its gate: ${Math.round(pl.link.length)} m`, kind: "info", lead: 2 });
-        } else if (pl.free && pl.ok) chips.push({ text: "No road it can reach: turn its gate toward one, or draw one to it", kind: "info", lead: 3 });
+        } else if (pl.free && pl.ok) {
+          // (a site turns its gate toward the nearest road by itself, so turning it is not the fix. Play-test 2026-11-10:
+          // "turn its gate toward one" sent the player turning a farm round and round beside a road its own fence stood
+          // in the way of)
+          const text = "No road it can reach: place it and draw a road to its gate, or move it nearer a road";
+          chips.push({ text, kind: "info", lead: 3 });
+        }
         else if (pl.faces) chips.push({ text: `Gate on a ${pl.faces.toLowerCase()}`, kind: "info", lead: 2 });
         // (the deposit share; a lot refused for too little of it gives the share in its reason instead)
         this.powerPreview(pv, chips, k, pl.c, pl.access?.seg);
@@ -2333,7 +2352,9 @@ export class App {
       this.townPings.sync(g.towns.list, g.time, served, this.bare);
       this.stuckAlerts.sync(g.traffic.stuckCars(STUCK_KEEP), g.time, this.bare);
       const dm = this.markedDeposits();
-      this.depositMarks.show(dm.kinds, dm.focus);
+      // (soil and forest: the nearest place the works in hand fits, ahead of the big patches)
+      const inHand = this.st.placed;
+      this.depositMarks.show(dm.kinds, dm.focus, dm.focus && this.st.tool === "place" && (inHand === "farm" || inHand === "loggingcamp") ? groundSpot(g, inHand) : null);
       this.depositMarks.inView = dm.focus && this.fieldInView(dm.kinds[0].field);
       // the first goal's soil: pointed at till the first farm is placed
       const farming = this.st.tool === "place" && this.st.placed === "farm";

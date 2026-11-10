@@ -129,7 +129,8 @@ describe("a site with no road yet", () => {
     expect(mine.access).not.toBeNull();
     expect(g.connected(mine.access!.seg, L.main)).toBe(true);
     expect(dot(outOf(mine, hd), minus(n))).toBeGreaterThan(0.999);
-    expect(toasts).toEqual(["Iron Mine connected, its gate turned to the road: its trucks can start"]);
+    // (joined to the town, but towns don't buy ore and no steel works is built yet: play-test 2026-11-10)
+    expect(toasts).toEqual(["Iron Mine connected, its gate turned to the road. Nothing on your roads takes its iron ore yet"]);
     // (the same plot: nothing else moved)
     expect(mine.c).toEqual(c0);
     expect(g.buildings.footprint(mine).map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).sort()).toEqual(corners);
@@ -168,7 +169,10 @@ describe("a site with no road yet", () => {
     layStraight(g, at(1380, 1150 + hd + 12), at(1620, 1150 + hd + 12), "street");
     expect(mine.access).not.toBeNull();
     expect(dot(outOf(mine, hd), n)).toBeGreaterThan(0.999);
-    expect(toasts).toEqual(["Iron Mine connected, its gate turned to the road: its trucks can start"]);
+    // (a road that leads nowhere yet: the mine is not "connected" till it joins the others, play-test 2026-11-10)
+    expect(toasts).toEqual(["Iron Mine's gate turned to the road. Join that road to your others and its trucks can start"]);
+    layStraight(g, at(1380, 1150 + hd + 12), at(1380, 0), "street");
+    expect(toasts.slice(1)).toEqual(["Iron Mine connected. Nothing on your roads takes its iron ore yet"]);
   }, 120000);
 
   it("with a road at its gate keeps its gate: a road drawn to its back is still refused", () => {

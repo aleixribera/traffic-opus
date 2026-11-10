@@ -9,7 +9,7 @@ import { siteFrame } from "../src/game/sites";
 import { MILESTONES } from "../src/game/progression";
 import { worldToScreen, type ViewPose } from "../src/render/viewmath";
 import { F } from "../src/world/gen";
-import { edgeSpot, farmSpot, inFrame, screenWay, type Frame } from "../src/ui/goalPointer";
+import { edgeSpot, farmSpot, groundSpot, inFrame, screenWay, type Frame } from "../src/ui/goalPointer";
 import { GATE_MARK_MIN, GATE_PLATE_OUT, gateSpot } from "../src/ui/gateMark";
 import { goalNow, goalNowSay } from "../src/ui/goalNow";
 
@@ -102,6 +102,35 @@ describe("where the first farm can go", () => {
     const after = goalNow(g, food, 0)!;
     expect(after.spot).toBeUndefined();
     expect(after.who).toBe("Your Farm");
+  }, 120000);
+});
+
+describe("where the first logging camp can go", () => {
+  it("is the nearest forest a camp fits, a road in reach where one is near, once the first food is sold: the timber goal says where", () => {
+    const g = new Game(7);
+    g.start();
+    const home = g.towns.list[0];
+    const at = groundSpot(g, "loggingcamp")!;
+    expect(at).toBeTruthy();
+    expect(g.terrain.has(F.forest, at)).toBe(true);
+    // (a place it fits: with a road in reach of its gate where one is near, else the nearest it fits at all)
+    expect(g.placedPlan("loggingcamp", at)!.ok).toBe(true);
+    // nearer the town than the big patch of forest the map was generated with (the old pointer's only answer)
+    const patch = g.terrain.gen.depositsNear(F.forest, home.c.x, home.c.y, 24000)[0];
+    const d = (p: { x: number; y: number }) => Math.hypot(p.x - home.c.x, p.y - home.c.y);
+    if (patch) expect(d(at)).toBeLessThanOrEqual(d(patch) + 1);
+    expect(groundSpot(g, "loggingcamp")).toBe(at);
+    // the timber goal: nothing said before the first food is sold (one chain at a time), then where its forest is
+    const planks = MILESTONES.find((m) => m.id === "planks10")!;
+    expect(goalNow(g, planks, 0)).toBeNull();
+    g.progress.sold.food = 1;
+    const now = goalNow(g, planks, 0)!;
+    expect(now.key).toBe("Where");
+    expect(now.spot).toEqual(at);
+    expect(goalNowSay(now)).toMatch(new RegExp(`^Forest for a logging camp lies [\\d.]+ (m|km) [a-z-]+ of ${home.name}\\.$`));
+    // a camp placed: the goal line is the camp's own
+    expect(g.place("loggingcamp", at)).toBeTruthy();
+    expect(goalNow(g, planks, 0)?.key).not.toBe("Where");
   }, 120000);
 });
 

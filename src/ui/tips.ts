@@ -97,19 +97,7 @@ export function cutOff(g: Game, b: Building): boolean {
   const c = cacheOf(g);
   const k = c.cut.get(b.id);
   if (k !== undefined) return k;
-  let out = true;
-  const s0 = b.access ? g.net.segs.get(b.access.seg) : undefined;
-  if (s0) {
-    const gates = new Set<number>();
-    for (const o of g.buildings.list) if (o.plant && o !== b && o.access) gates.add(o.access.seg);
-    const seen = new Set([s0.a, s0.b]), q = [s0.a, s0.b];
-    walk: while (q.length) {
-      for (const s of g.net.segsAt(q.pop()!)) {
-        if (s.town !== undefined || gates.has(s.id)) { out = false; break walk; }
-        for (const m of [s.a, s.b]) if (!seen.has(m)) { seen.add(m); q.push(m); }
-      }
-    }
-  }
+  const out = !g.roadsLeadOut(b);
   c.cut.set(b.id, out);
   return out;
 }
