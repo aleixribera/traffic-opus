@@ -58,7 +58,7 @@ describe("The inspector's panels", () => {
     }
   }, 240_000);
 
-  it("a producing site: output an hour (made vs can make), what it earns or ships, and trucks out of the fleet", () => {
+  it("a producing site: output a day (made vs can make), what it earns or ships, and trucks out of the fleet", () => {
     const m = siteModel(g, farm, led);
     expect(m.keys).toHaveLength(3);
     // (its pace now, the season's swing included: a farm in autumn can make more than its year-round pace)
@@ -67,7 +67,8 @@ describe("The inspector's panels", () => {
     expect(can).toBeCloseTo((Industry.perDay(farm, "crops") / 24) * seasonMult("farm", g.time));
     expect(r).not.toBeNull();
     expect(r!).toBeLessThanOrEqual(can + 1e-9);
-    expect(m.keys[0]).toMatchObject({ value: fmtRate(r!), unit: "/h", label: `crops, can ${fmtRate(can)}` });
+    // (in loads a day, the unit the town panel and the goals count in)
+    expect(m.keys[0]).toMatchObject({ value: fmtRate(r! * 24), unit: " loads", label: `crops a day, can ${fmtRate(can * 24)}` });
     // crops only feed your own plants: no price, so it shows what it shipped, not a "profit" that's only costs
     expect(m.keys[1].label).toMatch(/shipped, last hour$/);
     expect(m.keys[1].value).toBe(String(farm.plant!.last.sent));

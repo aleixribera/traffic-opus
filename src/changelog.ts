@@ -15,6 +15,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.94", date: "2026-11-10", title: "Loads a day",
+    notes: [
+      "Goods are counted one way everywhere: loads a day. A town's needs are bars on one scale, so the biggest ask looks biggest.",
+      "Economy shows each works as a bar of what it made against what it can make.",
+      "While a panel is open, the current goal stays in a strip above it. Click it to go back to the goals.",
+      "Text is larger and comes in fewer sizes, so panels read at a glance.",
+      "Demolish sits on its own at the foot of each panel, away from Close.",
+      "The radio says what is playing. Far out, a town shows one short line of what it needs instead of a pile of icons.",
+    ],
+  },
+  {
     v: "v0.0.93", date: "2026-11-10", title: "Room to breathe",
     notes: [
       "New towns lay out wider blocks, keep more parks and gardens, and spread further out as they grow.",
