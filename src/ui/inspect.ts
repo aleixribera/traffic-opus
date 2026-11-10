@@ -1200,11 +1200,10 @@ export function deadlockAt(g: Game, vs: Vehicle[]): Pick<PanelModel["status"], "
   }
   const text = `Deadlock: ${ring.length} vehicles each waiting for another to move`;
   const node = [...at].filter(([id]) => !g.net.nodes.get(id)?.signal && g.defaultSignal(id)).sort((a, b) => b[1] - a[1])[0]?.[0];
-  const later = "Left alone, one of them turns off another way, or gives up, within a minute or two.";
+  const later = "Left alone, one of them turns off another way, or gives up, within a few minutes.";
   if (node === undefined) return { text, fix: `${later} A second way round, or a roundabout, stops it happening again.` };
   if (!g.featureUnlocked("signals")) return { text, fix: `${later} Traffic lights here, once you have them, stop it happening again: they take turns.` };
-  const n = g.net.clusterOf(node).filter((m) => m === node || (!g.net.nodes.get(m)?.signal && g.defaultSignal(m))).length;
-  const cost = n * SIGNAL_COST;
+  const cost = g.lightsCost(node), n = Math.round(cost / SIGNAL_COST);
   return {
     text,
     fix: `Traffic lights here make them take turns, so it clears and doesn't come back.${n > 1 ? ` (These ${n} junctions are so close they work as one: they all get lights.)` : ""}`,

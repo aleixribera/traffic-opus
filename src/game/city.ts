@@ -512,7 +512,7 @@ export class Game {
       const was = before.get(id);
       if (was && ng.arms.every((a) => was.some((d) => a.dir.x * d.x + a.dir.y * d.y > 0.985))) continue;
       const plan = this.defaultSignal(id);
-      if (plan) { this.net.setSignal(id, plan); lit += 1 + this.lightCluster(id).length; }
+      if (plan) { this.net.setSignal(id, plan); lit += 1 + this.lightCluster(id, true).length; }
     }
     return lit;
   }
@@ -522,14 +522,23 @@ export class Game {
    * plan too (they run on its clock: Traffic.syncClusters). Returns the junctions it lit. Lights at one end only
    * let cars into a link that a free-for-all at the other end then left them standing on.
    */
-  private lightCluster(id: number): number[] {
+  private lightCluster(id: number, auto: boolean): number[] {
     const lit: number[] = [];
-    for (const m of this.net.clusterOf(id)) {
-      if (m === id || this.net.nodes.get(m)?.signal) continue;
-      const plan = this.defaultSignal(m);
-      if (plan) { this.net.setSignal(m, plan); lit.push(m); }
-    }
+    for (const m of this.unlitSiblings(id, auto)) { this.net.setSignal(m, this.defaultSignal(m)); lit.push(m); }
     return lit;
+  }
+
+  /** The junctions of `id`'s cluster that lights on it would light too (`auto`: not those the player took lights from). */
+  private unlitSiblings(id: number, auto: boolean): number[] {
+    return this.net.clusterOf(id).filter((m) => {
+      const n = this.net.nodes.get(m);
+      return m !== id && !!n && !n.signal && !(auto && n.noAutoLights) && !!this.defaultSignal(m);
+    });
+  }
+
+  /** What putting lights on junction `id` costs: it and the rest of its cluster still without (see lightCluster). */
+  lightsCost(id: number): number {
+    return (1 + this.unlitSiblings(id, false).length) * SIGNAL_COST;
   }
 
   /**
@@ -996,14 +1005,16 @@ export class Game {
     if (!n) return false;
     // lights the player takes away stay away (they aren't put back when the junction changes)
     if (!plan && n.signal) n.noAutoLights = true;
-    // (the rest of its cluster with it: lights on part of one cover all of it, see lightCluster)
-    const others = this.net.clusterOf(nodeId).filter((m) => m !== nodeId && !plan === !!this.net.nodes.get(m)?.signal && (!plan || this.defaultSignal(m)));
-    const cost = plan ? ((n.signal ? 0 : 1) + others.length) * SIGNAL_COST : 0;
+    // (the rest of its cluster with it, when lights go up or come down: lights on part of one cover all of it, see
+    // lightCluster. A change to the plan of lights already up is just that)
+    const adding = !!plan && !n.signal;
+    const lit = !plan && n.signal ? this.net.clusterOf(nodeId).filter((m) => m !== nodeId && this.net.nodes.get(m)?.signal) : [];
+    const cost = adding ? this.lightsCost(nodeId) : 0;
     if (cost > this.money) return false;
     const ops = this.applyRoads(() => {
       this.net.setSignal(nodeId, plan);
-      if (plan) this.lightCluster(nodeId);
-      else for (const m of others) { this.net.setSignal(m, null); this.net.nodes.get(m)!.noAutoLights = true; }
+      if (adding) this.lightCluster(nodeId, false);
+      for (const m of lit) { this.net.setSignal(m, null); this.net.nodes.get(m)!.noAutoLights = true; }
     });
     this.money -= cost;
     this.pushUndo({ label: "signal", ops, money: cost, added: [], removed: [] });

@@ -147,6 +147,18 @@ describe("junctions closer than a couple of car lengths work as one", () => {
       tr.step(DT);
       expect(tr.signalState(B, link)).toBe(tr.signalState(A, link));
     }
+    // a plan of its own at one of them (a phase more than the other's): a change to that junction alone, free, and
+    // it keeps a clock of its own, so every phase of it still comes round to green
+    const armsB = g.net.nodeGeom.get(B)!.arms.map((a) => a.seg);
+    const before = g.money;
+    expect(g.setSignal(B, { phases: armsB.slice(0, 3).map((a) => ({ arms: [a] })) })).toBe(true);
+    expect(g.money).toBe(before);
+    const greens = new Set<number>();
+    for (let t = 0; t < 200; t += DT) {
+      tr.step(DT);
+      armsB.slice(0, 3).forEach((a, k) => { if (tr.signalState(B, a) === "green") greens.add(k); });
+    }
+    expect([...greens].sort()).toEqual([0, 1, 2]);
     // and taking them away takes both
     expect(g.setSignal(B, null)).toBe(true);
     expect(g.net.nodes.get(A)!.signal).toBeNull();

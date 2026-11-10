@@ -1912,8 +1912,10 @@ export class Hud {
     const b = this.panel.querySelector<HTMLButtonElement>(".ip-act-fix");
     const act = m.status.act;
     if (b && act) b.onclick = () => {
-      const g = this.app.game;
-      if (!g.setSignal(act.node, g.defaultSignal(act.node))) { this.toast("Not enough money", true); return; }
+      const g = this.app.game, plan = g.defaultSignal(act.node);
+      // (the junction changed since the panel was drawn: it can't take lights now, or has them)
+      if (!plan || g.net.nodes.get(act.node)?.signal) { this.lastPanel = ""; this.fillSel(); return; }
+      if (!g.setSignal(act.node, plan)) { this.toast("Not enough money", true); return; }
       this.sfx.play("build");
       this.toast("Traffic lights up: the deadlock clears as they take turns");
       this.lastPanel = "";
@@ -2314,7 +2316,7 @@ export class Hud {
       const stopArms = arms.filter((a) => !g.net.segs.get(a.seg)?.ring && ng.conns.some((c) => c.armIn === a.seg));
       body = `<p class="small muted">Unsignalled: cars give way by road priority. A stop sign makes an approach stop and give way to all the others. Lights stop traffic in turns and help busy crossings.</p>
         <div class="phase stops"><span class="ph-name">Stop signs</span><span class="ph-arms">${stopArms.map((a) => `<button class="arm stop-arm ${stops.includes(a.seg) ? "on stop" : ""}" data-seg="${a.seg}" aria-pressed="${stops.includes(a.seg)}" title="Stop sign on this approach">${compass(a.dir)}</button>`).join("")}</span></div>
-        <button class="btn primary add-sig" ${sigOn ? "" : "disabled"}>${sigOn ? `Add traffic lights · ${formatMoney(SIGNAL_COST)}` : `Traffic lights unlock with ${unlockedBy((u) => u.features?.includes("signals"))!.name}`}</button>`;
+        <button class="btn primary add-sig" ${sigOn ? "" : "disabled"}>${sigOn ? `Add traffic lights · ${formatMoney(g.lightsCost(this.panelNode))}` : `Traffic lights unlock with ${unlockedBy((u) => u.features?.includes("signals"))!.name}`}</button>`;
     } else {
       body = `<p class="muted small">The lights run on a fixed clock: ${GREEN} s of green for each phase (${LEFT_GREEN} s for a left-turn arrow), then amber and a moment of all red. Cars may turn right on red after stopping.</p>` + plan.phases.map((p, i) => `<div class="phase ${i === this.panelPhase ? "on" : ""}${live?.st === 0 && live.i === i ? " live" : ""}" data-i="${i}"${live?.st === 0 && live.i === i ? ` title="Green now"` : ""}>
           <span class="ph-name">${i + 1}. ${p.left ? "Left turns" : "All turns"}<button class="ph-left ${p.left ? "on" : ""}" data-i="${i}" aria-pressed="${!!p.left}" title="Only left turns (and U-turns) go in this phase">Left only</button></span>

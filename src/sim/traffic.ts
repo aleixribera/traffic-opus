@@ -1166,7 +1166,8 @@ export class Traffic {
   }
 
   /**
-   * Lights on junctions that work as one (close links, see CLOSE_LINK) run on one clock, the lowest-numbered one's:
+   * Lights on junctions that work as one (close links, see CLOSE_LINK) run on one clock, the lowest-numbered one's
+ * (where their plans line up):
    * the same phase, stage and time, so traffic along the links has green at both ends at once. (Their plans put the
    * phase along the link first: see Game.defaultSignal.) Out of step, a car let into a link on green at one end
    * stood on it at a red at the other, its tail in the box behind.
@@ -1184,10 +1185,12 @@ export class Traffic {
       let L = this.sigCtl.get(lead);
       if (!L) { this.signalState(lead, -1); L = this.sigCtl.get(lead); }
       if (!L || L.plan !== this.net.nodes.get(lead)?.signal) continue; // (its plan changed this step: next step)
-      const ph = c.plan.phases;
-      let i = L.i % ph.length;
-      if (!ph[i].arms.length) i = c.i;
-      c.i = i; c.st = L.st; c.t = L.t;
+      // only where the plans line up phase for phase (the same number, the arrows in the same places, as the default
+      // plans of a cluster are): otherwise a phase it has and the lead hasn't would never go green. It keeps its own
+      // clock then (cars still only go into a link with room beyond it: clusterExit)
+      const ph = c.plan.phases, lp = L.plan.phases;
+      if (lp.length !== ph.length || lp.some((p, k) => !p.left !== !ph[k].left)) continue;
+      c.i = L.i; c.st = L.st; c.t = L.t;
     }
   }
 
@@ -1299,7 +1302,7 @@ export class Traffic {
       for (const c2 of lane.outs) {
         if (dkey(c2.to.seg, c2.to.dir) !== nk) continue;
         if (this.net.segs.get(c2.to.seg)?.ring) return undefined; // (onto a roundabout: its entry has its own rules)
-        const b = this.roomOn(c2.to, v, lane, nk);
+        const b = this.roomOn(c2.to, v, lane, nk, !!v.granted);
         if (b === undefined) { room = c2.to; break; }
         by ??= b;
       }
@@ -1311,10 +1314,11 @@ export class Traffic {
 
   /**
    * Room for `v` on lane `b` on its way through a cluster, from link `via`: the cars on `b` and those let in towards
-   * it, and the cars ahead on the link going the same way (`nk`), which get there first. Undefined: room; otherwise
+   * it, and the cars ahead on the link going the same way (`nk`), which get there first (`granted`: `v` was let in
+   * already, see canEnter). Undefined: room; otherwise
    * what fills it (null: the cars ahead on the link).
    */
-  private roomOn(b: Lane, v: Vehicle, via: Lane, nk: number): Vehicle | null | undefined {
+  private roomOn(b: Lane, v: Vehicle, via: Lane, nk: number, granted: boolean): Vehicle | null | undefined {
     let free = b.pl.length;
     const first = (b.occ as Vehicle[])[0];
     if (first) free = first.s - first.len;
@@ -1323,7 +1327,9 @@ export class Traffic {
     let by: Vehicle | null = first ?? null;
     for (const h of this.holdersInto(b)) if (h !== v && h.edge !== via) { free -= h.len + 2; by ??= h; }
     for (const u of via.occ as Vehicle[]) if (u !== v && u.route[u.ri + 1] === nk) { free -= u.len + 2; by ??= u; }
-    if (free >= v.len + 1.5 || (first && first.v > 3 && free > 0.5)) return undefined;
+    // (as the room check into the link: a car already let in keeps its grant on a little less, so it doesn't brake
+    // and go again each time the room beyond shrinks by a step)
+    if (free >= v.len + (granted ? 0.5 : 1.5) || (first && first.v > 3 && free > 0.5)) return undefined;
     return by;
   }
 
