@@ -286,7 +286,11 @@ function waitingFor(g: Game, b: Building): PanelModel["status"] | null {
   if (full) return { text, tone: "bad", fix: `${needHelpSay({ kind: "full", works: BUILDING_TYPES[full.works[0].kind].name, have: full.works.length, n: 1 })}${full.nextLevel ? ` Or wait: it grows to level ${full.nextLevel}.` : ""}` };
   // (a works short of power still works, slowly: it is not stopped, so it is not "held up")
   const pr = next.from?.problem ?? "", slow = /^(No power|Short of power): working at (\d+%)/.exec(pr);
-  const held = !pr || next.building ? "" : slow ? ` It works at ${slow[2]} without full power, so its loads come slowly.` : ` It is held up: ${pr.split(": ")[0].toLowerCase()}.`;
+  // (a power plant whose coal mine waits on this very plant's power: the two hold each other up, so name the way out)
+  const loop = slow && D.makes && next.from && g.utilities.reaches(b, next.from);
+  const chips = loop && D.alt?.coal === "chips" ? nextLoad(g, b, "chips") : null;
+  const held = !pr || next.building ? "" : loop ? ` It works at ${slow![2]}: it waits for this plant's own power. ${chips?.from ? `${chips.say}, and that gets both going.` : "Wood chips from a Sawmill on its roads would get both going."}`
+    : slow ? ` It works at ${slow[2]} without full power, so its loads come slowly.` : ` It is held up: ${pr.split(": ")[0].toLowerCase()}.`;
   return { text, tone: "bad", fix: `${next.say}.${held}` };
 }
 
@@ -406,7 +410,8 @@ export function siteModel(g: Game, b: Building, led?: TradeLedger): PanelModel {
     const { rate: r, can } = shownRate(g, b, p0);
     keys.push(r === null
       ? { value: "–", label: "no output yet", title: `Can make ${fmtRate(can)} ${lower(p0)} an hour` }
-      : { value: fmtRate(r), unit: "/h", label: `${lower(p0)}, can ${fmtRate(can)}`, tone: can > 0 ? toneOf(r / can, 0.75, 0.35) : "", title: `${PRODUCTS[p0].name} made an hour lately, against ${fmtRate(can)} an hour fully staffed and supplied` });
+      // (never the good green under a red status: a mine with no power read a green "0.4/h")
+      : { value: fmtRate(r), unit: "/h", label: `${lower(p0)}, can ${fmtRate(can)}`, tone: can > 0 ? (status.tone === "bad" && toneOf(r / can, 0.75, 0.35) === "good" ? "" : toneOf(r / can, 0.75, 0.35)) : "", title: `${PRODUCTS[p0].name} made an hour lately, against ${fmtRate(can)} an hour fully staffed and supplied` });
     // a product the towns pay for: what it earns; one that only feeds your plants: what it ships
     if (outs.some((p) => PRODUCTS[p].price > 0)) {
       const net = P.last.earned - P.last.spent;
@@ -479,9 +484,11 @@ export function siteModel(g: Game, b: Building, led?: TradeLedger): PanelModel {
       // (a kind of site cleared only so far waits for a goal: that is the plan, not trouble)
       const goal = P.why?.match(/^Level \d+ opens with the goal "(.+)"$/)?.[1];
       const held = !goal && P.why && P.why !== b.problem;
+      // (in the status's own words: "No power" above, not "Short of power" here)
+      const why = P.why === "Short of power" && b.problem?.startsWith("No power") ? "No power" : P.why;
       level = goal
         ? { from: `Level ${L}`, to: `Level ${L + 1}`, pct: 0, line: `opens with the goal “${goal}”` }
-        : { from: `Level ${L}`, to: `Level ${L + 1}`, pct: k, line: held ? `held back: ${P.why}` : `${Math.round(k * 100)}% · then ×${LEVEL_MULT[L]} output`, tone: held ? "bad" : "" };
+        : { from: `Level ${L}`, to: `Level ${L + 1}`, pct: k, line: held ? `held back: ${why}` : `${Math.round(k * 100)}% · then ×${LEVEL_MULT[L]} output`, tone: held ? "bad" : "" };
     }
   }
   siteViz(g, b, flow, rel);

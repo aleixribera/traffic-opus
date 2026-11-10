@@ -427,6 +427,23 @@ describe("read off the game", () => {
     expect(shownRate(g, farm, "crops").rate).toBeNull();
   });
 
+  it("a works short of power never reads as making all it can, nor in the good green (design audit 2026-11-10: a green 0.4/h under 'No power')", () => {
+    const can = canPerDay(g, farm, "crops") / 24;
+    // lumpy hours a flat-out reading would round up to what it can make
+    farm.plant!.hist = [{ crops: can * 3 * 0.8 }, {}, {}, {}];
+    expect(flatOut(g, farm, "crops")).toBe(true);
+    farm.problem = "No power: working at 40%";
+    expect(shownRate(g, farm, "crops").rate!).toBeCloseTo(can * 0.6);
+    const m = siteModel(g, farm);
+    expect(m.status.tone).toBe("bad");
+    expect(m.keys[0].tone).not.toBe("good");
+    // its level line in the status's own words
+    farm.plant!.why = "Short of power";
+    expect(siteModel(g, farm).level?.line).toBe("held back: No power");
+    farm.problem = null;
+    farm.plant!.why = null;
+  });
+
   it("a works that has made nothing yet is starting up, and says when its first truck leaves (owner, 2026-11-10)", () => {
     const fresh = (b: Building) => { b.plant!.hist = []; b.plant!.last.made = 0; b.plant!.now.made = 0; b.problem = null; };
     fresh(farm); fresh(foodplant);

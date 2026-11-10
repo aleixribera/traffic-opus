@@ -151,7 +151,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .cb-city > b small { font-size: 0.72em; letter-spacing: 0.06em; color: var(--cream-2); }
 /* money: a stamped readout, like a cash register's window */
 .cb-money { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; background: none; border: 1px solid transparent; border-radius: var(--r); padding: 4px 6px; }
-.cb-money b { font: 600 var(--t-big)/22px var(--f-text); letter-spacing: 0.02em; padding: 0 8px; min-width: 104px; background: var(--ink); border: 1px solid var(--edge); box-shadow: inset 0 0 0 1px var(--rule), inset 0 1px 3px rgba(0, 0, 0, 0.6); color: var(--cream); border-radius: 1px; }
+.cb-money b { font: 600 var(--t-big)/22px var(--f-text); font-variant-numeric: tabular-nums lining-nums; letter-spacing: 0.02em; padding: 0 8px; min-width: 104px; background: var(--ink); border: 1px solid var(--edge); box-shadow: inset 0 0 0 1px var(--rule), inset 0 1px 3px rgba(0, 0, 0, 0.6); color: var(--cream); border-radius: 1px; }
 .cb-money b.bad { color: var(--bad); }
 .cb-money span { font-size: var(--t-xs); font-weight: 600; padding-left: 2px; }
 
@@ -173,7 +173,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .cat.hint:not(.on)::before { content: ""; position: absolute; top: 5px; right: 8px; width: 8px; height: 8px; background: var(--ochre); transform: rotate(45deg); box-shadow: 0 0 0 2px var(--bar); }
 
 .cb-clock { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; line-height: 1; flex: none; }
-.cb-clock b { font: 600 var(--t-big)/22px var(--f-text); padding: 0 8px; background: var(--ink); border: 1px solid var(--edge); box-shadow: inset 0 0 0 1px var(--rule), inset 0 1px 3px rgba(0, 0, 0, 0.6); border-radius: 1px; letter-spacing: 0.04em; }
+.cb-clock b { font: 600 var(--t-big)/22px var(--f-text); font-variant-numeric: tabular-nums lining-nums; padding: 0 8px; background: var(--ink); border: 1px solid var(--edge); box-shadow: inset 0 0 0 1px var(--rule), inset 0 1px 3px rgba(0, 0, 0, 0.6); border-radius: 1px; letter-spacing: 0.04em; }
 .cb-day { white-space: nowrap; color: var(--cream-2); font-size: var(--t-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; }
 .cb-clock.night b { color: var(--info); }
 .speed { display: flex; background: var(--ink); border: 1px solid var(--edge); border-radius: var(--r); box-shadow: inset 0 0 0 1px var(--rule); padding: 2px; gap: 2px; }
@@ -997,7 +997,8 @@ button.fchip:hover { background: var(--plate-3); border-color: var(--pin); }
 /* a level bar named at both ends (levelRun): this level, the way to the next, the next */
 .lvr-k { font-weight: 600; color: var(--ochre-hi); font-variant-numeric: tabular-nums lining-nums; white-space: nowrap; }
 .lvr-k.lvr-to { color: var(--cream-2); font-weight: 500; }
-.lvr-bar { height: 4px; min-width: 48px; }
+/* (its empty part a visible track on the navy: a near-black one read as no bar at all) */
+.lvr-bar { height: 5px; min-width: 48px; background: var(--plate-3); box-shadow: inset 0 0 0 1px var(--pin); }
 .lvr-bar i { background: var(--ochre); }
 .lv-run { display: inline-grid; grid-template-columns: auto minmax(48px, 1fr) auto; gap: 6px; align-items: center; width: 100%; max-width: 220px; vertical-align: middle; }
 .lv-run .lvr-top { grid-column: 1 / -1; }

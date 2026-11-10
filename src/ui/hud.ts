@@ -28,7 +28,7 @@ import { comingNeeds, growthOf, townNeeds, type NeedView } from "./needs";
 import type { Lane } from "../roads/network";
 import { CHANGELOG } from "../changelog";
 import { PLACED, PLACED_TABS, type PlacedKind } from "../game/placed";
-import { SAVE_V, type Game } from "../game/city";
+import { GATE_LINK_REACH, SAVE_V, type Game } from "../game/city";
 import { BUS_UPKEEP, STOP_COST } from "../game/transit";
 import { WirelessControl, soundHtml, soundSummary, wireSound } from "./soundPanel";
 import { heraldSvg } from "./herald";
@@ -507,7 +507,8 @@ export class Hud {
       const locked = g.placedUnlocked(a.id) ? undefined : unlockedBy((u) => u.buildings?.includes(a.id));
       const site = D.site ? ` Starts as a building site: it needs ${siteText(D.site)} trucked to it.` : "";
       const power = D.power ? ` Draws ${D.power} MW: without power it works at ${Math.round(UNPOWERED * 100)}%.` : D.makes ? ` Makes ${D.makes} MW for the buildings on its roads within ${D.reach! / 1000} km that draw power.` : "";
-      const price = `${formatMoney(S.cost)} · ${formatMoney(S.upkeep)}/h`;
+      // (the hourly figure is upkeep: "$8,000 · $12/h" did not say whether it was earned or spent)
+      const price = `${formatMoney(S.cost)} · upkeep ${formatMoney(S.upkeep)}/h`;
       return {
         key: "placed:" + a.id, icon: placedIcon(a.id), name: T.name, sub: price, locked,
         flow: flowIcons(a.id),
@@ -766,7 +767,8 @@ export class Hud {
     } else if (st.tool === "place" && isPlantKind(st.placed)) {
       const D = PLANTS[st.placed];
       // (one line: the rest is on the cursor's chips as the building moves, and in the catalog's line)
-      items.push(h("p", "to-text", `Turn it with <kbd>,</kbd> and <kbd>.</kbd> or Shift + wheel.${D.deposit ? ` It needs ${D.deposit.name} under at least ${Math.round(MIN_DEPOSIT * 100)}% of its plot.` : ""}`));
+      // (and where its road comes from: the tip that said so steps aside while it is in hand)
+      items.push(h("p", "to-text", `Turn it with <kbd>,</kbd> and <kbd>.</kbd> or Shift + wheel.${D.deposit ? ` It needs ${D.deposit.name} under at least ${Math.round(MIN_DEPOSIT * 100)}% of its plot.` : ""} Within ${GATE_LINK_REACH} m of a road it lays its own street to it.`));
     } else if (st.tool === "roundabout") {
       items.push(elevation());
     } else if (st.tool === "bulldoze") {
@@ -915,7 +917,9 @@ export class Hud {
     const prefs = this.tipPrefs;
     const open = g.progress.open();
     // (with every goal reached the card lists the towns' shortfalls itself: the tip that says the same stands down)
-    const tip = prefs.off ? null : tipFor(g, (id) => prefs.dismissed.has(id) || (id === "ceiling" && !open.length));
+    // (and a tip that says to take in hand the works already in hand: the tool options say how to place it)
+    const st = this.app.st, inHand = (id: string) => st.tool === "place" && st.placed === id;
+    const tip = prefs.off ? null : tipFor(g, (id) => prefs.dismissed.has(id) || (id === "ceiling" && !open.length) || ((id === "farm" || id === "foodplant") && inHand(id)));
     this.tut.hidden = false;
     const v = g.progressView();
     const folded = this.tutHidden;

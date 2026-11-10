@@ -150,7 +150,8 @@ export function canPerDay(g: Game, b: Building, p: Product): number {
 export function shownRate(g: Game, b: Building, p: Product): { rate: number | null; can: number } {
   const can = canPerDay(g, b, p) / 24;
   const x = paceOf(b, p);
-  if (x) return { rate: flatOut(g, b, p) ? can : Math.min(can, x.made / x.hours), can };
+  // (short of power it is not making all it can, whatever a lumpy few hours say)
+  if (x) return { rate: flatOut(g, b, p) && !/^(No power|Short of power)/.test(b.problem ?? "") ? can : Math.min(can, x.made / x.hours), can };
   // (no pace yet: over the hours since its first load, fewer than PACE_HOURS of them)
   const by = Industry.madeLately(b, p).byHour, first = by.findIndex((v) => v > 0);
   if (first < 0) return { rate: null, can };
