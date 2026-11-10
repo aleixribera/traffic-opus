@@ -5,9 +5,9 @@
 // Pure over the town, so tests check every word against the sim (towns.ts growthPerDay, settlements.ts hourly).
 
 import { PRODUCTS, type Product } from "../game/industry";
-import { served, type Town } from "../game/settlements";
+import { served, townGrowth, type Town } from "../game/settlements";
 import { ENOUGH, deliveredLately } from "../game/supply";
-import { SETTLING, SUPPLY_HOURS, SUPPLY_WARMUP, demandPerDay, growthPerDay, needFrom, needsOf, nextNeed } from "../game/towns";
+import { HOLD_FROM, SETTLING, SUPPLY_HOURS, SUPPLY_WARMUP, demandPerDay, needFrom, needsOf, nextNeed, type GrowthBand } from "../game/towns";
 
 export type NeedState = "plenty" | "enough" | "low" | "none";
 
@@ -146,37 +146,21 @@ export function comingNeeds(pop: number): { products: Product[]; pop: number } |
 
 // ------------------------------------------------------------------ how it grows, in words
 
-export type GrowthWord = "Settling in" | "Shrinking" | "Not growing" | "Growing slowly" | "Growing" | "Growing fast";
-
-/** "food is running low", "food and planks are running low", and past two "3 needs are running low". */
-const runningLow = (names: string[]): string =>
-  names.length > 2 ? `${names.length} needs are running low` : names.length === 2 ? `${names[0]} and ${names[1]} are running low` : `${names[0]} ${isAre(names[0])} running low`;
-
-/** Its pace against its best (every need met in full) at or above which a town is "Growing fast", and "Growing". */
-export const GROW_FAST = 0.95, GROW_OK = 0.5;
-
 /**
- * How a town is growing, in a word and no numbers (docs/design.md, 2026-11-08): its pace now against the pace it would
- * have with every need met in full (towns.ts growthPerDay), so the words mean the same in a hamlet and a city. All
- * needs "Enough" reads "Growing", all "Plenty" "Growing fast"; one running low holds it to a trickle, "Growing slowly".
- * Below its best it says why, in the needs' own words ("needs food").
+ * How a town is growing, as the sim decides it and in its words (settlements.ts townGrowth, owner 2026-11-10: no
+ * second rule here): its band ("fast", "slow", "hold", "shrink"), the word that leads its line ("Holding steady"),
+ * and the line with the need that holds it named ("Holding steady: 72% supplied with food, grows from 85%"). Red
+ * below HOLD_FROM, where it is short and soon shrinks; green at its full pace.
  */
-export function growthOf(t: Town): { word: GrowthWord; tone: "good" | "bad" | ""; why: string } {
-  if (t.pop < SETTLING) return { word: "Settling in", tone: "", why: "" };
-  const short = townNeeds(t).filter((v) => v.state === "low" || v.state === "none").map((v) => v.name.toLowerCase());
-  // (one or two short: named. More: counted, the rows under the line name them, and the line stays one line)
-  const why = short.length > 2 ? `short of ${short.length} needs` : short.length ? `needs ${short.join(" and ")}` : "";
-  if (t.trend <= -0.5) return { word: "Shrinking", tone: "bad", why };
-  // (stood still with every need at "Enough" or better: what its supply runs out on first, settlements.ts limit)
-  if (t.trend < 0.5) return { word: "Not growing", tone: short.length ? "bad" : "", why: why || (t.limit ? `needs more ${PRODUCTS[t.limit].name.toLowerCase()}` : "") };
-  const best = growthPerDay(t.pop);
-  const k = best > 0 ? t.trend / best : 1;
-  // (still growing on the two days behind it while a need has run short over the last one: it says both, so the
-  // line never reads "Growing fast" over a row that reads "Running low")
-  if (k >= GROW_OK && short.length) return { word: "Growing", tone: "", why: `but ${runningLow(short)}` };
-  if (k >= GROW_FAST) return { word: "Growing fast", tone: "good", why: "" };
-  if (k >= GROW_OK) return { word: "Growing", tone: "good", why: "" };
-  return { word: "Growing slowly", tone: "", why: short.length ? why.replace(/^needs /, "needs more ") : "" };
+export function growthOf(t: Town): { band: GrowthBand; word: string; tone: "good" | "bad" | ""; line: string; by: Product | null } {
+  const tg = townGrowth(t);
+  const i = tg.line.indexOf(": ");
+  const word = i > 0 ? tg.line.slice(0, i) : tg.line;
+  // (its supply level is its worst-supplied need's: name that need, "72% supplied with food")
+  const name = tg.by && tg.band !== "fast" ? PRODUCTS[tg.by].name.toLowerCase() : "";
+  const line = name ? tg.line.replace(/(\d+%) supplied/, `$1 supplied with ${name}`) : tg.line;
+  const tone = tg.band === "fast" ? "good" : tg.band === "shrink" || tg.level < HOLD_FROM ? "bad" : "";
+  return { band: tg.band, word, tone: t.pop < SETTLING ? "" : tone, line, by: tg.by };
 }
 
 /**

@@ -4,8 +4,8 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 import { Game } from "../src/game/city";
-import type { Town } from "../src/game/settlements";
-import { SUPPLY_WARMUP, averageSupply, demandPerDay, growthPerDay, needsOf } from "../src/game/towns";
+import { townGrowth, type Town } from "../src/game/settlements";
+import { SHRINK_AFTER, SUPPLY_WARMUP, averageSupply, demandPerDay, needsOf } from "../src/game/towns";
 import type { Product } from "../src/game/industry";
 import { deliveredLately } from "../src/game/supply";
 import { townModel } from "../src/ui/inspect";
@@ -187,50 +187,37 @@ describe("a town's needs, read out", () => {
     t.pop = pop;
   });
 
-  it("growth in words, no numbers: against the town's own best, so a hamlet and a city read alike", () => {
-    const pop = t.pop, trend = t.trend;
-    /**
-     * every need at this share of a day's want, and the town growing at `k` of its best pace (towns.ts grows a town
-     * at its full pace on a proven supply and eases off as it nears what that supply supports, so the share of its
-     * best pace is what the words read)
-     */
-    const at = (p: number, share: Partial<Record<Product, number>>, k = 1) => {
+  it("growth in the sim's own words: townGrowth's band and line, with the need that holds it named", () => {
+    const pop = t.pop, rate = t.rate, lack = t.lack;
+    /** every need a little over a day's use, but those in `share` at that share of it; `short`: hours short so far */
+    const at = (p: number, share: Partial<Record<Product, number>>, short = 0) => {
       t.pop = p;
-      const want = (q: Product) => demandPerDay(q, p) * (share[q] ?? 1);
-      t.hours = Array.from({ length: 24 }, () => Object.fromEntries(needsOf(p).map((q) => [q, want(q) / 24])));
-      t.hourNow = {};
-      t.supply = Object.fromEntries(needsOf(p).map((q) => [q, Math.min(1, share[q] ?? 1)]));
-      t.trend = growthPerDay(p) * k;
+      t.rate = Object.fromEntries(needsOf(p).map((q) => [q, demandPerDay(q, p) * (share[q] ?? 1.1)]));
+      t.lack = short;
       return growthOf(t);
     };
     for (const p of [400, 2500, 8000]) {
-      expect(at(p, {}).word).toBe("Growing fast");
-      expect(at(p, Object.fromEntries(needsOf(p).map((q) => [q, ENOUGH])), 0.7).word).toBe("Growing");
-      // one need running low holds it to a trickle, and says which
-      expect(at(p, { food: 0.6 }, 0.2)).toEqual({ word: "Growing slowly", tone: "", why: "needs more food" });
-      expect(at(p, { food: 0.3 }, 0)).toMatchObject({ word: "Not growing", tone: "bad", why: "needs food" });
+      expect(at(p, {})).toMatchObject({ band: "fast", word: "Growing", tone: "good", line: "Growing: fully supplied" });
+      expect(at(p, { food: 0.92 })).toMatchObject({ band: "slow", word: "Growing slowly", tone: "", line: "Growing slowly: 92% supplied with food, full pace from 100%", by: "food" });
+      // held by one need at 70%: it says which
+      expect(at(p, { food: 0.7 })).toMatchObject({ band: "hold", word: "Holding steady", tone: "", line: "Holding steady: 70% supplied with food, grows from 85%", by: "food" });
+      expect(at(p, { food: 0.48 })).toMatchObject({ band: "hold", word: "Short of supplies", tone: "bad", line: "Short of supplies: 48% supplied with food, holds from 60%" });
+      expect(at(p, { food: 0.48 }, SHRINK_AFTER)).toMatchObject({ band: "shrink", word: "Shrinking", tone: "bad", line: "Shrinking: 48% supplied with food, holds from 60%" });
     }
-    // two short: both named
-    expect(at(400, { food: 0.3, planks: 0 }, 0).why).toBe("needs food and planks");
-    // still growing on the days behind it while a need has run short over the last one: the line says both, never
-    // "Growing fast" over a row that reads "Running low" (owner, 2026-11-10)
-    expect(at(400, { food: 0.6 }, 1)).toEqual({ word: "Growing", tone: "", why: "but food is running low" });
-    expect(at(400, { food: 0.6, planks: 0.5 }, 0.8).why).toBe("but food and planks are running low");
-    expect(townModel(g, t).status.text).toBe("Growing, but food and planks are running low");
-    // none at all: it loses households
-    expect(at(400, { food: 0 }, -0.1)).toEqual({ word: "Shrinking", tone: "bad", why: "needs food" });
-    // a landmark's boost on top still reads "fast"; a settlement just settles
-    expect(at(400, {}, 1.3).word).toBe("Growing fast");
+    // the worst-supplied need is the one named
+    expect(at(400, { food: 0.9, planks: 0.7 }).line).toBe("Holding steady: 70% supplied with planks, grows from 85%");
+    // townGrowth's band and words, never a second rule of the panel's own
+    for (const share of [{}, { food: 0.92 }, { food: 0.7 }, { food: 0.3 }]) {
+      const gr = at(2500, share), tg = townGrowth(t);
+      expect(gr.band).toBe(tg.band);
+      expect(gr.word).toBe(tg.line.split(":")[0]);
+    }
+    // the panel's status line is that line
+    at(400, { food: 0.7 });
+    expect(townModel(g, t).status).toMatchObject({ text: "Holding steady: 70% supplied with food, grows from 85%", tone: "" });
     t.pop = 40;
     expect(growthOf(t).word).toBe("Settling in");
-    // and the panel's status line carries the word, never a figure
-    expect(at(400, { food: 0.3 }, 0)).toBeTruthy();
-    expect(townModel(g, t).status.text).toBe("Not growing, needs food");
-    at(400, {});
-    expect(townModel(g, t).status.text).toBe("Growing fast");
-    expect(/\d/.test(townModel(g, t).status.text)).toBe(false);
-    t.pop = pop;
-    t.trend = trend;
+    Object.assign(t, { pop, rate, lack });
   });
 
   it("the panel's keys count the needs met, with no percentages", () => {

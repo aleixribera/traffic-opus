@@ -93,30 +93,29 @@ export function needHelpSay(o: { kind: "none"; works: string; product: string } 
   return `Your ${o.works} is held up: ${o.problem[0].toLowerCase()}${o.problem.slice(1)}.`;
 }
 
-/** Towns by name: "Alder Run", "Alder Run and Elton", "Alder Run, Elton and Ashby", "Alder Run, Elton and 2 more towns". */
-const townList = (ns: readonly string[]): string =>
-  ns.length <= 3 ? ns.join(", ").replace(/, ([^,]*)$/, " and $1") : `${ns[0]}, ${ns[1]} and ${ns.length - 2} more towns`;
+/** Towns by name, two at most: "Alder Run", "Alder Run and Elton", "Alder Run, Elton and 1 more". */
+const townList = (ns: readonly string[]): string => (ns.length <= 2 ? ns.join(" and ") : `${ns[0]}, ${ns[1]} and ${ns.length - 2} more`);
 
 /**
  * What holds a works short of workers, and the way out the sim offers (staffing): a town on its roads, the people
- * there still free taking its jobs, or the towns there growing. `works`: its name, where the advice would otherwise be
- * to build another.
+ * there still free taking its jobs, or the towns there growing. Short: it sits under a town's status in four lines
+ * at most (owner, 2026-11-10).
  */
-export function staffSay(o: { towns: readonly string[]; spare: number; works?: string }): string {
+export function staffSay(o: { towns: readonly string[]; spare: number }): string {
   if (!o.towns.length) return "No town is on its roads, so nobody can get to work there. Link it to a town by road.";
   const who = townList(o.towns);
   if (o.spare > 0) return `People from ${who} are taking its jobs.`;
-  const empty = o.works ? `, so another ${o.works} on these roads would stand empty` : "";
-  return `Every adult in ${who} already works for you${empty}. ${o.towns.length === 1 ? `${who} needs` : o.towns.length === 2 ? "Both need" : "Those towns need"} to grow, or link another town to its roads.`;
+  // (nobody left: every adult there works for the company, and the hiring never takes from one works for another)
+  return `${who} ${o.towns.length === 1 ? "needs" : "need"} to grow to fill it, or link another town.`;
 }
 
 /** "6 of 12 jobs filled". */
 export const jobsFilled = (s: Staffing): string => `${s.have} of ${s.jobs} jobs filled`;
 
-/** A works short of workers, for the town's advice: "Your Sawmill is short of workers: 6 of 12 jobs filled. Every ...". */
+/** A works short of workers, for the town's advice: "Your Sawmill has 6 of 12 workers. Alder Run needs to grow ...". */
 export function workersSay(g: Game, b: Building): string {
-  const s = staffing(g, b), name = nameOf(b.kind);
-  return `Your ${name} is short of workers: ${jobsFilled(s)}. ${staffSay({ towns: s.towns.map((t) => t.name), spare: s.spare, works: name })}`;
+  const s = staffing(g, b);
+  return `Your ${nameOf(b.kind)} has ${s.have} of ${s.jobs} workers. ${staffSay({ towns: s.towns.map((t) => t.name), spare: s.spare })}`;
 }
 
 // ------------------------------------------------------------------------------------------- reading the game

@@ -596,9 +596,9 @@ export function townStatus(t: Town, joined = false): PanelModel["status"] {
     ? { text: "Joined by road", tone: "", fix: "It waits for its first load of food. Your food plants send to it as soon as they have some to spare" }
     : { text: "No road yet", tone: "", fix: "Lay a road out to it and send it food: a new market, and a longer drive for your trucks" };
   if (t.pop < 60) return { text: "Settling in", tone: "", fix: "Its first homes go up on their own" };
-  // (in words, no numbers: the figure is under Details; what to bring is in the "What it needs" rows)
+  // (the sim's own band and line, the need that holds it named: settlements.ts townGrowth via needs.ts growthOf)
   const gr = growthOf(t);
-  return { text: gr.why ? `${gr.word}, ${gr.why}` : gr.word, tone: gr.tone };
+  return { text: gr.line, tone: gr.tone };
 }
 
 export function townModel(g: Game, t: Town, led?: TradeLedger): PanelModel {
