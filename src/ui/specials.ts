@@ -88,8 +88,7 @@ export function specialRows(g: Game, b: Building, bar: Bar, season = true): stri
 export function parkSection(g: Game, b: Building): string {
   const lines = g.parks.linesFor(b.id);
   if (!lines.length) return "";
-  return `<h3 class="sub-h">Industrial park</h3><ul class="park-lines">${lines.map((l) => `<li class="${l.out ? "out" : "in"}${l.stopped !== undefined ? " stopped" : ""}">${esc(l.text)}</li>`).join("")}</ul>
-    <p class="small muted">The belt carries a few loads an hour on its own; trucks take the rest. Linked plants pollute further.</p>`;
+  return `<h3 class="sub-h" title="The belt carries a few loads an hour on its own, and trucks take the rest. Linked works pollute further">Industrial park</h3><ul class="park-lines">${lines.map((l) => `<li class="${l.out ? "out" : "in"}${l.stopped !== undefined ? " stopped" : ""}">${esc(l.text)}</li>`).join("")}</ul>`;
 }
 
 const STAGE_NAME = ["Foundations", "Frame rising", "Finishing"];
@@ -132,9 +131,8 @@ export function landmarkSite(g: Game, b: Building): string | null {
       <p class="lm-stage">${status}</p>
       <p class="small muted">${loads ? `${loads} load${loads === 1 ? "" : "s"}` : "No loads"} on the way${pieces ? ` · ${pieces} convoy${pieces === 1 ? "" : "s"} coming` : ""}</p>
     </div></div>
-    ${site ? `<h3 class="sub-h">Materials delivered</h3><dl class="facts">${mats}${pieceRow}</dl>` : ""}
-    <h3 class="sub-h">When it opens</h3><p class="small lm-reward">${esc(M.reward)}</p>
-    <p class="small muted">Your plants truck the materials here on their own, and machine works send the ${pc ? BIG_NAME[pc.kind].toLowerCase() + "s" : "pieces"} by escorted convoy. Deliveries earn nothing: it is the company's own project.</p>`;
+    ${site ? `<h3 class="sub-h" title="Your works truck the materials here on their own, and machine works send the ${pc ? BIG_NAME[pc.kind].toLowerCase() + "s" : "pieces"} by escorted convoy. Deliveries earn nothing: it is the company's own project">Materials delivered</h3><dl class="facts">${mats}${pieceRow}</dl>` : ""}
+    <h3 class="sub-h">When it opens</h3><p class="small lm-reward">${esc(M.reward)}</p>`;
 }
 
 /** A finished landmark: when it opened, the town it serves, what it does. */

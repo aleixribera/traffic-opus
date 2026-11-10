@@ -170,15 +170,20 @@ export function comingNeeds(pop: number): { products: Product[]; pop: number } |
  * and the line with the need that holds it named ("Holding steady: 72% supplied with food, grows from 85%"). Red
  * below HOLD_FROM, where it is short and soon shrinks; green at its full pace.
  */
-export function growthOf(t: Town): { band: GrowthBand; word: string; tone: "good" | "bad" | ""; line: string; by: Product | null } {
+export function growthOf(t: Town): { band: GrowthBand; word: string; tone: "good" | "bad" | ""; line: string; share: string; by: Product | null } {
   const tg = townGrowth(t);
   const i = tg.line.indexOf(": ");
-  const word = i > 0 ? tg.line.slice(0, i) : tg.line;
   // (its supply level is its worst-supplied need's: name that need, "72% supplied with food")
   const name = tg.by && tg.band !== "fast" ? PRODUCTS[tg.by].name.toLowerCase() : "";
-  const line = name ? tg.line.replace(/(\d+%) supplied/, `$1 supplied with ${name}`) : tg.line;
+  // (the state word names the need it is short of, "Short of food", where the sim's line can only say "supplies")
+  const word = (i > 0 ? tg.line.slice(0, i) : tg.line).replace("Short of supplies", name ? `Short of ${name}` : "Short of supplies");
+  const line = !name ? tg.line : word !== tg.line.slice(0, i) ? tg.line.replace("Short of supplies", word) : tg.line.replace(/(\d+%) supplied/, `$1 supplied with ${name}`);
+  // (the number after the word in a status line: the need that holds it and its share, "Food 72%", or only the share
+  // when the word names the need already: "Short of planks", "0% supplied")
+  const pc = /(\d+%) supplied/.exec(tg.line)?.[1];
+  const share = !name || !pc || t.pop < SETTLING ? "" : word.endsWith(name) ? `${pc} supplied` : `${PRODUCTS[tg.by!].name} ${pc}`;
   const tone = tg.band === "fast" ? "good" : tg.band === "shrink" || tg.level < HOLD_FROM ? "bad" : "";
-  return { band: tg.band, word, tone: t.pop < SETTLING ? "" : tone, line, by: tg.by };
+  return { band: tg.band, word, tone: t.pop < SETTLING ? "" : tone, line, share, by: tg.by };
 }
 
 /**

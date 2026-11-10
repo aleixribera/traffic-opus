@@ -170,7 +170,7 @@ describe("a power plant at its limit", () => {
       utilities: { plants: new Map([[1, { made: 40, used: 50, users: 2 }]]), supplyOf: () => supply, reaches: () => true, outputOf: () => 40 },
     }) as unknown as Game;
     expect(powerFix(at(1), mine)).toEqual({ fix: "It is up to pace again within the hour.", show: 1, back: true });
-    expect(powerFix(at(0.4), mine)).toEqual({ fix: "Your Power Plant (300 m) cannot power everything in its reach. Build another Power Plant nearby.", show: 1 });
+    expect(powerFix(at(0.4), mine)).toEqual({ fix: "Your Power Plant 300 m away cannot power everything in its reach. Build another Power Plant nearby.", show: 1 });
   });
   it("makes no such claim with power to spare, or with none made (that is its coal's line)", () => {
     expect(powerCeiling(game(60, 60, []), plant)).toBeNull();
@@ -267,7 +267,7 @@ describe("read off the game", () => {
     expect(h.say).toBe("Your Food Plant is held up: waiting for crops.");
     // in a jam the panel never says to build more (D3: "building more makes it worse")
     const fix = siteModel(g, foodplant).status.fix!;
-    expect(fix).toMatch(/Clear that jam/);
+    expect(fix).toMatch(/Clear the jam/);
     expect(fix).not.toMatch(/Build or connect/);
     foodplant.problem = null;
   });
@@ -280,7 +280,7 @@ describe("read off the game", () => {
     expect(hasMade(foodplant)).toBe(false);
     const n = nextLoad(g, foodplant, "crops");
     expect(n.from).toBe(farm);
-    expect(n.say).toMatch(/^Your Farm \(\d+(\.\d)? k?m\) sends the next crops: (under an hour|about \d+ hours?)$/);
+    expect(n.say).toMatch(/^Your Farm \d+(\.\d)? k?m away sends the next crops: (under an hour|about \d+ hours?)$/);
     const st = siteModel(g, foodplant).status;
     expect(st.text).toBe("Starting up");
     expect(st.tone).toBe("");
@@ -327,9 +327,9 @@ describe("read off the game", () => {
     const mill = { kind: "sawmill", problem: "Nobody your roads reach buys planks" } as Building;
     const pop = t.pop;
     t.pop = 77;
-    expect(noBuyer(g, mill)).toEqual({ text: "No buyer for planks yet", tone: "", fix: `Towns buy planks from 100 people. ${t.name} has 77. Until then it fills its yard` });
+    expect(noBuyer(g, mill)).toEqual({ text: "No buyer for planks yet", tone: "", fix: `Towns buy planks from 100 people. ${t.name} has 77` });
     t.pop = 140;
-    expect(noBuyer(g, mill)).toEqual({ text: "No buyer for planks yet", tone: "bad", fix: `${t.name} buys planks. Join this works to it by road` });
+    expect(noBuyer(g, mill)).toEqual({ text: "No buyer for planks yet", tone: "bad", fix: `Build a road to ${t.name}` });
     t.pop = pop;
     // any other trouble is not this one
     expect(noBuyer(g, { kind: "sawmill", problem: "Waiting for logs" } as Building)).toBeNull();
@@ -454,7 +454,7 @@ describe("read off the game", () => {
     expect(m.keys[0].tone).not.toBe("good");
     // its level line in the status's own words
     farm.plant!.why = "Short of power";
-    expect(siteModel(g, farm).level?.line).toBe("held back: No power");
+    expect(siteModel(g, farm).level?.line).toBe("held back: no power");
     farm.problem = null;
     farm.plant!.why = null;
     staffed.mockRestore();
@@ -469,7 +469,7 @@ describe("read off the game", () => {
     expect(siteModel(g, farm).status).toMatchObject({ text: "Starting up", tone: "" });
     expect(worksCalm(g, farm)).toBe(true);
     // (and its key number claims no pace: it read "Working normally, 0.0/h")
-    expect(siteModel(g, farm).keys[0]).toMatchObject({ value: "–", label: "no output yet" });
+    expect(siteModel(g, farm).keys[0]).toMatchObject({ value: "–", label: "loads/day" });
     // at work on its first batch: how long that has to go at the staff it has, and where the load goes
     farm.problem = null;
     farm.plant!.prog = 0.5;
@@ -478,7 +478,7 @@ describe("read off the game", () => {
     expect(bh.left!).toBeCloseTo(bh.whole / 2);
     const st = siteModel(g, farm).status;
     expect(st.text).toBe("Starting up");
-    expect(st.fix).toMatch(new RegExp(`^Its first load of crops is ready in ${aboutHours(bh.left!)}\\. Then its first truck leaves for your Food Plant \\(\\d+(\\.\\d)? k?m\\)\\.$`));
+    expect(st.fix).toMatch(new RegExp(`^Its first load of crops is ready in ${aboutHours(bh.left!)}\\. Then its first truck leaves for your Food Plant \\d+(\\.\\d)? k?m away\\.$`));
     // half its staff: the batch takes twice as long; nobody at work: no guess
     staff.mockReturnValue(farm.cap / 2);
     expect(batchHours(g, farm, "crops").left!).toBeCloseTo(bh.whole);
@@ -504,9 +504,9 @@ describe("read off the game", () => {
     expect(up.text).toBe("Under construction · 50%");
     expect(up.fix).toMatch(/^Opens in (under an hour|about \d+ hours?)\. Its first load of crops follows (under an hour|about \d+ hours?) later\.$/);
     foodplant.built = 0.5;
-    expect(worksStatus(g, foodplant).fix).toMatch(/^Opens in (under an hour|about \d+ hours?)\. Your Farm \(\d+(\.\d)? k?m\) is still being built\. It sends crops once it opens\.$/);
+    expect(worksStatus(g, foodplant).fix).toMatch(/^Opens in (under an hour|about \d+ hours?)\. Your Farm \d+(\.\d)? k?m away is still being built\. It sends crops once it opens\.$/);
     farm.built = 1;
-    expect(worksStatus(g, foodplant).fix).toMatch(/\. Then it takes crops from your Farm \(\d+(\.\d)? k?m\)\.$/);
+    expect(worksStatus(g, foodplant).fix).toMatch(/\. Then it takes crops from your Farm \d+(\.\d)? k?m away\.$/);
     foodplant.built = 1;
     // once it has made something it is a works like any other
     made(farm, "crops", 0.5);
@@ -526,15 +526,18 @@ describe("read off the game", () => {
     const w = waitsForSite(g, farm)!;
     expect(w.text).toBe("Waiting for your Food Plant to open");
     expect(w.tone).toBe("");
-    expect(w.fix).toMatch(/^Your Food Plant \(\d+(\.\d)? k?m\) is a building site: 3 of 12 loads delivered\. It takes crops once it opens\. Until then this yard fills\.$/);
+    expect(w.fix).toMatch(/^Your Food Plant \d+(\.\d)? k?m away is a building site: 3 of 12 loads delivered\. It takes crops once it opens\. Until then this yard fills\.$/);
     expect(w.show).toBe(foodplant.id);
     const st = siteModel(g, farm).status;
     expect(st).toMatchObject({ text: w.text, tone: "", fix: w.fix, show: { id: foodplant.id, kind: "foodplant" } });
     // (no mark on the map for it: nothing to fix, the site has to finish)
     expect(worksCalm(g, farm)).toBe(true);
-    // the sim's other line for the same wait reads the same way
+    // the sim's other lines for the same wait read the same way: before its yard fills, and once it has
     farm.problem = "The plants that will use crops are still building sites";
     expect(waitsForSite(g, farm)!.text).toBe("Waiting for your Food Plant to open");
+    farm.problem = "Full of crops: the plants that will use crops are still building sites";
+    expect(waitsForSite(g, farm)!.text).toBe("Waiting for your Food Plant to open");
+    expect(worksCalm(g, farm)).toBe(true);
     // its materials in and the crews at work: when it opens
     P.site = undefined;
     foodplant.built = 0.25;
@@ -563,7 +566,7 @@ describe("read off the game", () => {
     expect(a.works).toBe(foodplant.id);
     const m = townModel(g, t);
     // (its growth line, townGrowth's: nothing has come, so it is at 0% of its worst-supplied need)
-    expect(m.status.text).toBe("Short of supplies: 0% supplied with food, holds from 60%");
+    expect(m.status).toMatchObject({ text: "Short of food", tag: "0% supplied", title: "Short of food: 0% supplied, holds from 60%" });
     expect(m.status.fix).toBe(a.say);
     expect(m.status.show).toEqual({ id: foodplant.id, kind: "foodplant" });
     // food in full, planks still none: the advice moves on to planks, with nothing to show (no sawmill yet)

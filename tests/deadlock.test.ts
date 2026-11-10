@@ -253,7 +253,8 @@ describe("the Traffic stuck panel", () => {
     (g.traffic.vehicles as Vehicle[]).push(...ring);
     try {
       const d = deadlockAt(g, ring)!;
-      expect(d.text).toMatch(/^Deadlock: 3 vehicles each waiting/);
+      expect(d.text).toBe("Deadlock");
+      expect(d.fix).toMatch(/^3 vehicles each wait for another to move\./);
       // (the crossing 22 m along is so close it works as one with A: lights on both)
       expect(d.act).toMatchObject({ kind: "lights", node: A, cost: 2 * SIGNAL_COST });
       expect(d.fix).toContain("work as one");

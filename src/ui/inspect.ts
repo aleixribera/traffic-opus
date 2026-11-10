@@ -71,9 +71,12 @@ export interface FlowChip {
   note?: string;
   tone?: Tone;
   ref?: Sel;
+  /** a longer explanation (tooltip) */
+  title?: string;
 }
 
-export interface FlowRow { label: string; chips: FlowChip[] }
+/** A row of chips; `title`: what its label means, as a tooltip (never a line of its own). */
+export interface FlowRow { label: string; chips: FlowChip[]; title?: string }
 
 /** The one-click fix beside the advice: lights on junction `node` (and the rest of its cluster), at `cost`. */
 export interface StatusAct { kind: "lights"; node: number; label: string; cost: number }
@@ -90,7 +93,7 @@ export interface PanelModel {
    * The one voice of the thing: what state it is in, and under it the one piece of advice (`fix`), with the works
    * to look at for it (`show`: a "Show it" button that flies there)
    */
-  status: { text: string; tone: Tone; fix?: string; tag?: string; show?: { id: number; kind: string }; act?: StatusAct };
+  status: { text: string; tone: Tone; fix?: string; tag?: string; title?: string; show?: { id: number; kind: string }; act?: StatusAct };
   keys: KeyNum[];
   flow: FlowRow[];
   /** the level bar: from this level toward `to` (none: the top level) */
@@ -198,10 +201,10 @@ const powerCause = (p: string): string => {
 
 /** What to do for the problems whose line says only what is wrong. */
 const FIXES: [RegExp, string][] = [
-  [/^No road to the gate/, "Draw a road to its gate (the marker on the map)"],
+  [/^No road to the gate/, "Draw a road to its gate marker"],
   [/^No road access/, "Connect it to a road"],
-  [/^No workers|^Not enough workers/, "Its staff come from the towns on its roads: link it to one by road, or let them grow"],
-  [/^No power|^Short of power/, "Build a power plant within reach, and keep its coal coming"],
+  [/^No workers|^Not enough workers/, "Link it by road to a town"],
+  [/^No power|^Short of power/, "Build a power plant within reach"],
   [/^Idle: /, "Build plants within its reach"],
   [/^Out of food$/, "Your food plant's trucks stock the shops"],
 ];
@@ -247,7 +250,7 @@ export function trucksOut(g: Game, b: Building): { busy: number; ids: number[] }
 export function takenBy(p: Product): string {
   const them = /[^s]s$/i.test(PRODUCTS[p].name) ? "them" : "it";
   // (what towns buy: from how many people, the fact a player can act on)
-  if (PRODUCTS[p].price > 0 && Number.isFinite(needFrom(p))) return `towns buy ${them} from ${needFrom(p).toLocaleString("en-US")} people`;
+  if (PRODUCTS[p].price > 0 && Number.isFinite(needFrom(p))) return needFrom(p) > 0 ? `towns buy ${them} from ${needFrom(p).toLocaleString("en-US")} people` : `towns buy ${them}`;
   const ks = Industry.takers(p).split(/, | or /);
   const a = /^[aeiou]/i.test(ks[0]) ? "an" : "a";
   return `${a} ${ks[0]}${ks.length > 1 ? " or another works" : ""} takes ${them}`;
@@ -258,7 +261,7 @@ export function takenBy(p: Product): string {
  * reach buys planks") left a new sawmill beside a hamlet of 77 looking broken, when planks sell from 100.
  */
 export function noBuyer(g: Game, b: Building): PanelModel["status"] | null {
-  const m = /^Nobody your roads reach buys (.+)$/.exec(b.problem ?? "");
+  const m = /^(?:Full of [^:]+: n|N)obody your roads reach buys (.+)$/.exec(b.problem ?? "");
   if (!m || !isPlantKind(b.kind)) return null;
   const p = (Object.keys(PLANTS[b.kind].outputs) as Product[]).find((q) => lower(q) === m[1]);
   const at = p ? needFrom(p) : Infinity;
@@ -266,8 +269,8 @@ export function noBuyer(g: Game, b: Building): PanelModel["status"] | null {
   const ts = [...g.towns.list].sort((a, c) => c.pop - a.pop);
   if (!ts.length) return null;
   const fix = ts[0].pop >= at
-    ? `${ts[0].name} buys ${m[1]}. Join this works to it by road`
-    : `Towns buy ${m[1]} from ${at.toLocaleString("en-US")} people. ${ts[0].name} has ${Math.round(ts[0].pop).toLocaleString("en-US")}. Until then it fills its yard`;
+    ? `Build a road to ${ts[0].name}`
+    : `Towns buy ${m[1]} from ${at.toLocaleString("en-US")} people. ${ts[0].name} has ${Math.round(ts[0].pop).toLocaleString("en-US")}`;
   return { text: `No buyer for ${m[1]} yet`, tone: ts[0].pop >= at ? "bad" : "", fix };
 }
 
@@ -282,7 +285,7 @@ function waitingFor(g: Game, b: Building): PanelModel["status"] | null {
   const p = b.problem ? (Object.keys(D.inputs) as Product[]).find((q) => b.problem!.startsWith(`Waiting for ${lower(q)}`)) : shortOf(g, b);
   if (!p) return null;
   const text = b.problem?.split(": ")[0] ?? `Waiting for ${lower(p)}`;
-  if (b.problem?.includes("stuck in traffic")) return { text, tone: "bad", fix: "The loads on their way are stuck in traffic. Clear that jam: the Traffic stuck sign on the map shows where. Another plant would only add trucks to it" };
+  if (b.problem?.includes("stuck in traffic")) return { text, tone: "bad", fix: "Its loads are stuck in traffic. Clear the jam the stuck sign marks" };
   const next = nextLoad(g, b, p);
   // (the works that feeds it, flat out: more of them is the way on)
   const full = makersFlatOut(g, p, b);
@@ -345,7 +348,9 @@ export function worksStatus(g: Game, b: Building): PanelModel["status"] {
         : pf ? { text: splitProblem(b.problem).text, tone: "bad", fix: `${powerCause(b.problem)}${pf.fix}`, show: ref(pf.show) }
         : /^(No workers|Not enough workers)/.test(b.problem) ? staffStatus(g, b, splitProblem(b.problem).text, "bad")
         // (its goods spoken for by the loads already on their way: nothing is wrong, so nothing is red)
-        : /^\d+ loads? on the way to /.test(b.problem) ? { text: "Loads on the way", tone: "", fix: `${b.problem[0].toUpperCase()}${b.problem.slice(1)}.` }
+        : /^(?:Full of [^:]+: )?\d+ loads? on the way to /.test(b.problem) ? { text: "Loads on the way", tone: "", fix: `${cap1(b.problem.replace(/^Full of [^:]+: /, ""))}.` }
+        // (its towns have all they take for now: a full buyer, so nothing is wrong. The rest waits in its yard)
+        : stockedFor(b.problem) ? stockedStatus(g, b, stockedFor(b.problem)!)
         : waitingFor(g, b) ?? noBuyer(g, b) ?? { ...splitProblem(b.problem), tone: "bad" };
     }
     else {
@@ -364,6 +369,24 @@ export function worksStatus(g: Game, b: Building): PanelModel["status"] {
     status.tag = `${SEASON_NAME[se]}${word ? ` ${word}` : ""} ×${m.toFixed(1)}`;
   }
   return status;
+}
+
+/** A line with its first letter capitalised: "2 loads on the way…" stays, "its trucks…" → "Its trucks…". */
+const cap1 = (s: string) => s[0].toUpperCase() + s.slice(1);
+
+/** The product named by a "towns have all they take" line (a full buyer, not a missing one), or null. */
+export function stockedFor(problem: string | null): string | null {
+  return /^(?:Full of [^:]+: t|T)owns on your roads have all the (.+) they take for now$/.exec(problem ?? "")?.[1] ?? null;
+}
+
+/**
+ * Its towns have all the food they take for now (they buy their demand and no more: settlements.ts roomFor). Calm:
+ * the output waits in the yard. With the yard full it stops, and a warehouse on its roads would keep it working.
+ */
+function stockedStatus(g: Game, b: Building, name: string): PanelModel["status"] {
+  const full = b.problem!.startsWith("Full of");
+  const store = full && g.placedUnlocked("warehouse") && !g.industry.plants().some((o) => PLANTS[o.kind as PlantKind].logistics === "warehouse");
+  return { text: `Towns have all the ${name} they need`, tone: "", fix: store ? "Build a warehouse to store the rest" : undefined, title: full ? "Its yard is full, so it waits until they want more" : "The rest waits in its yard until they want more" };
 }
 
 /**
@@ -395,49 +418,49 @@ export function siteModel(g: Game, b: Building, led?: TradeLedger): PanelModel {
   // ---- key numbers
   const keys: KeyNum[] = [];
   const outs = Object.keys(D.outputs) as Product[];
-  const trucksKey = (): KeyNum => ({ value: String(out.busy), unit: `/${fleet}`, label: "trucks out", tone: fleet && out.busy >= fleet ? "bad" : "", title: out.busy >= fleet && fleet ? "Every truck is out: a long or jammed haul keeps them away" : "Trucks on a run now, of its fleet" });
+  const trucksKey = (): KeyNum => ({ value: String(out.busy), unit: `/${fleet}`, label: "trucks out", tone: fleet && out.busy >= fleet ? "bad" : "", title: out.busy >= fleet && fleet ? "Every truck is out. A long or jammed haul keeps them away" : "Trucks on a run now, of its fleet" });
   if (P.site) {
     let need = 0, got = 0, coming = 0;
     for (const p of Object.keys(P.site.need) as Product[]) { need += P.site.need[p]!; got += Math.min(P.site.need[p]!, P.site.got[p] ?? 0); }
     for (const tr of g.trips()) if (tr.haul && !tr.haul.done && tr.haul.leg === "out" && tr.haul.dest === b.id) coming += tr.haul.n;
-    keys.push({ value: String(Math.floor(got)), unit: `/${need}`, label: "loads delivered", tone: got >= need ? "good" : "" });
-    keys.push({ value: String(coming), label: coming === 1 ? "load on the way" : "loads on the way" });
+    keys.push({ value: String(Math.floor(got)), unit: `/${need}`, label: "delivered", tone: got >= need ? "good" : "", title: "Loads of materials delivered, of all it needs" });
+    keys.push({ value: String(coming), label: "coming", title: "Loads on their way to it now" });
   } else if (D.logistics === "warehouse") {
     const held = Industry.stored(b), store = Industry.storeOf(b);
     const kinds = (Object.keys(P.stock) as Product[]).filter((p) => (P.stock[p] ?? 0) >= 1).length;
-    keys.push({ value: String(Math.floor(held)), unit: `/${store}`, label: "loads in store", tone: held >= store - 0.5 ? "bad" : "" });
+    keys.push({ value: String(Math.floor(held)), unit: `/${store}`, label: "in store", tone: held >= store - 0.5 ? "bad" : "", title: "Loads in store, of what it holds" });
     keys.push(trucksKey());
-    keys.push({ value: String(kinds), label: kinds === 1 ? "product held" : "products held" });
+    keys.push({ value: String(kinds), label: kinds === 1 ? "product" : "products", title: "Kinds of goods in store" });
   } else if (D.logistics === "depot") {
     const fuel = P.stock.fuel ?? 0;
-    keys.push({ value: fuel.toFixed(1), unit: `/${Industry.storeOf(b)}`, label: "fuel in store", tone: fuel < 0.05 ? "bad" : "" });
-    keys.push({ value: String(P.last.served ?? 0), label: "trucks filled, last hour" });
-    keys.push({ value: formatMoney(Math.round(P.last.saved ?? 0)), label: "saved, last hour", tone: (P.last.saved ?? 0) > 0 ? "good" : "" });
+    keys.push({ value: fuel.toFixed(1), unit: `/${Industry.storeOf(b)}`, label: "fuel", tone: fuel < 0.05 ? "bad" : "", title: "Loads of fuel in store" });
+    keys.push({ value: String(P.last.served ?? 0), label: "filled/h", title: "Trucks filled up here last hour" });
+    keys.push({ value: formatMoney(Math.round(P.last.saved ?? 0)), label: "saved/h", tone: (P.last.saved ?? 0) > 0 ? "good" : "", title: "Saved on fuel last hour, against the market price" });
   } else if (D.makes && b.built >= 1) {
     const pl = g.utilities.plants.get(b.id);
     const made = pl?.made ?? 0;
     const fuel = (Object.keys(D.inputs) as Product[])[0];
-    keys.push({ value: String(Math.round(made)), unit: ` MW`, label: `made, of ${D.makes}`, tone: toneOf(made / Math.max(1, D.makes), 0.8, 0.3) });
+    keys.push({ value: String(Math.round(made)), unit: `/${D.makes} MW`, label: "power", tone: toneOf(made / Math.max(1, D.makes), 0.8, 0.3), title: `Making ${Math.round(made)} MW of the ${D.makes} it can` });
     // (with nothing made, the buildings in its reach are not powered: "4 buildings powered" beside "0 MW" disagreed)
     const users = pl?.users ?? 0, things = users === 1 ? "building" : "buildings";
     const over = made > 0 && (pl?.used ?? 0) > made * 1.02;
-    keys.push({ value: String(users), label: made <= 0 ? `${things} in reach, unpowered` : over ? `${things} in reach, short` : `${things} powered`, tone: (made > 0 && !over) || !users ? "" : "bad", title: `${Math.round(pl?.used ?? 0)} MW wanted in reach` });
-    if (fuel) keys.push({ value: String(Math.floor(P.stock[fuel] ?? 0)), unit: `/${Industry.storeOf(b)}`, label: `${lower(fuel)} in the yard`, tone: (P.stock[fuel] ?? 0) < 1 ? "bad" : "" });
+    keys.push({ value: String(users), label: made <= 0 ? "unpowered" : over ? "short" : "powered", tone: (made > 0 && !over) || !users ? "" : "bad", title: `${users} ${things} in reach ${made <= 0 ? "with no power" : over ? "short of power" : "powered"}, wanting ${Math.round(pl?.used ?? 0)} MW` });
+    if (fuel) keys.push({ value: String(Math.floor(P.stock[fuel] ?? 0)), unit: `/${Industry.storeOf(b)}`, label: lower(fuel), tone: (P.stock[fuel] ?? 0) < 1 ? "bad" : "", title: `Loads of ${lower(fuel)} in its yard` });
   } else if (b.built >= 1 && outs.length) {
     const p0 = outs[0];
     // (one pace for the figure, the status and the town's advice: never above what it can make. "can" is its pace
     // now, the season's harvest swing included)
     const { rate: r, can } = shownRate(g, b, p0);
     keys.push(r === null
-      ? { value: "–", label: "no output yet", title: `Can make ${fmtRate(can * 24)} loads of ${lower(p0)} a day` }
+      ? { value: "–", unit: `/${fmtRate(can * 24)}`, label: "loads/day", title: `Nothing made yet. It can make ${fmtRate(can * 24)} loads of ${lower(p0)} a day` }
       // (never the good green under a red status: a mine with no power read a green "0.4/h". In loads a day, the one
       // unit goods are counted in wherever a player sees them: design audit 2026-11-10, F05)
-      : { value: fmtRate(r * 24), unit: " loads", label: `${lower(p0)} a day, can ${fmtRate(can * 24)}`, tone: can > 0 ? (status.tone === "bad" && toneOf(r / can, 0.75, 0.35) === "good" ? "" : toneOf(r / can, 0.75, 0.35)) : "", title: `Loads of ${lower(p0)} made a day lately, against ${fmtRate(can * 24)} a day fully staffed and supplied` });
+      : { value: fmtRate(r * 24), unit: `/${fmtRate(can * 24)}`, label: "loads/day", tone: can > 0 ? (status.tone === "bad" && toneOf(r / can, 0.75, 0.35) === "good" ? "" : toneOf(r / can, 0.75, 0.35)) : "", title: `Loads of ${lower(p0)} made a day lately, against ${fmtRate(can * 24)} a day fully staffed and supplied` });
     // a product the towns pay for: what it earns; one that only feeds your plants: what it ships
     if (outs.some((p) => PRODUCTS[p].price > 0)) {
       const net = P.last.earned - P.last.spent;
-      keys.push({ value: signedMoney(net), label: "profit, last hour", tone: net > 0 ? "good" : net < 0 ? "bad" : "", title: `Earned ${formatMoney(Math.round(P.last.earned))}, spent ${formatMoney(Math.round(P.last.spent))} on wages, upkeep and fuel` });
-    } else keys.push({ value: String(P.last.sent), label: P.last.sent === 1 ? "load shipped, last hour" : "loads shipped, last hour", title: `It feeds your own plants (nobody pays for ${lower(p0)}); it spent ${formatMoney(Math.round(P.last.spent))} last hour` });
+      keys.push({ value: signedMoney(net), label: "profit/h", tone: net > 0 ? "good" : net < 0 ? "bad" : "", title: `Last hour it earned ${formatMoney(Math.round(P.last.earned))} and spent ${formatMoney(Math.round(P.last.spent))} on wages, upkeep and fuel` });
+    } else keys.push({ value: String(P.last.sent), label: "shipped/h", title: `Loads shipped last hour. It feeds your own works, so nobody pays for ${lower(p0)}. It spent ${formatMoney(Math.round(P.last.spent))}` });
     if (fleet) keys.push(trucksKey());
     else keys.push({ value: String(g.people.workersAt(b.id)), unit: `/${b.cap}`, label: "staff" });
   } else if (b.built >= 1) {
@@ -475,8 +498,13 @@ export function siteModel(g: Game, b: Building, led?: TradeLedger): PanelModel {
       if (!dests.length && b.access && Industry.useful(p)) {
         const cs = g.industry.customers(b, p).sort((x, y) => y.value - x.value).slice(0, 2);
         for (const c of cs) to.push({ ...placeChip(g, c.b, b), product: p });
+        // (towns that buy it but have all they take for now: still its buyers, named as when they buy. v0.0.105)
+        // (and the same for a works of yours that takes it but has all it can store: v0.0.105 review)
+        if (!cs.length) for (const o of nearestFirst([...g.industry.takersOn(b, p), ...g.industry.buyersOf(b, p)], b).slice(0, 2)) to.push({ ...placeChip(g, o, b), product: p, title: "Has all it takes for now" });
       }
-      if (!to.some((c) => c.product === p)) to.push({ product: p, text: PRODUCTS[p].name, note: Industry.useful(p) ? `no buyer yet: ${takenBy(p)}` : `used from tier ${Industry.laterTier(p)}`, tone: Industry.useful(p) ? "bad" : "" });
+      if (!to.some((c) => c.product === p)) to.push(Industry.useful(p)
+        ? { product: p, text: PRODUCTS[p].name, note: "no buyer yet", tone: "bad", title: `No buyer on its roads: ${takenBy(p)}` }
+        : { product: p, text: PRODUCTS[p].name, note: `tier ${Industry.laterTier(p)}`, title: `Nothing uses ${lower(p)} until tier ${Industry.laterTier(p)}` });
     }
     const chips = dedupe(to).slice(0, 5);
     flow.push({ label: "To", chips });
@@ -505,11 +533,13 @@ export function siteModel(g: Game, b: Building, led?: TradeLedger): PanelModel {
       // (a kind of site cleared only so far waits for a goal: that is the plan, not trouble)
       const goal = P.why?.match(/^Level \d+ opens with the goal "(.+)"$/)?.[1];
       const held = !goal && P.why && P.why !== b.problem;
-      // (in the status's own words: "No power" above, not "Short of power" here)
+      // (in the status's own words: "No power" above, not "Short of power" here; and towns with all they take is a
+      // wait, not trouble: it grows again when they want more)
       const why = P.why === "Short of power" && b.problem?.startsWith("No power") ? "No power" : P.why;
+      const calm = P.why === "Towns want no more for now";
       level = goal
         ? { from: `Level ${L}`, to: `Level ${L + 1}`, pct: 0, line: `opens with the goal “${goal}”` }
-        : { from: `Level ${L}`, to: `Level ${L + 1}`, pct: k, line: held ? `held back: ${why}` : `${Math.round(k * 100)}% · then ×${LEVEL_MULT[L]} output`, tone: held ? "bad" : "" };
+        : { from: `Level ${L}`, to: `Level ${L + 1}`, pct: k, line: held ? (calm ? `${Math.round(k * 100)}% · grows when towns want more` : `held back: ${why!.split(": ")[0].toLowerCase()}`) : `${Math.round(k * 100)}% · then ×${LEVEL_MULT[L]} output`, tone: held && !calm ? "bad" : "" };
     }
   }
   siteViz(g, b, flow, rel);
@@ -583,6 +613,9 @@ function siteViz(g: Game, b: Building, flow: FlowRow[], rel: Related) {
   else if (D.logistics === "depot" && b.built >= 1) rel.rings = [{ c: b.c, r: DEPOT_REACH, tone: "reach" }];
 }
 
+/** Buildings nearest `to` first. */
+const nearestFirst = (list: Building[], to: Building) => [...list].sort((a, c) => Math.hypot(a.c.x - to.c.x, a.c.y - to.c.y) - Math.hypot(c.c.x - to.c.x, c.c.y - to.c.y));
+
 function nearest(list: Building[], to: Building): Building | null {
   let best: Building | null = null, bd = Infinity;
   for (const o of list) {
@@ -598,12 +631,12 @@ export function townStatus(t: Town, joined = false): PanelModel["status"] {
   // (a town that sprang up stands cut off till the company's trucks first reach it; once a road joins it, it is
   // waiting for that first load, and says so: play-test 2026-11-09, A10)
   if (t.spawned && !served(t)) return joined
-    ? { text: "Joined by road", tone: "", fix: "It waits for its first load of food. Your food plants send to it as soon as they have some to spare" }
-    : { text: "No road yet", tone: "", fix: "Lay a road out to it and send it food: a new market, and a longer drive for your trucks" };
-  if (t.pop < 60) return { text: "Settling in", tone: "", fix: "Its first homes go up on their own" };
+    ? { text: "Joined by road", tone: "", title: "Your food plants send to it as soon as they have food to spare" }
+    : { text: "No road yet", tone: "", fix: "Build a road to it and send it food" };
+  if (t.pop < 60) return { text: "Settling in", tone: "", title: "Its first homes go up on their own" };
   // (the sim's own band and line, the need that holds it named: settlements.ts townGrowth via needs.ts growthOf)
   const gr = growthOf(t);
-  return { text: gr.line, tone: gr.tone };
+  return { text: gr.word, tone: gr.tone, tag: gr.share || undefined, title: gr.line };
 }
 
 export function townModel(g: Game, t: Town, led?: TradeLedger): PanelModel {
@@ -615,7 +648,7 @@ export function townModel(g: Game, t: Town, led?: TradeLedger): PanelModel {
   const met = views.filter((v) => v.state === "plenty" || v.state === "enough").length;
   const keys: KeyNum[] = [
     { value: fmtNum(t.pop), label: "people", title: `${fmtNum(t.households)} households` },
-    { value: String(met), unit: `/${views.length}`, label: "needs met", tone: met === views.length ? "good" : "bad", title: "Needs with enough coming for the town to grow" },
+    { value: String(met), unit: `/${views.length}`, label: "needs met", tone: met === views.length ? "good" : "bad", title: "Needs with enough coming for it to grow" },
   ];
   const rel = emptyRel();
   if (t.hall) rel.self.push(t.hall);
@@ -656,12 +689,12 @@ export function homeModel(g: Game, b: Building): PanelModel {
   const town = b.town !== undefined ? g.towns.byId.get(b.town) : undefined;
   let status: PanelModel["status"];
   if (b.abandoned) status = { text: "Abandoned", tone: "bad", fix: "It will be cleared and something new can grow" };
-  else if (b.site) status = { text: "Building site", tone: "", fix: "Waiting for its construction parts, trucked in from your construction plant" };
+  else if (b.site) status = { text: "Building site", tone: "", title: "Waiting for construction parts from your Construction Plant" };
   else if (b.built < 1) status = { text: `Under construction · ${Math.round(b.built * 100)}%`, tone: "" };
   else if (b.problem) status = { ...splitProblem(b.problem), tone: "bad" };
   // (a shop with bare shelves is the one thing here the company can do something about)
   else if (grp === "com" && T.shelves && b.stock < 1) status = { text: "Shelves empty", tone: "bad", fix: `It sells the food your trucks bring${town ? ` to ${town.name}` : ""}` };
-  else status = { text: grp === "res" ? "Residents are happy here" : "Business is doing well", tone: "good" };
+  else status = { text: grp === "res" ? "Lived in" : "Open for business", tone: "good" };
   const keys: KeyNum[] = [];
   if (grp === "res") {
     const hhs = g.people.hhAt.get(b.id) ?? [];
@@ -669,11 +702,11 @@ export function homeModel(g: Game, b: Building): PanelModel {
     for (const hh of hhs) for (const c of hh.members) { res++; if (c.age === 1) { adults++; if (c.job >= 0) emp++; } }
     keys.push({ value: String(hhs.length), unit: `/${b.cap}`, label: "households" });
     keys.push({ value: String(res), label: "residents" });
-    keys.push({ value: String(emp), unit: `/${adults}`, label: "adults working", tone: adults ? toneOf(emp / adults, 0.7, 0.4) : "" });
+    keys.push({ value: String(emp), unit: `/${adults}`, label: "in work", title: "Adults with a job, of all the adults here", tone: adults ? toneOf(emp / adults, 0.7, 0.4) : "" });
   } else if (b.zone) {
     const w = g.people.workersAt(b.id);
     keys.push({ value: String(w), unit: `/${b.cap}`, label: "workers", tone: b.cap ? toneOf(w / b.cap, 0.7, 0.4) : "" });
-    if (grp === "com" && !T.fuel) keys.push({ value: fmtNum(b.custDay ?? b.custToday ?? 0), label: b.custDay !== undefined ? "customers yesterday" : "customers so far" });
+    if (grp === "com" && !T.fuel) keys.push({ value: fmtNum(b.custDay ?? b.custToday ?? 0), label: "customers", title: b.custDay !== undefined ? "Customers yesterday" : "Customers so far today" });
   }
   const rel = emptyRel();
   rel.self.push(b.id);
@@ -685,7 +718,7 @@ export function homeModel(g: Game, b: Building): PanelModel {
   const name = T.fuel || !b.zone ? T.name : grp === "res" ? "Home" : grp === "com" ? "Shop" : T.name;
   // (no level badge: a town's buildings grow by themselves, the company's sites are the ones with levels to earn.
   // Play-test 2026-11-09, D8: "the shop panel is from another game")
-  return { title: name, sub: town?.name, icon: b.kind, status, keys, flow, related: rel };
+  return { title: name, icon: b.kind, status, keys, flow, related: rel };
 }
 
 /** A workplace's short name for a chip: the site's kind, or "Shop" / "Offices" for a town's. */
@@ -810,15 +843,16 @@ export function vehicleModel(g: Game, v: Vehicle): PanelModel {
   else if (kind === "bus") { const l = g.transit.lines.get(tr.bus!.line); title = "Bus"; sub = l?.name; }
   else if (kind === "truck") {
     title = TRUCK_CLASSES[h?.cls ?? "light"].name;
-    sub = h ? (loaded ? `${plural(h.n, "load")} of ${lower(h.product)}` : "Returning empty") : tr.cargo ?? undefined;
+    // (a loaded truck's load is its first key number; one on its way back says so in its status tag)
+    sub = h ? undefined : tr.cargo ?? undefined;
   } else {
     title = tr.motor ? "Motor Works sedan" : "Car";
     sub = PURPOSE[tr.kind] ?? "A resident's car";
   }
   const left = metresLeft(g, v);
   const togo = km(left);
-  const speed: KeyNum = { value: String(Math.round(v.v * 3.6)), unit: " km/h", label: `speed, limit ${Math.round(v.edge.speed * 3.6)}` };
-  const arrives: KeyNum = { value: eta(g, v, left), label: `arrives · ${togo} to go`, title: "At the speeds of the roads ahead" };
+  const speed: KeyNum = { value: String(Math.round(v.v * 3.6)), unit: " km/h", label: "speed", title: `Speed limit ${Math.round(v.edge.speed * 3.6)} km/h` };
+  const arrives: KeyNum = { value: eta(g, v, left), label: "arrives", title: `${togo} to go, at the speeds of the roads ahead` };
   let keys: KeyNum[];
   if (loaded) {
     // a loaded truck: what it carries and what that is worth where it is going
@@ -826,23 +860,22 @@ export function vehicleModel(g: Game, v: Vehicle): PanelModel {
     keys = [
       { value: String(h!.n), unit: h!.n === 1 ? " load" : " loads", label: lower(h!.product) },
       worth > 0
-        ? { value: formatMoney(Math.round(worth)), label: "cargo value", title: "What its buyer pays on delivery (less if a perishable load goes off on the way)" }
-        : { value: "–", label: "for your own plant", title: `Nobody pays for ${lower(h!.product)}: it feeds the company's plant at the other end` },
+        ? { value: formatMoney(Math.round(worth)), label: "worth", title: "What its buyer pays on delivery. A perishable load is worth less if it goes off on the way" }
+        : { value: "–", label: "worth", title: `Nobody pays for ${lower(h!.product)}. It feeds your works at the other end` },
       arrives,
     ];
-  } else if (kind === "bus") keys = [{ value: String(tr.bus!.pax.length), label: tr.bus!.pax.length === 1 ? "rider aboard" : "riders aboard" }, speed, arrives];
-  else keys = [speed, { value: togo.replace(/ (k?m)$/, ""), unit: ` ${togo.split(" ")[1]}`, label: "to go" }, { ...arrives, label: "arrives" }];
+  } else if (kind === "bus") keys = [{ value: String(tr.bus!.pax.length), label: "aboard", title: "Riders aboard" }, speed, arrives];
+  else keys = [speed, { value: togo.replace(/ (k?m)$/, ""), unit: ` ${togo.split(" ")[1]}`, label: "to go" }, { ...arrives, title: "At the speeds of the roads ahead" }];
   // its places: a site by name; a town building as what it is, with its town ("Shop · Elton")
   const what = (b: Building | undefined, role: "from" | "to"): FlowChip[] => {
     if (!b) return [{ text: role === "from" ? "Out of town" : "Leaving", note: "" }];
     if (b.plant || b.town === undefined || h) return [placeChip(g, b)];
     return [{ kind: b.kind, text: workName(b), note: g.towns.byId.get(b.town)?.name, ref: { k: "building", id: b.id } }];
   };
-  const flow: FlowRow[] = [];
-  if (loaded) flow.push({ label: "Cargo", chips: [{ product: h!.product, text: PRODUCTS[h!.product].name, note: plural(h!.n, "load") }] });
-  flow.push({ label: "From", chips: what(fromB, "from") }, { label: "To", chips: what(toB, "to") });
+  // (the dashes on the map: what they mean is the To row's tooltip, never a line in the panel)
+  const flow: FlowRow[] = [{ label: "From", chips: what(fromB, "from") }, { label: "To", chips: what(toB, "to"), title: "On the map, dashes run the way it will take to the square at its end. The faded line is the way it came" }];
   const status: PanelModel["status"] = vehicleState(v);
-  if (h && !h.big) status.tag = h.leg === "out" ? "Outbound" : "Heading back";
+  if (h && !h.big && h.leg !== "out") status.tag = "Empty, heading back";
   return { title, sub, icon: kind, status, keys, flow, related: rel };
 }
 
@@ -949,13 +982,13 @@ export function roadModel(g: Game, seg: number): PanelModel | null {
   const ring = s.ring ? "Roundabout" : "";
   const flow: FlowRow[] = [];
   if (from.length) flow.push({ label: "Coming from", chips: from });
-  if (to.length) flow.push({ label: "Heading to", chips: to });
+  if (to.length) flow.push({ label: "Heading to", chips: to, title: "The map draws the whole route of every vehicle on it now, thicker where more share a road. Ochre is your freight, cream the rest" });
   return {
     title: ring || T.name, sub: ring ? T.name : `${lanes} ${lanes === 1 ? "lane" : "lanes"} · ${Math.round(T.speed * 3.6)} km/h`, icon: ring ? "roundabout" : `road:${s.type}`,
-    status: { text: c.word, tone: c.tone, fix: c.tone === "bad" ? "A junction ahead may be holding it up: click it, or try lights, a roundabout or more lanes" : undefined },
+    status: { text: c.word, tone: c.tone, fix: c.tone === "bad" ? "Try lights or a roundabout at the junction ahead" : undefined },
     keys: [
-      { value: String(all.length), label: all.length === 1 ? "vehicle on it" : "vehicles on it", title: `${stopped} stopped` },
-      { value: `${Math.round(speed * 100)}%`, label: "of the speed limit", tone: toneOf(speed, 0.8, 0.45) },
+      { value: String(all.length), label: all.length === 1 ? "vehicle" : "vehicles", title: `On it now, ${stopped} stopped` },
+      { value: `${Math.round(speed * 100)}%`, label: "speed", tone: toneOf(speed, 0.8, 0.45), title: "Its traffic's speed, of the speed limit" },
       { value: `${Math.round(full * 100)}%`, label: "full", tone: full > 0.6 ? "bad" : "", title: "How much of its lanes its vehicles and their gaps take up" },
     ],
     flow,
@@ -1021,11 +1054,11 @@ export function junctionModel(g: Game, node: number, compass: (d: { x: number; y
     title: "Junction", sub: control, icon: "junction",
     status: { text: queued === 0 ? "Clear" : tone === "bad" ? "Backing up" : "Busy", tone, tag, fix: tone === "bad" ? (n.signal ? "Give the worst approach a longer green, or add turn pockets" : "Try lights, stop signs on the quiet roads, or a roundabout") : undefined },
     keys: [
-      { value: String(queued), label: queued === 1 ? "vehicle queued" : "vehicles queued", tone },
+      { value: String(queued), label: "queued", tone, title: "Vehicles queued on its approaches" },
       worst && worst.queue
         ? { value: compass(worst.dir), unit: ` ${dur(worst.wait)}`, label: "longest wait", tone: waitTone(worst.wait), title: `${plural(worst.queue, "vehicle")} queued from the ${compass(worst.dir)}` }
         : { value: "–", label: "longest wait" },
-      { value: String(inBox), label: "crossing now" },
+      { value: String(inBox), label: "crossing", title: "Vehicles in the junction now" },
     ],
     flow: [],
     related: rel,
@@ -1045,7 +1078,7 @@ export function stopModel(g: Game, id: number): PanelModel | null {
     keys: [
       { value: String(st.wait.length), label: "waiting", tone: st.wait.length > 30 ? "bad" : "" },
       { value: String(lines.length), label: lines.length === 1 ? "line" : "lines" },
-      { value: String(buses), label: buses === 1 ? "bus on them" : "buses on them" },
+      { value: String(buses), label: buses === 1 ? "bus" : "buses", title: "Buses on its lines" },
     ],
     flow: [], related: rel,
   };
@@ -1125,11 +1158,11 @@ export function groundModel(g: Game, sel: Extract<Sel, { k: "ground" }>): PanelM
   if (sel.id === GROUND_WATER) {
     const lake = g.terrain.sample(F.lake, p.x, p.y) >= 0.5;
     rel.rings = [{ c: p, r: 0, tone: "here" }];
-    return { title: lake ? "Lake" : "River", icon: "water", status: { text: "Your roads cross it on bridges", tone: "", fix: "The road tool raises a bridge on its own wherever a road you draw meets water" }, keys: [], flow: [], related: rel };
+    return { title: lake ? "Lake" : "River", icon: "water", status: { text: "Roads cross it on bridges", tone: "", title: "A road you draw over water gets its bridge by itself" }, keys: [], flow: [], related: rel };
   }
   if (sel.id === GROUND_HILLS) {
     rel.rings = [{ c: p, r: 0, tone: "here" }];
-    return { title: "Hills", icon: "hills", status: { text: "Too steep to build on", tone: "", fix: "Roads go round them, and towns grow on the flat land below" }, keys: [], flow: [], related: rel };
+    return { title: "Hills", icon: "hills", status: { text: "Too steep to build on", tone: "", title: "Roads go round them, and towns grow on the flat land below" }, keys: [], flow: [], related: rel };
   }
   const field = sel.id, kinds = WORKED_BY.get(field) ?? [];
   const D0 = PLANTS[kinds[0]].deposit!;
@@ -1151,18 +1184,18 @@ export function groundModel(g: Game, sel: Extract<Sel, { k: "ground" }>): PanelM
   const here = yieldHere(g, first, p);
   const what = BUILDING_TYPES[first].name;
   let status: PanelModel["status"];
-  if (sites.length) status = { text: `Worked by ${sites.length === 1 ? `your ${BUILDING_TYPES[sites[0].kind].name.toLowerCase()}` : `${sites.length} of your sites`}`, tone: "good" };
-  else if (open.length) status = { text: "Unworked", tone: "", fix: `A ${what.toLowerCase()} placed here would work at ${Math.round(here.yld * 100)}%: the more of its lot on ${D0.name}, the faster` };
+  if (sites.length) status = { text: `Worked by ${sites.length === 1 ? `your ${BUILDING_TYPES[sites[0].kind].name}` : `${sites.length} of your works`}`, tone: "good" };
+  else if (open.length) status = { text: "Unworked", tone: "", title: `The more of an extractor's lot on ${D0.name}, the faster it works` };
   else {
     const m = unlockedBy((u) => u.buildings?.includes(first));
     status = { text: "Not open yet", tone: "", fix: `${what}s open with the goal “${m?.name ?? "a later tier"}”` };
   }
   const keys: KeyNum[] = [
     here.share < MIN_DEPOSIT
-      ? { value: `${Math.round(here.share * 100)}%`, label: "too thin here to work", tone: "bad", title: `An extractor needs at least ${Math.round(MIN_DEPOSIT * 100)}% of its lot on ${D0.name}: try nearer the middle` }
-      : { value: `${Math.round(here.yld * 100)}%`, label: `yield, ${what.toLowerCase()} here`, tone: toneOf(here.yld, 0.9, 0.6), title: `${Math.round(here.share * 100)}% of a ${what.toLowerCase()}'s lot would sit on it here` },
-    { value: patch.capped ? `${fmtNum(Math.round(patch.ha))}+` : fmtNum(Math.round(patch.ha)), unit: " ha", label: mined ? "deposit" : patch.capped ? "of it, and on past 1 km" : "in this patch" },
-    { value: String(sites.length), label: sites.length === 1 ? "site working it" : "sites working it" },
+      ? { value: `${Math.round(here.share * 100)}%`, label: "too thin", tone: "bad", title: `An extractor needs at least ${Math.round(MIN_DEPOSIT * 100)}% of its lot on ${D0.name}. Try nearer the middle` }
+      : { value: `${Math.round(here.yld * 100)}%`, label: "yield here", tone: toneOf(here.yld, 0.9, 0.6), title: `A ${what.toLowerCase()} here would work at ${Math.round(here.yld * 100)}%, with ${Math.round(here.share * 100)}% of its lot on ${D0.name}` },
+    { value: patch.capped ? `${fmtNum(Math.round(patch.ha))}+` : fmtNum(Math.round(patch.ha)), unit: " ha", label: mined ? "deposit" : "patch", title: patch.capped ? "It runs on past a kilometre" : undefined },
+    { value: String(sites.length), label: "working it", title: "Your works on it" },
   ];
   const flow: FlowRow[] = [];
   if (sites.length) flow.push({ label: "Worked by", chips: sites.slice(0, 4).map((b) => ({ ...placeChip(g, b), note: `Lv ${b.plant?.level ?? 1}` })) });
@@ -1200,15 +1233,15 @@ export function deadlockAt(g: Game, vs: Vehicle[]): Pick<PanelModel["status"], "
     const node = v.edge.kind === "conn" ? (v.edge as unknown as { node: number }).node : v.next?.node;
     if (node !== undefined) at.set(node, (at.get(node) ?? 0) + 1);
   }
-  const text = `Deadlock: ${ring.length} vehicles each waiting for another to move`;
+  const text = "Deadlock";
+  const why = `${ring.length} vehicles each wait for another to move.`;
   const node = [...at].filter(([id]) => !g.net.nodes.get(id)?.signal && g.defaultSignal(id)).sort((a, b) => b[1] - a[1])[0]?.[0];
-  const later = "Left alone, one of them turns off another way, or gives up, within a few minutes.";
-  if (node === undefined) return { text, fix: `${later} A second way round, or a roundabout, stops it happening again.` };
-  if (!g.featureUnlocked("signals")) return { text, fix: `${later} Traffic lights here, once you have them, stop it happening again: they take turns.` };
+  if (node === undefined) return { text, fix: `${why} A second way round or a roundabout stops it coming back.` };
+  if (!g.featureUnlocked("signals")) return { text, fix: `${why} One gives up within a few minutes. Traffic lights, once you have them, stop it coming back.` };
   const cost = g.lightsCost(node), n = Math.round(cost / SIGNAL_COST);
   return {
     text,
-    fix: `Traffic lights here make them take turns, so it clears and doesn't come back.${n > 1 ? ` (These ${n} junctions are so close they work as one: they all get lights.)` : ""}`,
+    fix: `${why} Traffic lights make them take turns.${n > 1 ? ` These ${n} junctions work as one, so they all get lights.` : ""}`,
     act: { kind: "lights", node, cost, label: `Add traffic lights · ${formatMoney(cost)}` },
   };
 }
@@ -1230,7 +1263,7 @@ export function stuckModel(g: Game, sel: Extract<Sel, { k: "stuck" }>): PanelMod
   const worst = vs[0]?.stuck ?? 0;
   const why = vs.find((v) => v.block)?.block;
   const status: PanelModel["status"] = vs.length
-    ? { text: `${plural(vs.length, "vehicle")} standing still`, tone: "bad", fix: why ? `The first is held at the junction ahead: ${blockWords(why)}. ${blockFix(why)}` : "Open the junction they wait at to see its queues" }
+    ? { text: `${plural(vs.length, "vehicle")} standing still`, tone: "bad", fix: why ? `The first is held at the junction ahead: ${blockWords(why)}. ${blockFix(why)}` : undefined }
     : { text: "Moving again", tone: "good" };
   const dl = deadlockAt(g, vs);
   if (dl) Object.assign(status, dl);
@@ -1241,9 +1274,9 @@ export function stuckModel(g: Game, sel: Extract<Sel, { k: "stuck" }>): PanelMod
   return {
     title: "Traffic stuck", icon: "stuck", status,
     keys: [
-      { value: String(vs.length), label: vs.length === 1 ? "vehicle standing" : "vehicles standing", tone: vs.length ? "bad" : "good" },
-      { value: vs.length ? dur(worst) : "–", label: "longest stood", tone: worst >= 90 ? "bad" : "" },
-      { value: String(segs.size), label: segs.size === 1 ? "road held up" : "roads held up" },
+      { value: String(vs.length), label: "standing", tone: vs.length ? "bad" : "good", title: "Vehicles standing still here, ringed on the map" },
+      { value: vs.length ? dur(worst) : "–", label: "longest", tone: worst >= 90 ? "bad" : "", title: "The longest any has stood" },
+      { value: String(segs.size), label: segs.size === 1 ? "road" : "roads", title: "Roads held up" },
     ],
     flow, related: rel,
   };
