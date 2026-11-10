@@ -11,7 +11,8 @@ def pv_car_far(F, style, h, hw, bw, rad, cowl, tail, zs, belt, roof, paint, wing
     if style in ("sedan", "coupe", "van", "streamliner"):
         y1 = {"sedan": 1.4, "coupe": 0.62, "van": tail, "streamliner": 1.2}[style]
         F.taper("glass", (-bw + 0.02, bw - 0.02, cowl + 0.04, y1), (-bw + 0.1, bw - 0.1, cowl + 0.2, y1 - 0.12), belt, roof - 0.09)
-        F.taper(paint if style == "streamliner" else wings, (-bw + 0.03, bw - 0.03, cowl + 0.1, y1), (-bw + 0.16, bw - 0.16, cowl + 0.3, y1 - 0.17), roof - 0.09, roof)
+        top = {"sedan": paint, "coupe": "canvas", "van": "cloth", "streamliner": paint}[style]
+        F.taper(top, (-bw + 0.03, bw - 0.03, cowl + 0.1, y1), (-bw + 0.16, bw - 0.16, cowl + 0.3, y1 - 0.17), roof - 0.09, roof)
 
 
 def pv_car(style, L=4.4, W=1.85, fa=-1.38, ra=1.36, r=0.36, paint="body", wings="second"):
@@ -47,7 +48,7 @@ def pv_car(style, L=4.4, W=1.85, fa=-1.38, ra=1.36, r=0.36, paint="body", wings=
         elif style == "coupe":
             K.px(paint, [(cowl, zs), (tail, zs), (tail, 0.74), (0.72, belt), (cowl, belt)], -bw, bw)
             K.taper("glass", (-bw + 0.02, bw - 0.02, cowl + 0.04, 0.62), (-bw + 0.1, bw - 0.1, cowl + 0.2, 0.5), belt, roof - 0.13)
-            K.taper(wings, (-bw + 0.03, bw - 0.03, cowl + 0.1, 0.62), (-bw + 0.16, bw - 0.16, cowl + 0.3, 0.45), roof - 0.13, roof - 0.04)
+            K.taper("canvas", (-bw + 0.03, bw - 0.03, cowl + 0.1, 0.62), (-bw + 0.16, bw - 0.16, cowl + 0.3, 0.45), roof - 0.13, roof - 0.04)   # a soft top
             K.box("black", -bw + 0.08, bw - 0.08, cowl - 0.05, cowl + 0.16, roof - 0.24, roof - 0.18)
             K.tube("tyre", tail - 0.06, tail + 0.12, 0.33, 0.33, 0.86, n=8)
             K.tube("chrome", tail + 0.12, tail + 0.15, 0.17, 0.17, 0.86, n=4)
@@ -84,12 +85,15 @@ def pv_car(style, L=4.4, W=1.85, fa=-1.38, ra=1.36, r=0.36, paint="body", wings=
 
 
 def pv_escort_car(Ms, P):
-    """The pilot and escort car of an oversized-load convoy (4.6 m): a sedan in warning yellow on black wings, a
-    lettered board across its roof and an amber lamp at each end of it."""
-    pv_car("sedan", L=4.6, W=1.9, fa=-1.3, ra=1.3, paint="yellow", wings="black")(Ms, P)
+    """The pilot and escort car of an oversized-load convoy (4.6 m): a saloon in the company's colour (`body`) on
+    black wings, a lettered board across its roof with an amber lamp at each end, a red flag on each front wing."""
+    pv_car("sedan", L=4.6, W=1.9, fa=-1.3, ra=1.3, paint="body", wings="black")(Ms, P)
     K = PV(Ms["model"])
-    K.box("yellow", -0.86, 0.86, 0.3, 0.42, 1.68, 2.02)
+    K.box("cream", -0.86, 0.86, 0.3, 0.42, 1.68, 2.02)
     K.box("black", -0.72, 0.72, 0.29, 0.43, 1.78, 1.92)
+    for x in (-0.84, 0.84):                                                                            # a red flag on each front wing
+        K.box("black", x - 0.015, x + 0.015, -1.62, -1.59, 0.7, 1.42)
+        K.box("flag", x - 0.02, x + 0.02, -1.59, -1.2, 1.1, 1.42)
     for x in (-0.76, 0.76):
         cyl(K.M, x, 0.36, 0.1, 2.02, 2.18, pv_mat("beacon"), n=6)
 
@@ -114,7 +118,7 @@ def pv_van(Ms, P):
     K.box("body", -bw, bw, cowl, -0.2, zs, belt)                                                       # the cab
     K.taper("glass", (-bw + 0.02, bw - 0.02, cowl + 0.04, -0.2), (-bw + 0.08, bw - 0.08, cowl + 0.2, -0.2), belt, top - 0.12)
     K.box("body", -bw, bw, -0.2, tail, zs, top - 0.12)                                                 # the body
-    K.py("second", [(-bw - 0.02, top - 0.12), (bw + 0.02, top - 0.12), (bw - 0.16, top + 0.04), (-bw + 0.16, top + 0.04)],
+    K.py("cloth", [(-bw - 0.02, top - 0.12), (bw + 0.02, top - 0.12), (bw - 0.16, top + 0.04), (-bw + 0.16, top + 0.04)],
          cowl + 0.02, tail + 0.03)                                                                     # the roof
     K.box("black", -bw + 0.08, bw - 0.08, cowl - 0.07, cowl + 0.1, top - 0.24, top - 0.18)            # visor
     K.box("cream", -bw - 0.015, bw + 0.015, 0.05, tail - 0.3, 1.1, 1.62)                               # lettered boards
@@ -126,7 +130,7 @@ def pv_van(Ms, P):
         F.box("second", -hw, hw, -h + 0.1, h - 0.1, 0.14, 0.54)
         F.taper("body", (-0.38, 0.38, rad, cowl), (-0.46, 0.46, rad + 0.05, cowl), 0.54, 1.24)
         F.box("body", -bw, bw, cowl, tail, 0.54, top - 0.12)
-        F.box("second", -bw + 0.1, bw - 0.1, cowl + 0.1, tail, top - 0.12, top + 0.04)
+        F.box("cloth", -bw + 0.1, bw - 0.1, cowl + 0.1, tail, top - 0.12, top + 0.04)
         F.box("cream", -bw - 0.015, bw + 0.015, 0.05, tail - 0.3, 1.1, 1.62)
 
 
@@ -175,9 +179,9 @@ def pv_slab8(K, mn, hw, y0, y1, c, z0, z1, hw1=None, y01=None, y11=None, c1=None
 
 def pv_bus(Ms, P):
     """The town bus (12 m), a bonneted coach of about 1930: the truck's front (radiator, big lamps, black wings), a
-    long body with a row of windows between cream pillars, rounded at the back, a clerestory down the roof and the
-    destination board over the screen. `body` (the panels and the roof) wears its line's colour, `second` is the
-    cream of its window band and clerestory. (The front axle stands under the bonnet now, 0.95 m ahead of where the
+    long body with a row of separate windows, rounded at the back, a clerestory down the roof, luggage on the rack
+    behind it and the destination board over the screen. `body` (the panels, the pillars and the roof) wears its
+    line's colour, `second` is the cream of its waistband and cantrail. (The front axle stands under the bonnet now, 0.95 m ahead of where the
     forward-control bus had it; the rear one is where it was.)"""
     K = PV(Ms["model"])
     L, W, r = 12.17, 2.575, 0.5
@@ -194,16 +198,17 @@ def pv_bus(Ms, P):
     K.wheels(fa, r, hw - 0.05)
     K.wheels(ra, r, hw - 0.015)
     pv_slab8(K, "body", bw, cowl, y1, 0.34, 0.5, 1.42, c1=0.34)                                         # the panels
+    pv_slab8(K, "second", bw + 0.012, cowl, y1, 0.34, 1.24, 1.42)                                      # the waistband
     pv_slab8(K, "glass", bw - 0.03, cowl + 0.03, y1 - 0.03, 0.34, 1.42, 2.3)                           # the windows
-    n = 7
+    n = 8
     for i in range(n):                                                                                 # pillars
-        y = cowl + 0.95 + (y1 - 0.75 - cowl - 0.95) * i / (n - 1)
-        K.box("second", -bw, bw, y, y + 0.2, 1.42, 2.3)
+        y = cowl + 0.9 + (y1 - 0.95 - cowl - 0.9) * i / (n - 1)
+        K.box("body", -bw, bw, y, y + 0.34, 1.42, 2.3)
     pv_slab8(K, "second", bw, cowl, y1, 0.34, 2.3, 2.48)                                               # the cantrail
     pv_slab8(K, "body", bw, cowl, y1, 0.34, 2.48, 2.68, hw1=bw - 0.32, y01=cowl + 0.3, y11=y1 - 0.4)   # the roof
     yc = 1.7                                                                                           # the clerestory
     K.box("glass", -0.4, 0.4, cowl + 1.2, yc, 2.66, 2.88)
-    K.taper("second", (-0.5, 0.5, cowl + 1.05, yc + 0.12), (-0.34, 0.34, cowl + 1.2, yc), 2.88, 2.98)
+    K.taper("body", (-0.5, 0.5, cowl + 1.05, yc + 0.12), (-0.34, 0.34, cowl + 1.2, yc), 2.88, 2.98)
     K.pair("black", 0.74, 0.8, yc + 0.5, y1 - 0.7, 2.66, 2.86)                                         # the luggage rail
     K.box("tan", -0.6, 0.1, yc + 0.7, yc + 1.7, 2.66, 3.0)                                             # trunks
     K.box("wood2", -0.1, 0.62, yc + 1.5, yc + 2.5, 2.66, 2.94)

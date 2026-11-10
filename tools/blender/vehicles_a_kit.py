@@ -19,8 +19,8 @@ PV_HEX = {
     "beacon": "#ffa21f", "lamp": "#f8e9b4", "tail": "#b3261e",
     "glass": "#7f96a3", "black": "#2a2c31", "tyre": "#1f2023", "frame": "#3a3d42",
     "chrome": "#d8d5c8", "wood": "#a8804f", "wood2": "#7e5d3c", "canvas": "#cdbf9d", "tan": "#a9794d",
-    "insul": "#ecebe3", "steel": "#8b9297", "cream": "#efe6cf", "yellow": "#e2b13a", "flag": "#d8322a",
-    "turbine": "#7d9bb0", "turbine2": "#43596b", "girder": "#a9b1b5", "girder2": "#6c767d", "chain": "#3b3e43",
+    "insul": "#ecebe3", "cloth": "#8e8a7d", "steel": "#8b9297", "cream": "#efe6cf", "yellow": "#e2b13a", "flag": "#d8322a",
+    "turbine": "#566f84", "turbine2": "#33475a", "girder": "#a6523b", "girder2": "#7a3a2b", "chain": "#3b3e43",
 }
 
 
@@ -139,7 +139,7 @@ def VEHICLE_TRIS(name):
     """The triangles a vehicle model may have, and its far model: cars and vans are the many (every parked car is
     one), freight, the bus and the convoy the few."""
     if name.startswith(("ll_", "rt_", "heavy_")) or name in ("truck", "tipper", "tanker", "flatbed", "reefer", "carrier"):
-        return 840, 0
+        return 880, 0
     if name in ("bus", "escort_car"):
-        return 640, 0
+        return 700, 0
     return 420, 110

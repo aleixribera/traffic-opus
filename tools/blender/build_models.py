@@ -5790,18 +5790,24 @@ def write_readme(stats):
         "",
         "## Vehicles",
         "",
-        "Front at glTF +Z (Blender -Y), origin at the ground centre, wheels on y = 0. Separate mesh nodes per",
-        "material: `body` and `cargo` are pure white (#ffffff) for per-instance tinting, `glass` is",
-        "#2b3440, `dark` (tyres, bumpers, chassis) is #30343a.",
+        "The vehicles of 1925-1940 (`tools/blender/vehicles_*.py`). Front at glTF +Z (Blender -Y), origin at the",
+        "ground centre, wheels on y = 0; each keeps the footprint and the axles the simulation drives. One mesh",
+        "node `model` with a material per colour; the cars, the van and the Motor Works car also have a node",
+        "`far`, a few boxes drawn instead once a car is a handful of pixels long. A material's name is its role:",
+        "`body`, `second` and `cargo` are white and tinted per vehicle (its paint; a car's wings or a lorry's",
+        "lettering colour; the load, tilt or tank). `lamp` and `tail` are the lenses the night's lights hang on,",
+        "`beacon` flashes, and every other (`v_glass`, `v_black`, `v_tyre`, `v_chrome`, `v_wood`, ...) keeps the",
+        "colour it was given. Limits (`VEHICLE_TRIS`): 420 triangles a car, 700 the bus and the escort car, 880",
+        "a lorry, a trailer or a convoy piece, 110 a far model.",
         "",
-        "| model | W × L × H (m) | tris | nodes |",
-        "|---|---|---|---|",
+        "| model | W × L × H (m) | tris | far tris | nodes |",
+        "|---|---|---|---|---|",
     ]
     for n in VEHICLES:
         s = stats.get(n)
         if not s:
             continue
-        lines.append(f"| {n} | {s['size'][0]:g} × {s['size'][1]:g} × {s['size'][2]:g} | {s['tris']} | "
+        lines.append(f"| {n} | {s['size'][0]:g} × {s['size'][1]:g} × {s['size'][2]:g} | {s['tris']} | {s.get('far') or ''} | "
                      f"{', '.join('`%s`' % m for m in s['meshes'])} |")
     lines.append("")
     with open(os.path.join(OUT, "README.md"), "w", encoding="utf-8", newline="\n") as f:
