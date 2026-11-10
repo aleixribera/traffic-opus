@@ -423,9 +423,9 @@ export class Lamps3D {
   /**
    * One vehicle piece's lights: `m` is its pose (model +z forward), `front` and `rear` its bumpers and `half` its
    * half width (model space); `head`/`tail`: whether this piece carries the headlamps (the front one) and the tail
-   * lights (the last one).
+   * lights (the last one); `hx`, `tx`: how far out from the middle its head and tail lamps sit, where the model says.
    */
-  car(m: THREE.Matrix4, front: number, rear: number, half: number, head: boolean, tail: boolean) {
+  car(m: THREE.Matrix4, front: number, rear: number, half: number, head: boolean, tail: boolean, hx?: number, tx?: number) {
     if (head && this.nBeam < this.beams.instanceMatrix.count) {
       this.m.copy(m).multiply(this.m2.makeTranslation(0, 0.1, front + 0.2)).multiply(this.m2.makeScale(9, 1, 17));
       this.beams.setMatrixAt(this.nBeam, this.m);
@@ -437,9 +437,9 @@ export class Lamps3D {
       this.carGlows.setMatrixAt(this.nGlow, this.m.compose(this.v, this.q.identity(), this.s.set(size, 1, size)));
       this.carGlows.setColorAt(this.nGlow++, this.c.setRGB(r, g, b));
     };
-    const x = Math.max(0.45, half - 0.25);
-    if (head) for (const sx of [-x, x]) lamp(sx, front - 0.05, 1.6, 1.3, 1.0, 0.92, 0.72);
-    if (tail) for (const sx of [-x, x]) lamp(sx, rear + 0.05, 1.6, 0.95, 0.95, 0.08, 0.04);
+    const x = Math.max(0.45, half - 0.25), xh = hx ?? x, xt = tx ?? x;
+    if (head) for (const sx of [-xh, xh]) lamp(sx, front - 0.05, 1.6, 1.3, 1.0, 0.92, 0.72);
+    if (tail) for (const sx of [-xt, xt]) lamp(sx, rear + 0.05, 1.6, 0.95, 0.95, 0.08, 0.04);
   }
 
   endCars() {

@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import type { Lamps3D } from "./lamps3d";
 import { SIM } from "../config";
-import { carColor, EMERGE, fromLot, TRAIN, type PendingSpawn, type Traffic, type Trip, type Vehicle } from "../sim/traffic";
+import { EMERGE, fromLot, TRAIN, type PendingSpawn, type Traffic, type Trip, type Vehicle } from "../sim/traffic";
 import type { V2 } from "../core/math";
 import type { LotWay } from "./buildings3d";
 import { VEHICLE_MODELS, type ModelSet, type VehicleKind } from "./models";
@@ -9,12 +9,20 @@ import { CARGO_COLOR, MOTOR_LIVERY } from "./palette";
 import { TRUCK_CLASSES } from "../game/trucks";
 import { CONVOY_UNITS } from "../game/convoys";
 import type { Unit } from "../sim/traffic";
+import type { Herald } from "../game/company";
+import { CANVAS, COACH_CREAM, carLook, deeper, fleetLivery } from "./carlook";
+import { PaintMaterials, Painted } from "./vehiclepaint";
+import { FAR_MPP, PARKED, ParkedCars } from "./parked3d";
+import type { View } from "./view";
 
+/** A vehicle kind's instances: the painted model (one draw call), and a convoy model's flashing lamps. */
 interface Batch {
   kind: VehicleKind;
-  meshes: { mesh: THREE.InstancedMesh; tint: "body" | "cargo" | "beacon" | null }[];
-  cap: number;
+  paint: Painted;
+  beacon: THREE.InstancedMesh | null;
 }
+/** The two paints a vehicle wears (render/carlook.ts): its main one, and its wings' or its lettering's. */
+interface Paint { body: number; second: number }
 
 /** A soft round glow (a flashing beacon's light on the road round it): white in the middle, fading out. */
 function glowTexture(): THREE.Texture {
@@ -39,7 +47,7 @@ const LIFT = 0.07;
 /** One piece of a car's way into or out of a lot: a cubic, driven forwards or backed along. */
 interface Leg { a: V2; b: V2; c: V2; d: V2; len: number; back: boolean }
 /** A car drawn driving into its lot (after it left the road) or out of it (before it joins the road). */
-interface Ghost { kind: VehicleKind; color: number; load: number | null; legs: Leg[]; total: number; t0: number; dur: number; out: boolean; pieces?: Piece[] }
+interface Ghost { kind: VehicleKind; body: number; second: number; load: number | null; legs: Leg[]; total: number; t0: number; dur: number; out: boolean; pieces?: Piece[] }
 /** One drawn piece of a vehicle: its model, and (a road train's trailers) how far its middle is behind the front piece's. */
 interface Piece { kind: VehicleKind; back: number }
 
@@ -78,20 +86,31 @@ function truckPieces(t: Trip): Piece[] {
   }
   return [{ kind: b, back: 0 }];
 }
-const EMPTY_BOX = 0xf2f2ee;
+/** A tank or a reefer's band whose product has no colour of its own: plain white enamel. */
+const EMPTY_BOX = 0xecebe3;
 /** A reefer's livery band down its white box: dairy blue for milk, gold for cheese (milk's own colour is white). */
 const REEFER_BAND: Record<string, number> = { milk: 0x2b6c9e, cheese: 0xd9a227 };
 /** A Motor Works car's paint: one of the company's liveries. */
 const livery = (look: number) => MOTOR_LIVERY[look % MOTOR_LIVERY.length];
-/** What a truck's load part shows: the cargo's colour, or null for nothing on an open body (tipper, flatbed) running empty. */
+/**
+ * What a truck's load part shows: the cargo's colour (a box body's tilt is lashed over it in that colour; with nothing
+ * under it, plain canvas), or null for nothing on an open body (tipper, flatbed, transporter) running empty.
+ */
 function loadOf(kind: Body, t: Trip): number | null {
   // (a transporter's cars are one batch off the line, in one of the Motor Works' liveries)
   if (kind === "carrier" && t.cargo) return MOTOR_LIVERY[Math.floor(t.startT) % MOTOR_LIVERY.length];
   if (kind === "reefer" && t.cargo) return REEFER_BAND[t.cargo] ?? EMPTY_BOX;
-  if (t.cargo) return CARGO_COLOR[t.cargo] ?? EMPTY_BOX;
+  if (t.cargo) return CARGO_COLOR[t.cargo] ?? (kind === "truck" ? CANVAS : EMPTY_BOX);
   if (kind === "tanker") return CARGO_COLOR[t.haul?.product ?? ""] ?? EMPTY_BOX; // the tank stays its product's colour
   if (kind === "reefer") return REEFER_BAND[t.haul?.product ?? ""] ?? EMPTY_BOX; // (and a reefer its product's livery band)
-  return kind === "tipper" || kind === "flatbed" || kind === "carrier" ? null : EMPTY_BOX;
+  return kind === "tipper" || kind === "flatbed" || kind === "carrier" ? null : CANVAS;
+}
+/** The car a townsperson's `look` puts them in (render/carlook.ts), kept per vehicle: asked every frame. */
+const LOOKS = new WeakMap<Vehicle, ReturnType<typeof carLook>>();
+function lookOf(v: Vehicle) {
+  let l = LOOKS.get(v);
+  if (!l) LOOKS.set(v, l = carLook(v.look));
+  return l;
 }
 
 const cub = (l: Leg, t: number): V2 => {
@@ -123,10 +142,15 @@ function leg(a: V2, da: V2, d: V2, dd: V2, back = false): Leg {
 export class Vehicles3D {
   readonly group = new THREE.Group();
   private batches = new Map<VehicleKind, Batch>();
-  private mat = new THREE.MeshLambertMaterial({ vertexColors: true });
-  private tintMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  private mats = new PaintMaterials();
   /** A convoy's amber lamps: lit (no shading), flashing. */
   private beaconMat = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false });
+  /** The cars standing in the lots' bays (render/parked3d.ts). */
+  private parked: ParkedCars;
+  /** The camera (cars a few pixels long are drawn as their far models) and the company's herald (its lorries' livery). */
+  private view: View | null = null;
+  private herald: (() => Herald | null | undefined) | null = null;
+  private fleet: Paint = fleetLivery(null);
   /** Each lit beacon's glow on the ground about it, added on top (one draw call for every convoy). */
   private glow: THREE.InstancedMesh;
   /** Where on each convoy model its beacons' glow sits (the middle of its lamps). */
@@ -135,7 +159,6 @@ export class Vehicles3D {
   private m = new THREE.Matrix4();
   /** Collapses a part to nothing (the empty load of an open truck body). */
   private none = new THREE.Matrix4().makeScale(0, 0, 0);
-  private c = new THREE.Color();
   private X = new THREE.Vector3();
   private Y = new THREE.Vector3(0, 1, 0);
   private Z = new THREE.Vector3();
@@ -144,14 +167,13 @@ export class Vehicles3D {
   lotOf: ((building: number) => LotWay | null) | null = null;
   /** The lamps layer: at night every vehicle's headlights and tail lights are drawn there. */
   lamps: Lamps3D | null = null;
-  /** Each model's bumpers and half width (model space: front +z, rear -z), for its lights. */
-  private ends = new Map<VehicleKind, { front: number; rear: number; half: number }>();
   private seen = new Map<number, Vehicle>();
   private arriving: Ghost[] = [];
   private leaving = new Map<PendingSpawn, Ghost>();
 
   constructor(private models: ModelSet) {
-    for (const k of VEHICLE_MODELS) this.batches.set(k, this.makeBatch(k, k === "car" || k === "van" || k === "truck" ? 256 : k === "bus" ? 16 : 64));
+    for (const k of VEHICLE_MODELS) this.batches.set(k, this.makeBatch(k, k === "car" || k === "truck" ? 256 : k === "bus" ? 16 : 64));
+    this.parked = new ParkedCars(models, this.mats, this.group);
     const plane = new THREE.PlaneGeometry(GLOW, GLOW).rotateX(-Math.PI / 2);
     const gm = new THREE.MeshBasicMaterial({
       map: glowTexture(), color: GLOW_COLOR, transparent: true, opacity: 1, blending: THREE.AdditiveBlending,
@@ -163,35 +185,51 @@ export class Vehicles3D {
     this.glow.renderOrder = 2;
     this.group.add(this.glow);
     for (const k of VEHICLE_MODELS) {
-      const p = this.models.vehicles.get(k)?.parts.find((q) => q.name === "beacon");
-      if (!p) continue;
-      p.geo.computeBoundingBox();
-      this.glowAt.set(k, p.geo.boundingBox!.getCenter(new THREE.Vector3()));
+      const g = this.models.vehicles.get(k)?.beacon;
+      if (!g) continue;
+      g.computeBoundingBox();
+      this.glowAt.set(k, g.boundingBox!.getCenter(new THREE.Vector3()));
     }
   }
 
+  /** The camera the vehicles are seen through, and where the company's herald is read from (the app's one hook). */
+  attach(view: View, herald: () => Herald | null | undefined) {
+    this.view = view;
+    this.herald = herald;
+  }
+
+  private beaconMesh(kind: VehicleKind, cap: number): THREE.InstancedMesh | null {
+    const g = this.models.vehicles.get(kind)!.beacon;
+    if (!g) return null;
+    const mesh = new THREE.InstancedMesh(g, this.beaconMat, cap);
+    mesh.count = 0;
+    mesh.frustumCulled = false;
+    this.group.add(mesh);
+    return mesh;
+  }
+
   private makeBatch(kind: VehicleKind, cap: number): Batch {
-    const vm = this.models.vehicles.get(kind)!;
-    const meshes = vm.parts.map((p) => {
-      const lamp = p.name === "beacon";
-      const mesh = new THREE.InstancedMesh(p.geo, p.tint ? this.tintMat : lamp ? this.beaconMat : this.mat, cap);
-      mesh.count = 0;
-      mesh.castShadow = !lamp;
-      mesh.frustumCulled = false;
-      if (p.tint) mesh.setColorAt(0, new THREE.Color(1, 1, 1));
-      this.group.add(mesh);
-      return { mesh, tint: p.tint ? (p.name === "cargo" ? "cargo" as const : "body" as const) : lamp ? "beacon" as const : null };
-    });
-    return { kind, meshes, cap };
+    return { kind, paint: new Painted(this.models.vehicles.get(kind)!, cap, this.mats, this.group), beacon: this.beaconMesh(kind, cap) };
   }
 
   private ensure(kind: VehicleKind, n: number): Batch {
-    let b = this.batches.get(kind)!;
-    if (n <= b.cap) return b;
-    for (const x of b.meshes) { this.group.remove(x.mesh); x.mesh.dispose(); }
-    b = this.makeBatch(kind, Math.max(n, b.cap * 2));
-    this.batches.set(kind, b);
+    const b = this.batches.get(kind)!;
+    if (n <= b.paint.cap) return b;
+    b.paint.ensure(n);
+    if (b.beacon) {
+      this.group.remove(b.beacon);
+      b.beacon.dispose();
+      b.beacon = this.beaconMesh(kind, b.paint.cap);
+    }
     return b;
+  }
+
+  /** What a vehicle wears: the company's livery on its lorries, a bus its line's colour, a car its owner's. */
+  private paintOf(truck: boolean, trip: Trip, look: number, color: number): Paint {
+    if (truck) return this.fleet;
+    if (trip.bus) return { body: color, second: COACH_CREAM };
+    if (trip.motor) { const b = livery(look); return { body: b, second: deeper(b) }; }
+    return carLook(look);
   }
 
   /** The model a vehicle is drawn with (a road train: its tractor's; its trailers are drawn too, see update). */
@@ -199,7 +237,7 @@ export class Vehicles3D {
     if (v.trip.bus) return "bus";
     if (v.truck) return truckPieces(v.trip)[0].kind;
     if (v.trip.motor) return "motorcar";
-    return v.look % 6 === 0 ? "van" : "car";
+    return lookOf(v).kind;
   }
 
   /** Write one vehicle pose into a matrix (also used for parked cars). */
@@ -234,7 +272,7 @@ export class Vehicles3D {
       const total = legs.reduce((n, l) => n + l.len, 0);
       const kind = Vehicles3D.kindOf(v);
       const pieces = v.truck ? truckPieces(v.trip) : undefined;
-      this.arriving.push({ kind, color: v.trip.motor ? livery(v.look) : v.color, load: v.truck ? loadOf(truckBody(v.trip), v.trip) : EMPTY_BOX, legs, total, t0: now, dur: Math.min(4, Math.max(1.1, total / 4.5)), out: false, pieces });
+      this.arriving.push({ kind, ...this.paintOf(v.truck, v.trip, v.look, v.color), load: v.truck ? loadOf(truckBody(v.trip), v.trip) : null, legs, total, t0: now, dur: Math.min(4, Math.max(1.1, total / 4.5)), out: false, pieces });
     }
     for (const v of traffic.vehicles) if (!this.seen.has(v.id)) this.seen.set(v.id, v);
     if (this.arriving.length > 400) this.arriving.splice(0, this.arriving.length - 400);
@@ -271,8 +309,8 @@ export class Vehicles3D {
       const total = legs.reduce((n, l) => n + l.len, 0);
       const look = p.look ?? 0;
       const pieces = p.truck ? truckPieces(p.trip) : undefined;
-      const kind: VehicleKind = pieces ? pieces[0].kind : p.trip.motor ? "motorcar" : look % 6 === 0 ? "van" : "car";
-      this.leaving.set(p, { kind, color: p.truck ? 0xf5f5f0 : p.trip.motor ? livery(look) : carColor(look), load: p.truck ? loadOf(truckBody(p.trip), p.trip) : EMPTY_BOX, legs, total, t0: p.go ?? p.t0 ?? traffic.time, dur: Math.min(EMERGE - 0.15, Math.max(1, total / 3.5)), out: true, pieces });
+      const kind: VehicleKind = pieces ? pieces[0].kind : p.trip.bus ? "bus" : p.trip.motor ? "motorcar" : carLook(look).kind;
+      this.leaving.set(p, { kind, ...this.paintOf(p.truck, p.trip, look, p.color ?? 0x2d6a8a), load: p.truck ? loadOf(truckBody(p.trip), p.trip) : null, legs, total, t0: p.go ?? p.t0 ?? traffic.time, dur: Math.min(EMERGE - 0.15, Math.max(1, total / 3.5)), out: true, pieces });
     }
     for (const p of this.leaving.keys()) if (!want.has(p)) this.leaving.delete(p);
   }
@@ -299,28 +337,18 @@ export class Vehicles3D {
     return { x: p.x, y: p.y, ang, s };
   }
 
-  private endsOf(kind: VehicleKind) {
-    let e = this.ends.get(kind);
-    if (e) return e;
-    const box = new THREE.Box3(), b = new THREE.Box3();
-    for (const p of this.models.vehicles.get(kind)?.parts ?? []) {
-      p.geo.computeBoundingBox();
-      if (p.geo.boundingBox) box.union(b.copy(p.geo.boundingBox));
-    }
-    e = box.isEmpty() ? { front: 2, rear: -2, half: 0.9 } : { front: box.max.z, rear: box.min.z, half: Math.max(-box.min.x, box.max.x) };
-    this.ends.set(kind, e);
-    return e;
-  }
-
   update(traffic: Traffic, alpha: number) {
     const now = traffic.time + (alpha - 1) * SIM.dt;
+    this.fleet = fleetLivery(this.herald?.());
+    if (this.view) this.parked.update(this.view, PARKED.hour());
+    const far = !!this.view && this.view.mpp > FAR_MPP;
     this.noteArrivals(traffic, now);
     this.noteDepartures(traffic);
     const lists = {} as Record<VehicleKind, { v: Vehicle; unit: number; load: number | null }[]>;
     const ghosts = {} as Record<VehicleKind, { g: Ghost; x: number; y: number; ang: number; s: number }[]>;
     for (const k of VEHICLE_MODELS) { lists[k] = []; ghosts[k] = []; }
     for (const v of traffic.vehicles) {
-      if (!v.truck) { lists[Vehicles3D.kindOf(v)].push({ v, unit: -1, load: EMPTY_BOX }); continue; }
+      if (!v.truck) { lists[Vehicles3D.kindOf(v)].push({ v, unit: -1, load: null }); continue; }
       const P = truckPieces(v.trip), load = loadOf(truckBody(v.trip), v.trip);
       // (a road train's pieces, or a heavy rigid on its axles, each have their own pose on the path; until the sim has
       // placed them, one rigid piece)
@@ -352,23 +380,24 @@ export class Vehicles3D {
     L?.beginCars();
     for (const kind of VEHICLE_MODELS) {
       const vs = lists[kind], gs = ghosts[kind];
-      const E = L ? this.endsOf(kind) : null;
-      const b = this.ensure(kind, vs.length + gs.length);
-      for (const { mesh } of b.meshes) mesh.count = vs.length + gs.length;
+      const n = vs.length + gs.length;
+      if (!n && !this.batches.get(kind)!.paint.mesh.count) continue;
+      const E = L ? this.models.vehicles.get(kind)!.ends : null;
+      const b = this.ensure(kind, n), P = b.paint, B = b.beacon;
+      P.far(far);
       for (let j = 0; j < gs.length; j++) {
         const q = gs[j];
         this.pose(this.m, q.x, q.y, 0, q.ang, q.s);
-        for (const { mesh, tint } of b.meshes) {
-          const bare = (tint === "cargo" && q.g.load === null) || (tint === "beacon" && !lit(j, 0));
-          mesh.setMatrixAt(vs.length + j, bare ? this.none : this.m);
-          if (tint === "beacon" && !bare) glowAt(kind);
-          if (tint === "body") mesh.setColorAt(vs.length + j, this.c.setHex(q.g.color));
-          else if (tint === "cargo") mesh.setColorAt(vs.length + j, this.c.setHex(q.g.load ?? EMPTY_BOX));
+        P.set(vs.length + j, this.m, q.g.body, q.g.second, q.g.load);
+        if (B) {
+          const on = lit(j, 0);
+          B.setMatrixAt(vs.length + j, on ? this.m : this.none);
+          if (on) glowAt(kind);
         }
         // (in a lot: the leading piece's headlamps, every piece's tail lights only if it is the last)
         if (L && E) {
           const pcs = q.g.pieces, last = !pcs || pcs.length < 2 || q.g.pieces![pcs.length - 1].kind === kind;
-          L.car(this.m, E.front, E.rear, E.half, !pcs || pcs.length < 2 || pcs[0].kind === kind, last);
+          L.car(this.m, E.front, E.rear, E.half, !pcs || pcs.length < 2 || pcs[0].kind === kind, last, E.head, E.tail);
         }
       }
       for (let i = 0; i < vs.length; i++) {
@@ -376,14 +405,14 @@ export class Vehicles3D {
         let x: number, y: number, h: number, ang: number;
         if (unit >= 0) {
           // one piece of an articulated vehicle, between its last pose and this one
-          const o = unit * 4, P = v.puPose!, Q = v.uPose!;
-          x = P[o] + (Q[o] - P[o]) * alpha;
-          y = P[o + 1] + (Q[o + 1] - P[o + 1]) * alpha;
-          h = P[o + 2] + (Q[o + 2] - P[o + 2]) * alpha;
-          let da = Q[o + 3] - P[o + 3];
+          const o = unit * 4, P0 = v.puPose!, Q = v.uPose!;
+          x = P0[o] + (Q[o] - P0[o]) * alpha;
+          y = P0[o + 1] + (Q[o + 1] - P0[o + 1]) * alpha;
+          h = P0[o + 2] + (Q[o + 2] - P0[o + 2]) * alpha;
+          let da = Q[o + 3] - P0[o + 3];
           if (da > Math.PI) da -= Math.PI * 2;
           if (da < -Math.PI) da += Math.PI * 2;
-          ang = P[o + 3] + da * alpha;
+          ang = P0[o + 3] + da * alpha;
         } else {
           x = v.px + (v.x - v.px) * alpha;
           y = v.py + (v.y - v.py) * alpha;
@@ -395,21 +424,23 @@ export class Vehicles3D {
         }
         const f = v.fade < 1 ? 0.55 + 0.45 * v.fade : 1;
         this.pose(this.m, x, y, h, ang, f);
-        for (const { mesh, tint } of b.meshes) {
-          const off = (tint === "cargo" && load === null) || (tint === "beacon" && !lit(v.id, unit));
-          mesh.setMatrixAt(i, off ? this.none : this.m);
-          if (tint === "beacon" && !off) glowAt(kind);
-          if (tint === "body") mesh.setColorAt(i, this.c.setHex(v.trip.motor ? livery(v.look) : v.color));
-          else if (tint === "cargo") mesh.setColorAt(i, this.c.setHex(load ?? EMPTY_BOX));
+        // (a townsperson's car wears its owner's paint; everything else is worked out from the trip)
+        const w = v.truck || v.trip.bus || v.trip.motor ? this.paintOf(v.truck, v.trip, v.look, v.color) : lookOf(v);
+        P.set(i, this.m, w.body, w.second, load);
+        if (B) {
+          const on = lit(v.id, unit);
+          B.setMatrixAt(i, on ? this.m : this.none);
+          if (on) glowAt(kind);
         }
         if (L && E && v.fade >= 1) {
-          const n = v.uPose ? v.uPose.length / 4 : 1;
-          L.car(this.m, E.front, E.rear, E.half, unit <= 0, unit < 0 || unit === n - 1);
+          const k = v.uPose ? v.uPose.length / 4 : 1;
+          L.car(this.m, E.front, E.rear, E.half, unit <= 0, unit < 0 || unit === k - 1, E.head, E.tail);
         }
       }
-      for (const { mesh } of b.meshes) {
-        mesh.instanceMatrix.needsUpdate = true;
-        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      P.commit(n);
+      if (B) {
+        B.count = n;
+        B.instanceMatrix.needsUpdate = true;
       }
     }
     this.glow.count = nGlow;

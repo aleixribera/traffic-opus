@@ -9,7 +9,9 @@ import { GATE_GAP, GROW_ANIM, siteDir, siteFrame, siteLayout, siteToWorld, slotH
 import type { MergedModel, ModelSet } from "./models";
 import { isHall } from "../game/towns";
 import { isCivic } from "../game/civics";
-import { CAR_COLORS, PAL } from "./palette";
+import { PAL } from "./palette";
+import { PARKED, setParked, type ParkSlot } from "./parked3d";
+import { clockOf } from "./daylight";
 import { HALL_TIER, squarePlan, type SquarePlan } from "./civic";
 import type { PlantedTree } from "./trees3d";
 import type { FxEmitter } from "./plumes";
@@ -203,7 +205,6 @@ class Quads {
 export class Buildings3D {
   readonly group = new THREE.Group();
   private meshes = new Map<string, THREE.InstancedMesh>();
-  private parked: THREE.InstancedMesh[] = [];
   private yards: THREE.InstancedMesh | null = null;
   private yardMat = seasonal(new THREE.MeshLambertMaterial({ color: 0xffffff }));
   /** Town hall squares: their paving, and their trees. */
@@ -221,7 +222,6 @@ export class Buildings3D {
   private siteParts: THREE.Object3D[] = [];
   /** Every model, under the season (snow on its roofs, its lawns and trees in the season's colours). */
   private mat = seasonal(new THREE.MeshLambertMaterial({ vertexColors: true }), { roofs: true, windows: true });
-  private carMat = new THREE.MeshLambertMaterial({ vertexColors: true });
   private driveMat = new THREE.MeshLambertMaterial({ color: PAL.driveway });
   private roadMat = new THREE.MeshLambertMaterial({ color: SERVICE_ROAD });
   private meshMat = new THREE.MeshLambertMaterial({ color: FENCE_MESH, transparent: true, opacity: 0.42, side: THREE.DoubleSide, depthWrite: false });
@@ -507,8 +507,6 @@ export class Buildings3D {
   rebuild(list: Building[]) {
     for (const m of this.meshes.values()) { this.group.remove(m); m.dispose(); }
     this.meshes.clear();
-    for (const m of this.parked) { this.group.remove(m); m.dispose(); }
-    this.parked = [];
     if (this.yards) { this.group.remove(this.yards); this.yards.dispose(); this.yards = null; }
     if (this.paving) { this.group.remove(this.paving); this.paving.geometry.dispose(); this.paving.dispose(); this.paving = null; }
     this.squareTrees = [];
@@ -622,10 +620,9 @@ export class Buildings3D {
     }
     this.applyColors();
     this.lights(list);
-    // parked cars, a deterministic share of bays filled (cars keep their size whatever the model's scale); a site's
-    // truck yard stays free for its trucks
-    const car = this.models.vehicles.get("car")!;
-    const filled: { m: THREE.Matrix4; color: number }[] = [];
+    // parked cars: a fixed share of the bays keep a car (it keeps its size whatever the model's scale), which is in
+    // or out by the hour (render/parked3d.ts draws them); a site's truck yard stays free for its trucks
+    const slots: ParkSlot[] = [];
     const inv = new THREE.Matrix4();
     for (const [model, ps] of this.order) {
       const mm = this.geoOf(model)!;
@@ -637,26 +634,15 @@ export class Buildings3D {
         const s = b.zone ? b.fit : 1;
         const tall = b.zone ? b.tall : 1;
         inv.makeScale(1 / s, 1 / (s * tall), 1 / s);
+        const home = BUILDING_TYPES[b.kind]?.zone === "res";
         mm.bays.forEach((bay, k) => {
-          const hsh = (b.id * 73856093) ^ (k * 19349663);
-          if (!bayTaken(b, k)) return; // ~60% occupied
-          filled.push({ m: M.clone().multiply(bay).multiply(inv), color: CAR_COLORS[(hsh >>> 3) % CAR_COLORS.length] });
+          if (!bayTaken(b, k)) return; // ~60% keep a car
+          slots.push({ m: M.clone().multiply(bay).multiply(inv), look: ((b.id * 73856093) ^ (k * 19349663)) >>> 3, home });
         });
       }
     }
-    if (filled.length) {
-      for (const p of car.parts) {
-        const im = new THREE.InstancedMesh(p.geo, p.tint ? new THREE.MeshLambertMaterial({ color: 0xffffff }) : this.carMat, filled.length);
-        im.castShadow = true;
-        filled.forEach((f, i) => {
-          im.setMatrixAt(i, f.m);
-          if (p.tint) im.setColorAt(i, this.col.setHex(f.color));
-        });
-        im.computeBoundingSphere();
-        this.parked.push(im);
-        this.group.add(im);
-      }
-    }
+    setParked(slots);
+    PARKED.hour = () => clockOf(this.seasonClock?.() ?? this.clock()).hour;
     this.rebuildSites(list);
     this.rebuildDrives(list);
     this.yardSites = list.filter((b) => b.placed && b.plant && this.layoutOf(b).slots.some((s) => YARDS[s.model]));
