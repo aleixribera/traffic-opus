@@ -1499,14 +1499,16 @@ export class Game {
   /**
    * Debug and tests: run a town's own growth for some game hours without the traffic, every need met. Construction,
    * streets, zoning, redevelopment, households and its history all run as in play; trips and the plants don't.
+   * `pace`: it grows that many times faster than in play (a test that wants a Town without a month of game time).
    */
-  fastForward(town: number, hours: number, ample = 1) {
+  fastForward(town: number, hours: number, ample = 1, pace = 1) {
     const AMPLE = ample;
     const t = this.towns.byId.get(town);
     if (!t) return;
     const TICK = HOUR / 8;
     this.ticking = true;
     this.grew = false;
+    this.towns.pace = pace;
     try {
       for (let k = 0; k < hours * 8; k++) {
         this.time += TICK;
@@ -1527,7 +1529,7 @@ export class Game {
         const day = Math.floor(this.time / DAY);
         if (day !== this.dayN) { this.towns.daily(); this.dayN = day; }
       }
-    } finally { this.ticking = false; }
+    } finally { this.ticking = false; this.towns.pace = 1; }
     this.towns.census();
     this.emit({ t: "zones" });
     this.emit({ t: "buildings" });

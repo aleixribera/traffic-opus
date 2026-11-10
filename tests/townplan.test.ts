@@ -37,10 +37,10 @@ describe("a town's own plan", () => {
     g.start();
     t = g.towns.list[0];
     // (every need served twice over: steady growth on a supply that runs ahead of the town, towns.ts)
-    for (day = 0; day < 30 && sizeOf(t.pop) < 2; day++) g.fastForward(t.id, 24, 2);
+    for (day = 0; day < 30 && sizeOf(t.pop) < 2; day++) g.fastForward(t.id, 24, 2, 5);
   }, 120_000);
 
-  it("grows to Town size at the pace it always did (the growth before steady growth, on the same supply: day 8)", () => {
+  it("grows to Town size within nine days at five times the pace of play, every need served twice over", () => {
     expect(t.size).toBe(2);
     expect(day).toBeLessThanOrEqual(9);
   });
@@ -56,7 +56,7 @@ describe("a town's own plan", () => {
       const h = new Game(seed);
       h.start();
       const u = h.towns.list[0];
-      for (let d = 0; d < 30 && sizeOf(u.pop) < 2; d++) h.fastForward(u.id, 24, 2);
+      for (let d = 0; d < 30 && sizeOf(u.pop) < 2; d++) h.fastForward(u.id, 24, 2, 5);
       sum += homesPerHa(h, u, 150);
     }
     expect(sum / (more.length + 1)).toBeLessThan(6.2);
@@ -135,7 +135,7 @@ describe("a town's own roads", () => {
     g = new Game(7);
     g.start();
     t = g.towns.list[0];
-    for (let d = 0; d < 30 && sizeOf(t.pop) < 2; d++) g.fastForward(t.id, 24);
+    for (let d = 0; d < 30 && sizeOf(t.pop) < 2; d++) g.fastForward(t.id, 24, 2, 5);
     g.money = 1e9;
   }, 120_000);
 

@@ -91,23 +91,70 @@ export function nextNeed(pop: number): { p: Product; pop: number } | null {
 }
 
 /**
- * Truckloads of a product a town uses per day. Each size uses more per resident than the last (x1.6), on top of
- * there being more residents: demand climbs exponentially through the sizes, as the design asks.
+ * How a town's use of a product climbs with its people (owner, 2026-11-10: "the lower level demands grow too much on
+ * larger cities, and the focus should go instead to getting those new resources"). Each product has its own size: the
+ * one that added it (an extra's: the size it is first bought at). Through that size it ramps up from `at` loads a day
+ * where it opens to `top` at the next size line, faster than the town grows: the new need is the big ask of its size.
+ * Past that line it is an old staple, bought in bulk, partly grown or made in town: it still climbs, but only as
+ * people to the power `then` (well under 1), so it gets lighter a head at every size after.
+ *
+ * Loads a day it comes to (pop 300 / 1,500 / 6,000 / 15,000):
+ *   food    18 / 46 / 102 / 174     planks 6 / 30 / 52 / 75     cement - / 26 / 45 / 65
+ *   goods    - /  8 / 105 / 159     fuel   - /  7 / 95 / 144
+ *   electronics - / - / 26 / 176    machinery - / - / 20 / 145
+ * A Village of 300 wants 24 loads a day in all, a Town of 1,500 about 117, a City of 6,000 about 450 and of 15,000
+ * about 940: fewer a head at every size (0.080, 0.078, 0.074, 0.062). From halfway through each size on, most of the
+ * loads its growth adds are its own new needs, and by its end they are the biggest part of what it wants.
  */
-export function demandPerDay(p: Product, pop: number): number {
-  return Math.max(1, pop * perHead(p) * Math.pow(1.6, sizeOf(pop)));
+interface Curve { at: number; top: number; then: number }
+const CURVES: Partial<Record<Product, Curve>> = {
+  // (food, a Hamlet's own need, is plain per head through the Hamlet: 0.06 a head, 18 loads at 300)
+  food: { at: 0, top: 18, then: 0.58 },
+  planks: { at: 2, top: 30, then: 0.4 },
+  cement: { at: 6, top: 26, then: 0.4 },
+  goods: { at: 8, top: 105, then: 0.45 },
+  fuel: { at: 7, top: 95, then: 0.45 },
+  electronics: { at: 26, top: 320, then: 0.45 },
+  machinery: { at: 20, top: 270, then: 0.45 },
+  // (the extras: a Village of 300 takes 5 loads of milk a day and 2 of cheese; a new Town 3 of cars, 28 by City size)
+  milk: { at: 5, top: 20, then: 0.45 },
+  cheese: { at: 2, top: 8, then: 0.45 },
+  cars: { at: 3, top: 28, then: 0.45 },
+};
+/** Anything else a town buys: a mild staple. */
+const OTHER: Curve = { at: 2, top: 12, then: 0.45 };
+
+/** Where a product's curve runs: from the population it opens at to the next size line after it (its own size). */
+function span(p: Product): { from: number; to: number; c: Curve } {
+  const from = EXTRAS[p] ?? (Number.isFinite(needFrom(p)) ? needFrom(p) : 0);
+  // (a need's own size is the one that adds it, even when it opens earlier: a hamlet's planks ramp up to 1,500)
+  const added = TOWN_SIZES.findIndex((s) => s.adds.includes(p));
+  const to = TOWN_SIZES[(added >= 0 ? added : sizeOf(from)) + 1]?.pop ?? from * 2;
+  return { from, to, c: CURVES[p] ?? OTHER };
 }
 
-/** Loads a day of a product each resident of a Hamlet uses (each size up uses 1.6 times as much a head). */
-function perHead(p: Product): number {
-  // (a new need starts lighter per resident than the old staples: a Town wants about 64 loads a day of goods and of
-  // fuel, a City several hundred; a new City about 250 of electronics and 175 of machinery)
-  const per: Partial<Record<Product, number>> = {
-    food: 1 / 8, planks: 1 / 20, cement: 1 / 30, goods: 1 / 60, fuel: 1 / 60, electronics: 1 / 100, machinery: 1 / 140,
-    // (the extras: a Village of 300 takes ~24 loads of milk a day and ~10 of cheese; a new Town ~25 of cars)
-    milk: 1 / 20, cheese: 1 / 50, cars: 1 / 150,
-  };
-  return per[p] ?? 1 / 24;
+/** Loads a day of a product a town of `pop` uses, before the floor of one load. */
+function useOf(p: Product, pop: number): number {
+  const { from, to, c } = span(p);
+  if (pop >= to) return c.top * Math.pow(pop / to, c.then);
+  // (from nothing, a plain share a head; below where it opens, the same share as at its opening)
+  if (from <= 0 || c.at <= 0) return (c.top * pop) / to;
+  if (pop <= from) return (c.at * pop) / from;
+  return c.at * Math.pow(pop / from, Math.log(c.top / c.at) / Math.log(to / from));
+}
+
+/** The population whose use of a product is `loads` a day (useOf turned round; it climbs all the way). */
+function popFor(p: Product, loads: number): number {
+  const { from, to, c } = span(p);
+  if (loads >= c.top) return to * Math.pow(loads / c.top, 1 / c.then);
+  if (from <= 0 || c.at <= 0) return (loads * to) / c.top;
+  if (loads <= c.at) return (loads * from) / c.at;
+  return from * Math.pow(loads / c.at, Math.log(to / from) / Math.log(c.top / c.at));
+}
+
+/** Truckloads of a product a town uses per day (at least one): see CURVES. */
+export function demandPerDay(p: Product, pop: number): number {
+  return Math.max(1, useOf(p, pop));
 }
 
 // ------------------------------------------------------------------ extras and cars (docs/design.md "Perishables", "Motor Works")
@@ -118,7 +165,7 @@ function perHead(p: Product): number {
  * town's growth (COMFORT_BONUS), but none holds it back.
  */
 export const EXTRAS: Partial<Record<Product, number>> = { milk: 300, cheese: 300, cars: 1500 };
-/** Growth a town gains for each extra it was supplied with (80%+) over the last day, when it grows. */
+/** Growth a town gains for each extra it was supplied with (GROW_FROM and up) over the last day, when it grows. */
 export const COMFORT_BONUS = 0.06;
 /** Everything a town of this population buys that it doesn't need: its extras. */
 export const extrasOf = (pop: number): Product[] => (Object.entries(EXTRAS) as [Product, number][]).filter(([, at]) => pop >= at).map(([p]) => p);
@@ -127,7 +174,7 @@ export const buys = (pop: number, p: Product): boolean => needsOf(pop).includes(
 /** The growth multiplier from the extras supplied over the last day (1 with none). */
 export function comfortOf(delivered: Partial<Record<Product, number>>, pop: number): number {
   let k = 1;
-  for (const p of extrasOf(pop)) if ((delivered[p] ?? 0) >= demandPerDay(p, pop) * 0.8) k += COMFORT_BONUS;
+  for (const p of extrasOf(pop)) if ((delivered[p] ?? 0) >= demandPerDay(p, pop) * GROW_FROM) k += COMFORT_BONUS;
   return k;
 }
 
@@ -153,24 +200,95 @@ export function supplyShare(delivered: Partial<Record<Product, number>>, pop: nu
   return out;
 }
 
-/** Growth rate (households per resident per day, well supplied) at each size: slowing as a town gets bigger. */
-const RATE = [0.09, 0.08, 0.06, 0.045, 0.035];
+// ------------------------------------------------------------------ growth in bands, on a proven supply
+
 /**
- * The early boost: a small town grows several times faster than the base rate, fading out by EARLY_TO people, so the
- * first hour moves (docs/design.md "Pacing": something new every few minutes) and the late game is as it was.
+ * How well a town is supplied decides how it grows (owner, 2026-11-10: "full resources should just be a slow daily
+ * increase of population, and barely reaching it should grow very very little, and then have a wide margin for no
+ * growth, and then a zone for decreasing"). Its supply level is the share of a day's use it has been getting of its
+ * worst-supplied need (supplyLevel, on the two-day average), and:
+ * - from GROW_FROM (85%) it grows, very little at first, rising smoothly (growthShare) to its full pace at 100%;
+ * - from HOLD_FROM (60%) to GROW_FROM it holds steady: no growth, no loss;
+ * - below HOLD_FROM for SHRINK_AFTER hours in a row it shrinks, slowly.
  */
-export const EARLY = 7, EARLY_TO = 450;
+export const GROW_FROM = 0.85, HOLD_FROM = 0.6;
+/** The "supplied" bar of the panels and goals: where a town starts to grow. */
+export const SUPPLY_COVER = GROW_FROM;
+
+/**
+ * Its full pace, with every need met in full: the share of its households a day it grows by at each size. A few
+ * percent a day: a Village adds about one home in seventeen a day, a City one in thirty.
+ */
+const RATE = [0.1, 0.06, 0.045, 0.035, 0.025];
+/** People to a household, about (to put a pace in households a day from a population). */
+export const PER_HOME = 2.5;
+/**
+ * The early boost: a hamlet settling its first streets grows several times faster than a village, fading out by
+ * EARLY_TO people, so the first hour moves (docs/design.md "Pacing": a Village in 20 to 30 minutes). Past it a town
+ * grows at the plain pace of its size.
+ */
+export const EARLY = 12, EARLY_TO = 380;
 export const earlyBoost = (pop: number): number => 1 + EARLY * Math.max(0, 1 - pop / EARLY_TO);
 /** Below this many people a town is still settling: it fills its first streets whether supplied or not. */
 export const SETTLING = 60;
 
 /**
- * Households a day a town grows by while its supply supports more people than it has: a hamlet of a few dozen by
- * more than half again a day, a village past 450 by about a fifth, a city ~7%. (It slows as it nears what its supply
- * supports: TownSystem.grow.)
+ * Households a day a town grows by with every need met in full (at least one): a hamlet of 80 by about an extra
+ * household for every one it has, a Village of 300 by a fifth of its homes, past 380 a Village by 6% a day, a Town
+ * 4.5%, a City 3.5%.
  */
 export function growthPerDay(pop: number): number {
-  return Math.max(4, pop * RATE[sizeOf(pop)] * earlyBoost(pop) * 1.5);
+  return Math.max(1, (pop / PER_HOME) * RATE[sizeOf(pop)] * earlyBoost(pop));
+}
+
+/**
+ * The share of its full pace a town grows at, on its supply level: none up to GROW_FROM, then rising as the square of
+ * the way from GROW_FROM to 100% (90% supplied grows at a ninth of the pace, 95% at four ninths), all of it from 100%.
+ */
+export function growthShare(level: number): number {
+  if (level >= 1) return 1;
+  if (level <= GROW_FROM) return 0;
+  const x = (level - GROW_FROM) / (1 - GROW_FROM);
+  return x * x;
+}
+
+/** The band a supply level puts a town in. */
+export type GrowthBand = "full" | "growing" | "holding" | "shrinking";
+export function growthBand(level: number): GrowthBand {
+  return level >= 1 ? "full" : level > GROW_FROM ? "growing" : level >= HOLD_FROM ? "holding" : "shrinking";
+}
+
+/**
+ * A town's growth in one plain line, with its supply level as the panel can show it: "Growing: fully supplied",
+ * "Growing slowly: 92% supplied, full pace from 100%", "Holding steady: 72% supplied, grows from 85%", "Short of
+ * supplies: 48% supplied, holds from 60%" and, once a shortfall has lasted (`shrinking`), "Shrinking: 48% supplied,
+ * holds from 60%". A town still settling its first streets: "Settling in".
+ */
+export function growthLine(level: number, pop: number, shrinking = false): string {
+  if (pop < SETTLING) return "Settling in";
+  const pc = (x: number) => `${Math.floor(x * 100 + 1e-6)}%`;
+  switch (growthBand(level)) {
+    case "full": return "Growing: fully supplied";
+    case "growing": return `Growing slowly: ${pc(level)} supplied, full pace from 100%`;
+    case "holding": return `Holding steady: ${pc(level)} supplied, grows from ${pc(GROW_FROM)}`;
+    default: return `${shrinking ? "Shrinking" : "Short of supplies"}: ${pc(level)} supplied, holds from ${pc(HOLD_FROM)}`;
+  }
+}
+
+/**
+ * A town's supply level: the share of a day's use it has been getting of its worst-supplied need (loads a day,
+ * averageSupply), and that need (null with none). `only` limits it to some of its needs.
+ */
+export function supplyLevel(
+  perDay: Partial<Record<Product, number>>, pop: number, only?: (p: Product) => boolean,
+): { level: number; by: Product | null } {
+  let level = Infinity, by: Product | null = null;
+  for (const p of needsOf(pop)) {
+    if (only && !only(p)) continue;
+    const x = (perDay[p] ?? 0) / demandPerDay(p, pop);
+    if (x < level) { level = x; by = p; }
+  }
+  return { level: by ? level : 1, by };
 }
 
 // ------------------------------------------------------------------ steady growth on a proven supply
@@ -188,19 +306,11 @@ export const SUPPLY_HOURS = 48;
  */
 export const SUPPLY_WARMUP = 8;
 /**
- * It grows only into the people whose needs that supply covers at least this share of (the "supplied" bar of the
- * panels and milestones). The safety is in time rather than quantity: two days of proof before growing, and a long
- * shortfall before shrinking. (Its plants are worked by its own people: a town held to well under what they can
- * make would never grow the hands to make more, measured 2026-11-08.)
+ * It shrinks only after SHRINK_AFTER hours in a row of its supply level (on the better of the last two days' average
+ * and the last day's) below HOLD_FROM (a day without deliveries, a jammed truck, doesn't do it), and then slowly:
+ * SHRINK_RATE of its households a day at most, and never below the people its supply still covers HOLD_FROM of.
  */
-export const SUPPLY_COVER = 0.8;
-/**
- * It shrinks only after SHRINK_AFTER hours in a row of its supply (the better of the last two days' average and the
- * last day's) covering less than SHRINK_AT of its households (a day without deliveries, a jammed truck, doesn't do
- * it), and then slowly: SHRINK_RATE of its households a day at
- * most, and never below what the supply still covers.
- */
-export const SHRINK_AT = 0.85, SHRINK_AFTER = 48, SHRINK_RATE = 0.03;
+export const SHRINK_AFTER = 48, SHRINK_RATE = 0.03;
 
 /** Loads a day of each product delivered, averaged over the hours given (oldest first; see SUPPLY_HOURS). */
 export function averageSupply(hours: readonly Partial<Record<Product, number>>[]): Partial<Record<Product, number>> {
@@ -219,42 +329,35 @@ export function averageSupply(hours: readonly Partial<Record<Product, number>>[]
 }
 
 /**
- * A supply that covers a size's people all the way to the next size line carries the town this far past it, on the
- * appetite it had (each size eats 1.6x a head, so without this a town would have to prove the bigger size's supply
- * before it could become it). Past that, it grows on the new size's appetite. It doesn't shrink back over the line:
- * the same supply that carried it there is still what supportOf's floor counts.
+ * The most people whose use of a product a supply (loads a day) covers `cover` of: GROW_FROM by default, where a
+ * town stops growing.
  */
-export const CROSS = 1.03;
-
-/** The most people whose needs a supply of a product (loads a day) covers SUPPLY_COVER of, each size using more a head. */
-export function supportedPop(p: Product, perDay: number): number {
-  const loads = perDay / SUPPLY_COVER;
-  let best = 0;
-  for (let s = 0; s < TOWN_SIZES.length; s++) {
-    const lo = TOWN_SIZES[s].pop, hi = TOWN_SIZES[s + 1]?.pop ?? Infinity;
-    const x = Math.floor(loads / (perHead(p) * Math.pow(1.6, s)) + 1e-6);
-    if (x >= lo) best = Math.max(best, x >= hi ? Math.ceil(hi * CROSS) : x);
-  }
-  return best;
+export function supportedPop(p: Product, perDay: number, cover = GROW_FROM): number {
+  if (perDay <= 0) return 0;
+  return Math.floor(popFor(p, perDay / cover) + 1e-6);
 }
 
+/** Does a shortfall of a need count toward shrinking a town of this population (not one opened ahead of its size)? */
+export const countsForShrinking = (p: Product, pop: number): boolean => TOWN_SIZES.findIndex((s) => s.adds.includes(p)) <= sizeOf(pop);
+
 /**
- * What a town's supply (loads a day of each need, averageSupply) supports at its population: `pop`, the most people it
- * grows to, set by the need `by`; and `floor`, the fewest a shortfall would shrink it to. A need that opens on the
- * way up doesn't hold it back before it opens (it couldn't be bought), and once open, being short of it holds the
- * town where it is rather than shrinking it below the population the need opened at; nor does a need opened ahead
- * of the town's size (a hamlet's planks) ever shrink it.
+ * What a town's supply (loads a day of each need, averageSupply) supports at its population: `pop`, the people it
+ * grows toward (where the supply would cover GROW_FROM of every need), set by the need `by`; and `floor`, the fewest
+ * a lasting shortfall would shrink it to (where it would cover HOLD_FROM). A need that opens on the way up doesn't
+ * hold it back before it opens (it couldn't be bought), and once open, being short of it holds the town where it is
+ * rather than shrinking it below the population the need opened at; nor does a need opened ahead of the town's size
+ * (a hamlet's planks) ever shrink it.
  */
 export function supportOf(perDay: Partial<Record<Product, number>>, pop: number): { pop: number; floor: number; by: Product | null } {
   let cap = Infinity, floor = Infinity, by: Product | null = null;
-  const size = sizeOf(pop);
   for (const p of needsOf(pop)) {
     const x = supportedPop(p, perDay[p] ?? 0);
     if (x < cap) { cap = x; by = p; }
-    if (TOWN_SIZES.findIndex((s) => s.adds.includes(p)) <= size) floor = Math.min(floor, Math.max(x, needFrom(p)));
+    if (countsForShrinking(p, pop)) floor = Math.min(floor, Math.max(supportedPop(p, perDay[p] ?? 0, HOLD_FROM), needFrom(p)));
   }
   return { pop: cap, floor, by };
 }
+
 
 // ------------------------------------------------------------------ town hall and the eras of building
 

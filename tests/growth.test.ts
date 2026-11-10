@@ -7,7 +7,7 @@ import { type Product } from "../src/game/industry";
 import { buildStep } from "../src/game/construction";
 import { SHRINK_AFTER, SHRINK_RATE, averageSupply } from "../src/game/towns";
 
-const STEADY: Partial<Record<Product, number>> = { food: 100, planks: 40, cement: 20 };
+const STEADY: Partial<Record<Product, number>> = { food: 20, planks: 8, cement: 6 };
 
 /**
  * The start town of seed 7 with no traffic: every need's loads come in through the day at a steady rate (as far as
@@ -84,12 +84,40 @@ describe("steady growth on a proven supply", () => {
   it("a long cut: it holds for two days, then declines slowly", () => {
     const cut = run(days + 2, [6, 99]);
     const before = cut.hh[at(6)];
-    // (held through the first day and a half of it)
-    expect(cut.hh[at(7.5)]).toBe(before);
+    // (held through the first day and a half of it: nobody leaves; a home already going up may still finish, and the
+    // two-day average stays in the growing band for the first few hours of the cut)
+    expect(cut.hh[at(7.5)]).toBeGreaterThanOrEqual(before);
+    expect(cut.hh[at(7.5)]).toBeLessThanOrEqual(before + 2);
     // (then down, but never by more than SHRINK_RATE of it a day, give or take a household)
     const end = cut.hh[cut.hh.length - 1];
     expect(end).toBeLessThan(before);
     for (let i = at(6) + 4; i < cut.hh.length; i += 4) expect(cut.hh[i - 4] - cut.hh[i]).toBeLessThanOrEqual(Math.ceil(before * SHRINK_RATE) + 1);
     expect(end).toBeGreaterThan(before * 0.75);
+  });
+}, 600_000);
+
+describe("a save from before the demand rework", () => {
+  // (public/showcase.json was saved under the old demand, a town's use of each need rising 1.6x a size: its towns'
+  // supply now covers more of the new, smaller use, so none of them is pushed into shrinking by loading it)
+  it("loads, and over its next two days no town's target drops, none counts toward shrinking, none ends smaller", async () => {
+    // (before the rework its Elton counted toward shrinking from its first hour, 40 hours of it by the end of the
+    // second day; a home rebuilt bigger takes a household away for an afternoon, so homes are judged at the end)
+    const fs = await import(/* @vite-ignore */ ["node", "fs"].join(":"));
+    const g = Game.load(JSON.parse(fs.readFileSync("public/showcase.json", "utf8")));
+    const homes = new Map(g.towns.list.map((t) => [t.id, t.households]));
+    const target = new Map(g.towns.list.map((t) => [t.id, t.target]));
+    expect(homes.size).toBeGreaterThan(1);
+    let maxLack = 0;
+    for (let i = 0; i < (2 * DAY) / (1 / 4); i++) {
+      g.step(1 / 4);
+      for (const t of g.towns.list) {
+        if (!target.has(t.id)) continue;
+        expect(t.target, t.name).toBeGreaterThanOrEqual(target.get(t.id)! - 1e-9);
+        target.set(t.id, t.target);
+        maxLack = Math.max(maxLack, t.lack ?? 0);
+      }
+    }
+    expect(maxLack).toBe(0);
+    for (const t of g.towns.list) if (homes.has(t.id)) expect(t.households, t.name).toBeGreaterThanOrEqual(homes.get(t.id)!);
   });
 }, 600_000);

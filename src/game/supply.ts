@@ -11,10 +11,10 @@
 import type { Product } from "./industry";
 import type { Town } from "./settlements";
 import { HOUR } from "./society";
-import { SUPPLY_HOURS, demandPerDay, needsOf } from "./towns";
+import { GROW_FROM, SUPPLY_HOURS, demandPerDay, needsOf } from "./towns";
 
-/** A need supplied this well lets the town grow (towns.ts growthPerDay: 80% of a day's needs and up): "Enough". */
-export const ENOUGH = 0.8;
+/** A need supplied this well lets the town grow (towns.ts GROW_FROM: 85% of a day's use and up): "Enough". */
+export const ENOUGH = GROW_FROM;
 /** Hours of its own deliveries a town needs before its supply rolls on them, and the hours that stand for a full day. */
 export const ROLL_MIN = 4, ROLL_FULL = 8;
 /**

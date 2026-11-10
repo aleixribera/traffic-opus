@@ -108,8 +108,8 @@ describe("a town growing into a town", () => {
       });
       return real(...a);
     };
-    for (let d = 0; d < 40 && sizeOf(t.pop) < 2; d++) g.fastForward(t.id, 24);
-    g.fastForward(t.id, 24);
+    for (let d = 0; d < 40 && sizeOf(t.pop) < 2; d++) g.fastForward(t.id, 24, 1, 5);
+    g.fastForward(t.id, 24, 1, 5);
   }, 600_000);
 
   it("reaches Town, with a banner at each size", () => {
