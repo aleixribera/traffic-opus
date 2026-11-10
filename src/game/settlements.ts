@@ -15,16 +15,16 @@ import { F, MOUNTAIN_STEPS } from "../world/gen";
 import { townName } from "./names";
 import type { Building } from "./buildings";
 import type { Game } from "./city";
-import { ZONE_GROUP, ZONE_LOTS } from "./growables";
+import { ZONE_GROUP, ZONE_LOTS, wallLots } from "./growables";
 import type { Product } from "./industry";
 import { townBoost } from "./megaprojects";
 import { PARK_SMOKE } from "./parks";
 import { DAY, HOUR } from "./society";
 import { deliveredLately, dipIn, landedGrace, rollGrace, type Grace } from "./supply";
 import {
-  BLOCK, CAR_SCRAP, HALLS, HIGH_STREET, NOISE, NUISANCE_HOMES, NUISANCE_SHOPS, NUISANCE_STREET, REDEV_SHARE, SEED_EDGES, TOWN_SIZES, buys, comfortOf,
-  demandPerDay, edgeKey, gridPt, growthPerDay, highLine, highStreetReach, motoring, needsOf, nextEdge, nuisanceAt, redevPerDay, ringZone, sizeOf,
-  smokeReach, supplyShare, townRadius, type GridEdge, type Nuisance,
+  BLOCK, CAR_SCRAP, HALLS, NOISE, NUISANCE_HOMES, NUISANCE_SHOPS, NUISANCE_STREET, REDEV_SHARE, SEED_EDGES, TOWN_SIZES, buys, comfortOf,
+  demandPerDay, edgeKey, gridPt, growthPerDay, motoring, needsOf, nextEdge, nuisanceAt, redevPerDay, ringZone, sizeOf,
+  smokeReach, supplyShare, townRadius, wallReach, wallStreet, wallZone, type GridEdge, type Nuisance,
   SETTLING, SHRINK_AFTER, SHRINK_AT, SHRINK_RATE, SUPPLY_COVER, SUPPLY_HOURS, averageSupply, supportOf,
 } from "./towns";
 import { LEAN_N as LEAN_DIRS, PLAN_GRID, PLAN_TOWN, TownPlan, type EdgeHit } from "./townplan";
@@ -85,6 +85,8 @@ const APPROACH = 6;
 export const MARKET = 3;
 /** Households per shop the town keeps open. */
 const HH_PER_SHOP = 25;
+/** Ticks a town goes without room in its street wall for a shop it wants before the wall runs on further (an hour). */
+const WALL_WAIT = 8;
 /**
  * Cells this close (m) to a street of the town's plan still to be laid stay empty, so the street never has to clear
  * homes (a bent street is laid within a metre or two of where its plan has it).
@@ -1105,11 +1107,19 @@ export class TownSystem {
   private zone() {
     const z = this.g.zones;
     const resized = this.list.some((t) => this.zonedSize.get(t.id) !== t.size);
-    // the high streets run further as a town wants more shops
+    // the street wall runs further as a town wants more shops
     let spread = false;
     for (const t of this.list) {
-      const r = Math.max(this.highReach.get(t.id) ?? 0, highStreetReach(t.size, this.shopsWanted(t)));
-      if (r !== this.highReach.get(t.id)) { this.highReach.set(t.id, r); spread = true; }
+      const had = this.highReach.get(t.id), want = this.shopsWanted(t);
+      let r = Math.max(had ?? 0, wallReach(t.size, want));
+      // (a wall with no room left for a shop the town wants, its land lost to water, a green or a bend, runs on a
+      // little further: a quarter block for every WALL_WAIT ticks it went without)
+      if (had !== undefined && r === had && t.size >= 1 && t.shops < want && r * BLOCK < t.reach + BLOCK / 2
+        && (this.wallWait.get(t.id) ?? 0) >= WALL_WAIT) {
+        r += 0.25;
+        this.wallWait.set(t.id, 0);
+      }
+      if (r !== had) { this.highReach.set(t.id, r); spread = true; }
     }
     if (this.zonedAt === z.version && !resized && !spread) return;
     // (what a cell's town wants for it is kept on the cell until a town's reach, size, hall, square or high streets
@@ -1154,6 +1164,26 @@ export class TownSystem {
     return hit;
   }
 
+  /**
+   * How far out (m) a town's street wall may build on free land now: as far as the nearest home that stands where
+   * the wall is to run (it makes way first, redevelop), and a little past it. Infinity: no such home.
+   */
+  private wallEnd(t: Town): number {
+    if (t.size < 1) return Infinity;
+    let end = Infinity;
+    for (const b of this.buildingsOf(t)) {
+      if (!b.zone || !b.lot || ZONE_GROUP[b.zone] !== "res") continue;
+      const d = dist(b.c, t.c);
+      if (d >= end) continue;
+      const z = this.redevZone(t, b);
+      if (z && ZONE_GROUP[z] === "com") end = d;
+    }
+    return end + BLOCK / 4;
+  }
+
+  /** how many ticks running each town wanted a shop and had nowhere in its street wall to build one (tickTown) */
+  private wallWait = new Map<number, number>();
+
   /** the planned street each cell, and each building, fronts (as frontOf and redevZone found it) */
   private fronts = new WeakMap<Cell, { P: TownPlan; hit: EdgeHit | null }>();
   private bfronts = new WeakMap<Building, { P: TownPlan; hit: EdgeHit | null }>();
@@ -1183,23 +1213,27 @@ export class TownSystem {
   }
 
   /**
-   * What a town plans for land at p fronting a street that runs at angle rot: its ring for its size, or shops and
-   * offices along its high streets (HIGH_STREET). `own` is the planned street it fronts, when already known.
+   * What a town plans for land at p fronting a street that runs at angle rot: homes by its ring for its size, or
+   * shops and offices where that street carries its street wall (towns.ts WALL_ZONES), taller toward the hall.
+   * `own` is the planned street it fronts, when already known.
    */
   planZone(t: Town, p: V2, rot: number, size = t.size, own?: EdgeHit | null): ZoneId {
     const r = dist(p, t.c) / BLOCK;
     const ring = ringZone(size, r);
-    const hs = HIGH_STREET[Math.min(HIGH_STREET.length - 1, size)];
-    if (!hs || ZONE_GROUP[ring] === "com" || r >= (this.highReach.get(t.id) ?? 0)) return ring;
+    if (size < 1 || r >= (this.highReach.get(t.id) ?? 0)) return ring;
     // the line of the plan the street it fronts is on (a lot is never more than half a block deep)
     if (own === undefined) {
       const P = this.planOf(t);
       P.index(t.reach / BLOCK + 1);
       own = P.edgeAt(p, fromAngle(rot), BLOCK / 2, 0.8);
     }
-    if (!own) return ring;
-    const line = own.e[1] === own.e[3] ? own.e[1] : own.e[0];
-    return highLine(size, Math.abs(line)) ? hs : ring;
+    if (!own || !wallStreet(size, own.e)) return ring;
+    return wallZone(size, r) ?? ring;
+  }
+
+  /** Is a town building's land part of its street wall now (shop land, from a Village on)? */
+  private wallLand(t: Town, zone: ZoneId): boolean {
+    return t.size >= 1 && ZONE_GROUP[zone] === "com";
   }
 
   // ------------------------------------------------------------------ redevelopment
@@ -1246,7 +1280,9 @@ export class TownSystem {
       this.bfronts.set(b, (got = { P, hit: P.edgeAt(b.front, fromAngle(b.rot), 10, 0.7) }));
     }
     const want = this.planZone(t, b.c, b.rot, t.size, got.hit);
-    if (want === b.zone) return null;
+    // (a detached shop from the town's first days, standing where its street wall now runs, is rebuilt as part of it)
+    // (once: one that could not be, for a bend in the street or shallow land, is left as it is)
+    if (want === b.zone) return !b.wall && !b.redev && this.wallLand(t, want) && this.g.wallCould(b) ? want : null;
     // (nobody builds denser homes in a plant's smoke)
     if (ZONE_GROUP[want] === "res" && this.nuisanceAt(b.c) > NUISANCE_HOMES) return null;
     const g0 = ZONE_GROUP[b.zone], g1 = ZONE_GROUP[want];
@@ -1288,7 +1324,10 @@ export class TownSystem {
       const z = this.redevZone(t, b);
       if (z) cands.push({ b, z, d: dist(b.c, t.c) });
     }
-    cands.sort((p, q) => p.d - q.d);
+    // (centre first; a home standing where the street wall is to run before the rest, so the wall is never kept
+    // waiting behind the flats of a whole ring)
+    const forWall = (c: { b: Building; z: ZoneId }) => (ZONE_GROUP[c.b.zone!] === "res" && ZONE_GROUP[c.z] === "com" ? 0 : 1);
+    cands.sort((p, q) => forWall(p) - forWall(q) || p.d - q.d);
     // (a building whose street front has no room for what its land wants waits a day before it is looked at again,
     // so it never keeps the ones behind it from their turn)
     if (this.stuck.size > 4000) for (const [id, at] of this.stuck) if (this.g.time - at >= DAY) this.stuck.delete(id);
@@ -1310,8 +1349,11 @@ export class TownSystem {
   private redevRun(t: Town, b: Building, z: ZoneId): { ids: number[]; block: string; lo: number; hi: number } | null {
     const blk = this.g.zones.blocks.get(b.lot!.block);
     if (!blk) return null;
-    const temps = ZONE_LOTS[z];
-    const target = temps[0].w, minW = Math.min(target, temps[1]?.w ?? target);
+    // (a front of the street wall can be as narrow as one cell: it only takes its neighbours for the width of the
+    // widest building of its zone)
+    const walled = this.wallLand(t, z);
+    const temps = walled ? wallLots(z)! : ZONE_LOTS[z];
+    const target = temps[0].w, minW = walled ? 1 : Math.min(target, temps[1]?.w ?? target);
     let lo = b.lot!.col0, hi = lo + b.lot!.w;
     const ids = [b.id];
     // a neighbour joins if it is waiting for the same zone; empty land beside joins too
@@ -1398,7 +1440,13 @@ export class TownSystem {
     // homes, a few at a time
     for (let n = Math.min(3, Math.ceil(short / 2)); n > 0; n--) if (!this.g.growIn(t.id, "res")) break;
     // about one shop for every HH_PER_SHOP households, and its filling stations from Town size
-    if (t.shops < this.shopsWanted(t)) this.g.growIn(t.id, "com");
+    // (in its street wall, never past a home that has yet to make way for it: the wall has no gaps)
+    if (t.shops < this.shopsWanted(t)) {
+      const end = this.wallEnd(t);
+      const made = this.g.growIn(t.id, "com", undefined, end);
+      // (no room, and no home in the way that will make some: the wall runs on further, zone())
+      this.wallWait.set(t.id, made || end < Infinity ? 0 : (this.wallWait.get(t.id) ?? 0) + 1);
+    }
     const stations = this.buildingsOf(t).filter((b) => BUILDING_TYPES[b.kind].fuel).length;
     if (stations < this.stationsWanted(t) && !this.g.growIn(t.id, "com", "fuelstation")) this.stationOnShop(t);
     // old buildings in the denser rings make way for new ones
