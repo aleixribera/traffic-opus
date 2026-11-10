@@ -10,7 +10,7 @@ import { TRUCK_CLASSES } from "../game/trucks";
 import { CONVOY_UNITS } from "../game/convoys";
 import type { Unit } from "../sim/traffic";
 import type { Herald } from "../game/company";
-import { CANVAS, COACH_CREAM, carLook, deeper, fleetLivery } from "./carlook";
+import { CANVAS, COACH_CREAM, carLook, deeper, fleetLivery, tiltOf } from "./carlook";
 import { PaintMaterials, Painted } from "./vehiclepaint";
 import { FAR_MPP, PARKED, ParkedCars } from "./parked3d";
 import type { View } from "./view";
@@ -100,7 +100,8 @@ function loadOf(kind: Body, t: Trip): number | null {
   // (a transporter's cars are one batch off the line, in one of the Motor Works' liveries)
   if (kind === "carrier" && t.cargo) return MOTOR_LIVERY[Math.floor(t.startT) % MOTOR_LIVERY.length];
   if (kind === "reefer" && t.cargo) return REEFER_BAND[t.cargo] ?? EMPTY_BOX;
-  if (t.cargo) return CARGO_COLOR[t.cargo] ?? (kind === "truck" ? CANVAS : EMPTY_BOX);
+  if (t.cargo && kind === "truck") { const c = CARGO_COLOR[t.cargo]; return c === undefined ? CANVAS : tiltOf(c); }
+  if (t.cargo) return CARGO_COLOR[t.cargo] ?? EMPTY_BOX;
   if (kind === "tanker") return CARGO_COLOR[t.haul?.product ?? ""] ?? EMPTY_BOX; // the tank stays its product's colour
   if (kind === "reefer") return REEFER_BAND[t.haul?.product ?? ""] ?? EMPTY_BOX; // (and a reefer its product's livery band)
   return kind === "tipper" || kind === "flatbed" || kind === "carrier" ? null : CANVAS;
@@ -397,7 +398,7 @@ export class Vehicles3D {
         // (in a lot: the leading piece's headlamps, every piece's tail lights only if it is the last)
         if (L && E) {
           const pcs = q.g.pieces, last = !pcs || pcs.length < 2 || q.g.pieces![pcs.length - 1].kind === kind;
-          L.car(this.m, E.front, E.rear, E.half, !pcs || pcs.length < 2 || pcs[0].kind === kind, last, E.head, E.tail);
+          L.car(this.m, E, !pcs || pcs.length < 2 || pcs[0].kind === kind, last);
         }
       }
       for (let i = 0; i < vs.length; i++) {
@@ -434,7 +435,7 @@ export class Vehicles3D {
         }
         if (L && E && v.fade >= 1) {
           const k = v.uPose ? v.uPose.length / 4 : 1;
-          L.car(this.m, E.front, E.rear, E.half, unit <= 0, unit < 0 || unit === k - 1, E.head, E.tail);
+          L.car(this.m, E, unit <= 0, unit < 0 || unit === k - 1);
         }
       }
       P.commit(n);

@@ -9,7 +9,7 @@ import { BUILDING_TYPES, SIM, type BuildingKind } from "../src/config";
 import { CONVOY_UNITS } from "../src/game/convoys";
 import { HERALD_COLORS, HERALD_PAIRS } from "../src/game/company";
 import { TRUCK_CLASSES } from "../src/game/trucks";
-import { CAR_BODIES, CAR_KINDS, CAR_PAINTS, VAN_PAINTS, carLook, fleetLivery, parkedAt } from "../src/render/carlook";
+import { CANVAS, CAR_BODIES, CAR_KINDS, CAR_PAINTS, VAN_PAINTS, WING_BLACK, carLook, deeper, fleetLivery, parkedAt, parkedStance, tiltOf } from "../src/render/carlook";
 import { BUILDING_MODELS, HOME_VARIANTS, PAINT_ROLES, SITE_PIECES, VEHICLE_MODELS, type VehicleKind } from "../src/render/models";
 import { TOWN_MODELS } from "../src/render/townmodels";
 
@@ -111,21 +111,23 @@ const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length;
 
 describe("the vehicles' models", () => {
   it("every kind the renderer draws has its model, made of the parts the renderer reads", () => {
-    const own = new Set(["v_glass", "v_black", "v_tyre", "v_frame", "v_chrome", "v_wood", "v_wood2", "v_canvas", "v_tan", "v_insul", "v_steel",
-      "v_cream", "v_yellow", "v_flag", "v_turbine", "v_turbine2", "v_girder", "v_girder2", "v_chain", "lamp", "tail", "beacon"]);
+    const own = new Set(["v_glass", "v_black", "v_tyre", "v_frame", "v_chrome", "v_wood", "v_wood2", "v_canvas", "v_tan", "v_cloth", "v_steel",
+      "v_cream", "v_flag", "v_turbine", "v_turbine2", "v_girder", "v_girder2", "v_chain", "lamp", "tail", "beacon"]);
     for (const k of VEHICLE_MODELS) {
       const g = glb(k);
       const nodes = new Set(g.parts.map((p) => p.node));
       expect([...nodes].sort(), k).toEqual(CARS.includes(k) ? ["far", "model"] : ["model"]);
       for (const p of g.parts) expect(own.has(p.material) || (PAINT_ROLES as readonly string[]).includes(p.material), `${k}: ${p.material}`).toBe(true);
       const mats = new Set(near(g).map((p) => p.material));
-      // (every vehicle but the convoy's warning-yellow car wears a paint the game gives it)
-      if (k !== "escort_car") expect(mats.has("body"), `${k} body paint`).toBe(true);
+      // (every vehicle wears a paint the game gives it: the convoy's cars too, in the company's)
+      expect(mats.has("body"), `${k} body paint`).toBe(true);
       // what leads has headlamps, what ends has tail lamps (the night's lights hang on them)
       const trailer = /^(rt_.*_[ab]|ll_trailer_.*)$/.test(k);
       expect(mats.has("lamp"), `${k} headlamps`).toBe(!trailer);
       expect(mats.has("tail"), `${k} tail lamps`).toBe(true);
       expect(mats.has("beacon"), `${k} beacons`).toBe(k === "escort_car" || k.startsWith("ll_"));
+      // (a convoy is flagged in red: the car at each end, the load at its widest)
+      expect(mats.has("v_flag"), `${k} red flags`).toBe(k === "escort_car" || k.startsWith("ll_trailer_"));
     }
     // the company's lorries: its colour, its lettering colour, and a load to tell the bodies apart
     for (const b of BODIES) for (const k of [b, `heavy_${b}`, `rt_${b}_a`, `rt_${b}_b`]) {
@@ -202,7 +204,7 @@ describe("the vehicles' models", () => {
     for (const k of VEHICLE_MODELS) {
       const g = glb(k), n = tris(near(g));
       const freight = /^(rt_|ll_|heavy_)/.test(k) || (BODIES as readonly string[]).includes(k);
-      expect(n, `${k} triangles`).toBeLessThanOrEqual(freight ? 840 : k === "bus" || k === "escort_car" ? 640 : 420);
+      expect(n, `${k} triangles`).toBeLessThanOrEqual(freight ? 880 : k === "bus" || k === "escort_car" ? 700 : 420);
       if (CARS.includes(k)) expect(tris(g.parts.filter((p) => p.node === "far")), `${k} far triangles`).toBeLessThanOrEqual(70);
     }
   });
@@ -223,10 +225,22 @@ describe("what a vehicle wears", () => {
       kinds.set(a.kind, (kinds.get(a.kind) ?? 0) + 1);
       if (a.kind !== "van") paints.set(a.body, (paints.get(a.body) ?? 0) + 1);
     }
+    // wings are black, or the body's own colour a shade deeper, or a listed two-tone's; a pickup's always black
+    let own = 0, coloured = 0;
+    for (let look = 0; look < N; look++) {
+      const a = carLook(look);
+      if (a.kind === "van") continue;
+      const listed = CAR_PAINTS.some((p) => p[0] === a.body && p[1] === a.second);
+      if (!listed) expect(a.second, `look ${look} wings`).toBe(deeper(a.body, 0.66));
+      if (a.kind === "car_pickup") expect(a.second).toBe(WING_BLACK);
+      else if (CAR_PAINTS.some((p) => p[0] === a.body && p[1] === WING_BLACK) && a.body !== CAR_PAINTS[0][0]) { coloured++; if (!listed) own++; }
+    }
+    expect(own / coloured).toBeGreaterThan(0.35);
+    expect(own / coloured).toBeLessThan(0.65);
     // every body is seen, the saloon most, none of them rare
     for (const k of CAR_BODIES) expect(kinds.get(k) ?? 0, k).toBeGreaterThan(N * 0.1);
     expect(kinds.get("car")!).toBeGreaterThan(kinds.get("car_coupe")!);
-    // every paint is seen, and no one colour is more than about a quarter of the street (black, the commonest)
+    // every paint is seen, and no one colour is more than about a quarter of the street
     const cars = N - kinds.get("van")!;
     for (const p of CAR_PAINTS) expect(paints.get(p[0]) ?? 0, `paint ${p[0].toString(16)}`).toBeGreaterThan(cars * 0.02);
     for (const n of paints.values()) expect(n).toBeLessThan(cars * 0.3);
@@ -244,6 +258,37 @@ describe("what a vehicle wears", () => {
       expect(l.body).not.toBe(l.second);
     }
     expect(fleetLivery(null).body).not.toBe(fleetLivery(null).second);
+  });
+
+  it("a tilt over a load is canvas dyed its load's colour: still that colour, never the pure paint", () => {
+    const ch = (hex: number) => [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
+    for (const c of [0xe2704a, 0x3a3a3e, 0xd99a2b, 0x2b6c9e, 0xffffff, 0x000000]) {
+      const t = ch(tiltOf(c)), a = ch(c), k = ch(CANVAS);
+      for (let i = 0; i < 3; i++) {
+        // (each channel between the load's and the canvas's, nearer the load's)
+        expect(t[i]).toBeGreaterThanOrEqual(Math.min(a[i], k[i]));
+        expect(t[i]).toBeLessThanOrEqual(Math.max(a[i], k[i]));
+        expect(Math.abs(t[i] - a[i])).toBeLessThanOrEqual(Math.abs(t[i] - k[i]));
+      }
+    }
+    expect(tiltOf(CANVAS)).toBe(CANVAS);
+  });
+
+  it("a parked car stands a little off true, some backed in, and always inside its bay", () => {
+    let back = 0;
+    const N = 3000;
+    for (let look = 0; look < N; look++) {
+      const s = parkedStance(look);
+      expect(s).toEqual(parkedStance(look));
+      const rev = Math.abs(s.yaw) > 1;
+      if (rev) back++;
+      // (a bay is a van's length and a door's width to spare: a hand's breadth and 3 degrees stay inside it)
+      expect(Math.abs(s.along)).toBeLessThanOrEqual(0.12);
+      expect(Math.abs(s.across)).toBeLessThanOrEqual(0.05);
+      expect(Math.abs(rev ? s.yaw - Math.PI : s.yaw)).toBeLessThanOrEqual(0.046);
+    }
+    expect(back / N).toBeGreaterThan(0.25);
+    expect(back / N).toBeLessThan(0.42);
   });
 
   it("a home's bays are full at night and thin by day; a shop's or a works' the other way round", () => {

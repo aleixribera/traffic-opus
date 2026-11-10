@@ -68,8 +68,11 @@ export interface VehicleModel {
   geo: THREE.BufferGeometry;
   far: THREE.BufferGeometry | null;
   beacon: THREE.BufferGeometry | null;
-  /** Model space (front +z): the bumpers, the half width, and how far out from the middle the head and tail lamps sit. */
-  ends: { front: number; rear: number; half: number; head: number; tail: number };
+  /**
+   * Model space (front +z): the bumpers, the half width, and where the head and tail lamps' lenses are: how far out
+   * from the middle (`head`, `tail`), how high and how far along (`headY`, `headZ`, `tailY`, `tailZ`).
+   */
+  ends: VehicleEnds;
   tris: number;
 }
 /** What a material's name asks for: 0 its own colour, else the instance's body, second or cargo paint. */
@@ -318,11 +321,13 @@ function mergeModel(sc: THREE.Object3D): MergedModel {
   return { geo, bays, fx, via, body, design };
 }
 
+export interface VehicleEnds { front: number; rear: number; half: number; head: number; tail: number; headY: number; headZ: number; tailY: number; tailZ: number }
+
 function splitVehicle(sc: THREE.Object3D): VehicleModel {
   const near: THREE.BufferGeometry[] = [], far: THREE.BufferGeometry[] = [], beacon: THREE.BufferGeometry[] = [];
   const white = new THREE.Color(1, 1, 1);
-  // (where the lamp lenses are: the mean distance of their vertices from the middle)
-  const lamps = { lamp: [0, 0], tail: [0, 0] };
+  // (where the lamp lenses are: the mean of their vertices, out from the middle, up and along)
+  const lamps = { lamp: [0, 0, 0, 0], tail: [0, 0, 0, 0] };
   sc.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!m.isMesh) return;
@@ -340,7 +345,7 @@ function splitVehicle(sc: THREE.Object3D): VehicleModel {
     (isFar ? far : near).push(g);
     if (!isFar && (name === "lamp" || name === "tail")) {
       const L = lamps[name];
-      for (let i = 0; i < pos.count; i++) { L[0] += Math.abs(pos.getX(i)); L[1]++; }
+      for (let i = 0; i < pos.count; i++) { L[0] += Math.abs(pos.getX(i)); L[1]++; L[2] += pos.getY(i); L[3] += pos.getZ(i); }
     }
   });
   const geo = mergeGeometries(near, false)!;
@@ -356,6 +361,10 @@ function splitVehicle(sc: THREE.Object3D): VehicleModel {
       front: b.max.z, rear: b.min.z, half,
       head: lamps.lamp[1] ? lamps.lamp[0] / lamps.lamp[1] : side,
       tail: lamps.tail[1] ? lamps.tail[0] / lamps.tail[1] : side,
+      headY: lamps.lamp[1] ? lamps.lamp[2] / lamps.lamp[1] : 0.9,
+      headZ: lamps.lamp[1] ? lamps.lamp[3] / lamps.lamp[1] : b.max.z,
+      tailY: lamps.tail[1] ? lamps.tail[2] / lamps.tail[1] : 0.9,
+      tailZ: lamps.tail[1] ? lamps.tail[3] / lamps.tail[1] : b.min.z,
     },
     tris: geo.getAttribute("position").count / 3,
   };

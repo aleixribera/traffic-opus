@@ -22,20 +22,21 @@ export const COACH_CREAM = 0xefe6cf;
 export const CANVAS = 0xcdbf9d;
 
 /**
- * The paints of about 1930, body then wings: black first and commonest, the deep colours enamel came in (bottle
- * green, maroon, navy), cream, greys and buffs, and a few two-tones. Listed by how often they are seen (a paint
- * listed twice is twice as common).
+ * The paints of about 1930, body then wings: black, the deep colours enamel came in (bottle green, maroon, navy),
+ * cream, greys and buffs, and a few two-tones. Listed by how often they are seen (a paint listed twice is twice as
+ * common). The deep colours are a step lighter than the enamel was and black is rarer than it was: seen from a
+ * hundred metres up, a car has to stand off the road's asphalt.
  */
-const BLACK = 0x2b2d33, GREEN = 0x2f4a3a, MAROON = 0x6e2a2a, NAVY = 0x263a5a, CREAM = 0xe6dcc0, GREY = 0x7d8085,
-  BUFF = 0xb59a6d, BROWN = 0x4f3a2c, BRICK = 0x9a3a2a, SLATE = 0x7f96a8;
+const BLACK = 0x2e3037, GREEN = 0x386048, MAROON = 0x822e2c, NAVY = 0x2c4878, CREAM = 0xe6dcc0, GREY = 0x8b8e93,
+  BUFF = 0xc0a577, BROWN = 0x6a4a34, BRICK = 0xa8432f, SLATE = 0x7f96a8;
 export const CAR_PAINTS: readonly (readonly [number, number])[] = [
-  [BLACK, WING_BLACK], [BLACK, WING_BLACK], [BLACK, WING_BLACK], [BLACK, WING_BLACK],
+  [BLACK, WING_BLACK], [BLACK, WING_BLACK], [BLACK, WING_BLACK],
   [GREEN, WING_BLACK], [GREEN, WING_BLACK], [GREEN, WING_BLACK],
   [MAROON, WING_BLACK], [MAROON, WING_BLACK], [MAROON, WING_BLACK],
   [NAVY, WING_BLACK], [NAVY, WING_BLACK], [NAVY, WING_BLACK],
-  [CREAM, WING_BLACK], [CREAM, WING_BLACK],
+  [CREAM, WING_BLACK], [CREAM, WING_BLACK], [CREAM, WING_BLACK],
   [GREY, WING_BLACK], [GREY, WING_BLACK],
-  [BUFF, WING_BLACK], [BROWN, WING_BLACK], [BRICK, WING_BLACK], [SLATE, WING_BLACK],
+  [BUFF, WING_BLACK], [BUFF, WING_BLACK], [BROWN, WING_BLACK], [BRICK, WING_BLACK], [BRICK, WING_BLACK], [SLATE, WING_BLACK],
   // the two-tones: a light body over dark wings in its own colour, or the other way about
   [CREAM, MAROON], [CREAM, GREEN], [GREY, NAVY], [BUFF, BROWN], [MAROON, CREAM],
 ];
@@ -66,8 +67,18 @@ export function carLook(look: number): CarLook {
   const k = (h >>> 8) % 18;
   const kind: CarKind = k < 8 ? "car" : k < 12 ? "car_coupe" : k < 15 ? "car_tourer" : "car_pickup";
   const p = CAR_PAINTS[h % CAR_PAINTS.length];
-  // (a pickup is a working car: no two-tones)
-  return { kind, body: p[0], second: kind === "car_pickup" ? WING_BLACK : p[1] };
+  // (a pickup is a working car: black wings, no two-tones)
+  if (kind === "car_pickup") return { kind, body: p[0], second: WING_BLACK };
+  // (about half the coloured cars have wings in their own colour, a shade deeper, as the dearer ones did: the car
+  // is then one colour from above and reads against the road; a black car's wings are black either way)
+  const own = p[1] === WING_BLACK && p[0] !== BLACK && ((h >>> 16) & 1) === 1;
+  return { kind, body: p[0], second: own ? deeper(p[0], 0.66) : p[1] };
+}
+
+/** A lorry's tilt over a load: canvas dyed toward its load's colour (a sheet is never a pure paint). */
+export function tiltOf(cargo: number, k = 0.34): number {
+  const m = (s: number) => Math.round(((cargo >> s) & 255) * (1 - k) + ((CANVAS >> s) & 255) * k);
+  return (m(16) << 16) | (m(8) << 8) | m(0);
 }
 
 /** A paint a shade deeper (a streamliner's wings, in its own colour). */
@@ -81,6 +92,17 @@ const hexOf = (css: string) => parseInt(css.slice(1), 16);
 export function fleetLivery(h: Herald | null | undefined): { body: number; second: number } {
   if (!h) return { body: hexOf(HERALD_COLORS.navy), second: hexOf(HERALD_COLORS.cream) };
   return { body: hexOf(HERALD_COLORS[h.field]), second: hexOf(HERALD_COLORS[h.ink]) };
+}
+
+/**
+ * How the car that keeps a bay stands in it, about its own middle (m along and across, radians): nobody parks to the
+ * inch, so it is a hand's breadth off and a degree or two askew, and one in three is backed in. All of it well inside
+ * the bay: a car is a car's length whichever way round it stands.
+ */
+export function parkedStance(look: number): { along: number; across: number; yaw: number } {
+  const h = scramble(look ^ 0x51ed27);
+  const a = (h & 255) / 255 - 0.5, b = ((h >>> 8) & 255) / 255 - 0.5, c = ((h >>> 16) & 255) / 255 - 0.5;
+  return { along: a * 0.24, across: b * 0.1, yaw: c * 0.09 + ((h >>> 24) % 3 === 0 ? Math.PI : 0) };
 }
 
 /**

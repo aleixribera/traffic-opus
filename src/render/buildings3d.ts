@@ -11,6 +11,7 @@ import { isHall } from "../game/towns";
 import { isCivic } from "../game/civics";
 import { PAL } from "./palette";
 import { PARKED, setParked, type ParkSlot } from "./parked3d";
+import { parkedStance } from "./carlook";
 import { clockOf } from "./daylight";
 import { HALL_TIER, squarePlan, type SquarePlan } from "./civic";
 import type { PlantedTree } from "./trees3d";
@@ -78,6 +79,12 @@ export interface LotWay {
 
 /** A bay a static parked car fills (the rest are free for cars that come and go). */
 const bayTaken = (b: Building, k: number) => (((b.id * 73856093) ^ (k * 19349663)) >>> 0) % 10 >= 4;
+
+/** How the car that keeps a bay stands in it (carlook.parkedStance), as a matrix in the car's own space. */
+function parkedHow(look: number, out: THREE.Matrix4): THREE.Matrix4 {
+  const s = parkedStance(look);
+  return out.makeRotationY(s.yaw).setPosition(s.across, 0, s.along);
+}
 
 /** Front yard depth (m) for a lot with this much depth to spare around its model. */
 const setback = (spare: number) => Math.min(spare * 0.68, 5);
@@ -623,7 +630,7 @@ export class Buildings3D {
     // parked cars: a fixed share of the bays keep a car (it keeps its size whatever the model's scale), which is in
     // or out by the hour (render/parked3d.ts draws them); a site's truck yard stays free for its trucks
     const slots: ParkSlot[] = [];
-    const inv = new THREE.Matrix4();
+    const inv = new THREE.Matrix4(), jig = new THREE.Matrix4();
     for (const [model, ps] of this.order) {
       const mm = this.geoOf(model)!;
       if (!mm.bays.length) continue;
@@ -637,7 +644,8 @@ export class Buildings3D {
         const home = BUILDING_TYPES[b.kind]?.zone === "res";
         mm.bays.forEach((bay, k) => {
           if (!bayTaken(b, k)) return; // ~60% keep a car
-          slots.push({ m: M.clone().multiply(bay).multiply(inv), look: ((b.id * 73856093) ^ (k * 19349663)) >>> 3, home });
+          const look = ((b.id * 73856093) ^ (k * 19349663)) >>> 3;
+          slots.push({ m: M.clone().multiply(bay).multiply(inv).multiply(parkedHow(look, jig)), look, home });
         });
       }
     }
