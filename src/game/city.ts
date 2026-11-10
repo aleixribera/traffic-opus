@@ -11,7 +11,7 @@ import {
 import { fromLot, Traffic, type TrafficSave, type Trip, type Vehicle } from "../sim/traffic";
 import { SITE_LEVELS, siteFrame } from "./sites";
 import { Terrain } from "../world/terrain";
-import { Buildings, obbOverlap, type Building, type BuildingMove } from "./buildings";
+import { Buildings, TOWN_STREET, obbOverlap, type Building, type BuildingMove } from "./buildings";
 import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, type LotTemplate } from "./growables";
 import { Progress, levelBy, levelCap, type Feature, type Milestone, type ProgressView } from "./progression";
 import { DAY, HOUR, Society } from "./society";
@@ -541,11 +541,37 @@ export class Game {
 
   private afterRoads(cs: ChangeSet) {
     for (const b of this.buildings.reattach()) this.toast(`${BUILDING_TYPES[b.kind].name} connected: its trucks can start`);
+    this.faceRoads();
     this.transit.afterRoads();
     this.traffic.onNetworkChange(cs);
     this.rezone(cs);
     this.emit({ t: "roads", cs });
     this.emit({ t: "zones" });
+  }
+
+  /**
+   * A site with no road at its gate, and a road now at the back of its plot (it ends there, or runs past): the gate
+   * goes to that side, the site turned half round where it stands (docs/playtest-2026-11-09.md, C1: a road drawn to
+   * the back of a mine was refused, "its gate faces the other way: draw the road round to it"). Half round is the
+   * same plot. A site that has a road keeps its gate.
+   */
+  private faceRoads() {
+    let any = false;
+    for (const b of this.buildings.sites) {
+      if (b.access) continue;
+      for (const rot of this.buildings.turnsOf(b)) {
+        const ga = this.buildings.gateAccess(b.c, rot, b.side, b.hd, isPlantKind(b.kind));
+        if (!ga) continue;
+        for (const c of this.lotCells(b)) if (c.lot === b.id) c.lot = 0;
+        this.buildings.turn(b, ga);
+        for (const c of this.lotCells(b)) c.lot ||= b.id;
+        this.candVersion = -1;
+        this.toast(`${BUILDING_TYPES[b.kind].name} connected, its gate turned to the road: its trucks can start`);
+        any = true;
+        break;
+      }
+    }
+    if (any) this.emit({ t: "buildings" });
   }
 
   /** The zone map after a road edit, and the lots of the buildings whose street was laid out again. */
@@ -1111,18 +1137,20 @@ export class Game {
     const S = add(f.gate, scale(out, GATE_LINK_OUT));
     const ahead = add(f.gate, scale(out, 30));
     const net = this.net, R = GATE_LINK_REACH;
-    const cands: { p: V2; d: number }[] = [];
+    // (a town's own street counts half as far again as the company's roads: the works' trucks go by the main road
+    // rather than through the back streets a little nearer)
+    const cands: { p: V2; d: number; k: number }[] = [];
     for (const id of net.segsNear(S.x - R, S.y - R, S.x + R, S.y + R)) {
       const s = net.segs.get(id)!;
       if (!takesGate(ROAD_TYPES[s.type])) continue; // (a boulevard too: the street meets it at a junction)
       const r = cubicClosest(s.c, ahead);
       if (net.heightOnSeg(id, r.t) > 0.5) continue;
-      const d = dist(r.p, S);
-      if (d <= R) cands.push({ p: r.p, d });
+      const d = dist(r.p, S), k = s.town ? TOWN_STREET : 1;
+      if (d <= R) cands.push({ p: r.p, d: d * k, k });
     }
     cands.sort((a, b) => a.d - b.d);
     const world: BuildWorld = { ...this.world, money: () => Infinity };
-    let best: Plan | null = null;
+    let best: Plan | null = null, bestCost = Infinity;
     for (const cd of cands.slice(0, 6)) {
       const end = snap(net, cd.p, { mpp: 0.4, level: 0, type: "street" });
       if (end.seg === undefined && end.node === undefined) continue;
@@ -1132,7 +1160,7 @@ export class Game {
       if (pts.some((q) => rectDistance(q, c, hw, hd, rot) < 6)) continue;
       // (never through a town's homes and shops: the company's street goes round them, or waits for the player)
       if (this.lotsUnder(plan).length) continue;
-      if (!best || plan.cost < best.cost) best = plan;
+      if (plan.cost * cd.k < bestCost) { best = plan; bestCost = plan.cost * cd.k; }
     }
     return best;
   }

@@ -49,8 +49,9 @@ export interface Snap {
   guides: Guide[];
   label?: string;
   ringRaw?: V2; // picked inside a roundabout: the rim point follows where the road heads
-  /** picked over a company site: the road goes to (or leaves from) its gate instead */
-  site?: { id: number; name: string; gate: V2 };
+  /** picked over a company site: the road goes to (or leaves from) its gate instead (turned: to the side of its
+   * fence the road comes to, where its gate will be once the road is built) */
+  site?: { id: number; name: string; gate: V2; turned?: boolean };
 }
 
 /** A company site as the road tool sees it: a road drawn to or from anywhere over it connects at its gate. */
@@ -65,6 +66,8 @@ export interface SiteTarget {
   entry: V2;
   /** the road its gate is on, when it has one */
   access?: number;
+  /** with no road yet: the other side its gate could be on (the site turned half round), as `gate`, `out` and `entry` above */
+  turns?: { gate: V2; out: V2; entry: V2 }[];
 }
 
 export interface Guide {
@@ -207,8 +210,27 @@ export function snap(net: RoadNetwork, raw: V2, o: SnapOpts): Snap {
   // 0) over a company site: its gate (never a road through its yard)
   if (geo && o.level === 0) for (const t of o.sites ?? []) {
     if (rectDistance(raw, t.c, t.hw, t.hd, t.rot) > 0) continue;
-    const e = siteEntry(net, t);
-    return { ...e, guides, label: `Connects to ${t.name}`, site: { id: t.id, name: t.name, gate: { ...t.gate } } };
+    let e = siteEntry(net, t), gate = t.gate, turned = false;
+    // A site with no road yet, and the road comes to it from behind (the straight way to its gate would cut through
+    // its yard): the gate goes to the back of the plot, and the road ends there.
+    if (t.access === undefined && t.turns?.length && o.from) {
+      const from = o.from.p;
+      const cuts = (to: V2) => {
+        const L = dist(from, to), n = Math.max(2, Math.ceil(L / 4));
+        for (let k = 0; k < n; k++) if (rectDistance(lerpV(from, to, k / n), t.c, t.hw, t.hd, t.rot) < 4) return true;
+        return false;
+      };
+      if (cuts(t.entry)) {
+        let best = Infinity;
+        for (const k of t.turns) {
+          const d = dist(from, k.entry);
+          if (d >= best || cuts(k.entry)) continue;
+          best = d; gate = k.gate; turned = true;
+          e = { p: { ...k.entry }, h: 0, tangent: { ...k.out } };
+        }
+      }
+    }
+    return { ...e, guides, label: turned ? `Connects to ${t.name}: its gate turns to this side` : `Connects to ${t.name}`, site: { id: t.id, name: t.name, gate: { ...gate }, ...(turned ? { turned } : {}) } };
   }
   // 1) nodes
   const nr = NODE_SNAP_PX * o.mpp;
@@ -1553,7 +1575,8 @@ function siteErrors(net: RoadNetwork, plan: Plan, start: Snap, end: Snap) {
     if (rest.length) out.push({ ...e, msg: rest.length === 1 ? "Building in the way" : `${rest.length} buildings in the way`, buildings: rest });
   }
   plan.errors = out;
-  plan.connects = `Connects to ${(end.site ?? start.site)!.name}`;
+  const joined = (end.site ?? start.site)!;
+  plan.connects = joined.turned ? `Connects to ${joined.name}: its gate turns to this side` : `Connects to ${joined.name}`;
 }
 
 /** Directions of the roads at a snap (both ways along a road; each road out of a junction). */
