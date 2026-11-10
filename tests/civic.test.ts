@@ -83,11 +83,11 @@ describe("a town hall's square", () => {
 
   it("keeps its furniture and its people off the hall, the path and the trees, and on the square", () => {
     // (a deep front strip: the open ground runs on past the lot to the pavement)
-    for (let tier = 0; tier < 4; tier++) for (const seed of [1, 7, 42]) for (const [kerbX, front] of [[0, HALF - 0.4], [-6, HALF + 20], [9, HALF + 4]]) {
+    for (let tier = 0; tier < 4; tier++) for (const seed of [1, 7, 42]) for (const [kerbX, front] of [[0, HALF - 0.4], [-6, HALF + 20], [9, HALF + 4], [3, HALF - 6]]) {
       const [mx, mz] = HALLS[tier];
       const p = squarePlan(tier, HALF, { x0: -mx, x1: mx, z0: -mz, z1: mz }, { x: 0, z: mz }, { x: kerbX, z: front + 3 }, seed, front);
       const path = p.rects.find((r) => r.kind === "path")!;
-      const F = Math.max(HALF - 0.4, front);
+      const F = front;
       const ux = Math.sin(path.rot), uz = Math.cos(path.rot);
       for (const q of p.props) {
         const where = `tier ${tier} seed ${seed} kerb ${kerbX} front ${front}: ${q.model} at ${q.x.toFixed(1)},${q.z.toFixed(1)}`;

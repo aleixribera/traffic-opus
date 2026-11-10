@@ -131,7 +131,8 @@ export function squarePlan(
     row(-H + 10, back + 3.5, H - 10, back + 3.5, 8.5, 3, 1);
   }
   if (pathRect) rects.push(pathRect);
-  const fz = Math.max(H, Math.min(front, kerb.z));
+  // (the open ground ends at the pavement: short of the lot's edge, should a widened street take some of it)
+  const fz = Math.max(door.z + 2, Math.min(front, kerb.z));
   const fx = door.x + (kerb.x - door.x) * ((fz - door.z) / (kerb.z - door.z || 1));
   const { props, folk } = furnish(tier, H, fz, fp, door, { x: fx, z: fz }, pathW, trees, seed);
   return { base, rects, trees, props, folk };

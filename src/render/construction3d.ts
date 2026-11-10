@@ -163,8 +163,16 @@ export class Construction3D {
 
     // the plot dug over and set out: stakes round it, a builder's line from stake to stake, till the frame goes up
     // (above the lot's yard, which lies at 0.04)
-    if (order === 0) this.put(j, "con_trench", cx, 0.03, cz, 0, W + 1.0, 1, D + 1.0);
-    if (order <= 1) {
+    // (a block's plot waiting on its materials is boarded up instead: see below)
+    const hoarded = order === 0 && !!j.room && (j.heavy || area > 250);
+    if (order === 0) {
+      // (a hoarded plot's digging stays inside the boards)
+      const r = j.room, b = 0.35 + 0.15;
+      const tx0 = hoarded && r ? Math.max(j.x0 - 0.5, r.x0 + b) : j.x0 - 0.5, tx1 = hoarded && r ? Math.min(j.x1 + 0.5, r.x1 - b) : j.x1 + 0.5;
+      const tz0 = hoarded && r ? Math.max(j.z0 - 0.5, r.z0 + b) : j.z0 - 0.5, tz1 = hoarded && r ? Math.min(j.z1 + 0.5, r.z1 - b) : j.z1 + 0.5;
+      this.put(j, "con_trench", (tx0 + tx1) / 2, 0.03, (tz0 + tz1) / 2, 0, tx1 - tx0, 1, tz1 - tz0);
+    }
+    if (order <= 1 && !hoarded) {
       const o = 0.8, xa = j.x0 - o, xb = j.x1 + o, za = j.z0 - o, zb = j.z1 + o;
       for (const [ax, az, ex, ez] of [[xa, za, xb, za], [xb, za, xb, zb], [xb, zb, xa, zb], [xa, zb, xa, za]]) {
         const len = Math.hypot(ex - ax, ez - az), n = Math.max(1, Math.round(len / 3.5));
@@ -175,7 +183,7 @@ export class Construction3D {
     }
     // a block's plot waiting on its materials is boarded up along its lot's edges, bills pasted on the boards, a gate
     // left open in front: a town redeveloping shows it from the street (the hoarding comes down for the slab's pour)
-    if (order === 0 && j.room && (j.heavy || area > 250)) this.hoarding(j, j.room, cx);
+    if (hoarded) this.hoarding(j, j.room!, cx);
     // the slab: poured through its step, then the floor everything stands on
     if (order >= 1) this.put(j, "con_slab", cx, 0, cz, 0, W + 0.4, order === 1 ? 0.25 + 0.75 * k : 1, D + 0.4);
     const y0 = order >= 1 ? 0.3 : 0;
@@ -249,13 +257,14 @@ export class Construction3D {
     const pileN = Math.max(3, Math.min(6, Math.round(area / 60)));
     const want = order === 0 ? Math.ceil(j.stage.got * pileN) : order === 1 ? pileN : order === 2 ? pileN - Math.floor(k * pileN * 0.5) : order === 3 ? Math.ceil(pileN * 0.5 * (1 - k)) : 0;
     const kinds: ConModel[] = j.heavy ? ["con_steel", "con_bricks", "con_gravel", "con_bricks", "con_steel", "con_bricks"] : ["con_lumber", "con_gravel", "con_lumber", "con_bricks", "con_lumber", "con_gravel"];
-    this.piles(j, kinds.slice(0, want), order, y0);
+    this.piles(j, kinds.slice(0, want), order, y0, hoarded);
 
     // the hut on a big job's lot
     if (j.room && area > 300 && order <= 3) {
-      const r = j.room;
-      if (r.x1 - j.x1 > 3.6) this.put(j, "con_hut", r.x1 - 1.8, 0, r.z0 + 3.2, Math.PI / 2);
-      else if (j.z0 - r.z0 > 3.6) this.put(j, "con_hut", r.x1 - 3.2, 0, r.z0 + 1.8);
+      // (inside the hoarding's boards and their braces while it stands)
+      const r = j.room, h = hoarded ? 0.6 : 0;
+      if (r.x1 - j.x1 > 3.6 + h) this.put(j, "con_hut", r.x1 - 1.8 - h, 0, r.z0 + 3.2 + h, Math.PI / 2);
+      else if (j.z0 - r.z0 > 3.6 + h) this.put(j, "con_hut", r.x1 - 3.2 - h, 0, r.z0 + 1.8 + h);
     }
 
     // the contractor's truck: the mixer for the slab, the lumber truck with the frame
@@ -315,9 +324,10 @@ export class Construction3D {
     return null;
   }
 
-  private piles(j: ConJob, kinds: ConModel[], order: number, y0: number) {
+  private piles(j: ConJob, kinds: ConModel[], order: number, y0: number, hoarded = false) {
     if (!kinds.length) return;
-    const r = j.room;
+    // (behind hoarding, the loads are stacked on the dug plot inside the boards, clear of them)
+    const r = hoarded ? undefined : j.room;
     // behind the walls if the lot has room there, else beside them; a works' building (or a full lot) stacks
     // them on its own plot until the frame goes up
     const back = r ? j.z0 - r.z0 : 0;
@@ -325,9 +335,12 @@ export class Construction3D {
     let z: number, yaw = 0, along = true;
     if (r && back >= 1.9) z = r.z0 + Math.min(back, 3.6) / 2;
     else if (r && r.x1 - j.x1 >= 1.9) { along = false; x = j.x1 + Math.min(r.x1 - j.x1, 3.6) / 2; z = r.z0 + 0.6; yaw = Math.PI / 2; }
-    else if (order <= 1) { z = j.z0 + 1.6; x = j.x0 + 0.4; }
+    else if (order <= 1) {
+      z = j.z0 + 1.6; x = j.x0 + 0.4;
+      if (hoarded && j.room) { x = Math.max(x, j.room.x0 + 1.3); z = Math.max(z, j.room.z0 + 2.6); }
+    }
     else return;
-    const limit = along ? (r ? r.x1 - 0.6 : j.x1 - 0.4) : (r ? r.z1 - TRUCK_L - 1 : j.z1);
+    const limit = along ? (r ? r.x1 - 0.6 : hoarded && j.room ? Math.min(j.x1 - 0.4, j.room.x1 - 1.3) : j.x1 - 0.4) : (r ? r.z1 - TRUCK_L - 1 : j.z1);
     const y = !r || (r && back < 1.9 && r.x1 - j.x1 < 1.9) ? y0 : 0;
     for (const m of kinds) {
       const [l, w] = PILE[m]!;

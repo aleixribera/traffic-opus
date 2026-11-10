@@ -16,12 +16,16 @@ const SQUARE_PROPS = ["life_bench", "life_stall_a", "life_stall_b", "life_kiosk"
 export const LIFE_MODELS: string[] = [...PEOPLE.flatMap((k) => [`life_person_${k}`, `life_person_${k}_far`]), ...SQUARE_PROPS];
 
 /** A town hall's square: its lot to the world (render/buildings3d.ts lotMatrix) and its plan. */
-export interface LifeSquare { base: THREE.Matrix4; plan: SquarePlan }
+export interface LifeSquare { base: THREE.Matrix4; plan: SquarePlan; seed: number }
 /**
  * A lot's frontage on its pavement: lot to world, its half width along the street, where its pavement runs (lot z,
  * from the back of the pavement to the kerb), what it is, and how near the town's centre (1 at the hall, less out).
  */
-export interface LifeFront { base: THREE.Matrix4; hw: number; z0: number; z1: number; kind: "shop" | "home"; centre: number; seed: number }
+export interface LifeFront {
+  base: THREE.Matrix4; hw: number; z0: number; z1: number; kind: "shop" | "home"; centre: number; seed: number;
+  /** how far past the lot's -x and +x ends its walkers may go (short of a side street's kerb; 3 m if none) */
+  past?: [number, number];
+}
 
 /** How near the camera must be (m a pixel) for the people to be drawn at all, and in full rather than two boxes. */
 export const PEOPLE_SEE = 0.42, PEOPLE_FULL = 0.2;
@@ -36,6 +40,8 @@ interface Folk {
   walk: boolean;
   /** m/s, s paused at each end, phase (s) */
   v: number; rest: number; t0: number;
+  /** (worked out once) the walk's time one way and its round trip, and its heading out */
+  go: number; cyc: number; head: number;
   /** drawn while the hour's share of the town out of doors is above it */
   rank: number;
   look: number;
@@ -72,6 +78,7 @@ export class TownLife {
   private near: THREE.InstancedMesh[] = [];
   private far: THREE.InstancedMesh[] = [];
   private folk: Folk[] = [];
+  private empty = new THREE.BufferGeometry();
   private shown = false;
 
   constructor(private models: Map<string, MergedModel>) {}
@@ -88,17 +95,24 @@ export class TownLife {
       v.set(Math.sin(rot), 0, Math.cos(rot)).transformDirection(base);
       return Math.atan2(v.x, v.z);
     };
-    const add = (f: Omit<Folk, "rank" | "look" | "size">, k: number) => {
-      folk.push({ ...f, rank: hash(k, 11), look: Math.floor(hash(k, 12) * PEOPLE.length), size: 0.93 + hash(k, 13) * 0.12 });
+    const add = (f: Omit<Folk, "rank" | "look" | "size" | "go" | "cyc" | "head">, k: number) => {
+      const len = Math.hypot(f.bx - f.ax, f.bz - f.az);
+      const walk = f.walk && len > 0.05 && f.v > 0;
+      const go = walk ? len / f.v : 0;
+      folk.push({
+        ...f, walk, go, cyc: 2 * (go + f.rest), head: walk ? Math.atan2(f.bx - f.ax, f.bz - f.az) : f.yaw,
+        rank: hash(k, 11), look: Math.floor(hash(k, 12) * PEOPLE.length), size: 0.93 + hash(k, 13) * 0.12,
+      });
     };
-    squares.forEach((sq, si) => {
+    for (const sq of squares) {
       for (const p of sq.plan.props) {
         let a = byModel.get(p.model);
         if (!a) byModel.set(p.model, (a = []));
         a.push(M.copy(sq.base).multiply(R.makeRotationY(p.rot).setPosition(p.x, 0, p.z)).clone());
       }
       sq.plan.folk.forEach((f, i) => {
-        const k = si * 7919 + i * 31 + 1;
+        // (keyed on the hall, so its people stay who they are when another hall is built or lost)
+        const k = sq.seed * 7919 + i * 31 + 1;
         v.set(f.x, 0, f.z).applyMatrix4(sq.base);
         if (f.to) {
           w.set(f.to.x, 0, f.to.z).applyMatrix4(sq.base);
@@ -109,7 +123,7 @@ export class TownLife {
         // (the square is the town's busiest ground: its people are nearly always about)
         folk[folk.length - 1].rank *= 0.6;
       });
-    });
+    }
     // the pavements: shoppers up and down in front of the shops, now and then someone outside a house; a few
     // looking in a shop's window
     for (const fr of fronts) {
@@ -119,9 +133,9 @@ export class TownLife {
       for (let i = 0; i < n; i++) {
         const k = fr.seed * 13 + i * 101;
         const z = fr.z0 + (fr.z1 - fr.z0) * (0.25 + 0.5 * hash(k, 4));
-        const ext = Math.min(3, fr.hw) * hash(k, 5);
-        v.set(-fr.hw - ext, 0, z).applyMatrix4(fr.base);
-        w.set(fr.hw + Math.min(3, fr.hw) * hash(k, 6), 0, z).applyMatrix4(fr.base);
+        const [p0, p1] = fr.past ?? [3, 3];
+        v.set(-fr.hw - Math.min(p0, fr.hw) * hash(k, 5), 0, z).applyMatrix4(fr.base);
+        w.set(fr.hw + Math.min(p1, fr.hw) * hash(k, 6), 0, z).applyMatrix4(fr.base);
         if (hash(k, 7) < 0.5) [v.x, v.z, w.x, w.z] = [w.x, w.z, v.x, v.z];
         add({ ax: v.x, az: v.z, bx: w.x, bz: w.z, yaw: 0, walk: true, v: 1.1 + hash(k, 8) * 0.45, rest: 0.5 + hash(k, 9) * 4, t0: hash(k, 10) * 90 }, k);
       }
@@ -151,7 +165,7 @@ export class TownLife {
     for (const m of [...this.near, ...this.far]) { this.group.remove(m); m.dispose(); }
     const make = (name: string, n: number) => {
       const mm = this.models.get(name);
-      const mesh = new THREE.InstancedMesh(mm?.geo ?? new THREE.BufferGeometry(), this.folkMat, Math.max(1, n));
+      const mesh = new THREE.InstancedMesh(mm?.geo ?? this.empty, this.folkMat, Math.max(1, n));
       mesh.count = 0;
       mesh.frustumCulled = false;
       mesh.castShadow = false;
@@ -165,6 +179,7 @@ export class TownLife {
     this.shown = true;
   }
 
+  private n = PEOPLE.map(() => 0);
   private a = new THREE.Vector3();
   private b = new THREE.Vector3();
 
@@ -181,7 +196,7 @@ export class TownLife {
     this.shown = true;
     // the ground in view (a little more, for those just off its edges)
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
-    for (const [nx, ny] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+    for (const [nx, ny] of CORNERS) {
       const a = this.a.set(nx, ny, -1).unproject(camera), b = this.b.set(nx, ny, 1).unproject(camera);
       const k = Math.abs(a.y - b.y) > 1e-6 ? a.y / (a.y - b.y) : 0;
       const x = a.x + (b.x - a.x) * k, z = a.z + (b.z - a.z) * k;
@@ -193,21 +208,22 @@ export class TownLife {
     const full = mpp <= PEOPLE_FULL;
     const meshes = full ? this.near : this.far;
     for (const m of full ? this.far : this.near) m.count = 0;
-    const n = meshes.map(() => 0);
+    const n = this.n.fill(0);
     for (const f of this.folk) {
       if (f.rank >= share) continue;
       let x = f.ax, z = f.az, yaw = f.yaw, y = 0;
       if (f.walk) {
-        const len = Math.hypot(f.bx - f.ax, f.bz - f.az);
-        const go = len / f.v, cyc = 2 * (go + f.rest);
-        let u = (t + f.t0) % cyc;
+        // (the whole walk out of view: skip the sums)
+        if (Math.max(f.ax, f.bx) < x0 || Math.min(f.ax, f.bx) > x1 || Math.max(f.az, f.bz) < z0 || Math.min(f.az, f.bz) > z1) continue;
+        const go = f.go;
+        let u = (t + f.t0) % f.cyc;
         let back = false;
         if (u > go + f.rest) { u -= go + f.rest; back = true; }
         const s = Math.min(1, u / go);
         const k = back ? 1 - s : s;
         x = f.ax + (f.bx - f.ax) * k;
         z = f.az + (f.bz - f.az) * k;
-        yaw = Math.atan2(f.bx - f.ax, f.bz - f.az) + (back ? Math.PI : 0);
+        yaw = f.head + (back ? Math.PI : 0);
         if (u < go) y = 0.035 * Math.abs(Math.sin((t + f.t0) * 5.6));
       }
       if (x < x0 || x > x1 || z < z0 || z > z1) continue;
@@ -220,7 +236,12 @@ export class TownLife {
     }
     meshes.forEach((m, i) => {
       m.count = n[i];
-      if (n[i]) m.instanceMatrix.needsUpdate = true;
+      if (n[i]) {
+        // (only the ones written this frame go up to the card)
+        m.instanceMatrix.clearUpdateRanges();
+        m.instanceMatrix.addUpdateRange(0, n[i] * 16);
+        m.instanceMatrix.needsUpdate = true;
+      }
     });
   }
 
@@ -238,8 +259,13 @@ export class TownLife {
     this.near = [];
     this.far = [];
     this.folk = [];
+    this.propMat.dispose();
+    this.folkMat.dispose();
+    this.empty.dispose();
   }
 }
+
+const CORNERS: [number, number][] = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
 
 /** Draw the mesh's instances only while a pixel is no more than `maxMpp` metres (the view's own camera says). */
 function zoomCull(mesh: THREE.InstancedMesh, maxMpp: number) {

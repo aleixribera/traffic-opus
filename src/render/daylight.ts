@@ -176,7 +176,7 @@ export function lightAt(hour: number, yday: number, mode: NightMode): Light {
   const t = 0.5 + 0.5 * Math.sin(((hour - NOON) / 24) * 2 * Math.PI);
   let amb = mix3(dawnK.amb, duskK.amb, t), sun = mix3(dawnK.sun, duskK.sun, t);
   // the moon takes over the direct light once the sun is well down
-  const moon = ramp(-2, -6.5, te);
+  const moon = ramp(-3, -7, te);
   sun = mix3(sun, MOONLIGHT, moon);
   // the setting's floor: soft nights lift the darkness, and lose some of the blue as they do
   const floor = NIGHT_FLOOR[mode];
@@ -187,7 +187,7 @@ export function lightAt(hour: number, yday: number, mode: NightMode): Light {
   }
   // the direct light's direction: the sun's, low suns clamped so shadows stay sane; the moon's at night (the swap
   // happens with both too faint to see)
-  const useMoon = te < -2.5;
+  const useMoon = te < -3;
   const b = useMoon ? MOON.bearing : sunBearing(hour, yday);
   const h = useMoon ? MOON.height : Math.max(SHADOW_MIN, e) * RAD;
   const dir: [number, number, number] = [Math.cos(b) * Math.cos(h), Math.sin(h), Math.sin(b) * Math.cos(h)];

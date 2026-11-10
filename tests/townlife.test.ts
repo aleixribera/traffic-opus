@@ -75,4 +75,25 @@ describe("the townspeople", () => {
     life.frame(camera(2000, 2000, 70), PEOPLE_FULL * 0.5, 100, 13, 20);
     expect(life.drawn).toBe(0);
   });
+
+  it("stop short of a side street at a corner", () => {
+    const life = new TownLife(models);
+    // one shop, a side street's kerb just past its -x end, open ground past its +x end
+    life.set([], [{ ...row(1, 1)[0], hw: 20, past: [0, 1] }]);
+    const cam = camera(0, -9, 70);
+    const near = life.group.children.slice(-PEOPLE.length * 2, -PEOPLE.length) as THREE.InstancedMesh[];
+    const m = new THREE.Matrix4(), p = new THREE.Vector3();
+    let seen = 0;
+    for (let t = 0; t < 120; t += 3.1) {
+      life.frame(cam, PEOPLE_FULL * 0.5, t, 13, 20);
+      for (const mesh of near) for (let i = 0; i < mesh.count; i++, seen++) {
+        mesh.getMatrixAt(i, m);
+        p.setFromMatrixPosition(m);
+        // (the lot is turned half round: its -x end lies at world +x)
+        expect(p.x).toBeLessThanOrEqual(20 + 1e-6);
+        expect(p.x).toBeGreaterThanOrEqual(-21 - 1e-6);
+      }
+    }
+    expect(seen).toBeGreaterThan(0);
+  });
 });

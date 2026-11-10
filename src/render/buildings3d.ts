@@ -1150,13 +1150,16 @@ export class Buildings3D {
       const kd = dot(rel, toward), xd = dot(rel, along) + this.driveX(b);
       const pave = this.paveOf(b.access.seg);
       if (b.built >= 1 && !b.abandoned) {
-        if (isHall(b.kind)) lifeSquares.push({ base: lotMatrix(new THREE.Matrix4(), b.c, b.rot, b.side, 0), plan: this.squareOf(b) });
+        if (isHall(b.kind)) lifeSquares.push({ base: lotMatrix(new THREE.Matrix4(), b.c, b.rot, b.side, 0), plan: this.squareOf(b), seed: b.id });
         else if (pave > 0) {
           const hall = b.town !== undefined ? halls.get(b.town) : undefined;
           const d = hall ? Math.hypot(hall.x - b.c.x, hall.y - b.c.y) : 250;
           const shop = !b.zone || ZONE_GROUP[b.zone] !== "res" || !!b.wall;
+          // (a corner lot's walkers stop short of the side street's kerb)
+          const sides = this.sidesOf(b, along, b.hw - 0.4), reach = (e: number) => (e > 0 ? Math.max(0, e - 0.7) : 3);
           lifeFronts.push({
             base: lotMatrix(new THREE.Matrix4(), b.c, b.rot, b.side, 0), hw: b.hw, z0: kd - pave, z1: kd, kind: shop ? "shop" : "home",
+            past: [reach(sides[1]), reach(sides[0])],
             centre: Math.max(0.12, Math.min(1, 1 - (d - 50) / 350)), seed: b.id,
           });
         }
