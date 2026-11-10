@@ -18,6 +18,7 @@
 import { F, MOUNTAIN_STEPS } from "../world/gen";
 import { RES, type Terrain } from "../world/terrain";
 import { CLEAR_RANGE, clearDist, type ClearShape } from "./clearing";
+import { KEEP } from "./furniture";
 
 /** A forest cell's side (m); a scrub cell is twice it. */
 export const TREE_CELL = 7.5;
@@ -101,6 +102,8 @@ export interface TreeTile {
   version: number;
   /** `alive` needs working out again */
   stale: boolean;
+  /** the roadside furniture `alive` was worked out against (KEEP.version) */
+  keep: number;
 }
 
 export interface Rect { x0: number; y0: number; x1: number; y1: number }
@@ -186,6 +189,8 @@ export class Forest {
 
   /** Would a crown of radius r at (x, y) reach built ground? Exactly clearing.ts crownCleared, found through a grid. */
   cleared(x: number, y: number, r: number): boolean {
+    // (nor a billboard: render/furniture.ts places them, after the roads and the lots)
+    if (KEEP.hit(x, y, r + 0.4)) return true;
     const list = this.buckets.get(tkey(Math.floor(x / BUCKET), Math.floor(y / BUCKET)));
     if (!list) return false;
     const p = this.at;
@@ -203,7 +208,7 @@ export class Forest {
       if (this.tiles.size >= this.maxTiles) this.tiles.delete(this.tiles.keys().next().value!);
       this.tiles.set(k, t);
     }
-    if (t.stale) {
+    if (t.stale || t.keep !== KEEP.version) {
       let changed = false;
       for (let i = 0; i < t.n; i++) {
         const a = this.cleared(t.x[i], t.y[i], t.r[i]) ? 0 : 1;
@@ -211,6 +216,7 @@ export class Forest {
       }
       if (changed) t.version = ++this.versions;
       t.stale = false;
+      t.keep = KEEP.version;
     }
     return t;
   }
@@ -218,7 +224,7 @@ export class Forest {
   /** Whether tile (ti, tj) is worked out and current (asking for it would cost nothing). */
   ready(ti: number, tj: number): boolean {
     const t = this.tiles.get(tkey(ti, tj));
-    return !!t && !t.stale;
+    return !!t && !t.stale && t.keep === KEEP.version;
   }
 
   /** A tile's trees as nature has them (before anything is built): the hashed cells against the terrain's fields. */
@@ -273,7 +279,7 @@ export class Forest {
     return {
       ti, tj, n,
       x: Float32Array.from(xs), y: Float32Array.from(ys), r: Float32Array.from(rs), grid: Uint8Array.from(gs),
-      ci: Int32Array.from(cis), cj: Int32Array.from(cjs), alive: new Uint8Array(n).fill(1), version: ++this.versions, stale: true,
+      ci: Int32Array.from(cis), cj: Int32Array.from(cjs), alive: new Uint8Array(n).fill(1), version: ++this.versions, stale: true, keep: -1,
     };
   }
 

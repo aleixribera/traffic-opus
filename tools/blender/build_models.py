@@ -453,9 +453,42 @@ def home_lot(M, P, garage_roof, yard="veg"):
     return L
 
 
+def home_window(M, F, a, w=1.0, z0=0.95, z1=2.15, frame=None, shutters=None):
+    """A house window on wall F (town_a_kit's _Face), centred at `a`: glass that lights at night (win_home), in a
+    painted frame, or between shutters."""
+    T = _td()
+    if frame is not None:
+        _wq(M, F, a - w / 2 - 0.1, a + w / 2 + 0.1, z0 - 0.1, z1 + 0.1, frame, 0.03)
+    if shutters is not None:
+        for s in (-1, 1):
+            _wq(M, F, a + s * (w / 2 + 0.2) - 0.17, a + s * (w / 2 + 0.2) + 0.17, z0, z1, shutters, 0.04)
+    _wq(M, F, a - w / 2, a + w / 2, z0, z1, T["win_home"], 0.055)
+
+
+def home_door(M, F, a, m, w=0.95, h=2.05, frame=None):
+    if frame is not None:
+        _wq(M, F, a - w / 2 - 0.1, a + w / 2 + 0.1, 0, h + 0.1, frame, 0.03)
+    _wq(M, F, a - w / 2, a + w / 2, 0, h, m, 0.055)
+
+
 def b_house(M, P):
     """A 1920s cross-gable house: the main body with its ridge along the street, a front wing, the porch, a chimney."""
     L = home_lot(M, P, P["res_roof2"], "veg")
+    T, tr = _td(), P["res_trim"]
+    B, W = _faces(-1.4, 5.4, -0.2, 4.6), _faces(2.4, 5.4, -2.4, -0.2)
+    home_door(M, B["f"], 1.9, T["door_g"], frame=tr)
+    home_window(M, B["f"], 0.7, 1.0, frame=tr)
+    home_window(M, W["f"], 1.5, 1.5, frame=tr)
+    home_window(M, W["f"], 1.5, 0.6, 3.15, 3.75, frame=tr)
+    home_window(M, W["r"], 1.1, 0.9, frame=tr)
+    home_window(M, B["r"], 2.6, 1.0, frame=tr)
+    home_window(M, B["r"], 2.4, 0.7, 3.3, 4.05, frame=tr)
+    home_window(M, B["l"], 1.5, 1.0, frame=tr)
+    home_window(M, B["l"], 3.4, 1.0, frame=tr)
+    home_window(M, B["l"], 2.4, 0.7, 3.3, 4.05, frame=tr)
+    home_window(M, B["b"], 1.6, 1.0, frame=tr)
+    home_window(M, B["b"], 5.3, 0.8, 1.2, 2.15, frame=tr)
+    home_door(M, B["b"], 3.6, T["door"], w=0.85, frame=tr)
     wall, roof = P["res_wall"], P["res_roof"]
     box(M, -1.4, 5.4, -0.2, 4.6, 0, 3.0, wall)
     gable(M, -1.4, 5.4, -0.2, 4.6, 3.0, 5.0, "x", roof, wall)
@@ -471,6 +504,18 @@ def b_house_b(M, P):
     """A brick bungalow: low walls under a hipped slate roof, a gabled porch on the front, a chimney at the side."""
     L = home_lot(M, P, P["res_roof"], "shed")
     wall, roof = P["brick_home"], P["slate"]
+    T, tr = _td(), P["res_trim"]
+    B, W = _faces(-1.4, 5.4, -1.8, 4.4), _faces(0.6, 3.0, -3.0, -1.8)
+    home_door(M, W["f"], 1.2, T["oxblood"])
+    home_window(M, B["f"], 1.0, 1.2, frame=tr)
+    home_window(M, B["f"], 5.6, 1.2, frame=tr)
+    home_window(M, B["r"], 1.3, 1.0, frame=tr)
+    home_window(M, B["r"], 4.9, 1.0, frame=tr)
+    home_window(M, B["l"], 1.6, 1.0, frame=tr)
+    home_window(M, B["l"], 4.6, 1.0, frame=tr)
+    home_window(M, B["b"], 1.5, 1.0, frame=tr)
+    home_window(M, B["b"], 5.4, 0.8, 1.2, 2.15, frame=tr)
+    home_door(M, B["b"], 3.6, T["door"], w=0.85, frame=tr)
     box(M, -1.4, 5.4, -1.8, 4.4, 0, 2.9, wall)
     taper(M, (-1.8, 5.8, -2.2, 4.8), (0.6, 3.4, 1.28, 1.32), 2.9, 4.7, roof)
     box(M, 0.6, 3.0, -3.0, -1.8, 0, 2.5, P["res_trim"])
@@ -486,6 +531,20 @@ def b_house_c(M, P):
     L = home_lot(M, P, P["res_roof2"], "lawn")
     wall, roof = P["res_trim"], P["shingle"]
     y0, y1 = -1.0, 4.4
+    T = _td()
+    B, D = _faces(-1.0, 5.4, y0, y1), _faces(-0.2, 4.6, y0 + 0.35, y0 + 1.6)
+    sh = T["green"]
+    home_door(M, B["f"], 3.2, T["oxblood"])
+    home_window(M, B["f"], 1.75, 0.95, shutters=sh)
+    home_window(M, B["f"], 4.85, 0.95, shutters=sh)
+    for a in (0.9, 2.4, 3.9):
+        home_window(M, D["f"], a, 0.85, 3.35, 4.3, shutters=sh if a != 2.4 else None)
+    home_window(M, B["r"], 1.5, 0.95, shutters=sh)
+    home_window(M, B["r"], 3.9, 0.95, shutters=sh)
+    home_window(M, B["l"], 1.4, 0.95, shutters=sh)
+    home_window(M, B["b"], 1.5, 0.95, shutters=sh)
+    home_window(M, B["b"], 5.0, 0.95, shutters=sh)
+    home_door(M, B["b"], 3.3, T["door"], w=0.85)
     box(M, -1.0, 5.4, y0, y1, 0, 2.8, wall)
     ym = (y0 + y1) / 2
     extrude_profile(M, [(y0 - 0.3, 2.8), (y0 + 0.5, 4.6), (ym, 5.6), (y1 - 0.5, 4.6), (y1 + 0.3, 2.8),
@@ -499,221 +558,11 @@ def b_house_c(M, P):
     return L
 
 
-def b_terrace(M, P):
-    xs = [-11.0, -11.0 + 22 / 3, 11.0 - 22 / 3, 11.0]
-    centres = [(xs[i] + xs[i + 1]) / 2 for i in range(3)]
-    L = lot(M, P, 24, 17, centres)
-    offs = [0.0, 0.7, 0.25]
-    heights = [5.6, 5.2, 5.6]
-    for i in range(3):
-        wall = P["res_wall"] if i % 2 == 0 else P["res_wall2"]
-        roof = P["res_roof"] if i % 2 == 0 else P["res_roof2"]
-        x0, x1 = xs[i], xs[i + 1]
-        y0, y1 = L.y0 + 1.2 + offs[i], L.y1 - 0.4 - (0.7 - offs[i])
-        ze = heights[i]
-        box(M, x0, x1, y0, y1, 0, ze, wall)
-        gable(M, x0, x1, y0, y1, ze, ze + 2.4, "x", roof, wall,
-              oh_a=(0.4 if i == 0 else 0.0, 0.4 if i == 2 else 0.0))
-        # front gabled bay per unit
-        c = centres[i] + (-1.0 if i == 1 else 0.9)
-        box(M, c - 1.5, c + 1.5, y0 - 1.1, y0 + 0.5, 0, 3.0, wall)
-        gable(M, c - 1.5, c + 1.5, y0 - 1.1, y0 + 1.4, 3.0, 4.3, "y", roof, wall, oh_a=(0.35, 0.0),
-              oh_u=(0.3, 0.3))
-        # chimney on the party wall
-        if i < 2:
-            box(M, x1 - 0.35, x1 + 0.35, y1 - 1.6, y1 - 0.9, ze, ze + 2.9, P["res_trim"], bevel=0.04)
-            emitter(M, "chimney", x1, y1 - 1.25, ze + 2.9, 0.6)
-    return L
-
-
-def b_apartments(M, P):
-    L = lot(M, P, 30, 30, bay_row(6))
-    wall, roof, brace, bandm = P["apt_wall"], P["apt_roof"], P["apt_brace"], P["apt_band"]
-    st = 3.1
-    mods = [  # x0, x1, y0, y1, storeys
-        (-13.5, -1.2, -7.0, 3.2, 4), (-13.5, -1.2, 3.2, 13.6, 3),
-        (1.2, 13.5, -6.2, 3.9, 3), (1.2, 13.5, 3.9, 13.8, 4),
-    ]
-    for x0, x1, y0, y1, n in mods:
-        h = n * st
-        for s in range(n):  # window bands
-            band(M, x0, x1, y0, y1, s * st + 1.0, s * st + 1.9, bandm, o=0.05)
-        top = flat_block(M, x0, x1, y0, y1, h, wall, roof)
-        xbrace(M, x0 + 0.3, x1 - 0.3, y0 + 0.3, y1 - 0.3, top, brace)
-    # stair-core link between the two columns, entrance canopies
-    flat_block(M, -1.3, 1.3, -1.5, 9.5, 7.4, wall, roof)
-    for cx in (-7.3, 7.3):
-        y = -7.0 if cx < 0 else -6.2
-        box(M, cx - 1.8, cx + 1.8, y - 1.2, y, 2.6, 2.85, roof, bevel=0.05)
-    return L
-
-
 # a main street shop's lot: the shop stands on the pavement, its side alley runs past it to a car park behind
 MAIN_ALLEY = (5.2, 8.8)     # the alley across the lot (x); the game drives cars in along it (buildings3d DRIVE_X)
 MAIN_FRONT = -9.0           # the shopfront (y), the paving before it carries on the town's pavement
 MAIN_BACK = 0.0             # the back wall of the shop (y): the car park from there to the back of the lot
 REAR_PARK = {"shop", "highstreet"}   # the models parking behind the building
-
-
-def main_lot(M, P, w, d, nbays):
-    """A main street shop's lot (w x d): paving at the front out to the shopfront, an asphalt alley down the +x side
-    and a car park behind the shop with a row of bays along the back (cars nose in toward the back fence), a board
-    fence round the back, a dumpster by the back door. Returns Lot."""
-    L = Lot(w, d)
-    yf, yb = -d / 2, d / 2
-    a0, a1 = MAIN_ALLEY
-    box(M, -w / 2, a0, yf, MAIN_FRONT, 0, PAD_H, P["lm_paving"])
-    box(M, -w / 2, a0, MAIN_FRONT, MAIN_BACK, 0, PAD_H, P["pad"])
-    box(M, a0, w / 2, yf, MAIN_BACK, 0, PAD_H, P["asphalt"])
-    box(M, -w / 2, w / 2, MAIN_BACK, yb, 0, PAD_H, P["asphalt"])
-    # the bays along the back, from the left
-    x0 = -w / 2 + 0.6
-    bays = [x0 + BAY_W / 2 + i * BAY_W for i in range(nbays)]
-    by0, by1 = yb - 0.6 - BAY_L, yb - 0.6
-    for lx in sorted({round(bx + k * BAY_W / 2, 3) for bx in bays for k in (-1, 1)}):
-        box(M, lx - 0.06, lx + 0.06, by0, by1, PAD_H, PAD_H + 0.012, P["line"])
-    L.bays = [(bx, (by0 + by1) / 2) for bx in bays]
-    # a board fence round the back of the car park, and the dumpster by the back door
-    fence = P["fence_w"]
-    box(M, -w / 2, w / 2, yb - 0.12, yb, 0, 1.6, fence)
-    box(M, -w / 2, -w / 2 + 0.12, MAIN_BACK, yb, 0, 1.6, fence)
-    box(M, w / 2 - 3.2, w / 2 - 1.4, MAIN_BACK + 0.3, MAIN_BACK + 1.4, 0, 1.3, P["hs_awning"], bevel=0.04)
-    return L
-
-
-def b_shop(M, P):
-    """A 1930s small-town store on the main street: a brick front with a stepped parapet and a sign band, wide
-    display windows either side of a recessed door, a canvas awning over the pavement; a car park behind it,
-    reached down the alley beside it."""
-    L = main_lot(M, P, 18, 20, 4)
-    wall, trim = P["hs_wall2"], P["res_trim"]
-    x0, x1, y0, y1, h = -9.0, MAIN_ALLEY[0] - 0.2, MAIN_FRONT, MAIN_BACK, 5.0
-    box(M, x0, x1, y0, y1, 0, h, wall)
-    box(M, x0 + 0.2, x1 - 0.2, y0 + 0.2, y1 - 0.2, h, h + 0.12, P["com_roof"])
-    # the parapet: stepped up in the middle over the sign, a cream coping all round
-    box(M, x0, x1, y0, y0 + 0.3, h, h + 0.9, wall)
-    cx = (x0 + x1) / 2
-    box(M, cx - 2.6, cx + 2.6, y0, y0 + 0.3, h + 0.9, h + 1.6, wall)
-    box(M, x0 - 0.05, x1 + 0.05, y0 - 0.08, y0 + 0.35, h + 0.9, h + 1.0, trim)
-    box(M, cx - 2.7, cx + 2.7, y0 - 0.08, y0 + 0.35, h + 1.6, h + 1.7, trim)
-    # the sign band, the display windows and the recessed door between them
-    box(M, x0 + 0.5, x1 - 0.5, y0 - 0.1, y0, 3.2, 4.2, trim)
-    box(M, cx - 3.4, cx + 3.4, y0 - 0.14, y0 - 0.1, 3.4, 4.0, P["hs_awning2"])
-    box(M, x0 + 0.6, cx - 1.0, y0 - 0.06, y0, 0.5, 2.9, P["lm_glass"])
-    box(M, cx + 1.0, x1 - 0.6, y0 - 0.06, y0, 0.5, 2.9, P["lm_glass"])
-    box(M, cx - 0.8, cx + 0.8, y0 + 0.4, y0 + 0.46, 0, 2.6, P["lm_glass"])
-    _awning(M, x0 + 0.4, x1 - 0.4, y0, 3.1, 1.0, P["hs_awning2"])
-    # the back door onto the car park, and a vent on the roof
-    box(M, x1 - 3.0, x1 - 2.0, y1, y1 + 0.06, 0, 2.2, trim)
-    ac_unit(M, x0 + 3.0, y1 - 2.5, h + 0.12, P)
-    return L
-
-
-def b_store(M, P):
-    L = lot(M, P, 30, 28, bay_row(8))
-    wall, roof, rib = P["com_wall"], P["com_roof"], P["com_rib"]
-    # module A: tall, back-left, three low gabled bays (ridges along Y)
-    ax0, ax1, ay0, ay1, ah = -13.5, 4.5, L.y0 + 1.2, L.y1, 7.0
-    box(M, ax0, ax1, ay0, ay1, 0, ah, wall)
-    n = 3
-    bw = (ax1 - ax0) / n
-    for i in range(n):
-        a, b = ax0 + i * bw, ax0 + (i + 1) * bw
-        gable(M, a, b, ay0, ay1, ah, ah + 1.1, "y", roof, wall,
-              oh_u=(0.3 if i == 0 else 0.0, 0.3 if i == n - 1 else 0.0), oh_a=(0.3, 0.3), th=0.2)
-    box(M, ax0 + 1.0, ax1 - 1.0, ay0 - 0.06, ay0, 0.3, 3.0, P["com_glass"])
-    box(M, ax0 + 0.5, ax1 - 0.5, ay0 - 1.6, ay0, 3.3, 3.6, P["com_canopy"], bevel=0.05)
-    # module B: lower, front-right, flat roof with ribs
-    bx0, bx1, by0, by1, bh = 3.0, 13.5, L.y0, 9.0, 5.2
-    top = flat_block(M, bx0, bx1, by0, by1, bh, wall, roof)
-    ribs(M, bx0 + 0.6, bx1 - 0.6, by0 + 0.6, by1 - 0.6, top, rib, 9, along="y")
-    box(M, bx0 + 1.5, bx1 - 1.0, by0 - 0.06, by0, 0.3, 2.8, P["com_glass"])
-    ac_unit(M, 0.0, ay1 - 3.0, ah + 0.2, P)
-    return L
-
-
-def b_mall(M, P):
-    L = lot(M, P, 48, 40, bay_row(14))
-    wall, roof, rib = P["com_wall"], P["com_roof"], P["com_rib"]
-    y0, y1 = L.y0, L.y1
-    # central hall with four gabled bays
-    hx0, hx1, hy0, hy1, hh = -11.0, 11.0, y0 + 2.5, y1 - 0.5, 9.0
-    box(M, hx0, hx1, hy0, hy1, 0, hh, wall)
-    n = 4
-    bw = (hx1 - hx0) / n
-    for i in range(n):
-        a, b = hx0 + i * bw, hx0 + (i + 1) * bw
-        gable(M, a, b, hy0, hy1, hh, hh + 1.3, "y", roof, wall,
-              oh_u=(0.3 if i == 0 else 0.0, 0.3 if i == n - 1 else 0.0), oh_a=(0.3, 0.3), th=0.22)
-    # glass entrance atrium with a canopy
-    box(M, -5.0, 5.0, y0, hy0, 0, 6.4, P["com_glass"])
-    box(M, -6.0, 6.0, y0 - 0.4, hy0 + 0.2, 6.4, 6.8, P["com_canopy"], bevel=0.06)
-    # left wing: flat, ribbed front band, AC units
-    lx0, lx1, ly0, ly1 = -22.5, -11.0, y0 + 4.0, y1 - 2.0
-    top = flat_block(M, lx0, lx1, ly0, ly1, 6.4, wall, roof)
-    ribs(M, lx0 + 0.6, lx1 - 0.6, ly0 + 0.6, ly0 + 5.0, top, rib, 9, along="y")
-    for cy in (ly0 + 9.0, ly0 + 13.5, ly0 + 18.0):
-        ac_unit(M, -16.8, cy, top, P)
-    box(M, lx0 + 1.0, lx1 - 1.0, ly0 - 0.06, ly0, 0.3, 3.0, P["com_glass"])
-    # right wing: taller, further forward, ribbed band at the back
-    rx0, rx1, ry0, ry1 = 11.0, 22.5, y0 + 0.5, y1 - 4.0
-    top = flat_block(M, rx0, rx1, ry0, ry1, 7.4, wall, roof)
-    ribs(M, rx0 + 0.6, rx1 - 0.6, ry1 - 6.0, ry1 - 0.6, top, rib, 9, along="y")
-    for cx, cy in ((14.2, ry0 + 4.0), (19.3, ry0 + 4.0), (14.2, ry0 + 9.5), (19.3, ry0 + 9.5)):
-        ac_unit(M, cx, cy, top, P, rot=True)
-    box(M, rx0 + 1.0, rx1 - 1.0, ry0 - 0.06, ry0, 0.3, 3.0, P["com_glass"])
-    return L
-
-
-def b_office(M, P):
-    L = lot(M, P, 20, 22, bay_row(5))
-    wall, roof, glass, trim = P["work_wall"], P["work_roof"], P["work_glass"], P["work_trim"]
-    st = 3.4
-    x0, x1, y0, y1 = -8.5, 6.0, L.y0 + 0.8, L.y1
-    for s in range(3):
-        band(M, x0, x1, y0, y1, s * st + 1.0, s * st + 2.6, glass)
-    top = flat_block(M, x0, x1, y0, y1, 3 * st, wall, roof, parapet=trim)
-    # lower entrance wing, offset forward and to the right
-    ex0, ex1, ey0, ey1 = 4.0, 8.5, L.y0, 5.5
-    band(M, ex0, ex1, ey0, ey1, 1.0, 2.6, glass)
-    etop = flat_block(M, ex0, ex1, ey0, ey1, 4.4, trim, roof)
-    box(M, ex0 + 0.8, ex1 - 0.8, ey0 + 0.8, ey1 - 0.8, etop, etop + 0.15, glass)
-    # rooftop plant and stair housing
-    box(M, -7.0, -4.0, y1 - 4.0, y1 - 1.2, top, top + 2.0, trim, bevel=0.06)
-    ac_unit(M, -0.6, y1 - 3.0, top, P)
-    ac_unit(M, 2.6, y1 - 3.0, top, P)
-    return L
-
-
-def b_tower(M, P):
-    L = lot(M, P, 30, 30, bay_row(9))
-    wall, roof, glass, trim = P["work_wall"], P["work_roof"], P["work_glass"], P["work_trim"]
-    st = 3.2
-    tiers = [  # x0, x1, y0, y1, storeys from, storeys to
-        (-13.5, 13.5, L.y0, L.y1, 0, 1),
-        (-10.5, 9.0, L.y0 + 2.0, L.y1 - 1.5, 1, 5),
-        (-7.5, 4.5, L.y0 + 4.0, L.y1 - 4.0, 5, 8),
-    ]
-    top = 0.0
-    for x0, x1, y0, y1, s0, s1 in tiers:
-        for s in range(s0, s1):
-            band(M, x0, x1, y0, y1, s * st + 0.9, s * st + 2.5, glass)
-        h = s1 * st
-        box(M, x0, x1, y0, y1, 0 if s0 == 0 else top - 0.3, h, wall)
-        box(M, x0 - 0.05, x1 + 0.05, y0 - 0.05, y1 + 0.05, h, h + 0.22, roof, bevel=0.08)
-        top = h + 0.22
-        frame(M, x0 - 0.05, x1 + 0.05, y0 - 0.05, y1 + 0.05, top, top + 0.35, 0.3, trim)
-    # roof plant on the top tier, AC units on the terraces
-    x0, x1, y0, y1 = tiers[2][:4]
-    box(M, x0 + 1.5, x0 + 5.5, y0 + 2.0, y1 - 2.0, top, top + 2.4, trim, bevel=0.08)
-    ac_unit(M, x1 - 2.5, y0 + 2.5, top, P)
-    ac_unit(M, x1 - 2.5, y1 - 2.5, top, P)
-    t1 = tiers[0][4 + 1] * st + 0.22
-    ac_unit(M, 11.0, L.y0 + 3.0, t1, P, rot=True)
-    ac_unit(M, -12.0, L.y1 - 3.0, t1, P, rot=True)
-    t2 = tiers[1][5] * st + 0.22
-    ac_unit(M, 7.0, L.y1 - 3.5, t2, P)
-    return L
 
 
 def b_mine(M, P):
@@ -1532,6 +1381,7 @@ def b_bridge_pylon(M, P):
 
 # Models whose origin is the foot of a post (the lamps layer stands them there), not their footprint's middle.
 POST_ORIGIN = {"streetlamp", "signal", "floodmast", "con_crane"}
+HUNG = {"telegraphwire"}   # models that do not stand on the ground
 
 
 def b_streetlamp(M, P):
@@ -3375,196 +3225,6 @@ def _awning(M, x0, x1, y, z, depth, m):
            [(x0, y - depth, z - 0.7), (x1, y - depth, z - 0.7), (x1, y - depth, z - 0.64), (x0, y - depth, z - 0.64)], m)
 
 
-def b_highstreet(M, P):
-    """Old main street: three narrow attached shop-houses on the pavement, each its own colour and height, a
-    shopfront and an awning on the ground floor, flats above under pitched roofs, chimneys on the party walls; a car
-    park behind them, reached down the alley beside them."""
-    L = main_lot(M, P, 18, 20, 3)
-    y0, y1 = MAIN_FRONT, MAIN_BACK
-    xs = [-9.0, -4.2, 0.6, MAIN_ALLEY[0] - 0.2]
-    spec = [("hs_wall1", "res_roof", 8.6, "hs_awning"), ("hs_wall2", "res_roof2", 9.8, "hs_awning2"),
-            ("hs_wall3", "res_roof", 8.0, "hs_awning")]
-    for i, (wm, rm, ze, am) in enumerate(spec):
-        x0, x1 = xs[i], xs[i + 1]
-        box(M, x0, x1, y0, y1, 0, ze, P[wm])
-        box(M, x0 + 0.4, x1 - 0.4, y0 - 0.06, y0, 0.3, 3.0, P["lm_glass"])
-        box(M, x0, x1, y0 - 0.12, y0, 3.0, 3.35, P["res_trim"])
-        _awning(M, x0 + 0.3, x1 - 0.3, y0, 3.25, 1.0, P[am])
-        for fl in range(1, 3 if ze < 9 else 3):
-            z = 3.0 + (fl - 1) * 2.9
-            for k in range(2):
-                wx = x0 + (x1 - x0) * (0.3 + 0.4 * k)
-                box(M, wx - 0.45, wx + 0.45, y0 - 0.06, y0, z + 0.9, z + 2.3, P["lm_glass"])
-        box(M, x0 - 0.05, x1 + 0.05, y0 - 0.15, y0, ze - 0.4, ze, P["res_trim"])
-        gable(M, x0, x1, y0, y1, ze, ze + 2.6, "y" if i == 1 else "x", P[rm], P[wm],
-              oh_u=(0.35, 0.35) if i != 1 else (0.0, 0.0), oh_a=(0.0, 0.0) if i != 1 else (0.3, 0.3))
-        if i < 2:
-            box(M, x1 - 0.35, x1 + 0.35, y1 - 2.6, y1 - 1.8, ze, ze + 3.2, P["res_trim"], bevel=0.04)
-            emitter(M, "chimney", x1, y1 - 2.2, ze + 3.2, 0.6)
-        # each shop's back door onto the car park
-        box(M, x0 + 1.2, x0 + 2.1, y1, y1 + 0.06, 0, 2.2, P["res_trim"])
-    return L
-
-
-def b_modernflats(M, P):
-    """Modern flats: two white mid-rise blocks with timber-clad corners and glass balcony bands, a green roof
-    with solar panels on each, a lawn courtyard with young trees between them."""
-    L = lot(M, P, 30, 30, bay_row(6))
-    y0, y1 = L.y0, L.y1
-    st = 3.0
-    blocks = ((-13.5, -2.5, y0 + 1.0, y1 - 0.5, 6), (2.0, 13.5, y0 + 1.0, y0 + 10.5, 5),
-              (2.0, 13.5, y0 + 10.5, y1 - 0.5, 4))
-    for (x0, x1, b0, b1, n) in blocks:
-        h = n * st
-        box(M, x0, x1, b0, b1, 0, h, P["mf_wall"])
-        box(M, x0 - 0.06, x0 + 2.6, b0 - 0.06, b0 + 2.6, 0, h, P["mf_wood"])
-        for s in range(n):
-            z = s * st
-            band(M, x0, x1, b0, b1, z + 0.9, z + 2.4, P["mf_glass"], o=0.05)
-            if s:
-                # balcony slab and glass balustrade along the front
-                box(M, x0 + 3.0, x1 - 0.4, b0 - 1.3, b0, z - 0.05, z + 0.15, P["mf_wall"])
-                box(M, x0 + 3.0, x1 - 0.4, b0 - 1.32, b0 - 1.2, z + 0.15, z + 1.1, P["mf_rail"])
-        box(M, x0 - 0.15, x1 + 0.15, b0 - 0.15, b1 + 0.15, h, h + 0.35, P["mf_dark"])
-        box(M, x0 + 0.4, x1 - 0.4, b0 + 0.4, b1 - 0.4, h + 0.35, h + 0.45, P["mf_green"])
-        nx = max(1, int((x1 - x0 - 2.0) // 2.4))
-        for k in range(nx):
-            px = x0 + 1.4 + k * 2.4
-            M.loft([(px, b1 - 3.6, h + 0.5), (px + 2.0, b1 - 3.6, h + 0.5), (px + 2.0, b1 - 3.6, h + 0.55),
-                    (px, b1 - 3.6, h + 0.55)],
-                   [(px, b1 - 1.2, h + 1.2), (px + 2.0, b1 - 1.2, h + 1.2), (px + 2.0, b1 - 1.2, h + 1.25),
-                    (px, b1 - 1.2, h + 1.25)], P["solar"])
-        box(M, x1 - 3.0, x1 - 1.0, b0 + 1.0, b0 + 3.0, h + 0.45, h + 1.8, P["mf_dark"])
-    # courtyard lawn between the blocks, entrance path from the front
-    box(M, -2.5, 2.0, y0 + 1.0, y1 - 0.5, PAD_H, PAD_H + 0.04, P["grass"])
-    box(M, -1.0, 0.6, y0, y1 - 0.5, PAD_H + 0.04, PAD_H + 0.07, P["path"])
-    for y in (y0 + 6.0, y0 + 14.0, y1 - 3.0):
-        tree(M, P, 1.2 if y > y0 + 10 else -1.6, y, 0.55, alt=y > y0 + 10)
-    return L
-
-
-def b_glasstower(M, P):
-    """Glass tower: a two-storey glazed podium with shops, a slim blue-glass shaft with pale vertical fins and
-    setbacks near the top, a lit crown and a roof plant deck."""
-    L = lot(M, P, 30, 30, bay_row(6))
-    y0, y1 = L.y0, L.y1
-    # podium
-    px0, px1, py0, py1 = -13.5, 13.5, y0 + 0.8, y1 - 0.5
-    box(M, px0, px1, py0, py1, 0, 7.0, P["gt_podium"])
-    band(M, px0, px1, py0, py1, 0.4, 6.4, P["gt_glass2"], o=0.05)
-    box(M, px0 - 0.2, px1 + 0.2, py0 - 0.2, py1 + 0.2, 7.0, 7.5, P["gt_fin"])
-    box(M, px0 + 0.3, px1 - 0.3, py0 + 0.3, py1 - 0.3, 7.5, 7.6, P["mf_green"])
-    _awning(M, -6.0, 6.0, py0 - 0.05, 4.4, 2.0, P["gt_fin"])
-    # shaft in three setbacks
-    tiers = ((-8.5, 8.5, py0 + 2.5, py1 - 2.5, 7.6, 44.0), (-7.0, 7.0, py0 + 4.0, py1 - 4.0, 44.0, 52.0),
-             (-5.0, 5.0, py0 + 5.5, py1 - 5.5, 52.0, 57.0))
-    for (x0, x1, b0, b1, z0, z1) in tiers:
-        box(M, x0, x1, b0, b1, z0, z1, P["gt_glass"])
-        for k in range(1, int((x1 - x0) // 2.0)):
-            x = x0 + k * 2.0
-            box(M, x - 0.12, x + 0.12, b0 - 0.25, b0, z0, z1, P["gt_fin"])
-            box(M, x - 0.12, x + 0.12, b1, b1 + 0.25, z0, z1, P["gt_fin"])
-        for k in range(1, int((b1 - b0) // 2.0)):
-            y = b0 + k * 2.0
-            box(M, x0 - 0.25, x0, y - 0.12, y + 0.12, z0, z1, P["gt_fin"])
-            box(M, x1, x1 + 0.25, y - 0.12, y + 0.12, z0, z1, P["gt_fin"])
-        box(M, x0 - 0.3, x1 + 0.3, b0 - 0.3, b1 + 0.3, z1, z1 + 0.6, P["gt_fin"])
-    x0, x1, b0, b1 = tiers[2][:4]
-    frame(M, x0 - 0.3, x1 + 0.3, b0 - 0.3, b1 + 0.3, 57.6, 60.2, 0.5, P["gt_fin"])
-    box(M, x0 + 1.0, x1 - 1.0, b0 + 1.0, b1 - 1.0, 57.6, 58.8, P["mf_dark"])
-    cyl(M, x1 - 1.6, b1 - 1.6, 0.1, 58.8, 64.0, P["ind_steel"], n=5)
-    return L
-
-def b_aptower(M, P):
-    """Apartment tower: a cross-plan residential high-rise in white render with terracotta panels, corner
-    balconies on every floor, a glazed lobby on a low podium, a roof plant room and a garden at its foot."""
-    L = lot(M, P, 30, 30, bay_row(6))
-    y0, y1 = L.y0, L.y1
-    cx, cy = 0.0, (y0 + y1) / 2 + 0.5
-    st, n = 3.0, 14
-    h = n * st + 1.0
-    # podium: lobby and bike store
-    box(M, -12.5, 12.5, y0 + 1.0, y1 - 0.5, 0, 4.0, P["mf_wall"])
-    band(M, -12.5, 12.5, y0 + 1.0, y1 - 0.5, 0.4, 3.4, P["mf_glass"], o=0.05)
-    box(M, -12.8, 12.8, y0 + 0.7, y1 - 0.2, 4.0, 4.4, P["mf_dark"])
-    box(M, -12.2, 12.2, y0 + 1.3, y1 - 0.8, 4.4, 4.5, P["mf_green"])
-    # cross-plan shaft: two crossing slabs
-    a, b = 9.0, 4.2
-    arms = ((cx - a, cx + a, cy - b, cy + b), (cx - b, cx + b, cy - a, cy + a))
-    for (x0, x1, c0, c1) in arms:
-        box(M, x0, x1, c0, c1, 4.5, h, P["mf_wall"])
-        for s in range(1, n):
-            z = s * st + 1.5
-            band(M, x0, x1, c0, c1, z + 0.8, z + 2.2, P["mf_glass"], o=0.04)
-    # terracotta panels up the arm ends
-    for (x0, x1, c0, c1) in ((cx - a - 0.06, cx - a, cy - 2.0, cy + 2.0), (cx + a, cx + a + 0.06, cy - 2.0, cy + 2.0),
-                             (cx - 2.0, cx + 2.0, cy - a - 0.06, cy - a), (cx - 2.0, cx + 2.0, cy + a, cy + a + 0.06)):
-        box(M, x0, x1, c0, c1, 4.5, h, P["hs_wall2"])
-    # balconies in the four inner corners from the second floor up
-    for s in range(2, n):
-        z = s * st + 1.5
-        for sx in (-1, 1):
-            for sy in (-1, 1):
-                bx0, bx1 = sorted((cx + sx * b, cx + sx * (b + 2.4)))
-                by0, by1 = sorted((cy + sy * b, cy + sy * (b + 2.4)))
-                box(M, bx0, bx1, by0, by1, z - 0.1, z + 0.1, P["mf_wall"])
-                ex = bx1 if sx > 0 else bx0
-                ey = by1 if sy > 0 else by0
-                box(M, min(ex, ex + sx * 0.1), max(ex, ex + sx * 0.1), by0, by1, z + 0.1, z + 1.0, P["mf_rail"])
-                box(M, bx0, bx1, min(ey, ey + sy * 0.1), max(ey, ey + sy * 0.1), z + 0.1, z + 1.0, P["mf_rail"])
-    for (x0, x1, c0, c1) in arms:
-        box(M, x0 - 0.25, x1 + 0.25, c0 - 0.25, c1 + 0.25, h, h + 0.6, P["mf_dark"])
-        box(M, x0 + 0.1, x1 - 0.1, c0 + 0.1, c1 - 0.1, h + 0.6, h + 0.4 + 0.25, P["tb_grey"])
-    box(M, cx - b + 0.4, cx + b - 0.4, cy + 3.4, cy + a - 0.4, h + 0.65, h + 0.72, P["mf_green"])
-    box(M, cx - 3.0, cx + 3.0, cy - 3.0, cy + 3.0, h + 0.4, h + 3.0, P["mf_wall"])
-    box(M, cx - 3.2, cx + 3.2, cy - 3.2, cy + 3.2, h + 3.0, h + 3.3, P["mf_dark"])
-    for (px, py) in ((cx + 6.0, cy - 2.0), (cx - 6.0, cy + 2.0)):
-        M.loft([(px - 1.6, py - 1.2, h + 0.7), (px + 1.6, py - 1.2, h + 0.7), (px + 1.6, py - 1.2, h + 0.75),
-                (px - 1.6, py - 1.2, h + 0.75)],
-               [(px - 1.6, py + 1.2, h + 1.35), (px + 1.6, py + 1.2, h + 1.35), (px + 1.6, py + 1.2, h + 1.4),
-                (px - 1.6, py + 1.2, h + 1.4)], P["solar"])
-    return L
-
-
-def b_fuelstation(M, P):
-    """Filling station: an asphalt forecourt under a white canopy on four columns over two pump islands, a small
-    kiosk shop at the back with a glass front, a price pylon at the front corner, two parking bays."""
-    L = lot(M, P, 24, 24, bay_row(2, cx=-7.0))
-    fy0, fy1 = L.yf + PARK_DEPTH, 4.6
-    box(M, -12.0, 12.0, fy0, fy1, PAD_H, PAD_H + 0.01, P["asphalt"])
-    # pump islands with two pumps each, a kerb round them
-    for ix in (-4.2, 4.2):
-        box(M, ix - 0.8, ix + 0.8, -3.6, 2.2, PAD_H, PAD_H + 0.2, P["concrete"], bevel=0.05)
-        for py in (-2.0, 0.6):
-            box(M, ix - 0.4, ix + 0.4, py - 0.35, py + 0.35, PAD_H + 0.2, 1.9, P["fs_pump"], bevel=0.04)
-            box(M, ix - 0.42, ix + 0.42, py - 0.37, py + 0.37, 1.5, 1.75, P["fs_canopy"])
-    # canopy: columns, deck, a band round the edge
-    for cx in (-4.2, 4.2):
-        for cy in (-3.3, 1.9):
-            box(M, cx - 0.22, cx + 0.22, cy - 0.22, cy + 0.22, PAD_H + 0.2, 4.7, P["fs_canopy"])
-    box(M, -8.6, 8.6, -4.7, 3.3, 4.7, 5.1, P["fs_canopy"])
-    box(M, -8.7, 8.7, -4.8, 3.4, 5.1, 5.6, P["fs_band"], bevel=0.04)
-    box(M, -8.4, 8.4, -4.5, 3.1, 5.6, 5.64, P["fs_canopy"])
-    # kiosk shop at the back: glass front, flat roof with a parapet, plant on the roof
-    kx0, kx1, ky0, ky1 = -8.5, 6.5, 6.0, L.y1
-    box(M, kx0, kx1, ky0, ky1, 0, 3.8, P["com_wall"])
-    box(M, kx0 + 1.0, kx1 - 3.0, ky0 - 0.06, ky0, 0.3, 2.8, P["com_glass"])
-    box(M, kx1 - 2.4, kx1 - 1.0, ky0 - 0.06, ky0, 0.0, 2.6, P["fs_pump"])
-    box(M, kx0 - 0.1, kx1 + 0.1, ky0 - 0.12, ky1 + 0.1, 3.8, 4.3, P["fs_band"])
-    box(M, kx0 + 0.3, kx1 - 0.3, ky0 + 0.2, ky1 - 0.3, 4.3, 4.34, P["com_roof"])
-    box(M, kx0 + 2.0, kx0 + 4.0, ky0 + 1.4, ky0 + 3.4, 4.3, 5.2, P["ac_box"], bevel=0.04)
-    box(M, kx0 - 0.3, kx1 + 0.3, ky0 - 1.6, ky0, PAD_H, PAD_H + 0.15, P["concrete"])
-    # air and water post, bins, the price pylon at the front corner
-    box(M, 9.2, 9.8, 5.2, 5.8, PAD_H, 1.3, P["fs_pump"], bevel=0.04)
-    box(M, -10.6, -10.0, 5.2, 5.8, PAD_H, 1.0, P["gb_skip_g"], bevel=0.04)
-    box(M, 10.4, 10.7, -5.2, -4.9, 0, 4.5, P["fs_pump"])
-    box(M, 9.7, 11.4, -5.3, -4.8, 4.5, 7.3, P["fs_canopy"], bevel=0.04)
-    box(M, 9.65, 11.45, -5.35, -4.75, 6.6, 7.3, P["fs_band"])
-    for z in (4.9, 5.5, 6.1):
-        box(M, 9.9, 11.2, -5.36, -5.3, z, z + 0.32, P["fs_pump"])
-    return L
-
-
 def b_warehouse(M, P):
     """Distribution warehouse: a long low portal-frame shed with a shallow pitched roof and rooflight strips, a row
     of dock doors along the front, each with its black seal, yellow bollards and a level apron, a dock canopy,
@@ -4991,18 +4651,19 @@ BUILDINGS = {
     "house": (b_house, 12, 15, 1),
     "house_b": (b_house_b, 12, 15, 1),
     "house_c": (b_house_c, 12, 15, 1),
-    "terrace": (b_terrace, 24, 17, 3),
-    "apartments": (b_apartments, 30, 30, 6),
-    "shop": (b_shop, 18, 20, 4),
-    "store": (b_store, 30, 28, 8),
-    "fuelstation": (b_fuelstation, 24, 24, 2),
-    "mall": (b_mall, 48, 40, 14),
-    "office": (b_office, 20, 22, 5),
-    "tower": (b_tower, 30, 30, 9),
-    "highstreet": (b_highstreet, 18, 20, 3),
-    "modernflats": (b_modernflats, 30, 30, 6),
-    "glasstower": (b_glasstower, 30, 30, 6),
-    "aptower": (b_aptower, 30, 30, 6),
+    # (the town's grown kinds: footprint and bays here, their models and variants built by town_*.py)
+    "terrace": (None, 24, 17, 3),
+    "apartments": (None, 30, 30, 6),
+    "shop": (None, 18, 20, 4),
+    "store": (None, 30, 28, 8),
+    "fuelstation": (None, 24, 24, 2),
+    "mall": (None, 48, 40, 14),
+    "office": (None, 20, 22, 5),
+    "tower": (None, 30, 30, 9),
+    "highstreet": (None, 18, 20, 3),
+    "modernflats": (None, 30, 30, 6),
+    "glasstower": (None, 30, 30, 6),
+    "aptower": (None, 30, 30, 6),
     "mine": (b_mine, 26, 30, 2),
     "farm": (b_farm, 40, 40, 2),
     # (the farmyard through the year: the renderer swaps it with the season, as it does the fields)
@@ -5127,9 +4788,10 @@ BUILDINGS = {
 }
 
 # The towns' civic buildings that town orders bring (src/game/civics.ts): each batch lives in its own file,
-# tools/blender/civics_*.py, run into this module so it can use the helpers above and add to BUILDINGS.
+# tools/blender/civics_*.py, run into this module so it can use the helpers above and add to BUILDINGS. The towns'
+# grown buildings (homes, shops, offices, towers) follow in tools/blender/town_*.py, the same way.
 for _f in sorted(os.listdir(HERE)):
-    if _f.startswith("civics_") and _f.endswith(".py"):
+    if _f.startswith(("civics_", "town_")) and _f.endswith(".py"):
         with open(os.path.join(HERE, _f), encoding="utf-8") as _fh:
             exec(compile(_fh.read(), os.path.join(HERE, _f), "exec"), globals())
 
@@ -5830,7 +5492,7 @@ def build_building(name):
         e.empty_display_type = "SPHERE"
         e.empty_display_size = 0.5
         e.location = (x, y, z)
-        e.scale = (size, size, size)
+        e.scale = size if isinstance(size, tuple) else (size, size, size)
         coll.objects.link(e)
         objs.append(e)
     return objs
@@ -5919,7 +5581,7 @@ def shoot(cam, objs, view, path, rx, ry, margin=1.08):
         cam.location = (c.x, c.y, 500.0)
         cam.rotation_euler = (0.0, 0.0, 0.0)
     else:
-        dv = Vector((0.8, -1.0, 1.15)).normalized()
+        dv = (Vector((-0.8, 1.0, 1.15)) if view == "qb" else Vector((0.8, -1.0, 1.15))).normalized()
         cam.location = c + dv * 500.0
         cam.rotation_euler = (-dv).to_track_quat("-Z", "Y").to_euler()
     bpy.context.view_layer.update()
@@ -5960,8 +5622,18 @@ def preview(cam, name, objs, size=640):
     os.makedirs(PREV, exist_ok=True)
     meshes = [o for o in objs if o.type == "MESH"]
     a, b = os.path.join(PREV, f"_{name}_a.png"), os.path.join(PREV, f"_{name}_b.png")
-    shoot(cam, meshes, "top", a, size, size)
-    shoot(cam, meshes, "q", b, size, size)
+    if name in TOWN_DESIGN:
+        # a town model is made for one lot (town_a_kit.py): shown as the game stands it there, from the street and
+        # from the yard, the two views a tilted camera gets of it
+        for o in meshes:
+            o.scale = (1, 1, TOWN_DESIGN[name][2])
+        shoot(cam, meshes, "q", a, size, size)
+        shoot(cam, meshes, "qb", b, size, size)
+        for o in meshes:
+            o.scale = (1, 1, 1)
+    else:
+        shoot(cam, meshes, "top", a, size, size)
+        shoot(cam, meshes, "q", b, size, size)
     tile([a, b], os.path.join(PREV, name + ".png"), size, size)
 
 
@@ -6035,7 +5707,8 @@ def verify(names):
             for o in meshes:
                 if o.matrix_world.translation.length > 1e-4:
                     st["issues"].append(f"{o.name} origin not at vehicle origin")
-        if abs(lo.z) > 1e-3:
+        # (a span of telegraph wire hangs between two poles)
+        if abs(lo.z) > 1e-3 and name not in HUNG:
             st["issues"].append(f"lowest point z={lo.z:.3f}")
         stats[name] = st
     return stats
@@ -6056,13 +5729,41 @@ def write_readme(stats):
         "## Buildings",
         "",
         "One mesh per building (named after the model, several materials) plus `park_N` empty nodes.",
-        "The whole w × d footprint is the lot: a light pad (#eef0ee, 0.06 m tall) with an asphalt",
-        "parking strip (6.5 m deep) at the front. `park_N` nodes sit at bay centres, at height 0.06.",
+        "The whole w × d footprint is the lot. `park_N` nodes sit at bay centres, at height 0.06.",
         "Each node's local +Y in Blender (= local **-Z in glTF**) is the direction a parked car's nose",
-        "faces: cars park nose-in, toward the building. All bays are in the front row, so every node has",
-        "identity rotation. The vehicle models point their nose along glTF +Z, so a car placed on a",
+        "faces. The vehicle models point their nose along glTF +Z, so a car placed on a",
         "bay needs a 180° turn about the up axis relative to the node (or copy the node's transform and",
         "rotate the car by π).",
+        "",
+        "### Town buildings (1920-1940)",
+        "",
+        "The kinds a town grows (`house`, `terrace`, `apartments`, `modernflats`, `aptower`, `highstreet`,",
+        "`shop`, `store`, `office`, `mall`, `tower`, `glasstower`, `fuelstation`) are built by",
+        "`tools/blender/town_*.py` (run by the same script). Each kind has several models, `kind`, `kind_b`,",
+        "`kind_c`...: all share the kind's footprint, origin, front (+Z) and entrance side, and differ in",
+        "architecture, brick and stone, roof and yard. The list is `src/render/townmodels.ts`; the renderer",
+        "picks one per building (`tests/townmodels.test.ts` checks every one of them).",
+        "",
+        "- **Made for a lot.** The game scales a model by the lot's `fit` and stretches it by `tall`. A model",
+        "  carries the fit and tall it was made for as a `design_0` empty (its scale: fit, tall, 1): the renderer",
+        "  draws a building with the model made nearest its own, so doors and storeys keep their true size.",
+        "  Models named `_s`, `_m`, `_n` are made for narrow lots, `_t`, `_u` for tall ones.",
+        "- **Stand on the pavement.** A town building's front wall is at the lot's front; its cars park in the",
+        "  yard behind, reached down an alley beside it. `via_0` is where that alley ends (the driveway is",
+        "  drawn to it), `body_0` the block itself without its yard (at its centre and top; its scale the half",
+        "  width and half depth): what a building site scaffolds, and what the night's window light spills",
+        "  round. Homes have neither; the filling station has no alley.",
+        "- **Glass that lights.** Window materials are named `win_home`, `win_shop`, `win_office`, `win_hall`:",
+        "  the renderer lights each pane by the hour (`src/render/daylight.ts`). `win_sign_*` materials",
+        "  (signs, marquees, a billboard's poster) glow in their own colour while the street lamps burn.",
+        "- **Chimneys.** `chimney_N` empties mark where smoke rises (houses, row houses, main street).",
+        "",
+        "### Roadside furniture",
+        "",
+        "`telegraphpole` (origin at its foot), `telegraphwire` (one span a metre long from the origin toward",
+        "glTF +Z, hanging at the crossarms' height: the renderer stretches it between two poles) and",
+        "`billboard_a`, `_b`, `_c` (a hoarding with a poster on each face, origin under its posts, the main",
+        "face toward +Z). Placed by `src/render/furniture.ts`.",
         "",
         "| model | footprint w × d (m) | height (m) | tris | park empties |",
         "|---|---|---|---|---|",

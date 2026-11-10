@@ -15,6 +15,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.87", date: "2026-11-10", title: "Main Street, 1930",
+    notes: [
+      "Every town building is rebuilt for the 1920s to 1940s: brick shop-houses with awnings and signs, department stores, banks, walk-ups, courtyard flats and Deco towers.",
+      "Each kind comes in several models and brick tones, and no two neighbours share one.",
+      "Roofs have tanks, skylights, stair heads and chimneys. Cars park in a yard behind, not in front.",
+      "At night shop windows glow warm and stay lit until past ten.",
+      "A telegraph line follows the country roads, and billboards stand where a road comes into town.",
+      "Town buildings have period names.",
+    ],
+  },
+  {
     v: "v0.0.86", date: "2026-11-10", title: "The camera, finished",
     notes: [
       "Pull back and the camera rises to a flat map; zoom in and your own tilt comes back.",

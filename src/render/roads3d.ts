@@ -14,6 +14,7 @@ import { ENV, ENV_GLSL, seasonal } from "./envShader";
 import { signalPost, type SignalSpot } from "./signals3d";
 import type { MergedModel } from "./models";
 import type { LampSpot } from "./lamps3d";
+import { Furniture3D, KEEP, LOTS, placeFurniture, type Placed, type RoadLine } from "./furniture";
 
 const LIFT = 0.06;
 const DECK = 0.9;
@@ -480,6 +481,12 @@ export class Roads3D {
   lamps: LampSpot[] = [];
   /** Counts up whenever the lamps change. */
   lampVersion = 0;
+  /** The telegraph line and the billboards along the country roads (render/furniture.ts), as last placed. */
+  furniture: Placed = { poles: [], spans: [], boards: [] };
+  private furn: Furniture3D | null = null;
+  /** What was built when they were placed (LOTS.version), and when that was (ms). */
+  private lotsSeen = -1;
+  private furnAt = 0;
   private hwEdgeMat = new THREE.MeshLambertMaterial({ color: PAL.hwEdge });
   /** Every marked surface material, so overlay modes reach all of them. */
   private get marked() { return [this.surface, this.ringSurface, this.hwSurface, this.hwRing, this.dirt]; }
@@ -610,6 +617,10 @@ export class Roads3D {
     this.lights.renderOrder = 3;
     this.lights.frustumCulled = false; // instances move around the whole map; bounds would go stale
     this.group.add(this.lights, this.islands, this.batch.group);
+    if (parts?.props.size) {
+      this.furn = new Furniture3D(parts.props);
+      this.group.add(this.furn.group);
+    }
   }
 
   private show(os: THREE.Object3D[]) {
@@ -633,8 +644,8 @@ export class Roads3D {
     return true;
   }
 
-  /** Gather every seg's street trees that have room to stand. */
-  private collectTrees() {
+  /** Every driveway as points along it, in a grid (what treeClear looks through). */
+  private driveGrid(): Map<number, V2[]> {
     const drives = new Map<number, V2[]>();
     // (each driveway as points 2 m apart over its first 40 m: a tree's crown clear of every one is clear of the drive)
     for (const [a, b] of this.parts?.drives?.() ?? []) {
@@ -647,6 +658,50 @@ export class Roads3D {
         if (list) list.push(d); else drives.set(key, [d]);
       }
     }
+    return drives;
+  }
+
+  /**
+   * Stand the telegraph line and the billboards again (render/furniture.ts): along the country stretches of every
+   * road but a motorway, clear of the other roads, the driveways, every lot and works site, and the water.
+   */
+  private placeFurniture(drives: Map<number, V2[]>) {
+    this.lotsSeen = LOTS.version;
+    this.furnAt = performance.now();
+    const lines: RoadLine[] = [];
+    // (with no one to say which roads are a town's, every road is a town street: none of this stands there)
+    if (this.towny) {
+      for (const [id, s] of this.net.segs) {
+        const g = this.net.segGeom.get(id);
+        if (!g || s.ring) continue;
+        lines.push({
+          id, a: s.a, b: s.b, center: g.center, hs: g.hs, halfW: g.width / 2,
+          from: g.trimA, to: Math.max(g.trimA + 0.3, g.center.length - g.trimB),
+          runs: this.towny.get(id), carries: !isHighway(ROAD_TYPES[s.type]),
+          pocketA: !!g.ends.a.pocket, pocketB: !!g.ends.b.pocket,
+        });
+      }
+    }
+    const water = this.parts?.isWater;
+    const at = { x: 0, y: 0, r: 0 };
+    const placed = placeFurniture(lines, (node) => this.net.segsAt(node).map((sg) => sg.id), (x, y, r, own) => {
+      at.x = x; at.y = y; at.r = r;
+      // (treeClear lets a crown lean a little over a road: a post may not)
+      if (LOTS.hit(x, y, r) || water?.(at)) return false;
+      at.r = r / 0.8;
+      return this.treeClear(own, at, drives);
+    }, (x, y, r) => LOTS.hit(x, y, r));
+    this.furniture = placed;
+    this.furn?.show(placed);
+    // the wild trees keep off the billboards (render/forest.ts)
+    let sig = placed.boards.length;
+    for (const b of placed.boards) sig = (Math.imul(sig, 31) + Math.round(b.x * 8) * 7 + Math.round(b.y * 8)) | 0;
+    KEEP.set("boards", placed.boards.map((b) => b.keep), sig);
+  }
+
+  /** Gather every seg's street trees that have room to stand. */
+  private collectTrees() {
+    const drives = this.driveGrid();
     this.streetTrees = [];
     for (const [sid, spots] of this.treeSpots) {
       for (const t of spots) if (this.treeClear(sid, t, drives)) this.streetTrees.push({ x: t.x, y: t.y, h: t.h + LIFT, r: t.r, style: "street" });
@@ -659,6 +714,7 @@ export class Roads3D {
       for (const l of spots) if (this.treeClear(sid, { x: l.x, y: l.y, r: 0.6 }, drives)) this.lamps.push(l);
     }
     this.lampVersion++;
+    this.placeFurniture(drives);
   }
 
   set flowMode(on: boolean) {
@@ -1477,6 +1533,8 @@ export class Roads3D {
 
   /** Per-frame: signal dots. Per-second: flow tint attributes. */
   update(traffic: Traffic, flowOverlay: boolean) {
+    // (something was built or cleared since the furniture was placed: at most twice a second while a town grows)
+    if (LOTS.version !== this.lotsSeen && performance.now() - this.furnAt > 500) this.placeFurniture(this.driveGrid());
     const L = this.lights;
     if (this.lightRefs.length > L.instanceMatrix.count) {
       this.group.remove(L);

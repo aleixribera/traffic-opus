@@ -197,8 +197,8 @@ export const WINDOW_KINDS: WindowKind[] = ["home", "shop", "office", "hall"];
 const OCC: Record<WindowKind, [number, number][]> = {
   // homes: lights on as people come in, most at 9 pm, fewer by midnight, a few at 3 am, the early risers from 5
   home: [[0, 0.3], [1.5, 0.14], [3.5, 0.06], [5, 0.12], [6.5, 0.42], [8.5, 0.18], [16, 0.25], [18.5, 0.62], [21, 0.78], [22.5, 0.58], [24, 0.3]],
-  // shops: open into the evening, a few display windows lit all night
-  shop: [[0, 0.16], [6, 0.16], [7.5, 0.7], [19, 0.9], [20.5, 0.62], [21.5, 0.24], [24, 0.16]],
+  // shops: open into the evening, the show windows left lit till late for the street, a few all night
+  shop: [[0, 0.16], [6, 0.16], [7.5, 0.7], [19, 0.9], [21, 0.74], [22.5, 0.42], [23.5, 0.2], [24, 0.16]],
   // offices: lit through the working day, a late few, the cleaners, then the night watch
   office: [[0, 0.08], [6.5, 0.1], [8, 0.85], [17.5, 0.85], [19, 0.45], [21, 0.22], [23, 0.1], [24, 0.08]],
   // town halls: lit late for meetings and dances, always a few on

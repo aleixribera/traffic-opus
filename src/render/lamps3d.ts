@@ -7,7 +7,7 @@
 // One time-of-day value drives it all (ENV.uNight); by day the layer is hidden.
 
 import * as THREE from "three";
-import { ENV, seasonal } from "./envShader";
+import { ENV, LIT, seasonal } from "./envShader";
 import { windowsLit, WINDOW_KINDS, type WindowKind } from "./daylight";
 import type { MergedModel } from "./models";
 
@@ -33,8 +33,9 @@ const POST_BLOCK = 256;
 /** Window light by kind: the colour that spills out, and the window spacing along a wall (m). */
 const WIN: Record<WindowKind, { color: [number, number, number]; every: number }> = {
   home: { color: [1.0, 0.62, 0.28], every: 2.6 },
-  shop: { color: [1.0, 0.88, 0.7], every: 2.2 },
-  office: { color: [0.82, 0.9, 1.0], every: 2.0 },
+  // (the lamps of 1930 are all incandescent: a shop's show windows a full warm white, an office's a little paler)
+  shop: { color: [1.0, 0.8, 0.5], every: 2.2 },
+  office: { color: [1.0, 0.84, 0.6], every: 2.0 },
   hall: { color: [1.0, 0.8, 0.5], every: 2.4 },
 };
 /** How far window light reaches out from the walls (m). */
@@ -218,7 +219,8 @@ function twice(geo: THREE.BufferGeometry): THREE.BufferGeometry {
 export class Lamps3D {
   readonly group = new THREE.Group();
   private mpp = { value: 1 };
-  private occ = { value: new THREE.Vector4() };
+  /** (shared with the buildings' own lit glass: envShader LIT) */
+  private occ = LIT.uLit;
   private poolMat = brighten(POOL_VS, POOL_FS, 0.5, 0.42);
   private floodMat = brighten(POOL_VS, FLOOD_FS, 0.5, 0.36);
   private beamMat = brighten(POOL_VS, BEAM_FS, 0.5, 0.3);

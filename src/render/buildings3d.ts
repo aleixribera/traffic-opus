@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { BUILDING_TYPES, ROAD_TYPES, SIDEWALK, roadGroup, type BuildingKind } from "../config";
-import { add, dot, fromAngle, pointSegDist2, right, scale, type V2 } from "../core/math";
+import { add, dot, fromAngle, pointSegDist2, rectCorners, right, scale, type V2 } from "../core/math";
 import type { RoadNetwork } from "../roads/network";
 import type { Building } from "../game/buildings";
 import { ZONE_GROUP } from "../game/growables";
@@ -18,6 +18,8 @@ import { isMega, megaStage } from "../game/megaprojects";
 import { fieldLook, fieldModel } from "../game/calendar";
 import { seasonal } from "./envShader";
 import type { LampSpot, WindowSpot } from "./lamps3d";
+import { TOWN_MODELS, Variety, townChoices } from "./townmodels";
+import { LOTS } from "./furniture";
 import type { Solid } from "../ui/pick";
 import type { WindowKind } from "./daylight";
 import { stageAt, stageOf, type StageInfo } from "../game/construction";
@@ -77,29 +79,27 @@ const bayTaken = (b: Building, k: number) => (((b.id * 73856093) ^ (k * 19349663
 
 /** Front yard depth (m) for a lot with this much depth to spare around its model. */
 const setback = (spare: number) => Math.min(spare * 0.68, 5);
-/**
- * Main street shops stand on the pavement (owner, 2026-11-09: no strip-mall car parks in front), their car park behind
- * them down an alley beside them: the alley's end there (model x, z; tools/blender main_lot, MAIN_ALLEY/MAIN_BACK).
- */
-const REAR_PARK: Partial<Record<string, [number, number]>> = { shop: [7.0, -1.6], highstreet: [7.0, -1.6] };
-/** A zoned building's front yard: none for a main street shop. */
-const setbackOf = (b: Building, spare: number) => (REAR_PARK[b.kind] ? 0 : setback(spare));
 
 const SITE = 0xb59d6a; // construction site: bare earth
 /** A building getting its roof on: raw timber, brick and concrete before the paint. */
 const RAW = 0xd6c6a4;
-/** Other houses a home may be (tools/blender: same lot, driveway and bay as the kind's own model). */
-const VARIANTS: Partial<Record<string, string[]>> = { house: ["house_b", "house_c"] };
-/** A lot's driveway off its middle (model x, m): a home's runs down the side to its garage. */
-const DRIVE_X: Partial<Record<string, number>> = { house: -4.0, shop: REAR_PARK.shop![0], highstreet: REAR_PARK.highstreet![0] };
+/** A lot's driveway off its middle (model x, m): a home's runs down the side to its garage. (A town building with
+ * its yard behind it has an alley instead, where its model says: MergedModel.via.) */
+const DRIVE_X: Partial<Record<string, number>> = { house: -4.0 };
 /** Where a home's own walls start (model x, z): what stands left of or behind that is its garage and shed. */
-const HOME_FOOT: Partial<Record<string, [number, number]>> = { house: [-1.9, -4.9], house_b: [-1.9, -4.9], house_c: [-1.9, -4.9] };
+const HOME_FOOT: Partial<Record<string, [number, number]>> = Object.fromEntries(TOWN_MODELS.house.map((m) => [m, [-1.9, -4.9]]));
 /** Homes, shops and the small halls go up on a timber frame; blocks, towers and big halls on a steel skeleton. */
 const TIMBER = new Set<string>(["house", "terrace", "highstreet", "shop", "fuelstation", "hamlethall", "villagehall"]);
+/** ...up to this height (m): a five-storey tenement on a row-house lot is a steel and brick job. */
+const TIMBER_TOP = 13;
 /** Tints multiplied over a model's own colours, picked per building. */
-const VARY = [0xffffff, 0xffffff, 0xf2ebe4, 0xe2dcd8, 0xfbf3e6, 0xdcdcdc, 0xf5f0f0];
+/** (fresh, sun-warmed, sooty, rosy, cool: brick and paint a shade apart from the same model next door) */
+// (never greener than it is red: the seasons' shader takes green for grass and leaves, and turns it in autumn)
+const VARY = [0xffffff, 0xffffff, 0xf6eadc, 0xe4dcd6, 0xfbf3e6, 0xd9d6d4, 0xf4ecec, 0xe9e6e4, 0xf0e2d2, 0xe2dcd4, 0xffffff];
 /** Ground of a grown lot: lawn for homes, paving for business. */
 const YARD: Record<string, number> = { res: 0x99994f, com: 0xb3ae9b, ind: 0xaaa490, off: 0xb3ae9b };
+/** A business paves this far behind its building (m); a lot with more than BACK_WILD m beyond that keeps it as grass. */
+const BACK_YARD = 1.2, BACK_WILD = 4;
 const ABANDONED = 0x77736b;
 /** A town hall's square (src/render/civic.ts): lawn, stone paving laid in slabs with a darker border, a path of setts. */
 const SQUARE_LAWN = 0x8f9a4c;
@@ -220,7 +220,7 @@ export class Buildings3D {
   private strips: THREE.Object3D[] = [];
   private siteParts: THREE.Object3D[] = [];
   /** Every model, under the season (snow on its roofs, its lawns and trees in the season's colours). */
-  private mat = seasonal(new THREE.MeshLambertMaterial({ vertexColors: true }), { roofs: true });
+  private mat = seasonal(new THREE.MeshLambertMaterial({ vertexColors: true }), { roofs: true, windows: true });
   private carMat = new THREE.MeshLambertMaterial({ vertexColors: true });
   private driveMat = new THREE.MeshLambertMaterial({ color: PAL.driveway });
   private roadMat = new THREE.MeshLambertMaterial({ color: SERVICE_ROAD });
@@ -421,7 +421,7 @@ export class Buildings3D {
     }
     // the model stands near the street; deep lots keep the rest as a back yard
     const spare = Math.max(0, b.hd * 2 - this.depth(b));
-    this.tmp2.makeScale(b.fit, b.fit * b.tall * grow, b.fit).setPosition(0, 0, spare / 2 - setbackOf(b, spare));
+    this.tmp2.makeScale(b.fit, b.fit * b.tall * grow, b.fit).setPosition(0, 0, spare / 2 - this.setbackOf(b, spare));
     return out.multiply(this.tmp2);
   }
 
@@ -432,27 +432,50 @@ export class Buildings3D {
     lotMatrix(out, b.c, b.rot, b.side);
     if (!b.zone) return out;
     const spare = Math.max(0, b.hd * 2 - this.depth(b));
-    this.tmp2.makeScale(b.fit, b.fit * b.tall, b.fit).setPosition(0, 0, spare / 2 - setbackOf(b, spare));
+    this.tmp2.makeScale(b.fit, b.fit * b.tall, b.fit).setPosition(0, 0, spare / 2 - this.setbackOf(b, spare));
     return out.multiply(this.tmp2);
   }
 
   private baseColor(b: Building): number | null {
     if (b.abandoned) return ABANDONED;
     // a street of the same model shouldn't look stamped: weathering and paint vary a little from one to the next
-    return VARY[(Math.imul(b.id, 2654435761) >>> 28) % VARY.length];
+    return VARY[(Math.imul(b.id, 2654435761) >>> 20) % VARY.length];
   }
 
-  /** The model a zoned building is drawn with: its kind's, or for a home one of the kind's other houses. */
+  /**
+   * The model a zoned building is drawn with: the one of its kind's models made for a lot and a height nearest its
+   * own (render/townmodels.ts), so its doors and storeys stand at their true size; among equals, by its id, but not
+   * the one a building of its kind near it already has.
+   */
   private modelOf(b: Building): string {
-    const v = VARIANTS[b.kind];
-    if (!v) return b.kind;
-    const pick = (Math.imul(b.id + 7, 2246822519) >>> 0) % (v.length + 1);
-    return pick === 0 || !this.geoOf(v[pick - 1]) ? b.kind : v[pick - 1];
+    if (!b.zone || !TOWN_MODELS[b.kind]) return b.kind;
+    const got = this.picked.get(b.id);
+    if (got && got.kind === b.kind && got.fit === b.fit && got.tall === b.tall) return got.model;
+    const choices = townChoices(b.kind, b.fit, b.tall, b.id, (m) => this.geoOf(m)?.design).filter((m) => this.geoOf(m));
+    const model = choices.length ? this.variety.pick(b.id, b.kind, b.c.x, b.c.y, Math.max(44, b.hw * 7), choices) : b.kind;
+    this.picked.set(b.id, { kind: b.kind, fit: b.fit, tall: b.tall, model });
+    return model;
+  }
+  private picked = new Map<number, { kind: string; fit: number; tall: number; model: string }>();
+  private variety = new Variety();
+
+  /**
+   * Where a town building's alley ends (model x, z): it stands on the pavement (owner, 2026-11-09: no car parks in
+   * front), its yard and parking behind it down an alley beside it. Undefined: a home, a filling station, a hall.
+   */
+  private viaOf(b: Building): [number, number] | undefined {
+    return b.zone ? this.geoOf(this.modelOf(b))?.via : undefined;
   }
 
-  /** How far along the street (lot x, m) a lot's driveway runs from its middle (a home's down the side to its garage). */
+  /** A zoned building's front yard: none for one that stands on the pavement. */
+  private setbackOf(b: Building, spare: number): number {
+    return this.viaOf(b) ? 0 : setback(spare);
+  }
+
+  /** How far along the street (lot x, m) a lot's driveway runs from its middle (a home's down the side to its garage,
+   * a town building's alley beside it). */
   private driveX(b: Building): number {
-    return (DRIVE_X[b.kind] ?? 0) * (b.zone ? b.fit : 1);
+    return (this.viaOf(b)?.[0] ?? DRIVE_X[b.kind] ?? 0) * (b.zone ? b.fit : 1);
   }
 
   /** Where a lot's driveway meets the kerb (a home's off to the side, toward its garage): verge trees and lamps keep clear. */
@@ -470,7 +493,7 @@ export class Buildings3D {
    */
   private reachOf(b: Building): number {
     if (!b.zone) return isHall(b.kind) ? this.halfDepth(b) : b.hd;
-    return b.hd - setbackOf(b, Math.max(0, b.hd * 2 - this.depth(b))) + (DRIVE_X[b.kind] !== undefined ? -0.3 : 0.5);
+    return b.hd - this.setbackOf(b, Math.max(0, b.hd * 2 - this.depth(b))) + (DRIVE_X[b.kind] !== undefined || this.viaOf(b) ? -0.3 : 0.5);
   }
 
   /** The pieces a building is drawn with: one model, or a site's buildings up to its level. */
@@ -491,7 +514,12 @@ export class Buildings3D {
     this.squareTrees = [];
     this.treeVersion++;
     const live = new Set(list.map((b) => b.id));
+    // what is built, for the roadside furniture to keep off (render/furniture.ts): every lot and works site
+    let sig = list.length;
+    for (const b of list) sig = (Math.imul(sig, 31) + b.id) | 0;
+    LOTS.set("buildings", list.map((b) => rectCorners(b.c, b.hw, b.hd, b.rot)), sig);
     for (const id of this.layouts.keys()) if (!live.has(id)) this.layouts.delete(id);
+    for (const id of this.picked.keys()) if (!live.has(id)) { this.picked.delete(id); this.variety.drop(id); }
     const lots = list.filter((b) => b.zone);
     const squares = list.filter((b) => isHall(b.kind)).map((b) => ({ b, plan: this.squareOf(b) }));
     // lawns (and the lots' yards) in one instanced mesh, paving in another
@@ -507,7 +535,14 @@ export class Buildings3D {
       lots.forEach((b, i) => {
         lotMatrix(this.tmp, b.c, b.rot, b.side, 0.04);
         // the lot is hw along the road and hd deep; in lot space x runs along the road
-        ym.setMatrixAt(i, this.tmp.multiply(sc.makeScale(b.hw * 2 - 0.8, 1, b.hd * 2 - 0.8)));
+        const home = ZONE_GROUP[b.zone!] === "res";
+        // a business paves its lot edge to edge (two side by side share one yard, with no strip of grass between),
+        // but only as far back as it is built: a deep lot's back is left to the grass, not an empty paved field
+        const edge = home ? 0.8 : 0;
+        const spare = Math.max(0, b.hd * 2 - this.depth(b));
+        const used = home || b.built < 1 ? b.hd * 2 : b.hd * 2 - spare + this.setbackOf(b, spare) + BACK_YARD;
+        const deep = used < b.hd * 2 - BACK_WILD ? used : b.hd * 2;
+        ym.setMatrixAt(i, this.tmp.multiply(sc.makeScale(b.hw * 2 - edge, 1, deep - edge).setPosition(0, 0, b.hd - deep / 2)));
         ym.setColorAt(i, this.col.setHex(b.built < 1 ? SITE : YARD[ZONE_GROUP[b.zone!]]));
       });
       this.yards = ym;
@@ -632,7 +667,13 @@ export class Buildings3D {
   /** A model's walls seen from above: the bounds of everything over 1.2 m (the lot's yard and parking excluded). */
   private footOf(model: string) {
     if (this.feet.has(model)) return this.feet.get(model)!;
-    const pos = this.geoOf(model)?.geo.getAttribute("position");
+    const mm = this.geoOf(model);
+    // (a town model says where its building stands on its lot)
+    if (mm?.body) {
+      this.feet.set(model, mm.body);
+      return mm.body;
+    }
+    const pos = mm?.geo.getAttribute("position");
     let f: [number, number, number, number, number] | null = null;
     // (a home's walls only: not its garage down the side, nor the shed in its back yard)
     const clip = HOME_FOOT[model];
@@ -854,10 +895,11 @@ export class Buildings3D {
     const drive = { x: b.c.x - into.x * reach + al.x, y: b.c.y - into.y * reach + al.y };
     const kerb = { x: b.front.x + al.x, y: b.front.y + al.y };
     const bays: LotWay["bays"] = [];
-    const mm = this.geoOf(b.kind);
+    const model = this.modelOf(b);
+    const mm = this.geoOf(model);
     let via: V2 | undefined;
     if (mm?.bays.length && b.built >= 1 && !b.abandoned) {
-      const M = this.matrix(new THREE.Matrix4(), { b, model: b.kind, slot: null });
+      const M = this.matrix(new THREE.Matrix4(), { b, model, slot: null });
       const s = b.zone ? b.fit : 1;
       const inv = new THREE.Matrix4().makeScale(1 / s, 1 / (s * (b.zone ? b.tall : 1)), 1 / s);
       const W = new THREE.Matrix4();
@@ -867,7 +909,7 @@ export class Buildings3D {
         const L = Math.hypot(e[8], e[10]) || 1;
         bays.push({ p: { x: e[12], y: e[14] }, dir: { x: e[8] / L, y: e[10] / L } });
       });
-      const rear = REAR_PARK[b.kind];
+      const rear = this.viaOf(b);
       if (rear) {
         const v = this.v3.set(rear[0], 0, rear[1]).applyMatrix4(M);
         via = { x: v.x, y: v.z };
@@ -1252,11 +1294,11 @@ export class Buildings3D {
       lotMatrix(base, b.c, b.rot, b.side);
       room = { x0: -b.hw, x1: b.hw, z0: -b.hd, z1: b.hd };
       if (b.zone) {
-        const spare = Math.max(0, b.hd * 2 - this.depth(b)), dz = spare / 2 - setbackOf(b, spare), s = b.fit;
+        const spare = Math.max(0, b.hd * 2 - this.depth(b)), dz = spare / 2 - this.setbackOf(b, spare), s = b.fit;
         x0 *= s; x1 *= s; z0 = z0 * s + dz; z1 = z1 * s + dz; top *= s * b.tall;
       }
     }
-    const timber = p.slot ? (PLANTS[b.kind as PlantKind]?.tier ?? 2) <= 1 && top < 12 : TIMBER.has(b.kind);
+    const timber = p.slot ? (PLANTS[b.kind as PlantKind]?.tier ?? 2) <= 1 && top < 12 : TIMBER.has(b.kind) && top < TIMBER_TOP;
     const id = p.slot ? `${b.id}:${p.slot.x.toFixed(1)},${p.slot.y.toFixed(1)}` : `${b.id}`;
     return { id, base, x0, x1, z0, z1, top, heavy: !timber, stage, seed: (Math.imul(b.id + 1, 2654435761) >>> 20) / 4096 + (p.slot ? p.slot.x * 0.13 : 0), room };
   }
