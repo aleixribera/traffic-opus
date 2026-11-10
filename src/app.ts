@@ -71,6 +71,7 @@ import { MapLabels } from "./ui/labels";
 import { MapIcons } from "./ui/mapIcons";
 import { Pops } from "./ui/pops";
 import { Terrain3D } from "./render/terrain3d";
+import { LandMask } from "./render/landmask";
 import { clearShapes } from "./render/clearing";
 import { Forest } from "./render/forest";
 import { Trees3D } from "./render/trees3d";
@@ -174,6 +175,7 @@ export class App {
   vehicles!: Vehicles3D;
   buildings3d!: Buildings3D;
   terrain3d!: Terrain3D;
+  landMask!: LandMask;
   /** where the wild trees stand (one list for the 3D trees and the ground's painted crowns) */
   private forest!: Forest;
   private trees3d!: Trees3D;
@@ -695,7 +697,9 @@ export class App {
     this.forestDue = false;
     // (the old game's ground and trees hand back what they hold on the GPU: a chunk's textures are freed by nothing else)
     this.terrain3d?.dispose();
-    this.terrain3d = new Terrain3D(g.terrain, this.forest, small);
+    this.landMask?.dispose();
+    this.landMask = new LandMask();
+    this.terrain3d = new Terrain3D(g.terrain, this.forest, small, this.landMask);
     this.trees3d?.dispose();
     this.trees3d = new Trees3D(this.models.trees, this.forest);
     this.treeSig = "";
@@ -2210,6 +2214,7 @@ export class App {
     // and over the woods and the fields a few birds wheel
     this.birds.update(this.view.camera, this.view.mpp, g.paused ? 0 : dt);
     if (this.terrain3d.shared.uOverlay.value >= 0.5) this.birds.mesh.visible = false;
+    this.landMask.update(g.buildings.list, this.buildings3d.version);
     this.terrain3d.update(this.view);
     this.roadsFar.update(this.view.mpp, this.view.w, this.view.h);
     this.labels.update(this.view);

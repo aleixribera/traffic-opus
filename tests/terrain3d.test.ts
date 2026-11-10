@@ -28,8 +28,8 @@ describe("the ground's chunks", () => {
     const gone = new Set<THREE.Material>();
     for (const m of chunks) (m.material as THREE.Material).addEventListener("dispose", (e) => gone.add(e.target as THREE.Material));
     ground.dispose();
-    // three field textures a chunk, and the crowns of the ones that had them painted
-    expect(textures.mock.calls.length).toBeGreaterThan(chunks.length * 3);
+    // three field textures a chunk and its relief, and the crowns of the ones that had them painted
+    expect(textures.mock.calls.length).toBeGreaterThan(chunks.length * 4);
     expect(gone.size).toBe(chunks.length);
     expect(materials.mock.calls.length).toBeGreaterThanOrEqual(chunks.length);
     expect(ground.group.children.length).toBe(0);
