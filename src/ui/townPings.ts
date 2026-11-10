@@ -50,14 +50,15 @@ export class TownPings {
       const edge = document.createElement("button");
       edge.type = "button";
       edge.className = "tp-edge";
-      edge.innerHTML = `<i class="tp-arrow" aria-hidden="true"></i><span class="tp-k">New town</span><b></b><span class="tp-km"></span>`;
+      edge.innerHTML = `<i class="tp-arrow" aria-hidden="true"></i><b></b><span class="tp-km"></span>`;
       edge.querySelector("b")!.textContent = t.name;
       edge.title = `Fly to ${t.name}`;
       edge.setAttribute("aria-label", edge.title);
       edge.onclick = () => { const p = this.pings.get(t.id); if (p) p.seen = true; this.on.fly(t.id); };
       this.el.append(ring, edge);
       const far = farText(t, towns);
-      edge.querySelector(".tp-km")!.textContent = far;
+      // (the name, and under it what it is and how far: "New town · 1.9 km from Alder Run". No label over the name)
+      edge.querySelector(".tp-km")!.textContent = far ? `New town · ${far}` : "New town";
       if (far) { edge.title = `Fly to ${t.name}, ${far}`; edge.setAttribute("aria-label", edge.title); }
       this.pings.set(t.id, { t, ring, edge, seen: false, far });
     }

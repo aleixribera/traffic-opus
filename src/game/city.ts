@@ -213,7 +213,7 @@ export class Game {
       canMake: (p) => [...this.progress.unlocked.buildings].some((k) => isPlantKind(k) && !!PLANTS[k].outputs[p]),
       delivered: (d) => this.delivered(d),
       shipped: (from, to, p, n) => this.emit({ t: "shipped", from, to, p, n }),
-      grew: (b, level) => { this.toast(`${BUILDING_TYPES[b.kind].name} grew to level ${level}: more output, jobs and trucks`); this.emit({ t: "buildings" }); },
+      grew: (b, level) => { this.toast(`${BUILDING_TYPES[b.kind].name} grew to level ${level}`); this.emit({ t: "buildings" }); },
     });
     this.convoys = new Convoys({
       get time() { return game.time; },
@@ -234,11 +234,11 @@ export class Game {
         const mega = isMega(to.kind);
         this.toast(mega
           ? `${BIG_NAME[kind]} delivered to the ${name} site`
-          : `${BIG_NAME[kind]} installed at the ${name}: +${Math.round(TURBINE_BOOST * 100)}% power for good`);
+          : `${BIG_NAME[kind]} installed at the ${name}: +${Math.round(TURBINE_BOOST * 100)}% power`);
         this.emit({ t: "convoy", phase: "in", kind, from: -1, to: to.id });
       },
       departed: (kind, from, to) => {
-        this.toast(`Oversized load: a ${BIG_NAME[kind].toLowerCase()} leaves the ${BUILDING_TYPES[from.kind].name} for the ${BUILDING_TYPES[to.kind].name}, under escort`);
+        this.toast(`A ${BIG_NAME[kind].toLowerCase()} leaves the ${BUILDING_TYPES[from.kind].name} for the ${BUILDING_TYPES[to.kind].name} under escort`);
         this.emit({ t: "convoy", phase: "out", kind, from: from.id, to: to.id });
       },
       toast: (msg) => this.toast(msg),
@@ -431,7 +431,7 @@ export class Game {
       for (const s of towns) {
         this.emit({ t: "townSpawned", town: s.town.id, from: s.from?.id ?? null, dist: s.dist, dir: s.dir });
         const where = s.from ? `${(s.dist / 1000).toFixed(1)} km ${s.dir} of ${s.from.name}` : "on the map";
-        this.toast(`A new town: ${s.town.name} has sprung up ${where}. Join it to your roads and keep it fed.`);
+        this.toast(`${s.town.name} has sprung up ${where}`);
       }
       if (towns.length) { this.emit({ t: "zones" }); this.emit({ t: "buildings" }); }
       this.emit({ t: "money" });
@@ -456,14 +456,13 @@ export class Game {
       return true;
     };
     const money = (v: number) => `$${Math.round(v).toLocaleString("en-US")}`;
-    const name = PRODUCTS[d.product].name.toLowerCase();
     const town = d.to.town !== undefined ? this.towns.byId.get(d.to.town) : undefined;
     const where = town?.name ?? `the ${BUILDING_TYPES[d.to.kind].name}`;
     if (d.lost >= 1 && d.from && once(`spoiled:${d.from.id}`)) {
-      this.toast(`Spoiled on the way: ${name} from the ${BUILDING_TYPES[d.from.kind].name} reached ${where} at ${Math.round(d.fresh * 100)}% (${money(d.lost)} lost). A nearer buyer or a quicker road keeps it fresh.`);
+      this.toast(`${PRODUCTS[d.product].name} from the ${BUILDING_TYPES[d.from.kind].name} spoiled on the way to ${where}: ${money(d.lost)} lost`);
     }
     if (d.product === "cars" && town && once(`cars:${town.id}`)) {
-      this.toast(`${town.name} took delivery of ${d.n * CARS_PER_LOAD} new Motor Works cars: watch for them on its streets`);
+      this.toast(`${town.name} took delivery of ${d.n * CARS_PER_LOAD} new Motor Works cars`);
     }
   }
 

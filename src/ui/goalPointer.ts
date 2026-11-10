@@ -146,7 +146,7 @@ export class GoalPointer {
     this.el.className = "goal-ptr-layer";
     this.edge.type = this.pin.type = "button";
     this.edge.className = "goal-ptr";
-    this.edge.innerHTML = `<i class="gp-arrow" aria-hidden="true"><s class="gp-ring"></s></i><span class="gp-k">First goal</span><b>Fertile soil</b><span class="gp-km"></span>`;
+    this.edge.innerHTML = `<i class="gp-arrow" aria-hidden="true"><s class="gp-ring"></s></i><b>Fertile soil</b><span class="gp-km"></span>`;
     this.edge.onclick = () => { if (this.at) this.act.fly(this.at); };
     this.pin.className = "goal-pin";
     this.pin.innerHTML = `<i aria-hidden="true"><s class="gp-ring"></s>${productIcon("crops")}</i><span><b>Fertile soil</b><em>Place your farm here</em></span>`;

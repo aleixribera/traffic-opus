@@ -41,7 +41,7 @@ import { TipPrefs, joinedUp, tipFor } from "./tips";
 import { blockWords, buildOrder, shortfalls, shownRate } from "./bottleneck";
 import { longProject, type LongProject } from "./longProject";
 import { distText, planLength } from "./distance";
-import { goalNow, goalNowSay } from "./goalNow";
+import { goalNow, goalNowSay, lineOf } from "./goalNow";
 import { STUCK_RAISE, stuckSpots } from "./stuckAlerts";
 import { nextTown } from "./nextTown";
 import { openOrders, townOrders } from "./orders";
@@ -188,41 +188,40 @@ const SNAP_HELP = {
 } as const;
 
 const KEYS: [string, string][] = [
-  ["Esc", "Back, one thing at a time: the road being drawn, the tool in hand, then the catalog, a panel, a window, an info view. With nothing open: the pause menu"],
-  ["Right click", "Undo the last click of a road; again to drop the tool (a touchpad: click with two fingers)"],
-  ["W A S D / drag", "Move the camera (drag with the right button, or with the left when nothing is in hand)"],
-  ["Space + drag", "Move the camera with any tool in hand"],
-  ["Two fingers", "Touchpad: scroll to move the camera, pinch to zoom, click for a right click (Scroll wheel setting in this menu)"],
+  ["Esc", "Back one step. With nothing open, the pause menu"],
+  ["Right click", "Undo a road's last click, again to drop the tool"],
+  ["W A S D / drag", "Move the camera. Right-drag, or left-drag with nothing in hand"],
+  ["Space + drag", "Move the camera with a tool in hand"],
+  ["Two fingers", "Touchpad: scroll to move, pinch to zoom, click to right-click"],
   ["Q / E", "Turn the camera"],
-  ["Middle drag", "Sideways turns the camera. Up lowers it toward the horizon, down lifts it toward straight down"],
-  ["Y / H", "Tilt the camera. Y lifts it toward straight down, H lowers it toward the horizon. Zoomed far out it looks straight down by itself"],
-  ["M", "Map view (straight down) and back to the Diorama. The same as Camera in the pause menu"],
-  ["Camera block", "Top left: drag it like the middle button (for a touchpad), click it for the Map view"],
-  ["Wheel, + / -", "Zoom in / out, also with a road or a building in hand"],
-  ["R / I", "Roads / Industry: open the catalog (again to close it)"],
+  ["Middle drag", "Turn sideways, tilt up and down"],
+  ["Y / H", "Tilt toward straight down / toward the horizon"],
+  ["M", "Map view and back to the Diorama"],
+  ["Camera block", "Drag to turn and tilt, click for the Map view"],
+  ["Wheel, + / -", "Zoom"],
+  ["R / I", "Roads / Industry"],
   ["Tab", "Next road mode: curve, straight, upgrade"],
-  ["Page Up / Down", "Raise or lower the road (bridges over water and motorways rise on their own)"],
+  ["Page Up / Down", "Raise or lower the road"],
   ["[ / ]", "Parallel road spacing"],
-  [", / .", "Turn the building you are placing 15° (with Shift: 1°). Shift + wheel turns it too"],
+  [", / .", "Turn the building in hand 15°, 1° with Shift. Shift + wheel too"],
   ["Shift", "15° angle steps while drawing"],
-  ["Alt (hold)", "Ignore snapping and guides for a moment"],
+  ["Alt (hold)", "Ignore snapping and guides"],
   ["B", "Bulldozer"],
-  ["L", "Add lane (Shift or right click removes)"],
+  ["L", "Add lane. Shift or right click removes"],
   ["P / Z / C / X", "Goals / Economy / Towns / Traffic"],
-  ["Space, 1 2 3", "Pause (a tap of Space), game speed"],
+  ["Space, 1 2 3", "Pause, game speed"],
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
   ["F5 / F9", "Quicksave / quickload"],
   ["`", "Hide the interface"],
-  ["G", "Follow the truck nearest the middle of the screen (again, or moving the map, lets go)"],
-  ["T / Shift+T", "Tour camera / Vehicle cam (any key or click comes back)"],
-  ["N", "Sound on / off (volumes: Sound in this menu)"],
+  ["G", "Follow the nearest truck"],
+  ["T / Shift+T", "Tour camera / Vehicle cam"],
+  ["N", "Sound on / off"],
 ];
 
 export class Hud {
   root = h("div", "hud");
   // bottom bar
   private bbar = h("footer", "bbar");
-  private cityName = h("button", "cb-city");
   private popEl = h("span", "cb-pop");
   private moneyBtn = h("button", "cb-money");
   private clockEl = h("button", "cb-clock");
@@ -347,12 +346,12 @@ export class Hud {
     const bottom = h("div", "bottom");
     // city block (left)
     const city = h("div", "bb-city");
-    this.cityName.onclick = () => this.toggleWin("progression");
-    this.cityName.title = "Goals (P)";
     this.moneyBtn.onclick = () => this.toggleWin("economy");
     this.moneyBtn.title = "Economy (Z)";
     this.popEl.title = "People living in all your towns together";
-    city.append(this.cityName, this.popEl, this.moneyBtn);
+    // (the goals' count and progress live in the Goals card and its window: the bar keeps people and money.
+    // docs/ui-words.md, one place per fact)
+    city.append(this.popEl, this.moneyBtn);
     // categories (centre)
     const cat = (key: string, icon: string, label: string, title: string, fn: () => void) => {
       const b = h("button", "cat", `${icon}<span>${label}</span>`);
@@ -365,7 +364,6 @@ export class Hud {
     this.cats.append(
       cat("roads", ICON.roadCat, "Roads", "Roads", () => this.toggleCat("roads")),
       cat("industry", ICON.industry, "Industry", "Industry: extractors, plants and power", () => this.toggleCat("industry")),
-      cat("towns", ICON.town, "Towns", "Towns (C): your towns, what they need and how they are growing. New ones spring up as you reach milestones", () => this.toggleWin("city")),
       cat("transport", ICON.busCat, "Transport", "Public transport", () => this.toggleCat("transport")),
       h("span", "cat-sep"),
       cat("bulldoze", ICON.bulldoze, "Bulldoze", "Bulldozer (B)", () => app.setTool({ tool: app.st.tool === "bulldoze" ? "inspect" : "bulldoze" })),
@@ -707,7 +705,7 @@ export class Hud {
     if (st.tool === "road" && st.mode !== "replace") this.lastDraw = st.mode;
     for (const [k, b] of this.catBtns) {
       // (Towns opens the Towns window: lit while that is open)
-      const on = k === "bulldoze" ? st.tool === "bulldoze" : k === "towns" ? this.winKind === "city" : this.cat === k;
+      const on = k === "bulldoze" ? st.tool === "bulldoze" : this.cat === k;
       b.classList.toggle("on", on);
       b.setAttribute(k === "bulldoze" ? "aria-pressed" : "aria-expanded", String(on));
     }
@@ -928,16 +926,6 @@ export class Hud {
     const g = this.app.game;
     if (!g) return;
     const st = g.people.stats;
-    const reached = g.progress.done.length, all = MILESTONES.length;
-    const last = reached ? MILESTONES.find((m) => m.id === g.progress.done[reached - 1]) : undefined;
-    const key = [g.cityName, reached].join("|");
-    if (force || this.cityName.dataset.k !== key) {
-      this.cityName.dataset.k = key;
-      // (it opens the goals, so it is named for them: it used to wear the first town's name beside the people of
-      // every town, which read as that town's count. Play-test 2026-11-09, A14)
-      this.cityName.innerHTML = `<b>Goals ${reached}<small> of ${all}</small></b><span class="cb-ms"><i style="--p:${reached / all}"></i><span>${last ? `Last: ${escapeHtml(last.name)}` : "None reached yet"}</span></span>`;
-      this.cityName.setAttribute("aria-label", `Goals: ${reached} of ${all} reached${last ? `, last ${last.name}` : ""}. Open progression`);
-    }
     const pop = `${ICON.people}<span class="cb-pop-n"><b>${fmtNum(st.population)}</b><small>${g.towns.list.length === 1 ? "people" : "in all towns"}</small></span>`;
     if (this.popEl.dataset.k !== pop) { this.popEl.dataset.k = pop; this.popEl.innerHTML = pop; }
     const net = g.netIncome;
@@ -977,17 +965,24 @@ export class Hud {
     const v = g.progressView();
     const folded = this.tutHidden;
     // (a goal that waits on a first load says what the chain is doing now and when its first truck leaves: the
-    // works' own status, so the wait counts down here as it does in its panel. Owner, 2026-11-10)
-    const nowLine = (now: ReturnType<typeof goalNow>, one = false) => now ? `<button type="button" class="gl-now ${now.tone}"${now.works !== undefined ? ` data-id="${now.works}"` : now.spot ? ` data-spot="${Math.round(now.spot.x)},${Math.round(now.spot.y)}"` : " disabled"} title="${now.works !== undefined ? "Show it on the map" : now.spot ? "Fly there" : ""}" aria-label="${now.key ?? "Now"}: ${escapeHtml(goalNowSay(now))}"><span class="gl-now-k">${now.key ?? "Now"}</span><span class="gl-now-t"><b>${escapeHtml(now.who ? `${now.who}: ${now.text[0].toLowerCase()}${now.text.slice(1)}` : now.text)}.</b>${now.fix ? ` ${escapeHtml(now.fix)}` : ""}</span></button>`.replace('class="gl-now ', `class="gl-now${one ? " gl-now-one" : ""} `) : "";
+    // works' own status, so the wait counts down here as it does in its panel. Owner, 2026-11-10. One line: the state
+    // in bold, the one thing to do after it, and a missing link's chain on a line of its own)
+    const nowLine = (now: ReturnType<typeof goalNow>, one = false) => {
+      if (!now) return "";
+      const say = goalNowSay(now);
+      const go = now.works !== undefined ? ` data-id="${now.works}"` : now.spot ? ` data-spot="${Math.round(now.spot.x)},${Math.round(now.spot.y)}"` : " disabled";
+      const tip = [one ? say : now.more, now.works !== undefined ? "Click to show it" : now.spot ? "Click to fly there" : ""].filter(Boolean).join(" ");
+      return `<button type="button" class="gl-now${one ? " gl-now-one" : ""} ${now.tone}"${go}${tip ? ` title="${escapeHtml(tip)}"` : ""} aria-label="${escapeHtml(say)}"><span class="gl-now-t">${now.key === "Where" ? `${escapeHtml(now.text).replace(/^(Place an? )(.+?)( on | in )/, "$1<b>$2</b>$3")}.` : `<b>${escapeHtml(lineOf(now))}.</b>`}${now.fix ? ` ${escapeHtml(now.fix)}${/[.!?]$/.test(now.fix) ? "" : "."}` : ""}${now.where ? ` ${escapeHtml(now.where)}.` : ""}${now.chain && !one ? `<span class="gl-chain">${escapeHtml(now.chain)}</span>` : ""}</span></button>`;
+    };
     // (folded, the card is its header and one line under it: the goal at hand, how far along, and what its chain is
     // doing now, cut to two lines and whole on hover. Review 2026-11-10: the full card stood over the map all game,
     // and folding it hid the goal too)
-    let fold = `<span class="gl-count">${g.progress.done.length} of ${MILESTONES.length} reached</span>`;
+    let fold = `<span class="gl-count">${g.progress.done.length} of ${MILESTONES.length}</span>`;
     let body = `<div id="gl-body" hidden></div>`;
     if (folded && open[0]) {
       const m = open[0], [have, need] = m.measure(v), now = goalNow(g, m, have);
       fold = `<span class="gl-fold"><b>${escapeHtml(m.name)}</b><span class="num">${measureText(m, have, need)}</span></span>`;
-      body = `<div id="gl-body" class="gl-one">${now ? nowLine(now, true).replace(/ title="[^"]*"/, ` title="${escapeHtml(`${now.key ?? "Now"}: ${goalNowSay(now)}`)}"`) : `<p class="gl-goal">${escapeHtml(m.goal)}</p>`}</div>`;
+      body = `<div id="gl-body" class="gl-one">${now ? nowLine(now, true) : `<p class="gl-goal">${escapeHtml(m.goal)}</p>`}</div>`;
     } else if (folded) {
       // (every goal reached: the long project, and how it is going)
       const lp = longProject(g);
@@ -997,21 +992,36 @@ export class Hud {
       }
     }
     const foldName = folded ? /<b>([^<]*)<\/b>/.exec(fold)?.[1] : undefined;
-    const head = `<button class="gl-head" aria-expanded="${!folded}" aria-controls="gl-body"${foldName ? ` title="${foldName}. Click for the whole card."` : ""}><b>Goals</b>${fold}<span class="gl-caret">${ICON.caret}</span></button>`;
+    const head = `<button class="gl-head" aria-expanded="${!folded}" aria-controls="gl-body" title="${foldName ? `${foldName}. Click for the whole card` : "Fold the card to one line"}"><b>Goals</b>${fold}<span class="gl-caret">${ICON.caret}</span></button>`;
+    let tipShown = tip;
     if (!folded) {
-      const items = open.map((m) => {
+      // (the goal at hand in full: what it asks, how far along, what its chain is doing, what it brings. The other open
+      // goals one line each, with their own line under them only when something holds them. docs/ui-words.md)
+      // (a later goal's line on a chain an earlier one already speaks for stays quiet: the planks the held hamlet
+      // waits for and the first planks are one chain, said once)
+      const said = new Set<string>();
+      const nows = open.map((m) => {
+        const [have] = m.measure(v), n = goalNow(g, m, have);
+        if (n?.p && said.has(n.p)) return null;
+        if (n?.p) said.add(n.p);
+        return n;
+      });
+      const items = open.map((m, i) => {
         const [have, need] = m.measure(v);
         const p = Math.max(0, Math.min(1, have / need));
-        const now = goalNow(g, m, have);
+        const bar = `<span class="bar gl-bar" role="progressbar" aria-label="${m.name}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p * 100)}"><i style="width:${Math.max(2, p * 100)}%"></i></span>`;
+        const gifts = unlockList(m.unlocks).join(" · ");
+        if (i > 0) return `<li class="gl-more" title="${escapeHtml(`${m.goal}. Unlocks ${gifts}`)}"><div class="gl-top"><b>${m.name}</b><span class="num">${measureText(m, have, need)}</span></div>${bar}${nowLine(nows[i])}</li>`;
         return `<li><div class="gl-top"><b>${m.name}</b><span class="num">${measureText(m, have, need)}</span></div>
-          <p class="gl-goal">${m.goal}</p>
-          <span class="bar gl-bar" role="progressbar" aria-label="${m.name}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p * 100)}"><i style="width:${Math.max(2, p * 100)}%"></i></span>
-          ${nowLine(now)}<p class="gl-gift">${unlockList(m.unlocks).join(" · ")}</p></li>`;
+          <p class="gl-goal">${m.goal}</p>${bar}
+          ${nowLine(nows[i])}<p class="gl-gift"><span class="gl-gift-k">Unlocks</span> ${gifts}</p></li>`;
       }).join("");
+      // (a tip on the chain a goal's line already speaks for stands down: one place per fact)
+      if (tip?.p && nows.some((n) => n?.p === tip.p)) tipShown = null;
       // (the road offered under the pointer stays drawn only while its button is still there, for that works)
-      if (this.app.offerFor !== null && tip?.road?.works !== this.app.offerFor) this.app.offerFor = null;
-      const roadBtn = tip?.road ? ` <button type="button" class="btn gl-act" data-id="${tip.road.works}"${g.money < tip.road.cost ? ` disabled title="More than you have now"` : ""}>Build this road · ${formatMoney(tip.road.cost)}</button>` : "";
-      body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : this.afterGoals()}${tip ? `<div class="gl-tip" data-tip="${tip.id}"><p>${tip.html}${roadBtn}</p><button class="gl-x" aria-label="Dismiss this tip" title="Dismiss this tip (Pause › Tips turns them all off)">${ICON.close}</button></div>` : ""}</div>`;
+      if (this.app.offerFor !== null && tipShown?.road?.works !== this.app.offerFor) this.app.offerFor = null;
+      const roadBtn = tipShown?.road ? ` <button type="button" class="btn gl-act" data-id="${tipShown.road.works}"${g.money < tipShown.road.cost ? ` disabled title="More than you have now"` : ""}>Build this road · ${formatMoney(tipShown.road.cost)}</button>` : "";
+      body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : this.afterGoals()}${tipShown ? `<div class="gl-tip" data-tip="${tipShown.id}"><p>${tipShown.html}${roadBtn}</p><button class="gl-x" aria-label="Dismiss this tip" title="Dismiss this tip (Pause › Tips turns them all off)">${ICON.close}</button></div>` : ""}</div>`;
     }
     const html = head + body;
     if (this.tut.dataset.html !== html) {
@@ -1021,7 +1031,7 @@ export class Hud {
       const btn = this.tut.querySelector(".gl-head") as HTMLButtonElement;
       btn.onclick = () => { this.tutHidden = !this.tutHidden; this.sfx.play("click"); this.renderTips(); };
       const x = this.tut.querySelector<HTMLButtonElement>(".gl-x");
-      if (x && tip) x.onclick = () => { prefs.dismiss(tip.id); this.sfx.play("click"); this.renderTips(); this.tut.querySelector<HTMLButtonElement>(".gl-head")?.focus({ preventScroll: true }); };
+      if (x && tipShown) x.onclick = () => { prefs.dismiss(tipShown.id); this.sfx.play("click"); this.renderTips(); this.tut.querySelector<HTMLButtonElement>(".gl-head")?.focus({ preventScroll: true }); };
       for (const n of this.tut.querySelectorAll<HTMLButtonElement>(".gl-now[data-id]")) n.onclick = () => {
         const b = g.buildings.byId.get(+n.dataset.id!);
         if (!b) return;
@@ -1060,13 +1070,11 @@ export class Hud {
     if (!m) { this.tut.hidden = true; this.tut.dataset.html = ""; return; }
     const [have, need] = m.measure(g.progressView());
     const now = goalNow(g, m, have);
-    const k = now?.key ?? "Now";
-    // (a missing link of the chain says the whole of it, recipe and all, wrapping as it needs: design audit
-    // 2026-11-10, F01)
-    const text = !now ? "" : now.link ? goalNowSay(now) : `${now.who ? `${now.who}: ${now.text[0].toLowerCase()}${now.text.slice(1)}` : now.text}.`;
-    const full = `${m.name}: ${m.goal}, ${measureText(m, have, need)}.${now ? ` ${k}: ${goalNowSay(now)}` : ""}`;
-    const nowRow = now ? `<span class="gl-now-k">${k}</span><span class="gl-strip-t ${now.tone}${now.link ? " wrap" : ""}">${escapeHtml(text)}</span>` : "";
-    const html = `<button type="button" class="gl-strip" title="${escapeHtml(full)} Click to see your goals." aria-label="${escapeHtml(full)} Show the goals"><span class="gl-now-k">Goal</span><span class="gl-strip-t"><b>${escapeHtml(m.goal)}</b></span><span class="num">${measureText(m, have, need)}</span>${nowRow}</button>`;
+    // (a missing link of the chain says what to build too, wrapping as it needs: design audit 2026-11-10, F01)
+    const text = !now ? "" : now.link && now.fix ? `${lineOf(now)}. ${now.fix}${/[.!?]$/.test(now.fix) ? "" : "."}` : `${lineOf(now)}.`;
+    const full = `${m.name}: ${m.goal}, ${measureText(m, have, need)}.${now ? ` ${goalNowSay(now)}` : ""}`;
+    const nowRow = now ? `<span class="gl-strip-t ${now.tone}${now.link ? " wrap" : ""}">${escapeHtml(text)}</span>` : "";
+    const html = `<button type="button" class="gl-strip" title="${escapeHtml(full)} Click to see your goals." aria-label="${escapeHtml(full)} Show the goals"><span class="gl-strip-t"><b>${escapeHtml(m.goal)}</b></span><span class="num">${measureText(m, have, need)}</span>${nowRow}</button>`;
     this.tut.hidden = false;
     if (this.tut.dataset.html === html) return;
     this.tut.dataset.html = html;
@@ -1084,8 +1092,7 @@ export class Hud {
     const g = this.app.game, lp = longProject(g);
     if (lp) {
       const means = lp.means.map((j) => `<li><div class="gl-top"><b>${escapeHtml(j.head)}</b></div><p class="gl-goal gl-job">${escapeHtml(j.say)}</p></li>`).join("");
-      return `<ol class="gl-list gl-proj"><li><p class="gl-proj-k">Every goal reached. The long project</p>
-        <div class="gl-top"><b>${escapeHtml(lp.name)}</b><span class="num">${escapeHtml(lp.measure)}</span></div>
+      return `<ol class="gl-list gl-proj"><li><div class="gl-top" title="Every goal reached. The long project"><b>${escapeHtml(lp.name)}</b><span class="num">${escapeHtml(lp.measure)}</span></div>
         <span class="bar gl-bar" role="progressbar" aria-label="${escapeHtml(lp.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(lp.p * 100)}"><i style="width:${Math.max(2, lp.p * 100)}%"></i></span>
         ${this.projNow(g, lp)}</li></ol>
         ${means ? `<p class="gl-means-k">To get there</p><ol class="gl-list gl-means">${means}</ol>` : `<p class="gl-done">Nothing holds it back: it gets there by itself, a little every day.</p>`}
@@ -1102,7 +1109,7 @@ export class Hud {
   private projNow(g: Game, lp: LongProject, one = false): string {
     const t = lp.town !== undefined ? g.towns.byId.get(lp.town) : undefined;
     const at = lp.works !== undefined ? ` data-id="${lp.works}" title="Show it on the map"` : t ? ` data-spot="${Math.round(t.c.x)},${Math.round(t.c.y)}" title="Fly there"` : " disabled";
-    return `<button type="button" class="gl-now${one ? " gl-now-one" : ""}${lp.bad ? " bad" : ""}"${at} aria-label="Now: ${escapeHtml(lp.state)}"><span class="gl-now-k">Now</span><span class="gl-now-t">${escapeHtml(lp.state)}.</span></button>`;
+    return `<button type="button" class="gl-now${one ? " gl-now-one" : ""}${lp.bad ? " bad" : ""}"${at} ><span class="gl-now-t">${escapeHtml(lp.state)}.</span></button>`;
   }
 
   /** The notes at the foot of the tool options card (only redrawn when they change: the pointer moves every frame). */
@@ -1328,15 +1335,13 @@ export class Hud {
     this.banner.classList.toggle("nt", "spawned" in X);
     this.banner.classList.toggle("ord", "order" in X);
     if (lm && isMega(lm.kind)) {
-      this.banner.innerHTML = `<p class="lm-kicker">The company presents</p>
-        <header>The ${BUILDING_TYPES[lm.kind].name} is open</header>
+      this.banner.innerHTML = `<header>The ${BUILDING_TYPES[lm.kind].name} is open</header>
         <p class="gifts">${escapeHtml(MEGAS[lm.kind].reward)}</p>
         <div class="banner-btns"><button class="btn" data-k="show">Show me</button><button class="btn primary" data-k="ok">Continue</button></div>`;
     } else if ("order" in X) {
       // an order filled: the town's new building going up, the grant, and what it does for the town for good
       const C = CIVICS[X.kind];
-      this.banner.innerHTML = `<p class="lm-kicker">Order filled</p>
-        <header>${escapeHtml(t!.name)} builds its ${C.name.toLowerCase()}</header>
+      this.banner.innerHTML = `<header>${escapeHtml(t!.name)} builds its ${C.name.toLowerCase()}</header>
         <p class="sub">${escapeHtml(t!.name)} pays the company ${formatMoney(X.grant)}</p>
         <p class="gifts">${escapeHtml(C.perkText)}.</p>
         <div class="banner-btns">${civ ? `<button class="btn" data-k="civic">Show me</button>` : ""}<button class="btn" data-k="town">Open ${escapeHtml(t!.name)}</button><button class="btn primary" data-k="ok">Continue</button></div>`;
@@ -1346,10 +1351,9 @@ export class Hud {
       // (the arrow points the way the town lies on screen, whichever way the camera is turned)
       const a = this.app.screenBearing(from?.c ?? { x: this.app.view.cx, y: this.app.view.cy }, T.c);
       const where = from ? `${km(X.dist)} ${X.dir} of ${escapeHtml(from.name)}` : "on the map";
-      this.banner.innerHTML = `<p class="lm-kicker">A new town on the map</p>
-        <div class="nt-head">${spawnCompass(a)}<header>${escapeHtml(T.name)} has sprung up</header></div>
-        <p class="sub">${where} · ${g.towns.sizeName(T)} of ${fmtNum(T.pop)} · no road yet</p>
-        <p class="gifts">Lay a road out to it and keep it fed: a new market for the company, and a longer drive for your trucks.</p>
+      this.banner.innerHTML = `<div class="nt-head">${spawnCompass(a)}<header>${escapeHtml(T.name)} has sprung up</header></div>
+        <p class="sub">${where} · no road yet</p>
+        <p class="gifts">Lay a road out to it and keep it fed.</p>
         <div class="banner-btns"><button class="btn" data-k="fly">Fly there</button><button class="btn" data-k="town">Open ${escapeHtml(T.name)}</button><button class="btn primary" data-k="ok">Continue</button></div>`;
     } else if ("m" in X) {
       const M = X.m;
@@ -1367,8 +1371,7 @@ export class Hud {
       }).join("");
       const rest = unlockList({ ...M.unlocks, buildings: [] }, names);
       this.banner.innerHTML = `<header class="banner-co">${heraldSvg(co.herald, co.name, 26)}<span>${M.name}</span></header>
-        <p class="sub">${escapeHtml(co.name)} · milestone reached · ${M.goal}</p>
-        ${works.length ? `<p class="bn-lead">${works.length > 1 ? "New in Industry, in the order to build them" : "New in Industry"}</p><ol class="bn-new${works.length > 1 ? " num" : ""}">${intro}</ol>` : ""}
+        ${works.length ? `<p class="bn-lead">${works.length > 1 ? "New in Industry, in build order" : "New in Industry"}</p><ol class="bn-new${works.length > 1 ? " num" : ""}">${intro}</ol>` : ""}
         ${rest.length ? `<p class="gifts">${works.length ? "Also" : "Unlocked"}: ${rest.map(escapeHtml).join(" · ")}</p>` : ""}
         <div class="banner-btns">${works.length ? `<button class="btn" data-k="industry">Open Industry</button>` : ""}<button class="btn primary" data-k="ok">Continue</button></div>`;
     } else if ("town" in X) {
@@ -1780,7 +1783,7 @@ export class Hud {
         ${cur ? `<span class="bar"><i style="width:${Math.max(2, p * 100)}%"></i></span>` : ""}
         <p class="small muted">${unlockList(M.unlocks, (g.progress.spawned[M.id] ?? []).map((id) => g.towns.byId.get(id)?.name).filter((n): n is string => !!n)).map(escapeHtml).join(" · ")}</p></li>`;
     }).join("");
-    this.setWin("Goals", `<p class="win-sub">${g.progress.done.length} of ${MILESTONES.length} reached · up to three open at once, reach one to open the next</p><ul class="ms-list">${rows}</ul>`);
+    this.setWin("Goals", `<ul class="ms-list" title="Up to three goals are open at once. Reach one to open the next">${rows}</ul>`);
   }
 
   /** The Towns window: every town, how big it is and which way it's heading. */
@@ -2538,7 +2541,7 @@ export class Hud {
     const app = this.app;
     if (!app.game.paused) { app.togglePause(); this.resumeOnClose = true; }
     const co = app.game.company;
-    const dlg = this.showModal(`<header class="pm-head pm-co">${heraldSvg(co.herald, co.name, 36)}<span class="pm-co-t">${escapeHtml(co.name)}<span class="muted">Paused · ${escapeHtml(app.game.cityName)}</span></span></header>
+    const dlg = this.showModal(`<header class="pm-head pm-co">${heraldSvg(co.herald, co.name, 36)}<span class="pm-co-t">${escapeHtml(co.name)}</span></header>
       <div class="pm-list">
         <button class="pm resume">Resume</button>
         <button class="pm co">Company</button>

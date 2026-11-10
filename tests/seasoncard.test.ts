@@ -94,7 +94,8 @@ describe("the season's effects", () => {
     const html = seasonCardHtml("autumn", 1, fx);
     expect(html).toContain("Farms");
     expect(html).not.toContain("Logging camps");
-    expect(html).toContain("The harvest rush is on");
+    // (the title stands alone: no motto under it, no year over it. docs/ui-words.md)
+    expect(html).not.toContain("The harvest rush is on");
     // a logging camp only: winter's hint is about the logs, not the farms
     const logs = seasonEffects("winter", ownedSeasonal([{ kind: "loggingcamp" }]));
     expect(logs.lines.map((l) => l.text)).toEqual(["Logging camps ▲ +35%"]);
@@ -109,7 +110,7 @@ describe("the season's effects", () => {
     const html = seasonCardHtml("autumn", 2, fx);
     expect(html).toContain("sc-general");
     expect(html).not.toContain("sc-fx");
-    expect(html).toContain("Year 2");
+    expect(html).toContain("year 2");
   });
 
   it("puts the same lines in the clock's popover", () => {

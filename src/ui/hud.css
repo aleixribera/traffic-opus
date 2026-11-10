@@ -323,7 +323,15 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .gl-bar { height: 6px; }
 .gl-bar i { background: var(--ochre); }
 .gl-gift { margin: 6px 0 0; font-size: var(--t-sm); color: var(--cream-2); line-height: 1.45; }
-.gl-gift::before { content: "Unlocks "; color: var(--ochre-hi); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+.gl-gift-k { color: var(--cream-3); font-weight: 600; }
+/* the other open goals: one line each, a thin bar, their own line only when something holds them */
+.gl-list li.gl-more { padding: 7px 0 7px; }
+.gl-more .gl-top b { font-weight: 600; font-size: var(--t-sm); color: var(--cream-2); }
+.gl-more .gl-top .num { color: var(--cream-2); font-weight: 500; }
+.gl-more .gl-bar { height: 3px; margin-top: 4px; }
+.gl-more .gl-bar i { background: var(--cream-3); }
+.gl-more .gl-now { margin: 6px 0 0; }
+.gl-chain { display: block; margin-top: 2px; color: var(--cream-2); font-weight: 600; }
 .gl-tip { display: flex; align-items: flex-start; gap: 4px; margin: 0 6px; padding: 9px 4px 10px 10px; border-top: 1px solid var(--ochre); background: var(--plate-2); color: var(--cream-2); line-height: 1.45; }
 .gl-tip p { margin: 0; flex: 1; min-width: 0; }
 .gl-x { flex: none; display: grid; place-items: center; width: 32px; height: 32px; margin: -7px -6px -4px 0; padding: 0; background: none; border: 0; border-radius: var(--r); color: var(--cream-3); }
@@ -337,18 +345,17 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .gl-now:focus-visible { outline: 2px solid var(--ochre); outline-offset: 1px; }
 /* the goal in one line over an open panel (hud.ts goalStrip): the card's place is the panel's, the goal stays */
 .goals:has(> .gl-strip) { margin-bottom: 6px; }
-.gl-strip { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: baseline; gap: 2px 8px; width: 100%; padding: 7px 12px 8px; background: none; border: 0; border-left: 3px solid var(--ochre); border-radius: 0; color: var(--cream-2); font: 400 var(--t-sm)/1.35 var(--f-text); text-align: left; cursor: pointer; }
+.gl-strip { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 2px 8px; width: 100%; padding: 7px 12px 8px; background: none; border: 0; border-left: 3px solid var(--ochre); border-radius: 0; color: var(--cream-2); font: 400 var(--t-sm)/1.35 var(--f-text); text-align: left; cursor: pointer; }
 .gl-strip:hover { background: var(--plate-2); }
 .gl-strip:focus-visible { outline: 2px solid var(--ochre); outline-offset: -3px; }
 .gl-strip-t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gl-strip-t b { color: var(--cream); font-weight: 600; }
 .gl-strip-t.bad { color: var(--bad); }
-.gl-strip > .gl-strip-t:last-child { grid-column: 2 / 4; }
-.gl-strip > .gl-strip-t:nth-child(2), .gl-strip-t.wrap { white-space: normal; text-wrap: pretty; }
+.gl-strip > .gl-strip-t:last-child { grid-column: 1 / 3; }
+.gl-strip > .gl-strip-t:first-child, .gl-strip-t.wrap { white-space: normal; text-wrap: pretty; }
 .gl-strip .num { color: var(--cream-2); font-weight: 500; font-variant-numeric: tabular-nums lining-nums; }
 .tr:has(.gl-strip) .panel { max-height: calc(100vh - var(--bar-h) - 46px - var(--strip-h, 60px)); }
-.gl-now-k { flex: none; font: 700 var(--t-xs)/1.4 var(--f-text); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ochre-hi); }
-.gl-now-t { flex: 1; min-width: 0; }
+.gl-now-t { flex: 1; min-width: 0; color: var(--cream-2); }
 .gl-now-t b { color: var(--cream); font-weight: 600; }
 .gl-now.bad { border-left-color: var(--bad); }
 .gl-now.bad .gl-now-t b { color: var(--bad); }
@@ -356,7 +363,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .gl-done + .gl-list { margin-top: -4px; }
 .gl-goal.gl-job { margin-bottom: 0; }
 /* the long project once every goal is reached: its name and bar like a goal's, what to do under it */
-.gl-proj-k, .gl-means-k { margin: 0 0 4px; font: 700 var(--t-xs)/1.4 var(--f-text); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ochre-hi); }
+.gl-means-k { margin: 0 0 4px; font: 700 var(--t-xs)/1.4 var(--f-text); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ochre-hi); }
 .gl-proj .gl-bar { margin: 6px 0 8px; }
 .gl-proj .gl-now { margin-bottom: 0; }
 .gl-means-k { margin: 2px 14px 0; padding-top: 9px; border-top: 1px solid var(--rule); }
@@ -482,7 +489,7 @@ body.in-menu .hud > :not(.modal):not(.toasts) { display: none !important; }
 .banner::before { content: ""; display: block; height: 6px; margin: 0 -28px 14px; background: repeating-linear-gradient(90deg, var(--ochre) 0 24px, var(--bar) 24px 28px); }
 .banner header { font: 800 var(--t-banner)/1.05 var(--f-display); letter-spacing: 0.05em; text-transform: uppercase; color: var(--cream); margin-bottom: 8px; text-wrap: balance; }
 .banner p { margin: 3px 0; color: var(--cream-2); }
-.banner .sub { color: var(--ochre-hi); font-weight: 600; font-size: var(--t-xs); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; }
+.banner .sub { color: var(--cream-2); font-size: var(--t-sm); margin-bottom: 6px; font-variant-numeric: tabular-nums; }
 .banner .gifts { color: var(--cream); font-size: var(--t-md); text-wrap: pretty; }
 .banner .btn { margin-top: 14px; min-height: 32px; }
 /* a milestone's new works, one a line: what each takes and makes */
@@ -518,7 +525,7 @@ body.in-menu .hud > :not(.modal):not(.toasts) { display: none !important; }
 .pm:hover, .pm:focus-visible { background: var(--plate-2); box-shadow: inset 3px 0 0 var(--ochre); }
 .pm:focus-visible { outline-offset: -2px; }
 .pm.resume { color: var(--ochre-hi); }
-.pm.tips, .pm.wheel, .pm.edge { display: flex; justify-content: space-between; align-items: baseline; }
+.pm.tips, .pm.wheel, .pm.edge, .pm.camview, .pm.nights { display: flex; justify-content: space-between; align-items: baseline; }
 .pm-v { font: 600 var(--t-xs)/1 var(--f-text); text-transform: uppercase; letter-spacing: 0.14em; color: var(--ochre-hi); }
 .pm.tips[aria-checked="false"] .pm-v, .pm.edge[aria-checked="false"] .pm-v { color: var(--cream-3); }
 .pm.new { color: var(--bad); margin-top: 6px; border-top: 1px solid var(--rule); border-radius: 0 0 var(--r) var(--r); }
@@ -832,10 +839,6 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 /* a landmark's opening: the banner dressed for the occasion, a double gilt frame and spaced capitals */
 .banner.lm { min-width: 380px; max-width: min(560px, calc(100vw - 32px));
   border: 1px solid var(--ochre); box-shadow: 0 0 0 3px var(--plate), 0 0 0 4px var(--ochre), 0 0 28px rgba(224, 168, 51, 0.28), var(--shadow); }
-.banner.lm .lm-kicker { display: flex; align-items: center; gap: 10px; justify-content: center; margin: 0 0 6px; color: var(--ochre-hi);
-  font-size: var(--t-xs); font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; }
-.banner.lm .lm-kicker::before, .banner.lm .lm-kicker::after { content: ""; flex: 1; max-width: 70px; height: 5px;
-  border-top: 1px solid var(--ochre); border-bottom: 1px solid var(--ochre); }
 .banner.lm .gifts { color: var(--cream); line-height: 1.45; text-wrap: pretty; }
 .banner.lm.in { animation: lmin .6s cubic-bezier(.2, 1.2, .35, 1); }
 @keyframes lmin { from { opacity: 0; transform: translate(-50%, -14px) scale(.92); } }
@@ -875,7 +878,7 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .tp-ring:hover .tp-tag, .tp-ring:focus-visible .tp-tag { background: var(--ochre-hi); }
 .tp-ring:focus-visible { outline: none; }
 .tp-ring:focus-visible .tp-dot { outline: 2px solid var(--ochre-hi); outline-offset: 4px; }
-.tp-edge { position: absolute; left: 0; top: 0; pointer-events: auto; display: grid; grid-template-columns: auto auto auto; grid-template-rows: auto auto; column-gap: 8px;
+.tp-edge { position: absolute; left: 0; top: 0; pointer-events: auto; display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; column-gap: 8px;
   align-items: center; padding: 5px 10px 5px 6px; text-align: left; white-space: nowrap; will-change: transform; cursor: pointer;
   background: var(--plate); color: var(--cream); border: 1px solid var(--ochre); border-radius: 3px; font-family: var(--f-text); line-height: 1.2;
   box-shadow: 0 0 0 2px var(--plate), 0 0 0 3px var(--pin), 0 3px 10px rgba(0, 0, 0, 0.4); }
@@ -883,9 +886,8 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 /* (a long, narrow head, so its point reads at a glance; a shaft behind it) */
 .tp-edge .tp-arrow::before { content: ""; position: absolute; left: 5px; top: 12px; width: 9px; height: 2px; background: var(--ochre-hi); }
 .tp-edge .tp-arrow::after { content: ""; position: absolute; left: 12px; top: 8px; border-style: solid; border-color: transparent transparent transparent var(--ochre-hi); border-width: 5px 0 5px 10px; }
-.tp-edge .tp-k { grid-column: 2; grid-row: 1; font-size: var(--t-xs); font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ochre-hi); }
-.tp-edge b { grid-column: 2 / 4; grid-row: 2; font: 700 var(--t-plate)/1.1 var(--f-display); letter-spacing: 0.04em; text-transform: uppercase; }
-.tp-edge .tp-km { grid-column: 3; grid-row: 1; justify-self: end; font-size: var(--t-sm); color: var(--cream-2); font-variant-numeric: tabular-nums; }
+.tp-edge b { grid-column: 2; grid-row: 1; font: 700 var(--t-plate)/1.1 var(--f-display); letter-spacing: 0.04em; text-transform: uppercase; }
+.tp-edge .tp-km { grid-column: 2; grid-row: 2; font-size: var(--t-sm); color: var(--cream-2); font-variant-numeric: tabular-nums; }
 .tp-edge:hover { border-color: var(--ochre-hi); background: var(--plate-2); }
 .tp-edge:focus-visible { outline: 2px solid var(--ochre-hi); outline-offset: 3px; }
 /* the new town's banner: a compass rose beside the name, its needle the way the town lies on screen */
@@ -910,7 +912,7 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 /* the first goal's ground (goalPointer.ts): a big brass pointer at the screen's edge while the soil is off screen,
    its roundel beating so nobody misses it, and a pin on the spot once it is in view */
 .goal-ptr-layer { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
-.goal-ptr { position: absolute; left: 0; top: 0; pointer-events: auto; display: grid; grid-template-columns: auto auto auto; grid-template-rows: auto auto; column-gap: 12px; row-gap: 1px;
+.goal-ptr { position: absolute; left: 0; top: 0; pointer-events: auto; display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; column-gap: 12px; row-gap: 1px;
   align-items: center; padding: 9px 16px 9px 10px; text-align: left; white-space: nowrap; will-change: transform; cursor: pointer;
   background: var(--plate); color: var(--cream); border: 2px solid var(--ochre-hi); border-radius: 3px; font-family: var(--f-text); line-height: 1.15;
   box-shadow: 0 0 0 3px var(--plate), 0 0 0 4px var(--ochre), 0 6px 18px rgba(0, 0, 0, 0.5); }
@@ -920,9 +922,8 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 /* (the beat: a ring that grows and fades, transform and opacity only) */
 .gp-ring { position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 3px rgba(240, 194, 90, 0.8); pointer-events: none; animation: gp-beat 1.6s ease-out infinite; }
 @keyframes gp-beat { from { transform: scale(1); opacity: 1; } to { transform: scale(1.7); opacity: 0; } }
-.goal-ptr .gp-k { grid-column: 2; grid-row: 1; font-size: var(--t-xs); font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ochre-hi); }
-.goal-ptr b { grid-column: 2 / 4; grid-row: 2; font: 700 var(--t-head)/1.1 var(--f-display); letter-spacing: 0.04em; text-transform: uppercase; }
-.goal-ptr .gp-km { grid-column: 3; grid-row: 1; justify-self: end; font-size: var(--t-sm); font-weight: 600; color: var(--cream); font-variant-numeric: tabular-nums; }
+.goal-ptr b { grid-column: 2; grid-row: 1; align-self: end; font: 700 var(--t-head)/1.05 var(--f-display); letter-spacing: 0.04em; text-transform: uppercase; }
+.goal-ptr .gp-km { grid-column: 2; grid-row: 2; align-self: start; font-size: var(--t-sm); font-weight: 600; color: var(--cream-2); font-variant-numeric: tabular-nums; }
 .goal-ptr:hover { background: var(--plate-2); border-color: var(--cream); }
 .goal-ptr:focus-visible { outline: 2px solid var(--cream); outline-offset: 5px; }
 .goal-pin { position: absolute; left: 0; top: 0; pointer-events: auto; display: flex; align-items: center; gap: 9px; margin-top: -16px; padding: 6px 13px 6px 6px; text-align: left; white-space: nowrap;
@@ -1201,10 +1202,7 @@ body.cinema #game { cursor: none; }
 .order-note .on-x svg { width: 14px; height: 14px; }
 .toast.order-note { padding-right: 40px; }
 
-/* an order filled: the town news banner with a gilt kicker, like a landmark's but plainer */
-.banner.ord .lm-kicker { display: flex; align-items: center; gap: 10px; justify-content: center; margin: 0 0 6px; color: var(--ochre-hi);
-  font-size: var(--t-xs); font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; }
-.banner.ord .lm-kicker::before, .banner.ord .lm-kicker::after { content: ""; flex: 1; max-width: 50px; height: 0; border-top: 1px solid var(--ochre); }
+/* an order filled: the town news banner, its grant in green */
 .banner.ord .sub { color: var(--good); }
 
 /* a town with an open order: a tag beside its nameplate, ochre on navy, a lozenge for a bullet */

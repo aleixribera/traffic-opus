@@ -76,12 +76,12 @@ function notice(title: string, body: string, act: string, go: () => void) {
   b.focus();
 }
 
-const GL_FIX = "Close a few browser tabs or other games and try again. If it keeps happening, restart the browser and check that hardware acceleration is on in its settings.";
+const GL_FIX = "Close some tabs and try again. If it keeps happening, restart the browser and turn on hardware acceleration.";
 
 boot().catch((e) => {
   console.error(e);
   const msg = String(e?.message ?? e);
-  if (/webgl/i.test(msg)) notice("The game couldn't start its 3D view", `Your browser didn't give it the graphics it needs. ${GL_FIX}`, "Try again", () => location.reload());
+  if (/webgl/i.test(msg)) notice("The game couldn't start its 3D view", `The browser gave it no 3D graphics. ${GL_FIX}`, "Try again", () => location.reload());
   else notice("The game couldn't start", msg, "Try again", () => location.reload());
 });
 
@@ -91,7 +91,7 @@ document.getElementById("game")?.addEventListener("webglcontextlost", (e) => {
   e.preventDefault();
   const app = (window as unknown as { app?: App }).app;
   try { if (app?.game && app.mode === "play") app.saves.autosave(app.game); } catch (err) { console.error(err); }
-  notice("The 3D view stopped", `The graphics card dropped the game's picture. Your city is saved. ${GL_FIX}`, "Reload my city", () => {
+  notice("The 3D view stopped", `Your city is saved. ${GL_FIX}`, "Reload my city", () => {
     const u = new URL(location.href);
     u.searchParams.delete("new");
     u.searchParams.set("play", "");

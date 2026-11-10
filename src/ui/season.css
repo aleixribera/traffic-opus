@@ -27,17 +27,8 @@
 .sc-sun .sc-base { stroke: var(--ochre); stroke-width: 1.5; }
 .sc-sun .season-glyph { color: var(--sc); }
 
-.sc-kicker { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 8px 0 0; color: var(--ochre-hi);
-  font: 600 var(--t-xs)/16px var(--f-text); letter-spacing: 0.3em; text-transform: uppercase; font-variant-numeric: lining-nums; }
-.sc-kicker::before, .sc-kicker::after { content: ""; flex: 1; max-width: 84px; height: 5px; border-top: 1px solid var(--ochre); border-bottom: 1px solid var(--ochre); }
-/* (the tracking's trailing space, given back so the word sits centred) */
-.sc-kicker span { margin-right: -0.3em; }
-
-.sc-title { margin: 2px 0 0; font: 800 84px/0.92 var(--f-display); letter-spacing: 0.14em; text-indent: 0.14em; text-transform: uppercase;
+.sc-title { margin: 8px 0 0; font: 800 84px/0.92 var(--f-display); letter-spacing: 0.14em; text-indent: 0.14em; text-transform: uppercase;
   color: var(--cream); text-shadow: 0 2px 0 var(--edge); }
-.sc-motto { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 6px 0 0; color: var(--sc);
-  font: 600 16px/1.25 var(--f-text); letter-spacing: 0.02em; text-wrap: balance; }
-.sc-motto::before, .sc-motto::after { content: ""; flex: none; width: 7px; height: 7px; background: var(--ochre); transform: rotate(45deg); }
 
 .sc-body { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--rule-2); text-align: left; }
 
@@ -104,8 +95,7 @@
   border-bottom: 1px solid var(--ochre); box-shadow: 0 1px 0 var(--edge), 0 3px 0 var(--plate), 0 4px 0 var(--pin); }
 .season-pop header .season-glyph { width: 16px; height: 16px; color: var(--sc); }
 .season-pop header span { font: 800 var(--t-head)/1 var(--f-display); letter-spacing: 0.1em; text-transform: uppercase; color: var(--cream); }
-.season-pop .sp-motto { margin: 11px 14px 0; color: var(--sc); font-size: var(--t-md); font-weight: 600; line-height: 18px; }
-.season-pop .sp-when { margin: 2px 14px 10px; color: var(--cream-2); font-size: var(--t-sm); font-variant-numeric: tabular-nums lining-nums; }
+.season-pop .sp-when { margin: 10px 14px 10px; color: var(--cream-2); font-size: var(--t-sm); font-variant-numeric: tabular-nums lining-nums; }
 .season-pop .sc-fx, .season-pop .sc-general, .season-pop .sc-hint { margin-left: 14px; margin-right: 14px; }
 .season-pop .sc-fx li { font-size: var(--t-sm); }
 .season-pop .sc-general { text-align: left; font-size: var(--t-sm); }
