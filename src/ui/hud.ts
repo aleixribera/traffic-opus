@@ -185,7 +185,7 @@ const SNAP_HELP = {
 } as const;
 
 const KEYS: [string, string][] = [
-  ["Esc", "Back, one thing at a time: the tool in hand, then the catalog, a panel, a window, an info view. With nothing open: the pause menu"],
+  ["Esc", "Back, one thing at a time: the road being drawn, the tool in hand, then the catalog, a panel, a window, an info view. With nothing open: the pause menu"],
   ["Right click", "Undo the last click of a road; again to drop the tool (a touchpad: click with two fingers)"],
   ["W A S D / drag", "Move the camera (drag with the right button, or with the left when nothing is in hand)"],
   ["Space + drag", "Move the camera with any tool in hand"],
@@ -1109,6 +1109,16 @@ export class Hud {
   /** Milestones reached (and towns grown) not yet shown: several can come at once, each gets its banner in turn. */
   private bannerQ: Banner[] = [];
   private bannerT = 0;
+  /**
+   * The clock was stopped for a card that waits to be read, and starts again once the last is put away (review
+   * 2026-11-10, B7: at speed 4 two milestones stacked in the middle of the screen while the trucks ran on behind
+   * them). Queued and paused rather than a ribbon: a milestone's card introduces new works one by one, which is
+   * reading, and a game day at speed 4 passes in seconds. The player's own pause or speed change takes over.
+   */
+  private bannerHeld = false;
+
+  /** The player set the clock: a card that stopped it no longer starts it again. */
+  clockSet() { this.bannerHeld = false; }
 
   /** A milestone was reached: what it unlocks (with the towns it brought), and the grant. */
   milestone(M: Milestone, towns?: number[]) {
@@ -1198,6 +1208,7 @@ export class Hud {
   clearBanners() {
     clearTimeout(this.bannerT);
     this.bannerQ = [];
+    this.bannerHeld = false;
     this.banner.hidden = true;
     this.orderNoteAway(0);
     this.seasons.clear();
@@ -1213,8 +1224,14 @@ export class Hud {
   private nextBanner() {
     clearTimeout(this.bannerT);
     const X = this.bannerQ.shift();
-    if (!X) { this.banner.hidden = true; return; }
     const g = this.app.game;
+    // (the cards that wait to be read stop the clock; the town's news that steps aside by itself does not)
+    const read = !!X && ("m" in X || "landmark" in X || "spawned" in X);
+    if (!read && this.bannerHeld) {
+      this.bannerHeld = false;
+      if (g.paused) { g.paused = false; this.refresh(); }
+    }
+    if (!X) { this.banner.hidden = true; return; }
     const t = "town" in X ? g.towns.byId.get(X.town) : "spawned" in X ? g.towns.byId.get(X.spawned) : "order" in X ? g.towns.byId.get(X.order) : undefined;
     if (("town" in X || "spawned" in X || "order" in X) && !t) { this.nextBanner(); return; }
     const civ = "order" in X && X.b !== undefined ? g.buildings.byId.get(X.b) : undefined;
@@ -1283,6 +1300,9 @@ export class Hud {
         <p class="gifts">${what[0].toUpperCase() + what.slice(1)}</p>
         <div class="banner-btns"><button class="btn" data-k="town">Open ${escapeHtml(t!.name)}</button><button class="btn primary" data-k="ok">Continue</button></div>`;
     }
+    if (read && !g.paused && this.app.mode === "play") { g.paused = true; this.bannerHeld = true; this.refresh(); }
+    // (said beside the button that starts it again)
+    if (this.bannerHeld) this.banner.querySelector(".banner-btns")?.insertAdjacentHTML("afterbegin", `<span class="bn-held">Paused while you read</span>`);
     this.banner.hidden = false;
     this.seasons.yieldTo();
     this.banner.classList.remove("in");
@@ -1397,7 +1417,7 @@ export class Hud {
   /** What is open now, for Esc (ui/escape.ts has the order they go in). */
   private escState(): EscState {
     return {
-      dialog: !this.modal.hidden, banner: !this.banner.hidden, popover: this.seasons.popOpen,
+      dialog: !this.modal.hidden, banner: !this.banner.hidden, popover: this.seasons.popOpen, draft: this.app.hasDraft,
       tool: this.app.st.tool !== "inspect", catalog: !!this.cat, selection: !!this.sel, window: !!this.winKind,
       view: this.app.overlay !== "none",
     };
@@ -1413,6 +1433,7 @@ export class Hud {
     if (layer === "dialog") this.closeModal();
     else if (layer === "banner") this.nextBanner();
     else if (layer === "popover") this.seasons.closePop();
+    else if (layer === "draft") this.app.cancelDraft();
     // (the catalog it came from stays open, its list unfolded again: the next press closes that)
     else if (layer === "tool") { this.catPeek = false; this.app.setTool({ tool: "inspect" }); }
     else if (layer === "catalog") { this.cat = null; this.sfx.play("close"); this.refresh(); }

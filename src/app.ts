@@ -1340,12 +1340,14 @@ export class App {
   }
 
   togglePause() {
+    this.hud?.clockSet();
     this.game.paused = !this.game.paused;
     this.audio.play(this.game.paused ? "pause" : "resume");
     this.hud?.refresh();
   }
 
   setSpeed(s: number) {
+    this.hud?.clockSet();
     this.audio.play(this.game.paused ? "resume" : "speed");
     this.game.speed = s;
     this.game.paused = false;
@@ -1472,8 +1474,19 @@ export class App {
 
   // ---------------------------------------------------------------- clicks
 
-  /** Right click (CS2): undo the last click of the road being drawn. */
-  /** Undo the last click of a stroke. False when there was nothing to undo. */
+  /** Has the tool started something it hasn't finished: a road's first point, a bus line's stops, a drag box? */
+  get hasDraft(): boolean { return !!this.anchor || this.lineDraft.length > 0 || !!this.dragRect; }
+
+  /** Esc: drop what the tool has started, all of it (the tool stays in hand). */
+  cancelDraft() {
+    this.dirtyPreview = true;
+    if (this.dragRect) { this.dragRect = null; this.hud?.rect(null); }
+    this.anchor = null; this.startTangent = undefined; this.freeDir = undefined; this.parFrom = undefined; this.confirmKey = null;
+    this.lineDraft.length = 0;
+    this.hud?.sound("close");
+  }
+
+  /** Right click (CS2): undo the last click of a stroke. False when there was nothing to undo. */
   stepBack(): boolean {
     this.dirtyPreview = true;
     if (this.dragRect) { this.dragRect = null; this.hud?.rect(null); }

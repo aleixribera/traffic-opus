@@ -479,6 +479,8 @@ body.in-menu .hud > :not(.modal):not(.toasts) { display: none !important; }
 .bn-say small { display: block; font-size: var(--t-sm); color: var(--cream-2); }
 .banner-btns { display: flex; justify-content: center; gap: 8px; margin-top: 14px; }
 .banner-btns .btn { margin-top: 0; padding: 6px 16px; }
+/* the clock stopped for this card: said quietly beside the button that starts it again (review 2026-11-10, B7) */
+.banner-btns .bn-held { align-self: center; margin-right: 6px; font-size: var(--t-xs); text-transform: uppercase; letter-spacing: 0.1em; color: var(--cream-3); }
 
 /* ------------------------------------------------------------ pause menu, saves, controls */
 .modal { position: absolute; inset: 0; background: rgba(5, 9, 17, 0.58); display: grid; place-items: center; z-index: 5; }

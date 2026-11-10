@@ -30,8 +30,12 @@ describe("one Esc, one layer (play-test 2026-11-09, A9)", () => {
     expect(presses(open("banner", "tool"))).toEqual(["banner", "tool"]);
   });
 
+  it("a road being drawn: the first press drops the road, the second the tool, the third the catalog (review 2026-11-10)", () => {
+    expect(presses(open("draft", "tool", "catalog"))).toEqual(["draft", "tool", "catalog"]);
+  });
+
   it("a dialog is on top of everything", () => {
-    expect(escLayer(open("dialog", "banner", "popover", "tool", "catalog", "selection", "window", "view"))).toBe("dialog");
+    expect(escLayer(open("dialog", "banner", "popover", "draft", "tool", "catalog", "selection", "window", "view"))).toBe("dialog");
   });
 
   it("puts away exactly one layer a press, whatever is open", () => {
