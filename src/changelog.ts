@@ -15,6 +15,15 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.95", date: "2026-11-10", title: "Say what's missing",
+    notes: [
+      "Every button on the top bar has its name under it. The Progression window is now Goals, and Transportation is now Traffic.",
+      "When a goal waits on a missing link, it names it: a farm with no Food Plant, a smelter with nothing to bring it iron ore. If that building isn't open yet, it says which goal opens it.",
+      "A town's people, needs met and its way to the next size sit at the top of its panel, never cut off.",
+      "Economy and a works' own panel show the same made-a-day figure.",
+    ],
+  },
+  {
     v: "v0.0.94", date: "2026-11-10", title: "Loads a day",
     notes: [
       "Goods are counted one way everywhere: loads a day. A town's needs are bars on one scale, so the biggest ask looks biggest.",

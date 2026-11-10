@@ -54,14 +54,28 @@ export class MainMenu {
     this.ver.setAttribute("aria-label", `Version ${VERSION}: what's new`);
     this.ver.onclick = () => { this.hud.sound("click"); this.hud.openNews(app.mode === "menu"); };
     document.body.append(this.root, this.curtain, this.strip, this.ver);
+    // (the explore strip sits in the middle of the top edge, but never over the top bar, which grows a button when
+    // the map is turned)
+    const bar = document.querySelector(".corner.tl");
+    if (bar) new ResizeObserver(() => this.placeStrip()).observe(bar);
+    window.addEventListener("resize", () => this.placeStrip());
     app.onMode((m) => {
       this.root.hidden = m !== "menu";
       this.strip.hidden = m !== "explore";
+      if (m === "explore") this.placeStrip();
       if (m !== "menu") window.clearInterval(this.timer);
     });
   }
 
   /** The showcase save, fetched once. */
+  /** The explore strip at the middle of the top edge, or just right of the top bar when the bar reaches past it. */
+  private placeStrip(): void {
+    if (this.strip.hidden) return;
+    const bar = document.querySelector(".corner.tl")?.getBoundingClientRect();
+    const w = this.strip.offsetWidth;
+    this.strip.style.left = `${Math.max(window.innerWidth / 2 - w / 2, (bar?.right ?? 0) + 12)}px`;
+  }
+
   private async showcase(): Promise<SaveData | null> {
     if (this.data) return this.data;
     try {

@@ -61,20 +61,22 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 
 /* ------------------------------------------------------------ top left: company plate, menu + info buttons */
 .tl-row { display: flex; align-items: center; gap: 2px; background: var(--plate); border: 1px solid var(--edge); border-radius: var(--r); box-shadow: var(--shadow); padding: 4px; pointer-events: auto; }
-.tlb { width: 36px; height: 36px; display: grid; place-items: center; background: transparent; border: 1px solid transparent; border-radius: var(--r); color: var(--cream-2); padding: 0; position: relative; }
-.tlb svg { width: 19px; height: 19px; }
+/* each button: its picture over its name in small caps, the bottom bar's way (design audit 2026-11-10, F28) */
+.tlb { min-width: 46px; height: 46px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; background: transparent; border: 1px solid transparent; border-radius: var(--r); color: var(--cream-2); padding: 3px 6px 2px; position: relative; }
+.tlb svg { width: 19px; height: 19px; flex: none; }
+.tlb-l { font-size: var(--t-xs); line-height: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
 .tlb:hover:not(.on) { background: var(--plate-2); color: var(--cream); }
 .tlb.on { background: var(--plate-3); color: var(--ochre-hi); border-color: var(--rule-2); }
 .tlb.on::after { content: ""; position: absolute; left: 6px; right: 6px; bottom: -1px; height: 2px; background: var(--ochre); }
-.tl-sep { width: 1px; height: 24px; background: var(--rule-2); margin: 0 4px; }
-.compass { width: 36px; height: 36px; padding: 0; justify-content: center; border-color: transparent; background: transparent; }
+.tl-sep { width: 1px; height: 32px; background: var(--rule-2); margin: 0 4px; }
 .compass[hidden] { display: none; }
 /* the camera control: a small block seen as the camera sees the map. From straight above it is a plain square;
    tilted, its sides show; it turns with the map, brick on its north side */
 .viewgiz { touch-action: none; cursor: grab; }
 .viewgiz.dragging { cursor: grabbing; background: var(--plate-3); }
-.vg { position: relative; display: block; width: 24px; height: 24px; pointer-events: none; }
-.vg-cube { position: absolute; left: 6px; top: 6px; width: 12px; height: 12px; transform-style: preserve-3d; }
+.vg { position: relative; display: block; flex: none; width: 24px; height: 20px; pointer-events: none; }
+.viewgiz.map { background: var(--plate-3); color: var(--ochre-hi); border-color: var(--rule-2); }
+.vg-cube { position: absolute; left: 6px; top: 4px; width: 12px; height: 12px; transform-style: preserve-3d; }
 .vg-cube i { position: absolute; inset: 0; box-sizing: border-box; border: 1px solid var(--plate); backface-visibility: hidden; }
 .vg-top { transform: translateZ(6px); background: var(--cream-2); }
 .vg-top::after { content: ""; position: absolute; left: 2px; right: 2px; top: 0; height: 3px; background: var(--brick); }
@@ -84,14 +86,14 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .vg-w { transform: rotateY(-90deg) translateZ(6px); background: #6f6858; }
 .viewgiz:hover .vg-top, .viewgiz.dragging .vg-top { background: var(--cream); }
 /* the company: a button by the menu (opens its dialog), dressed as a works nameplate: herald + name in display caps */
-.company { display: flex; align-items: center; gap: 8px; height: 36px; max-width: 250px; padding: 0 10px 0 4px; background: transparent; border: 1px solid transparent; border-radius: var(--r); color: var(--cream); }
+.company { display: flex; align-items: center; gap: 8px; height: 46px; max-width: 250px; padding: 0 10px 0 4px; background: transparent; border: 1px solid transparent; border-radius: var(--r); color: var(--cream); }
 .company:hover { background: var(--plate-2); border-color: var(--rule-2); }
 .company:hover .company-name { color: var(--ochre-hi); }
 .company .herald { flex: none; display: block; }
 .company-name { font: 700 var(--t-plate)/1 var(--f-display); letter-spacing: 0.06em; text-transform: uppercase; color: var(--cream); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* windows that open from the top-left buttons */
-.win { width: 340px; max-height: calc(100vh - var(--bar-h) - 90px); display: flex; flex-direction: column; overflow: hidden; }
+.win { width: 340px; max-height: calc(100vh - var(--bar-h) - 100px); display: flex; flex-direction: column; overflow: hidden; }
 .win[hidden] { display: none; }
 .win.wide { width: 420px; }
 .win-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 8px 7px 14px; margin-bottom: 4px; }
@@ -329,9 +331,9 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .gl-strip-t b { color: var(--cream); font-weight: 600; }
 .gl-strip-t.bad { color: var(--bad); }
 .gl-strip > .gl-strip-t:last-child { grid-column: 2 / 4; }
-.gl-strip > .gl-strip-t:nth-child(2) { white-space: normal; text-wrap: pretty; }
+.gl-strip > .gl-strip-t:nth-child(2), .gl-strip-t.wrap { white-space: normal; text-wrap: pretty; }
 .gl-strip .num { color: var(--cream-2); font-weight: 500; font-variant-numeric: tabular-nums lining-nums; }
-.tr:has(.gl-strip) .panel { max-height: calc(100vh - var(--bar-h) - 90px); }
+.tr:has(.gl-strip) .panel { max-height: calc(100vh - var(--bar-h) - 46px - var(--strip-h, 60px)); }
 .gl-now-k { flex: none; font: 700 var(--t-xs)/1.4 var(--f-text); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ochre-hi); }
 .gl-now-t { flex: 1; min-width: 0; }
 .gl-now-t b { color: var(--cream); font-weight: 600; }

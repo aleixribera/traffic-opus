@@ -1,7 +1,7 @@
 {
   "F01": {
     "verdict": "PASS",
-    "note": "With a panel open, a GOAL strip sits above it: the goal in full and a NOW line with the next step ('Your Farm: under construction'). Clicking it closes the panel and shows the full Goals card. Still open: nothing yet says the farm's crops become the food the goal asks for",
+    "note": "With a panel open, the GOAL strip keeps the goal and its NOW line in view. When a link of the chain is missing, the NOW line names it from the recipes: 'Your Farm: no Food Plant to take its crops. Build a Food Plant: crops → Food Plant → food.'",
     "evidence": "after/farm-no-road@desktop"
   },
   "F04": {
@@ -11,7 +11,7 @@
   },
   "F05": {
     "verdict": "PASS",
-    "note": "One unit everywhere a player sees goods: loads a day. Crates are gone from the town panel; the works key reads '10 loads, iron ore a day, can 10'; Economy rows are loads; the chart caption says 'full pace, N loads a day'",
+    "note": "One unit everywhere a player sees goods: loads a day. Crates are gone from the town panel; the works key reads '10 loads, iron ore a day, can 10'; Economy rows are loads; the chart caption says 'full pace, N loads a day'. Economy and a works panel now give the same figure: Economy adds up each works' own pace ('Made a day, lately'), so Iron ore reads 10 of 10 in both",
     "evidence": "after/late-town@desktop, after/late-works@wide, after/late-economy@desktop"
   },
   "F10": {
@@ -74,15 +74,20 @@
     "note": "Need bars share one scale: each track's length is the want against the town's biggest want, so Food (518) runs full width and Fuel (69) is a short track",
     "evidence": "after/late-town@desktop"
   },
+  "F26": {
+    "verdict": "PASS",
+    "note": "The town's summary (people, needs met, the Town to City track) now sits under the status line, above the needs, so it is in view at 900 px tall",
+    "evidence": "after/late-town@desktop"
+  },
   "F27": {
     "verdict": "PASS",
     "note": "At far zoom a town shows one summary chip ('Short of 5 needs', or 'Needs food and planks' for one or two) with a single alarm disc; the icon row only shows closer in. Industry map badges went from 13 to 16 px",
     "evidence": "after/late-far@wide"
   },
   "F28": {
-    "verdict": "FAIL",
-    "note": "The radio is labelled now (RADIO kicker over the tune, new radio icon). The seven top-bar icons still have no visible labels; that part was not in this task",
-    "evidence": "after/fresh@desktop"
+    "verdict": "PASS",
+    "note": "Every top-bar button has its name under its picture, as the bottom bar does: Menu, Views, Goals, Economy, Towns, Traffic, Camera, Map. The radio has its RADIO label",
+    "evidence": "after/fresh@desktop, after/fresh@small"
   },
   "F29": {
     "verdict": "PASS",
