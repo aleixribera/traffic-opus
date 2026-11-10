@@ -337,6 +337,11 @@ export const MIN_DEPOSIT = 0.35;
 /** Fuel and wear per km a light truck drives (both ways), charged when it sets off. */
 export const FUEL_PER_KM = 4;
 /**
+ * What each unit of cargo already on its way to a town's shop takes off that shop's worth, against the town's
+ * least-served one (about 4 km of extra driving a unit): the next truck goes to another counter in the same town.
+ */
+export const SHARE_OUT = 30;
+/**
  * The haul a site's fleet is sized for (m, one way): at every level it has the trucks to carry its whole output,
  * fully staffed, this far over streets, with the smallest truck and load. Nothing to buy: the fleet grows with the
  * site, and bigger truck classes stretch the same fleet over longer hauls. Idle trucks wait in the yard,
@@ -1198,8 +1203,16 @@ export class Industry {
       const dip = new Map<number, number>();
       let slow: TruckClass | undefined;
       const slowest = () => (slow ??= from.plant ? [...TRUCK_CLASS_ORDER].reverse().find((c) => this.mixOf(from)[c] > 0) ?? "light" : "light");
+      const open = (o: Building) => !!o.access && !o.abandoned && o.built >= 1 && this.h.connected(seg, o.access.seg);
+      // (the loads on their way to a town's least-served shop: the others count theirs above it, so the trucks share
+      // a town's counters out instead of all queueing at the one nearest the works)
+      const least = new Map<number, number>();
       for (const o of shops) {
-        if (!o.access || o.abandoned || o.built < 1 || !this.h.connected(seg, o.access.seg)) continue;
+        const t = this.h.townOf(o);
+        if (t !== null && open(o)) least.set(t, Math.min(least.get(t) ?? Infinity, on(o.id)));
+      }
+      for (const o of shops) {
+        if (!open(o)) continue;
         const t = this.h.townOf(o);
         const l = t === null ? 0 : left.get(t)!;
         if (l < 1) continue;
@@ -1221,7 +1234,8 @@ export class Industry {
         // (short of it: below "Enough" on what has landed, or about to be; with no supply line to read, short of its day's)
         const need = t !== null && short >= 1 && (this.h.dipIn ? ahead || soon <= 0 : true);
         out.push({
-          b: o, value: price - km(o) * FUEL_PER_KM * 2 + (short >= 1 ? 400 : 0) + (ahead ? SEND_FIRST : 0) + Math.min(3, l) * 15 - (product === "food" ? o.stock * 15 : 0),
+          b: o, value: price - km(o) * FUEL_PER_KM * 2 + (short >= 1 ? 400 : 0) + (ahead ? SEND_FIRST : 0) + Math.min(3, l) * 15 - (product === "food" ? o.stock * 15 : 0)
+            - (t === null ? 0 : on(o.id) - least.get(t)!) * SHARE_OUT,
           room: Math.ceil(l), ...(ahead ? { urgent: true } : {}), ...(need ? { need: true, has: this.h.supply?.(t!, product) ?? 0 } : {}),
         });
       }

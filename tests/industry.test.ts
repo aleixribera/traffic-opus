@@ -493,6 +493,27 @@ describe("Tier 3 chains", () => {
     expect(PRODUCTS.fuel.price).toBeGreaterThan(0);
   });
 
+  it("a town's loads go to several of its shops, not all to the one nearest the works", () => {
+    const w = world();
+    (w.host as { townOf: (b: Building) => number | null }).townOf = (b) => b.town ?? null;
+    w.host.want = () => 40;
+    const ff = ready(w, "furniture", 0);
+    const shops = [w.shop(3000), w.shop(3150), w.shop(3300), w.shop(3450)];
+    for (const s of shops) s.town = 1;
+    ff.plant!.out.goods = 8;
+    w.ind.trucksOf = () => 4;
+    w.ind.capOf = () => 2;
+    w.ind.tick(0);
+    const dests = w.pending.filter((p) => p.trip.haul?.product === "goods").map((p) => p.trip.haul!.dest);
+    expect(dests.length).toBe(4);
+    expect(new Set(dests).size).toBe(4);
+    // (and a town further off still loses to a nearer one: the spread is within a town, about 4 km a load)
+    const far = w.shop(40000);
+    far.town = 2;
+    const next = w.ind.customers(ff, "goods").map((c) => c.b.id);
+    expect(next.indexOf(far.id)).toBeGreaterThan(0);
+  });
+
   it("construction parts go to a town's building site, which goes up once it has them all; the town pays", () => {
     const w = world();
     let sold = 0;

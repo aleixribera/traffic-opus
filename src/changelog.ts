@@ -15,6 +15,13 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.97", date: "2026-11-10", title: "Every counter in town",
+    notes: [
+      "Trucks share a town's shops between them instead of all unloading at the one nearest the works.",
+      "A save keeps a truck changing lanes or leaving a gate exactly where it was.",
+    ],
+  },
+  {
     v: "v0.0.96", date: "2026-11-10", title: "New wants, not more of the old",
     notes: [
       "A town wants each good most at the size that opened it. Food, planks and cement grow only a little after that, so a City asks mostly for what is new to it.",

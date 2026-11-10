@@ -182,17 +182,14 @@ describe("a save keeps the traffic", () => {
       expect(!!w.next).toBe(!!v.next);
       expect(w.granted).toBe(v.granted);
       expect(w.stuck).toBeCloseTo(v.stuck, 6);
-      // drawn where it was: the body (it is laid again along the way it came; a car half out of its driveway to
-      // within half a metre), and a road train's last trailer
-      // (known gap, src/sim/traffic.ts layTrail: one crossing out of a gate is laid again without its crossing pose,
-      // a metre or so off, and snaps back to it as it moves; reported 2026-11-10 with the demand rework, whose dice
-      // put a truck there at the moment of the save)
-      expect(Math.hypot(w.x - v.x, w.y - v.y), `vehicle ${v.id} moved`).toBeLessThan(v.crossing ? 1.5 : 0.6);
+      // drawn where it was: the body (laid again along the way it came; one off its lane's line, changing lanes,
+      // pulling out or crossing out of a gate, keeps the path it drew, which a path laid again from the lanes would
+      // put up to a metre off), and a road train's last trailer
+      expect(Math.hypot(w.x - v.x, w.y - v.y), `vehicle ${v.id} moved`).toBeLessThan(v.lat !== 0 || v.lcFrom || v.crossing ? 0.01 : 0.6);
       if (v.uPose && w.uPose) {
         trains++;
         const o = v.uPose.length - 4;
-        // (one still coming out of its driveway: as its body above)
-        expect(Math.hypot(w.uPose[o] - v.uPose[o], w.uPose[o + 1] - v.uPose[o + 1]), `trailer of ${v.id} moved`).toBeLessThan(v.lat !== 0 && !v.lcFrom ? 0.6 : 0.25);
+        expect(Math.hypot(w.uPose[o] - v.uPose[o], w.uPose[o + 1] - v.uPose[o + 1]), `trailer of ${v.id} moved`).toBeLessThan(v.lat !== 0 || v.lcFrom || v.crossing ? 0.01 : 0.25);
       }
     }
     expect(trains).toBeGreaterThan(3);

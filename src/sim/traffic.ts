@@ -190,6 +190,9 @@ export interface SavedVehicle {
   hold?: EdgeRef; stopAt?: EdgeRef; boxes?: EdgeRef[];
   hist?: EdgeRef[]; histSpan?: [number, number][]; entS?: number;
   lcFrom?: string; lcS?: number; crossing?: { lane: string; s: number }[]; crossFrom?: number; crossOut?: number;
+  /** the drawn path, newest first, [x, y, h] per sample: kept for a body off its lane's line (a lane change, a pull
+   *  out, a gate crossing), which a path laid again from the lanes would put up to a metre off */
+  trail?: number[];
 }
 
 /** A trip waiting to set off as saved: in its lot, at the kerb, or beyond the edge of the map. */
@@ -2496,6 +2499,11 @@ export class Traffic {
       if (v.entS !== undefined) d.entS = v.entS;
       if (v.lcFrom) { d.lcFrom = v.lcFrom.key; d.lcS = v.lcS; }
       if (v.crossing?.length) { d.crossing = v.crossing.map((c) => ({ lane: c.lane.key, s: c.s })); d.crossFrom = v.crossFrom; d.crossOut = v.crossOut; }
+      if (v.trail && (v.lat !== 0 || v.lcFrom || v.crossing?.length)) {
+        const T = v.trail, out: number[] = [];
+        for (let k = 0; k < TR_N; k++) { const i = ((v.trH! - k + TR_N) % TR_N) * 3; out.push(+T[i].toFixed(3), +T[i + 1].toFixed(3), +T[i + 2].toFixed(3)); }
+        d.trail = out;
+      }
       vehicles.push(d);
     }
     const pending = this.pending.map((p): SavedSpawn => {
@@ -2599,6 +2607,10 @@ export class Traffic {
         if (cr.length) { v.crossing = cr; v.crossFrom = s.crossFrom; v.crossOut = s.crossOut; }
       } else v.lat = 0;
       this.layTrail(v);
+      if (!moved && s.trail?.length === TR_N * 3) {
+        const T = v.trail!;
+        for (let k = 0; k < TR_N; k++) { const i = ((TR_N - k) % TR_N) * 3; T[i] = s.trail[k * 3]; T[i + 1] = s.trail[k * 3 + 1]; T[i + 2] = s.trail[k * 3 + 2]; }
+      }
       this.place(v, false);
       v.px = v.x; v.py = v.y; v.ph = v.h; v.pang = v.ang;
       if (v.uPose) v.puPose!.set(v.uPose);
