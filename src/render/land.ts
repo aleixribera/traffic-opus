@@ -38,7 +38,7 @@ export const OPEN = 0, PASTURE = 1, MEADOW = 2;
 export const HEDGE_E = 4, HEDGE_N = 8, HEDGE_W = 16, HEDGE_S = 32;
 
 /** Hash slots (their own range, clear of the trees'). */
-const K = { warpX: 70, warpY: 71, warpX2: 72, warpY2: 73, district: 60, kind: 61, joinE: 62, joinN: 63, pick: 64, gate: 65, tint: 67, stack: 68, bare: 69, lineX: 74, lineY: 75, beach: 76, reed: 130, hay: 110, piece: 120 } as const;
+const K = { warpX: 70, warpY: 71, warpX2: 72, warpY2: 73, district: 60, kind: 61, joinE: 62, joinN: 63, pick: 64, gate: 65, tint: 67, stack: 68, lineX: 74, lineY: 75, beach: 76, reed: 130, hay: 110, piece: 120 } as const;
 export const LAND_K = K;
 
 function tnoise(x: number, y: number, k: number): number {
@@ -97,6 +97,8 @@ vec3 encAxis(float q, uint k) {
   else if (f >= ${ENC.toFixed(1)} + o1) { i += 1.0; f -= ${ENC.toFixed(1)}; o0 = o1; o1 = encLineOff(i + 1.0, k); }
   return vec3(i, f - o0, ${ENC.toFixed(1)} + o1 - o0);
 }
+/* the cell a field takes its tone from (fieldCell): its own, or its block of four's when it lacks a hedge */
+ivec2 fieldCell(ivec2 c, int cls) { return (cls & 60) == 60 ? c : c & ivec2(-2); }
 vec2 encWarp(vec2 p) {
   vec2 a = p / ${ENC_WARP_L[0].toFixed(1)}, b = p / ${ENC_WARP_L[1].toFixed(1)};
   return (vec2(tnoise(a + vec2(3.3, 8.1), ${K.warpX}u), tnoise(a + vec2(-6.7, 1.9), ${K.warpY}u)) - 0.5) * ${(2 * ENC_WARP[0]).toFixed(1)}
@@ -140,25 +142,34 @@ export function encKind(ci: number, cj: number, alone: (ci: number, cj: number) 
   return alone(ci + 1, cj) || alone(ci - 1, cj) || alone(ci, cj + 1) || alone(ci, cj - 1) ? k : OPEN;
 }
 
-/** Whether cell (ci, cj) is thrown together with its east / north neighbour (when both are of one kind). */
-export const joinsE = (ci: number, cj: number): boolean => thashf(ci, cj, K.joinE) < 0.4;
-export const joinsN = (ci: number, cj: number): boolean => thashf(ci, cj, K.joinN) < 0.4;
-/** Whether the boundary on a cell's east / north side, between a pasture and a meadow, has no hedge (a fence line at most). */
-const bareE = (ci: number, cj: number): boolean => thashf(ci, cj, K.bare) < 0.3;
-const bareN = (ci: number, cj: number): boolean => thashf(ci, cj, K.bare + 100) < 0.3;
+/**
+ * Whether cell (ci, cj) is thrown together with its east / north neighbour (when both are of one kind). Only inside
+ * a block of four (an even cell with the odd one after it, each way): a field is one, two, three or four cells, and
+ * every cell of it can tell which field it is in from its own byte (fieldCell).
+ */
+export const joinsE = (ci: number, cj: number): boolean => (ci & 1) === 0 && thashf(ci, cj, K.joinE) < 0.6;
+export const joinsN = (ci: number, cj: number): boolean => (cj & 1) === 0 && thashf(ci, cj, K.joinN) < 0.6;
 
 /** A cell's byte from the kinds of it and its four neighbours. */
 export function encByte(ci: number, cj: number, kind: (ci: number, cj: number) => number): number {
   const k = kind(ci, cj), e = kind(ci + 1, cj), n = kind(ci, cj + 1), w = kind(ci - 1, cj), s = kind(ci, cj - 1);
   let b = k;
-  // (no hedge between two cells thrown together, nor, sometimes, between a pasture and a meadow)
-  const hedge = (a: number, c: number, joined: boolean, bare: boolean) => (a || c) && !(a === c && joined) && !(a && c && a !== c && bare);
-  if (hedge(k, e, joinsE(ci, cj), bareE(ci, cj))) b |= HEDGE_E;
-  if (hedge(k, n, joinsN(ci, cj), bareN(ci, cj))) b |= HEDGE_N;
-  if (hedge(k, w, joinsE(ci - 1, cj), bareE(ci - 1, cj))) b |= HEDGE_W;
-  if (hedge(k, s, joinsN(ci, cj - 1), bareN(ci, cj - 1))) b |= HEDGE_S;
+  // (a hedge wherever the land changes: field against open land, pasture against meadow; none between two cells
+  // thrown together. So the ground never changes its tone along a line with nothing standing on it.)
+  const hedge = (a: number, c: number, joined: boolean) => (a || c) && !(a === c && joined);
+  if (hedge(k, e, joinsE(ci, cj))) b |= HEDGE_E;
+  if (hedge(k, n, joinsN(ci, cj))) b |= HEDGE_N;
+  if (hedge(k, w, joinsE(ci - 1, cj))) b |= HEDGE_W;
+  if (hedge(k, s, joinsN(ci, cj - 1))) b |= HEDGE_S;
   return b;
 }
+
+/**
+ * The cell a field takes its tone, and the lie of its swaths, from: a cell hedged all round is its own; a cell
+ * thrown together with a neighbour takes its block of four's (so do all the cells it is thrown together with).
+ */
+export const fieldCell = (ci: number, cj: number, byte: number): [number, number] =>
+  (byte & (HEDGE_E | HEDGE_N | HEDGE_W | HEDGE_S)) === (HEDGE_E | HEDGE_N | HEDGE_W | HEDGE_S) ? [ci, cj] : [ci & ~1, cj & ~1];
 
 /** Where along a cell's west (side 0) or south (side 1) boundary its gateway is, as a share of that side's length. */
 export const gateAt = (ci: number, cj: number, side: 0 | 1): number => 0.14 + thashf(ci, cj, K.gate + side) * 0.72;

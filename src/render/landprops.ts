@@ -8,12 +8,14 @@ import * as THREE from "three";
 import { CH, F, RES, riverWater, type Terrain } from "../world/terrain";
 import { ENV, ENV_GLSL } from "./envShader";
 import { thashf, type Forest } from "./forest";
-import { ENC, GATE_HW, HEDGE_S, HEDGE_W, LAND_K, MEADOW, beachAt, encLine, encUnwarp, gateAt, reedAt, type Enclosures, type NodeAt } from "./land";
+import { ENC, ENC_JIT, ENC_WARP, GATE_HW, HEDGE_S, HEDGE_W, LAND_K, MEADOW, beachAt, encLine, encUnwarp, fieldCell, gateAt, reedAt, type Enclosures, type NodeAt } from "./land";
 import type { MergedModel } from "./models";
 
 /** Drawn while a pixel is no more than this many metres; they sink into the ground over the last part of it. */
 export const LAND_PROPS_SEE = 1.25;
 const SINK_FROM = 0.95;
+/** How far outside its chunk's square a prop can stand (the bend of the survey grid and the set of its lines). */
+const REACH = ENC_WARP[0] + ENC_WARP[1] + ENC_JIT;
 /**
  * Past this many metres a pixel a hedge, a haystack or a clump of reeds is drawn as its far model: the same shape in
  * a tenth of the faces. A hedge is then a few pixels high, and a screen of enclosed country holds thousands of them.
@@ -95,12 +97,16 @@ export function placeLand(
           if (!blocked(x, y, 3) && !inWater(x, y)) put("land_haystack", x, y, hs * 40, 0.9 + 0.5 * hs, 0.9 + 0.4 * hs);
         }
         if (thashf(cx, cy, LAND_K.hay + 3) < 0.7) {
-          const rows = thashf(cx, cy, LAND_K.tint) > 0.5; // (as the swaths run: render/terrain3d.ts)
+          const [fi, fj] = fieldCell(cx, cy, byte);
+          const rows = thashf(fi, fj, LAND_K.tint) > 0.5; // (as the swaths run: render/terrain3d.ts)
+          // (in rows, as they were raked up, but by hand: none quite on its line, none quite evenly spaced, some carted)
           for (let v = 14; v < (rows ? X1 - X0 : Y1 - Y0) - 10; v += 23) {
             for (let u = 12; u < (rows ? Y1 - Y0 : X1 - X0) - 10; u += 19) {
-              const j = thashf(Math.round(X0 + v), Math.round(Y0 + u), LAND_K.hay + 4);
-              if (j < 0.25) continue;
-              const fx = rows ? v : u + (j - 0.5) * 6, fy = rows ? u + (j - 0.5) * 6 : v;
+              const hx = Math.round(X0 + v), hy = Math.round(Y0 + u);
+              const j = thashf(hx, hy, LAND_K.hay + 4);
+              if (j < 0.3) continue;
+              const du = (thashf(hx, hy, LAND_K.hay + 5) - 0.5) * 13, dv = (thashf(hx, hy, LAND_K.hay + 6) - 0.5) * 7;
+              const fx = rows ? v + dv : u + du, fy = rows ? u + du : v + dv;
               const [x, y] = encUnwarp(X0 + fx, Y0 + fy);
               if (!blocked(x, y, 1.5) && !inWater(x, y)) put("haycock", x, y, j * 30, 0.4 + 0.12 * j, 0.36 + 0.1 * j);
             }
@@ -172,7 +178,10 @@ function landMaterial(grow: { value: number }): THREE.MeshLambertMaterial {
     float bare = smoothstep(0.2, 1.0, envBareOf(0.5));
     lf = mix(lf, vec3(0.19, 0.15, 0.12) * (0.6 + 3.5 * l), bare);
     dc = mix(dc, lf * 0.74, leaf);
-    dc = mix(dc, dc * vec3(1.5, 1.05, 0.6), reed * clamp(envFall + envBare, 0.0, 1.0));
+    // (reeds yellow in autumn, and stand through the winter dead and dull: straw against the snow, not gold)
+    vec3 rf = dc * vec3(1.5, 1.05, 0.6);
+    rf = mix(rf, vec3(dot(rf, vec3(0.3, 0.55, 0.15))) * vec3(0.92, 0.8, 0.58), envBare * 0.8);
+    dc = mix(dc, rf, reed * clamp(envFall + envBare, 0.0, 1.0));
     if (envSnow > 0.001) {
       float up = smoothstep(0.3, 0.75, normalize(vEnvN).y);
       dc = mix(dc, envSnowCol(vEnvW.xz), envSnowAt(vEnvW.xz, 0.1) * up * 0.9);
@@ -180,7 +189,7 @@ function landMaterial(grow: { value: number }): THREE.MeshLambertMaterial {
     diffuseColor.rgb = envGrade(dc);
   }`);
   };
-  mat.customProgramCacheKey = () => "land-props-v1";
+  mat.customProgramCacheKey = () => "land-props-v2";
   return mat;
 }
 
@@ -194,8 +203,15 @@ export class LandProps {
   private lastRefresh = 0;
   /** How long the last chunk took to set out (ms). */
   lastBuildMs = 0;
-  /** Whether a chunk in view is still to be set out. */
+  /** Whether a chunk in view is still to be set out (or the painted hedges are still giving way to the ones set out). */
   due = false;
+  /**
+   * How much of the hedges the ground still paints (1 all, 0 none: render/terrain3d.ts uHedge). None while these
+   * stand over them, or the painted band would show as a pale fringe along each; all of it while a chunk in view is
+   * not set out yet, and as they sink away higher up.
+   */
+  paint = 1;
+  private paintAt = 0;
 
   constructor(
     private props: Map<string, MergedModel>, private terrain: Terrain, private forest: Forest, private enc: Enclosures,
@@ -221,14 +237,18 @@ export class LandProps {
     const mpp = view.mpp;
     this.group.visible = mpp < LAND_PROPS_SEE && this.props.size > 0;
     this.due = false;
-    if (!this.group.visible) return;
-    this.grow.value = 1 - Math.min(1, Math.max(0, (mpp - SINK_FROM) / (LAND_PROPS_SEE - SINK_FROM))) ** 2;
+    const now = performance.now(), dt = Math.min(0.1, (now - this.paintAt) / 1000);
+    this.paintAt = now;
+    if (!this.group.visible) { this.paint = 1; return; }
+    const sunk = Math.min(1, Math.max(0, (mpp - SINK_FROM) / (LAND_PROPS_SEE - SINK_FROM)));
+    this.grow.value = 1 - sunk ** 2;
     // (the hay stands in the meadows from the mowing: the cocks until they are carted, the stacks through the winter)
     const dry = ENV.uSeasonA.value.z, fall = ENV.uSeasonA.value.w, bare = ENV.uSeasonB.value.x;
     const stacks = dry > 0.45 || fall > 0.15 || bare > 0.15, cocks = dry > 0.45 && fall < 0.45;
     const lod = mpp > FAR_FROM ? 1 : 0;
     if (this.town && this.town.stamp !== this.stamp) { this.stamp = this.town.stamp; this.invalidate(null); }
-    const S = CHS * RES, { x0, y0, x1, y1 } = view.bounds();
+    // (a chunk's hedges stand where the bent grid puts them: up to REACH outside its own square)
+    const S = CHS * RES, b = view.bounds(), x0 = b.x0 - REACH, y0 = b.y0 - REACH, x1 = b.x1 + REACH, y1 = b.y1 + REACH;
     let want: { ci: number; cj: number; d: number } | null = null, stale: Chunk | null = null;
     for (let cj = Math.floor(y0 / S); cj <= Math.floor(y1 / S); cj++) {
       for (let ci = Math.floor(x0 / S); ci <= Math.floor(x1 / S); ci++) {
@@ -239,7 +259,7 @@ export class LandProps {
             m.visible = m.name === "land_haystack" ? stacks : m.name === "haycock" ? cocks : m.name === "land_gate" ? mpp < GATE_SEE : true;
             m.geometry = (m.userData.geos as Geos)[lod];
             // (far, a hedge's shadow is the one the ground paints along it: only a haystack still throws its own)
-            m.castShadow = m.name === "land_haystack" || (lod === 0 && m.name !== "land_reeds" && m.name !== "haycock");
+            m.castShadow = m.name === "land_haystack" || (lod === 0 && m.name !== "land_reeds");
           }
           if (c.stale) stale = c;
           continue;
@@ -250,8 +270,10 @@ export class LandProps {
     }
     for (const c of this.chunks.values()) if (c.used !== this.frame) for (const m of c.meshes) m.visible = false;
     // one chunk a frame: a missing one first; one grown stale now and then (a town adds a house every few seconds)
-    const now = performance.now();
-    this.due = !!want && !mayBuild;
+    // (the painted hedges come back at once, and give way over a moment)
+    const paint = want ? 1 : sunk;
+    this.paint = paint >= this.paint ? paint : Math.max(paint, this.paint - dt / 0.25);
+    this.due = (!!want && !mayBuild) || this.paint !== paint;
     if (!mayBuild) return;
     if (want) { this.build(want.ci, want.cj); this.due = true; }
     else if (stale && now - this.lastRefresh > 120) { this.lastRefresh = now; this.build(stale.ci, stale.cj); }
@@ -277,7 +299,7 @@ export class LandProps {
       mesh.instanceMatrix.needsUpdate = true;
       mesh.name = kind;
       mesh.frustumCulled = false;
-      mesh.castShadow = kind !== "land_reeds" && kind !== "haycock";
+      mesh.castShadow = kind !== "land_reeds";
       mesh.receiveShadow = true;
       meshes.push(mesh);
       this.group.add(mesh);

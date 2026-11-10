@@ -7,7 +7,7 @@ import { describe, it, expect } from "vitest";
 import { F, Terrain, riverWater } from "../src/world/terrain";
 import {
   ENC, ENC_JIT, ENC_REACH, ENC_WARP, Enclosures, HEDGE_E, HEDGE_N, HEDGE_S, HEDGE_W, MEADOW, OPEN, PASTURE,
-  encCell, encKindAlone, encLine, encUnwarp, encWarp, gateAt, type NodeAt,
+  encCell, encKindAlone, encLine, encUnwarp, encWarp, fieldCell, gateAt, type NodeAt,
 } from "../src/render/land";
 import { rasterPlots, type MaskPlot } from "../src/render/landmask";
 import { placeLand } from "../src/render/landprops";
@@ -103,6 +103,25 @@ describe("the enclosures of a real map", () => {
     }
     expect(hedged).toBeGreaterThan(joined);
     expect(joined).toBeGreaterThan(10);
+  });
+
+  it("change tone only across a hedge: two cells with none between them are one field, and of one kind", () => {
+    let fields = 0;
+    for (let cj = -R; cj < R; cj++) for (let ci = -R; ci < R; ci++) {
+      const b = enc.byte(ci, cj, at);
+      if (!(b & 3)) continue;
+      const own = fieldCell(ci, cj, b);
+      for (const [di, dj, bit] of [[1, 0, HEDGE_E], [0, 1, HEDGE_N]] as const) {
+        const o = enc.byte(ci + di, cj + dj, at);
+        // (pasture against meadow always has its hedge)
+        if ((o & 3) && (o & 3) !== (b & 3)) expect(b & bit).toBe(bit);
+        if (b & bit) continue;
+        expect(o & 3).toBe(b & 3);
+        expect(fieldCell(ci + di, cj + dj, o)).toEqual(own);
+        fields++;
+      }
+    }
+    expect(fields).toBeGreaterThan(10);
   });
 });
 

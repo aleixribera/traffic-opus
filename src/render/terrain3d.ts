@@ -187,6 +187,7 @@ export class Terrain3D {
     }
     // what stands on the land, in the frames the ground leaves free
     this.land.update(view, performance.now() - t0 < 2.5);
+    this.shared.uHedge.value = this.land.paint;
   }
 
   /** Which cells of a chunk hold a tree, as the texture its shader paints the crowns from. */
@@ -436,7 +437,7 @@ export class Terrain3D {
         .replace("#include <common>", `#include <common>\n${ENV_GLSL}\n${GROUND_GLSL}`)
         .replace("#include <color_fragment>", "#include <color_fragment>\ndiffuseColor.rgb = envGrade(groundColor(vWorld));");
     };
-    mat.customProgramCacheKey = () => "ground-v13";
+    mat.customProgramCacheKey = () => "ground-v14";
     return mat;
   }
 }
@@ -613,12 +614,14 @@ vec3 groundColor(vec2 p) {
   int cls = 0;
   vec2 ef = vec2(0.0);
   ivec2 ec = ivec2(0);
-  vec2 el = vec2(${fl(ENC)});
-  float encK = 1.0 - smoothstep(4.2, 6.8, mpp);
+  vec2 el = vec2(${fl(ENC)}), eq = p;
+  // (the fields are gone from the page before it is all atlas: lines a pixel apart would only be a mesh on it)
+  float encK = 1.0 - smoothstep(2.6, 4.4, mpp);
   if (uWarpO.z > 0.5 && encK > 0.0) {
     vec2 q = p + texture(uWarp, ((p - uWarpO.xy) / ${fl(WARP_STEP)} + 0.5) / ${fl(WARP_N)}).rg;
     vec3 ex = encAxis(q.x, ${LAND_K.lineX}u), ey = encAxis(q.y, ${LAND_K.lineY}u);
     ec = ivec2(int(ex.x), int(ey.x));
+    eq = q;
     ef = vec2(ex.y, ey.y);
     el = vec2(ex.z, ey.z);
     vec2 mid = (vec2(ex.x, ey.x) + 0.5) * ${fl(ENC)};
@@ -626,10 +629,8 @@ vec3 groundColor(vec2 p) {
   }
   float kind = float(cls & 3);
   float pasture = (kind == 1.0 ? 1.0 : 0.0) * encK, meadow = (kind == 2.0 ? 1.0 : 0.0) * encK;
-  // (two cells thrown together are one field: one tone)
-  ivec2 fid = ec;
-  if (kind > 0.0) { if ((cls & 16) == 0) fid.x -= 1; else if ((cls & 32) == 0) fid.y -= 1; }
-  float fh = thashf(fid, ${LAND_K.tint}u);
+  // (cells thrown together are one field: one tone, and no line where they meet)
+  float fh = thashf(fieldCell(ec, cls), ${LAND_K.tint}u);
   // hedges: the nearest one's middle line (m), which side of it faces the sun, and the shadow it throws
   float hd = 1e3, hlit = 0.5, hsh = 0.0;
   if ((cls & 60) != 0) {
@@ -686,8 +687,9 @@ vec3 groundColor(vec2 p) {
     if (kind > 0.0) {
       vec3 ft = kind == 1.0 ? vec3(1.06, 1.04, 0.92) : vec3(0.93, 1.0, 0.86);
       c = mix(c, c * ft * (0.93 + 0.14 * fh), encK);
-      float sw = sin((fh > 0.5 ? ef.x : ef.y) * ${(6.2832 / 4.6).toFixed(4)});
-      c *= 1.0 + sw * 0.045 * meadow * mown * (1.0 - smoothstep(0.5, 1.6, mpp));
+      // (as the mower went: along the bent grid, not ruled; fainter and stronger from one stretch to the next)
+      float sw = sin((fh > 0.5 ? eq.x : eq.y) * ${(6.2832 / 4.6).toFixed(4)} + (n2 - 0.5) * 5.0);
+      c *= 1.0 + sw * (0.012 + 0.036 * n3) * meadow * mown * (1.0 - smoothstep(0.5, 1.6, mpp));
     }
     // built land: a town's ground is the lawn of its lots (buildings3d.ts YARD.res, as the seasons' shader turns it),
     // a works' yard bare trodden earth, a farmyard worn and pale
@@ -774,12 +776,14 @@ vec3 groundColor(vec2 p) {
     // snow: drifts with a lit and a shaded side, thin under the trees, on trodden and wind-scoured ground, and
     // gone from the water's edge; a hedge's shadow lies on it
     if (envSnow > 0.001) {
-      sn = envSnowOf(snowN, -0.3 + fo * 0.72 + works * 0.6 + heath * 0.2 + (1.0 - smoothstep(0.0, 2.5, land)) * 0.9 + smoothstep(0.6, 0.9, dryK) * 0.2);
+      sn = envSnowOf(snowN, -0.3 + fo * 0.72 + works * 0.6 + heath * 0.2 + (1.0 - smoothstep(0.0, 2.5, land)) * 0.9 * (1.0 - envFrost) + smoothstep(0.6, 0.9, dryK) * 0.2);
       float e = rnoise((p + uSun * 5.0) / 31.0) - rnoise((p - uSun * 5.0) / 31.0);
       vec3 sc = envSnowCol(p) * (1.0 + clamp(e * 0.45, -0.1, 0.06)) * mix(vec3(1.0), vec3(0.9, 0.94, 1.0), clamp(-e * 2.0, 0.0, 1.0));
       under = mix(under, sc, sn);
     }
-    under *= 1.0 - hsh * 0.34 * uShade.x * uHedge * encK * (1.0 - town) * (1.0 - smoothstep(1.0, 3.0, mpp));
+    // (no hedge stands in a town's ground: the 3D ones are left out there by the same measure, render/landprops.ts)
+    float hedgeK = encK * (1.0 - smoothstep(0.12, 0.2, town));
+    under *= 1.0 - hsh * 0.34 * uShade.x * hedgeK * (1.0 - smoothstep(1.0, 3.0, mpp));
     // the hedges, painted (until the 3D ones stand in their place): a lumpy dark band, its sun side lit
     if (hd < 4.0 && uHedge > 0.0) {
       float hw = ${fl(HEDGE_HW)} * (0.72 + 0.56 * vnoise(p / 1.9 + 8.8));
@@ -790,7 +794,7 @@ vec3 groundColor(vec2 p) {
       hc = mix(hc, mix(${c3(0x8a5a2c)}, ${c3(0xb08a38)}, smoothstep(0.35, 0.65, vnoise(p / 9.0 + 3.1))) * (0.7 + 0.4 * hlit), envFall * 0.8);
       float bare = envBareOf(0.5);
       hc = mix(hc, envWood(hlit, smoothstep(0.35, 0.8, hlit + n4 * 0.3)), smoothstep(0.2, 1.0, bare));
-      under = mix(under, hc, hm * uHedge * encK * (1.0 - town) * mix(1.0, 0.8, bare) * (1.0 - smoothstep(2.5, 6.0, mpp) * 0.55));
+      under = mix(under, hc, hm * uHedge * hedgeK * mix(1.0, 0.8, bare) * (1.0 - smoothstep(2.5, 6.0, mpp) * 0.55));
     }
     // the share of evergreens among the trees: most in the forests
     float everK = mix(${EVERGREEN.scrub.toFixed(2)}, ${EVERGREEN.forest.toFixed(2)}, fo);
@@ -919,7 +923,9 @@ vec3 groundColor(vec2 p) {
     // out in the stream would draw shoals in lines along it)
     float mid = clamp((rw - sAbs) / max(rw, 1e-6), 0.0, 1.0);
     float bed = 1.0 - mid;
-    float depth = mix(mix(max(dW, 0.0), 26.0 * (1.0 - bed * bed * bed), smoothstep(0.1, 0.35, mid)), max(dW, 0.0), isLake);
+    // (the two are joined so the depth never falls going in: the metres out capped at what the middle reaches, and
+    // the middle deep enough that the darkest water is already reached where the bank's own measure is let go)
+    float depth = mix(mix(min(max(dW, 0.0), 26.0), 40.0 * (1.0 - bed * bed * bed), smoothstep(0.1, 0.35, mid)), max(dW, 0.0), isLake);
     vec3 wc = mix(${c3(LAND.waterShallow)}, ${c3(PAL.water)}, smoothstep(0.0, mix(3.5, 9.0, isLake) + 5.0 * n3, depth));
     wc = mix(wc, ${c3(LAND.waterDeep)}, smoothstep(9.0, mix(22.0, 70.0, isLake), depth) * 0.9);
     wc *= 1.0 + (n2 - 0.5) * 0.1 + (n3 - 0.5) * 0.05;
@@ -937,7 +943,7 @@ vec3 groundColor(vec2 p) {
       float gh = cellRand(gqi + vec2(31.0, 7.0)).g;
       vec2 gd = (gq - gqi - 0.5) * vec2(11.0, 3.4);
       // (a wavelet's crest: a few metres long across the wind, bent, thin)
-      float glint = step(0.88, gh) * (1.0 - smoothstep(1.6, 4.2, abs(gd.x))) * (1.0 - smoothstep(0.1, 0.26, abs(gd.y + sin(gd.x * 1.25 + gh * 20.0) * 0.5)))
+      float glint = step(0.88, gh) * (1.0 - smoothstep(1.6, 4.2, abs(gd.x))) * (1.0 - smoothstep(0.1, 0.26, abs(gd.y + sin(gd.x * (0.8 + 7.0 * (gh - 0.88)) + gh * 20.0) * (gh > 0.94 ? 0.5 : -0.34))))
         * smoothstep(0.5, 1.0, sin(t * (4.0 + floor(gh * 50.0)) + gh * 40.0)) * smoothstep(4.0, 14.0, depth);
       wc += (ring * 0.1 + glint * 0.06 * (0.5 + uWind.z)) * rippleK * (1.0 - envFrost);
       // a river's current: fine lines along its banks
@@ -945,9 +951,9 @@ vec3 groundColor(vec2 p) {
     }
     // (a pale line where the water meets the land)
     wc = mix(wc, ${c3(LAND.foam)}, (1.0 - smoothstep(0.15, 0.8, depth)) * 0.45 * (1.0 - smoothstep(0.6, 1.8, mpp)) * (1.0 - envFrost));
-    wc = mix(wc, wc * vec3(0.86, 0.94, 1.04), envFrost);
+    wc = mix(wc, mix(wc, vec3(dot(wc, vec3(0.3, 0.5, 0.2))) * vec3(0.9, 1.0, 1.12), 0.55) * 0.93, envFrost);
     // (ice a few metres out from the bank, broken at its edge, snow lying on it near the bank)
-    float ice = (1.0 - smoothstep(2.0, 5.0 + 6.0 * vnoise(p / 9.0), depth)) * envFrost;
+    float ice = (1.0 - smoothstep(3.0, 7.0 + 9.0 * vnoise(p / 9.0), depth)) * envFrost;
     vec3 ic = mix(vec3(0.83, 0.88, 0.92), envSnowCol(p), (1.0 - smoothstep(0.5, 3.0 + 2.0 * n4, depth)) * envSnow * 0.8);
     c = mix(c, mix(wc, ic, ice * 0.9), wa);
   }
