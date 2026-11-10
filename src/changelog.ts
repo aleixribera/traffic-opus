@@ -15,6 +15,16 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.91", date: "2026-11-10", title: "The lie of the land",
+    notes: [
+      "The seasons read as seasons: a green spring, a summer that dries only the driest ground, a gold and red autumn, and snow that lies evenly.",
+      "The countryside is enclosed: pasture and meadow on a bent old survey, with hedgerows, field gates, hay in the mown meadows and haystacks through the winter.",
+      "Water has a real shore: shallows, reeds, wavelets in the wind, and ice at the edges in winter.",
+      "Zoomed far out the map becomes a period road atlas: inked roads by class, lettered towns, contour-shaded hills and dotted woods.",
+      "All of it costs about the same to draw as the old ground.",
+    ],
+  },
+  {
     v: "v0.0.90", date: "2026-11-10", title: "The fleet of 1930",
     notes: [
       "Every car, lorry, bus and convoy piece is rebuilt for 1925 to 1940: upright cabs, long bonnets, running boards, spoked wheels.",

@@ -13,7 +13,7 @@ const LAWN = 0x93a050;
 export class Greens3D {
   readonly group = new THREE.Group();
   // (under the season and the hour like every other lawn: it yellows, takes the snow, and goes dark at night)
-  private mat = seasonal(new THREE.MeshLambertMaterial({ color: LAWN, side: THREE.DoubleSide }));
+  private mat = seasonal(new THREE.MeshLambertMaterial({ color: LAWN, side: THREE.DoubleSide }), { atlas: "park" });
   private lawn: THREE.Mesh | null = null;
   /** The greens' trees (the 3D trees draw them, render/trees3d.ts), and a count of how often they changed. */
   trees: PlantedTree[] = [];

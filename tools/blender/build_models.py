@@ -4791,7 +4791,7 @@ BUILDINGS = {
 # tools/blender/civics_*.py, run into this module so it can use the helpers above and add to BUILDINGS. The towns'
 # grown buildings (homes, shops, offices, towers) follow in tools/blender/town_*.py, the same way.
 for _f in sorted(os.listdir(HERE)):
-    if _f.startswith(("civics_", "town_")) and _f.endswith(".py"):
+    if _f.startswith(("civics_", "town_", "land_")) and _f.endswith(".py"):
         with open(os.path.join(HERE, _f), encoding="utf-8") as _fh:
             exec(compile(_fh.read(), os.path.join(HERE, _f), "exec"), globals())
 

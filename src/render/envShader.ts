@@ -4,6 +4,7 @@
 
 import * as THREE from "three";
 import type { Light, SeasonLook } from "./daylight";
+import { LAND } from "./palette";
 
 /** The shared uniforms (the same objects in every material, so one write reaches all of them). */
 export const ENV = {
@@ -21,6 +22,8 @@ export const ENV = {
   uNight: { value: new THREE.Vector2(0, 0) },
   /** x how far colour drains towards moonlit blue-grey at night (the eye's night vision). */
   uGrade: { value: new THREE.Vector2(0, 0) },
+  /** How far the view has gone over to the road atlas (0 the diorama .. 1 the far map; render/terrain3d.ts sets it). */
+  uEnvAtlas: { value: 0 },
 };
 /**
  * The share of each kind's windows lit now (x home, y shop, z office, w hall): the buildings' lit glass and the light
@@ -65,7 +68,7 @@ export const WOOD = 0x6d5f52;
  */
 export const ENV_CORE_GLSL = /* glsl */ `
 uniform vec4 uSeasonA; uniform vec4 uSeasonB; uniform vec2 uSeasonC;
-uniform vec2 uSun; uniform vec2 uShade; uniform vec2 uNight; uniform vec2 uGrade;
+uniform vec2 uSun; uniform vec2 uShade; uniform vec2 uNight; uniform vec2 uGrade; uniform float uEnvAtlas;
 #define envFresh uSeasonA.x
 #define envLush uSeasonA.y
 #define envDry uSeasonA.z
@@ -86,20 +89,28 @@ float envNoise(vec2 p) {
   vec2 u = f * f * (3.0 - 2.0 * f);
   return mix(mix(envHash(i), envHash(i + vec2(1, 0)), u.x), mix(envHash(i + vec2(0, 1)), envHash(i + vec2(1, 1)), u.x), u.y);
 }
-/* Grass through the year, as a tint over the palette's dry-summer olive: spring's bright green, summer's deep green
-   turning gold late on, autumn's brown olive, winter's dun (under the snow). */
-vec3 envGrass(vec3 c) {
-  vec3 t = vec3(1.0);
-  t = mix(t, vec3(0.62, 0.95, 0.5), envLush);
-  t = mix(t, vec3(1.3, 1.16, 1.0), envDry);
-  t = mix(t, vec3(0.8, 1.14, 0.66), envFresh);
-  t = mix(t, vec3(0.92, 0.8, 0.7), envFall * (1.0 - envDry * 0.5));
+/* Grass through the year, as a tint over the palette's olive: spring's fresh green, summer's deep green, late
+   summer paler (and gold only where the ground is driest: 'dry' 0 damp .. 1 parched), autumn's ochre with the green
+   holding in the damp ground, winter's dun (under the snow). The one place the land's greens are decided: the open
+   ground, a lawn, a park, a road's verge all pass their colour through here, so they turn together. */
+vec3 envGrassAt(vec3 c, float dry) {
+  // (the tints are worked out against the noon light, which lifts the palette's olive by nearly a half)
+  vec3 t = vec3(0.38, 0.72, 0.44);
+  t = mix(t, vec3(0.31, 0.66, 0.4), envLush);
+  t = mix(t, mix(vec3(0.41, 0.66, 0.46), vec3(0.9, 0.8, 0.72), smoothstep(0.5, 0.95, dry)), envDry);
+  t = mix(t, vec3(0.44, 0.77, 0.47), envFresh);
+  // (autumn: the green holds in the low and grazed ground, the rest goes ochre, the driest rises rust)
+  vec3 fall = mix(vec3(0.36, 0.6, 0.4), vec3(0.6, 0.6, 0.56), smoothstep(0.24, 0.74, dry));
+  fall = mix(fall, vec3(0.68, 0.56, 0.54), smoothstep(0.74, 1.0, dry));
+  t = mix(t, fall, envFall * (1.0 - envDry * 0.5));
   t = mix(t, vec3(0.72, 0.66, 0.64), envBare * (1.0 - envFresh));
   c *= t;
   // (winter's grass is dead: a dun brown-grey, most of its colour gone)
   float w = envBare * (1.0 - envFresh) * 0.55;
   return mix(c, dot(c, vec3(0.2126, 0.7152, 0.0722)) * vec3(1.08, 1.0, 0.86), w);
 }
+/* (ordinary ground: a lawn, a verge) */
+vec3 envGrass(vec3 c) { return envGrassAt(c, 0.38); }
 /* A broadleaf's leaves through the year, while it has them. summer: their colour as drawn now; tone: 0..1 per tree;
    h: another hash per tree (whether it blossoms, which colour it turns, when); lit: its lit side 0..1; m: how much of
    this spot is blossom on a tree that flowers (0..1: mottled clusters). The painted crowns and the 3D trees both
@@ -152,7 +163,24 @@ float envSnowAt(vec2 p, float shelter) {
     + mix(0.5, envNoise(q2 / 3.3 - 2.7), kB) * 0.15 + mix(0.5, envNoise(q3 / 0.85 + 3.9), kC) * 0.08;
   float k = envSnow * (1.0 - shelter);
   float aa = max(fwidth(n), 0.004) * 1.5;
-  return smoothstep(1.0 - k * 0.63 - aa, 1.0 - k * 0.63 + aa + 0.04, n) * smoothstep(0.0, 0.2, envSnow);
+  // (in deep winter it lies nearly everywhere; while it comes and goes, in drifts with the ground showing between)
+  return smoothstep(1.0 - k * 0.72 - aa, 1.0 - k * 0.72 + aa + 0.04, n) * smoothstep(0.0, 0.2, envSnow);
+}
+/* The same in two steps, for a shader that asks inside a branch (a derivative there makes Direct3D's compiler run
+   both sides of the branch for every pixel): the drifts' noise at p and the width of a soft edge in it, worked out
+   from the size of a pixel on the ground (mppS: its two sides added, fwidth(p.x) + fwidth(p.y)); then the snow. */
+vec2 envSnowNoise(vec2 p, float mppS) {
+  vec2 q0 = mat2(0.96, 0.28, -0.28, 0.96) * p, q1 = mat2(0.8, -0.6, 0.6, 0.8) * p, q2 = mat2(0.28, 0.96, -0.96, 0.28) * p;
+  vec2 q3 = mat2(-0.6, 0.8, -0.8, -0.6) * p;
+  float kC = 1.0 - smoothstep(0.25, 0.8, mppS), kB = 1.0 - smoothstep(1.2, 3.5, mppS);
+  float n = envNoise(q0 / 39.0) * 0.5 + envNoise(q1 / 12.0 + 7.1) * 0.27
+    + mix(0.5, envNoise(q2 / 3.3 - 2.7), kB) * 0.15 + mix(0.5, envNoise(q3 / 0.85 + 3.9), kC) * 0.08;
+  // (the noise's own slope, octave by octave, times the pixel)
+  return vec2(n, max(mppS * (0.013 + 0.024 * kB + 0.05 * kC), 0.004) * 1.5);
+}
+float envSnowOf(vec2 na, float shelter) {
+  float k = envSnow * (1.0 - shelter);
+  return smoothstep(1.0 - k * 0.72 - na.y, 1.0 - k * 0.72 + na.y + 0.04, na.x) * smoothstep(0.0, 0.2, envSnow);
 }
 /* Snow's colour at a point: a little blue in the hollows. */
 vec3 envSnowCol(vec2 p) {
@@ -206,7 +234,7 @@ vec4 envLeaf(vec3 summer, float tone, float h, vec2 q, float lit, float evergree
  * hour (LIT) is above its own number, so a street's windows come on and go out one by one through the evening; a
  * sign glows in its own colour as long as the street lamps burn. A building drawn dark (abandoned) stays dark.
  */
-export function seasonal(mat: THREE.MeshLambertMaterial, opts: { roofs?: boolean; shelter?: number; key?: string; windows?: boolean } = {}): THREE.MeshLambertMaterial {
+export function seasonal(mat: THREE.MeshLambertMaterial, opts: { roofs?: boolean; shelter?: number; key?: string; windows?: boolean; atlas?: "park" } = {}): THREE.MeshLambertMaterial {
   const prev = mat.onBeforeCompile;
   mat.onBeforeCompile = (sh, r) => {
     prev?.call(mat, sh, r);
@@ -288,13 +316,25 @@ export function seasonal(mat: THREE.MeshLambertMaterial, opts: { roofs?: boolean
       float s = envSnowAt(vEnvW.xz, mix(${(opts.shelter ?? 0).toFixed(2)}, -0.05, roof)) * up * (1.0 - paved * 0.92);
       dc = mix(dc, envSnowCol(vEnvW.xz) * (0.95 + 0.05 * n.y), s);
     }
+    // far out the page is a road atlas (render/terrain3d.ts): a lot's lawn goes the built-up wash of its town, a
+    // park its own pale green, paving near the paper, and whatever is built a warm block
+    if (uEnvAtlas > 0.001) {
+      float al = dot(dc, vec3(0.3, 0.55, 0.15));
+      float asat = max(dc.r, max(dc.g, dc.b)) - min(dc.r, min(dc.g, dc.b));
+      float low = 1.0 - smoothstep(0.5, 1.0, vEnvW.y);
+      vec3 ac = mix(${v3(0x8a5340)}, ${v3(0xc99a80)}, smoothstep(0.08, 0.6, al));
+      ac = mix(ac, ${v3(0xddd3bd)}, (1.0 - smoothstep(0.03, 0.08, asat)) * low);
+      ac = mix(ac, mix(${v3(opts.atlas === "park" ? LAND.wood : LAND.town)}, ${v3(LAND.snow)}, envSnow * 0.55), green * low);
+      ac = mix(ac, ${v3(LAND.woodInk)}, green * (1.0 - low) * 0.8);
+      dc = mix(dc, ac, uEnvAtlas);
+    }
     diffuseColor.rgb = envGrade(dc);${litFrag}
   }`,
       );
   };
   // (the program cache must tell this material's shader from another seasonal one with a different shader of its own)
   const own = mat.customProgramCacheKey !== THREE.Material.prototype.customProgramCacheKey ? mat.customProgramCacheKey() : prev?.toString() ?? "";
-  const k = `${own}|${opts.key ?? "seasonal"}${opts.roofs ? "r" : ""}${opts.windows ? "w" : ""}${opts.shelter ?? 0}`;
+  const k = `${own}|${opts.key ?? "seasonal"}${opts.roofs ? "r" : ""}${opts.windows ? "w" : ""}${opts.atlas ?? ""}${opts.shelter ?? 0}`;
   mat.customProgramCacheKey = () => k;
   return mat;
 }

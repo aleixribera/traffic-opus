@@ -65,6 +65,52 @@ export const PAL = {
   bg: 0x9d955a,
 };
 
+/**
+ * The land's own colours (render/terrain3d.ts): the shore and the water's depths, bare trodden earth, reeds, the
+ * wild flowers, and the inks and washes of the far map, which is drawn as a road atlas of the 1930s.
+ */
+export const LAND = {
+  waterShallow: 0x9fc6b6,
+  waterDeep: 0x4a7896,
+  foam: 0xe9efe6,
+  beach: 0xd6c796,
+  sandWet: 0x97885f,
+  earth: 0xa08e69,
+  earthDark: 0x7f6d50,
+  reed: 0x66743a,
+  reedDry: 0xb49d5c,
+  flowers: [0xf4f1e4, 0xecc93a, 0xcc4630, 0xd493ac, 0x7187c8],
+  // the atlas
+  paper: 0xefe5cb,
+  low: 0xdde3ba,
+  high: 0xead9b0,
+  tier: [0xe2cfa4, 0xd8c093, 0xccb083, 0xc0a074],
+  reliefInk: 0x8a6a45,
+  wood: 0xc0d49c,
+  woodInk: 0x567846,
+  fertile: 0xefe0a0,
+  fertileInk: 0xb3943a,
+  water: 0xbcd9e1,
+  waterInk: 0x3d7190,
+  town: 0xe8b9a2,
+  townInk: 0x9a5e48,
+  works: 0xcdc2c9,
+  worksInk: 0x5e5560,
+  farm: 0xeadc9c,
+  parcelInk: 0x7d8853,
+  pasture: 0xd7e2b1,
+  meadow: 0xe6e5ae,
+  gridInk: 0x8a7a5a,
+  snow: 0xf5f5f0,
+  // the atlas's roads: a dirt track's dashes, the casing of every made road, and each class's fill
+  inkTrack: 0x6b5237,
+  inkCasing: 0x33291f,
+  fillStreet: 0xfdf8ea,
+  fillAvenue: 0xf2c84e,
+  fillMotorway: 0xc94a32,
+  fillMotorwayLine: 0xfdf8ea,
+};
+
 /** Elevation tints used by previews and badges (level 0..3). */
 export const LEVEL_TINT = [0x58c8e6, 0x8fd14f, 0x4f8fe8, 0x9a6ae0];
 
