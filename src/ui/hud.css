@@ -177,34 +177,63 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .speed-btn:hover:not(.on) { background: var(--plate-2); color: var(--cream); }
 
 /* ------------------------------------------------------------ asset panel (above the bar) */
-/* (wide enough for a full tab of 8 cards on one row, but clear of the tool options on the left) */
-.assets { width: min(920px, max(540px, calc(100vw - 560px))); margin-bottom: 12px; padding: 0 0 14px; overflow: hidden; }
+/* The catalog: cards, one line that reads out a card, and the strip of tabs at its foot. The strip sits on the bar
+   and never moves; the cards stack up from it, so no tab changes place when another tab has more rows.
+   (wide enough for a full tab of 8 cards on one row, but clear of the tool options on the left) */
+.assets { width: min(920px, max(540px, calc(100vw - 560px))); margin-bottom: 12px; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
 .assets[hidden] { display: none; }
-.as-head { display: flex; align-items: center; gap: 14px; padding: 0 40px 0 14px; position: relative; margin-bottom: 4px; }
+/* (the strip is a header plate upside down: its ochre rule and the pinstripe are above it, the rivets in its corners) */
+.as-head { display: flex; align-items: center; gap: 14px; padding: 0 44px 0 22px; position: relative;
+  border-bottom: 0; border-top: 1px solid var(--ochre); box-shadow: 0 -1px 0 var(--edge), 0 -3px 0 var(--plate), 0 -4px 0 var(--pin); margin-top: 4px;
+  background: var(--rivet) left 7px bottom 7px / 6px 6px no-repeat, var(--rivet) right 7px bottom 7px / 6px 6px no-repeat, var(--plate-2); }
 .as-title { flex: none; font-weight: inherit; }
 .as-tabs { display: flex; gap: 0; overflow-x: auto; scrollbar-width: none; min-width: 0; align-self: stretch; }
 .as-tabs::-webkit-scrollbar { display: none; }
-.as-tab { background: none; border: 0; border-bottom: 3px solid transparent; padding: 10px 11px 7px; color: var(--cream-2); white-space: nowrap; font: 600 var(--t-xs)/16px var(--f-text); text-transform: uppercase; letter-spacing: 0.08em; }
-.as-tab:hover:not(.on) { color: var(--cream); }
-.as-tab.on { color: var(--cream); border-bottom-color: var(--ochre); }
+.as-tab { background: none; border: 0; border-top: 3px solid transparent; padding: 7px 11px 10px; min-height: 36px; color: var(--cream-2); white-space: nowrap; font: 600 var(--t-xs)/16px var(--f-text); text-transform: uppercase; letter-spacing: 0.08em; }
+.as-tab:hover:not(.on) { color: var(--cream); background: var(--plate-3); }
+.as-tab.on { color: var(--cream); border-top-color: var(--ochre); }
 .as-tab:focus-visible { outline-offset: -2px; }
-.as-head .close { top: 50%; transform: translateY(-50%); }
+.as-head .close { top: 50%; right: 16px; transform: translateY(-50%); }
 /* (a tab with more cards than fit wraps to a second row instead of hiding the last ones off the edge) */
-.as-cards { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 0; max-height: min(340px, 42vh); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--plate-3) transparent; }
+.as-cards { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 12px 8px; max-height: min(340px, 42vh); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--plate-3) transparent; }
 .asset { width: 106px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 9px 4px 7px; background: var(--plate-2); border: 1px solid var(--rule); border-radius: var(--r); position: relative; color: var(--cream); }
-.asset:hover:not(:disabled):not(.on) { border-color: var(--cream-3); background: var(--plate-3); }
+.asset:hover:not(.locked):not(.on) { border-color: var(--cream-3); background: var(--plate-3); }
+.asset:active:not(.locked) { background: var(--plate); }
 .asset.on { border-color: var(--ochre); background: var(--plate-3); box-shadow: inset 0 0 0 1px var(--ochre); }
 .asset.on::after { content: ""; position: absolute; left: -1px; right: -1px; bottom: -1px; height: 3px; background: var(--ochre); }
 .asset b { font-weight: 600; text-align: center; line-height: 1.2; }
 .as-icon { height: 36px; display: grid; place-items: center; }
 .as-icon svg { width: 34px; height: 34px; }
-.as-sub { color: var(--cream-2); font-size: var(--t-xs); display: block; text-align: center; line-height: 1.3; }
+/* what it takes and makes, in pictures: a ruled slot under the name, so the row lines up across the cards */
+.as-flow { display: flex; align-items: center; justify-content: center; gap: 2px; height: 22px; width: 100%; margin-top: auto; border-top: 1px solid var(--rule); padding-top: 3px; color: var(--cream-2); font-size: var(--t-xs); white-space: nowrap; }
+.as-flow i { display: grid; place-items: center; width: 16px; height: 16px; font-style: normal; flex: none; }
+.as-flow i svg { width: 16px; height: 16px; }
+.as-flow .fl-to { width: 12px; color: var(--ochre-hi); }
+.as-flow .fl-to svg { width: 12px; height: 12px; }
+.as-flow .fl-ground { color: var(--cream-2); }
+.as-flow .fl-big { color: var(--ochre-hi); }
+.fl-spec { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+.fl-lanes { flex: none; color: var(--cream); }
+.as-sub { color: var(--cream-2); font-size: var(--t-xs); display: block; text-align: center; line-height: 1.3; font-variant-numeric: tabular-nums; }
 .as-sub svg { vertical-align: -1px; margin-right: 3px; width: 10px; height: 12px; }
 /* locked: a plain stamped blank, still legible so the player can plan */
-.asset.locked { background: var(--plate); border-style: dashed; border-color: var(--rule-2); }
+.asset.locked { background: var(--plate); border-style: dashed; border-color: var(--rule-2); cursor: default; }
 .asset.locked .as-icon { opacity: 0.4; filter: grayscale(0.7); }
+.asset.locked .as-flow { opacity: 0.6; }
 .asset.locked b { color: var(--cream-2); }
-.asset.locked .as-sub { color: var(--cream-3); }
+.asset.locked .as-sub { color: var(--cream-2); }
+/* the line: the card under the pointer in words, else the one in hand. One row, always the same height */
+.as-read { display: flex; align-items: baseline; gap: 0; margin: 0 14px; padding: 7px 0 6px; height: 34px; border-top: 1px solid var(--rule); white-space: nowrap; overflow: hidden; color: var(--cream-2); font-size: var(--t-sm); line-height: 20px; }
+.assets.folded .as-read { border-top: 0; margin-top: 2px; }
+.as-read b { color: var(--cream); font-weight: 700; font-size: var(--t-md); margin-right: 12px; flex: none; }
+.as-read span { flex: none; }
+.as-read span + span::before { content: ""; display: inline-block; width: 1px; height: 11px; background: var(--rule-2); margin: 0 10px; vertical-align: -1px; }
+.as-read .num { color: var(--cream); font-variant-numeric: tabular-nums; }
+.as-read .as-lock { color: var(--cream-2); flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.as-read .as-lock svg { width: 10px; height: 12px; vertical-align: -1px; margin-right: 4px; }
+.as-read .as-hand { margin-left: auto; padding-left: 12px; color: var(--ochre-hi); font: 600 var(--t-xs)/20px var(--f-text); text-transform: uppercase; letter-spacing: 0.1em; }
+.as-read .as-hand::before { display: none; }
+.as-read .as-hint { color: var(--cream-2); }
 
 /* ------------------------------------------------------------ tool options (left, above the bar) */
 .toolopts { position: absolute; left: 10px; bottom: calc(var(--bar-h) + 12px); width: 248px; padding: 0 0 16px; overflow: hidden; }

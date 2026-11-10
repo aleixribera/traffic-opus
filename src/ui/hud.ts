@@ -28,7 +28,7 @@ import { comingNeeds, growthOf, townNeeds, type NeedView } from "./needs";
 import type { Lane } from "../roads/network";
 import { CHANGELOG } from "../changelog";
 import { PLACED, PLACED_TABS, type PlacedKind } from "../game/placed";
-import { GATE_LINK_REACH, SAVE_V } from "../game/city";
+import { SAVE_V } from "../game/city";
 import { BUS_UPKEEP, STOP_COST } from "../game/transit";
 import { WirelessControl, soundHtml, soundSummary, wireSound } from "./soundPanel";
 import { heraldSvg } from "./herald";
@@ -42,6 +42,7 @@ import { openOrders, townOrders } from "./orders";
 import { CIVICS, type CivicKind } from "../game/civics";
 import { orderLine } from "../game/orders";
 import { SeasonCard } from "./seasonCard";
+import { escLayer, type EscState } from "./escape";
 
 export interface Chip {
   text: string;
@@ -83,7 +84,11 @@ const CATS: Record<CatId, { label: string; tabs: Tab[] }> = {
   },
   industry: {
     label: "Industry",
-    tabs: PLACED_TABS.map((t) => ({ id: t.id, label: t.label, assets: t.kinds.map((id) => ({ kind: "placed", id }) as Asset) })),
+    // (the power plant is one card: it shares a tab with the warehouse and the fuel depot, not a tab to itself)
+    tabs: PLACED_TABS.filter((t) => t.id !== "power").map((t) => {
+      const kinds = t.id === "logistics" ? [...t.kinds, ...PLACED_TABS.filter((x) => x.id === "power").flatMap((x) => x.kinds)] : t.kinds;
+      return { id: t.id, label: t.id === "logistics" ? "Logistics & power" : t.label, assets: kinds.map((id) => ({ kind: "placed", id }) as Asset) };
+    }),
   },
   transport: {
     label: "Transport",
@@ -174,7 +179,7 @@ const SNAP_HELP = {
 } as const;
 
 const KEYS: [string, string][] = [
-  ["Esc", "Back: close a panel, drop the tool, then the pause menu"],
+  ["Esc", "Back, one thing at a time: the tool in hand, then the catalog, a panel, a window, an info view. With nothing open: the pause menu"],
   ["Right click", "Undo the last click of a road; again to drop the tool (a touchpad: click with two fingers)"],
   ["W A S D / drag", "Move the camera (drag with the right button, or with the left when nothing is in hand)"],
   ["Space + drag", "Move the camera with any tool in hand"],
@@ -184,11 +189,12 @@ const KEYS: [string, string][] = [
   ["Y / H", "Tilt the camera. Y lifts it toward straight down, H lowers it toward the horizon. Zoomed far out it looks straight down by itself"],
   ["M", "Map view (straight down) and back to the Diorama. The same as Camera in the pause menu"],
   ["Camera block", "Top left: drag it like the middle button (for a touchpad), click it for the Map view"],
-  ["R / F, wheel", "Zoom in / out (placing a building: the mouse wheel turns it, Shift + wheel by 1°, Ctrl + wheel zooms)"],
+  ["Wheel, + / -", "Zoom in / out, also with a road or a building in hand"],
+  ["R / I", "Roads / Industry: open the catalog (again to close it)"],
   ["Tab", "Next road mode: curve, straight, upgrade"],
   ["Page Up / Down", "Raise or lower the road (bridges over water and motorways rise on their own)"],
   ["[ / ]", "Parallel road spacing"],
-  [", / .", "Turn the building you are placing 15° (with Shift: 1°)"],
+  [", / .", "Turn the building you are placing 15° (with Shift: 1°). Shift + wheel turns it too"],
   ["Shift", "15° angle steps while drawing"],
   ["Alt (hold)", "Ignore snapping and guides for a moment"],
   ["B", "Bulldozer"],
@@ -245,6 +251,12 @@ export class Hud {
   private cat: CatId | null = null;
   private tab: Record<CatId, string> = { roads: "small", industry: "extraction", transport: "bus" };
   private lastRoad: RoadTypeId = "dirt";
+  /** the drawing mode last used (curve or straight): picking a road card comes back to it from Upgrade */
+  private lastDraw: RoadMode = "curve";
+  /** the catalog asked open while a building is in hand (it folds to its strip by itself, out of the map's way) */
+  private catPeek = false;
+  /** the card under the pointer or the keyboard focus: the catalog's line reads it out */
+  private hoverKey = "";
   private winKind: WinId | null = null;
   /** the one thing selected on the map (its panel is open top right) */
   private sel: Sel | null = null;
@@ -388,35 +400,47 @@ export class Hud {
 
   // ---------------------------------------------------------------- categories
 
+  /** R and I, and the bar's buttons. */
+  catKey(c: CatId) { this.toggleCat(c); }
+
+  /** The catalog folds to its strip while a building is in hand, so the map under the cursor is free. */
+  private folded(): boolean {
+    return this.cat === "industry" && this.app.st.tool === "place" && !this.catPeek;
+  }
+
   private toggleCat(c: CatId) {
     const app = this.app;
+    const inHand = catOf(app.st) === c;
+    // (folded with a building in hand: the button brings the cards back)
+    if (this.cat === c && this.folded()) { this.catPeek = true; this.refresh(); return; }
+    this.catPeek = false;
     if (this.cat === c) {
       this.cat = null;
-      if (catOf(app.st) === c) app.setTool({ tool: "inspect" });
+      this.sfx.play("close");
+      if (inHand) app.setTool({ tool: "inspect" });
       else this.refresh();
       return;
     }
     this.cat = c;
-    // like picking up the last thing you built from this category
-    if (c === "roads") app.setTool({ tool: "road", roadType: this.lastRoad });
-    else if (c === "transport") {
-      if (app.game.featureUnlocked("transit")) app.setTool({ tool: "transit" });
-      else this.refresh();
-    } else if (c === "industry") {
-      // hold the tool only on something already unlocked
-      const k = app.game.placedUnlocked(app.st.placed) ? app.st.placed : PLACED_TABS.flatMap((t) => t.kinds).find((x) => app.game.placedUnlocked(x));
-      if (k) app.setTool({ tool: "place", placed: k });
-      else this.refresh();
-    }
+    // Roads picks up the road last drawn, in the drawing mode last used: a road only starts with a click on the map,
+    // and costs nothing until its second. Industry puts nothing in hand: there a stray click is a works bought.
+    if (c === "roads") app.setTool({ tool: "road", roadType: this.lastRoad, mode: this.lastDraw });
+    else if (c === "transport" && app.game.featureUnlocked("transit")) app.setTool({ tool: "transit" });
+    // (whatever was in hand is put down: the catalog open with another category's tool armed would lie)
+    else if (app.st.tool !== "inspect") { app.setTool({ tool: "inspect" }); this.cat = c; this.refresh(); }
+    else this.refresh();
   }
 
   private pick(a: Asset) {
     const app = this.app;
-    if (a.kind === "road") { this.lastRoad = a.id; app.setTool({ tool: "road", roadType: a.id }); }
+    this.catPeek = false;
+    // (a road card is for drawing that road: out of Upgrade, back to the drawing mode last used)
+    if (a.kind === "road") { this.lastRoad = a.id; app.setTool({ tool: "road", roadType: a.id, mode: this.lastDraw }); }
     else if (a.kind === "roundabout") app.setTool({ tool: "roundabout", rbSize: a.size });
     else if (a.kind === "junction") app.setTool({ tool: "junction" });
     else if (a.kind === "lane") app.setTool({ tool: "lane" });
-    else if (a.kind === "placed") app.setTool({ tool: "place", placed: a.id });
+    // (a different building starts square to the screen: the last one's turn is not carried over)
+    else if (a.kind === "placed") app.setTool({ tool: "place", placed: a.id, ...(app.st.tool === "place" && app.st.placed === a.id ? {} : { placeTurn: 0 }) });
     else if (a.kind === "busstop") app.setTool({ tool: "transit", transitMode: "stop" });
     else app.setTool({ tool: "transit", transitMode: "line" });
     this.sfx.play("click");
@@ -434,18 +458,37 @@ export class Hud {
     return null;
   }
 
-  private assetInfo(a: Asset): { key: string; icon: string; name: string; sub: string; title: string; locked?: Milestone } {
+  /**
+   * One catalog card: its icon and name, the row under the name that says what it is in pictures (`flow`: what a
+   * works takes and makes, a road's lanes and speed), its price, and the one line the catalog reads out for it
+   * (`read`: the same in words, with what it costs to build and to run).
+   */
+  private assetInfo(a: Asset): { key: string; icon: string; name: string; flow: string; sub: string; read: string; title: string; locked?: Milestone } {
     const g = this.app.game;
     if (a.kind === "road") {
       const T = ROAD_TYPES[a.id];
       const locked = g.roadsUnlocked.has(a.id) ? undefined : unlockedBy((u) => u.roads?.includes(a.id));
-      const lanes = T.bwd ? `${T.fwd}+${T.bwd} lanes` : `${T.fwd} lane${T.fwd > 1 ? "s" : ""} one-way`;
-      return { key: "road:" + a.id, icon: roadIcon(a.id), name: T.name, sub: `${formatMoney(T.costPerM * 10)}/10 m`, title: `${T.name} · ${lanes} · ${Math.round(T.speed * 3.6)} km/h. ${T.hint}`, locked };
+      const n = (k: number) => ["no", "one", "two", "three", "four"][k] ?? String(k);
+      const lanes = T.bwd ? `${cap(n(T.fwd))} lane${T.fwd > 1 ? "s" : ""} each way` : `${cap(n(T.fwd))} lane${T.fwd > 1 ? "s" : ""}, one way`;
+      const kmh = Math.round(T.speed * 3.6);
+      const cost = `${formatMoney(T.costPerM * 10)}/10 m`;
+      return {
+        key: "road:" + a.id, icon: roadIcon(a.id), name: T.name, sub: cost, locked,
+        flow: `<span class="fl-spec">${laneArrows(T.fwd, T.bwd)}${kmh} km/h</span>`,
+        read: `<span>${lanes}, ${kmh} km/h</span><span>${escapeHtml(ROAD_USE[a.id])}</span><span class="num">${cost}</span>`,
+        title: `${T.name} · ${lanes.toLowerCase()} · ${kmh} km/h. ${T.hint}`,
+      };
     }
     if (a.kind === "roundabout") {
       const R = ROUNDABOUTS[a.size];
       const locked = g.featureUnlocked("roundabout") ? undefined : unlockedBy((u) => u.features?.includes("roundabout"));
-      return { key: "rb:" + a.size, icon: rbIcon(a.size), name: `${R.name} roundabout`, sub: `${R.r * 2} m`, title: `${R.name} roundabout: ${R.r * 2} m across, ${ROAD_TYPES[R.type].fwd}-lane ring. Drop it on a junction or a road.`, locked };
+      const ring = `${ROAD_TYPES[R.type].fwd}-lane ring`;
+      return {
+        key: "rb:" + a.size, icon: rbIcon(a.size), name: `${R.name} roundabout`, sub: `${R.r * 2} m across`, locked,
+        flow: `<span class="fl-spec">${ring}</span>`,
+        read: `<span>${R.r * 2} m across, ${ring}</span><span>Drop it on a junction or a road</span>`,
+        title: `${R.name} roundabout: ${R.r * 2} m across, ${ring}. Drop it on a junction or a road.`,
+      };
     }
     if (a.kind === "placed") {
       const S = PLACED[a.id], T = BUILDING_TYPES[a.id];
@@ -453,80 +496,128 @@ export class Hud {
       const locked = g.placedUnlocked(a.id) ? undefined : unlockedBy((u) => u.buildings?.includes(a.id));
       const site = D.site ? ` Starts as a building site: it needs ${siteText(D.site)} trucked to it.` : "";
       const power = D.power ? ` Draws ${D.power} MW: without power it works at ${Math.round(UNPOWERED * 100)}%.` : D.makes ? ` Makes ${D.makes} MW for the buildings on its roads within ${D.reach! / 1000} km that draw power.` : "";
+      const price = `${formatMoney(S.cost)} · ${formatMoney(S.upkeep)}/h`;
       return {
-        key: "placed:" + a.id, icon: placedIcon(a.id), name: T.name, sub: `${formatMoney(S.cost)} · ${formatMoney(S.upkeep)}/h`,
-        title: `${T.name}: ${chainText(a.id)}. ${T.blurb}${site}${power} Costs ${formatMoney(S.cost)}; upkeep ${formatMoney(S.upkeep)} an hour plus its ${T.jobs} workers' wages.`, locked,
+        key: "placed:" + a.id, icon: placedIcon(a.id), name: T.name, sub: price, locked,
+        flow: flowIcons(a.id),
+        read: `<span>${escapeHtml(chainText(a.id))}</span>${D.site ? `<span>Site needs ${escapeHtml(siteShort(D.site))}</span>` : ""}${D.power ? `<span>Draws ${D.power} MW</span>` : D.makes ? `<span>Makes ${D.makes} MW</span>` : ""}<span class="num">${price}</span>`,
+        title: `${T.name}: ${chainText(a.id)}. ${T.blurb}${site}${power} Costs ${formatMoney(S.cost)}; upkeep ${formatMoney(S.upkeep)} an hour plus its ${T.jobs} workers' wages.`,
       };
     }
     if (a.kind === "lane") {
       return {
-        key: "lane", icon: ICON.lane, name: "Add lane", sub: "Turn & slip lanes",
+        key: "lane", icon: ICON.lane, name: "Add lane", sub: "Free", flow: `<span class="fl-spec">Turn and slip lanes</span>`,
+        read: `<span>Click a road just before a junction for a turn lane</span><span>Shift or right click removes one</span>`,
         title: "Add lane (L): click a road just before a junction for a turn lane, nearer the middle for left turns, nearer the kerb for right turns. On a motorway, click before an exit or after an entry to lengthen its slip lane. Shift or right click removes a turn lane.",
       };
     }
     if (a.kind === "busstop" || a.kind === "busline") {
       const locked = g.featureUnlocked("transit") ? undefined : unlockedBy((u) => u.features?.includes("transit"));
       return a.kind === "busstop"
-        ? { key: "busstop", icon: ICON.busStop, name: "Bus stop", sub: formatMoney(STOP_COST), title: `Bus stop: put it on the kerb of a street, on the side the buses will stop. ${formatMoney(STOP_COST)}.`, locked }
-        : { key: "busline", icon: ICON.busLine, name: "Bus line", sub: `${formatMoney(BUS_UPKEEP)}/h a bus`, title: `Bus line: click stops in the order the buses visit them, then the first again to close the loop. Each bus costs ${formatMoney(BUS_UPKEEP)} an hour; riders pay a fare.`, locked };
+        ? { key: "busstop", icon: ICON.busStop, name: "Bus stop", sub: formatMoney(STOP_COST), flow: `<span class="fl-spec">On a kerb</span>`, read: `<span>Put it on the kerb of a street, on the side the buses will stop</span><span class="num">${formatMoney(STOP_COST)}</span>`, title: `Bus stop: put it on the kerb of a street, on the side the buses will stop. ${formatMoney(STOP_COST)}.`, locked }
+        : { key: "busline", icon: ICON.busLine, name: "Bus line", sub: `${formatMoney(BUS_UPKEEP)}/h a bus`, flow: `<span class="fl-spec">Stop to stop</span>`, read: `<span>Click stops in the order the buses visit them, then the first again</span><span class="num">${formatMoney(BUS_UPKEEP)}/h a bus</span>`, title: `Bus line: click stops in the order the buses visit them, then the first again to close the loop. Each bus costs ${formatMoney(BUS_UPKEEP)} an hour; riders pay a fare.`, locked };
     }
     const locked = g.featureUnlocked("signals") ? undefined : unlockedBy((u) => u.features?.includes("signals"));
-    return { key: "junction", icon: ICON.junction, name: "Traffic lights", sub: formatMoney(SIGNAL_COST), title: "Traffic lights: click a junction to add lights or edit their phases", locked };
+    return { key: "junction", icon: ICON.junction, name: "Traffic lights", sub: formatMoney(SIGNAL_COST), flow: `<span class="fl-spec">At a junction</span>`, read: `<span>Click a junction to add lights or edit their phases</span><span class="num">${formatMoney(SIGNAL_COST)}</span>`, title: "Traffic lights: click a junction to add lights or edit their phases", locked };
   }
 
+  /**
+   * The catalog above the bar (play-test 2026-11-09, A5, C7, D1): the cards, one line that reads out the card under
+   * the pointer (or the one in hand), and under them the strip with the tabs. The strip is the part that never
+   * moves: the window grows upward from it, so a tab is at the same place on the screen whichever tab is open and
+   * however many rows it holds. With a building in hand the cards fold away and only the line and the strip stay.
+   */
   private renderAssets() {
     const c = this.cat, el = this.assets;
-    if (!c) { el.hidden = true; this.lastAssets = ""; return; }
+    if (!c) { el.hidden = true; this.lastAssets = ""; this.hoverKey = ""; return; }
     const cur = this.current();
-    const curKey = cur ? this.assetInfo(cur).key : "";
+    const inHand = cur && catOf(this.app.st) === c ? cur : null;
+    const curKey = inHand ? this.assetInfo(inHand).key : "";
     const C = CATS[c];
     // follow the tool to its tab (keyboard, right click, loading)
-    if (cur && catOf(this.app.st) === c) {
+    if (inHand) {
       const t = C.tabs.find((t) => t.assets.some((a) => this.assetInfo(a).key === curKey));
       if (t && this.followKey !== curKey) this.tab[c] = t.id;
     }
     this.followKey = curKey;
     const tab = C.tabs.find((t) => t.id === this.tab[c]) ?? C.tabs[0];
     const infos = tab.assets.map((a) => ({ a, ...this.assetInfo(a) }));
-    const sig = [c, tab.id, curKey, infos.map((i) => i.key + (i.locked ? "L" : "") + i.sub).join()].join("|");
+    const folded = this.folded();
+    const sig = [c, tab.id, curKey, folded, infos.map((i) => i.key + (i.locked ? "L" : "") + i.sub).join()].join("|");
     el.hidden = false;
     if (sig === this.lastAssets) return;
     this.lastAssets = sig;
     const fa = document.activeElement;
     const focusKey = fa instanceof HTMLElement && el.contains(fa) ? fa.dataset.key : null;
     el.innerHTML = "";
+    el.classList.toggle("folded", folded);
+    this.hoverKey = "";
+    // ---- the line: what the card under the pointer is, else the one in hand, else what to do
+    const read = h("p", "as-read");
+    const held = inHand ? this.assetInfo(inHand) : null;
+    const say = () => {
+      const i = infos.find((x) => x.key === this.hoverKey) ?? held;
+      if (!i) {
+        // (a category still locked says what opens it, on the line: the Transport button used to do nothing at all)
+        const lk = infos.every((x) => x.locked) ? infos[0]?.locked : undefined;
+        read.innerHTML = lk ? `<span class="as-lock">${ICON.lock} ${C.label === "Transport" ? "Buses unlock" : "Unlocks"} with the goal ${escapeHtml(lk.name)}: ${escapeHtml(lk.goal)}</span>`
+          : `<span class="as-hint">Nothing in hand. ${c === "roads" ? "Pick a road, then click the map to draw it." : c === "industry" ? "Pick a works, then click the map to build it." : "Pick a stop or a line."}</span>`;
+        return;
+      }
+      const lock = i.locked ? `<span class="as-lock">${ICON.lock} Unlocks with ${escapeHtml(i.locked.name)}: ${escapeHtml(i.locked.goal)}</span>` : "";
+      const hand = !i.locked && i.key === curKey ? `<span class="as-hand">In hand</span>` : "";
+      read.innerHTML = `<b>${escapeHtml(i.name)}</b>${i.read}${lock}${hand}`;
+    };
+    // ---- the strip: the category, its tabs, close
     const head = h("header", "as-head");
     const tabs = h("div", "as-tabs");
     tabs.setAttribute("role", "tablist");
     for (const t of C.tabs) {
       const b = h("button", "as-tab", t.label);
       b.setAttribute("role", "tab");
-      b.setAttribute("aria-selected", String(t === tab));
+      b.setAttribute("aria-selected", String(t === tab && !folded));
       b.dataset.key = "tab:" + t.id;
-      b.classList.toggle("on", t === tab);
-      b.onclick = () => { this.tab[c] = t.id; this.renderAssets(); this.sfx.play("click"); };
+      b.classList.toggle("on", t === tab && !folded);
+      // (a tab clicked while the cards are folded away brings them back)
+      b.onclick = () => { this.tab[c] = t.id; this.catPeek = true; this.renderAssets(); this.sfx.play("click"); };
       tabs.appendChild(b);
     }
     const close = h("button", "close", ICON.close);
     close.setAttribute("aria-label", `Close ${C.label}`);
+    close.title = `Close ${C.label}`;
     close.dataset.key = "close";
-    close.onclick = () => this.toggleCat(c);
+    close.onclick = () => {
+      this.catPeek = false;
+      this.cat = null;
+      this.sfx.play("close");
+      if (catOf(this.app.st) === c) this.app.setTool({ tool: "inspect" });
+      else this.refresh();
+    };
     head.append(h("b", "as-title", C.label), tabs, close);
-    const cards = h("div", "as-cards");
-    for (const i of infos) {
-      const b = h("button", "asset", `<span class="as-icon">${i.icon}</span><b>${i.name}</b><span class="as-sub">${i.locked ? `${ICON.lock} ${i.locked.name}` : i.sub}</span>`);
-      b.dataset.key = i.key;
-      const on = i.key === curKey;
-      b.classList.toggle("on", on);
-      b.classList.toggle("locked", !!i.locked);
-      b.setAttribute("aria-pressed", String(on));
-      b.title = i.locked ? `${i.name} · unlocks with the milestone ${i.locked.name}: ${i.locked.goal}` : i.title;
-      b.setAttribute("aria-label", b.title);
-      b.disabled = !!i.locked;
-      b.onclick = () => this.pick(i.a);
-      cards.appendChild(b);
+    if (!folded) {
+      const cards = h("div", "as-cards");
+      for (const i of infos) {
+        const b = h("button", "asset", `<span class="as-icon">${i.icon}</span><b>${i.name}</b><span class="as-flow">${i.flow}</span><span class="as-sub">${i.locked ? `${ICON.lock} ${i.locked.name}` : i.sub}</span>`);
+        b.dataset.key = i.key;
+        const on = i.key === curKey;
+        b.classList.toggle("on", on);
+        b.classList.toggle("locked", !!i.locked);
+        b.setAttribute("aria-pressed", String(on));
+        b.setAttribute("aria-label", i.locked ? `${i.name} · unlocks with the milestone ${i.locked.name}: ${i.locked.goal}` : i.title);
+        // (a locked card is not pressed, but it can still be read: the pointer and the keyboard reach it)
+        b.setAttribute("aria-disabled", String(!!i.locked));
+        const over = (k: string) => { if (this.hoverKey !== k) { this.hoverKey = k; say(); } };
+        b.onpointerenter = () => over(i.key);
+        b.onpointerleave = () => { if (this.hoverKey === i.key) over(""); };
+        b.onfocus = () => over(i.key);
+        b.onblur = () => { if (this.hoverKey === i.key) over(""); };
+        b.onclick = () => { if (!i.locked) this.pick(i.a); };
+        cards.appendChild(b);
+      }
+      el.append(cards);
     }
-    el.append(head, cards);
+    say();
+    el.append(read, head);
     if (focusKey) el.querySelector<HTMLElement>(`[data-key="${focusKey}"]`)?.focus();
   }
   private followKey = "";
@@ -540,6 +631,7 @@ export class Hud {
     if (tc) this.cat = tc;
     else if (st.tool !== "inspect") this.cat = null;
     if (st.tool === "road") this.lastRoad = st.roadType;
+    if (st.tool === "road" && st.mode !== "replace") this.lastDraw = st.mode;
     for (const [k, b] of this.catBtns) {
       // (Towns opens the Towns window: lit while that is open)
       const on = k === "bulldoze" ? st.tool === "bulldoze" : k === "towns" ? this.winKind === "city" : this.cat === k;
@@ -653,11 +745,8 @@ export class Hud {
       }
     } else if (st.tool === "place" && isPlantKind(st.placed)) {
       const D = PLANTS[st.placed];
-      items.push(h("p", "to-text", `Scroll to turn it, or hold Shift to turn it 1° at a time. The comma and period keys turn it 15° (1° with Shift); Ctrl + scroll zooms. A street is laid from its gate to the nearest road within ${GATE_LINK_REACH} m, round any homes, shown before you click.`));
-      items.push(h("p", "to-text", D.deposit
-        ? `At least ${Math.round(MIN_DEPOSIT * 100)}% of the plot must be ${D.deposit.name}: the ground shows it while you place, and the pointers at the screen's edge lead to the nearest deposits. More of it, faster work.`
-        : `Trucks from your other plants bring it ${productList(D.inputs)}; ${D.makes ? `it powers the buildings on its roads within ${D.reach! / 1000} km that draw power`
-          : outputsText(D.outputs)}.`));
+      // (one line: the rest is on the cursor's chips as the building moves, and in the catalog's line)
+      items.push(h("p", "to-text", `Turn it with <kbd>,</kbd> and <kbd>.</kbd> or Shift + wheel.${D.deposit ? ` It needs ${D.deposit.name} under at least ${Math.round(MIN_DEPOSIT * 100)}% of its plot.` : ""}`));
     } else if (st.tool === "roundabout") {
       items.push(elevation());
     } else if (st.tool === "bulldoze") {
@@ -1164,15 +1253,32 @@ export class Hud {
     requestAnimationFrame(() => { input.focus(); input.select(); });
   }
 
+  /** What is open now, for Esc (ui/escape.ts has the order they go in). */
+  private escState(): EscState {
+    return {
+      dialog: !this.modal.hidden, banner: !this.banner.hidden, popover: this.seasons.popOpen,
+      tool: this.app.st.tool !== "inspect", catalog: !!this.cat, selection: !!this.sel, window: !!this.winKind,
+      view: this.app.overlay !== "none",
+    };
+  }
+
+  /**
+   * One step back, the way Esc works: one press puts away exactly one thing, the one on top (a dialog, a banner, the
+   * tool in hand, the catalog, the selection, a window, an info view). False when there was nothing to put away:
+   * only then does Esc open the pause menu.
+   */
   back(): boolean {
-    if (!this.banner.hidden) { this.nextBanner(); return true; }
-    if (this.seasons.popOpen) { this.seasons.closePop(); return true; }
-    if (!this.modal.hidden) { this.closeModal(); return true; }
-    if (this.sel) { this.closeSelection(); return true; }
-    if (this.winKind) { this.closeWin(); return true; }
-    if (this.app.st.tool !== "inspect") { this.cat = null; this.app.setTool({ tool: "inspect" }); return true; }
-    if (this.cat) { this.cat = null; this.refresh(); return true; }
-    return false;
+    const layer = escLayer(this.escState());
+    if (layer === "dialog") this.closeModal();
+    else if (layer === "banner") this.nextBanner();
+    else if (layer === "popover") this.seasons.closePop();
+    // (the catalog it came from stays open, its list unfolded again: the next press closes that)
+    else if (layer === "tool") { this.catPeek = false; this.app.setTool({ tool: "inspect" }); }
+    else if (layer === "catalog") { this.cat = null; this.sfx.play("close"); this.refresh(); }
+    else if (layer === "selection") this.closeSelection();
+    else if (layer === "window") this.closeWin();
+    else if (layer === "view") this.app.setOverlay(this.app.overlay);
+    return layer !== null;
   }
 
   /** Called when the tool changes away from inspecting: the selection panel gives way. */
@@ -1203,6 +1309,8 @@ export class Hud {
 
   toggleWin(k: WinId) {
     if (this.winKind === k) { this.closeWin(); return; }
+    // (one window at a time: the one open gives way, and its info view with it)
+    this.dropView();
     this.sfx.play("open");
     this.winKind = k;
     this.lastWin = "";
@@ -1212,8 +1320,19 @@ export class Hud {
     this.refresh();
   }
 
+  /**
+   * The info view the open window shows goes off with it (play-test 2026-11-09, A8: Esc closed Info views and left
+   * the Resources tint on for minutes, and no night falls while a view is on). Info views owns whichever view is on,
+   * Transportation its Traffic flow.
+   */
+  private dropView() {
+    const o = this.app.overlay;
+    if (this.winKind === "info" && o !== "none") this.app.setOverlay(o);
+    else if (this.winKind === "transport" && o === "flow") this.app.setOverlay("flow");
+  }
+
   private closeWin() {
-    if (this.winKind === "transport" && this.app.overlay === "flow") this.app.setOverlay("flow");
+    this.dropView();
     if (this.winKind) this.sfx.play("close");
     this.winKind = null;
     this.win.hidden = true;
@@ -2393,18 +2512,6 @@ const km = (m: number) => `${(m / 1000).toFixed(1)} km`;
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 const fmtLoads = (n: number) => (n < 10 && n % 1 ? n.toFixed(1) : Math.round(n).toLocaleString("en-US"));
 
-/** Where a plant's outputs go, as a clause: sold to towns, taken to the company's plants, or flared for now. */
-function outputsText(o: Partial<Record<Product, number>>): string {
-  const outs = Object.keys(o) as Product[];
-  const pick = (f: (p: Product) => boolean) => Object.fromEntries(outs.filter(f).map((p) => [p, 1])) as Partial<Record<Product, number>>;
-  const sold = pick((p) => PRODUCTS[p].price > 0), fed = pick((p) => !PRODUCTS[p].price && Industry.usedBy(p)), idle = pick((p) => !Industry.useful(p));
-  const parts: string[] = [];
-  if (Object.keys(sold).length) parts.push(`its own trucks sell the ${productList(sold)} to the towns on your roads`);
-  if (Object.keys(fed).length) parts.push(`its trucks take the ${productList(fed)} to your plants that use it`);
-  for (const p of Object.keys(idle) as Product[]) parts.push(`it burns off the ${PRODUCTS[p].name.toLowerCase()} until tier ${Industry.laterTier(p)} brings plants that use it`);
-  return parts.join("; ");
-}
-
 function productList(o: Partial<Record<Product, number>>): string {
   return (Object.keys(o) as Product[]).map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ");
 }
@@ -2422,6 +2529,59 @@ function chainText(k: keyof typeof PLANTS): string {
   const ins = (Object.keys(D.inputs) as Product[]).map((p) => PRODUCTS[p].name.toLowerCase() + (D.alt?.[p] ? ` or ${PRODUCTS[D.alt[p]!].name.toLowerCase()}` : "")).join(" and ");
   const from = D.deposit ? `${cap(D.deposit.name)}${D.deposit.name === to ? " deposit" : ""}` : cap(ins);
   return `${from} → ${to}`;
+}
+
+/** A site's materials, short: "30 planks, 20 cement". */
+function siteShort(o: Partial<Record<Product, number>>): string {
+  return (Object.entries(o) as [Product, number][]).map(([p, n]) => `${n} ${PRODUCTS[p].name.toLowerCase()}`).join(", ");
+}
+
+/** What each road is for, in a few words (the catalog's line; the lanes and the speed are said beside it). */
+const ROAD_USE: Record<RoadTypeId, string> = {
+  dirt: "Cheap and slow. Houses can face it",
+  street: "Houses and shops can face it",
+  avenue: "Buildings can still face it",
+  boulevard: "Too busy for driveways",
+  streetM: "Planted median: no turning across it",
+  avenueM: "A median: buildings get right in, right out",
+  boulevardM: "A city's main artery",
+  one1: "Runs the way you draw it. Houses and shops can face it",
+  one2: "Runs the way you draw it",
+  hw1: "A highway ramp",
+  hw2: "A motorway carriageway: build pairs, link them with ramps",
+  one3: "Build pairs for a motorway",
+  one4: "For the heaviest flows",
+};
+
+/** A road's lanes as small arrows, the way they run: one down and one up for a street, two up for a one-way. */
+function laneArrows(fwd: number, bwd: number): string {
+  let d = "", x = 3;
+  for (let i = 0; i < bwd; i++, x += 6) d += `M${x} 2V10M${x - 2.2} 7.4L${x} 10L${x + 2.2} 7.4`;
+  if (bwd) x += 2;
+  for (let i = 0; i < fwd; i++, x += 6) d += `M${x} 10V2M${x - 2.2} 4.6L${x} 2L${x + 2.2} 4.6`;
+  const w = x - 3;
+  return `<svg class="fl-lanes" viewBox="0 0 ${w} 12" width="${w}" height="12" aria-hidden="true"><path d="${d}" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>`;
+}
+
+const FLOW_TO = `<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M1.5 6H10M6.8 2.8L10 6L6.8 9.2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`;
+// (the ground an extractor stands on: a plot seen from above, hatched)
+const FLOW_GROUND = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8 2.5L14.5 8L8 13.5L1.5 8Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5 8L8 10.6M8 5.4L11 8" stroke="currentColor" stroke-width="1.2"/></svg>`;
+
+/**
+ * What a works takes and makes, as a row of pictures for its catalog card: "crops → food", "ground → coal",
+ * "ore, coal → steel, slag" (play-test 2026-11-09, D1: "two icons on each card (in → out)"). The words are in the
+ * catalog's line and the card's label, never the pictures alone.
+ */
+function flowIcons(k: PlantKind): string {
+  const D = PLANTS[k];
+  const ic = (p: Product) => `<i>${productIcon(p)}</i>`;
+  const to = `<i class="fl-to">${FLOW_TO}</i>`;
+  if (D.logistics === "warehouse") return `<span class="fl-spec">Stores any load</span>`;
+  if (D.logistics === "depot") return `${ic("fuel")}${to}<i class="fl-big">${ICON.truck}</i>`;
+  if (D.mega) return D.makes ? `<span class="fl-spec">River</span>${to}<i class="fl-big">${ICON.power}</i>` : `<span class="fl-spec">One of a kind</span>`;
+  const ins = D.deposit ? `<i class="fl-ground">${FLOW_GROUND}</i>` : (Object.keys(D.inputs) as Product[]).map(ic).join("");
+  const outs = D.makes ? `<i class="fl-big">${ICON.power}</i>` : (Object.keys(D.outputs) as Product[]).map(ic).join("");
+  return `${ins}${to}${outs}`;
 }
 
 /** A site's materials: "6 loads of planks". */
