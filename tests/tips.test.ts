@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 import { Game } from "../src/game/city";
 import { v2, type V2 } from "../src/core/math";
 import type { PlacedKind } from "../src/game/placed";
-import { TipPrefs, cutOff, joinedUp, soilInReach, tipFor, wants, type TipId } from "../src/ui/tips";
+import { DEPOSIT_GOALS, TipPrefs, cutOff, joinedUp, soilInReach, tipFor, wants, type TipId } from "../src/ui/tips";
+import { MILESTONES } from "../src/game/progression";
 import { planRoad, snap } from "../src/roads/planner";
 import { road } from "./helpers";
 import { nextTown } from "../src/ui/nextTown";
@@ -118,6 +119,9 @@ describe("tips follow the map", () => {
     home.pop = 40;
     expect(tipFor(g)?.id).not.toBe("planks");
     home.pop = 90;
+    // (not while the first load of food has still to land: one chain at a time. Owner, 2026-11-10)
+    expect(tipFor(g)?.id).not.toBe("planks");
+    g.progress.sold.food = 1;
     const t = tipFor(g)!;
     expect(t.id).toBe("planks");
     expect(t.html).toContain(home.name);
@@ -126,6 +130,30 @@ describe("tips follow the map", () => {
     expect(tipFor(g)!.html).toMatch(/wants planks now/);
     placeNear(g, "sawmill", home.c);
     expect(tipFor(g)?.id).not.toBe("planks");
+  });
+
+  it("a goal's new mines: the power plant first, then where each deposit lies, and nothing once the goals are old or all reached (owner, 2026-11-10)", () => {
+    const { g } = started();
+    const upTo = (id: string) => MILESTONES.slice(0, MILESTONES.findIndex((m) => m.id === id) + 1).map((m) => m.id);
+    const only = (...ids: TipId[]) => tipFor(g, (id) => !ids.includes(id));
+    // Village just reached: the power plant comes before the mines it runs, as the goal's banner says
+    g.progress.done = upTo("village");
+    expect(g.placedUnlocked("coalplant")).toBe(true);
+    const first = only("power", "deposits")!;
+    expect(first.id).toBe("power");
+    expect(first.html).toMatch(/^<b>Build a Power plant first\.<\/b>/);
+    // with that one out of the way (dismissed, or built): the coal mine's ground, the first of the mines to build
+    const dep = only("deposits")!;
+    expect(dep.html).toMatch(/^<b>The coal mine goes on /);
+    // two goals on, those mines are old news: the tip does not nag about them
+    const i = MILESTONES.findIndex((m) => m.id === "village");
+    g.progress.done = [...upTo("village"), ...MILESTONES.slice(i + 1, i + 1 + DEPOSIT_GOALS).map((m) => m.id)];
+    expect(only("deposits")?.html ?? "").not.toMatch(/coal mine/);
+    expect(only("power")).toBeNull();
+    // every goal reached: no deposit tip at all (it asked for an oil well at 20 of 20)
+    g.progress.done = MILESTONES.map((m) => m.id);
+    expect(only("deposits")).toBeNull();
+    expect(only("power")).toBeNull();
   });
 
   it("points out a town that sprang up with no road to it, and drops it once a road joins it", () => {

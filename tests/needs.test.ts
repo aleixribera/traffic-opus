@@ -5,10 +5,11 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { Game } from "../src/game/city";
 import type { Town } from "../src/game/settlements";
-import { demandPerDay, growthPerDay, needsOf } from "../src/game/towns";
+import { SUPPLY_WARMUP, averageSupply, demandPerDay, growthPerDay, needsOf } from "../src/game/towns";
 import type { Product } from "../src/game/industry";
+import { deliveredLately } from "../src/game/supply";
 import { townModel } from "../src/ui/inspect";
-import { ENOUGH, MAX_CRATES, comingNeeds, growthOf, labelNeeds, loadsLately, loadsPerCrate, needState, needView, townNeeds } from "../src/ui/needs";
+import { ENOUGH, MAX_CRATES, comingNeeds, growthOf, labelNeeds, loadsLately, loadsPerCrate, needState, needView, sinceFirstLoad, townNeeds } from "../src/ui/needs";
 
 let g: Game, t: Town;
 
@@ -100,9 +101,47 @@ describe("a town's needs, read out", () => {
 
   it("a load shows the moment it lands, not an hour later", () => {
     feed(0);
+    expect(loadsLately(t, "food")).toBe(0);
+    t.hourNow = { food: 1 };
+    // (the first load of a new supply: read over the warm-up, the way the town's growth reads it)
+    expect(loadsLately(t, "food")).toBeCloseTo(24 / SUPPLY_WARMUP);
+    // into a steady supply, the load under way shows at once too
+    feed(2.4);
     const was = loadsLately(t, "food");
     t.hourNow = { food: 1 };
-    expect(loadsLately(t, "food")).toBeCloseTo(was + 1);
+    expect(loadsLately(t, "food")).toBeGreaterThan(was + 0.8);
+  });
+
+  it("a young supply reads as the town's growth reads it: over the hours since its first load", () => {
+    // a Food Plant opened five hours ago and lands a load an hour: 24 a day, against the 5 this hamlet wants
+    const young = [...Array.from({ length: 19 }, () => ({})), ...Array.from({ length: 5 }, () => ({ food: 1 }))];
+    t.hours = young;
+    t.hourNow = {};
+    // (the sim's own average, towns.ts averageSupply: 5 loads over the warm-up's 8 hours)
+    expect(averageSupply(young).food).toBeCloseTo((5 * 24) / SUPPLY_WARMUP);
+    expect(sinceFirstLoad(t, "food")).toBeCloseTo(averageSupply(young).food!);
+    expect(loadsLately(t, "food")).toBeCloseTo(averageSupply(young).food!);
+    // (spread over the whole day gone by it read 5 a day or less: "Running low" under a town "Growing fast")
+    expect(needView(t, "food").state).toBe("plenty");
+    // the very first load: read over the warm-up, as the sim reads it
+    t.hours = Array.from({ length: 24 }, () => ({}));
+    t.hourNow = { food: 1 };
+    expect(loadsLately(t, "food")).toBeCloseTo(24 / SUPPLY_WARMUP);
+    // a supply a day old or more reads as what landed in the day
+    feed(6);
+    expect(sinceFirstLoad(t, "food")).toBeCloseTo(6, 0);
+    expect(loadsLately(t, "food")).toBeCloseTo(6, 0);
+    // one that stopped a day ago still reads as its growth reads it: 12 loads over the 30 hours since the first
+    const stopped = [...Array.from({ length: 6 }, () => ({ food: 2 })), ...Array.from({ length: 24 }, () => ({}))];
+    t.hours = stopped;
+    t.hourNow = {};
+    expect(sinceFirstLoad(t, "food")).toBeCloseTo((12 * 24) / 31);
+    expect(sinceFirstLoad(t, "food")).toBeCloseTo((averageSupply(stopped).food! * 30) / 31);
+    expect(loadsLately(t, "food")).toBeGreaterThanOrEqual(deliveredLately(t, "food"));
+    // and a supply two days old with gaps in it is no young supply: the whole two days count (a dip must show)
+    t.hours = Array.from({ length: 48 }, (_, i) => (i === 0 || i === 20 || i === 40 ? { food: 2 } : {}));
+    expect(sinceFirstLoad(t, "food")).toBeCloseTo((6 * 24) / 49);
+    expect(loadsLately(t, "food")).toBeCloseTo(Math.max(deliveredLately(t, "food"), (6 * 24) / 49));
   });
 
   it("a big town's need: the crates stand for several loads each, and the empty ones still add up to what to bring", () => {
@@ -175,6 +214,11 @@ describe("a town's needs, read out", () => {
     }
     // two short: both named
     expect(at(400, { food: 0.3, planks: 0 }, 0).why).toBe("needs food and planks");
+    // still growing on the days behind it while a need has run short over the last one: the line says both, never
+    // "Growing fast" over a row that reads "Running low" (owner, 2026-11-10)
+    expect(at(400, { food: 0.6 }, 1)).toEqual({ word: "Growing", tone: "", why: "but food is running low" });
+    expect(at(400, { food: 0.6, planks: 0.5 }, 0.8).why).toBe("but food and planks are running low");
+    expect(townModel(g, t).status.text).toBe("Growing, but food and planks are running low");
     // none at all: it loses households
     expect(at(400, { food: 0 }, -0.1)).toEqual({ word: "Shrinking", tone: "bad", why: "needs food" });
     // a landmark's boost on top still reads "fast"; a settlement just settles

@@ -13,12 +13,13 @@ import type { V2 } from "../src/core/math";
 import type { Building } from "../src/game/buildings";
 import {
   GROUND_HILLS, GROUND_WATER, STUCK_NEAR, TradeLedger, WORK_LINE, approaches, congestion, extractorFor, fmtNum, fmtRate, groundAt,
-  groundModel, homeModel, junctionModel, metresLeft, modelOf, patchAt, rateLately, roadModel, routeLine, routesThrough, siteModel,
+  groundModel, homeModel, junctionModel, metresLeft, modelOf, patchAt, roadModel, routeLine, routesThrough, siteModel,
   splitProblem, stuckAt, stuckModel, townModel, townStatus, trucksOut, vehicleModel, vehiclesOnSeg, waitTone, type Sel,
 } from "../src/ui/inspect";
 import { dkDir, dkSeg } from "../src/sim/router";
 import { junctionAt, pickAt, pickRadius, poseOf, vehicleAt } from "../src/ui/pick";
 import { placeAlong, road } from "./helpers";
+import { shownRate } from "../src/ui/bottleneck";
 
 const compass = () => "N";
 
@@ -61,8 +62,11 @@ describe("The inspector's panels", () => {
     const m = siteModel(g, farm, led);
     expect(m.keys).toHaveLength(3);
     // (its pace now, the season's swing included: a farm in autumn can make more than its year-round pace)
-    const r = rateLately(farm, "crops"), can = (Industry.perDay(farm, "crops") / 24) * seasonMult("farm", g.time);
+    // (one source with its status and the town's advice, and never above what it can make)
+    const { rate: r, can } = shownRate(g, farm, "crops");
+    expect(can).toBeCloseTo((Industry.perDay(farm, "crops") / 24) * seasonMult("farm", g.time));
     expect(r).not.toBeNull();
+    expect(r!).toBeLessThanOrEqual(can + 1e-9);
     expect(m.keys[0]).toMatchObject({ value: fmtRate(r!), unit: "/h", label: `crops, can ${fmtRate(can)}` });
     // crops only feed your own plants: no price, so it shows what it shipped, not a "profit" that's only costs
     expect(m.keys[1].label).toMatch(/shipped, last hour$/);
