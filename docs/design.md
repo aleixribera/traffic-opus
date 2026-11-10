@@ -905,14 +905,14 @@ no longer applies; it names a town only when that town is the one that needs it 
 |---|---|
 | Start a food chain | no farm placed. Worded for the map: place one on soil within reach of a road, or, when no fertile soil lies near any road, lay a road out to some first. Names the biggest reachable town that wants food. |
 | No road reaches your site | a site's roads reach no town and no other site (placed out past where its gate street reaches) |
-| Build a Food plant | a farm and no food plant |
+| Build a Food Plant | a farm and no food plant |
 | Nobody to sell to | a built plant whose roads reach no buyer |
 | Traffic is stuck | four or more vehicles stand together (the Traffic stuck sign is up). It says more works will not help till it moves, and names the three ways out: a turn lane, lights, a second road. While it shows, no later tip does. |
 | A works is at full output | a works is flat out and a town still asks for more of what it makes, or (a step up the chain) the works that feeds the town's supplier is flat out. Says what to build. |
-| Planks | no sawmill, and a town is at 60% of the size that wants planks (names it, "will want" or "wants now") |
+| Planks | no sawmill, the first food has landed (one chain at a time), and a town is at 60% of the size that wants planks (names it, "will want" or "wants now") |
 | A new town has no road | a town that sprang up isn't joined by road to another town or to a works that makes something it buys (a stub of road out of it, or a logging camp at its edge, is not a road to it) |
 | A site waits for something | a building site needs a product none of the company's plants makes |
-| Where a deposit lies | a mined kind is unlocked and none placed: the nearest deposit's distance and direction |
+| Where a deposit lies | a mined kind is unlocked by one of the last two goals reached and none placed: the nearest deposit's distance and direction, in the order to build them (the power plant first). None once every goal is reached |
 | Power | a built plant draws power and no power plant is placed |
 | Construction parts | the construction plant is unlocked, none placed, and a town's new blocks wait for parts |
 | Fresh milk | the dairy farm is unlocked and none placed |
@@ -921,7 +921,8 @@ no longer applies; it names a town only when that town is the one that needs it 
 Cut: the "keep the town fed" filler, and the "build X next" tips for each later plant (the goals card's unlock
 line already says what opened). Each tip has a dismiss button; the pause menu's Tips switch turns them all off,
 and turning it back on brings every dismissed tip back. Both are kept per browser (`flowtown.tips.off`,
-`flowtown.tips.dismissed`). The category button a tip points at gets a still marker, no pulse.
+`flowtown.tips.dismissed`). The category button a tip points at gets a still marker, no pulse. A tip that says to
+take a works in hand steps aside while that works is in hand: the tool options say how to place it.
 
 ## Reading the game (play-test 2026-11-09)
 
@@ -932,22 +933,52 @@ The play-test's finding was that the game knew what was wrong and did not say it
 
 | Line | When | It says |
 |---|---|---|
-| Building site / Under construction | not open yet | loads still to come, hours to go at the pace they arrive, where the next comes from |
+| Building site / Under construction | not open yet | loads still to come, hours to go at the pace they arrive, where the next comes from. With no road to its gate that comes first, in red: nothing can come till it has one |
 | Starting up | open, waiting for an input, has made nothing yet | where the first load comes from and when. Not trouble: no mark on the map |
-| Waiting for X | short of an input | the works that sends it and when; if that one is flat out, "Build another". With the loads stuck in traffic it says to clear the jam and never to build |
+| Waiting for X | short of an input | the works that sends it and when; if that one is flat out, "Build another". With the loads stuck in traffic it says to clear the jam and never to build. A sender short of power "works at 40%, so its loads come slowly". A power plant whose coal mine waits on its own power names the wood chips that get both going |
+| No power / Short of power | it draws power and gets too little | where its power would come from, in this order: the plant in reach that is out of coal (and where its next coal is), the plant in reach that cannot power everything, the plant going up, the plant too far or on other roads, else build one within its reach on its roads. Show it goes to that plant. "Power back on" when power came back since the sim's hourly line |
 | No buyer for X yet | nobody on its roads buys what it makes | the town that will and from how many people ("Towns buy planks from 100 people. Alder Run has 77") |
-| At full output | flat out while a town or one of the company's works would take more | who would take more, and the two ways out: build another, or wait for the next level |
+| At full output | flat out while a town or one of the company's works would take more | who would take more, and the two ways out: build another, or wait for the next level. A power plant whose reach wants more than it makes says so in MW |
 | Working normally | none of the above | |
 
 "Waiting for X" is read steadily (under its pace with an empty yard), not from the sim's own line, which comes and
-goes with every load that lands. The panel, the mark on the map, the Economy rows and the town's advice all go by
+goes with every load that lands. "Starting up" ends a day after opening, whatever holds it. The figure in the panel
+("0.4/h, can 0.4") is the same pace the status goes by, never above what it can make, never the good green under
+a red status, and never "all it can" for a works short of power. The panel, the mark on the map, the Economy rows and the town's advice all go by
 the same reading. A works is flat out only from 60% of what it can make over its last hours, so one early batch
 does not count.
 
 **A town's need** says how much is missing and then what to do about it, with a Show it button to the works in
 question: nothing of yours makes it (build one), your works are at full output (build about N more), or one is
 held up (look at it). The advice goes a step up the chain when the works that feeds the town's supplier is the one
-flat out. A town no road reaches says only that.
+flat out. A new works starting up beside others flat out is counted in ("Build about 3 more. Your new Food Plant
+is starting up."); one in real trouble is named before one only starting up. A town no road reaches says only that.
+A town's panel says it once: one status line, one piece of advice with Show it, then the figures per need.
+
+**The goal line.** Under the goal being worked on, one line in the same voice as the panels: WHERE (the soil for the
+first farm, with its distance and direction) until there is a works to talk about, then NOW (the works the goal
+waits on and its status line, with when its first truck leaves). A click flies to it. The first ten game hours
+are quiet by design; the line counts them down, so the wait reads as a wait.
+
+**The first goal's pointer.** Until a farm is placed, a brass plate at the screen edge points at the fertile soil
+with its distance, at any turn and tilt, and flies there on a click; with the soil on screen it becomes a pin on
+it ("Place your farm here"). The camera is not opened further out to show it.
+
+**The gate mark.** A works being placed, and a selected works, show where the gate is and which way it faces:
+a ring at the gate, a stem out to a GATE plate, brass when a road joins it, red ("no road yet") when none does. A
+site with no road turns its gate to a road drawn to the back of its plot (the road tool says "its gate turns to
+this side"), and the mark follows.
+
+**One line at the pointer.** A tool says one thing by the cursor: whatever stops the click, else a warning, else
+the note that matters most (what the road joins beats its length), with the price beside it. The rest (length,
+climb, bridge, angle) sit still in the tool options card (src/ui/pointer.ts).
+
+**Town names at far zoom** do not heap up: the biggest keeps its plate in full, a smaller one is cut to its name,
+stacked just clear of what it hits, or left out till there is room (src/ui/labels.ts, declutter). Works plates
+keep clear of the names.
+
+**The catalog** fills its fixed width: up to four cards are wide plates with a sentence each, more share the row
+in equal columns, and a tab too long for a row splits into even rows (src/ui/catalog.ts).
 
 **A new town** reads "No road yet" on its label and panel, then "First load due" / "Joined by road" once a road
 joins it to somewhere a load can come from, until its first load lands.

@@ -1,0 +1,126 @@
+{
+  "lens": "hierarchy",
+  "findings": [
+    {
+      "screen": "late-works",
+      "viewport": "desktop",
+      "rule": "HUD-05",
+      "severity": "medium",
+      "title": "The loudest number on a stalled Iron Mine is a green 0.4/h that reads as healthy",
+      "detail": "Below the red 'No power' headline, the first and biggest figure in the panel is output in the same green the Power Plant uses for 'Working normally'. Its caption 'can 0.4' says the mine is at its limit, so a player who glances at the panel concludes the mine is fine. The red headline is 14 px; the green figure is 20 px and catches the eye first. The panel looks the same at wide and small.",
+      "evidence": "'0.4' 20px/600 rgb(147,201,122) at [1305,201,27,24]; caption 'iron ore, can 0.4' 12px; headline 'No power' 14px rgb(239,138,108) at [1321,69,58,17]; body says 'Working at 40%'. Power Plant DOM uses the same green for 'Working normally'.",
+      "fix": "Colour the output figure by state: red or amber when the works is held back. Change the caption to say what it could make with full power (e.g. '0.4/h, 1.0 with power') so the number shows the shortfall.",
+      "box": [1298, 195, 97, 68]
+    },
+    {
+      "screen": "late-economy",
+      "viewport": "desktop",
+      "rule": "NEW",
+      "severity": "medium",
+      "title": "The 'made / can make' bars don't show the ratio: every row looks nearly full",
+      "detail": "Idea: a meter beside a ratio must fill in proportion to that ratio. Each bar is a dark track with one or two thin coloured ticks at its right end, so Food 2/12, Crops 4/6 and Logs 2/3 look the same. Steel 0/4 and Cement 0/6 look only slightly emptier. The eye reads the bars before the small numbers and gets the wrong answer.",
+      "evidence": "Bars at x 260-330, rows y 324-605; Food '2 / 12' shows two orange ticks at x~322-330, Crops '4 / 6' the same ticks at the same spot, Steel '0 / 4' an empty track. Numbers 13px at x 384-415.",
+      "fix": "Fill each bar from the left to made/can make, in the resource colour. Draw the unused part as a dim track. If the ticks are an hourly sparkline, give them their own label or drop them from this list.",
+      "box": [258, 320, 160, 286]
+    },
+    {
+      "screen": "late-town",
+      "viewport": "desktop",
+      "rule": "NEW",
+      "severity": "medium",
+      "title": "The town's summary (size and needs met) sits below the panel's bottom edge",
+      "detail": "Idea: a panel's headline numbers come first. The only place the panel shows '1,620 people' and '0/5 needs met' as big 20 px figures is at the very bottom. It is clipped there, so the player sees five red 'None!' rows and never the totals that tie them together.",
+      "evidence": "DOM: '1,620' 20px at [1305,807,48,24], '0' '/5' 'needs met' at [1451,807..846]; the panel's visible bottom edge in the PNG is at y~800, so these runs are cut off.",
+      "fix": "Move the population and the 'needs met' stats up under the title, next to the 'Shrinking, short of 5 needs' headline, as the Iron Mine and Power Plant panels do with their stat rows.",
+      "box": [1300, 795, 280, 50]
+    },
+    {
+      "screen": "late-town",
+      "viewport": "desktop",
+      "rule": "NEW",
+      "severity": "medium",
+      "title": "Need meters look alike but use different scales, so 518 and 69 loads a day look the same size",
+      "detail": "Idea: meters stacked in one list share one scale, or are clearly not meant to be compared. Each crate is worth a different amount on each row (60, 30, 20, 8, 8 loads), so Food (518 a day) and Fuel (69 a day) both draw 9 empty crates. A player can't see which need is biggest, the thing they need to know to decide what to build first. The row of 9 to 10 dashed red boxes repeats five times and adds noise without adding information.",
+      "evidence": "Food: 9 crates, '1 crate = 60 loads', '0 of 518 loads a day'; Planks: 7 crates at 30; Cement: 7 at 20; Household goods: 9 at 8; Fuel: 9 at 8. The '1 crate = N loads' captions are 12px rgb(169,159,138).",
+      "fix": "Use one bar per need on a shared scale (or order rows by size and show the daily figure big on the right instead of 'None!'). Drop the per-row crate legend.",
+      "box": [1350, 228, 180, 382]
+    },
+    {
+      "screen": "fresh",
+      "viewport": "desktop",
+      "rule": "MENU-01",
+      "severity": "medium",
+      "title": "The how-to for the first move is the last block in a dense goals card, under two goals the player can't act on yet",
+      "detail": "A new player who reads the Goals card from the top meets 'Growing hamlet' and 'Village', with their UNLOCKS lists, at the same weight as the live goal. The instruction that says what to press ('Open Industry and place a Farm...') starts at y 429, under 340 px of 12-13 px text. The same stack shows at wide and small.",
+      "evidence": "Card [1291,11,298,527]; goals 2-3 occupy y 206-405 with 12px UNLOCKS lines; tip 'Start a food chain. Alder Run needs food. Open Industry and place a Farm...' 13px at [1307,429,230,91]. Text sizes in the card: 12, 13, 14 only.",
+      "fix": "Show only the active goal at full weight (title, WHERE, next step). Collapse the later goals to one 'Next: Growing hamlet 79/150' line each. Put the tip's action sentence straight under the WHERE line.",
+      "box": [1295, 200, 290, 325]
+    },
+    {
+      "screen": "drawing-road",
+      "viewport": "desktop",
+      "rule": "HUD-04",
+      "severity": "medium",
+      "title": "The road's length and cost readout is the smallest text on screen, about 750 px from the cursor",
+      "detail": "While dragging, the only figures that change are the length and the price, and they sit at the bottom of Tool options under the snapping checkboxes. They are smaller than the checkbox labels around them, so the player has to look away from the road to check what it will cost.",
+      "evidence": "'0 m' 13px/400 rgb(207,196,171) at [25,771,20,16]; '$0' 13px at [25,791,14,16]; drag point / 'Too short' hint at [846,494,215,16]; the snapping labels above are 13px in brighter cream.",
+      "fix": "Show length and cost in a small plate at the cursor end of the road (e.g. '420 m · $2,520', 14-16 px, tabular). Keep the Tool options total as the secondary copy.",
+      "box": [20, 765, 60, 45]
+    },
+    {
+      "screen": "farm-in-hand",
+      "viewport": "desktop",
+      "rule": "HUD-02",
+      "severity": "medium",
+      "title": "The farm's two placement rules are in opposite corners, and the tip still says to open Industry",
+      "detail": "With a Farm in hand, the soil rule ('fertile soil under at least 35% of its plot') is in Tool options at bottom left. The road rule ('within 400 m of a road') is only in the Goals tip at top right, which still begins 'Open Industry and place a Farm'. The player has to piece the rules together from two places, and one of the two still describes a step they have already taken. Same at small.",
+      "evidence": "Tool options text 13px at [25,730,192,57]; tip 13px at [1307,429,230,91]; IN HAND strip [341,748,918,36] shows only 'Farm · Fertile soil → crops · $8,000 · $12/h'. None of the four category tabs is highlighted (all rgb(207,196,171)).",
+      "fix": "Put both rules in the IN HAND strip next to the item ('Needs: 35% fertile soil · road within 400 m'). Hide or rewrite the tip once a Farm is in hand.",
+      "box": [12, 683, 245, 142]
+    },
+    {
+      "screen": "drawing-road",
+      "viewport": "desktop",
+      "rule": "HUD-01",
+      "severity": "low",
+      "title": "Road catalog cards with paragraph descriptions cover the lower middle of the map while drawing",
+      "detail": "The four road cards stay fully open as the player drags, with 3 to 7 line descriptions, and cover about a third of the map's height just below where the road is going. The IN HAND strip under them already names the chosen road.",
+      "evidence": "Catalog block [341,525,919,300]; 'Dirt road' description 13px, 7 lines at [364,594,194,107]; the road being drawn and the Alder Run label sit at y 270-500, just above.",
+      "fix": "Collapse the cards to their title and price row once the player starts a drag, or once a road is in hand. Keep the full descriptions on hover.",
+      "box": [341, 525, 919, 300]
+    },
+    {
+      "screen": "late",
+      "viewport": "desktop",
+      "rule": "TYP-04",
+      "severity": "low",
+      "title": "Late Goals card is a wall of grey prose; the action is the last clause of each paragraph",
+      "detail": "Each demand row is 3 to 5 lines of 13 px grey text. The useful verb ('Build another', 'Build about 43 more') comes at the end, after 'Quimbyton and 2 more towns.' is repeated three times. With nothing to set it apart, the player has to read every paragraph to find what to do.",
+      "evidence": "Paragraphs 13px/400 rgb(207,196,171) at [1305,130,268,52], [1305,224,251,52], [1305,319,264,71]; each starts 'Quimbyton and 2 more towns.'",
+      "fix": "Split each row into a one-line state ('Food Plant at full output') and an action line in cream or bold ('Build about 43 more'). Move the shared 'Quimbyton and 2 more towns' up into the card intro.",
+      "box": [1297, 100, 285, 295]
+    },
+    {
+      "screen": "late-far",
+      "viewport": "desktop",
+      "rule": "NEW",
+      "severity": "low",
+      "title": "At far zoom Quimbyton's five need icons overlap each other and their alarm badges",
+      "detail": "Idea: decluttering should cover marker rows as well as labels. The needs row is wider than the label plate, so the circles overlap and every red '!' badge sits on the next icon. The five needs become one red smear that can't be read at this zoom. The same happens at wide.",
+      "evidence": "Icon row ~[728,498,122,30] under the 'Town · 1,620' plate [745,487,84,14]; in the 3x crop each circle covers about a quarter of its neighbour, and the badges sit on the joins.",
+      "fix": "At far zoom, show one summary badge ('5 short') instead of the per-need row, or space the circles so they don't touch.",
+      "box": [726, 496, 126, 34]
+    },
+    {
+      "screen": "late-economy",
+      "viewport": "desktop",
+      "rule": "TYP-02",
+      "severity": "low",
+      "title": "The money section has no section heading, and its Balance total is the same size as its line items",
+      "detail": "The other two sections open with brass uppercase headings ('MADE, LAST 24 HOURS', 'YOUR WORKS, LAST HOUR'). The money block opens with 'Last hour' in plain 13 px grey body text, so it doesn't read as a section. Its result line, Balance −$963, differs from the rows above it only by bold weight.",
+      "evidence": "'Last hour' 13px/400 rgb(207,196,171) at [25,125,53,16] vs section heads 12px/600 rgb(240,194,90) uppercase at [25,297] and [25,627]; 'Balance' and '−$963' 13px/700 at y 264, the line items 13px/500.",
+      "fix": "Give the block a heading in the same style ('MONEY, LAST HOUR'). Show the balance at the stat size used elsewhere (20 px) above or beside the breakdown.",
+      "box": [20, 120, 400, 165]
+    }
+  ]
+}

@@ -1,0 +1,137 @@
+{
+  "lens": "first-time",
+  "findings": [
+    {
+      "screen": "late-economy",
+      "viewport": "desktop",
+      "rule": "NEW",
+      "severity": "high",
+      "title": "Advice says plants are 'at full output' while the Economy window beside it shows them far below what they can make",
+      "detail": "NEW: status, advice and figures must agree. With the Economy window open next to the Goals card, a player reads 'Your Food Plant is at full output' and, 1,000 px to the left, 'Food 2 / 12' under 'made / can make'. They can't tell which one is true, so they don't know whether to build another plant or fix supply to the one they have. The same thing happens on the Planks line ('Your Logging Camp is at full output') against 'Logs 2 / 3', and the town panel (late-town) repeats the 'at full output' sentence.",
+      "evidence": "Goals card [1305,130,268,52]: 'Your Food Plant is at full output. Build about 43 more.' Economy rows: 'Food 2 / 12' [47,324,368,16], 'Logs 2 / 3' [47,377,368,16], header 'Made, last 24 hours · made / can make'.",
+      "fix": "Generate the 'at full output' clause from the same made/can-make figure the Economy window shows, and say it only when made >= ~90% of can-make. Otherwise name the actual shortfall, e.g. 'Your Food Plant made 2 of 12: short of crops'.",
+      "box": [1305, 130, 268, 52]
+    },
+    {
+      "screen": "late",
+      "viewport": "desktop",
+      "rule": "NEW",
+      "severity": "high",
+      "title": "The demand headline and the 'build about 43 more' advice under it are worked out for different towns",
+      "detail": "NEW: a figure and its advice must come from one calculation. The Food line totals 'Quimbyton and 2 more towns' at 1,055 more loads a day, but 'Build about 43 more' is Quimbyton's own number: the town panel shows the same 43 against that town's 518 loads a day. A player who trusts the advice builds about half of what the headline asks for and can't see why the gap stays open. 'Build another' on the Planks line doesn't say another what.",
+      "evidence": "Goals card: 'Food 1,055 more loads a day' / 'Quimbyton and 2 more towns ... Build about 43 more.' late-town panel: '0 of 518 loads a day' and the same 'Build about 43 more'. 518/12 is about 43, while 1,055/12 is about 88. Planks line: 'Your Logging Camp is at full output. Build another.'",
+      "fix": "Work out the build count from the same total the headline shows (or scope the headline to Quimbyton too), and always name the building: 'Build about 88 more Food Plants' / 'Build another Logging Camp'.",
+      "box": [1305, 109, 270, 73]
+    },
+    {
+      "screen": "late-powerplant",
+      "viewport": "desktop",
+      "rule": "NEW",
+      "severity": "high",
+      "title": "The power plant and its coal mine are waiting on each other, and the advice names no way out",
+      "detail": "NEW: when the cause is a loop, the advice has to name the step that breaks it. The plant waits for coal, and its own advice says the coal mine 290 m away 'works at 40% without full power', which is power this plant would make. The Economy list shows the other fuel (wood chips) blocked as well ('Sawmill · Waiting for logs'). A new player reads three true sentences and still has nothing to build or fix. The headline also seems to flip: the DOM sample from this same capture reads 'Working normally · 40 / 40 MW', while the screenshot shows 'Waiting for coal or wood chips · 0 MW'.",
+      "evidence": "Screenshot: 'Waiting for coal or wood chips', 'Your Coal Mine (290 m) sends the next coal: about 4 hours. It works at 40% without full power, so its loads come slowly.', '0 MW made, of 40', '4 buildings in reach, unpowered', '1 /8 coal in the yard'. DOM sample of the same shot: 'Working normally', 'Making 40 / 40 MW'. late-economy: 'Coal Mine · No power', 'Sawmill · Waiting for logs'.",
+      "fix": "Detect the power/coal loop and give one action, e.g. 'Coal Mine and this plant need each other: give the mine power from another plant, or feed wood chips (needs logs at your Sawmill)'. Smooth the status so it doesn't switch between 'Working normally' and 'Waiting' from one coal load to the next, and say why 1 coal in the yard isn't burning.",
+      "box": [1300, 68, 280, 170]
+    },
+    {
+      "screen": "farm-no-road",
+      "viewport": "desktop",
+      "rule": "ONB-02",
+      "severity": "high",
+      "title": "After the first farm goes down, the goal and the next step disappear, and 'crops' never connects to the 'food' the goal asks for",
+      "detail": "The works panel takes the Goals card's place and the tip goes with it. All that is left is a farm that makes 'crops' and opens in 3 hours, with no 'To' row. The first goal says 'Deliver your first load of food to a town', and the Economy window later lists Crops and Food as separate goods, so a first-timer can't tell whether the farm alone meets the goal or what to build or connect next.",
+      "evidence": "Panel: 'Farm Lv 1/4', 'Under construction · 0%', 'Opens in about 3 hours. Its first load of crops follows about 2 hours later.', 'From Fertile soil 100%'. No 'To' row and no goal line on screen. Goal elsewhere: 'Deliver your first load of food to a town'. Economy rows 'Food' and 'Crops' are listed separately.",
+      "fix": "Keep a one-line goal strip (NOW/WHERE) visible while a works panel is open, and give the farm panel a 'To' / next-step line that says where its crops go and whether they count as food for Alder Run (e.g. 'Crops go to Alder Run as food: a road links them' or 'Next: a Food Plant turns crops into food').",
+      "box": [1291, 11, 298, 218]
+    },
+    {
+      "screen": "late-works",
+      "viewport": "desktop",
+      "rule": "COL-03",
+      "severity": "medium",
+      "title": "A green 'at capacity' output figure sits under a red 'No power, working at 40%' status",
+      "detail": "The headline figure '0.4/h iron ore, can 0.4' is green and reads as 'making everything it can', right under red text saying the mine is crippled. The same state also gets three names: 'No power', 'held back: Short of power' and 'Power none · working at 40%'. A player can't tell how bad it is or what full output would be. Wide and small show the same thing.",
+      "evidence": "Status (red): 'No power', 'Working at 40%.' Figure (green): '0.4 /h iron ore, can 0.4' [1305,201,90,40]. Level bar: 'held back: Short of power'. Details: 'Power none · working at 40%'.",
+      "fix": "Show 'can' as the full-power figure (e.g. '0.4/h of 1.0'), colour the figure in the warning tone while held back, and use one phrase for the state everywhere ('No power').",
+      "box": [1305, 201, 90, 40]
+    },
+    {
+      "screen": "drawing-road",
+      "viewport": "desktop",
+      "rule": "FB-01",
+      "severity": "medium",
+      "title": "A long dark line from the town reads as the road being drawn, but the readout says 0 m and 'Too short'",
+      "detail": "With Street in hand, a dark line runs from Alder Run toward the soil pin. It looks just like a road preview, yet the red pill says 'Too short: drag further from the start' and Tool options shows '0 m · $0'. A first-timer can't tell the guide line from their own road and doesn't know where the start of the drag is. Meanwhile the tip and pin still say to place a farm, which is a different tool from the one in hand.",
+      "evidence": "Line from about (720,275) to the town at (790,440). Pill 'Too short: drag further from the start' [846,494,215,16]. Readout '0 m' [25,771,20,16], '$0' [25,791,14,16]. Pin: 'Fertile soil · Place your farm here'. Tip: 'Open Industry and place a Farm...'.",
+      "fix": "Draw the goal pointer in a style no road uses (dashed brass, with an arrowhead at the soil end) and hide it while the road tool is dragging. Mark the drag's start point and show the live length next to the cursor ('12 m: drag at least 30 m').",
+      "box": [715, 270, 355, 246]
+    },
+    {
+      "screen": "fresh",
+      "viewport": "desktop",
+      "rule": "ONB-02",
+      "severity": "medium",
+      "title": "The first goal is given as '700 m north' on a rotated map with no compass",
+      "detail": "The WHERE line says the soil lies '700 m north of Alder Run', but the town's grid is turned about 30° and nothing on screen marks north. The pointer chip's icon is a mouse-cursor glyph pointing up-left, which reads as 'click here' rather than a heading. A new player doesn't know which way to pan, or that clicking the chip may take them there. The same happens on wide and small.",
+      "evidence": "WHERE [1368,120,196,34]: 'Fertile soil for your farm lies 700 m north of Alder Run.' Chip [527,90,210,64]: 'First goal 700 m Fertile soil' with a cursor-arrow icon. No compass anywhere in the HUD.",
+      "fix": "Use a true direction arrow on the chip, rotated to the screen bearing, and add 'click to go there' to it. Add a small north mark near the top-bar map buttons, or phrase WHERE relative to the screen ('up and left of Alder Run').",
+      "box": [527, 90, 210, 64]
+    },
+    {
+      "screen": "late-economy",
+      "viewport": "desktop",
+      "rule": "NEW",
+      "severity": "medium",
+      "title": "The Economy works list is cut off at the panel edge with no sign that it scrolls",
+      "detail": "NEW: clipped content needs a visible scroll cue. 'Your works, last hour' is the list a player opens Economy for ('click one to go there'), but the Power Plant row is sliced through its status line and the Coal Mine row, which also has 'No power', can't be seen at all. There is no scrollbar or fade to suggest more below. The town panel (late-town) does the same thing: its 'From Food Plant 2.6 km' row sits under the bottom bar.",
+      "evidence": "Panel ends at y about 808. DOM rows: 'Power Plant' at y 786 with 'Waiting for coal or wood chips' at y 822 (clipped), 'Coal Mine / No power' at y 851-887 (hidden). late-town: 'From Food Plant 2.6 km' at y 867-899, behind the bottom bar.",
+      "fix": "Put problem works first and cap the list with a visible '+2 more' or scroll fade. Or shorten the 'Made, last 24 hours' block so all works fit above the bottom bar at 900 px tall.",
+      "box": [11, 780, 418, 30]
+    },
+    {
+      "screen": "late-town",
+      "viewport": "desktop",
+      "rule": "ONB-03",
+      "severity": "medium",
+      "title": "Four unexplained units for the same goods: crates, loads a day, made/can-make, more loads a day",
+      "detail": "The town panel shows empty crate boxes captioned '1 crate = 60 loads' over '0 of 518 loads a day'. The Goals card asks for '1,055 more loads a day', and Economy counts 'Food 2 / 12' with no unit at all. A first-timer can't relate 12 food made to 518 loads wanted, so they can't judge how big the gap is or whether one more plant matters.",
+      "evidence": "Town: '1 crate = 60 loads', '0 of 518 loads a day', 10 empty crate squares. Goals: '1,055 more loads a day'. Economy: 'Food 2 / 12' (made / can make, last 24 hours).",
+      "fix": "Pick one unit (loads a day) and use it in all three places, including 'made 2 of 12 loads a day' in Economy. Either drop the crate boxes or label them once ('each box = 60 loads a day').",
+      "box": [1351, 209, 224, 80]
+    },
+    {
+      "screen": "farm-in-hand",
+      "viewport": "desktop",
+      "rule": "ONB-03",
+      "severity": "low",
+      "title": "'$12/h' on the Farm card doesn't say whether it is income or upkeep",
+      "detail": "The in-hand card reads '$8,000 · $12/h' with no sign or word. Everywhere else, costs carry a minus ('−$963/h', '−$47'), so a new player may read this as 'the farm earns $12 an hour' when it is most likely running cost.",
+      "evidence": "'Fertile soil → crops | $8,000 · $12/h' [399,758,207,16]. Bottom bar: '−$963/h'. Economy: 'Plant upkeep −$502'.",
+      "fix": "Write 'Builds for $8,000 · upkeep $12/h', or use '−$12/h' to match the rest of the UI.",
+      "box": [527, 758, 79, 16]
+    },
+    {
+      "screen": "farm-in-hand",
+      "viewport": "desktop",
+      "rule": "ONB-01",
+      "severity": "low",
+      "title": "The rotate keys show as specks: ',' and '.' inside tiny keycaps",
+      "detail": "Tool options teaches rotation with two keycaps holding a comma and a full stop. The glyphs are 3 px wide, so at a glance the line reads 'Turn it with [ ] and [ ] or Shift + wheel'.",
+      "evidence": "DOM: ',' box [98,733,3,14] and '.' box [141,733,3,14] at 12 px, inside keycaps about 16 px wide.",
+      "fix": "Write the key names ('Turn it with Comma / Period or Shift + wheel'), or set the keycap glyphs at 16 px+ with wider caps.",
+      "box": [88, 729, 64, 22]
+    },
+    {
+      "screen": "fresh",
+      "viewport": "desktop",
+      "rule": "ONB-03",
+      "severity": "low",
+      "title": "Seven top-bar icons and the 'Tuning in' widget have no visible labels",
+      "detail": "The bottom bar labels every tool, but the top bar is a row of unlabeled icons (layers, flag, coins, house, car, camera, map), whose names live only in tooltips. 'Tuning in' with a padlock-like icon next to the clock reads like a status warning, not a radio.",
+      "evidence": "Controls [302..566,15,36,36]: aria labels 'Info views', 'Progression (P)', 'Economy (Z)', 'Towns (C)', 'Transportation overview (X)', 'Camera...', 'Map view', none shown as text. 'Tuning in' [1131,862,52,14] next to the 'Wireless' button [1088,853,32,32].",
+      "fix": "Show short labels under or beside the top-bar icons (as the bottom bar does), or at least for the first sessions. Rename the radio readout to 'Radio: tuning in' and give it a radio icon.",
+      "box": [302, 15, 264, 36]
+    }
+  ]
+}

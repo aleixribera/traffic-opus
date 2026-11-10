@@ -1,0 +1,804 @@
+{
+ "project": "kilometre-zero (interface readout branch)",
+ "date": "2026-11-10",
+ "commit": null,
+ "dirty": null,
+ "findings": [
+  {
+   "id": "F01",
+   "screen": "farm-no-road",
+   "viewport": "desktop",
+   "rule": "ONB-02",
+   "severity": "high",
+   "lenses": [
+    "first-time",
+    "hud"
+   ],
+   "title": "After the first farm goes down, the goal and the next step disappear, and 'crops' never connects to the 'food' the goal asks for",
+   "detail": "The works panel takes the Goals card's place and the tip goes with it. All that is left is a farm that makes 'crops' and opens in 3 hours, with no 'To' row. The first goal says 'Deliver your first load of food to a town', and the Economy window later lists Crops and Food as separate goods, so a first-timer can't tell whether the farm alone meets the goal or what to build or connect next.",
+   "fix": "Keep a one-line goal strip (NOW/WHERE) visible while a works panel is open, and give the farm panel a 'To' / next-step line that says where its crops go and whether they count as food for Alder Run (e.g. 'Crops go to Alder Run as food: a road links them' or 'Next: a Food Plant turns crops into food').",
+   "evidence": "Panel: 'Farm Lv 1/4', 'Under construction · 0%', 'Opens in about 3 hours. Its first load of crops follows about 2 hours later.', 'From Fertile soil 100%'. No 'To' row and no goal line on screen. Goal elsewhere: 'Deliver your first load of food to a town'. Economy rows 'Food' and 'Crops' are listed separately. · fresh: Goals card at [1290,10,300,530]. farm-no-road: Farm panel at [1290,10,300,218], with no Goals text in the DOM; the only goal text is 'Goals 0' 'of 20' 'None reached yet' at [21,847].",
+   "box": [
+    1291,
+    11,
+    298,
+    218
+   ],
+   "alsoNoted": [
+    "hud: Opening any works or town panel removes the Goals card and its NOW/WHERE line"
+   ]
+  },
+  {
+   "id": "F04",
+   "screen": "late-powerplant",
+   "viewport": "desktop",
+   "rule": "NEW",
+   "severity": "high",
+   "lenses": [
+    "first-time",
+    "hud"
+   ],
+   "title": "The power plant and its coal mine are waiting on each other, and the advice names no way out",
+   "detail": "NEW: when the cause is a loop, the advice has to name the step that breaks it. The plant waits for coal, and its own advice says the coal mine 290 m away 'works at 40% without full power', which is power this plant would make. The Economy list shows the other fuel (wood chips) blocked as well ('Sawmill · Waiting for logs'). A new player reads three true sentences and still has nothing to build or fix. The headline also seems to flip: the DOM sample from this same capture reads 'Working normally · 40 / 40 MW', while the screenshot shows 'Waiting for coal or wood chips · 0 MW'.",
+   "fix": "Detect the power/coal loop and give one action, e.g. 'Coal Mine and this plant need each other: give the mine power from another plant, or feed wood chips (needs logs at your Sawmill)'. Smooth the status so it doesn't switch between 'Working normally' and 'Waiting' from one coal load to the next, and say why 1 coal in the yard isn't burning.",
+   "evidence": "Screenshot: 'Waiting for coal or wood chips', 'Your Coal Mine (290 m) sends the next coal: about 4 hours. It works at 40% without full power, so its loads come slowly.', '0 MW made, of 40', '4 buildings in reach, unpowered', '1 /8 coal in the yard'. DOM sample of the same shot: 'Working normally', 'Making 40 / 40 MW'. late-economy: 'Coal Mine · No power', 'Sawmill · Waiting for logs'. · PNG: 'Waiting for coal or wood chips', '0 MW made, of 40', '4 buildings in reach, unpowered', '1 /8 coal in the yard', '0% · then ×2 output'. DOM same capture: 'Working normally' (green 147,201,122), '40 MW made, of 40', '4 buildings powered', '1% · then ×2 output'.",
+   "box": [
+    1300,
+    68,
+    280,
+    170
+   ],
+   "alsoNoted": [
+    "hud: The Power Plant headline says it's waiting for coal while showing coal in the yard, and flips to 'Working normally' moments later"
+   ]
+  },
+  {
+   "id": "F05",
+   "screen": "late-town",
+   "viewport": "desktop",
+   "rule": "ONB-03",
+   "severity": "high",
+   "lenses": [
+    "first-time",
+    "hud"
+   ],
+   "title": "Four unexplained units for the same goods: crates, loads a day, made/can-make, more loads a day",
+   "detail": "The town panel shows empty crate boxes captioned '1 crate = 60 loads' over '0 of 518 loads a day'. The Goals card asks for '1,055 more loads a day', and Economy counts 'Food 2 / 12' with no unit at all. A first-timer can't relate 12 food made to 518 loads wanted, so they can't judge how big the gap is or whether one more plant matters.",
+   "fix": "Pick one unit (loads a day) and use it in all three places, including 'made 2 of 12 loads a day' in Economy. Either drop the crate boxes or label them once ('each box = 60 loads a day').",
+   "evidence": "Town: '1 crate = 60 loads', '0 of 518 loads a day', 10 empty crate squares. Goals: '1,055 more loads a day'. Economy: 'Food 2 / 12' (made / can make, last 24 hours). · Town: 'Food … 1 crate = 60 loads … 0 of 518 loads a day'. Goals card: 'Food 1,055 more loads a day … Build about 43 more'. Iron Mine: '1 load shipped, last hour'. Power Plant (DOM): 'Made 0 loads'. Economy: 'Food 2 / 12' under 'Made, last 24 hours'.",
+   "box": [
+    1351,
+    209,
+    224,
+    80
+   ],
+   "alsoNoted": [
+    "hud: \"Load\" means two different sizes, so demand can't be compared with production"
+   ]
+  },
+  {
+   "id": "F06",
+   "screen": "fresh",
+   "viewport": "desktop",
+   "rule": "HUD-04",
+   "severity": "medium",
+   "lenses": [
+    "hud"
+   ],
+   "title": "The first screen says the same instruction three times and buries it among future goals",
+   "detail": "A new player gets the edge pointer ('FIRST GOAL 700 m FERTILE SOIL'), the WHERE line ('…lies 700 m north of Alder Run') and the tip ('Open Industry and place a Farm on fertile soil within 400 m of a road'). These sit in a 300x530 px card that also lists two later goals with six-item unlock lists. The bottom bar repeats '0 of 20'. The one action, open Industry and place a Farm, is not the loudest thing on screen.",
+   "fix": "Show only the current goal expanded, with one NOW line ('Open Industry › Farm, place it on the yellow soil 700 m north'). Collapse the later goals to a single 'Next: Growing hamlet 79/150' row and fold the tip into the NOW line, or drop it.",
+   "evidence": "Goals card [1290,10,300,530] holds 3 goals and 3 UNLOCKS lines (e.g. 'Power Plant · Coal Mine · Iron Mine · Smelter · Heavy trucks · $80,000 grant'). The tip mixes '400 m of a road' with the '700 m' of the pointer and the WHERE line. The header '0 of 20 reached' duplicates the bottom-left 'GOALS 0 OF 20 None reached yet'.",
+   "box": [
+    1290,
+    10,
+    300,
+    530
+   ]
+  },
+  {
+   "id": "F07",
+   "screen": "fresh",
+   "viewport": "desktop",
+   "rule": "ONB-02",
+   "severity": "medium",
+   "lenses": [
+    "first-time"
+   ],
+   "title": "The first goal is given as '700 m north' on a rotated map with no compass",
+   "detail": "The WHERE line says the soil lies '700 m north of Alder Run', but the town's grid is turned about 30° and nothing on screen marks north. The pointer chip's icon is a mouse-cursor glyph pointing up-left, which reads as 'click here' rather than a heading. A new player doesn't know which way to pan, or that clicking the chip may take them there. The same happens on wide and small.",
+   "fix": "Use a true direction arrow on the chip, rotated to the screen bearing, and add 'click to go there' to it. Add a small north mark near the top-bar map buttons, or phrase WHERE relative to the screen ('up and left of Alder Run').",
+   "evidence": "WHERE [1368,120,196,34]: 'Fertile soil for your farm lies 700 m north of Alder Run.' Chip [527,90,210,64]: 'First goal 700 m Fertile soil' with a cursor-arrow icon. No compass anywhere in the HUD.",
+   "box": [
+    527,
+    90,
+    210,
+    64
+   ]
+  },
+  {
+   "id": "F08",
+   "screen": "fresh",
+   "viewport": "desktop",
+   "rule": "MENU-01",
+   "severity": "medium",
+   "lenses": [
+    "hierarchy"
+   ],
+   "title": "The how-to for the first move is the last block in a dense goals card, under two goals the player can't act on yet",
+   "detail": "A new player who reads the Goals card from the top meets 'Growing hamlet' and 'Village', with their UNLOCKS lists, at the same weight as the live goal. The instruction that says what to press ('Open Industry and place a Farm...') starts at y 429, under 340 px of 12-13 px text. The same stack shows at wide and small.",
+   "fix": "Show only the active goal at full weight (title, WHERE, next step). Collapse the later goals to one 'Next: Growing hamlet 79/150' line each. Put the tip's action sentence straight under the WHERE line.",
+   "evidence": "Card [1291,11,298,527]; goals 2-3 occupy y 206-405 with 12px UNLOCKS lines; tip 'Start a food chain. Alder Run needs food. Open Industry and place a Farm...' 13px at [1307,429,230,91]. Text sizes in the card: 12, 13, 14 only.",
+   "box": [
+    1295,
+    200,
+    290,
+    325
+   ]
+  },
+  {
+   "id": "F09",
+   "screen": "fresh",
+   "viewport": "desktop",
+   "rule": "TYP-04",
+   "severity": "medium",
+   "lenses": [
+    "rules"
+   ],
+   "title": "The first tip and other descriptions run to 3-5 sentences",
+   "detail": "The first thing a new player reads is a 45-word paragraph, and it repeats the WHERE line just above it. Works advice and road-card descriptions follow the same pattern: the Dirt road card has five sentences, and the Iron Mine advice has three.",
+   "fix": "Cut each tip and description to one short sentence and push the rest to Details or a tooltip. For example: 'Open Industry and place a Farm on the yellow soil.'",
+   "evidence": "Tip [1307,429,230,91]: \"Start a food chain. Alder Run needs food. Open Industry and place a Farm on fertile soil within 400 m of a road: the ground shows the soil while you place, and the farm lays its own street to the road.\" Dirt road card: \"Cheap and slow: packed earth at a quarter of a street's price. Houses can face it. Pave it later by drawing a Street over it. It stays on the ground: a bridge on it is built as a paved street.\"",
+   "box": [
+    1307,
+    429,
+    230,
+    91
+   ]
+  },
+  {
+   "id": "F10",
+   "screen": "farm-in-hand",
+   "viewport": "desktop",
+   "rule": "HUD-04",
+   "severity": "medium",
+   "lenses": [
+    "hud"
+   ],
+   "title": "The tip and WHERE line still give the step the player has just done",
+   "detail": "With Industry open, the Farm in hand and the soil pin on screen, the tip still says 'Open Industry and place a Farm on fertile soil…' and the Goals card still says the soil 'lies 700 m north of Alder Run'. The same stale text is on drawing-road. The instructions don't follow the player's progress, so they learn to ignore the card.",
+   "fix": "Make the NOW/WHERE line and tip follow the state: with a Farm in hand, 'Click on the yellow soil to place it (needs 35% soil under the plot)'; once it is placed, 'Farm opens in about 3 h, then trucks take crops to …'. Hide the tip once its action is done.",
+   "evidence": "farm-in-hand DOM: tip [1307,429,230,91] 'Start a food chain. Alder Run needs food. Open Industry and place a Farm on fertile soil within 400 m of a road…'; WHERE [1368,120] 'Fertile soil for your farm lies 700 m north of Alder Run.'; catalog strip 'Farm … IN HAND'.",
+   "box": [
+    1307,
+    429,
+    230,
+    91
+   ]
+  },
+  {
+   "id": "F11",
+   "screen": "farm-in-hand",
+   "viewport": "desktop",
+   "rule": "HUD-02",
+   "severity": "medium",
+   "lenses": [
+    "hierarchy"
+   ],
+   "title": "The farm's two placement rules are in opposite corners, and the tip still says to open Industry",
+   "detail": "With a Farm in hand, the soil rule ('fertile soil under at least 35% of its plot') is in Tool options at bottom left. The road rule ('within 400 m of a road') is only in the Goals tip at top right, which still begins 'Open Industry and place a Farm'. The player has to piece the rules together from two places, and one of the two still describes a step they have already taken. Same at small.",
+   "fix": "Put both rules in the IN HAND strip next to the item ('Needs: 35% fertile soil · road within 400 m'). Hide or rewrite the tip once a Farm is in hand.",
+   "evidence": "Tool options text 13px at [25,730,192,57]; tip 13px at [1307,429,230,91]; IN HAND strip [341,748,918,36] shows only 'Farm · Fertile soil → crops · $8,000 · $12/h'. None of the four category tabs is highlighted (all rgb(207,196,171)).",
+   "box": [
+    12,
+    683,
+    245,
+    142
+   ]
+  },
+  {
+   "id": "F13",
+   "screen": "drawing-road",
+   "viewport": "desktop",
+   "rule": "HUD-01",
+   "severity": "medium",
+   "lenses": [
+    "hierarchy",
+    "hud"
+   ],
+   "title": "Road catalog cards with paragraph descriptions cover the lower middle of the map while drawing",
+   "detail": "The four road cards stay fully open as the player drags, with 3 to 7 line descriptions, and cover about a third of the map's height just below where the road is going. The IN HAND strip under them already names the chosen road.",
+   "fix": "Collapse the cards to their title and price row once the player starts a drag, or once a road is in hand. Keep the full descriptions on hover.",
+   "evidence": "Catalog block [341,525,919,300]; 'Dirt road' description 13px, 7 lines at [364,594,194,107]; the road being drawn and the Alder Run label sit at y 270-500, just above. · Catalog cards [340,525,920,300]; Tool options [10,430,248,395]; Goals card [1290,10,300,530]; 'Too short: drag further from the start' [846,494,215,16]; length/cost readout '0 m' '$0' at [25,771] in the far-left panel.",
+   "box": [
+    341,
+    525,
+    919,
+    300
+   ],
+   "alsoNoted": [
+    "hud: While drawing, the road catalog stays open over the lower-centre third of the map"
+   ]
+  },
+  {
+   "id": "F15",
+   "screen": "late",
+   "viewport": "desktop",
+   "rule": "TYP-03",
+   "severity": "medium",
+   "lenses": [
+    "rules"
+   ],
+   "title": "Cash and clock, the two numbers that change all the time, use proportional digits",
+   "detail": "The company balance and the clock tick constantly, and with proportional figures their digits shift sideways as they change. Most smaller figures in the HUD already use tabular figures, so these two are the exceptions, and they are the largest numbers in the bar.",
+   "fix": "Set font-variant-numeric: tabular-nums on the cash and clock values in the bottom bar.",
+   "evidence": "DOM: \"$1,000,000,000\" [308,848,126,22] 18 px, tabular:false. Clock \"12:05\" [1376,850,46,22] 18 px, tabular:false. Next to them, \"−$963/h\", \"4,535\" and \"Spring · Day 13\" are tabular:true. The same holds on every shot (\"$250,000\" and \"06:05\" on fresh).",
+   "box": [
+    308,
+    848,
+    126,
+    22
+   ]
+  },
+  {
+   "id": "F16",
+   "screen": "late-economy",
+   "viewport": "desktop",
+   "rule": "NEW",
+   "severity": "medium",
+   "lenses": [
+    "hierarchy",
+    "hud"
+   ],
+   "title": "The 'made / can make' bars don't show the ratio: every row looks nearly full",
+   "detail": "Idea: a meter beside a ratio must fill in proportion to that ratio. Each bar is a dark track with one or two thin coloured ticks at its right end, so Food 2/12, Crops 4/6 and Logs 2/3 look the same. Steel 0/4 and Cement 0/6 look only slightly emptier. The eye reads the bars before the small numbers and gets the wrong answer.",
+   "fix": "Fill each bar from the left to made/can make, in the resource colour. Draw the unused part as a dim track. If the ticks are an hourly sparkline, give them their own label or drop them from this list.",
+   "evidence": "Bars at x 260-330, rows y 324-605; Food '2 / 12' shows two orange ticks at x~322-330, Crops '4 / 6' the same ticks at the same spot, Steel '0 / 4' an empty track. Numbers 13px at x 384-415. · Food '2 / 12', Planks '2 / 6' and Wood chips '2 / 6' each show two coloured ticks at x≈323–330 of a 259–330 px bar. Steel and Cement '0 / 4', '0 / 6' are empty. The header says only 'Made, last 24 hours · made / can make'.",
+   "box": [
+    258,
+    320,
+    160,
+    286
+   ],
+   "alsoNoted": [
+    "hud: The Economy 'made / can make' bars look like full progress bars when output is a sixth of capacity"
+   ]
+  },
+  {
+   "id": "F17",
+   "screen": "late-economy",
+   "viewport": "desktop",
+   "rule": "ONB-03",
+   "severity": "medium",
+   "lenses": [
+    "rules"
+   ],
+   "title": "Economy's 'made / can make' bars look like progress bars but are unlabelled 24-hour strips",
+   "detail": "Each resource row has a dark bar with a few ticks at its right end, so Food (2 of 12) looks almost full, the same as Crops (4 of 6). The bar is really an hourly timeline, but nothing says so: there is no axis, no 'now', and no unit on the figures. The Iron Mine's own Details chart does carry '24 hours ago / now' and 'dashed: full pace'.",
+   "fix": "Either draw a true ratio bar (made out of can-make) or label the strip as a timeline with '24 h ago' and 'now' ends and a full-pace line. Add 'loads' to the figures.",
+   "evidence": "Header \"MADE, LAST 24 HOURS · made / can make\" [25,297,240,14]. Bars at x 259-331. Food \"2 / 12\" and Crops \"4 / 6\" show ticks at the same right-hand spot. Steel \"0 / 4\" is an empty bar. The figures have no unit, while every other panel says 'loads'.",
+   "box": [
+    259,
+    322,
+    72,
+    285
+   ]
+  },
+  {
+   "id": "F18",
+   "screen": "late-economy",
+   "viewport": "desktop",
+   "rule": "NEW",
+   "severity": "medium",
+   "lenses": [
+    "accessibility",
+    "first-time"
+   ],
+   "title": "The Economy window's works list is cut through a line of text, hiding the Power Plant's status",
+   "detail": "The 'Your works, last hour' list ends mid-row: 'Power Plant' shows, its location line is sliced by the panel edge and its status ('Waiting for coal or wood chips') is hidden, with no visible scrollbar or fade to say there is more. A player reading down the list for problems sees Iron Mine 'No power' and Sawmill 'Waiting for logs' and stops, missing the Power Plant and Coal Mine below.",
+   "fix": "Show a visible scroll affordance (a cream scrollbar thumb or a bottom fade with 'and 2 more'), snap the list height to whole rows, and sort works with a problem to the top so the first rows are the ones to act on.",
+   "evidence": "late-economy@desktop.png: the panel ends at about y 810; late-economy@desktop.dom.json has '2.7 km south of New Bixby' at [61,805,135,14] (half visible), 'Waiting for coal or wood chips' at [61,822,158,14] and the Coal Mine row at y 851-887 (hidden). The contrast script's 1.67:1 fail on 'Waiting for coal or wood chips' is this clipping, not the text colour. · Panel ends at y about 808. DOM rows: 'Power Plant' at y 786 with 'Waiting for coal or wood chips' at y 822 (clipped), 'Coal Mine / No power' at y 851-887 (hidden). late-town: 'From Food Plant 2.6 km' at y 867-899, behind the bottom bar.",
+   "box": [
+    24,
+    780,
+    400,
+    30
+   ],
+   "alsoNoted": [
+    "first-time: The Economy works list is cut off at the panel edge with no sign that it scrolls"
+   ]
+  },
+  {
+   "id": "F19",
+   "screen": "late-works",
+   "viewport": "desktop",
+   "rule": "MENU-03",
+   "severity": "medium",
+   "lenses": [
+    "rules"
+   ],
+   "title": "Demolish sits 1 px from Close in every works panel header",
+   "detail": "The unlabelled excavator icon (Demolish) and the × (Close) are touching 32 px targets. A player who goes to shut the panel and slips a few pixels left hits Demolish on a working site. The same tight packing is elsewhere: the four speed buttons (Pause, 1, 2, 3) are 32x32 and 2 px apart, the top toolbar and bottom bar buttons are 2 px apart, and the road Mode buttons are 30 px tall and 3 px apart.",
+   "fix": "Move Demolish out of the header, next to Details or into a footer row with a confirm. Leave at least 8 px between header controls, and between the speed buttons, toolbar icons and Mode buttons. Make the Mode buttons 32 px tall.",
+   "evidence": "late-works@desktop controls: \"Demolish\" [1519,19,32,32] and \"Close\" [1552,15,32,32], a 1 px gap. Speed buttons at x 1451/1485/1519/1553, each 32 wide (2 px gaps). drawing-road: \"Curve mode\" [25,501,32,30], \"Straight mode\" [60,501,32,30], \"Upgrade mode\" [95,501,32,30]. The rule asks for at least 8 px between targets and about 32 px height.",
+   "box": [
+    1519,
+    15,
+    65,
+    32
+   ]
+  },
+  {
+   "id": "F20",
+   "screen": "late-works",
+   "viewport": "desktop",
+   "rule": "HUD-05",
+   "severity": "medium",
+   "lenses": [
+    "hierarchy"
+   ],
+   "title": "The loudest number on a stalled Iron Mine is a green 0.4/h that reads as healthy",
+   "detail": "Below the red 'No power' headline, the first and biggest figure in the panel is output in the same green the Power Plant uses for 'Working normally'. Its caption 'can 0.4' says the mine is at its limit, so a player who glances at the panel concludes the mine is fine. The red headline is 14 px; the green figure is 20 px and catches the eye first. The panel looks the same at wide and small.",
+   "fix": "Colour the output figure by state: red or amber when the works is held back. Change the caption to say what it could make with full power (e.g. '0.4/h, 1.0 with power') so the number shows the shortfall.",
+   "evidence": "'0.4' 20px/600 rgb(147,201,122) at [1305,201,27,24]; caption 'iron ore, can 0.4' 12px; headline 'No power' 14px rgb(239,138,108) at [1321,69,58,17]; body says 'Working at 40%'. Power Plant DOM uses the same green for 'Working normally'.",
+   "box": [
+    1298,
+    195,
+    97,
+    68
+   ]
+  },
+  {
+   "id": "F21",
+   "screen": "late-works",
+   "viewport": "desktop",
+   "rule": "COL-03",
+   "severity": "medium",
+   "lenses": [
+    "first-time",
+    "hud"
+   ],
+   "title": "A green 'at capacity' output figure sits under a red 'No power, working at 40%' status",
+   "detail": "The headline figure '0.4/h iron ore, can 0.4' is green and reads as 'making everything it can', right under red text saying the mine is crippled. The same state also gets three names: 'No power', 'held back: Short of power' and 'Power none · working at 40%'. A player can't tell how bad it is or what full output would be. Wide and small show the same thing.",
+   "fix": "Show 'can' as the full-power figure (e.g. '0.4/h of 1.0'), colour the figure in the warning tone while held back, and use one phrase for the state everywhere ('No power').",
+   "evidence": "Status (red): 'No power', 'Working at 40%.' Figure (green): '0.4 /h iron ore, can 0.4' [1305,201,90,40]. Level bar: 'held back: Short of power'. Details: 'Power none · working at 40%'. · 'No power' (239,138,108) at [1321,69]; '0.4' at 20 px in green (147,201,122) [1305,201,27,24]; 'iron ore, can 0.4' [1305,226]; Details: 'dashed: full pace, 0.4 an hour'.",
+   "box": [
+    1305,
+    201,
+    90,
+    40
+   ],
+   "alsoNoted": [
+    "hud: The output stat is green and says it is at its maximum on a mine that is crippled by no power"
+   ]
+  },
+  {
+   "id": "F22",
+   "screen": "late-works",
+   "viewport": "desktop",
+   "rule": "COL-03",
+   "severity": "medium",
+   "lenses": [
+    "rules"
+   ],
+   "title": "The 'good' green marks the output of a mine that has no power",
+   "detail": "The Iron Mine's headline is red 'No power, working at 40%', yet the big output figure right under it is the green used for 'Working normally' on the Power Plant. A player glancing at the numbers sees green and reads the mine as healthy. Green ends up meaning both 'fine' and 'at whatever reduced pace it can manage'.",
+   "fix": "Only colour the rate green when the works runs at full pace. When it is held back, show it in cream or the alarm colour and say 'of 1.0 at full power', not 'can 0.4'.",
+   "evidence": "\"0.4\" /h, class \"good\", rgb(147,201,122), box [1305,201,27,24], caption \"iron ore, can 0.4\". It sits under \"No power\" rgb(239,138,108) and \"held back: Short of power\". The same green carries \"Working normally\" and \"40 MW\" in the late-powerplant DOM.",
+   "box": [
+    1305,
+    201,
+    42,
+    24
+   ]
+  },
+  {
+   "id": "F23",
+   "screen": "late-works",
+   "viewport": "desktop",
+   "rule": "NEW",
+   "severity": "medium",
+   "lenses": [
+    "accessibility"
+   ],
+   "title": "The Level 1 to Level 2 progress bar is a near-black track on navy, so how far the site is from its next level can't be seen",
+   "detail": "Non-text contrast: the bar that should show progress toward Level 2 is a 4 px track of #070D17 on the #122036 panel, with a 4x4 px brass dot as its fill at 0%. The track is effectively invisible, so the line reads as an empty gap between 'Level 1' and 'Level 2' and the player gets no sense of distance to go. The same near-black track is used by the Economy window's 'Made, last 24 hours' bars, where only thin coloured ticks show on an invisible track.",
+   "fix": "Give progress tracks a visible empty state of at least 3:1 against the panel (e.g. a 1 px cream-grey #8E8672 outline or a #2A3A55 fill) and make them 6 px tall; show the fill as a solid brass bar from the left edge, with the percentage ('0% to Level 2') next to it rather than only in Details.",
+   "evidence": "Pixel samples in late-works@desktop.png at y 365-368: track (7,13,23) between a (37,41,48) 1 px border, panel (18,32,54): about 1.19:1, far below the 3:1 needed for a graphic that carries meaning. Fill at x 1351-1353 only, (224,168,51). Economy bars in late-economy@desktop.png x 260-330 are the same (7,13,23) track with 2 px ticks.",
+   "box": [
+    1349,
+    363,
+    182,
+    8
+   ]
+  },
+  {
+   "id": "F24",
+   "screen": "late-works",
+   "viewport": "wide",
+   "rule": "TYP-01",
+   "severity": "medium",
+   "lenses": [
+    "accessibility",
+    "rules"
+   ],
+   "title": "The sentences that say what a works is short of are 13 px, and they stay 13 px at 1920x1080",
+   "detail": "The game's main message, the paragraph under the status line that says why a works is held back and what to build, is set in 13 px regular cream-grey in a 300 px panel. That size does not change between 1440, 1600 and 1920 wide, so on a 1080p monitor at desk distance the most important text in the game is the smallest body text on screen. The same 13 px body is used for the Goals card descriptions and tip (fresh, late), the town panel's 'Start with food...' advice (late-town), the road-type descriptions (drawing-road) and the farm's 'Opens in about 3 hours...' (farm-no-road).",
+   "fix": "Raise the panel and card body text to 15 px (14 px minimum) and the status headline to 16 px, and scale the HUD root font with viewport width (e.g. clamp(14px, 0.78vw, 16px) for body) so 1920 wide gets larger text than 1440; widen the works/town panel from ~300 px to ~340 px to keep line lengths.",
+   "evidence": "late-works@wide.dom.json: 'Working at 40%. Your Power Plant (6.9 km) is too far: power reaches 4 km. Build a Power Plant within 4 km of this works, on its roads.' is 13 px / weight 400 at box [1641,93,158,89] on a 1920x1080 viewport. contrast.md lists 51 size warnings out of 78 texts on late-works@wide and the same font sizes (12, 13, 13.68, 14...) on every viewport, so nothing scales with width. Contrast is fine (declared 9.44:1); size is the problem. · late-works@wide: \"Working at 40%. Your Power Plant (6.9 km) is too far: power reaches 4 km. Build a Power Plant within 4 km of this works, on its roads.\" is 13 px [1641,93,158,89]. \"iron ore, can 0.4\" and \"load shipped, last hour\" are 12 px lowercase. fresh@wide: goal descriptions and tip are 13 px, and 'UNLOCKS' lines 12 px. contrast.md counts 21 to 80 size warnings per shot.",
+   "box": [
+    1641,
+    93,
+    158,
+    89
+   ],
+   "alsoNoted": [
+    "rules: The text that says what a works is short of is 12-13 px at 1920x1080"
+   ]
+  },
+  {
+   "id": "F25",
+   "screen": "late-town",
+   "viewport": "desktop",
+   "rule": "NEW",
+   "severity": "medium",
+   "lenses": [
+    "hierarchy"
+   ],
+   "title": "Need meters look alike but use different scales, so 518 and 69 loads a day look the same size",
+   "detail": "Idea: meters stacked in one list share one scale, or are clearly not meant to be compared. Each crate is worth a different amount on each row (60, 30, 20, 8, 8 loads), so Food (518 a day) and Fuel (69 a day) both draw 9 empty crates. A player can't see which need is biggest, the thing they need to know to decide what to build first. The row of 9 to 10 dashed red boxes repeats five times and adds noise without adding information.",
+   "fix": "Use one bar per need on a shared scale (or order rows by size and show the daily figure big on the right instead of 'None!'). Drop the per-row crate legend.",
+   "evidence": "Food: 9 crates, '1 crate = 60 loads', '0 of 518 loads a day'; Planks: 7 crates at 30; Cement: 7 at 20; Household goods: 9 at 8; Fuel: 9 at 8. The '1 crate = N loads' captions are 12px rgb(169,159,138).",
+   "box": [
+    1350,
+    228,
+    180,
+    382
+   ]
+  },
+  {
+   "id": "F26",
+   "screen": "late-town",
+   "viewport": "desktop",
+   "rule": "NEW",
+   "severity": "medium",
+   "lenses": [
+    "hierarchy"
+   ],
+   "title": "The town's summary (size and needs met) sits below the panel's bottom edge",
+   "detail": "Idea: a panel's headline numbers come first. The only place the panel shows '1,620 people' and '0/5 needs met' as big 20 px figures is at the very bottom. It is clipped there, so the player sees five red 'None!' rows and never the totals that tie them together.",
+   "fix": "Move the population and the 'needs met' stats up under the title, next to the 'Shrinking, short of 5 needs' headline, as the Iron Mine and Power Plant panels do with their stat rows.",
+   "evidence": "DOM: '1,620' 20px at [1305,807,48,24], '0' '/5' 'needs met' at [1451,807..846]; the panel's visible bottom edge in the PNG is at y~800, so these runs are cut off.",
+   "box": [
+    1300,
+    795,
+    280,
+    50
+   ]
+  },
+  {
+   "id": "F27",
+   "screen": "late-far",
+   "viewport": "wide",
+   "rule": "NEW",
+   "severity": "medium",
+   "lenses": [
+    "accessibility"
+   ],
+   "title": "At far zoom the town need chips and the industry warning marks shrink to icons about 10 px across, and the red '!' badges cover their neighbours",
+   "detail": "Legibility of map symbols: the far view is where a player scans which towns and works need attention, but each need chip is about 24 px wide with a goods icon of roughly 10 px, the chips overlap each other, and every red '!' badge sits on top of the next chip and on the TOWN · 1,620 strip. The industry warning tags are a ~10 px cream square with a red '!'. Telling food from planks or cement means zooming back in. The same overlap is visible at closer zoom on late@desktop and late-town@desktop, at a larger size.",
+   "fix": "Hold need chips at a minimum of 28 px with 16 px icons whatever the zoom, space them 2-4 px apart instead of overlapping, and put the '!' inside the chip's lower-right rim (or replace the five badges with one '5 short' tag beside the label). Give industry warning tags a 16 px minimum.",
+   "evidence": "late-far@wide.png, Quimbyton chips span about x 886-1006, y 599-629 (five chips in 120 px, so ~24 px each including overlap); badges overlap the label strip and adjacent chips. The industry '!' text in late-far@desktop.dom.json is a 4x16 px box at [722,426] and [876,481]. Contrast of the plates themselves is fine (13.65:1 cream on navy, 8.55:1 ink on brass; the script's 1.1 p10 fails come from map pixels outside the plates).",
+   "box": [
+    884,
+    597,
+    124,
+    34
+   ]
+  },
+  {
+   "id": "F28",
+   "screen": "fresh",
+   "viewport": "desktop",
+   "rule": "ONB-03",
+   "severity": "low",
+   "lenses": [
+    "first-time"
+   ],
+   "title": "Seven top-bar icons and the 'Tuning in' widget have no visible labels",
+   "detail": "The bottom bar labels every tool, but the top bar is a row of unlabeled icons (layers, flag, coins, house, car, camera, map), whose names live only in tooltips. 'Tuning in' with a padlock-like icon next to the clock reads like a status warning, not a radio.",
+   "fix": "Show short labels under or beside the top-bar icons (as the bottom bar does), or at least for the first sessions. Rename the radio readout to 'Radio: tuning in' and give it a radio icon.",
+   "evidence": "Controls [302..566,15,36,36]: aria labels 'Info views', 'Progression (P)', 'Economy (Z)', 'Towns (C)', 'Transportation overview (X)', 'Camera...', 'Map view', none shown as text. 'Tuning in' [1131,862,52,14] next to the 'Wireless' button [1088,853,32,32].",
+   "box": [
+    302,
+    15,
+    264,
+    36
+   ]
+  },
+  {
+   "id": "F29",
+   "screen": "fresh",
+   "viewport": "desktop",
+   "rule": "TYP-01",
+   "severity": "low",
+   "lenses": [
+    "accessibility"
+   ],
+   "title": "Lower-case sentences and lists are set at 12 px, below the size the rule only allows for short uppercase labels",
+   "detail": "Several runs that are full phrases, not labels, use 12 px regular: the Goals card UNLOCKS lists wrap to two lines at 12 px, the works panel's red 'held back: Short of power' is 12 px regular, and the Power Plant's Details paragraph is three lines of 12 px. Players have to lean in to read what a goal unlocks or why a works is not levelling.",
+   "fix": "Keep 12 px only for short uppercase kickers (WHERE, UNLOCKS, RUNNING IT). Set the unlock lists, the 'held back' line, stat captions and Details prose at 14 px.",
+   "evidence": "fresh@desktop.dom.json: 'Power Plant · Coal Mine · Iron Mine · Smelter · Heavy trucks · $80,000 grant' 12 px/400 at [1305,374,240,31]; 'Divided street · Roundabouts · A new town springs up' 12 px at [1305,263,249,31]. late-works@desktop: 'held back: Short of power' 12 px/400 at [1305,380,132,14]; late-powerplant@desktop: 'Growing: it works near capacity, ships its output and gets its inputs.' 12 px at [1305,527,269,46]. Stat captions 'load shipped, last hour' and 'iron ore, can 0.4' are also 12 px.",
+   "box": [
+    1305,
+    374,
+    240,
+    31
+   ]
+  },
+  {
+   "id": "F30",
+   "screen": "fresh",
+   "viewport": "desktop",
+   "rule": "HUD-03",
+   "severity": "low",
+   "lenses": [
+    "rules"
+   ],
+   "title": "HUD text sits 8-25 px from the screen edges",
+   "detail": "At 1600 px the safe margin is about 48 px, yet the version tag, the Goals card numbers, the bottom-left goal counter and the bottom-bar captions all hug the bezel, which makes the frame feel cramped.",
+   "fix": "Inset the Goals card and panels to about 24-32 px from the edge, pad the bottom bar's text inward, and drop or tuck the version tag into the pause menu.",
+   "evidence": "\"v0.0.91\" control [1541,817,59,21] is 8 px from the right edge. Goals card numbers end at x 1575 (25 px). \"Goals 0\" starts at x 21. Bottom-bar captions end at y 888 (12 px from the bottom). The 3% rule needs 48 px.",
+   "box": [
+    1541,
+    817,
+    59,
+    21
+   ]
+  },
+  {
+   "id": "F31",
+   "screen": "fresh",
+   "viewport": "desktop",
+   "rule": "ONB-03",
+   "severity": "low",
+   "lenses": [
+    "hud"
+   ],
+   "title": "An unexplained 'Tuning in' ticker takes the status slot next to the clock",
+   "detail": "The framed slot between the tools and the clock shows 'Tuning in', then 'Alder Run Hop' and 'Payday in Quimbyton' on other shots, with a skip button. Nothing says it's a radio. 'Payday in Quimbyton' reads like a game event the player should act on, in a spot where they would expect alerts.",
+   "fix": "Label it as the radio (a 'Radio' caption or a speaker icon plus 'Now playing:'), or move it out of the status band. Keep that slot for game alerts such as 'Quimbyton is shrinking'.",
+   "evidence": "'Tuning in' [1131,862,52,14] at 12 px in (169,159,138) on fresh, late, late-works and late-town. 'Alder Run Hop' on drawing-road; 'Payday in Quimbyton' (240,194,90) on late-economy.",
+   "box": [
+    1088,
+    850,
+    206,
+    38
+   ]
+  },
+  {
+   "id": "F32",
+   "screen": "farm-in-hand",
+   "viewport": "desktop",
+   "rule": "ONB-01",
+   "severity": "low",
+   "lenses": [
+    "first-time"
+   ],
+   "title": "The rotate keys show as specks: ',' and '.' inside tiny keycaps",
+   "detail": "Tool options teaches rotation with two keycaps holding a comma and a full stop. The glyphs are 3 px wide, so at a glance the line reads 'Turn it with [ ] and [ ] or Shift + wheel'.",
+   "fix": "Write the key names ('Turn it with Comma / Period or Shift + wheel'), or set the keycap glyphs at 16 px+ with wider caps.",
+   "evidence": "DOM: ',' box [98,733,3,14] and '.' box [141,733,3,14] at 12 px, inside keycaps about 16 px wide.",
+   "box": [
+    88,
+    729,
+    64,
+    22
+   ]
+  },
+  {
+   "id": "F33",
+   "screen": "farm-in-hand",
+   "viewport": "desktop",
+   "rule": "ONB-03",
+   "severity": "low",
+   "lenses": [
+    "first-time"
+   ],
+   "title": "'$12/h' on the Farm card doesn't say whether it is income or upkeep",
+   "detail": "The in-hand card reads '$8,000 · $12/h' with no sign or word. Everywhere else, costs carry a minus ('−$963/h', '−$47'), so a new player may read this as 'the farm earns $12 an hour' when it is most likely running cost.",
+   "fix": "Write 'Builds for $8,000 · upkeep $12/h', or use '−$12/h' to match the rest of the UI.",
+   "evidence": "'Fertile soil → crops | $8,000 · $12/h' [399,758,207,16]. Bottom bar: '−$963/h'. Economy: 'Plant upkeep −$502'.",
+   "box": [
+    527,
+    758,
+    79,
+    16
+   ]
+  },
+  {
+   "id": "F34",
+   "screen": "drawing-road",
+   "viewport": "desktop",
+   "rule": "TYP-02",
+   "severity": "low",
+   "lenses": [
+    "rules"
+   ],
+   "title": "Nine to eleven font sizes, most only 1 px apart",
+   "detail": "The type scale has sizes that sit almost on top of each other (12, 13, 13.68, 14, then 17, 18, 19), so labels, values and captions in the goal card and panels look like near-misses rather than clear tiers.",
+   "fix": "Collapse to four steps, for example 12 (uppercase labels), 14 (body and values), 18 (panel titles and big stats) and 24 (headline numbers). Drop 13, 13.68, 15.96, 16, 17, 19, 20 and 21.",
+   "evidence": "contrast.md for drawing-road@desktop: 12, 13, 13.68, 14, 15.96, 16, 17, 18, 19. late-works adds 20 and fresh adds 21. In the goal card alone: 'UNLOCKS' lines 12, descriptions 13, numbers 13, titles 14, header 18, with 'of 20' at 13.68 in the bottom bar.",
+   "box": [
+    1291,
+    11,
+    298,
+    528
+   ]
+  },
+  {
+   "id": "F35",
+   "screen": "drawing-road",
+   "viewport": "desktop",
+   "rule": "MENU-03",
+   "severity": "low",
+   "lenses": [
+    "accessibility"
+   ],
+   "title": "Road tool mode and elevation buttons are 32x30 px and sit 3 px apart",
+   "detail": "The Curve / Straight / Upgrade mode buttons and the elevation − / + buttons are icon-only squares under the 32 px height guideline, with almost no gap between them, so switching mode mid-drag invites misclicks on the neighbour. These are the buttons a player uses constantly while drawing roads.",
+   "fix": "Make these buttons 36x36 px with 8 px between them; the 230 px Tool options panel has room for three 36 px buttons plus gaps.",
+   "evidence": "drawing-road@desktop.dom.json controls: 'Curve mode' [25,501,32,30], 'Straight mode' [60,501,32,30], 'Upgrade mode' [95,501,32,30] (3 px gaps); 'Parallel' [25,560,32,30]; '−' [25,619,32,30], '+' [133,619,32,30].",
+   "box": [
+    25,
+    501,
+    102,
+    30
+   ]
+  },
+  {
+   "id": "F36",
+   "screen": "drawing-road",
+   "viewport": "desktop",
+   "rule": "COL-01",
+   "severity": "low",
+   "lenses": [
+    "accessibility"
+   ],
+   "title": "The locked road card dims its speed to 4.26:1 at 12 px",
+   "detail": "On the locked Divided street card the speed line is dimmed with the rest of the card, so a player comparing road speeds across the four cards reads '50 km/h' noticeably fainter than on the others. The lock is already shown by the dashed border, the padlock and 'Growing hamlet', so the dimming adds nothing the player needs.",
+   "fix": "Keep the locked card's text at the normal secondary colour (#CFC4AB, 9.4:1) and mark it locked with the dashed border, padlock and requirement only; if dimming is wanted, dim the icon, not the text.",
+   "evidence": "contrast.md drawing-road@desktop: '50 km/h' box [1058,716,42,14], 12 px, declared 4.26, p50 4.26, p10 4.26 (needs 4.5). It is the only panel text in the audit whose own colour on its own plate fails.",
+   "box": [
+    1058,
+    716,
+    42,
+    14
+   ]
+  },
+  {
+   "id": "F37",
+   "screen": "late",
+   "viewport": "desktop",
+   "rule": "HUD-04",
+   "severity": "low",
+   "lenses": [
+    "rules"
+   ],
+   "title": "At 20/20 the Goals card keeps a 300x510 px block of repeated paragraphs on screen",
+   "detail": "Once every goal is reached, the card turns into three paragraphs that each open with the same 'Quimbyton and 2 more towns.', plus a tip, and it covers the right third of the map. The Food advice is repeated word for word in the town panel. The goal count also appears twice: in the card header and in the bottom-left 'GOALS 20 OF 20'.",
+   "fix": "Collapse the card to one line per resource ('Food: 1,055 more loads a day') and move the cause text to the town and works panels, or show it on hover. Drop one of the two goal counters.",
+   "evidence": "Goals card [1291,11,298,510]. Three gl-job texts each begin \"Quimbyton and 2 more towns.\" The town panel's status body is \"Start with food. Your Food Plant is at full output. Build about 43 more. Your new Food Plant is starting up.\", the same text. Count shown as \"20 of 20 reached\" [1356,25] and \"Goals 20 of 20\" [21,847].",
+   "box": [
+    1291,
+    11,
+    298,
+    510
+   ]
+  },
+  {
+   "id": "F38",
+   "screen": "late",
+   "viewport": "desktop",
+   "rule": "TYP-04",
+   "severity": "low",
+   "lenses": [
+    "hierarchy"
+   ],
+   "title": "Late Goals card is a wall of grey prose; the action is the last clause of each paragraph",
+   "detail": "Each demand row is 3 to 5 lines of 13 px grey text. The useful verb ('Build another', 'Build about 43 more') comes at the end, after 'Quimbyton and 2 more towns.' is repeated three times. With nothing to set it apart, the player has to read every paragraph to find what to do.",
+   "fix": "Split each row into a one-line state ('Food Plant at full output') and an action line in cream or bold ('Build about 43 more'). Move the shared 'Quimbyton and 2 more towns' up into the card intro.",
+   "evidence": "Paragraphs 13px/400 rgb(207,196,171) at [1305,130,268,52], [1305,224,251,52], [1305,319,264,71]; each starts 'Quimbyton and 2 more towns.'",
+   "box": [
+    1297,
+    100,
+    285,
+    295
+   ]
+  },
+  {
+   "id": "F39",
+   "screen": "late-economy",
+   "viewport": "desktop",
+   "rule": "TYP-02",
+   "severity": "low",
+   "lenses": [
+    "hierarchy"
+   ],
+   "title": "The money section has no section heading, and its Balance total is the same size as its line items",
+   "detail": "The other two sections open with brass uppercase headings ('MADE, LAST 24 HOURS', 'YOUR WORKS, LAST HOUR'). The money block opens with 'Last hour' in plain 13 px grey body text, so it doesn't read as a section. Its result line, Balance −$963, differs from the rows above it only by bold weight.",
+   "fix": "Give the block a heading in the same style ('MONEY, LAST HOUR'). Show the balance at the stat size used elsewhere (20 px) above or beside the breakdown.",
+   "evidence": "'Last hour' 13px/400 rgb(207,196,171) at [25,125,53,16] vs section heads 12px/600 rgb(240,194,90) uppercase at [25,297] and [25,627]; 'Balance' and '−$963' 13px/700 at y 264, the line items 13px/500.",
+   "box": [
+    20,
+    120,
+    400,
+    165
+   ]
+  },
+  {
+   "id": "F40",
+   "screen": "late-economy",
+   "viewport": "desktop",
+   "rule": "COL-03",
+   "severity": "low",
+   "lenses": [
+    "rules"
+   ],
+   "title": "Routine costs use the same alarm red as 'No power'",
+   "detail": "Every normal expense line (wages, upkeep, fuel) is painted in the alarm colour that marks broken works a few rows below. So the red the player should react to is diluted by red they can ignore, and this is a company holding $1,000,000,000.",
+   "fix": "Show costs in the muted cream with a minus sign and keep the alarm colour for states that need action, or for a balance that will run out.",
+   "evidence": "\"−$136\", \"−$502\", \"−$111\", \"−$213\", \"−$963\" all class \"bad\", rgb(239,138,108), [380,172,35,108]. \"No power\" [61,693] and \"Waiting for logs\" [61,758] use the same rgb(239,138,108).",
+   "box": [
+    380,
+    172,
+    35,
+    108
+   ]
+  },
+  {
+   "id": "F41",
+   "screen": "late-far",
+   "viewport": "desktop",
+   "rule": "NEW",
+   "severity": "low",
+   "lenses": [
+    "hud"
+   ],
+   "title": "At far zoom, the need badges overlap each other and the town plate",
+   "detail": "NEW: map labels keep a fixed gap from each other after decluttering. Quimbyton's five need circles overlap one another, and their '!' dots sit on the bottom of the 'TOWN · 1,620' plate. New Bixby's badge row nearly touches Quimbyton's name plate, so at the zoom where the player compares towns, the two labels read as one cluster.",
+   "fix": "At far zoom, collapse the badges to one 'short of 5' chip beside the plate, or space them at their full diameter below the plate. Include the badge row in the declutter bounds so neighbouring towns keep a gap.",
+   "evidence": "Zoomed crop of [690,380,210,160]: badge circles under Quimbyton overlap by ~4 px each, '!' dots cover the plate's lower edge at y≈500. New Bixby badges end at y≈446 and the Quimbyton plate starts at y≈466.",
+   "box": [
+    727,
+    463,
+    122,
+    68
+   ]
+  },
+  {
+   "id": "F42",
+   "screen": "late-far",
+   "viewport": "desktop",
+   "rule": "NEW",
+   "severity": "low",
+   "lenses": [
+    "hierarchy",
+    "rules"
+   ],
+   "title": "At far zoom Quimbyton's five need icons overlap each other and their alarm badges",
+   "detail": "Idea: decluttering should cover marker rows as well as labels. The needs row is wider than the label plate, so the circles overlap and every red '!' badge sits on the next icon. The five needs become one red smear that can't be read at this zoom. The same happens at wide.",
+   "fix": "At far zoom, show one summary badge ('5 short') instead of the per-need row, or space the circles so they don't touch.",
+   "evidence": "Icon row ~[728,498,122,30] under the 'Town · 1,620' plate [745,487,84,14]; in the 3x crop each circle covers about a quarter of its neighbour, and the badges sit on the joins. · Crop of late-far@desktop around [727,498,125,32]: rings about 25 px wide on about 23 px spacing, '!' badges overlapping neighbours, ring tops at y≈500 against the plate's bottom edge at y 501 (\"Town · 1,620\" [745,487,84,14]). The same on late-far@wide at [885,598,120,30].",
+   "box": [
+    726,
+    496,
+    126,
+    34
+   ],
+   "alsoNoted": [
+    "rules: At far zoom Quimbyton's need icons overlap each other and its name plate"
+   ]
+  }
+ ]
+}
