@@ -17,7 +17,7 @@ import { PAL } from "../render/palette";
 import { F } from "../world/gen";
 import { DEPOSIT_KINDS } from "./depositMarks";
 import type { SignalPlan } from "../roads/network";
-import { GREEN, LEFT_GREEN, greenFor } from "../sim/traffic";
+import { GREEN, LEFT_GREEN, greenFor, stuckNow } from "../sim/traffic";
 import { SEASONS } from "../game/calendar";
 import type { GameAudio } from "../audio";
 import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId } from "../app";
@@ -1713,7 +1713,7 @@ export class Hud {
     const g = this.app.game;
     const flow = g.traffic.flowScore();
     let cars = 0, trucks = 0, standing = 0;
-    for (const v of g.traffic.vehicles) { if (v.truck) trucks++; else cars++; if (v.stuck >= STANDING_S && !v.dwell) standing++; }
+    for (const v of g.traffic.vehicles) { if (v.truck) trucks++; else cars++; if (stuckNow(v, STANDING_S)) standing++; }
     const all = cars + trucks;
     const jams = stuckSpots(g.traffic.stuckCars(STUCK_RAISE)).length;
     let len = 0;

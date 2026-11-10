@@ -26,7 +26,7 @@ import { buildTime } from "../game/construction";
 import type { Lane } from "../roads/network";
 import { dkDir, dkSeg } from "../sim/router";
 import { poseOf } from "./pick";
-import type { Vehicle } from "../sim/traffic";
+import { stuckNow, type Vehicle } from "../sim/traffic";
 
 /** The one thing selected on the map. */
 export type Sel =
@@ -1178,7 +1178,7 @@ export const STUCK_NEAR = 130;
 
 /** The vehicles stuck round a diamond (standing a while), the longest first. */
 export function stuckAt(g: Game, c: V2): Vehicle[] {
-  return g.traffic.vehicles.filter((v) => v.stuck >= STUCK_KEEP && !v.dwell && Math.hypot(v.x - c.x, v.y - c.y) <= STUCK_NEAR).sort((a, b) => b.stuck - a.stuck);
+  return g.traffic.vehicles.filter((v) => stuckNow(v, STUCK_KEEP) && Math.hypot(v.x - c.x, v.y - c.y) <= STUCK_NEAR).sort((a, b) => b.stuck - a.stuck);
 }
 
 export function stuckModel(g: Game, sel: Extract<Sel, { k: "stuck" }>): PanelModel {

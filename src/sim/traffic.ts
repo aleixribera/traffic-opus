@@ -111,6 +111,10 @@ export interface Vehicle {
   block?: string; // why the junction last refused entry (debug + inspector)
   stopAt?: Connector; // the stop sign it has already stopped at (and may now go on from, when clear)
   blockTo?: Lane; // the lane the car it last gave way to was heading into
+  /** The vehicle the junction ahead last refused it for (null: a light, a stop sign, a full roundabout). */
+  blockBy?: Vehicle | null;
+  /** What it is held behind this step: the vehicle whose gap was the tightest (null: free, or a rule, not a car). */
+  waitOn?: Vehicle | null;
   grantT?: number; // order in which it got its current go-ahead at the junction ahead (a sequence, never tied)
   overrode?: boolean; // that go-ahead was a driver with an earlier one letting it out (see letsOut)
   turnOk?: boolean; // its driveway was clear to turn into on the way up to it (it carries on rather than stop dead)
@@ -330,6 +334,8 @@ export class Traffic {
   private lcTimer = 0;
   private statTimer = 0;
   private turnBlockedByQueue = false; // set by canTurnIn: the car in the way is standing still
+  private turnBlocker: Vehicle | null = null; // set by canTurnIn: the oncoming car it waits for
+  private clashBy: Vehicle | null = null; // set by mergeOk: the car it gives way to
   private keepClear = new Map<Lane, { s: number; b: number; a: number }[]>(); // lane -> driveway spots queues leave free (this step)
   // lane -> cars beside it that need to get into it soon: the car behind each one holds back to make room
   private wishes = new Map<Lane, Vehicle[]>();
@@ -938,6 +944,7 @@ export class Traffic {
     const opp = this.lanesAt(dkey(lane.seg, lane.dir === 1 ? -1 : 1), v.dest.p);
     const need = v.wait > 12 ? 0.8 : v.wait > 5 ? 1.6 : 2.6;
     this.turnBlockedByQueue = false;
+    this.turnBlocker = null;
     // judged for when we get there (asked from a way off, a car that will be long gone by then is no reason to stop)
     // (a cautious guess both ways: we may get there as soon as at our present speed, or as late as slowing to 5 m/s)
     const dd = v.destS >= 0 ? Math.max(0, v.destS - v.s) : 0;
@@ -953,11 +960,12 @@ export class Traffic {
           // passing now, its tail clear before our nose is into its lane (about half a second after we reach the driveway)
           if (o.v > 0.5 && (os + 2 - (o.s - o.len)) / ov < tSoon + 0.3) continue;
           this.turnBlockedByQueue = o.v < 0.5;
+          this.turnBlocker = o;
           return false;
         }
         if (o.s < os) {
           const tO = o.v < 0.5 && o.wait > 1 ? (os - o.s) / ov : reach(os - o.s), gone = (os + 2 - (o.s - o.len)) / ov;
-          if (tO < tMe + need && gone > tSoon + 0.3) return false;
+          if (tO < tMe + need && gone > tSoon + 0.3) { this.turnBlocker = o; return false; }
         }
       }
     }
@@ -1142,6 +1150,7 @@ export class Traffic {
 
   private canEnter(v: Vehicle, c: Connector, toEnd: number): boolean {
     v.blockTo = undefined;
+    v.blockBy = null;
     const ng = this.net.nodeGeom.get(c.node);
     if (!ng) return false;
     if (ng.kind === "cont" || ng.kind === "bend") return true;
@@ -1149,13 +1158,13 @@ export class Traffic {
       // the main line never stops for a slip road: a merging car finds a gap and falls in (car-following does the rest)
       // (at a weave the carriageway's traffic is free and the slip lane's gives way, to it crossing over as well)
       if (c.free || (c.turn === "S" && c.free !== false)) return true;
-      for (const cf of c.conflicts) if ((cf.merge || cf.c.free) && !this.mergeOk(v, c, cf.c)) { v.block = "yield"; return false; }
+      for (const cf of c.conflicts) if ((cf.merge || cf.c.free) && !this.mergeOk(v, c, cf.c)) { v.block = "yield"; v.blockBy = this.clashBy; return false; }
       return true;
     }
     // two roads meeting (one road changing type, or what's left of a removed crossing): nothing crosses here, so
     // there is no box to keep clear. Cars just follow on; where lanes narrow they zip in turn.
     if (ng.arms.length === 2 && c.conflicts.every((cf) => cf.merge) && !this.net.nodes.get(c.node)?.signal && !this.net.segs.get(c.to.seg)?.ring && !this.net.segs.get((c.from as Lane).seg)?.ring) {
-      for (const cf of c.conflicts) if (cf.merge && !this.mergeOk(v, c, cf.c)) { v.block = "yield"; return false; }
+      for (const cf of c.conflicts) if (cf.merge && !this.mergeOk(v, c, cf.c)) { v.block = "yield"; v.blockBy = this.clashBy; return false; }
       return true;
     }
     // a stop sign: a full stop at the line first (then the usual giving way, to everyone: its arm ranks lowest)
@@ -1169,7 +1178,7 @@ export class Traffic {
     if (sig === "red" && !sneak && !(c.turn === "R" && this.rightOnRed(v, c, toEnd))) { v.block = "red"; return false; }
     // letting a long-waiting car out: hold back if our path crosses its and we can still stop
     const cl = this.courtesy.get(c.node);
-    if (cl && cl.v !== v && cl.v.next && !this.committed(v) && this.crossesCourtesy(cl.v, c, v)) { v.block = "courtesy"; return false; }
+    if (cl && cl.v !== v && cl.v.next && !this.committed(v) && this.crossesCourtesy(cl.v, c, v)) { v.block = "courtesy"; v.blockBy = cl.v; return false; }
     if (sig === "yellow" && !sneak && toEnd > (v.v * v.v) / (2 * SIM.idm.b) + 1) { v.block = "red"; return false; }
     // don't block the box: room on the exit lane. Not between arcs of the same roundabout:
     // circulating cars just follow each other (requiring a free arc ahead gridlocks a full ring)
@@ -1180,9 +1189,10 @@ export class Traffic {
     if (ringId) return this.ringEntry(v, c, ringId, sig, toEnd);
     let free = out.pl.length;
     const first = (out.occ as Vehicle[])[0];
+    let fullBy: Vehicle | null = first ?? null; // what fills the exit lane (for blockBy)
     // (a road train whose front is already further on still fills this lane with its trailers)
     const tl = this.tails.get(out);
-    if (tl) for (const t of tl) if (t.v !== v) free = Math.min(free, t.rear);
+    if (tl) for (const t of tl) if (t.v !== v && t.rear < free) { free = t.rear; fullBy = t.v; }
     // how far the last one on the exit lane can still roll on without a go-ahead of its own: to its stop line, or
     // to the driveway it will stand at waiting to turn in across the road (one that turns in on its own side, or
     // has its go-ahead at the next junction, is on its way out of the lane)
@@ -1200,6 +1210,7 @@ export class Traffic {
       if (h === v) continue;
       if (this.outranks(v, h)) continue; // still far off and able to stop: it re-checks and waits for us
       free -= h.len + 2;
+      fullBy ??= h;
     }
     // (moving, and with the road to move on far enough for us to fit in behind it: a car rolling up to the stop
     // line of a short link, or to a driveway it must wait at, is about to stand right where we would need to be,
@@ -1210,12 +1221,13 @@ export class Traffic {
     if (claim && claim !== v) {
       if (!this.claimLive(claim, out)) this.roomClaim.delete(out);
       // (it holds back new go-aheads; one already given stands, or the car would brake and go again)
-      else if (!v.granted && claim.wait > v.wait + 2 && !(v.v > 2 && toEnd <= (v.v * v.v) / (2 * 3.5) + 0.5)) { v.block = "box"; return false; }
+      else if (!v.granted && claim.wait > v.wait + 2 && !(v.v > 2 && toEnd <= (v.v * v.v) / (2 * 3.5) + 0.5)) { v.block = "box"; v.blockBy = claim; return false; }
     }
     if (free < v.len + (v.granted ? 0.5 : 1.5) && !(moving && free > 0.5)) {
       // a short link lane can't hold a car: allow if the lane after it is clear (chain of cont nodes)
       if (!(out.pl.length < v.len + 2 && !first)) {
         v.block = "box";
+        v.blockBy = fullBy;
         if (toEnd < 3 && (!claim || claim === v || !this.claimLive(claim, out) || v.wait > claim.wait)) this.roomClaim.set(out, v);
         return false;
       }
@@ -1271,7 +1283,7 @@ export class Traffic {
         // (traffic already going round has the right of way: it never stops for a car waiting to come on, only
         // follows one that has come on ahead of it, which car-following does)
         if (c.prio > o.prio) continue;
-        if (!this.mergeOk(v, c, o)) { v.block = "yield"; return false; }
+        if (!this.mergeOk(v, c, o)) { v.block = "yield"; v.blockBy = this.clashBy; return false; }
         continue;
       }
       const tMe = this.reachIn(v, c, cf.sSelf);
@@ -1295,11 +1307,11 @@ export class Traffic {
         if (!Number.isNaN(hp)) {
           // on the connector, or already out on its exit lane (or past it: a road train) with the tail still in the box
           const rear = hp - h.len;
-          if (rear < cf.sOther + 1.2) { v.block = "crossing"; v.blockTo = o.to; return false; }
+          if (rear < cf.sOther + 1.2) { v.block = "crossing"; v.blockTo = o.to; v.blockBy = h; return false; }
         } else if (this.clearsBefore(v, c, { sOther: cf.sSelf }, this.reachIn(h, o, cf.sOther), true, m)) {
           continue; // we're through before it gets there: it needn't even slow down
         } else if (!this.letsOut(v, h)) {
-          v.block = "reserved"; v.blockTo = o.to; return false; // it has the junction; we wait our turn
+          v.block = "reserved"; v.blockTo = o.to; v.blockBy = h; return false; // it has the junction; we wait our turn
         } else v.overrode = true;
       }
       // yield to higher-priority traffic that is about to arrive (unless it is stopping to let us out, or
@@ -1314,6 +1326,10 @@ export class Traffic {
         const w = ap[ap.length - 1];
         if (w && w !== v && (w.next === o || (w.next === null && !this.isFinal(w)))) {
           if (exempt && !this.committed(w)) continue; // it can still stop for us
+          // it stands at its line held for us (our claim on the room it wants, or our turn): giving way to it would
+          // leave us both standing, each waiting on the other (review 2026-11-10, B1: a junction where turning and
+          // straight-on traffic queue for the same exit passed a car every 20 s). We go; it follows when it can.
+          if (!w.granted && w.blockBy === v && w.v < 0.3) continue;
           // it stands at its line waiting for room on its way out (not for us): it is not about to come through.
           // Giving way to it all the same could lock a junction: it waits for room, the room waits for us.
           if (w.next === o && !w.granted && w.block === "box" && w.v < 0.3 && w.wait > 1 && o.to !== c.to) continue;
@@ -1330,7 +1346,7 @@ export class Traffic {
           // the gap it needs is counted from when we get to the line, not from now
           const tLine = toEnd / Math.max((v.v + Math.min(v.v, c.speed)) / 2, 1);
           if (tArr < tLine + SIM.yieldGap * patience * (1 - v.drv * DRIVERS.accept) && (w.v > 1 || d < 6)) {
-            if (!(w.next === null && w.v < 0.5 && d > 3)) { v.block = "yield"; v.blockTo = o.to; return false; }
+            if (!(w.next === null && w.v < 0.5 && d > 3)) { v.block = "yield"; v.blockTo = o.to; v.blockBy = w; return false; }
           }
         }
       }
@@ -1557,7 +1573,7 @@ export class Traffic {
       if (tH - tMe >= 1.5) return false; // we're in well ahead of it
       return true;
     };
-    for (const h of o.occ as Vehicle[]) if (clash(h, o.pl.length - h.s)) return false;
+    for (const h of o.occ as Vehicle[]) if (clash(h, o.pl.length - h.s)) { this.clashBy = h; return false; }
     // the traffic coming round towards the merge: on a small roundabout the arcs and links are only a few metres
     // long, so a car two or three pieces back is a couple of seconds away. Look back along the ring as far as a
     // driver would (the gap that matters, not just the stretch nearest the line)
@@ -1566,13 +1582,13 @@ export class Traffic {
       const L = e.pl.length;
       for (const h of e.occ as Vehicle[]) {
         if (hops === 0 ? (h.next ? h.next !== o : !via(h)) : !via(h)) continue;
-        if (clash(h, L - h.s + back)) return false;
+        if (clash(h, L - h.s + back)) { this.clashBy = h; return false; }
       }
       if (!ring) break;
       back += L;
       const up = e.ins.find((x) => this.net.segs.get(x.from.seg)?.ring === ring);
       if (!up) break;
-      for (const h of up.occ as Vehicle[]) if (via(h) && clash(h, up.pl.length - h.s + back)) return false;
+      for (const h of up.occ as Vehicle[]) if (via(h) && clash(h, up.pl.length - h.s + back)) { this.clashBy = h; return false; }
       back += up.pl.length;
       e = up.from as Lane;
     }
@@ -1591,7 +1607,7 @@ export class Traffic {
     const claim = this.ringClaim.get(ring);
     if (claim && claim !== v && !v.granted) {
       if (!this.ringClaimLive(claim, ring)) this.ringClaim.delete(ring);
-      else if (claim.wait > v.wait + 4) { v.block = "box"; return false; }
+      else if (claim.wait > v.wait + 4) { v.block = "box"; v.blockBy = claim; return false; }
     }
     const refuse = () => {
       v.block = "box";
@@ -1714,9 +1730,10 @@ export class Traffic {
     const G = this.conG, L = this.conL;
     G.length = 0; L.length = 0;
     let gap = Infinity, lv = 0; // the nearest so far
-    const con = (g: number, speed: number) => {
+    let who: Vehicle | null = null; // ...and the vehicle behind it (null: a rule, a light, an empty stop line)
+    const con = (g: number, speed: number, by: Vehicle | null = null) => {
       G.push(g); L.push(speed);
-      if (g < gap) { gap = g; lv = speed; }
+      if (g < gap) { gap = g; lv = speed; who = by; }
     };
     let capA = Infinity; // a plain limit on acceleration from rules that aren't a leader to follow
     // leader on the same edge
@@ -1733,12 +1750,12 @@ export class Traffic {
         // stop with the nose at the driveway (s0 is the standstill gap IDM keeps to an obstacle)
         // once it can't comfortably stop short of the driveway any more, its decision to turn in stands
         if (!(v.turnOk && v.v > 1 && dd < (v.v * v.v) / (2 * 2.5) + 1.5)) v.turnOk = this.canTurnInCheap(v, lane);
-        if (!v.turnOk) con(Math.max(0.1, dd - 0.85 + P.s0), 0);
+        if (!v.turnOk) con(Math.max(0.1, dd - 0.85 + P.s0), 0, this.turnBlocker);
       } else v.turnOk = false;
     }
     // a long vehicle's trailers still on this edge, its front already on the next
     const TL = this.tails.get(e);
-    if (TL) for (const t of TL) if (t.v !== v && t.rear > v.s - 0.5) con(Math.max(0.1, t.rear - v.s), t.v.v);
+    if (TL) for (const t of TL) if (t.v !== v && t.rear > v.s - 0.5) con(Math.max(0.1, t.rear - v.s), t.v.v, t.v);
     // ...or one that went the other way where our paths fork, its trailers still where the two run side by side
     const fc = e.kind === "conn" ? (e as Connector) : e.kind === "lane" ? v.next : null;
     if (fc && this.tails.size) {
@@ -1747,15 +1764,15 @@ export class Traffic {
         const tl2 = c2 === fc ? undefined : this.tails.get(c2);
         if (!tl2) continue;
         const fork = this.forkAt(c2, fc);
-        for (const t of tl2) if (t.v !== v && t.rear < fork && before + t.rear > -0.5) con(Math.max(0.1, before + t.rear), t.v.v);
+        for (const t of tl2) if (t.v !== v && t.rear < fork && before + t.rear > -0.5) con(Math.max(0.1, before + t.rear), t.v.v, t.v);
       }
     }
     if (lead) {
-      con(lead.s - lead.len - v.s, lead.v);
+      con(lead.s - lead.len - v.s, lead.v, lead);
       // drivers watch the brake lights a car further on too, so a queue's slowdown reaches them sooner and
       // doesn't build into a stop-and-go wave down the line
       const lead2 = occ[i + 2];
-      if (lead2 && lead2.v < lead.v) con(lead2.s - lead2.len - v.s - lead.len - P.s0, lead2.v);
+      if (lead2 && lead2.v < lead.v) con(lead2.s - lead2.len - v.s - lead.len - P.s0, lead2.v, lead2);
     } else {
       // look ahead along the planned path, through the junction too (also before the go-ahead: a car turning
       // ahead of us is something to slow for in good time, not something that appears when we're let through)
@@ -1767,9 +1784,9 @@ export class Traffic {
         if (!drive) {
           // stop line: only there once the junction has been asked and said no (it is asked while the car can
           // still stop comfortably, so a car with a clear way never brakes for it)
-          if ((!c || !v.granted) && (c || d < this.askAt(v) - 0.5)) con(d + 0.5, 0);
+          if ((!c || !v.granted) && (c || d < this.askAt(v) - 0.5)) con(d + 0.5, 0, c ? v.blockBy ?? null : null);
           // further back in the queue too: a driver letting a long-waiting car out starts easing off in good time
-          else if (!c && this.courtesyAhead(v, lane)) con(d + 0.5, 0);
+          else if (!c && this.courtesyAhead(v, lane)) con(d + 0.5, 0, this.courtesy.get(lane.to)?.v ?? null);
           if (c) {
             next = c;
             // slow to the junction's speed along a gentle, steady braking curve
@@ -1784,19 +1801,19 @@ export class Traffic {
       while (next && hops++ < 3 && d < 140) {
         const o = next.occ as Vehicle[];
         const sh = this.shadows.get(next);
-        if (sh) for (const u of sh) if (u !== v) con(d + this.shadowS.get(u)! - u.len, u.v);
+        if (sh) for (const u of sh) if (u !== v) con(d + this.shadowS.get(u)! - u.len, u.v, u);
         const lx = next.kind === "lane" ? this.leavers.get(next as Lane) : undefined;
-        if (lx) for (const u of lx) if (u !== v) con(d + this.mapS(u.edge as Lane, next as Lane, u.s) - u.len, u.v);
+        if (lx) for (const u of lx) if (u !== v) con(d + this.mapS(u.edge as Lane, next as Lane, u.s) - u.len, u.v, u);
         const tn = this.tails.get(next);
-        if (tn) for (const t of tn) if (t.v !== v) con(d + t.rear, t.v.v);
+        if (tn) for (const t of tn) if (t.v !== v) con(d + t.rear, t.v.v, t.v);
         // (one that has just turned off at its end, whichever way, still sticks back into it: a short ring arc)
         if (next.kind === "lane" && !o.length) for (const c2 of (next as Lane).outs) {
           const u = (c2.occ as Vehicle[])[0];
-          if (u && u !== v && u.s < u.len) con(d + next.pl.length + u.s - u.len, u.v);
+          if (u && u !== v && u.s < u.len) con(d + next.pl.length + u.s - u.len, u.v, u);
         }
         if (o.length) {
           const l = o[0];
-          con(d + l.s - l.len, l.v);
+          con(d + l.s - l.len, l.v, l);
           break;
         }
         d += next.pl.length;
@@ -1828,11 +1845,11 @@ export class Traffic {
           if (uRem < vRem) {
             const real = vRem - uRem - u.len;
             if (myPos > 0 && myPos - 0.5 > real) {
-              con(myPos - 0.5, u.v);
+              con(myPos - 0.5, u.v, u);
               // and get there no sooner than its tail is past that point (the point itself doesn't move on)
               const clr = Math.max(0, uPos + u.len + P.s0) / Math.max(u.v, 1);
               if (clr > 0) v0 = Math.min(v0, Math.max(myPos / clr, 0.5));
-            } else con(real, u.v);
+            } else con(real, u.v, u);
           } else if (myPos > 0) {
             // further back but there first: time our arrival for just after it has gone by
             const after = tU + (u.len + P.s0 + u.v * 0.6) / Math.max(u.v, 1);
@@ -1845,7 +1862,7 @@ export class Traffic {
         if (tc) for (const t of tc) {
           if (t.v === v || t.rear >= cf.c.pl.length) continue;
           const at = (cf.jSelf ?? cf.sSelf) + Math.max(0, t.rear - (cf.jOther ?? cf.sOther)); // its rear, on our path
-          con(vRem - (mc.pl.length - at), t.v.v);
+          con(vRem - (mc.pl.length - at), t.v.v, t.v);
         }
         // and one with its go-ahead still on its way up to the junction: line up behind it in good time
         for (const u of cf.c.holders as Vehicle[]) if (u !== v && u.edge === cf.c.from && u.v > 2) ld(u, cf.c.from.pl.length - u.s + cf.c.pl.length);
@@ -1854,7 +1871,7 @@ export class Traffic {
     // a turn pocket coming up with a queue in it: ease off to join its tail rather than swing in fast and brake hard
     if (e.kind === "lane" && v.pocketAhead && v.pocketAhead.seg === (e as Lane).seg) {
       const pk = v.pocketAhead, tail = (pk.occ as Vehicle[])[0];
-      if (tail) con(Math.max(0.1, this.mapRaw(pk, e as Lane, tail.s - tail.len) - v.s - 1.5), tail.v);
+      if (tail) con(Math.max(0.1, this.mapRaw(pk, e as Lane, tail.s - tail.len) - v.s - 1.5), tail.v, tail);
     }
     // cooperative merging (see laneChange): line up behind a car in the lane we must get into...
     if (e.kind === "lane" && v.wish) {
@@ -1869,7 +1886,7 @@ export class Traffic {
         // already behind us: it makes room (below). Level with our tail at speed it can't any more: drop behind it
         if (mutual || o.s <= ts - v.len - (o.v * o.v > 6 * 6 ? 6 : 0)) continue;
         const g2 = this.mapS(tl, e as Lane, o.s - o.len) - v.s - 1.5;
-        if (g2 >= P.s0) con(g2, o.v);
+        if (g2 >= P.s0) con(g2, o.v, o);
         else {
           // still alongside it: drop back to a little under its speed (comfortable braking) rather than
           // stopping dead beside it, or creeping along level with it
@@ -1879,7 +1896,7 @@ export class Traffic {
           // across, or it never finds room beside us
           if (o.wish?.lane === e) {
             const back = e.pl.length - 1.5 - o.len - 1.6 - v.s;
-            if (back > -2) con(Math.max(0.1, back + P.s0), 0);
+            if (back > -2) con(Math.max(0.1, back + P.s0), 0, o);
           }
         }
         break;
@@ -1897,7 +1914,7 @@ export class Traffic {
         const wRear = this.mapS(w.edge as Lane, e as Lane, w.s) - w.len;
         const g2 = wRear - v.s - 1.5;
         if (g2 <= 0 || g2 > 60 || (v.v * v.v) / (2 * 3) > g2 + 1) continue; // alongside already, far off, or too late to stop
-        con(g2, w.v);
+        con(g2, w.v, w);
       }
     }
     // brake for a car pulling out across this lane
@@ -1914,7 +1931,7 @@ export class Traffic {
       if (u === v) continue;
       const us = this.shadowS.get(u)!;
       if (us <= v.s) continue;
-      con(Math.max(0.1, us - u.len - v.s), u.v);
+      con(Math.max(0.1, us - u.len - v.s), u.v, u);
     }
     // a car changing out of this lane ahead of us is still (partly) in it
     if (e.kind === "lane") {
@@ -1923,19 +1940,20 @@ export class Traffic {
         if (u === v) continue;
         const rear = this.mapS(u.edge as Lane, e as Lane, u.s) - u.len;
         if (rear + u.len <= v.s) continue; // behind us
-        con(Math.max(0.1, rear - v.s), u.v);
+        con(Math.max(0.1, rear - v.s), u.v, u);
       }
       // and while we're still partly in the lane we're leaving, we don't drive into the car ahead in it
       const f = v.lcFrom;
       if (f && f.seg === (e as Lane).seg) {
         const ms = this.mapS(e as Lane, f, v.s);
-        for (const o of f.occ as Vehicle[]) if (o !== v && o.s > ms) { con(Math.max(0.1, o.s - o.len - ms), o.v); break; }
+        for (const o of f.occ as Vehicle[]) if (o !== v && o.s > ms) { con(Math.max(0.1, o.s - o.len - ms), o.v, o); break; }
       }
     }
     // keep driveways clear: don't come to rest across a spot where someone waits to turn in or pull out
     // Only when what's ahead is (nearly) stopped, i.e. a queue is forming: a moving leader won't leave us there.
     // The spot needs our front 6.5 m short of it (a car pulling out needs that much to fit in ahead of us)
     // and our rear well past it; we come to rest s0 behind whatever we follow.
+    const gapBy: Vehicle | null = who;
     if (e.kind === "lane" && gap !== Infinity && lv < 2) {
       // (not one still pulling out itself: held there, it would only block the lane it is across for longer)
       const K = v.crossing ? undefined : this.keepClear.get(e as Lane);
@@ -1945,7 +1963,7 @@ export class Traffic {
         if (v.s + (v.v * v.v) / 8 > hold) continue; // too close to stop short of it now: carry on through
         if (Math.abs(k - mine) < 6) continue; // that's our own driveway: we're turning in there
         const restFront = v.s + gap - P.s0;
-        if (restFront > hold && restFront - v.len < k + after) con(hold + P.s0 - v.s, 0);
+        if (restFront > hold && restFront - v.len < k + after) con(hold + P.s0 - v.s, 0, gapBy);
       }
     }
     // diverging: a car that just left the same lane on a sibling connector is still right ahead
@@ -1963,11 +1981,12 @@ export class Traffic {
           const rear = u.s - u.len;
           if (rear > shared) continue;
           const g2 = rear - myPos;
-          if (g2 > -0.5) con(Math.max(g2, 0.1), u.v);
+          if (g2 > -0.5) con(Math.max(g2, 0.1), u.v, u);
         }
       }
     }
     v.v0e = v0;
+    v.waitOn = who;
     // free road (IIDM: above the desired speed, ease down to it at no more than comfortable braking)
     const vf = Math.max(v0, 0.1);
     const pa = P.a * (v.af ?? 1) * (1 + v.drv * DRIVERS.launch);
@@ -2256,7 +2275,31 @@ export class Traffic {
   /** The cars that have stood still at least `min` seconds (ui/stuckAlerts.ts): where each is, and for how long. */
   stuckCars(min: number): { p: V2; t: number }[] {
     const out: { p: V2; t: number }[] = [];
-    for (const v of this.vehicles) if (v.stuck >= min && !v.dwell) out.push({ p: { x: v.x, y: v.y }, t: v.stuck });
+    for (const v of this.vehicles) if (stuckNow(v, min)) out.push({ p: { x: v.x, y: v.y }, t: v.stuck });
+    return out;
+  }
+
+  /**
+   * Circular waits: rings of standing vehicles where each is held behind the next (see Vehicle.waitOn), so none of
+   * them can move until one of them leaves. Only vehicles that have stood at least `min` s count. Each ring once,
+   * the vehicle that has stood longest first.
+   */
+  waitCycles(min = 0): Vehicle[][] {
+    const out: Vehicle[][] = [];
+    const state = new Map<Vehicle, number>(); // 1 on the path being walked, 2 done
+    const standing = (u: Vehicle) => u.v < 0.3 && u.stuck >= min && u.quit === undefined && u.dwell === undefined;
+    for (const v0 of this.vehicles) {
+      if (state.has(v0) || !standing(v0)) continue;
+      const path: Vehicle[] = [];
+      let u: Vehicle | null | undefined = v0;
+      while (u && standing(u) && !state.has(u)) { state.set(u, 1); path.push(u); u = u.waitOn; }
+      if (u && state.get(u) === 1) {
+        const ring = path.slice(path.indexOf(u));
+        ring.sort((a, b) => b.stuck - a.stuck);
+        out.push(ring);
+      }
+      for (const p of path) state.set(p, 2);
+    }
     return out;
   }
 
@@ -2904,6 +2947,19 @@ export class Traffic {
     for (const t of this.trips) { a += t.ff; b += t.ff + Math.max(0, t.actual - t.ff - (4 + t.ff * 0.12)); }
     return a / b;
   }
+}
+
+/**
+ * Faster than this (m/s), a vehicle is not stuck, whatever it stood before: `stuck` runs down only at twice the
+ * rate it built up, so a car that stood five minutes and is now driving off at full speed still carries most of it
+ * (review 2026-11-10, B1: such cars made lone "stuck" spots all along the road out of a jam that had cleared, and
+ * the count of places climbed while the jam itself drained). A queue that creeps on stays under it.
+ */
+export const STUCK_SPEED = 3;
+
+/** Has `v` stood at least `min` s, and is it standing or crawling still (not a bus at its stop)? */
+export function stuckNow(v: Vehicle, min: number): boolean {
+  return v.stuck >= min && v.v < STUCK_SPEED && !v.dwell && v.quit === undefined;
 }
 
 export function insertOcc(e: Edge, v: Vehicle) {
