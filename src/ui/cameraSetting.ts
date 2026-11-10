@@ -58,7 +58,7 @@ export function wireCamera(b: HTMLButtonElement | null, get: () => CameraView, s
   if (!b) return () => {};
   const show = () => {
     const m = CAMERA_VIEWS.find((x) => x.id === get()) ?? CAMERA_VIEWS[0];
-    b.innerHTML = `Camera <span class="muted">· ${m.name}</span>`;
+    b.innerHTML = `Camera<span class="pm-v">${m.name}</span>`;
     b.title = `${m.blurb}. Click to change (M).`;
     b.setAttribute("aria-label", `Camera: ${m.name}. ${m.blurb}. Click to change.`);
   };

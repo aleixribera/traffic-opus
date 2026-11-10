@@ -7,6 +7,7 @@ import { BUILDING_TYPES } from "../config";
 import type { Building } from "../game/buildings";
 import type { Game } from "../game/city";
 import { PLANTS, PRODUCTS, takesIn, type PlantKind, type Product } from "../game/industry";
+import { GATE_LINK_REACH } from "../game/city";
 import { unlockedBy, type Milestone } from "../game/progression";
 import type { V2 } from "../core/math";
 import { compassWords, townGrowth, type Town } from "../game/settlements";
@@ -35,13 +36,21 @@ export interface GoalNow {
   text: string;
   /** and what comes next, the works' own advice: "Its first load of crops is ready in about 2 hours. ..." */
   fix?: string;
+  /** the chain a missing link sits in, as the recipe goes: "crops → Food Plant → food" (shown on a line of its own) */
+  chain?: string;
+  /** where the ground for the first works of the chain lies: "Forest lies 800 m east of Alder Run" */
+  where?: string;
+  /** the product whose chain this is about (a tip on the same chain stands down: docs/ui-words.md, one place per fact) */
+  p?: Product;
   tone: "good" | "bad" | "";
+  /** said in the line's tooltip: what it doesn't say itself */
+  more?: string;
   /** the works to show */
   works?: number;
   /** or the place on the map to fly to (the soil for the first farm) */
   spot?: V2;
-  /** the word before it when it is not about now: "Where" */
-  key?: string;
+  /** the line says where to build the first of the chain, not what it is doing now */
+  key?: "Where";
   /** a missing link of the chain: the advice (which names the chain) belongs on the line even where space is short */
   link?: boolean;
 }
@@ -69,8 +78,7 @@ const aName = (k: PlantKind) => { const n = BUILDING_TYPES[k].name; return `${/^
 function buildSay(g: Game, ks: PlantKind[]): string {
   const can = ks.filter((k) => g.placedUnlocked(k)), not = ks.filter((k) => !g.placedUnlocked(k));
   const later = not.map((k) => { const m = unlockedBy((u) => u.buildings?.includes(k)); return `${aName(k)}${m ? ` opens with the goal “${m.name}”` : " is not open yet"}`; });
-  const say = [can.length ? `Build ${andList(can.map(aName))}` : "", ...later].filter(Boolean).join("; ");
-  return say[0].toUpperCase() + say.slice(1);
+  return [can.length ? `Build ${andList(can.map(aName))}` : "", ...later].filter(Boolean).map((x) => x[0].toUpperCase() + x.slice(1)).join(". ");
 }
 
 /**
@@ -84,8 +92,7 @@ export function missingLink(g: Game, p: Product): GoalNow | null {
   if (!k) return null;
   const ins = Object.keys(PLANTS[k].inputs) as Product[];
   if (!ins.length) return null;
-  // (no break inside the works' name or before the product, so the chain wraps whole: "crops →" / "Food Plant → food")
-  const chain = `${andList(ins.map(lower))} → ${BUILDING_TYPES[k].name.replace(/ /g, " ")} → ${lower(p)}`;
+  const chain = chainText(k, p);
   const mk = furthest(g, k);
   if (!mk) {
     // (a feeder stands with nowhere to send its goods: build the works in the middle. Not a feeder whose goods another
@@ -94,22 +101,23 @@ export function missingLink(g: Game, p: Product): GoalNow | null {
     const taken = (q: Product) => g.industry.plants().some((o) => o.kind !== k && takesIn(o.kind as PlantKind, q));
     for (const q of ins) {
       const f = maker(g, q);
-      if (f && !taken(q)) return { who: `Your ${BUILDING_TYPES[f.kind].name}`, text: `No ${BUILDING_TYPES[k].name} to take its ${lower(q)}`, fix: `${buildSay(g, [k])}: ${chain}.`, tone: "", works: f.id, link: true };
+      if (f && !taken(q)) return { text: `Your ${BUILDING_TYPES[f.kind].name} has no ${BUILDING_TYPES[k].name} to take its ${lower(q)}`, fix: buildSay(g, [k]), chain, tone: "", works: f.id, link: true, p };
     }
     // (part of the chain stands, its goods going elsewhere: the works in the middle is the gap, said as itself)
-    if (ins.some((q) => maker(g, q))) return { text: `No ${BUILDING_TYPES[k].name} yet`, fix: `${buildSay(g, [k])}: ${chain}.`, tone: "", link: true };
+    if (ins.some((q) => maker(g, q))) return { text: `No ${BUILDING_TYPES[k].name} yet`, fix: buildSay(g, [k]), chain, tone: "", link: true, p };
     return null;
   }
   const missing = ins.filter((q) => !maker(g, q));
   if (!missing.length) return null;
   const kinds = [...new Set(missing.map((q) => makerKind(q)).filter((x): x is PlantKind => !!x))];
   return {
-    who: `Your ${BUILDING_TYPES[k].name}`,
-    text: `Waiting for ${andList(missing.map(lower))}, which nothing of yours makes`,
-    fix: `${buildSay(g, kinds)}: ${chain}.`,
+    text: `Nothing of yours makes ${andList(missing.map(lower))} for your ${BUILDING_TYPES[k].name}`,
+    fix: buildSay(g, kinds),
+    chain,
     tone: "",
     works: mk.id,
     link: true,
+    p,
   };
 }
 
@@ -131,17 +139,17 @@ export function goalNow(g: Game, m: Milestone, have: number): GoalNow | null {
   const f = FIRST_LOAD[m.id];
   if (!f || have > 0) return null;
   const c = chainNow(g, f.p, f.sold);
-  if (c) return c;
+  if (c) return { ...c, p: f.p };
   // nothing of the chain placed: the first goal says where its ground is (the pointer on the map flies there too)
   if (m.id === "food10") {
     const at = farmSpot(g), home = g.towns.list[0];
-    if (at && home) return { key: "Where", text: `Fertile soil for your farm lies ${far(Math.hypot(at.x - home.c.x, at.y - home.c.y))} ${compassWords(home.c, at)} of ${home.name}`, tone: "", spot: at };
+    if (at && home) return { key: "Where", text: `Place a Farm on the fertile soil ${far(Math.hypot(at.x - home.c.x, at.y - home.c.y))} ${compassWords(home.c, at)} of ${home.name}`, more: `A farm within ${GATE_LINK_REACH} m of a road lays its own street to it.`, tone: "", spot: at, p: "food" };
   }
   // and the timber's forest, once the first food is sold (one chain at a time, as the tip): the nearest wood a
   // logging camp fits with a road in reach, not the big patch kilometres over the river (play-test 2026-11-10)
   if (m.id === "planks10" && (g.progress.sold.food ?? 0) >= 1 && !g.buildings.list.some((b) => b.kind === "loggingcamp")) {
     const at = groundSpot(g, "loggingcamp"), home = g.towns.list[0];
-    if (at && home) return { key: "Where", text: `Forest for a logging camp lies ${far(Math.hypot(at.x - home.c.x, at.y - home.c.y))} ${compassWords(home.c, at)} of ${home.name}`, tone: "", spot: at };
+    if (at && home) return { key: "Where", text: `Place a Logging Camp in the forest ${far(Math.hypot(at.x - home.c.x, at.y - home.c.y))} ${compassWords(home.c, at)} of ${home.name}`, more: "Then a Sawmill on its road.", tone: "", spot: at, p: "planks" };
   }
   return null;
 }
@@ -182,18 +190,19 @@ function chainNow(g: Game, p: Product, sold: boolean): GoalNow | null {
 /** The goals that grow a town to a size, and the size. */
 const POP_GOAL: Record<string, number> = { hamlet150: 150, village: 300, pop1000: 1000, town: 1500, pop4000: 4000, city: 6000 };
 
-/** The works a product's chain still needs, the makers of its inputs first: "Build a Logging Camp and a Sawmill: logs → Sawmill → planks." */
-function chainToBuild(g: Game, p: Product): string {
-  return chainKinds(g, p).say;
+/** A works' recipe as a chain: "logs → Sawmill → planks" (no break inside the works' name, so it wraps whole). */
+function chainText(k: PlantKind, p: Product): string {
+  const ins = Object.keys(PLANTS[k].inputs) as Product[];
+  return `${andList(ins.map(lower))} → ${BUILDING_TYPES[k].name.replace(/ /g, " ")} → ${lower(p)}`;
 }
 
-function chainKinds(g: Game, p: Product): { say: string; kinds: PlantKind[] } {
+/** The works a product's chain still needs, the makers of its inputs first: "Build a Logging Camp and a Sawmill", and its recipe. */
+function chainKinds(g: Game, p: Product): { say: string; chain?: string; kinds: PlantKind[] } {
   const k = makerKind(p);
   if (!k) return { say: "", kinds: [] };
   const ins = Object.keys(PLANTS[k].inputs) as Product[];
   const kinds = [...new Set([...ins.filter((q) => !maker(g, q)).map((q) => makerKind(q)).filter((x): x is PlantKind => !!x), k])];
-  const chain = ins.length ? `: ${andList(ins.map(lower))} → ${BUILDING_TYPES[k].name.replace(/ /g, " ")} → ${lower(p)}` : "";
-  return { say: `${buildSay(g, kinds)}${chain}.`, kinds };
+  return { say: buildSay(g, kinds), chain: ins.length ? chainText(k, p) : undefined, kinds };
 }
 
 /**
@@ -213,24 +222,40 @@ function townNow(g: Game, size: number): (GoalNow & { need?: Product }) | null {
     // (none of it sold yet: the chain toward its first load, as the first-load goals say it)
     if ((g.progress.sold[p] ?? 0) < 1) {
       const c = chainNow(g, p, true);
-      if (c) return { text, fix: goalNowSay(c), tone: c.tone === "bad" ? "bad" : "", works: c.works, link: c.link, need: p };
+      // (a missing link: what to build, and the chain; else what the chain is doing, its timing in the tooltip)
+      if (c) return c.link
+        ? { text, fix: c.fix, chain: c.chain, tone: c.tone === "bad" ? "bad" : "", works: c.works, link: true, need: p, p }
+        : { text, fix: lineOf(c), ...(c.fix ? { more: goalNowSay(c) } : {}), tone: c.tone === "bad" ? "bad" : "", works: c.works, need: p, p };
       // (nothing of it placed: the line flies to the ground for the first of it, the forest for a logging camp)
-      const { say, kinds } = chainKinds(g, p);
+      const { say, chain, kinds } = chainKinds(g, p);
       const k = kinds.find((x): x is "farm" | "loggingcamp" => x === "farm" || x === "loggingcamp");
       const spot = (k && groundSpot(g, k)) || undefined;
-      return { text, fix: say, tone: "bad", link: true, need: p, ...(spot ? { spot } : {}) };
+      // (and where its ground lies, as the first-load goal would say it: the line flies there)
+      const where = spot ? `${k === "farm" ? "Fertile soil" : "Forest"} lies ${far(Math.hypot(spot.x - t.c.x, spot.y - t.c.y))} ${compassWords(t.c, spot)} of ${t.name}` : undefined;
+      return { text, fix: say, chain, ...(where ? { where } : {}), tone: "bad", link: true, need: p, p, ...(spot ? { spot } : {}) };
     }
     const h = needHelp(g, t, p);
-    return { text, fix: h?.say ?? "Your works are still getting up to pace.", tone: h?.kind === "none" ? "bad" : "", need: p };
+    return { text, fix: h?.say ?? "Your works are still getting up to pace.", tone: h?.kind === "none" ? "bad" : "", need: p, p };
   }
   const nn = nextNeed(t.pop);
   if (!nn || nn.pop > size || t.pop < nn.pop * 0.7 || maker(g, nn.p)) return null;
   if (needsOf(t.pop).some((q) => (g.progress.sold[q] ?? 0) < 1)) return null;
-  return { text: `${t.name} will want ${lower(nn.p)} from ${nn.pop.toLocaleString("en-US")} people`, fix: `Without a supply it stops growing there. ${chainToBuild(g, nn.p)}`, tone: "", link: true };
+  const { say, chain } = chainKinds(g, nn.p);
+  return { text: `${t.name} will want ${lower(nn.p)} from ${nn.pop.toLocaleString("en-US")} people`, fix: say, chain, more: "Without a supply it stops growing there.", tone: "", link: true, p: nn.p };
+}
+
+/** The line's state in a few words: "Your Farm: starting up". */
+export function lineOf(n: GoalNow): string {
+  return n.who ? `${n.who}: ${n.text[0].toLowerCase()}${n.text.slice(1)}` : n.text;
 }
 
 /** The goal line as one sentence (for the screen reader, and the tests): "Your Farm: starting up. Its first ...". */
 export function goalNowSay(n: GoalNow): string {
-  const fix = n.fix ? ` ${n.fix}${/[.!?]$/.test(n.fix) ? "" : "."}` : "";
-  return `${n.who ? `${n.who}: ${n.text[0].toLowerCase()}${n.text.slice(1)}` : n.text}.${fix}`;
+  const end = (x: string) => (/[.!?]$/.test(x) ? x : `${x}.`);
+  // (the chain runs on from a one-sentence fix after a colon, "Build a Sawmill: logs → Sawmill → planks."; after a
+  // longer one it stands as its own sentence, so it is not read as what the last sentence names)
+  const cap = (x: string) => x[0].toUpperCase() + x.slice(1);
+  const one = n.fix && !/[.!?] /.test(n.fix.replace(/\.$/, ""));
+  const how = n.fix && n.chain ? (one ? `${n.fix.replace(/\.$/, "")}: ${n.chain}` : `${end(n.fix)} ${cap(n.chain)}`) : (n.fix ?? n.chain);
+  return [lineOf(n), how, n.where].filter((x): x is string => !!x).map(end).join(" ");
 }

@@ -95,13 +95,13 @@ describe("where the first farm can go", () => {
     const now = goalNow(g, food, 0)!;
     expect(now.key).toBe("Where");
     expect(now.spot).toEqual(at);
-    expect(goalNowSay(now)).toMatch(new RegExp(`^Fertile soil for your farm lies [\\d.]+ (m|km) [a-z-]+ of ${home.name}\\.$`));
+    expect(goalNowSay(now)).toMatch(new RegExp(`^Place a Farm on the fertile soil [\\d.]+ (m|km) [a-z-]+ of ${home.name}\\.$`));
     // a farm placed there: nothing more to point at, and the goal line is the farm's own
     expect(g.place("farm", at)).toBeTruthy();
     expect(farmSpot(g)).toBeNull();
     const after = goalNow(g, food, 0)!;
     expect(after.spot).toBeUndefined();
-    expect(after.who).toBe("Your Farm");
+    expect(after.text).toMatch(/^Your Farm /);
   }, 120000);
 });
 
@@ -127,7 +127,7 @@ describe("where the first logging camp can go", () => {
     const now = goalNow(g, planks, 0)!;
     expect(now.key).toBe("Where");
     expect(now.spot).toEqual(at);
-    expect(goalNowSay(now)).toMatch(new RegExp(`^Forest for a logging camp lies [\\d.]+ (m|km) [a-z-]+ of ${home.name}\\.$`));
+    expect(goalNowSay(now)).toMatch(new RegExp(`^Place a Logging Camp in the forest [\\d.]+ (m|km) [a-z-]+ of ${home.name}\\.$`));
     // a camp placed: the goal line is the camp's own
     expect(g.place("loggingcamp", at)).toBeTruthy();
     expect(goalNow(g, planks, 0)?.key).not.toBe("Where");

@@ -130,10 +130,10 @@ export class DepositMarks {
       const el = document.createElement("button");
       el.type = "button";
       el.className = "tp-edge dm-edge";
-      el.innerHTML = `<i class="tp-arrow" aria-hidden="true"></i><span class="tp-k">Nearest</span><b></b><span class="tp-km"></span>`;
+      el.innerHTML = `<i class="tp-arrow" aria-hidden="true"></i><b></b><span class="tp-km"></span>`;
       el.querySelector("b")!.textContent = k.name;
       const far = this.far?.(at) ?? "";
-      el.querySelector(".tp-km")!.textContent = far;
+      el.querySelector(".tp-km")!.textContent = far ? `Nearest · ${far}` : "Nearest";
       el.title = `Fly to the ${k.name.toLowerCase()} deposit${far ? `, ${far}` : ""}`;
       el.setAttribute("aria-label", el.title);
       el.onclick = () => this.fly(at);

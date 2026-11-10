@@ -9,7 +9,7 @@ export function wireNights(b: HTMLButtonElement | null, cycle: DayCycle, click: 
   if (!b) return;
   const show = () => {
     const m = NIGHT_MODES.find((x) => x.id === cycle.mode) ?? NIGHT_MODES[0];
-    b.innerHTML = `Nights <span class="muted">· ${m.name}</span>`;
+    b.innerHTML = `Nights<span class="pm-v">${m.name}</span>`;
     b.title = `${m.blurb}. Click to change.`;
     b.setAttribute("aria-label", `Nights: ${m.name}. ${m.blurb}. Click to change.`);
   };

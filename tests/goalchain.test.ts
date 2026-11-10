@@ -22,34 +22,34 @@ describe("the missing link of a goal's chain", () => {
   it("a farm with no food plant: build the Food Plant", () => {
     const farm = works("farm");
     const n = missingLink(game(farm), "food")!;
-    expect({ ...n, fix: plain(n.fix) }).toEqual({
-      who: "Your Farm", text: "No Food Plant to take its crops",
-      fix: "Build a Food Plant: crops → Food Plant → food.", tone: "", works: farm.id, link: true,
-    });
+    // (one sentence that names the works, then the fix, and the chain on a line of its own: docs/ui-words.md)
+    expect(n).toMatchObject({ text: "Your Farm has no Food Plant to take its crops", tone: "", works: farm.id, link: true, p: "food" });
+    expect(n.who).toBeUndefined();
+    expect(goalNowSay(n)).toBe("Your Farm has no Food Plant to take its crops. Build a Food Plant: crops → Food Plant → food.");
   });
 
   it("a food plant with no farm: build the Farm", () => {
     const fp = works("foodplant");
     const n = missingLink(game(fp), "food")!;
-    expect(n).toMatchObject({ who: "Your Food Plant", works: fp.id });
-    expect(goalNowSay(n)).toBe("Your Food Plant: waiting for crops, which nothing of yours makes. Build a Farm: crops → Food Plant → food.");
+    expect(n).toMatchObject({ works: fp.id });
+    expect(goalNowSay(n)).toBe("Nothing of yours makes crops for your Food Plant. Build a Farm: crops → Food Plant → food.");
   });
 
   it("names every input missing, and only those, with the recipe in full", () => {
     const sm = works("smelter");
     expect(goalNowSay(missingLink(game(sm), "steel")!)).toBe(
-      "Your Smelter: waiting for iron ore and coal, which nothing of yours makes. Build an Iron Mine and a Coal Mine: iron ore and coal → Smelter → steel.",
+      "Nothing of yours makes iron ore and coal for your Smelter. Build an Iron Mine and a Coal Mine: iron ore and coal → Smelter → steel.",
     );
     expect(goalNowSay(missingLink(game(sm, works("coalmine")), "steel")!)).toBe(
-      "Your Smelter: waiting for iron ore, which nothing of yours makes. Build an Iron Mine: iron ore and coal → Smelter → steel.",
+      "Nothing of yours makes iron ore for your Smelter. Build an Iron Mine: iron ore and coal → Smelter → steel.",
     );
     // a logging camp with no sawmill
-    expect(plain(missingLink(game(works("loggingcamp")), "planks")!.fix)).toBe("Build a Sawmill: logs → Sawmill → planks.");
+    expect(goalNowSay(missingLink(game(works("loggingcamp")), "planks")!)).toBe("Your Logging Camp has no Sawmill to take its logs. Build a Sawmill: logs → Sawmill → planks.");
   });
 
   it("a works not open to build yet is named with the goal that opens it", () => {
     const g = { ...game(works("ironmine")), placedUnlocked: (k: string) => k !== "smelter" } as unknown as Game;
-    expect(plain(missingLink(g, "steel")!.fix)).toBe("A Smelter opens with the goal “Village”: iron ore and coal → Smelter → steel.");
+    expect(goalNowSay(missingLink(g, "steel")!)).toBe("Your Iron Mine has no Smelter to take its iron ore. A Smelter opens with the goal “Village”: iron ore and coal → Smelter → steel.");
   });
 
   it("a feeder whose goods another works takes is not blamed for a works not built (review 2026-11-10, B4)", () => {
@@ -61,7 +61,7 @@ describe("the missing link of a goal's chain", () => {
     expect(n.works).toBeUndefined();
     expect(goalNowSay(n)).toBe("No Cement Works yet. A Cement Works opens with the goal “Steady trade”: limestone and coal → Cement Works → cement.");
     // a coal mine with nothing else to take its coal is still the one to name
-    expect(missingLink(game(coal), "cement")).toMatchObject({ who: "Your Coal Mine", works: coal.id });
+    expect(missingLink(game(coal), "cement")).toMatchObject({ text: expect.stringMatching(/^Your Coal Mine /), works: coal.id });
   });
 
   it("a site going up counts as there: no missing link while the chain is placed", () => {
@@ -80,8 +80,9 @@ describe("the missing link of a goal's chain", () => {
       // (the works that makes it stands alone: the line asks for what feeds it, and ends on the goal's product)
       const k = (Object.keys(PLANTS) as PlantKind[]).find((x) => (PLANTS[x].outputs[f.p] ?? 0) > 0)!;
       const now = goalNow(game(works(k)), m, 0);
-      expect(now?.text, mid).toMatch(/^Waiting for /);
-      expect(plain(now!.fix), mid).toMatch(/^Build an? [A-Z].*: .+ → .+ → .+\.$/);
+      expect(now?.text, mid).toMatch(/^Nothing of yours makes .+ for your [A-Z]/);
+      expect(plain(now!.fix), mid).toMatch(/^Build an? [A-Z][^.]*\.?$/);
+      expect(plain(now!.chain), mid).toMatch(/^.+ → .+ → .+$/);
     }
   });
 });
@@ -105,20 +106,22 @@ describe("a goal to grow a town says what holds it (review 2026-11-10, First hou
     expect(n.tone).toBe("bad");
     // (and flies to the forest for the camp)
     expect(n.spot).toEqual({ x: 800, y: 0 });
-    expect(goalNowSay(n)).toBe("Alder Run holds at 127 people, short of planks. Build a Logging Camp and a Sawmill: logs → Sawmill → planks.");
+    expect(goalNowSay(n)).toBe("Alder Run holds at 127 people, short of planks. Build a Logging Camp and a Sawmill: logs → Sawmill → planks. Forest lies 800 m east of Alder Run.");
     // (once, under the first goal that grows a town: the Village goal after it would only say it again)
     expect(goalNow(g, village, 127)).toBeNull();
   });
 
   it("with part of the chain placed, the link it lacks", () => {
     const n = goalNow(hamlet(127, { food: 50 }, [works("loggingcamp")]), growing, 127)!;
-    expect(goalNowSay(n)).toBe("Alder Run holds at 127 people, short of planks. Your Logging Camp: no Sawmill to take its logs. Build a Sawmill: logs → Sawmill → planks.");
+    expect(goalNowSay(n)).toBe("Alder Run holds at 127 people, short of planks. Build a Sawmill: logs → Sawmill → planks.");
   });
 
   it("growing toward the need, its first food in: planks named before they hold it", () => {
     expect(goalNowSay(goalNow(hamlet(81, { food: 50 }), growing, 81)!)).toBe(
-      "Alder Run will want planks from 100 people. Without a supply it stops growing there. Build a Logging Camp and a Sawmill: logs → Sawmill → planks.",
+      "Alder Run will want planks from 100 people. Build a Logging Camp and a Sawmill: logs → Sawmill → planks.",
     );
+    // (why it matters is in the tooltip)
+    expect(goalNow(hamlet(81, { food: 50 }), growing, 81)!.more).toBe("Without a supply it stops growing there.");
     // (not before its first food is sold: one chain at a time)
     expect(goalNow(hamlet(81, { food: 50 }, [], {}), growing, 81)).toBeNull();
     // (nor with a sawmill placed: it is on its way)

@@ -159,13 +159,12 @@ export class MainMenu {
       <nav class="card mm-card" aria-label="Main menu">
         <header class="mm-head">
           <h1 class="mm-title">Kilometre <span>Zero</span></h1>
-          <p class="mm-tag">Farms, mills and the roads between them. Keep the towns supplied and they grow.</p>
         </header>
         <div class="mm-list">
           ${meta ? `<button class="mm-item primary" data-a="continue"><span class="mm-l">Continue</span><span class="mm-s">${esc(meta.name.replace(/, autosave$/, ""))} · ${fmtNum(meta.residents)} people · ${ago(meta.savedAt)}</span></button>` : ""}
-          <button class="mm-item${meta ? "" : " primary"}" data-a="new"><span class="mm-l">New company</span>${meta ? "" : `<span class="mm-s">A hamlet, a road out of it and ${formatMoney(START_MONEY)}</span>`}</button>
+          <button class="mm-item${meta ? "" : " primary"}" data-a="new" title="A hamlet, a road out of it and ${formatMoney(START_MONEY)}"><span class="mm-l">New company</span></button>
           <button class="mm-item" data-a="load"><span class="mm-l">Load game</span></button>
-          <button class="mm-item" data-a="explore"><span class="mm-l">Explore ${esc(name)}</span><span class="mm-s">The company behind this menu. Look round, try the tools; nothing is saved</span></button>
+          <button class="mm-item" data-a="explore" title="The company behind this menu. Try the tools, nothing is saved"><span class="mm-l">Explore ${esc(name)}</span></button>
           <button class="mm-item" data-a="keys"><span class="mm-l">Controls</span></button>
         </div>
         <button class="mm-news" data-a="news"><span class="mm-news-k">New in ${VERSION}</span><span class="mm-news-t">${esc(CHANGELOG[0].title)}</span></button>
@@ -174,7 +173,7 @@ export class MainMenu {
     this.live.setAttribute("aria-live", "off");
     this.root.append(this.live);
     for (const b of this.root.querySelectorAll<HTMLButtonElement>(".mm-item, .mm-news")) b.onclick = () => this.act(b.dataset.a!);
-    this.strip.innerHTML = `<span><b>Exploring ${esc(name)}</b><span class="muted"> · nothing here is saved</span></span><button class="btn">Main menu</button>`;
+    this.strip.innerHTML = `<span><b>Exploring ${esc(name)}</b><span class="muted"> · nothing is saved</span></span><button class="btn">Main menu</button>`;
     (this.strip.querySelector("button") as HTMLButtonElement).onclick = () => this.open();
     this.tick();
     window.clearInterval(this.timer);

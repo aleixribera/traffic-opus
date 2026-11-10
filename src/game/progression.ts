@@ -109,7 +109,7 @@ export const MILESTONES: Milestone[] = [
   {
     // (tier 2 opens whole: the power plant, coal mine, iron mine and smelter of the steel chain. Listed in the order
     // to build them: the power plant first, since the other three stand at 40% without it. Owner, 2026-11-10)
-    id: "village", name: "Village", goal: "Grow a town to Village size: 300 people",
+    id: "village", name: "Village", goal: "Grow a town to 300 people",
     measure: (v) => [biggest(v), 300],
     unlocks: { buildings: ["coalplant", "coalmine", "ironmine", "smelter"], trucks: ["heavy"], grant: 80000 },
   },
@@ -140,7 +140,7 @@ export const MILESTONES: Milestone[] = [
   },
   {
     // (the villages buy fresh milk: the dairy opens as the second one grows)
-    id: "villages2", name: "Two villages", goal: "Grow two towns to Village size: 300 people",
+    id: "villages2", name: "Two villages", goal: "Grow two towns to 300 people",
     measure: (v) => [ofSize(v, 1), 2],
     unlocks: { towns: 1, roads: ["boulevard", "boulevardM"], buildings: ["dairyfarm", "creamery"], grant: 10000 },
   },
@@ -164,12 +164,12 @@ export const MILESTONES: Milestone[] = [
   },
   {
     // (the chemical works' fertilizer and explosives are what farms and mines need past level 2)
-    id: "town", name: "Town", goal: "Grow a town to Town size: 1,500 people",
+    id: "town", name: "Town", goal: "Grow a town to 1,500 people",
     measure: (v) => [biggest(v), 1500],
     unlocks: { towns: 2, trucks: ["roadtrain"], roads: ["one4"], buildings: ["chemworks"], grant: 50000 },
   },
   {
-    id: "townSupplied", name: "Town supplied", goal: "Keep a Town of 1,500+ in everything it needs for a day",
+    id: "townSupplied", name: "Town supplied", goal: "Keep a town of 1,500 in all it needs for a day",
     measure: (v) => [v.towns.some((t) => sizeOf(t.pop) >= 2 && fullySupplied(t)) ? 1 : 0, 1],
     unlocks: { towns: 1, levels: { kinds: ["constructionplant", "chemworks", "creamery"], to: 3 }, grant: 140000 },
   },
@@ -182,17 +182,17 @@ export const MILESTONES: Milestone[] = [
     unlocks: { buildings: ["coppermine", "coppersmelter", "electronics", "machineworks"], towns: 2, grant: 230000 },
   },
   {
-    id: "city", name: "City", goal: "Grow a town to City size: 6,000 people",
+    id: "city", name: "City", goal: "Grow a town to 6,000 people",
     measure: (v) => [biggest(v), 6000],
     unlocks: { towns: 2, levels: { kinds: ["coppersmelter"], to: 3 }, grant: 100000 },
   },
   {
-    id: "machinery1", name: "Heavy industry", goal: "Build your first load of machinery",
+    id: "machinery1", name: "Heavy industry", goal: "Make your first load of machinery",
     measure: (v) => [n(v.made, "machinery"), 1],
     unlocks: { levels: { kinds: ["farm", "foodplant", "loggingcamp", "sawmill", "electronics", "machineworks"], to: 4 }, grant: 80000 },
   },
   {
-    id: "citySupplied", name: "City supplied", goal: "Keep a City of 6,000+ in everything it needs for a day",
+    id: "citySupplied", name: "City supplied", goal: "Keep a city of 6,000 in all it needs for a day",
     measure: (v) => [v.towns.some((t) => sizeOf(t.pop) >= 3 && fullySupplied(t)) ? 1 : 0, 1],
     unlocks: {
       towns: 2, grant: 150000,

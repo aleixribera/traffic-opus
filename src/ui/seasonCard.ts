@@ -17,14 +17,6 @@ import { BUILDING_TYPES, type BuildingKind } from "../config";
 import { SEASONAL, SEASONS, SEASON_DAYS, SEASON_NAME, YEAR, seasonDay, seasonOf, yearOf, yearPhase, type Season } from "../game/calendar";
 import { seasonGlyph } from "./specials";
 
-/** A line under the season's name, as a newsreel would put it. */
-export const SEASON_MOTTO: Record<Season, string> = {
-  spring: "The thaw is in and the fields are sown",
-  summer: "Long days on the open road",
-  autumn: "The harvest rush is on",
-  winter: "Hard ground and short days",
-};
-
 /**
  * One practical hint per season, the first whose kind the player runs (in this order). Where nothing they run swings
  * much, no hint.
@@ -163,9 +155,7 @@ function sunburst(s: Season): string {
 export function seasonCardHtml(s: Season, year: number, fx: SeasonEffects): string {
   return `<div class="sc-in">
     ${sunburst(s)}
-    <p class="sc-kicker"><span>Year ${year}</span></p>
-    <h2 class="sc-title">${SEASON_NAME[s]}</h2>
-    <p class="sc-motto">${SEASON_MOTTO[s]}</p>
+    <h2 class="sc-title" aria-label="${SEASON_NAME[s]}, year ${year}">${SEASON_NAME[s]}</h2>
     <div class="sc-body">${fxHtml(fx)}${hintHtml(fx)}</div>
   </div>`;
 }
@@ -175,7 +165,6 @@ export function seasonPopHtml(t: number, fx: SeasonEffects): string {
   const s = fx.season, d = seasonDay(t), wait = SEASON_DAYS - d + 1;
   const next = SEASON_NAME[SEASONS[(SEASONS.indexOf(s) + 1) % 4]];
   return `<header>${seasonGlyph(s)}<span>${SEASON_NAME[s]}</span></header>
-    <p class="sp-motto">${SEASON_MOTTO[s]}</p>
     <p class="sp-when">Day ${d} of ${SEASON_DAYS} · year ${yearOf(t)} · ${next} ${wait === 1 ? "tomorrow" : `in ${wait} days`}</p>
     ${fxHtml(fx)}${hintHtml(fx)}`;
 }

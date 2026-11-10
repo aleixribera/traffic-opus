@@ -2,9 +2,8 @@
 
 /* the wireless: a readout plate like the speed group, the tune's name on a dial strip between its two buttons */
 .wireless { display: flex; align-items: center; background: var(--ink); border: 1px solid var(--edge); border-radius: var(--r); box-shadow: inset 0 0 0 1px var(--rule); padding: 2px; gap: 2px; min-width: 0; }
-/* the dial strip: a RADIO kicker over the tune's name, so the slot says what it is */
+/* the dial strip: the tune's name, in quotes */
 .wl-name { width: 168px; height: 32px; padding: 0 8px; display: flex; flex-direction: column; justify-content: center; border-left: 1px solid var(--rule); border-right: 1px solid var(--rule); }
-.wl-k { font: 600 var(--t-xs)/12px var(--f-text); letter-spacing: 0.12em; text-transform: uppercase; color: var(--cream-3); }
 .wl-tune { font: 600 var(--t-sm)/17px var(--f-text); color: var(--ochre-hi); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wl-name.idle .wl-tune { color: var(--cream-2); }
 .wireless .speed-btn:disabled { color: var(--plate-3); }
@@ -16,9 +15,8 @@
 /* the Sound dialog */
 .dialog.sound { width: min(400px, calc(100vw - 24px)); }
 .snd { display: flex; flex-direction: column; }
-.snd-row { display: grid; grid-template-columns: 156px 1fr 30px; align-items: center; gap: 12px; padding: 9px 2px; border-bottom: 1px solid var(--rule); }
+.snd-row { display: grid; grid-template-columns: 110px 1fr 30px; align-items: center; gap: 12px; padding: 9px 2px; border-bottom: 1px solid var(--rule); }
 .snd-n { display: flex; flex-direction: column; gap: 2px; font-size: var(--t-sm); font-weight: 600; color: var(--cream); line-height: 1.1; }
-.snd-n .muted { font: 400 var(--t-sm)/1.2 var(--f-text); color: var(--cream-3); }
 .snd-row output { text-align: right; color: var(--cream-2); font-size: var(--t-sm); }
 /* a slider as a gauge: an ink track filled in ochre up to a square brass knob */
 .snd-row input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 22px; margin: 0; background: transparent; cursor: pointer; }

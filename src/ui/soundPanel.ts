@@ -15,7 +15,7 @@ const ICON_NEXT = svg(`<path d="M3 3.5 L9 8 L3 12.5 Z" fill="currentColor"/><rec
 
 const SLIDERS: [key: "master" | "music" | "world" | "ui", name: string, hint: string][] = [
   ["master", "Master", "Everything"],
-  ["music", "Music", "The wireless"],
+  ["music", "Music", "The radio"],
   ["world", "World", "Traffic, works, towns, weather"],
   ["ui", "Interface", "Clicks, building, fanfares"],
 ];
@@ -24,11 +24,11 @@ const SLIDERS: [key: "master" | "music" | "world" | "ui", name: string, hint: st
 export function soundHtml(a: GameAudio): string {
   const s = a.settings;
   return `<div class="snd">
-    ${SLIDERS.map(([k, name, hint]) => `<label class="snd-row"><span class="snd-n">${name}<span class="muted">${hint}</span></span>
+    ${SLIDERS.map(([k, name, hint]) => `<label class="snd-row" title="${hint}"><span class="snd-n">${name}</span>
       <input type="range" min="0" max="100" step="5" value="${Math.round(s[k] * 100)}" data-k="${k}" aria-label="${name} volume">
       <output class="num">${Math.round(s[k] * 100)}</output></label>`).join("")}
     <button class="pm snd-sw mute" role="switch" aria-checked="${s.muted}">Mute<span class="muted">N</span><span class="pm-v">${s.muted ? "On" : "Off"}</span></button>
-    <button class="pm snd-sw old" role="switch" aria-checked="${s.old}" title="Old set: the band through a 1930s wireless, a narrow, warm sound with a faint crackle. Off: the band as it is.">Old wireless tone<span class="pm-v">${s.old ? "On" : "Off"}</span></button>
+    <button class="pm snd-sw old" role="switch" aria-checked="${s.old}" title="Old set: the band through a 1930s radio, a narrow, warm sound with a faint crackle. Off: the band as it is.">Old radio tone<span class="pm-v">${s.old ? "On" : "Off"}</span></button>
   </div>`;
 }
 
@@ -59,8 +59,9 @@ export function wireSound(dlg: HTMLElement, a: GameAudio, click: () => void) {
 export const soundSummary = (a: GameAudio) => (a.settings.muted ? "Muted" : `${Math.round(a.settings.master * 100)}%`);
 
 /**
- * The radio beside the clock: a "Radio" kicker over the tune's name in quotes, so a tune called "Payday in Quimbyton"
- * reads as a song, not a game event, and the slot says what it is (design audit 2026-11-10, F28, F31).
+ * The radio beside the clock: the set's icon and the tune's name in quotes, so a tune called "Payday in Quimbyton"
+ * reads as a song, not a game event (design audit 2026-11-10, F28, F31). No "Radio" label over it: the icon says
+ * what the slot is, and "Radio off" when it is off (no eyebrows, docs/ui-words.md).
  */
 export class WirelessControl {
   readonly el = document.createElement("div");
@@ -79,7 +80,6 @@ export class WirelessControl {
     this.onBtn.setAttribute("role", "switch");
     this.onBtn.onclick = () => { a.set({ wireless: !a.settings.wireless }); click(); };
     this.name.className = "wl-name";
-    this.name.innerHTML = `<span class="wl-k">Radio</span>`;
     this.tuneEl.className = "wl-tune";
     this.name.append(this.tuneEl);
     this.nextBtn.className = "speed-btn wl-next";
@@ -94,7 +94,7 @@ export class WirelessControl {
   /** Bring it up to date (the tune changed, a setting changed). */
   paint() {
     const s = this.a.settings, on = s.wireless, tune = this.a.tune;
-    const text = !on ? "Off" : s.muted ? "Sound muted" : tune ? `“${tune}”` : "Tuning in";
+    const text = !on ? "Radio off" : s.muted ? "Sound muted" : tune ? `“${tune}”` : "Tuning in";
     const key = `${on}|${text}`;
     if (key === this.last) return;
     this.last = key;
