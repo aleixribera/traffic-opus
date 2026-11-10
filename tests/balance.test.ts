@@ -126,6 +126,8 @@ function play() {
         const pl = g.placedPlan(kind, p);
         if (pl?.ok) {
           const x = g.place(kind, p)!;
+          // (a spot whose gate no street reaches is no use: a player would see "No road to the gate" and move it)
+          if (!x.access) { g.undo(); continue; }
           say(`place ${kind}${x.plant!.yld < 1 ? ` (${Math.round(x.plant!.yld * 100)}% on its deposit)` : ""}, ${(dist(p, A.c) / 1000).toFixed(1)} km from ${A.name} · $${Math.round(g.money).toLocaleString("en-US")} left`);
           return x;
         }
