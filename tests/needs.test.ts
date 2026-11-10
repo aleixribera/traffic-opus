@@ -141,7 +141,10 @@ describe("a town's needs, read out", () => {
     const was = { spawned: t.spawned, today: t.today, yesterday: t.yesterday, days: t.hist.days };
     Object.assign(t, { spawned: true, today: {}, yesterday: {} });
     t.hist.days = [];
-    expect(labelNeeds(t)).toEqual({ kind: "noroad", needs: ["food"] });
+    expect(labelNeeds(t)).toEqual({ kind: "noroad", needs: ["food"], joined: false });
+    // joined by road, it stops saying "no road" and waits for its first load (play-test 2026-11-09, A10)
+    expect(labelNeeds(t, true)).toEqual({ kind: "noroad", needs: ["food"], joined: true });
+    expect(needView(t, "food", true).say).toBe("A road reaches it now. It waits for its first load of food.");
     Object.assign(t, { spawned: was.spawned, today: was.today, yesterday: was.yesterday });
     t.hist.days = was.days;
     t.pop = pop;

@@ -43,19 +43,20 @@ const START_INSET = { l: 40, t: 84, r: 330, b: 96 };
 
 /** How far outside a waiting site's gate the road tool snaps a road's end (m): clear of the fence, well in reach. */
 const GATE_SNAP = 7;
-/** How far one pixel of scrolling turns the building being placed (a wheel notch of ~100 px: ~10°). */
-const PLACE_TURN_PER_PX = (10 * Math.PI) / 180 / 100;
-/** Shift + the wheel, or Shift + , and ., turns it in fine steps: a wheel notch (or a key press) turns it 1°. */
+/** Shift + , and . turn the building being placed in fine steps: 1° a press (plain, and Shift + wheel: 15°). */
 const FINE_TURN = Math.PI / 180;
 import { ZONES } from "./game/zones";
 import { MIN_DEPOSIT, PLANTS, PRODUCTS, UNPOWERED, isPlantKind, type Product } from "./game/industry";
 import { CIVICS } from "./game/civics";
 import { labelNeeds, type LabelNeeds } from "./ui/needs";
+import { hasMade, steadyProblem, tally } from "./ui/bottleneck";
+import { dearShare } from "./ui/cost";
 import { productIcon } from "./ui/icons";
 import { TownPings } from "./ui/townPings";
 import { STUCK_KEEP, StuckAlerts } from "./ui/stuckAlerts";
 import { DEPOSIT_KINDS, DepositMarks } from "./ui/depositMarks";
 import { served } from "./game/settlements";
+import { joinedUp } from "./ui/tips";
 import type { ModelSet } from "./render/models";
 import { Preview3D } from "./render/preview3d";
 import { Highlight3D } from "./render/highlight3d";
@@ -63,7 +64,7 @@ import { buildingOn, deckOn, heightsOn, junctionOn, pickOn, straightDown } from 
 import { frameFit, rayAt, riseShare, TILT_MAP, TILT_MAX, type GroundRay } from "./render/viewmath";
 import { newOrbit, orbitStep, type OrbitDrag } from "./ui/orbit";
 import { TILT_MIN, loadCameraView, loadTilt, loadTurn, saveCameraView, saveTilt, saveTurn, type CameraView } from "./ui/cameraSetting";
-import { groundAt, isMined } from "./ui/inspect";
+import { groundAt, isMined, modelOf, noBuyer } from "./ui/inspect";
 import type { Sel } from "./ui/inspect";
 import { Roads3D } from "./render/roads3d";
 import { RoadsFar } from "./render/roadsFar";
@@ -80,7 +81,7 @@ import { Birds } from "./render/birds";
 import { Vehicles3D } from "./render/vehicles3d";
 import { Lamps3D } from "./render/lamps3d";
 import { Signals3D } from "./render/signals3d";
-import { DayCycle } from "./render/daycycle";
+import { DayCycle, farLift } from "./render/daycycle";
 import { fieldLook } from "./game/calendar";
 import { Transit3D, legPoints } from "./render/transit3d";
 import { STOP_COST } from "./game/transit";
@@ -167,7 +168,7 @@ export class App {
   /** money and moments rising off the map, and the shelf-time rings over refrigerated trucks */
   pops = new Pops();
   /** Shift + wheel scrolling not yet turned into a whole degree (px) */
-  private fineWheel = 0;
+  private turnWheel = 0;
   private treesDue: ReturnType<typeof setTimeout> | 0 = 0;
   private iconT = 0;
   private labelKey = "";
@@ -437,6 +438,16 @@ export class App {
     const d = Math.hypot(c.x - this.view.cx, c.y - this.view.cy);
     const lift = Math.max(0, Math.min(this.view.maxHalfH, d * 0.4) - Math.max(this.view.halfH, halfH));
     this.glideTo(c, halfH, Math.min(3.2, 1.2 + d / 4000), lift);
+  }
+
+  /** Whether a patch of a ground field is on screen now (a coarse grid of the view, clear of the HUD's edges). */
+  private fieldInView(field: number): boolean {
+    const t = this.game.terrain, W = this.view.w, H = this.view.h;
+    let n = 0;
+    for (let j = 0; j < 6; j++) for (let i = 0; i < 10; i++) {
+      if (t.has(field, this.view.screenToGround(W * (0.08 + (i / 9) * 0.84), H * (0.14 + (j / 5) * 0.68))) && ++n >= 3) return true;
+    }
+    return false;
   }
 
   /** The deposit kinds the map marks now: the one the extractor being placed works, or every kind in the Resources view. */
@@ -748,6 +759,10 @@ export class App {
     this.groundOverlay();
     this.pops.clear();
     this.icons.boostOf = (b) => g.industry.boosts(b);
+    // (a new works waiting for its first loads is starting up, not in trouble: no roundel yet)
+    this.icons.troubleOf = (b) => steadyProblem(g, b);
+    // (nor is one whose goods no town is big enough to buy yet: nothing to fix, the town has to grow)
+    this.icons.quiet = (b) => !!b.plant && ((!!b.problem?.startsWith("Waiting for") && !hasMade(b)) || noBuyer(g, b)?.tone === "");
     // what is pinned over a building stands over its roof; a jam's pin on its road's deck
     this.icons.topOf = this.pops.topOf = (b) => this.buildings3d.topOf(b);
     this.stuckAlerts.heightAt = (p) => deckOn(g.net, straightDown(p), 8)?.h ?? 0;
@@ -912,25 +927,21 @@ export class App {
       const act = this.wheel.read(e);
       if (performance.now() < this.wheelQuiet) return;
       if (act === "pinch" && this.gesturing) return;
-      // a building in hand turns with a mouse wheel, Shift + wheel by 1° (Ctrl + wheel and a pinch still zoom, as do
-      // R and F; two fingers on a touchpad still move the map, and , and . turn it)
-      if (this.st.tool === "place" && !e.ctrlKey && act !== "pinch" && (act === "zoom" || e.shiftKey)) {
+      // The wheel always zooms, with a building in hand too: the first thing a player does with a farm in hand is
+      // zoom out to look for soil, and the wheel span the farm instead (play-test 2026-11-09, C4). Shift + wheel
+      // turns the building, 15° a notch (, and . do the same; with Shift they turn it by 1°).
+      if (this.st.tool === "place" && e.shiftKey && !e.ctrlKey && act !== "pinch") {
         // (with Shift held the browser may scroll sideways instead: either way it is the wheel turning)
-        const d = e.deltaY || (e.shiftKey ? e.deltaX : 0);
+        const d = e.deltaY || e.deltaX;
         if (!d) return;
         const px = e.deltaMode === 1 ? d * 33 : d;
-        if (e.shiftKey) {
-          // (fine: a degree per wheel notch, ~100 px; a trackpad's many small steps add up to the same)
-          this.fineWheel += Math.sign(px) * Math.min(Math.abs(px), 200);
-          while (Math.abs(this.fineWheel) >= 100) {
-            const dir = this.fineWheel > 0 ? 1 : -1;
-            this.fineWheel -= dir * 100;
-            this.turnPlaced(dir, true);
-          }
-          return;
+        // (a notch is ~100 px; a trackpad's many small steps add up to the same)
+        this.turnWheel += Math.sign(px) * Math.min(Math.abs(px), 200);
+        while (Math.abs(this.turnWheel) >= 100) {
+          const dir = this.turnWheel > 0 ? 1 : -1;
+          this.turnWheel -= dir * 100;
+          this.turnPlaced(dir);
         }
-        this.st.placeTurn = wrapAngle(this.st.placeTurn + Math.sign(px) * Math.min(Math.abs(px), 200) * PLACE_TURN_PER_PX);
-        this.dirtyPreview = true;
         return;
       }
       const r = el.getBoundingClientRect();
@@ -978,6 +989,12 @@ export class App {
     window.addEventListener("keydown", (e) => this.onKey(e, true));
     window.addEventListener("keyup", (e) => this.onKey(e, false));
     window.addEventListener("resize", () => this.view.resize());
+    // (the canvas can change size with no resize event: the page laid out after the first frame, a window resized
+    // while loading. Then the picture was drawn for the old size and stood off from the pointer)
+    if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => {
+      const r = el.getBoundingClientRect();
+      if (Math.abs(r.width - this.view.w) > 0.5 || Math.abs(r.height - this.view.h) > 0.5) { this.view.resize(); this.dirtyPreview = true; }
+    }).observe(el);
     window.addEventListener("blur", () => { this.keys.clear(); this.setSpace(false); });
   }
 
@@ -1189,6 +1206,9 @@ export class App {
       const i = order.indexOf(this.st.mode);
       this.setTool({ tool: "road", mode: order[(i + (e.shiftKey ? order.length - 1 : 1)) % order.length] });
     }
+    // R and I: the two catalogs a company lives in (zoom is on the wheel and on + and -)
+    else if (k === "r" && !e.repeat) { this.hud?.catKey("roads"); this.hud?.sound("click"); }
+    else if (k === "i" && !e.repeat) { this.hud?.catKey("industry"); this.hud?.sound("click"); }
     else if (k === "b") this.setTool({ tool: "bulldoze" });
     else if (k === "l") this.setTool({ tool: this.st.tool === "lane" ? "inspect" : "lane" });
     else if (k === "p") this.hud?.toggleWin("progression");
@@ -1517,7 +1537,10 @@ export class App {
     }
     if (t === "inspect") {
       // anything on the map opens its panel; empty ground clears the selection
-      let s = this.pickOn(this.cursorRay);
+      // (a works' plate on the far map flies down to the works as it opens it)
+      const ic = this.icons.hit(this.cursorPx.x, this.cursorPx.y);
+      if (ic?.far) this.glideTo(ic.b.c, Math.max(260, Math.hypot(ic.b.hw, ic.b.hd) * 1.6), 1.1);
+      let s: Sel | null = ic ? { k: "building", id: ic.b.id } : this.pickOn(this.cursorRay);
       // open ground: a mined deposit always opens; soil, forest, water and hills (which are most of the map) only
       // when nothing else is selected, ground is, or the Resources view is on; otherwise a click there clears
       if (!s) {
@@ -1743,7 +1766,8 @@ export class App {
     const g = this.game;
     const D = PLANTS[k];
     const plants = g.buildings.list.filter((b) => b.kind === "coalplant");
-    const linked = (b: Building) => seg !== undefined && !!b.access && g.connected(seg, b.access.seg);
+    // (with no road at its gate yet, it is judged by distance: the road that joins it is still to come)
+    const linked = (b: Building) => seg === undefined || (!!b.access && g.connected(seg, b.access.seg));
     const ring = (p: V2, r: number, color: number) => {
       const pts: V2[] = [];
       for (let i = 0; i <= 96; i++) pts.push(v2(p.x + Math.cos((i / 96) * Math.PI * 2) * r, p.y + Math.sin((i / 96) * Math.PI * 2) * r));
@@ -1751,13 +1775,31 @@ export class App {
     };
     if (D.makes) {
       ring(c, D.reach!, 0x2f86e0);
-      const near = g.buildings.list.filter((b) => g.utilities.demandOf(b) > 0 && dist(b.c, c) <= D.reach! && linked(b)).length;
-      chips.push({ text: near ? `Powers ${near} building${near === 1 ? "" : "s"} within ${D.reach! / 1000} km` : `Nothing within ${D.reach! / 1000} km needs power yet`, kind: "info" });
+      // every works in reach that draws power, building sites and ones still going up too: they are what a power
+      // plant is built for (play-test 2026-11-09, A12: it said "nothing needs power" beside a coal mine's site)
+      const users = g.buildings.list.filter((b) => isPlantKind(b.kind) && !!PLANTS[b.kind].power && dist(b.c, c) <= D.reach! && linked(b));
+      chips.push({ text: users.length ? `Will power: ${tally(users.map((b) => BUILDING_TYPES[b.kind].name))}` : `Nothing within ${D.reach! / 1000} km draws power yet`, kind: "info" });
     } else if (D.power) {
       for (const p of plants) ring(p.c, PLANTS.coalplant.reach!, 0x2f86e0);
-      const inReach = plants.some((p) => dist(p.c, c) <= PLANTS.coalplant.reach! && linked(p));
-      chips.push({ text: inReach ? `Needs ${D.power} MW: a power plant is in reach` : `Needs ${D.power} MW: no power plant in reach, works at ${Math.round(UNPOWERED * 100)}%`, kind: inReach ? "info" : "error" });
+      const near = plants.filter((p) => dist(p.c, c) <= PLANTS.coalplant.reach! && linked(p));
+      const open = near.some((p) => p.built >= 1 && !p.plant?.site);
+      chips.push({
+        text: open ? `Needs ${D.power} MW: a power plant is in reach` : near.length ? `Needs ${D.power} MW: the power plant in reach is still being built` : `Needs ${D.power} MW: no power plant in reach, works at ${Math.round(UNPOWERED * 100)}%`,
+        kind: near.length ? "info" : "error",
+      });
     }
+  }
+
+  /**
+   * What a click will cost, by the pointer: in brick with its share of the company's cash once that share is large
+   * (one click on a long road was a third of the bank with nothing to say so: play-test 2026-11-09, C5), and as
+   * an error when there isn't the money.
+   */
+  private costChip(total: number): Chip {
+    const money = this.game.money;
+    if (total > money) return { text: `${formatMoney(total)} · not enough money`, kind: "error" };
+    const share = dearShare(total, money);
+    return share ? { text: `${formatMoney(total)} · ${share}% of your cash`, kind: "dear" } : { text: formatMoney(total), kind: "cost" };
   }
 
   /** The steepest grade along a plan's lead road (%). */
@@ -1830,7 +1872,7 @@ export class App {
             }
             if (u.moves.length) chips.push({ text: u.moves.length === 1 ? "1 building moves back" : `${u.moves.length} buildings move back`, kind: "info" });
             chips.push({ text: `${ROAD_TYPES[s.type].name} → ${ROAD_TYPES[this.st.roadType].name}`, kind: "info" });
-            chips.push({ text: formatMoney(u.cost), kind: u.cost > g.money ? "error" : "cost" });
+            chips.push(this.costChip(u.cost));
           }
         }
       }
@@ -1875,10 +1917,11 @@ export class App {
           const lead = plan.strokes[0] ?? plan.ghosts?.[0];
           const L = lead?.chain.length ? plan.length / Math.max(1, plan.strokes.length) : 0;
           if (lead) chips.push({ text: L < 950 ? `${Math.round(L)} m` : `${(L / 1000).toFixed(2)} km`, kind: "info" });
-          chips.push({ text: formatMoney(total), kind: total > g.money ? "error" : "cost" });
-          // the steepest it climbs (a bridge's ramps, or the whole road between levels)
+          chips.push(this.costChip(total));
+          // the steepest it climbs (a bridge's ramps, or the whole road between levels), in words: the bare
+          // "↗ 11.0%" was never explained (play-test 2026-11-09, C6)
           const grade = lead ? this.maxGrade(plan) : 0;
-          if (grade > 0.5) chips.push({ text: `↗ ${grade.toFixed(1)}%`, kind: "info" });
+          if (grade > 0.5) chips.push({ text: `Steepest climb ${grade.toFixed(1)}%`, kind: "info" });
           for (const sp of plan.bridges ?? []) chips.push({ text: `Bridge ${Math.round(sp.length)} m over ${sp.over === "water" ? "water" : sp.over === "road" ? "the road" : "water and road"} · ${formatMoney(sp.cost)}`, kind: "info", icon: "bridge" });
           // (to or from a company site: which one it connects; ending at its gate, that says it all)
           if (plan.connects) chips.push({ text: plan.connects, kind: "info" });
@@ -1985,10 +2028,11 @@ export class App {
         else if (pl.faces) chips.push({ text: `Gate on a ${pl.faces.toLowerCase()}`, kind: "info" });
         // (the deposit share; a lot refused for too little of it gives the share in its reason instead)
         this.powerPreview(pv, chips, k, pl.c, pl.access?.seg);
+        this.depositMarks.here = !!pl.deposit && pl.deposit.share >= MIN_DEPOSIT;
         if (pl.deposit && pl.deposit.share >= MIN_DEPOSIT) chips.push({ text: `${pl.deposit.name[0].toUpperCase()}${pl.deposit.name.slice(1)} ${Math.round(pl.deposit.share * 100)}%`, kind: "info" });
         if (!pl.ok) chips.push({ text: pl.reason ?? "Can't build here", kind: "error" });
         else {
-          chips.push({ text: formatMoney(pl.cost), kind: pl.cost > g.money ? "error" : "cost" });
+          chips.push(this.costChip(pl.cost));
           chips.push({ text: `${formatMoney(PLACED[k].upkeep)}/h upkeep`, kind: "info" });
           const site = PLANTS[k].site;
           if (site) chips.push({ text: `Site: needs ${Object.entries(site).map(([p, q]) => `${q} load${q === 1 ? "" : "s"} of ${PRODUCTS[p as Product].name.toLowerCase()}`).join(", ")}`, kind: "info" });
@@ -1998,7 +2042,9 @@ export class App {
       }
     } else if (t === "inspect") {
       // what a click would select: a thin cream outline and a pointer (the selection itself is lit by Highlight3D)
-      const h = this.pickOn(this.cursorRay);
+      // (a trouble roundel or a works' far plate under the pointer stands for its building, and says what is wrong)
+      const ic = this.icons.hit(this.cursorPx.x, this.cursorPx.y);
+      const h: Sel | null = ic ? { k: "building", id: ic.b.id } : this.pickOn(this.cursorRay);
       this.highlight.hoverV = h?.k === "vehicle" ? h.id : null;
       // (the building it is: a town's hall or civic building selects the town)
       const hb = h?.k === "building" ? g.buildings.byId.get(h.id) ?? null : h?.k === "town" ? buildingOn(g, this.cursorRay, this.buildings3d.solidsOf)?.b ?? null : null;
@@ -2013,7 +2059,13 @@ export class App {
         if (n) pv.path(Array.from({ length: 33 }, (_, i) => ({ x: n.p.x + Math.cos(i / 16 * Math.PI) * r, y: n.p.y + Math.sin(i / 16 * Math.PI) * r })), cream, w, n.h);
       }
       const b = hb;
-      if (b) chips.push({ text: b.zone ? `${ZONES[b.zone].short} · ${b.town !== undefined ? g.towns.byId.get(b.town)?.name ?? "" : "level " + b.level}` : BUILDING_TYPES[b.kind].name, kind: "info" });
+      if (ic) {
+        const m = modelOf(g, { k: "building", id: ic.b.id }, undefined, () => "");
+        if (m) {
+          chips.push({ text: `${m.title}: ${m.status.text}`, kind: m.status.tone === "bad" ? "error" : "info" });
+          if (m.status.fix) chips.push({ text: m.status.fix, kind: "info" });
+        }
+      } else if (b) chips.push({ text: b.zone ? `${ZONES[b.zone].short} · ${b.town !== undefined ? g.towns.byId.get(b.town)?.name ?? "" : "level " + b.level}` : BUILDING_TYPES[b.kind].name, kind: "info" });
     }
     this.hud?.chips(chips.length ? this.cursorPx : null, chips);
   }
@@ -2034,7 +2086,7 @@ export class App {
   /** The light and the season for this frame, and the lamps that go with them. */
   private dayFrame(dt: number, far: boolean) {
     const g = this.game;
-    const L = this.dayCycle.update(g.time + g.alpha * SIM.dt, dt, this.mode === "menu", this.overlay !== "none");
+    const L = this.dayCycle.update(g.time + g.alpha * SIM.dt, dt, this.mode === "menu", this.overlay !== "none", this.mode === "menu" ? 0 : farLift(this.view.halfH));
     this.view.setLight(L.amb, L.sun, L.dir);
     this.smoke.setLight(L.amb, L.sun, L.dir);
     this.birds.setLight(L.amb, L.sun, L.dir);
@@ -2067,14 +2119,14 @@ export class App {
     this.last = now;
     const g = this.game;
     this.syncRise();
-    // The camera from the keys: W A S D or the arrows move it along the screen's own axes, Q/E turn it, R/F zoom
-    // (CS2), Y/H tilt it. Not with Ctrl held (Ctrl+S saves, Ctrl+Y is redo), nor while a cinematic camera films.
+    // The camera from the keys: W A S D or the arrows move it along the screen's own axes, Q/E turn it, + and - zoom
+    // (R and I open the catalogs), Y/H tilt it. Not with Ctrl held (Ctrl+S saves, Ctrl+Y is redo), nor while a cinematic camera films.
     const held = (...ks: string[]) => ks.some((k) => this.keys.has(k));
     const free = !this.camera.cinematic && !held("Control", "Meta");
     let mx = free ? (held("d", "ArrowRight") ? 1 : 0) - (held("a", "ArrowLeft") ? 1 : 0) : 0;
     let my = free ? (held("s", "ArrowDown") ? 1 : 0) - (held("w", "ArrowUp") ? 1 : 0) : 0;
     const turn = free ? (held("e") ? 1 : 0) - (held("q") ? 1 : 0) : 0;
-    const zoom = free ? (held("f") ? 1 : 0) - (held("r") ? 1 : 0) : 0;
+    const zoom = free ? (held("-", "_") ? 1 : 0) - (held("+", "=") ? 1 : 0) : 0;
     // Y up toward the Map view, H down toward the horizon
     const pitch = free ? (held("h") ? 1 : 0) - (held("y") ? 1 : 0) : 0;
     if ((mx || my) && (this.camera.following !== null || this.glide)) { this.camera.stopFollow(); this.glide = null; }
@@ -2230,6 +2282,7 @@ export class App {
       this.stuckAlerts.sync(g.traffic.stuckCars(STUCK_KEEP), g.time, this.bare);
       const dm = this.markedDeposits();
       this.depositMarks.show(dm.kinds, dm.focus);
+      this.depositMarks.inView = dm.focus && this.fieldInView(dm.kinds[0].field);
     }
     else this.icons.update(this.view);
     this.pops.update(this.view, this.bare || far ? null : g.traffic, g.alpha);
@@ -2256,8 +2309,8 @@ export class App {
   private townLabels() {
     const g = this.game;
     const hide = this.bare;
-    const info = g.towns.list.map((t) => ({ t, ln: labelNeeds(t) }));
-    const sig = (ln: LabelNeeds) => (ln.kind === "calm" ? "" : ln.kind === "noroad" ? `x${ln.needs.join(",")}` : ln.needs.map((n) => `${n.p}.${n.state}`).join(","));
+    const info = g.towns.list.map((t) => ({ t, ln: labelNeeds(t, t.spawned && joinedUp(g, t)) }));
+    const sig = (ln: LabelNeeds) => (ln.kind === "calm" ? "" : ln.kind === "noroad" ? `x${ln.joined ? "j" : ""}${ln.needs.join(",")}` : ln.needs.map((n) => `${n.p}.${n.state}`).join(","));
     // (a town with an open order wears a tag saying what for: owner, 2026-11-08)
     const ord = (id: number) => g.orders.openIn(id).map((o) => CIVICS[o.kind].fair ? CIVICS[o.kind].fair!.event : CIVICS[o.kind].name).join(" · ");
     const key = hide ? "" : info.map(({ t, ln }) => `${t.id}:${t.name}:${g.towns.sizeName(t)}:${t.pop}:${sig(ln)}:${ord(t.id)}`).join("|");
@@ -2268,7 +2321,7 @@ export class App {
       const pop = t.pop.toLocaleString("en-US");
       const words = (ps: Product[]) => ps.map((p) => PRODUCTS[p].name.toLowerCase()).join(" and ");
       let say = "";
-      if (ln.kind === "noroad") say = ", no road reaches it yet";
+      if (ln.kind === "noroad") say = ln.joined ? ", joined by road, waiting for its first load" : ", no road reaches it yet";
       else if (ln.kind === "needs") {
         const none = ln.needs.filter((n) => n.state === "none").map((n) => n.p), low = ln.needs.filter((n) => n.state === "low").map((n) => n.p);
         say = `${none.length ? `, no ${words(none)} coming` : ""}${low.length ? `, running low on ${words(low)}` : ""}`;
@@ -2282,7 +2335,7 @@ export class App {
         icons: ln.kind === "calm" ? undefined
           : ln.kind === "noroad" ? ln.needs.map((p) => ({ svg: productIcon(p), cls: "noroad" }))
           : ln.needs.map((n) => ({ svg: productIcon(n.p), cls: n.state })),
-        note: ln.kind === "noroad" ? "No road yet" : undefined,
+        note: ln.kind === "noroad" ? (ln.joined ? "First load due" : "No road yet") : undefined,
         compactHalfH: 9000,
         onClick: () => { this.setTool({ tool: "inspect" }); this.hud?.openTown(t.id); },
       };

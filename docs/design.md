@@ -788,6 +788,14 @@ Each unlocks something concrete: a chain, the next level for named kinds of site
 junction tool, a new town springing up, warehouses, fuel depots, a grant. The last ones unlock **company
 projects**: huge buildings that take hundreds of mixed loads, as long-term goals and goods sinks.
 
+The first goal, First customers, is the **first load of food delivered** (play-test 2026-11-09, B3: at ten loads
+the game stayed silent through its first hour). The bar's count reads "Goals N of M" and the people count says "in
+all towns". A milestone that opens new works lists them in its banner **in the order to build them** (what feeds
+another comes first), each with what it takes, makes, needs on site and draws, and an Open Industry button that
+opens the catalog on their tab with nothing in hand. Once every goal is reached the Goals card does not go empty:
+it lists what the towns are short of, the biggest first, each with what to do ("Your Food Plant is short of crops.
+Your 2 Farms are at full output. Build about 3 more.").
+
 ### Trimmed to real steps (owner, 2026-11-08)
 
 "Some goals and objectives are just weird, let's trim them down a lot." The ladder went from 54 milestones to
@@ -847,8 +855,10 @@ no longer applies; it names a town only when that town is the one that needs it 
 | No road reaches your site | a site's roads reach no town and no other site (placed out past where its gate street reaches) |
 | Build a Food plant | a farm and no food plant |
 | Nobody to sell to | a built plant whose roads reach no buyer |
+| Traffic is stuck | four or more vehicles stand together (the Traffic stuck sign is up). It says more works will not help till it moves, and names the three ways out: a turn lane, lights, a second road. While it shows, no later tip does. |
+| A works is at full output | a works is flat out and a town still asks for more of what it makes, or (a step up the chain) the works that feeds the town's supplier is flat out. Says what to build. |
 | Planks | no sawmill, and a town is at 60% of the size that wants planks (names it, "will want" or "wants now") |
-| A new town has no road | a town that sprang up isn't joined by road to anything beyond its own streets |
+| A new town has no road | a town that sprang up isn't joined by road to another town or to a works that makes something it buys (a stub of road out of it, or a logging camp at its edge, is not a road to it) |
 | A site waits for something | a building site needs a product none of the company's plants makes |
 | Where a deposit lies | a mined kind is unlocked and none placed: the nearest deposit's distance and direction |
 | Power | a built plant draws power and no power plant is placed |
@@ -860,6 +870,57 @@ Cut: the "keep the town fed" filler, and the "build X next" tips for each later 
 line already says what opened). Each tip has a dismiss button; the pause menu's Tips switch turns them all off,
 and turning it back on brings every dismissed tip back. Both are kept per browser (`flowtown.tips.off`,
 `flowtown.tips.dismissed`). The category button a tip points at gets a still marker, no pulse.
+
+## Reading the game (play-test 2026-11-09)
+
+The play-test's finding was that the game knew what was wrong and did not say it. The rules since
+(src/ui/bottleneck.ts, tests/bottleneck.test.ts, tests/farzoom.test.ts):
+
+**A works' one status line** is the first of these that applies, with one line under it saying what to do:
+
+| Line | When | It says |
+|---|---|---|
+| Building site / Under construction | not open yet | loads still to come, hours to go at the pace they arrive, where the next comes from |
+| Starting up | open, waiting for an input, has made nothing yet | where the first load comes from and when. Not trouble: no mark on the map |
+| Waiting for X | short of an input | the works that sends it and when; if that one is flat out, "Build another". With the loads stuck in traffic it says to clear the jam and never to build |
+| No buyer for X yet | nobody on its roads buys what it makes | the town that will and from how many people ("Towns buy planks from 100 people. Alder Run has 77") |
+| At full output | flat out while a town or one of the company's works would take more | who would take more, and the two ways out: build another, or wait for the next level |
+| Working normally | none of the above | |
+
+"Waiting for X" is read steadily (under its pace with an empty yard), not from the sim's own line, which comes and
+goes with every load that lands. The panel, the mark on the map, the Economy rows and the town's advice all go by
+the same reading. A works is flat out only from 60% of what it can make over its last hours, so one early batch
+does not count.
+
+**A town's need** says how much is missing and then what to do about it, with a Show it button to the works in
+question: nothing of yours makes it (build one), your works are at full output (build about N more), or one is
+held up (look at it). The advice goes a step up the chain when the works that feeds the town's supplier is the one
+flat out. A town no road reaches says only that.
+
+**A new town** reads "No road yet" on its label and panel, then "First load due" / "Joined by road" once a road
+joins it to somewhere a load can come from, until its first load lands.
+
+**Held in traffic.** A vehicle's panel says why in words ("the road past the junction is full, so it waits for
+room"), never the sim's name for it. The Transport window counts the vehicles standing still.
+
+**Marks on the map.** A trouble roundel stands only on what the company can fix: every trouble of its own works,
+and a town building out of goods or cut off from the roads. A shop short of staff or customers gets none.
+Pointing at a roundel says what is wrong and what to do, as the chips by the pointer, and a click selects the
+building. A town's own building opens a short panel with no demolish button.
+
+**From far out** (the view more than 1,100 m tall), every works of the company shows as a small plate with its
+catalog picture, since the buildings are a few pixels by then: navy when well, brick with a "!" tab when in
+trouble, dashed while it is being built. They take the place of the gate roundels, thin out where they would
+overlap (troubled ones kept first), say their status under the pointer and fly the camera in on a click. Night
+never goes black from there: from 700 m the light is lifted toward day, up to three tenths at 2,200 m, so roads
+and works still read while close in the night is untouched.
+
+**Windows fly you there.** A row in Towns, Economy or Transport, and a chip in any panel, flies the camera to the
+thing and frames it when it is off screen or the view is far out. The Economy window lists the company's works
+by what they lose or earn, troubled ones first, each with where it is.
+
+**Resource pointers.** With an extractor in hand, the pointer to the nearest deposit shows at once and goes away
+as soon as that ground is on screen or under the building. Edge pointers stay clear of the open catalog.
 
 ## Pacing (no waiting)
 
@@ -1075,7 +1136,12 @@ height levels shown while drawing, and the instant upgrade preview.
 **Tools:**
 - Left mouse applies the tool.
 - Right mouse goes back one step (a road in progress loses its last click; with nothing left it ends the chain).
-- Esc closes an open panel, else leaves the tool.
+- Esc goes back one thing at a time: the tool in hand (a road half drawn goes with it), the catalog, a panel, a window, an
+  info view. With nothing open it opens the pause menu (src/ui/escape.ts).
+- R and I open the Roads and Industry catalogs (again to close). Opening Industry puts nothing in hand; a card
+  click does. Locked cards stay in their place and say what unlocks them. With something in hand the catalog
+  folds to one strip so the map is clear, and its tabs stay where they were.
+- The wheel always zooms, also with a road or a building in hand. Shift + wheel turns a building 15° a notch.
 - Tab / Shift+Tab cycle the road modes.
 - B selects the bulldozer.
 - Page Up/Page Down change elevation, in steps shown as a height in metres.
@@ -1123,7 +1189,9 @@ starts or ends on, and each new piece carries on from the last twin.
   15° angles (default off). Shift flips the angle steps while held; Alt ignores every snap and guide.
 
 **Readouts** (next to the cursor, in the HUD's Deco chips): length (in 8 m steps when that's on), cost (red when
-it's more than the company has), the steepest average climb of any piece (↗ %), each bridge's deck length, what
+it's more than the company has; in brick with its share, "$5,690 · 41% of your cash", from a quarter of the cash
+and $2,000, for roads and works alike), the steepest average climb of any piece in words ("Steepest climb 11.0%"),
+each bridge's deck length, what
 it crosses and cost, what the end joins and at what angle ("Joins the street at 90°"), or, for a road off another,
 its angle to that road ("90.0° to the road"). A cream right-angle mark sits in the corner wherever it meets or
 leaves a road square.

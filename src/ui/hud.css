@@ -93,6 +93,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 /* windows that open from the top-left buttons */
 .win { width: 340px; max-height: calc(100vh - var(--bar-h) - 90px); display: flex; flex-direction: column; overflow: hidden; }
 .win[hidden] { display: none; }
+.win.wide { width: 420px; }
 .win-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 8px 7px 14px; margin-bottom: 4px; }
 .win-head b { font-weight: inherit; }
 .win-head .close { position: static; }
@@ -144,6 +145,10 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .cb-ms i { width: 64px; height: 6px; border-radius: 1px; background: linear-gradient(90deg, var(--ochre) calc(var(--p) * 100%), var(--plate-3) 0); box-shadow: 0 0 0 1px var(--edge); flex: none; }
 .cb-pop { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: var(--t-md); color: var(--cream); padding: 0 6px; }
 .cb-pop svg { color: var(--cream-2); width: 15px; height: 15px; }
+.cb-pop-n { display: flex; flex-direction: column; gap: 3px; line-height: 1; }
+.cb-pop-n b { font-weight: 600; }
+.cb-pop-n small { font-size: var(--t-xs); font-weight: 400; color: var(--cream-2); white-space: nowrap; }
+.cb-city > b small { font-size: 0.72em; letter-spacing: 0.06em; color: var(--cream-2); }
 /* money: a stamped readout, like a cash register's window */
 .cb-money { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; background: none; border: 1px solid transparent; border-radius: var(--r); padding: 4px 6px; }
 .cb-money b { font: 600 var(--t-big)/22px var(--f-text); letter-spacing: 0.02em; padding: 0 8px; min-width: 104px; background: var(--ink); border: 1px solid var(--edge); box-shadow: inset 0 0 0 1px var(--rule), inset 0 1px 3px rgba(0, 0, 0, 0.6); color: var(--cream); border-radius: 1px; }
@@ -177,34 +182,63 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .speed-btn:hover:not(.on) { background: var(--plate-2); color: var(--cream); }
 
 /* ------------------------------------------------------------ asset panel (above the bar) */
-/* (wide enough for a full tab of 8 cards on one row, but clear of the tool options on the left) */
-.assets { width: min(920px, max(540px, calc(100vw - 560px))); margin-bottom: 12px; padding: 0 0 14px; overflow: hidden; }
+/* The catalog: cards, one line that reads out a card, and the strip of tabs at its foot. The strip sits on the bar
+   and never moves; the cards stack up from it, so no tab changes place when another tab has more rows.
+   (wide enough for a full tab of 8 cards on one row, but clear of the tool options on the left) */
+.assets { width: min(920px, max(540px, calc(100vw - 560px))); margin-bottom: 12px; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
 .assets[hidden] { display: none; }
-.as-head { display: flex; align-items: center; gap: 14px; padding: 0 40px 0 14px; position: relative; margin-bottom: 4px; }
+/* (the strip is a header plate upside down: its ochre rule and the pinstripe are above it, the rivets in its corners) */
+.as-head { display: flex; align-items: center; gap: 14px; padding: 0 44px 0 22px; position: relative;
+  border-bottom: 0; border-top: 1px solid var(--ochre); box-shadow: 0 -1px 0 var(--edge), 0 -3px 0 var(--plate), 0 -4px 0 var(--pin); margin-top: 4px;
+  background: var(--rivet) left 7px bottom 7px / 6px 6px no-repeat, var(--rivet) right 7px bottom 7px / 6px 6px no-repeat, var(--plate-2); }
 .as-title { flex: none; font-weight: inherit; }
 .as-tabs { display: flex; gap: 0; overflow-x: auto; scrollbar-width: none; min-width: 0; align-self: stretch; }
 .as-tabs::-webkit-scrollbar { display: none; }
-.as-tab { background: none; border: 0; border-bottom: 3px solid transparent; padding: 10px 11px 7px; color: var(--cream-2); white-space: nowrap; font: 600 var(--t-xs)/16px var(--f-text); text-transform: uppercase; letter-spacing: 0.08em; }
-.as-tab:hover:not(.on) { color: var(--cream); }
-.as-tab.on { color: var(--cream); border-bottom-color: var(--ochre); }
+.as-tab { background: none; border: 0; border-top: 3px solid transparent; padding: 7px 11px 10px; min-height: 36px; color: var(--cream-2); white-space: nowrap; font: 600 var(--t-xs)/16px var(--f-text); text-transform: uppercase; letter-spacing: 0.08em; }
+.as-tab:hover:not(.on) { color: var(--cream); background: var(--plate-3); }
+.as-tab.on { color: var(--cream); border-top-color: var(--ochre); }
 .as-tab:focus-visible { outline-offset: -2px; }
-.as-head .close { top: 50%; transform: translateY(-50%); }
+.as-head .close { top: 50%; right: 16px; transform: translateY(-50%); }
 /* (a tab with more cards than fit wraps to a second row instead of hiding the last ones off the edge) */
-.as-cards { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 0; max-height: min(340px, 42vh); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--plate-3) transparent; }
+.as-cards { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 12px 8px; max-height: min(340px, 42vh); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--plate-3) transparent; }
 .asset { width: 106px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 9px 4px 7px; background: var(--plate-2); border: 1px solid var(--rule); border-radius: var(--r); position: relative; color: var(--cream); }
-.asset:hover:not(:disabled):not(.on) { border-color: var(--cream-3); background: var(--plate-3); }
+.asset:hover:not(.locked):not(.on) { border-color: var(--cream-3); background: var(--plate-3); }
+.asset:active:not(.locked) { background: var(--plate); }
 .asset.on { border-color: var(--ochre); background: var(--plate-3); box-shadow: inset 0 0 0 1px var(--ochre); }
 .asset.on::after { content: ""; position: absolute; left: -1px; right: -1px; bottom: -1px; height: 3px; background: var(--ochre); }
 .asset b { font-weight: 600; text-align: center; line-height: 1.2; }
 .as-icon { height: 36px; display: grid; place-items: center; }
 .as-icon svg { width: 34px; height: 34px; }
-.as-sub { color: var(--cream-2); font-size: var(--t-xs); display: block; text-align: center; line-height: 1.3; }
+/* what it takes and makes, in pictures: a ruled slot under the name, so the row lines up across the cards */
+.as-flow { display: flex; align-items: center; justify-content: center; gap: 2px; height: 22px; width: 100%; margin-top: auto; border-top: 1px solid var(--rule); padding-top: 3px; color: var(--cream-2); font-size: var(--t-xs); white-space: nowrap; }
+.as-flow i { display: grid; place-items: center; width: 16px; height: 16px; font-style: normal; flex: none; }
+.as-flow i svg { width: 16px; height: 16px; }
+.as-flow .fl-to { width: 12px; color: var(--ochre-hi); }
+.as-flow .fl-to svg { width: 12px; height: 12px; }
+.as-flow .fl-ground { color: var(--cream-2); }
+.as-flow .fl-big { color: var(--ochre-hi); }
+.fl-spec { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+.fl-lanes { flex: none; color: var(--cream); }
+.as-sub { color: var(--cream-2); font-size: var(--t-xs); display: block; text-align: center; line-height: 1.3; font-variant-numeric: tabular-nums; }
 .as-sub svg { vertical-align: -1px; margin-right: 3px; width: 10px; height: 12px; }
 /* locked: a plain stamped blank, still legible so the player can plan */
-.asset.locked { background: var(--plate); border-style: dashed; border-color: var(--rule-2); }
+.asset.locked { background: var(--plate); border-style: dashed; border-color: var(--rule-2); cursor: default; }
 .asset.locked .as-icon { opacity: 0.4; filter: grayscale(0.7); }
+.asset.locked .as-flow { opacity: 0.6; }
 .asset.locked b { color: var(--cream-2); }
-.asset.locked .as-sub { color: var(--cream-3); }
+.asset.locked .as-sub { color: var(--cream-2); }
+/* the line: the card under the pointer in words, else the one in hand. One row, always the same height */
+.as-read { display: flex; align-items: baseline; gap: 0; margin: 0 14px; padding: 7px 0 6px; height: 34px; border-top: 1px solid var(--rule); white-space: nowrap; overflow: hidden; color: var(--cream-2); font-size: var(--t-sm); line-height: 20px; }
+.assets.folded .as-read { border-top: 0; margin-top: 2px; }
+.as-read b { color: var(--cream); font-weight: 700; font-size: var(--t-md); margin-right: 12px; flex: none; }
+.as-read span { flex: none; }
+.as-read span + span::before { content: ""; display: inline-block; width: 1px; height: 11px; background: var(--rule-2); margin: 0 10px; vertical-align: -1px; }
+.as-read .num { color: var(--cream); font-variant-numeric: tabular-nums; }
+.as-read .as-lock { color: var(--cream-2); flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.as-read .as-lock svg { width: 10px; height: 12px; vertical-align: -1px; margin-right: 4px; }
+.as-read .as-hand { margin-left: auto; padding-left: 12px; color: var(--ochre-hi); font: 600 var(--t-xs)/20px var(--f-text); text-transform: uppercase; letter-spacing: 0.1em; }
+.as-read .as-hand::before { display: none; }
+.as-read .as-hint { color: var(--cream-2); }
 
 /* ------------------------------------------------------------ tool options (left, above the bar) */
 .toolopts { position: absolute; left: 10px; bottom: calc(var(--bar-h) + 12px); width: 248px; padding: 0 0 16px; overflow: hidden; }
@@ -257,10 +291,12 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .gl-gift::before { content: "Unlocks "; color: var(--ochre-hi); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
 .gl-tip { display: flex; align-items: flex-start; gap: 4px; margin: 0 6px; padding: 9px 4px 10px 10px; border-top: 1px solid var(--ochre); background: var(--plate-2); color: var(--cream-2); line-height: 1.45; }
 .gl-tip p { margin: 0; flex: 1; min-width: 0; }
-.gl-x { flex: none; display: grid; place-items: center; width: 24px; height: 24px; margin-top: -3px; padding: 0; background: none; border: 0; border-radius: var(--r); color: var(--cream-3); }
+.gl-x { flex: none; display: grid; place-items: center; width: 32px; height: 32px; margin: -7px -6px -4px 0; padding: 0; background: none; border: 0; border-radius: var(--r); color: var(--cream-3); }
 .gl-x:hover, .gl-x:focus-visible { color: var(--cream); background: var(--plate); }
 .gl-tip b { color: var(--cream); font-weight: 700; }
 .gl-done { margin: 0; padding: 10px 14px; color: var(--cream-2); }
+.gl-done + .gl-list { margin-top: -4px; }
+.gl-goal.gl-job { margin-bottom: 0; }
 @media (prefers-reduced-motion: reduce) { .gl-caret { transition: none; } }
 .panel { position: relative; width: 100%; padding: 0 14px 20px; max-height: calc(100vh - var(--bar-h) - 40px); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--plate-3) transparent; }
 .panel[hidden] { display: none; }
@@ -357,6 +393,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .chip:first-child { font-weight: 700; }
 .chip svg { width: 12px; height: 12px; color: var(--cream-2); }
 .chip.cost { color: var(--ochre-hi); }
+.chip.dear { color: var(--cream); font-weight: 700; border-color: var(--brick); box-shadow: inset 0 0 0 1px var(--brick), inset 3px 0 0 1px var(--brick), 0 2px 6px rgba(3, 7, 14, 0.45); padding-left: 10px; }
 .chip.error { background: var(--brick); color: var(--cream); box-shadow: inset 0 0 0 1px rgba(243, 234, 214, 0.3), 0 2px 6px rgba(3, 7, 14, 0.45); }
 .toasts { position: absolute; left: 50%; top: 60px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 5px; pointer-events: none !important; }
 /* (out of the milestone banner's way while one is up) */
@@ -380,7 +417,19 @@ body.in-menu .hud > :not(.modal):not(.toasts) { display: none !important; }
 .banner p { margin: 3px 0; color: var(--cream-2); }
 .banner .sub { color: var(--ochre-hi); font-weight: 600; font-size: var(--t-xs); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; }
 .banner .gifts { color: var(--cream); font-size: var(--t-md); text-wrap: pretty; }
-.banner .btn { margin-top: 14px; }
+.banner .btn { margin-top: 14px; min-height: 32px; }
+/* a milestone's new works, one a line: what each takes and makes */
+.banner .bn-lead { margin: 8px 0 0; font-size: var(--t-xs); text-transform: uppercase; letter-spacing: 0.1em; color: var(--cream-2); }
+.bn-new { list-style: none; margin: 6px 0 8px; padding: 0; text-align: left; border-top: 1px solid var(--rule-2); counter-reset: bn; }
+.bn-new li { display: grid; grid-template-columns: 22px minmax(0, 132px) 84px minmax(0, 1fr); align-items: center; column-gap: 10px; padding: 6px 2px; border-bottom: 1px solid var(--rule); color: var(--cream); }
+.bn-new.num li { grid-template-columns: 14px 22px minmax(0, 132px) 84px minmax(0, 1fr); }
+.bn-new.num li::before { counter-increment: bn; content: counter(bn); color: var(--ochre-hi); font-weight: 700; font-variant-numeric: tabular-nums; }
+.bn-ic { display: inline-flex; }
+.bn-ic svg { width: 22px; height: 22px; }
+.bn-new b { font-weight: 600; }
+.bn-new .bn-flow { margin: 0; border: 0; padding: 0; justify-content: flex-start; width: auto; }
+.bn-say { color: var(--cream-2); line-height: 1.3; }
+.bn-say small { display: block; font-size: var(--t-xs); color: var(--cream-2); }
 .banner-btns { display: flex; justify-content: center; gap: 8px; margin-top: 14px; }
 .banner-btns .btn { margin-top: 0; padding: 6px 16px; }
 
@@ -439,6 +488,12 @@ kbd { font: 600 var(--t-xs)/1 var(--f-text); padding: 3px 6px; border: 1px solid
 .map-icon { position: absolute; left: 0; top: 0; width: 26px; height: 26px; padding: 1px; border-radius: 50%; background: var(--bar); box-shadow: 0 0 0 1.5px var(--cream), 0 2px 4px rgba(3, 7, 14, 0.55); }
 .map-icon svg { width: 24px; height: 24px; display: block; }
 .map-icon::after { content: ""; position: absolute; left: 50%; bottom: -6px; margin-left: -4px; border: 4px solid transparent; border-bottom: 0; border-top: 5px solid var(--cream); }
+/* a works seen from far out: a square navy plate with its pictogram; in trouble, brick with a "!" tab on its corner */
+.map-works { position: absolute; left: 0; top: 0; width: 24px; height: 24px; display: grid; place-items: center; background: var(--plate); outline: 1px solid var(--cream-2); box-shadow: 0 2px 4px rgba(3, 7, 14, 0.55); }
+.map-works svg { width: 18px; height: 18px; display: block; }
+.map-works.site { outline-style: dashed; }
+.map-works.bad { background: var(--brick); outline: 2px solid var(--cream); }
+.map-works i { position: absolute; right: -7px; top: -7px; width: 13px; height: 13px; display: grid; place-items: center; background: var(--cream); color: var(--brick); font: 700 12px/1 var(--f-body, inherit); font-style: normal; }
 .map-icon.urgent { animation: icon-bob 0.9s ease-in-out infinite alternate; }
 @keyframes icon-bob { to { margin-top: -4px; } }
 @media (prefers-reduced-motion: reduce) { .map-icon.urgent { animation: none; } }
@@ -568,6 +623,10 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .nd-each { flex-basis: 100%; font-size: var(--t-xs); line-height: 1.2; color: var(--cream-3); font-variant-numeric: tabular-nums; }
 .nd-say { line-height: 1.35; color: var(--cream-2); }
 .nd.low .nd-say, .nd.none .nd-say { color: var(--cream); font-weight: 600; }
+/* what to do about a short need, and the works to look at */
+.nd-fix { display: flex; align-items: center; gap: 8px; padding-top: 5px; border-top: 1px solid var(--rule); line-height: 1.35; color: var(--cream-2); }
+.nd-fix > span { flex: 1; min-width: 0; }
+.nd-fix .fchip { flex: none; }
 /* a need still to come: greyed, friendly, no lock */
 .nd-soon { display: flex; align-items: center; gap: 10px; margin: 12px 0 0; padding-top: 10px; border-top: 1px dashed var(--rule-2); color: var(--cream-2); line-height: 1.35; }
 .nd-soon .nd-ic { grid-row: auto; width: 30px; height: 30px; flex: none; box-shadow: 0 0 0 1.5px var(--rule-2); }
@@ -582,6 +641,20 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .tw-need svg { width: 14px; height: 14px; }
 .tw-need.mid { color: var(--ochre-hi); }
 .tw-need.low { color: var(--bad); }
+.tw-name .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the Economy window's works: icon, name and place, what holds it up, the hour's balance */
+.ec-list { list-style: none; margin: 4px 0 10px; padding: 0; }
+.ec-list li + li { border-top: 1px solid var(--rule); }
+.ec-row { width: 100%; min-height: 40px; display: flex; align-items: center; gap: 10px; padding: 6px; background: none; border: 0; border-radius: var(--r); text-align: left; color: var(--cream); }
+.ec-row:hover { background: var(--plate-2); box-shadow: inset 3px 0 0 var(--ochre); }
+.ec-ic { flex: none; display: inline-flex; }
+.ec-ic svg { width: 20px; height: 20px; }
+.ec-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ec-name b { font-weight: 600; }
+.ec-name .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ec-st { font-size: var(--t-xs); color: var(--cream-2); }
+.ec-st.bad { color: var(--bad); font-weight: 600; }
+.ec-row .num { font-weight: 600; white-space: nowrap; }
 
 /* output a day: the building panel's hourly bars and the Economy window's production list */
 .hb-chart rect, .pd-ticks rect { fill: var(--pc, var(--ochre)); }
@@ -761,13 +834,15 @@ body.ui-hidden .map-pops, body.in-menu .map-pops { display: none; }
 .sa-sign::before { width: 2px; height: 6px; margin: -1.5px 0 0 -1.5px; }
 .sa-sign::after { width: 2px; height: 2px; margin: 3px 0 0 3px; }
 .sa-pin { position: absolute; left: 0; top: 0; padding: 4px 4px 9px; border: 0; background: none; pointer-events: auto; cursor: pointer; will-change: transform; }
+/* (the sign is small on the map; the pointer gets a 32 px square around it) */
+.sa-pin::before { content: ""; position: absolute; inset: -3px -6px; }
 /* (a short post under the sign, standing it on the spot) */
 .sa-pin::after { content: ""; position: absolute; left: 50%; bottom: 1px; width: 2px; height: 7px; margin-left: -1px; background: var(--ink); opacity: .8; }
 .sa-pin .sa-sign { filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .6)); animation: sa-nod 2.6s ease-in-out infinite; }
 @keyframes sa-nod { 0%, 70%, 100% { transform: rotate(45deg) scale(1); } 80% { transform: rotate(45deg) scale(1.25); } }
 .sa-pin:hover .sa-sign, .sa-pin:focus-visible .sa-sign { box-shadow: 0 0 0 1px var(--ochre), 0 0 0 3px var(--ink), 0 0 0 4px var(--ochre); }
 .sa-pin:focus-visible { outline: none; }
-.sa-chip { position: fixed; right: 16px; bottom: 96px; z-index: 3; display: flex; align-items: center; gap: 8px; padding: 5px 10px 5px 9px; cursor: pointer;
+.sa-chip { position: fixed; right: 16px; bottom: 96px; z-index: 3; display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 5px 10px 5px 9px; cursor: pointer;
   background: var(--bar); color: var(--cream); border: 1px solid var(--ochre); border-radius: 2px; font-family: var(--f-text); font-size: var(--t-xs); line-height: 1.2;
   box-shadow: 0 0 0 2px var(--bar), 0 3px 10px rgba(0, 0, 0, .45); white-space: nowrap; }
 .sa-chip[hidden] { display: none; }
@@ -830,6 +905,9 @@ button.fchip:hover { background: var(--plate-3); border-color: var(--pin); }
 .fchip .fc-p { display: inline-flex; margin-left: -3px; }
 .fchip .fc-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fchip em { font-style: normal; font-size: var(--t-xs); color: var(--cream-2); white-space: nowrap; font-variant-numeric: tabular-nums lining-nums; }
+.fchip.still { flex-wrap: wrap; row-gap: 1px; }
+.fchip.still .fc-t { flex: none; }
+.fchip.still em { white-space: normal; }
 .fchip em.bad { color: var(--bad); }
 .fchip em.good { color: var(--good); }
 

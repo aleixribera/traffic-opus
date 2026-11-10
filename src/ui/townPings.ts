@@ -56,7 +56,7 @@ export class TownPings {
       this.pings.set(t.id, { t, ring, edge, seen: false });
     }
     for (const [id, p] of this.pings) if (!live.has(id)) { p.ring.remove(); p.edge.remove(); this.pings.delete(id); }
-    this.walls = this.pings.size ? [...document.querySelectorAll(".corner > *, .banner:not([hidden])")].map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0) : [];
+    this.walls = this.pings.size ? [...document.querySelectorAll(".corner > *, .banner:not([hidden]), .bottom > .assets")].map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0) : [];
   }
 
   /** The towns flown to from elsewhere (the banner's "Fly there"): no pointer for them any more. */

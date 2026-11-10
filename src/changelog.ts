@@ -15,6 +15,20 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.88", date: "2026-11-10", title: "The game says what it needs",
+    notes: [
+      "A works at its limit says so: \"At full output\", and the town tells you what to build, with a button that shows you where.",
+      "A building site says how many loads are still to come, about how long, and where the next one comes from.",
+      "Every works card shows what goes in and what comes out. Opening Industry puts nothing in your hand.",
+      "Esc goes back one thing at a time. R opens Roads, I opens Industry.",
+      "The wheel always zooms, even with a building in hand. Shift and the wheel turn it.",
+      "Zoomed far out, every works has a plate on the map, and the night is never too dark to read.",
+      "Your first goal is your first load of food. After the last goal, the list shows what your towns are short of.",
+      "Info views switch off with their window. A long road shows what share of your cash it costs.",
+      "The Towns, Economy and Transport windows fly you to what they list.",
+    ],
+  },
+  {
     v: "v0.0.87", date: "2026-11-10", title: "Main Street, 1930",
     notes: [
       "Every town building is rebuilt for the 1920s to 1940s: brick shop-houses with awnings and signs, department stores, banks, walk-ups, courtyard flats and Deco towers.",

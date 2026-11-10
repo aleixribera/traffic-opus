@@ -79,9 +79,14 @@ export interface NeedView {
 }
 
 const loads = (n: number) => (n === 1 ? "load" : "loads");
+/** "is" or "are" for a product's name: planks are coming, food is. */
+export const isAre = (name: string) => (/[^s]s$/i.test(name) ? "are" : "is");
 
-/** One need of a town, read out. */
-export function needView(t: Town, p: Product): NeedView {
+/**
+ * One need of a town, read out. `joined`: a town that sprang up already has a road to the company's roads (it is
+ * only waiting for its first load: play-test 2026-11-09, A10, it read "No road yet" for six hours after the road).
+ */
+export function needView(t: Town, p: Product, joined = false): NeedView {
   const want = demandPerDay(p, t.pop), got = loadsLately(t, p);
   const share = want > 0 ? got / want : 1;
   const per = loadsPerCrate(want), n = Math.max(1, Math.ceil(want / per - 1e-6));
@@ -94,20 +99,20 @@ export function needView(t: Town, p: Product): NeedView {
   const more = state === "plenty" ? 0 : Math.max(1, Math.ceil(want - got - 1e-6));
   const name = PRODUCTS[p].name, low = name.toLowerCase();
   let say: string;
-  if (t.spawned && !served(t)) say = `No road reaches it yet. Lay one, then bring ${low}.`;
+  if (t.spawned && !served(t)) say = joined ? `A road reaches it now. It waits for its first load of ${low}.` : `No road reaches it yet. Lay one, then bring ${low}.`;
   else if (state === "plenty") say = `${name} is fine.`;
   // (the need its proven supply runs out on, with the town stood still at what that supply carries: "Enough" holds
   // it, a little more lets it grow again)
   else if (state === "enough" && t.limit === p && t.trend < 0.5) say = `Just enough to hold steady. ${more} more ${loads(more)} a day and it grows again.`;
   else if (state === "enough") say = `Enough to grow. ${more} more ${loads(more)} a day fills every crate.`;
   else if (state === "low") say = `Bring ${more} more ${loads(more)} of ${low} a day.`;
-  else if (got < 0.05) say = `No ${low} is coming. Bring ${more} ${loads(more)} a day.`;
-  else say = `Almost no ${low} is coming. Bring ${more} more ${loads(more)} a day.`;
+  else if (got < 0.05) say = `No ${low} ${isAre(low)} coming. Bring ${more} ${loads(more)} a day.`;
+  else say = `Almost no ${low} ${isAre(low)} coming. Bring ${more} more ${loads(more)} a day.`;
   return { p, name, state, word: NEED_WORD[state], got, want, more, crates: { n, full, per }, say };
 }
 
 /** Everything a town needs now, read out, in the order the needs opened. */
-export const townNeeds = (t: Town): NeedView[] => needsOf(t.pop).map((p) => needView(t, p));
+export const townNeeds = (t: Town, joined = false): NeedView[] => needsOf(t.pop).map((p) => needView(t, p, joined));
 
 /** The need(s) a town will have next and the population they open at (null: none ahead). */
 export function comingNeeds(pop: number): { products: Product[]; pop: number } | null {
@@ -144,11 +149,14 @@ export function growthOf(t: Town): { word: GrowthWord; tone: "good" | "bad" | ""
   return { word: "Growing slowly", tone: "", why: short.length ? why.replace(/^needs /, "needs more ") : "" };
 }
 
-/** What a town's map label shows: nothing when all is well, its needs tinted by state when one isn't, or no road. */
-export type LabelNeeds = { kind: "calm" } | { kind: "noroad"; needs: Product[] } | { kind: "needs"; needs: { p: Product; state: NeedState }[] };
+/**
+ * What a town's map label shows: nothing when all is well, its needs tinted by state when one isn't, or that no road
+ * reaches it yet (`joined`: one does now, and it waits for its first load).
+ */
+export type LabelNeeds = { kind: "calm" } | { kind: "noroad"; needs: Product[]; joined: boolean } | { kind: "needs"; needs: { p: Product; state: NeedState }[] };
 
-export function labelNeeds(t: Town): LabelNeeds {
-  if (t.spawned && !served(t)) return { kind: "noroad", needs: needsOf(t.pop) };
+export function labelNeeds(t: Town, joined = false): LabelNeeds {
+  if (t.spawned && !served(t)) return { kind: "noroad", needs: needsOf(t.pop), joined };
   // (a settlement fills its first streets whatever comes: nothing to ask of the player yet)
   if (t.pop < SETTLING) return { kind: "calm" };
   const needs = townNeeds(t).map((v) => ({ p: v.p, state: v.state }));

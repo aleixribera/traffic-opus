@@ -95,8 +95,10 @@ const ofSize = (v: ProgressView, size: number) => v.towns.filter((t) => sizeOf(t
 export const MILESTONES: Milestone[] = [
   // ---------------------------------------------------------------- tier 1: food and timber, the first hamlet
   {
-    id: "food10", name: "First customers", goal: "Deliver 10 loads of food to your towns",
-    measure: (v) => [n(v.sold, "food"), 10],
+    // (the first load, not the tenth: the first reward lands the moment the chain works, not twenty game hours on
+    // with nothing to do in between. Play-test 2026-11-09, B3. The id is kept for the saves that hold it.)
+    id: "food10", name: "First customers", goal: "Deliver your first load of food to a town",
+    measure: (v) => [n(v.sold, "food"), 1],
     unlocks: { roads: ["avenue", "one2"], grant: 5000 },
   },
   {
