@@ -58,11 +58,25 @@ function litAttribute(g: THREE.BufferGeometry, kind: number): THREE.BufferAttrib
   return new THREE.BufferAttribute(out, 1);
 }
 
-/** A vehicle split by material: tinted parts get the per-vehicle colour; a "beacon" part (a convoy's amber lamps)
- * is drawn on its own so it can flash. */
+/**
+ * A vehicle model (tools/blender/vehicles_a_kit.py), merged so a kind is one draw call. `geo` is the whole vehicle:
+ * `color` is each part's own colour, white where the vehicle's paint goes, and `role` says whose paint that is (see
+ * PAINT_ROLES; render/vehiclepaint.ts lays it on). `far` is the same vehicle in a few dozen triangles (the cars: drawn
+ * when one is a handful of pixels long). `beacon` (a convoy's amber lamps) is drawn on its own so it can flash.
+ */
 export interface VehicleModel {
-  parts: { geo: THREE.BufferGeometry; tint: boolean; name: string }[];
+  geo: THREE.BufferGeometry;
+  far: THREE.BufferGeometry | null;
+  beacon: THREE.BufferGeometry | null;
+  /**
+   * Model space (front +z): the bumpers, the half width, and where the head and tail lamps' lenses are: how far out
+   * from the middle (`head`, `tail`), how high and how far along (`headY`, `headZ`, `tailY`, `tailZ`).
+   */
+  ends: VehicleEnds;
+  tris: number;
 }
+/** What a material's name asks for: 0 its own colour, else the instance's body, second or cargo paint. */
+export const PAINT_ROLES = ["", "body", "second", "cargo"] as const;
 
 export const BUILDING_MODELS: BuildingKind[] = [
   "house", "terrace", "apartments", "modernflats", "aptower", "highstreet", "shop", "store", "fuelstation", "office", "mall", "tower", "glasstower",
@@ -98,7 +112,9 @@ export const SITE_PIECES: string[] = [
   ...PILE_MODELS,
 ];
 export const VEHICLE_MODELS = [
-  "car", "van", "truck", "tipper", "tanker", "flatbed", "bus",
+  // the townspeople's cars (render/carlook.ts picks one for each): a saloon, a coupe, an open tourer, a pickup
+  "car", "car_coupe", "car_tourer", "car_pickup",
+  "van", "truck", "tipper", "tanker", "flatbed", "bus",
   // the bigger truck classes (game/trucks.ts): heavy rigids, and a road train's tractor and its lead (a) and rear (b)
   // trailers, drawn piece by piece along the path
   "heavy_truck", "heavy_tipper", "heavy_tanker", "heavy_flatbed",
@@ -305,29 +321,51 @@ function mergeModel(sc: THREE.Object3D): MergedModel {
   return { geo, bays, fx, via, body, design };
 }
 
+export interface VehicleEnds { front: number; rear: number; half: number; head: number; tail: number; headY: number; headZ: number; tailY: number; tailZ: number }
+
 function splitVehicle(sc: THREE.Object3D): VehicleModel {
-  const parts: VehicleModel["parts"] = [];
+  const near: THREE.BufferGeometry[] = [], far: THREE.BufferGeometry[] = [], beacon: THREE.BufferGeometry[] = [];
+  const white = new THREE.Color(1, 1, 1);
+  // (where the lamp lenses are: the mean of their vertices, out from the middle, up and along)
+  const lamps = { lamp: [0, 0, 0, 0], tail: [0, 0, 0, 0] };
   sc.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!m.isMesh) return;
-    const name = (m.name || (m.material as THREE.Material).name || "").toLowerCase();
-    const tint = /body|cargo/.test(name) || /body|cargo/.test(((m.material as THREE.Material).name || "").toLowerCase());
-    const col = meshColor(m);
-    parts.push({ geo: prepGeometry(m, tint ? null : col), tint, name });
+    const mat = (Array.isArray(m.material) ? m.material[0] : m.material) as THREE.Material | undefined;
+    const name = (mat?.name ?? "").toLowerCase();
+    const isFar = /^far/i.test(m.name) || /^far/i.test(m.parent?.name ?? "");
+    if (name === "beacon") {
+      if (!isFar) beacon.push(prepGeometry(m, meshColor(m)));
+      return;
+    }
+    const role = Math.max(0, (PAINT_ROLES as readonly string[]).indexOf(name));
+    const g = prepGeometry(m, role ? white : meshColor(m));
+    const pos = g.getAttribute("position");
+    g.setAttribute("role", new THREE.BufferAttribute(new Float32Array(pos.count).fill(role), 1));
+    (isFar ? far : near).push(g);
+    if (!isFar && (name === "lamp" || name === "tail")) {
+      const L = lamps[name];
+      for (let i = 0; i < pos.count; i++) { L[0] += Math.abs(pos.getX(i)); L[1]++; L[2] += pos.getY(i); L[3] += pos.getZ(i); }
+    }
   });
-  // merge by role so a vehicle kind is at most 3 draw calls: body (tinted), cargo (tinted), fixed (and a convoy's
-  // flashing beacons)
-  const out: VehicleModel["parts"] = [];
-  const beacon = (p: VehicleModel["parts"][number]) => p.name.includes("beacon");
-  const groups: [string, (p: VehicleModel["parts"][number]) => boolean, boolean][] = [
-    ["body", (p) => p.tint && !p.name.includes("cargo"), true],
-    ["cargo", (p) => p.tint && p.name.includes("cargo"), true],
-    ["fixed", (p) => !p.tint && !beacon(p), false],
-    ["beacon", (p) => !p.tint && beacon(p), false],
-  ];
-  for (const [name, pick, tint] of groups) {
-    const ps = parts.filter(pick);
-    if (ps.length) out.push({ geo: mergeGeometries(ps.map((p) => p.geo), false)!, tint, name });
-  }
-  return { parts: out };
+  const geo = mergeGeometries(near, false)!;
+  geo.computeBoundingBox();
+  geo.computeBoundingSphere();
+  const b = geo.boundingBox!;
+  const half = Math.max(-b.min.x, b.max.x), side = Math.max(0.45, half - 0.25);
+  return {
+    geo,
+    far: far.length ? mergeGeometries(far, false)! : null,
+    beacon: beacon.length ? mergeGeometries(beacon, false)! : null,
+    ends: {
+      front: b.max.z, rear: b.min.z, half,
+      head: lamps.lamp[1] ? lamps.lamp[0] / lamps.lamp[1] : side,
+      tail: lamps.tail[1] ? lamps.tail[0] / lamps.tail[1] : side,
+      headY: lamps.lamp[1] ? lamps.lamp[2] / lamps.lamp[1] : 0.9,
+      headZ: lamps.lamp[1] ? lamps.lamp[3] / lamps.lamp[1] : b.max.z,
+      tailY: lamps.tail[1] ? lamps.tail[2] / lamps.tail[1] : 0.9,
+      tailZ: lamps.tail[1] ? lamps.tail[3] / lamps.tail[1] : b.min.z,
+    },
+    tris: geo.getAttribute("position").count / 3,
+  };
 }

@@ -237,42 +237,51 @@ face toward +Z). Placed by `src/render/furniture.ts`.
 
 ## Vehicles
 
-Front at glTF +Z (Blender -Y), origin at the ground centre, wheels on y = 0. Separate mesh nodes per
-material: `body` and `cargo` are pure white (#ffffff) for per-instance tinting, `glass` is
-#2b3440, `dark` (tyres, bumpers, chassis) is #30343a.
+The vehicles of 1925-1940 (`tools/blender/vehicles_*.py`). Front at glTF +Z (Blender -Y), origin at the
+ground centre, wheels on y = 0; each keeps the footprint and the axles the simulation drives. One mesh
+node `model` with a material per colour; the cars, the van and the Motor Works car also have a node
+`far`, a few boxes drawn instead once a car is a handful of pixels long. A material's name is its role:
+`body`, `second` and `cargo` are white and tinted per vehicle (its paint; a car's wings or a lorry's
+lettering colour; the load, tilt or tank). `lamp` and `tail` are the lenses the night's lights hang on,
+`beacon` flashes, and every other (`v_glass`, `v_black`, `v_tyre`, `v_chrome`, `v_wood`, ...) keeps the
+colour it was given. Limits (`VEHICLE_TRIS`): 420 triangles a car, 700 the bus and the escort car, 880
+a lorry, a trailer or a convoy piece, 110 a far model.
 
-| model | W × L × H (m) | tris | nodes |
-|---|---|---|---|
-| car | 1.85 × 4.4 × 1.45 | 156 | `body`, `dark`, `glass` |
-| van | 2 × 5 × 2 | 164 | `body`, `dark`, `glass` |
-| truck | 2.5 × 8.5 × 3.2 | 228 | `body`, `cargo`, `dark`, `glass` |
-| tipper | 2.7 × 8.5 × 3.04 | 364 | `body`, `cargo`, `dark`, `glass` |
-| tanker | 2.46 × 8.5 × 3.1 | 424 | `body`, `cargo`, `dark`, `glass` |
-| flatbed | 2.52 × 8.5 × 3.04 | 440 | `body`, `cargo`, `dark`, `glass` |
-| heavy_truck | 2.7 × 12 × 3.62 | 316 | `body`, `cargo`, `dark`, `glass` |
-| heavy_tipper | 2.7 × 12 × 3.6 | 428 | `body`, `cargo`, `dark`, `glass` |
-| heavy_tanker | 2.7 × 12 × 3.68 | 476 | `body`, `cargo`, `dark`, `glass` |
-| heavy_flatbed | 2.7 × 12 × 3.6 | 428 | `body`, `cargo`, `dark`, `glass` |
-| rt_tractor | 2.7 × 6.4 × 3.69 | 292 | `body`, `dark`, `glass` |
-| rt_truck_a | 2.54 × 9.4 × 3.97 | 196 | `body`, `cargo`, `dark` |
-| rt_truck_b | 2.54 × 10 × 3.97 | 184 | `body`, `cargo`, `dark` |
-| rt_tipper_a | 2.7 × 9.4 × 3.95 | 284 | `body`, `cargo`, `dark` |
-| rt_tipper_b | 2.7 × 10 × 3.95 | 296 | `body`, `cargo`, `dark` |
-| rt_tanker_a | 2.44 × 9.4 × 4.03 | 356 | `body`, `cargo`, `dark` |
-| rt_tanker_b | 2.44 × 10 × 4.03 | 344 | `body`, `cargo`, `dark` |
-| rt_flatbed_a | 2.52 × 9.4 × 3.95 | 308 | `body`, `cargo`, `dark` |
-| rt_flatbed_b | 2.52 × 10 × 3.95 | 296 | `body`, `cargo`, `dark` |
-| reefer | 2.58 × 8.5 × 3.33 | 368 | `body`, `cargo`, `dark`, `glass`, `insul` |
-| heavy_reefer | 2.7 × 12 × 3.63 | 420 | `body`, `cargo`, `dark`, `glass`, `insul` |
-| rt_reefer_a | 2.58 × 9.4 × 3.98 | 300 | `body`, `cargo`, `dark`, `insul` |
-| rt_reefer_b | 2.58 × 10 × 3.98 | 288 | `body`, `cargo`, `dark`, `insul` |
-| carrier | 2.58 × 8.5 × 3.7 | 364 | `body`, `cargo`, `dark`, `glass` |
-| heavy_carrier | 2.7 × 12 × 3.72 | 464 | `body`, `cargo`, `dark`, `glass` |
-| rt_carrier_a | 2.58 × 9.4 × 4.02 | 296 | `body`, `cargo`, `dark` |
-| rt_carrier_b | 2.58 × 10 × 4.02 | 356 | `body`, `cargo`, `dark` |
-| motorcar | 1.84 × 4.92 × 1.55 | 272 | `body`, `chrome`, `dark`, `glass` |
-| bus | 2.57 × 12.17 × 3.12 | 272 | `body`, `dark`, `glass`, `lights`, `trim` |
-| escort_car | 1.9 × 4.6 × 2 | 280 | `beacon`, `dark`, `glass`, `paint`, `trim` |
-| ll_tractor | 2.64 × 6.6 × 3.3 | 424 | `beacon`, `dark`, `glass`, `paint`, `trim` |
-| ll_trailer_turbine | 3.4 × 14 × 4.35 | 460 | `dark`, `paint`, `piece` |
-| ll_trailer_girder | 2.5 × 14 × 3.59 | 456 | `dark`, `paint`, `piece` |
+| model | W × L × H (m) | tris | far tris | nodes |
+|---|---|---|---|---|
+| car | 1.85 × 4.4 × 1.7 | 392 | 60 | `far`, `model` |
+| van | 2 × 5 × 2.04 | 396 | 60 | `far`, `model` |
+| truck | 2.5 × 8.51 × 2.864 | 472 |  | `model` |
+| tipper | 2.7 × 8.51 × 2.85 | 520 |  | `model` |
+| tanker | 2.46 × 8.51 × 2.95 | 592 |  | `model` |
+| flatbed | 2.52 × 8.51 × 2.6 | 568 |  | `model` |
+| heavy_truck | 2.7 × 12 × 3.34 | 668 |  | `model` |
+| heavy_tipper | 2.7 × 12 × 3.34 | 728 |  | `model` |
+| heavy_tanker | 2.7 × 12 × 3.4 | 784 |  | `model` |
+| heavy_flatbed | 2.7 × 12 × 3.34 | 824 |  | `model` |
+| rt_tractor | 2.7 × 6.4 × 3.4 | 516 |  | `model` |
+| rt_truck_a | 2.54 × 9.4 × 3.564 | 372 |  | `model` |
+| rt_truck_b | 2.54 × 10 × 3.564 | 348 |  | `model` |
+| rt_tipper_a | 2.7 × 9.4 × 3.34 | 408 |  | `model` |
+| rt_tipper_b | 2.7 × 10 × 3.34 | 396 |  | `model` |
+| rt_tanker_a | 2.44 × 9.4 × 3.65 | 468 |  | `model` |
+| rt_tanker_b | 2.44 × 10 × 3.65 | 440 |  | `model` |
+| rt_flatbed_a | 2.52 × 9.41 × 2.74 | 504 |  | `model` |
+| rt_flatbed_b | 2.52 × 10.01 × 2.74 | 540 |  | `model` |
+| reefer | 2.58 × 8.51 × 2.92 | 496 |  | `model` |
+| heavy_reefer | 2.7 × 12 × 3.37 | 668 |  | `model` |
+| rt_reefer_a | 2.58 × 9.4 × 3.62 | 372 |  | `model` |
+| rt_reefer_b | 2.58 × 10 × 3.62 | 324 |  | `model` |
+| carrier | 2.58 × 8.51 × 3.85 | 568 |  | `model` |
+| heavy_carrier | 2.7 × 12 × 3.95 | 860 |  | `model` |
+| rt_carrier_a | 2.58 × 9.4 × 4.1 | 444 |  | `model` |
+| rt_carrier_b | 2.58 × 10 × 4.1 | 516 |  | `model` |
+| motorcar | 1.84 × 4.92 × 1.55 | 356 | 60 | `far`, `model` |
+| bus | 2.575 × 12.17 × 3 | 670 |  | `model` |
+| escort_car | 1.9 × 4.6 × 2.18 | 504 |  | `model` |
+| ll_tractor | 2.64 × 6.608 × 3.48 | 560 |  | `model` |
+| ll_trailer_turbine | 3.4 × 14.01 × 4.39 | 816 |  | `model` |
+| ll_trailer_girder | 2.524 × 14.01 × 3.59 | 772 |  | `model` |
+| car_coupe | 1.85 × 4.4 × 1.68 | 380 | 60 | `far`, `model` |
+| car_tourer | 1.85 × 4.4 × 1.4 | 412 | 36 | `far`, `model` |
+| car_pickup | 1.85 × 4.4 × 1.64 | 420 | 58 | `far`, `model` |

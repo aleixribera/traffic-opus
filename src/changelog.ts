@@ -15,6 +15,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.90", date: "2026-11-10", title: "The fleet of 1930",
+    notes: [
+      "Every car, lorry, bus and convoy piece is rebuilt for 1925 to 1940: upright cabs, long bonnets, running boards, spoked wheels.",
+      "Your lorries wear the company colours. A tilt is roped and tinted by its load, a tipper is heaped, a reefer is a coach-built insulated van.",
+      "Heavy lorries look heavier. Convoys travel in company colours with red flags.",
+      "Cars come in four bodies and lighter period paints.",
+      "Real parked cars stand in the yards. Shops and offices fill in the morning and empty at night; homes do the reverse.",
+      "Headlamps and tail lamps sit on each model's own lenses at night.",
+    ],
+  },
+  {
     v: "v0.0.89", date: "2026-11-10", title: "Freight that never seizes",
     notes: [
       "A jam at a works gate gets slow. It no longer locks the whole company.",

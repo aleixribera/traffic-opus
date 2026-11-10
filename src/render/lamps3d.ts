@@ -9,7 +9,7 @@
 import * as THREE from "three";
 import { ENV, LIT, seasonal } from "./envShader";
 import { windowsLit, WINDOW_KINDS, type WindowKind } from "./daylight";
-import type { MergedModel } from "./models";
+import type { MergedModel, VehicleEnds } from "./models";
 
 /** A light on a post or a mast: where it stands (h: the ground's height there) and which way it throws its light. */
 /** A lamp: where its post stands, the way it faces (unit), and for a floodlight how far its light reaches (m; a
@@ -113,7 +113,7 @@ void main() {
 }`;
 /** A glow (a lamp's head, a headlamp, a tail light, a signal), kept a few pixels across however far out the view is. */
 const GLOW_VS = /* glsl */ `
-uniform float uMpp; uniform float uMinPx;
+uniform float uMpp; uniform float uMinPx; uniform float uNear;
 varying vec2 vUv; varying vec3 vCol;
 void main() {
   vUv = uv;
@@ -127,6 +127,9 @@ void main() {
   float size = length(instanceMatrix[0].xyz);
   float k = max(1.0, uMinPx * uMpp / max(size, 1e-3));
   gl_Position = projectionMatrix * modelViewMatrix * vec4(c.xyz + off * k, 1.0);
+  // (a lamp on a vehicle glows over the bodywork round its lens rather than being cut by it: its depth is taken
+  // uNear metres nearer the camera, which looks along its own z and has no perspective)
+  gl_Position.z += projectionMatrix[2][2] * uNear;
 }`;
 const GLOW_FS = /* glsl */ `
 uniform vec2 uNight; uniform float uK;
@@ -198,10 +201,10 @@ function brighten(vs: string, fs: string, k: number, add: number, extra: Record<
     new THREE.ShaderMaterial({ ...base, blendSrc: THREE.DstColorFactor, blendDst: THREE.OneFactor }),
   ];
 }
-function glowMaterial(k: number, minPx: number, mpp: THREE.IUniform): THREE.ShaderMaterial {
+function glowMaterial(k: number, minPx: number, mpp: THREE.IUniform, near = 0): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     vertexShader: GLOW_VS, fragmentShader: GLOW_FS,
-    uniforms: { uNight: ENV.uNight, uK: { value: k }, uMpp: mpp, uMinPx: { value: minPx } },
+    uniforms: { uNight: ENV.uNight, uK: { value: k }, uMpp: mpp, uMinPx: { value: minPx }, uNear: { value: near } },
     transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending,
   });
 }
@@ -226,7 +229,7 @@ export class Lamps3D {
   private beamMat = brighten(POOL_VS, BEAM_FS, 0.5, 0.3);
   private spillMat = brighten(SPILL_VS, SPILL_FS, 0.25, 0.08, { uOcc: this.occ });
   private glowMat = glowMaterial(1.0, 3.2, this.mpp);
-  private carGlowMat = glowMaterial(1.0, 2.2, this.mpp);
+  private carGlowMat = glowMaterial(1.0, 2.2, this.mpp, 1.0);
   private signalMat = glowMaterial(0.9, 0, this.mpp);
   /** The posts and masts: lit like the buildings (snow settles on the lamp hoods). */
   private postMat = seasonal(new THREE.MeshLambertMaterial({ vertexColors: true }), { roofs: true });
@@ -421,13 +424,13 @@ export class Lamps3D {
   }
 
   /**
-   * One vehicle piece's lights: `m` is its pose (model +z forward), `front` and `rear` its bumpers and `half` its
-   * half width (model space); `head`/`tail`: whether this piece carries the headlamps (the front one) and the tail
-   * lights (the last one).
+   * One vehicle piece's lights: `m` is its pose (model +z forward), `E` where its model's bumpers and lamp lenses
+   * are (models.ts); `head`/`tail`: whether this piece carries the headlamps (the front one) and the tail lights
+   * (the last one). Each glow sits on its lens, so it stays on the vehicle from every side the camera turns to.
    */
-  car(m: THREE.Matrix4, front: number, rear: number, half: number, head: boolean, tail: boolean) {
+  car(m: THREE.Matrix4, E: VehicleEnds, head: boolean, tail: boolean) {
     if (head && this.nBeam < this.beams.instanceMatrix.count) {
-      this.m.copy(m).multiply(this.m2.makeTranslation(0, 0.1, front + 0.2)).multiply(this.m2.makeScale(9, 1, 17));
+      this.m.copy(m).multiply(this.m2.makeTranslation(0, 0.1, E.front + 0.2)).multiply(this.m2.makeScale(9, 1, 17));
       this.beams.setMatrixAt(this.nBeam, this.m);
       this.beams.setColorAt(this.nBeam++, this.c.setRGB(0.95, 0.82, 0.58));
     }
@@ -437,9 +440,8 @@ export class Lamps3D {
       this.carGlows.setMatrixAt(this.nGlow, this.m.compose(this.v, this.q.identity(), this.s.set(size, 1, size)));
       this.carGlows.setColorAt(this.nGlow++, this.c.setRGB(r, g, b));
     };
-    const x = Math.max(0.45, half - 0.25);
-    if (head) for (const sx of [-x, x]) lamp(sx, front - 0.05, 1.6, 1.3, 1.0, 0.92, 0.72);
-    if (tail) for (const sx of [-x, x]) lamp(sx, rear + 0.05, 1.6, 0.95, 0.95, 0.08, 0.04);
+    if (head) for (const sx of [-E.head, E.head]) lamp(sx, E.headZ + 0.06, E.headY + 0.05, 1.15, 1.0, 0.92, 0.72);
+    if (tail) for (const sx of [-E.tail, E.tail]) lamp(sx, E.tailZ - 0.04, E.tailY + 0.05, 0.85, 0.95, 0.08, 0.04);
   }
 
   endCars() {
