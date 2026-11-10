@@ -95,8 +95,6 @@ export function compassWords(a: V2, b: V2): string {
 const START_HOUSEHOLDS = 24;
 /** Households a day a settlement still filling its first streets grows by, supplied or not. */
 const SETTLE_RATE = 6;
-/** How many times its needs a town's shops will buy in a day. */
-export const MARKET = 3;
 /** Households per shop the town keeps open. */
 const HH_PER_SHOP = 25;
 /**
@@ -235,6 +233,21 @@ export type TownJSON = Omit<Town, "built" | "failed" | Counted | "size" | "hall"
   built: string[]; failed: string[]; size?: number; hall?: number; sq?: [number, number]; hist?: TownHistory; redevToday?: number; layout?: number;
 };
 
+/**
+ * A town's shops' room for a product: the loads it buys over the hours its supply is judged on (SUPPLY_HOURS, two
+ * days, or the day or more it has behind it), less what landed in them and in the hour under way. So it is never
+ * supplied past its demand on the reading its growth goes on, while a short day can still be made good; a load in
+ * progress is taken whole (industry.ts rounds the room up), so a town fed to its last load reads 100%, not just under.
+ */
+export function roomFor(t: Town, p: Product, perDay: number): number {
+  const hours = (t.hours ?? []).slice(-(SUPPLY_HOURS - 1));
+  let n = t.hourNow?.[p] ?? 0;
+  for (const h of hours) n += h[p] ?? 0;
+  // (a town with less than a day of hours: what landed since midnight may be more than they hold)
+  if (hours.length < 24) n = Math.max(n, t.today[p] ?? 0);
+  return (perDay * Math.max(24, hours.length + 1)) / 24 - n;
+}
+
 export class TownSystem {
   list: Town[] = [];
   byId = new Map<number, Town>();
@@ -264,22 +277,33 @@ export class TownSystem {
   }
 
   /**
-   * Loads of a product a town will still buy today; -Infinity when it doesn't use it at its size. Its shops buy
-   * up to MARKET times what it needs to grow, so more supply always sells (docs/design.md, pillar 5).
+   * Loads of a product a town's shops buy in a day; -Infinity when it doesn't use it at its size. What it uses and no
+   * more (owner, 2026-11-10: the old 3x market let surplus sell anywhere, which made the late game a matter of dumping
+   * loads); an order or a landmark that raises its demand raises this too.
    */
-  want(id: number, p: Product): number {
+  buysPerDay(id: number, p: Product): number {
     const t = this.byId.get(id);
     // (its extras too: milk and cheese from a Village, cars from a Town, which it buys without needing them to grow)
     if (!t || !buys(t.pop, p)) return -Infinity;
     // (a finished Skyline Tower in it: its shops and offices buy more of everything, see megaprojects.ts)
-    return demandPerDay(p, t.pop) * MARKET * townBoost(id, this.g.buildings.sites).demand * this.g.orders.boost(id).demand - (t.today[p] ?? 0);
+    return demandPerDay(p, t.pop) * townBoost(id, this.g.buildings.sites).demand * this.g.orders.boost(id).demand;
   }
 
-  /** Loads a town still needs today to grow (0 when its needs are met or it doesn't use the product). */
+  /**
+   * Loads of a product a town will still buy now (roomFor): rolling, like its supply, so a load is never turned away
+   * at midnight nor a day's worth taken twice across it.
+   */
+  want(id: number, p: Product): number {
+    const t = this.byId.get(id);
+    if (!t) return -Infinity;
+    return roomFor(t, p, this.buysPerDay(id, p));
+  }
+
+  /** Loads a town still needs to grow (as want, on its need alone; 0 when met or it doesn't use the product). */
   short(id: number, p: Product): number {
     const t = this.byId.get(id);
     if (!t || !needsOf(t.pop).includes(p)) return 0;
-    return Math.max(0, demandPerDay(p, t.pop) - (t.today[p] ?? 0));
+    return Math.max(0, roomFor(t, p, demandPerDay(p, t.pop)));
   }
 
   /** A load reached one of the town's shops. */

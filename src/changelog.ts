@@ -15,6 +15,14 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.105", date: "2026-11-10", title: "Only what they need",
+    notes: [
+      "Towns buy what they use and no more. Their shops used to take three times their need, so any spare load sold somewhere; now a full town turns loads away, and they wait at your works or go to a warehouse.",
+      "A short day can still be made up: a town takes up to two days' use over the two days its supply is judged on, rounded up to a whole load, so a well-fed town still reads Plenty.",
+      "The town panel says how much its shops buy a day.",
+    ],
+  },
+  {
     v: "v0.0.104", date: "2026-11-10", title: "Room to build",
     notes: [
       "Every build menu folds to a one-line strip while you place, and can be hidden without dropping the tool. The Goals card folds to the goal at hand and what's happening now.",

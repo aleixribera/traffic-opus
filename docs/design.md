@@ -255,7 +255,10 @@ Our own names, look and art throughout.
 - **Warehouses** (tier 2) store any product and re-ship it with their own trucks (a fleet that comes with its
   size, like a plant's), so long chains can be split
   into legs. A load's destination comes in this order: a plant short of the input, then a town that needs it,
-  then a warehouse with room as overflow, never another warehouse. The exception is a warehouse set as a
+  then a warehouse with room as overflow, never another warehouse. A town's shops buy what it uses and no more
+  (owner, 2026-11-10; the old shops took three times their need): over the two days its supply is judged on, a
+  day's demand a day less what landed, rounded up to a whole load, so a short day can be made good and a full one
+  turns loads away (settlements.ts `roomFor`). The exception is a warehouse set as a
   **feeder** for the product: it comes first when it is nearer than where the load would otherwise go. In
   the panel the player picks the products it takes (all by default) and the ones it feeds, and sees the stock.
 - **Unlocks:** heavy trucks with "Village" (with the mines), warehouses with "First cement", depots with "First fuel",
@@ -728,7 +731,7 @@ A town should visibly turn from a hamlet into a city over a playthrough: bigger,
   want against the town's biggest want, so a small need draws a short track. Under that, one sentence of what to do ("Bring 4 more loads of food a day", "Food is fine"). The words
   follow the sim: "Enough" from 85% of a day's need (where a town starts to grow), "Plenty" from
   all of it (where it grows at its full pace), "None!" while not one step's worth (a tenth of the want, rounded) is coming. The need still to come shows greyed: "Soon: Planks, when
-  it reaches 100 people". The rest (what the shops buy at most, today's tally) sits in the row's
+  it reaches 100 people". The rest (what the shops buy at most, a day's demand) sits in the row's
   tooltip and under Details. On the map, a town's nameplate shows its needs only while one wants seeing to: each
   picture on a disc ringed green, ochre or brick (with a "!" for none at its bottom right), the fine ones smaller.
   Zoomed far out the discs give way to one chip ("Short of 5 needs", or "Needs food and planks" for one or two), so

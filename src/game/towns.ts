@@ -170,7 +170,7 @@ export function demandPerDay(p: Product, pop: number): number {
 
 /**
  * Products a town buys from a population on without needing them to grow: fresh milk and cheese from a Village, motor
- * cars from a Town. They sell like needs (up to MARKET times a day's use) and each one supplied adds a little to the
+ * cars from a Town. They sell like needs (up to a day's use) and each one supplied adds a little to the
  * town's growth (COMFORT_BONUS), but none holds it back.
  */
 export const EXTRAS: Partial<Record<Product, number>> = { milk: 300, cheese: 300, cars: 1500 };

@@ -505,7 +505,7 @@ export interface IndustryHost {
   townOf(b: Building): number | null;
   /** loads of a product a town still wants today (0 or less: it has enough; -Infinity: it doesn't use it) */
   want(town: number, p: Product): number;
-  /** loads a town still needs today to grow (its shops buy more than that; this part comes first), 0 if none */
+  /** loads a town still needs to grow (its shops buy up to its demand and no more; this part comes first), 0 if none */
   short?(town: number, p: Product): number;
   /**
    * sim s until what has landed of a need in a town would read below "Enough" with only the loads `arriving` (sim time
@@ -1226,7 +1226,8 @@ export class Industry {
         if (!open(o)) continue;
         const t = this.h.townOf(o);
         const l = t === null ? 0 : left.get(t)!;
-        if (l < 1) continue;
+        // (a part load left counts: the load that completes its demand is taken whole, see settlements.ts roomFor)
+        if (l <= 1e-6) continue;
         // a town still short of what it needs to grow comes first (within ~50 km of extra driving), then nearest
         // first; a town further short, and a shop with emptier shelves, a little ahead
         const short = t === null ? 0 : (shortLeft.get(t) ?? 0);
@@ -1403,7 +1404,7 @@ export class Industry {
       for (const o of this.h.shops) {
         if (!o.access || !this.h.connected(seg, o.access.seg)) continue;
         const t = this.h.townOf(o);
-        if (t !== null && Number.isFinite(this.h.want(t, p))) return `Towns on your roads have all the ${name} they need today`;
+        if (t !== null && Number.isFinite(this.h.want(t, p))) return `Towns on your roads have all the ${name} they take for now`;
       }
     }
     if (!this.used(p) && PRODUCTS[p].price <= 0) return `Nothing uses ${name} until tier ${Industry.laterTier(p)}: it stays in the yard`;

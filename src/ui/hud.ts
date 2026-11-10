@@ -11,7 +11,7 @@ import { buildTime } from "../game/construction";
 import { DEPOT_REACH, HIST_HOURS, Industry, PLANTS, PRODUCTS, MIN_DEPOSIT, SUPPLY_STORE, UNPOWERED, isPlantKind, powerPace, type PlantKind, type Product } from "../game/industry";
 import { TRUCK_CLASSES, TRUCK_CLASS_ORDER, type TruckClass } from "../game/trucks";
 import { LEVEL_MULT, SITE_LEVELS, growNeed } from "../game/sites";
-import { MARKET, compassWords, served, type Town } from "../game/settlements";
+import { compassWords, served, type Town } from "../game/settlements";
 import { HALLS, TOWN_SIZES, needFrom, needsOf, sizeOf } from "../game/towns";
 import { HOUR } from "../game/society";
 import { PAL } from "../render/palette";
@@ -2176,7 +2176,7 @@ export class Hud {
     // (figures only: the status line and the one piece of advice above them do the talking. Owner, 2026-11-10)
     const most = Math.max(1e-6, ...views.map((v) => v.want));
     const rows = views.map((v) => {
-      const tip = `${fmtLoads(v.got)} loads a day coming, of the ${fmtLoads(v.want)} it needs to grow. ${buyer(v.p)} up to ${fmtLoads(v.want * MARKET)} a day; ${fmtLoads(t.today[v.p] ?? 0)} so far today.`;
+      const tip = `${fmtLoads(v.got)} loads a day coming, of the ${fmtLoads(v.want)} it needs to grow. ${buyer(v.p)} up to ${fmtLoads(g.towns.buysPerDay(t.id, v.p))} a day and no more.`;
       const track = Math.max(6, (v.want / most) * 100);
       return `<li class="nd ${v.state}" title="${escapeHtml(tip)}">
           <span class="nd-ic" aria-hidden="true">${productIcon(v.p)}</span>
@@ -2190,7 +2190,7 @@ export class Hud {
       ? `<p class="nd-soon">${cn.products.map((p) => `<span class="nd-ic" aria-hidden="true">${productIcon(p)}</span>`).join("")}<span><b>Soon: ${cn.products.map((p) => PRODUCTS[p].name).join(" and ")}</b> <span class="muted">when it reaches ${fmtNum(cn.pop)} people</span></span></p>`
       : "";
     const lead = `<h3 class="sub-h nd-h">What it needs</h3><ul class="nds">${rows}</ul>${soon}${townOrders(g, t)}`;
-    const figures = views.map((v) => `<dt title="${buyer(v.p)} up to ${fmtLoads(v.want * MARKET)} a day; ${fmtLoads(t.today[v.p] ?? 0)} so far today">${PRODUCTS[v.p].name}</dt><dd>${fmtLoads(v.got)} <span class="muted">of ${fmtLoads(v.want)}</span></dd>`).join("");
+    const figures = views.map((v) => `<dt title="${buyer(v.p)} up to ${fmtLoads(g.towns.buysPerDay(t.id, v.p))} a day and no more">${PRODUCTS[v.p].name}</dt><dd>${fmtLoads(v.got)} <span class="muted">of ${fmtLoads(v.want)}</span></dd>`).join("");
     // what came, by product, and what it was worth
     const sold = (Object.entries(t.yesterday) as [Product, number][]).filter(([, n]) => n > 0);
     const worth = sold.reduce((a, [p, n]) => a + n * PRODUCTS[p].price, 0);
@@ -2219,7 +2219,7 @@ export class Hud {
       </dl>
       <h3 class="sub-h">Needs in figures <span class="muted">loads a day</span></h3>
       <dl class="facts">${figures}</dl>
-      <p class="small muted">Its shops buy up to ${MARKET}× what it needs to grow, so extra loads still sell.</p>
+      <p class="small muted">Its shops buy what it uses in a day and no more: loads beyond that wait at your works or go to a warehouse.</p>
       <h3 class="sub-h">Delivered yesterday</h3>
       ${deliveries}`;
     // (its size, needs met and the track to the next size first, under the status: below the needs they fell past the

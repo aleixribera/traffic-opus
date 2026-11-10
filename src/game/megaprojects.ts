@@ -83,8 +83,8 @@ export interface LandmarkState { pieces: number; done?: number; town?: number }
 
 /**
  * What a load is worth to a landmark's site, against the other customers (Industry.customers): after the company's
- * own plants short of it (they keep the chains running) and a town that needs it to grow, ahead of a town's extra
- * sales and of any warehouse. So it drinks up the surplus without starving a chain.
+ * own plants short of it (they keep the chains running) and a town that needs it to grow, ahead of a town's extras
+ * and of any warehouse. So it drinks up what the towns won't take without starving a chain.
  */
 export function megaValue(price: number, km: number): number {
   return (price > 0 ? price + 200 : 5000) - km * 8;
