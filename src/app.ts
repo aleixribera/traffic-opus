@@ -707,7 +707,8 @@ export class App {
     this.preview.group.visible = false;
     this.offer.group.visible = false;
     this.hud?.chips(null);
-    if (this.game.paused) this.togglePause();
+    // (not the player setting the clock: a card that stopped it to be read still starts it again once put away)
+    if (this.game.paused) { this.game.paused = false; this.audio.play("resume"); }
     document.body.classList.add("cinema");
     this.labelKey = "";
     this.iconT = 1;
@@ -722,7 +723,7 @@ export class App {
     this.offer.group.visible = true;
     if (overlay !== "none") this.setOverlay(overlay);
     if (tool !== "inspect") this.setTool({ tool });
-    if (paused && !this.game.paused) this.togglePause();
+    if (paused && !this.game.paused) { this.game.paused = true; this.audio.play("pause"); }
     this.labelKey = "";
     this.iconT = 1;
     this.dirtyPreview = true;
@@ -738,6 +739,7 @@ export class App {
   }
 
   private setGame(g: Game) {
+    this.offerFor = null;
     this.game = g;
     setYearStart(g.calStart);
     // the view as the player left it: the turn, and the Diorama or the Map view (the Camera setting)
@@ -2193,20 +2195,24 @@ export class App {
 
   /**
    * The dirt road the game would lay to a site placed here with no road in its own street's reach (Game.gateLink, out
-   * to ROAD_TO_REACH). Worked out at most every 150 ms while the ghost moves (undefined meanwhile: the frame after
-   * asks again), and kept while the site, its turn and the roads stay put.
+   * to ROAD_TO_REACH). Worked out at most every 150 ms while the ghost moves (meanwhile the last one stands, so the
+   * offer doesn't blink off between: undefined only before the first; the frame after asks again), and kept while the
+   * site, its turn and the roads stay put.
    */
   private farLink(k: PlacedKind, pl: { c: V2; rot: number; side: 1 | -1 }): Plan | null | undefined {
     const g = this.game, key = `${k}:${Math.round(pl.c.x)},${Math.round(pl.c.y)}:${pl.rot.toFixed(3)}:${pl.side}:${g.net.version}`;
     if (this.farMemo?.key === key) return this.farMemo.plan;
     const now = performance.now();
-    if (now - this.farAt < 150) { requestAnimationFrame(() => { this.dirtyPreview = true; }); return undefined; }
+    if (now - this.farAt < 150) {
+      requestAnimationFrame(() => { this.dirtyPreview = true; });
+      return this.farMemo?.k === k ? this.farMemo.plan : undefined;
+    }
     this.farAt = now;
     const plan = g.gateLink(k, pl.c, pl.rot, pl.side, { reach: ROAD_TO_REACH, type: "dirt", tries: 3 });
-    this.farMemo = { key, plan };
+    this.farMemo = { key, k, plan };
     return plan;
   }
-  private farMemo: { key: string; plan: Plan | null } | null = null;
+  private farMemo: { key: string; k: PlacedKind; plan: Plan | null } | null = null;
   private farAt = 0;
 
   /** The offered road of the works selected (or pointed at), redrawn only when it, the roads or the zoom change. */

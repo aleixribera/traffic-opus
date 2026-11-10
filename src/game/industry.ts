@@ -1374,7 +1374,8 @@ export class Industry {
     const where = kinds.size === 1 ? `the ${BUILDING_TYPES[[...kinds][0]].name}${ids.length > 1 ? "s" : ""}` : "your plants that use it";
     const h = Number.isFinite(next) ? Math.max(0, next - this.h.time) / HOUR : null;
     const when = h === null ? "" : h > 0.75 ? `; the next lands in ${aboutHours(h)}` : "; the next lands within the hour";
-    return `${n === 1 ? "1 load" : `${Math.round(n)} loads`} on the way to ${where}${when}`;
+    const k = Math.round(n);
+    return `${k === 1 ? "1 load" : `${k} loads`} on the way to ${where}${when}`;
   }
 
   /** Why a load has nowhere to go: no town on its roads uses it, or they all have enough for today. */

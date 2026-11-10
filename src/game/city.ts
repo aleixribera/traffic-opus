@@ -1255,22 +1255,29 @@ export class Game {
 
   /**
    * The road the game offers a site with no road to its gate, too far out for its own street (ROAD_TO_REACH): a dirt
-   * road from the gate to the nearest road it can be laid to. Worked out again only when the roads change.
+   * road from the gate to the nearest road it can be laid to. Worked out again only when the roads or the company's
+   * works change (a works placed on its way); a town's new homes are checked when it is built (buildRoadTo).
    */
   roadTo(b: Building): Plan | null {
     if (b.access || !b.placed || !this.buildings.byId.has(b.id)) return null;
-    const v = this.net.version, m = this.roadToMemo.get(b.id);
+    const s = this.buildings.sites, v = `${this.net.version}|${s.length}|${s[s.length - 1]?.id ?? 0}`;
+    const m = this.roadToMemo.get(b.id);
     if (m && m.v === v) return m.plan;
     const plan = this.gateLink(b.kind as PlacedKind, b.c, b.rot, b.side, { reach: ROAD_TO_REACH, type: "dirt", tries: 3 });
     this.roadToMemo.set(b.id, { v, plan });
     return plan;
   }
-  private roadToMemo = new Map<number, { v: number; plan: Plan | null }>();
+  private roadToMemo = new Map<number, { v: string; plan: Plan | null }>();
 
-  /** Lay the offered road (one Undo takes it away); false if there is none, or it can't be paid for. */
-  buildRoadTo(b: Building): boolean {
+  /**
+   * Lay the offered road (one Undo takes it away), worked out afresh so it goes round whatever stands on its way
+   * now: the plan laid, or null if there is none or it can't be paid for.
+   */
+  buildRoadTo(b: Building): Plan | null {
+    if (b.access || !b.placed || !this.buildings.byId.has(b.id)) return null;
+    this.roadToMemo.delete(b.id);
     const plan = this.roadTo(b);
-    return !!plan && this.build(plan);
+    return plan && this.build(plan) ? plan : null;
   }
 
   /** Would a lot (centre c, turned rot, half sizes hw x hd) cover any of a town's square (kept for its hall)? */

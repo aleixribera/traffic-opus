@@ -283,15 +283,15 @@ describe("free placement and the gate", () => {
     expect(g.roadsLeadOut(farm)).toBe(true);
   });
 
-  it("a first-tier works goes up over its crew time (a first farm: three game hours) before it makes anything", () => {
+  it("a first-tier works goes up over its crew time (a first farm: two game hours) before it makes anything", () => {
     const g = openGame();
     const b = g.place("farm", openSpot(g, "farm"))!;
     expect(b.built).toBe(0);
-    run(g, 2.5);
+    run(g, 1.6);
     expect(b.built).toBeGreaterThan(0.7);
     expect(b.built).toBeLessThan(1);
     expect(Industry.running(b)).toBe(false);
-    run(g, 0.75);
+    run(g, 0.6);
     expect(b.built).toBe(1);
   });
 

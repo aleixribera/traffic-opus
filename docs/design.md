@@ -1516,8 +1516,8 @@ The game's setting is 1920s-40s American industry: steel, oil, highways, Deco.
   site hut. Trucks drive in off the street and away again. A site's new buildings after it grows go up the same
   way over 8 game hours (the new level works from the start). Construction is slower, the one thing the owner
   wanted slower: a house takes 3 game hours, a terrace 4, apartment blocks, stores and offices 6, courtyard
-  apartments, grand stores and the office tower 9, the apartment tower, the skyscraper and the city hall 12; a first-tier works 3 (a
-  first farm opens two minutes after it is placed, at 1x), tier 2 works 6, deeper ones 8 to 12; a landmark 6, once
+  apartments, grand stores and the office tower 9, the apartment tower, the skyscraper and the city hall 12; a first-tier works 2 (a
+  first farm opens under a minute and a half after it is placed, at 1x), tier 2 works 6, deeper ones 8 to 12; a landmark 6, once
   its last convoy is in.
 - **Lived-in home lots** (tools/blender/build_models.py `home_lot`, src/render/buildings3d.ts `VARIANTS`,
   `DRIVE_X`). A street of homes is no longer one house stamped down: five 1920s homes share one lot plan, picked

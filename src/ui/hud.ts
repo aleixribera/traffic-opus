@@ -696,6 +696,8 @@ export class Hud {
     const app = this.app, g = app.game, st = app.st;
     if (!g) return;
     const tc = catOf(st);
+    // (another catalog's tool taken up by key: its cards start open, as from its button)
+    if (tc && this.cat !== tc) { this.handPicked = false; this.catHidden = false; this.catPeek = false; }
     if (tc) this.cat = tc;
     else if (st.tool !== "inspect") this.cat = null;
     // (nothing of the catalog's in hand: nothing to fold for or to hide behind)
@@ -1005,6 +1007,8 @@ export class Hud {
           <span class="bar gl-bar" role="progressbar" aria-label="${m.name}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p * 100)}"><i style="width:${Math.max(2, p * 100)}%"></i></span>
           ${nowLine(now)}<p class="gl-gift">${unlockList(m.unlocks).join(" · ")}</p></li>`;
       }).join("");
+      // (the road offered under the pointer stays drawn only while its button is still there, for that works)
+      if (this.app.offerFor !== null && tip?.road?.works !== this.app.offerFor) this.app.offerFor = null;
       const roadBtn = tip?.road ? ` <button type="button" class="btn gl-act" data-id="${tip.road.works}"${g.money < tip.road.cost ? ` disabled title="More than you have now"` : ""}>Build this road · ${formatMoney(tip.road.cost)}</button>` : "";
       body = `<div id="gl-body">${items ? `<ol class="gl-list">${items}</ol>` : this.afterGoals()}${tip ? `<div class="gl-tip" data-tip="${tip.id}"><p>${tip.html}${roadBtn}</p><button class="gl-x" aria-label="Dismiss this tip" title="Dismiss this tip (Pause › Tips turns them all off)">${ICON.close}</button></div>` : ""}</div>`;
     }
@@ -2358,11 +2362,20 @@ export class Hud {
   /** Lay the road offered to a works (its panel's button, or its tip's). */
   buildRoadTo(id: number) {
     const g = this.app.game, b = g.buildings.byId.get(id);
-    const plan = b ? g.roadTo(b) : null;
-    if (!b || !plan) return;
-    if (!g.buildRoadTo(b)) { this.sfx.play("error"); this.toast(g.money < plan.cost ? "Not enough money for that road" : "That road can't be laid now", true); return; }
+    if (!b || !g.roadTo(b)) return;
+    const built = g.buildRoadTo(b);
+    if (!built) {
+      // (worked out afresh: the way may be blocked now, or dearer than the money there is)
+      const now = g.roadTo(b);
+      this.sfx.play("error");
+      this.toast(now && g.money < now.cost ? "Not enough money for that road" : "That road can't be laid now", true);
+      this.lastPanel = "";
+      if (this.sel) this.fillSel();
+      this.renderTips();
+      return;
+    }
     this.sfx.play("build");
-    this.toast(`Dirt road to the ${BUILDING_TYPES[b.kind].name}'s gate built for ${formatMoney(plan.cost)}`);
+    this.toast(`Dirt road to the ${BUILDING_TYPES[b.kind].name}'s gate built for ${formatMoney(built.cost)}`);
     this.app.offerFor = null;
     this.lastPanel = "";
     if (this.sel) this.fillSel();
