@@ -3,7 +3,7 @@ import { BUILDING_TYPES, LEVEL_H, MAX_LEVEL, ROAD_TYPES, SIM, roadWidth, type Ro
 import { clamp, cubicAt, cubicTangent, dist, dot, formatMoney, norm, rectCorners, right, sub, v2, wrapAngle, type V2 } from "./core/math";
 import { townStreets } from "./game/rural";
 import type { Building } from "./game/buildings";
-import { GATE_LINK_REACH, Game, ROAD_TO_REACH } from "./game/city";
+import { Game, ROAD_TO_REACH } from "./game/city";
 import {
   chainPoints, parallelSpacing, planAddLane, planRoad, planRoundabout, removalRefund, snap,
   type CurveMode, type Plan, type RoundaboutSize, type Snap, type SnapOpts,
@@ -97,7 +97,7 @@ import { Transit3D, legPoints } from "./render/transit3d";
 import { STOP_COST } from "./game/transit";
 import { View } from "./render/view";
 import { Saves, type SavedView } from "./game/saves";
-import { PLACED, type PlacedKind } from "./game/placed";
+import type { PlacedKind } from "./game/placed";
 import type { Hud, Chip } from "./ui/hud";
 import { CameraDirector } from "./ui/camera";
 import { followOn } from "./render/cinema";
@@ -921,7 +921,7 @@ export class App {
   }
 
   setLevel(l: number) {
-    if (l > 0 && this.st.tool === "road" && this.st.mode !== "replace" && ROAD_TYPES[this.st.roadType].unpaved) { this.reject("Dirt roads stay on the ground: a bridge on one is built paved, on its own"); return; }
+    if (l > 0 && this.st.tool === "road" && this.st.mode !== "replace" && ROAD_TYPES[this.st.roadType].unpaved) { this.reject("Dirt roads stay on the ground"); return; }
     this.setTool({ level: Math.max(0, Math.min(MAX_LEVEL, l)) });
   }
 
@@ -1135,7 +1135,7 @@ export class App {
   /** A plan through homes builds on a second click, and only when its cost and the compensation can be paid. */
   private confirmLots(plan: Plan): boolean {
     const g = this.game, lots = g.lotsUnder(plan), total = plan.cost + g.demolishCost(lots);
-    if (total > g.money + 0.5) { this.reject(`Not enough money (${formatMoney(total)} with the compensation)`); return false; }
+    if (total > g.money + 0.5) { this.reject(`Not enough money for ${formatMoney(total)} with compensation`); return false; }
     if (!lots.length) return true;
     const key = this.planKey(plan, lots);
     if (this.confirmKey !== key) { this.confirmKey = key; this.hud?.sound("error"); this.dirtyPreview = true; return false; }
@@ -1149,7 +1149,7 @@ export class App {
     for (const b of lots) this.preview.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
     if (!lots.length) return;
     const comp = this.game.demolishCost(lots), what = `${lots.length} building${lots.length === 1 ? "" : "s"}`;
-    chips.push({ text: this.confirmKey === this.planKey(plan, lots) ? `Click again to demolish ${what} (${formatMoney(comp)})` : `Demolishes ${what}: ${formatMoney(comp)} compensation`, kind: "error", warn: true });
+    chips.push({ text: this.confirmKey === this.planKey(plan, lots) ? `Click again to demolish ${what}` : `Demolishes ${what}, ${formatMoney(comp)} compensation`, kind: "error", warn: true });
   }
 
   private onMove(e: PointerEvent) {
@@ -1584,7 +1584,7 @@ export class App {
       if (!l) { this.reject("That line needs two stops"); return; }
       const ok = isFinite(tr.loopTime(l));
       this.hud?.sound("build");
-      this.hud?.toast(ok ? `${l.name} opened: ${l.stops.length} stops, ${l.want} bus${l.want === 1 ? "" : "es"}` : `${l.name} made, but its buses can't get round it: check the roads between its stops`);
+      this.hud?.toast(ok ? `${l.name} opened with ${l.stops.length} stops and ${l.want} bus${l.want === 1 ? "" : "es"}` : `${l.name} made, but its buses can't drive round it. Check the roads between its stops`);
       this.hud?.openLines(l.id);
     } else if (d.includes(id)) { this.reject(d.length >= 2 ? "Click the first stop to close the line" : "Already on this line"); return; }
     else {
@@ -1655,7 +1655,7 @@ export class App {
       const cut = !!pl.free && !pl.link && !b.access;
       // (too far out for its own street: the dirt road the ghost showed waits in its panel, one click)
       const far = cut ? g.roadTo(b) : null;
-      this.hud?.toast(`${BUILDING_TYPES[k].name} built for ${formatMoney(pl.cost)}${!cut ? "" : far ? `. No road reaches its gate yet: click it to build the dirt road to it (${formatMoney(far.cost)})` : ". No road reaches its gate yet: draw one to it"}`);
+      this.hud?.toast(`${BUILDING_TYPES[k].name} built for ${formatMoney(pl.cost)}${!cut ? "" : far ? `. Click it to lay the ${formatMoney(far.cost)} road to its gate` : ". Draw a road to its gate"}`);
       this.dirtyPreview = true;
       return;
     }
@@ -1710,7 +1710,7 @@ export class App {
       if (plan.errors.length) { this.reject(plan.errors[0].msg); return; }
       // through homes: say what goes and what it costs, and build on a second click
       const lots = g.lotsUnder(plan);
-      if (plan.cost + g.demolishCost(lots) > g.money + 0.5) { this.reject(`Not enough money (${formatMoney(plan.cost + g.demolishCost(lots))} with the compensation)`); return; }
+      if (plan.cost + g.demolishCost(lots) > g.money + 0.5) { this.reject(`Not enough money for ${formatMoney(plan.cost + g.demolishCost(lots))} with compensation`); return; }
       if (lots.length) {
         const key = this.planKey(plan, lots);
         if (this.confirmKey !== key) {
@@ -1726,7 +1726,7 @@ export class App {
       const endH = plan.continueAt?.h ?? lead.h1;
       if (g.build(plan)) {
         this.audio.road(Math.hypot(endP.x - this.anchor.p.x, endP.y - this.anchor.p.y));
-        if (plan.bridges?.length) this.hud?.toast(plan.bridges.length === 1 ? `Bridge built: ${Math.round(plan.bridges[0].length)} m span` : `${plan.bridges.length} bridges built`);
+        if (plan.bridges?.length) this.hud?.toast(plan.bridges.length === 1 ? `${Math.round(plan.bridges[0].length)} m bridge built` : `${plan.bridges.length} bridges built`);
         // keep drawing from where this road ended
         const s = snap(g.net, endP, { ...this.snapOpts(), mpp: 0.05, off: undefined, lengthStep: 0 });
         this.anchor = s.node !== undefined || (plan.continueAt && s.seg !== undefined) ? s : { p: endP, h: endH, guides: [] };
@@ -1751,13 +1751,13 @@ export class App {
     }
     if (t === "bulldoze") {
       const hit = this.bulldozeAt();
-      if (hit.stop !== undefined) { g.transit.removeStop(hit.stop); this.hud?.sound("remove"); this.hud?.toast(`Removed bus stop, refunded ${formatMoney(STOP_COST / 2)}`); return; }
+      if (hit.stop !== undefined) { g.transit.removeStop(hit.stop); this.hud?.sound("remove"); this.hud?.toast(`Bus stop removed, ${formatMoney(STOP_COST / 2)} refunded`); return; }
       if (hit.b) { g.bulldoze([], [hit.b.id]); this.hud?.sound("remove"); return; }
       const id = hit.seg ?? null;
       if (id !== null) {
         const refund = g.bulldoze([id], []);
         this.hud?.sound("remove");
-        this.hud?.toast(`Removed road, refunded ${formatMoney(refund)}`);
+        this.hud?.toast(`Road removed, ${formatMoney(refund)} refunded`);
       }
       return;
     }
@@ -1780,7 +1780,7 @@ export class App {
     if (!segs.length && !bs.length) return;
     const refund = g.bulldoze(segs, bs);
     this.hud?.sound("remove");
-    if (segs.length) this.hud?.toast(`Removed ${segs.length} road${segs.length > 1 ? "s" : ""}, refunded ${formatMoney(refund)}`);
+    if (segs.length) this.hud?.toast(`${segs.length === 1 ? "Road" : `${segs.length} roads`} removed, ${formatMoney(refund)} refunded`);
   }
 
   /**
@@ -1886,7 +1886,7 @@ export class App {
    * power shows the reach of the plants there are and whether it would be in one. In reach means near and on the same
    * roads, as for the power itself. Placing either shows the power view.
    */
-  private powerPreview(pv: Preview3D, chips: Chip[], k: PlacedKind, c: V2, seg: number | undefined) {
+  private powerPreview(pv: Preview3D, k: PlacedKind, c: V2, seg: number | undefined): Chip | null {
     const g = this.game;
     const D = PLANTS[k];
     const plants = g.buildings.list.filter((b) => b.kind === "coalplant");
@@ -1902,16 +1902,16 @@ export class App {
       // every works in reach that draws power, building sites and ones still going up too: they are what a power
       // plant is built for (play-test 2026-11-09, A12: it said "nothing needs power" beside a coal mine's site)
       const users = g.buildings.list.filter((b) => isPlantKind(b.kind) && !!PLANTS[b.kind].power && dist(b.c, c) <= D.reach! && linked(b));
-      chips.push({ text: users.length ? `Will power: ${tally(users.map((b) => BUILDING_TYPES[b.kind].name))}` : `Nothing within ${D.reach! / 1000} km draws power yet`, kind: "info" });
+      return { text: users.length ? `Powers ${tally(users.map((b) => BUILDING_TYPES[b.kind].name))}` : `Nothing within ${D.reach! / 1000} km draws power yet`, kind: "info" };
     } else if (D.power) {
       for (const p of plants) ring(p.c, PLANTS.coalplant.reach!, 0x2f86e0);
       const near = plants.filter((p) => dist(p.c, c) <= PLANTS.coalplant.reach! && linked(p));
       const open = near.some((p) => p.built >= 1 && !p.plant?.site);
-      chips.push({
-        text: open ? `Needs ${D.power} MW: a power plant is in reach` : near.length ? `Needs ${D.power} MW: the power plant in reach is still being built` : `Needs ${D.power} MW: no power plant in reach, works at ${Math.round(UNPOWERED * 100)}%`,
-        kind: near.length ? "info" : "error",
-      });
+      return open ? { text: "Power plant in reach", kind: "info" }
+        : near.length ? { text: "Its power plant is still going up", kind: "info" }
+        : { text: `No power in reach, works at ${Math.round(UNPOWERED * 100)}%`, kind: "error", warn: true };
     }
+    return null;
   }
 
   /**
@@ -2010,11 +2010,10 @@ export class App {
         pv.marker(s.p, s.h);
         pv.refs(s.refs, s.h);
         pv.target(g.net, s);
-        chips.push({ text: `${T.name}: ${this.st.mode === "straight" ? "straight" : "curve"}`, kind: "info" });
         const joins = s.site ? s.label : s.node !== undefined ? (g.net.segsAt(s.node).length === 1 ? "Carries on the road" : "From the junction") : s.seg !== undefined ? `From the ${ROAD_TYPES[g.net.segs.get(s.seg)!.type].name.toLowerCase()}` : s.label;
         if (joins) chips.push({ text: joins, kind: "info", lead: 2 });
         if (this.st.level > 0) chips.push({ text: `Elevation ${this.st.level * LEVEL_H} m`, kind: "info" });
-        if (this.keys.has("Alt")) chips.push({ text: "No snapping (Alt)", kind: "info" });
+        if (this.keys.has("Alt")) chips.push({ text: "Snapping off", kind: "info" });
       } else {
         const plan = this.computeRoadPlan();
         this.plan = plan;
@@ -2051,7 +2050,7 @@ export class App {
           // pointer never shows two prices side by side)
           for (const sp of plan.bridges ?? []) {
             chips.push({ text: `Bridge ${Math.round(sp.length)} m over ${sp.over === "water" ? "water" : sp.over === "road" ? "the road" : "water and road"}`, kind: "info", icon: "bridge", lead: 1 });
-            chips.push({ text: `The bridge costs ${formatMoney(sp.cost)} of it`, kind: "info" });
+            chips.push({ text: `${formatMoney(sp.cost)} for the bridge`, kind: "info" });
           }
           // (to or from a company site: which one it connects; ending at its gate, that says it all)
           if (plan.connects) chips.push({ text: plan.connects, kind: "info", lead: 3 });
@@ -2067,9 +2066,9 @@ export class App {
             for (const b of lots) pv.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
             const key = this.planKey(plan, lots);
             const what = `${lots.length} building${lots.length === 1 ? "" : "s"}`;
-            chips.push({ text: this.confirmKey === key ? `Click again to demolish ${what} (${formatMoney(comp)})` : `Demolishes ${what}: ${formatMoney(comp)} compensation`, kind: "error", warn: true });
+            chips.push({ text: this.confirmKey === key ? `Click again to demolish ${what}` : `Demolishes ${what}, ${formatMoney(comp)} compensation`, kind: "error", warn: true });
           }
-          if (this.keys.has("Alt")) chips.push({ text: "No snapping (Alt)", kind: "info" });
+          if (this.keys.has("Alt")) chips.push({ text: "Snapping off", kind: "info" });
         }
       }
     } else if (t === "roundabout") {
@@ -2135,7 +2134,7 @@ export class App {
       const k = this.st.placed;
       const pl = g.placedPlan(k, c, this.placeOpts());
       const T = BUILDING_TYPES[k];
-      chips.push({ text: T.name, kind: "info" });
+      // (not its name: the catalog's strip says what is in hand)
       if (!pl) {
         chips.push({ text: "Can't build here", kind: "error" });
       } else {
@@ -2158,7 +2157,7 @@ export class App {
         if (deg) chips.push({ text: `Turned ${deg}°`, kind: "info" });
         if (pl.link) {
           pv.plan(pl.link, 0);
-          chips.push({ text: `Street to its gate: ${Math.round(pl.link.length)} m`, kind: "info", lead: 2 });
+          chips.push({ text: `Lays a ${Math.round(pl.link.length)} m street to its gate`, kind: "info", lead: 2 });
         } else if (pl.free && pl.ok) {
           // (further out than its own street reaches: the dirt road the game would lay to it, dashed, and its price;
           // built with one click from its panel once it is placed. Review 2026-11-10)
@@ -2166,14 +2165,14 @@ export class App {
           if (far) {
             this.offerRoad(pv, far);
             if (this.gateGhost) this.gateGhost = { ...this.gateGhost, note: "dirt road offered", bad: false };
-            chips.push({ text: `No road within ${GATE_LINK_REACH} m: a dirt road to its gate, ${distText(planLength(far))}, ${formatMoney(far.cost)}. Its panel builds it`, kind: "info", lead: 3 });
-          } else {
+            // (its price is in its panel, one click once placed: not a second price beside the works' own)
+            chips.push({ text: `${distText(planLength(far))} dirt road to its gate offered`, kind: "info", lead: 3 });
+          } else if (far === null) {
             // (a site turns its gate toward the nearest road by itself, so turning it is not the fix. Play-test
             // 2026-11-10: "turn its gate toward one" sent the player turning a farm round and round beside a road its
-            // own fence stood in the way of)
-            const text = far === undefined ? "No road within reach of its gate" : "No road it can reach: place it and draw a road to its gate, or move it nearer a road";
-            chips.push({ text, kind: "info", lead: 3 });
-          }
+            // own fence stood in the way of. Still being worked out, undefined: nothing said yet, not a false "no road")
+            chips.push({ text: "No road in reach of its gate", kind: "info", lead: 3 });
+          } else if (this.gateGhost) this.gateGhost = { ...this.gateGhost, note: undefined, bad: false };
         }
         else if (pl.faces) chips.push({ text: `Gate on a ${pl.faces.toLowerCase()}`, kind: "info", lead: 2 });
         // (the belts and pipes it would make with the company's plants fence to fence with it, drawn from fence to
@@ -2185,23 +2184,26 @@ export class App {
             pv.dot(l.a, 0xe0a833, 2.6);
             pv.dot(l.b, 0xe0a833, 2.6);
             const pipe = l.product === "crude" || l.product === "fuel";
-            const say = `${pipe ? "Pipe" : "Conveyor"} ${l.out ? "to" : "from"} your ${BUILDING_TYPES[l.other.kind].name}: ${PRODUCTS[l.product].name.toLowerCase()}`;
+            const say = `${PRODUCTS[l.product].name} by ${pipe ? "pipe" : "conveyor"} ${l.out ? "to" : "from"} your ${BUILDING_TYPES[l.other.kind].name}`;
             if (!said.has(say)) { said.add(say); chips.push({ text: say, kind: "info", lead: 4 }); }
           }
         }
         // (the deposit share; a lot refused for too little of it gives the share in its reason instead)
-        this.powerPreview(pv, chips, k, pl.c, pl.access?.seg);
+        const power = this.powerPreview(pv, k, pl.c, pl.access?.seg);
+        if (power && power.kind !== "error") chips.push(power);
         this.depositMarks.here = !!pl.deposit && pl.deposit.share >= MIN_DEPOSIT;
         if (pl.deposit && pl.deposit.share >= MIN_DEPOSIT) chips.push({ text: `${pl.deposit.name[0].toUpperCase()}${pl.deposit.name.slice(1)} ${Math.round(pl.deposit.share * 100)}%`, kind: "info" });
-        if (over) chips.push({ text: `Over your ${BUILDING_TYPES[over.kind].name}: move it clear`, kind: "info", lead: 9 });
+        if (over) chips.push({ text: `Over your ${BUILDING_TYPES[over.kind].name}`, kind: "info", lead: 9 });
         else if (!pl.ok) chips.push({ text: pl.reason ?? "Can't build here", kind: "error" });
         else {
+          // (its upkeep and what its site needs are on the catalog's strip, beside its name)
           chips.push(this.costChip(pl.cost));
-          chips.push({ text: `${formatMoney(PLACED[k].upkeep)}/h upkeep`, kind: "info" });
-          const site = PLANTS[k].site;
-          if (site) chips.push({ text: `Site: needs ${Object.entries(site).map(([p, q]) => `${q} load${q === 1 ? "" : "s"} of ${PRODUCTS[p as Product].name.toLowerCase()}`).join(", ")}`, kind: "info" });
           const n = pl.clears?.length ?? 0;
           if (n) chips.push({ text: `${n} building${n === 1 ? "" : "s"} replaced`, kind: "error", warn: true });
+          // (no power is a warning, after the buildings it replaces: it doesn't stop the click, so it never stands in
+          // for the real reason a plot is refused. Review 2026-11-10: "No power plant in reach" showed over "Not enough
+          // fertile soil")
+          if (power?.kind === "error") chips.push(power);
         }
       }
     } else if (t === "inspect") {

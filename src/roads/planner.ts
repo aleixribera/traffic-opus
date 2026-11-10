@@ -230,7 +230,7 @@ export function snap(net: RoadNetwork, raw: V2, o: SnapOpts): Snap {
         }
       }
     }
-    return { ...e, guides, label: turned ? `Connects to ${t.name}: its gate turns to this side` : `Connects to ${t.name}`, site: { id: t.id, name: t.name, gate: { ...gate }, ...(turned ? { turned } : {}) } };
+    return { ...e, guides, label: turned ? `Connects to ${t.name}, turning its gate` : `Connects to ${t.name}`, site: { id: t.id, name: t.name, gate: { ...gate }, ...(turned ? { turned } : {}) } };
   }
   // 1) nodes
   const nr = NODE_SNAP_PX * o.mpp;
@@ -692,7 +692,7 @@ function findCrossings(net: RoadNetwork, pts: V2[], cum: number[], hsPlan: numbe
         const da = norm(sub(pts[i + 1], pts[i])), db = norm(sub(cp[j + 1], cp[j]));
         const angle = Math.acos(clamp(Math.abs(dot(da, db)), 0, 1));
         if (dh > 0.6) {
-          bad.push({ p, msg: `Not enough clearance (${dh.toFixed(1)} m, needs ${CLEARANCE} m): raise or lower the road with Page Up / Down`, seg: id, sPlan, hSeg: hS, angle });
+          bad.push({ p, msg: `Only ${dh.toFixed(1)} of ${CLEARANCE} m clearance, raise or lower it with Page Up or Down`, seg: id, sPlan, hSeg: hS, angle });
           continue;
         }
         out.push({ seg: id, sPlan, p, angle, hSeg: hS });
@@ -1124,7 +1124,7 @@ function planSlipExtend(net: RoadNetwork, world: BuildWorld, start: Snap, end: S
     plan.removeSegs = [s.id];
     plan.cost = Math.max(0, plan.cost - segCost(net, s.id, world));
     plan.errors = plan.errors.filter((e) => !e.msg.startsWith("Not enough money"));
-    if (plan.cost > world.money() + 0.5) plan.errors.push({ msg: `Not enough money (${fmt(plan.cost)})`, p: msgP });
+    if (plan.cost > world.money() + 0.5) plan.errors.push({ msg: `Not enough money for ${fmt(plan.cost)}`, p: msgP });
     plan.note = piece.joined ? "Slip lanes joined" : `${Math.round(piece.length)} m slip lane`;
     plan.continueAt = { p: { ...end.p }, h: end.h };
     return plan;
@@ -1255,11 +1255,11 @@ function autoBridge(net: RoadNetwork, world: BuildWorld, st: Stroke, ignore: { s
   const maxH = MAX_LEVEL * LEVEL_H;
   for (const sp of spans) {
     const what = sp.water && !sp.road ? "the water" : sp.road && !sp.water ? "the road" : "the crossing";
-    if (sp.h > maxH + 0.1) { errors.push({ msg: `Too high to bridge here: cross ${what} somewhere lower`, p: polyAt(pl, clamp((sp.s0 + sp.s1) / 2, 0, L)) }); continue; }
-    if (sp.s0 + BRIDGE_PAD < 0.5 && baseAt(0) < sp.h - 0.3) errors.push({ msg: `Can't start on ${what}: start the road on dry, open ground`, p: pts[0] });
-    else if (sp.s1 - BRIDGE_PAD > L - 0.5 && baseAt(L) < sp.h - 0.3) errors.push({ msg: `Can't end on ${what}: carry the road on past it`, p: pts[pts.length - 1] });
-    else if (sp.f0 < -0.5) errors.push({ msg: `No room for the bridge's ramp over ${what}: start ${Math.ceil(-sp.f0)} m further back`, p: pts[0] });
-    else if (sp.f1 > L + 0.5) errors.push({ msg: `No room for the bridge's ramp over ${what}: carry on ${Math.ceil(sp.f1 - L)} m further`, p: pts[pts.length - 1] });
+    if (sp.h > maxH + 0.1) { errors.push({ msg: `Too high to bridge ${what} here`, p: polyAt(pl, clamp((sp.s0 + sp.s1) / 2, 0, L)) }); continue; }
+    if (sp.s0 + BRIDGE_PAD < 0.5 && baseAt(0) < sp.h - 0.3) errors.push({ msg: `Can't start on ${what}`, p: pts[0] });
+    else if (sp.s1 - BRIDGE_PAD > L - 0.5 && baseAt(L) < sp.h - 0.3) errors.push({ msg: `Can't end on ${what}`, p: pts[pts.length - 1] });
+    else if (sp.f0 < -0.5) errors.push({ msg: `Start ${Math.ceil(-sp.f0)} m further back to ramp up over ${what}`, p: pts[0] });
+    else if (sp.f1 > L + 0.5) errors.push({ msg: `Carry on ${Math.ceil(sp.f1 - L)} m to ramp down from the bridge`, p: pts[pts.length - 1] });
     sp.f0 = Math.max(0, sp.f0);
     sp.f1 = Math.min(L, sp.f1);
     sp.s0 = Math.max(sp.f0, sp.s0);
@@ -1372,7 +1372,7 @@ function planRoadOnce(net: RoadNetwork, world: BuildWorld, inp: PlanInput): Plan
   // a dirt road stays on the ground (it gets over water or a road on a paved bridge of its own)
   if (ROAD_TYPES[type].unpaved && Math.max(start.h, end.h) > RAISED) {
     const p = start.h > RAISED ? start.p : end.p;
-    return { strokes: [], cost: 0, length: 0, errors: [{ msg: "Dirt roads stay on the ground: start and end it at ground level, or pick a paved road", p }], crossings: [], kind: "road" };
+    return { strokes: [], cost: 0, length: 0, errors: [{ msg: "Dirt roads stay on the ground", p }], crossings: [], kind: "road" };
   }
   if (!inp.parallel && inp.mode === "straight") {
     const x = planSlipExtend(net, world, start, end, type);
@@ -1381,14 +1381,14 @@ function planRoadOnce(net: RoadNetwork, world: BuildWorld, inp: PlanInput): Plan
     // lengthened by drawing on from where it leaves it.
     // (only along one connected stretch: filling a gap between two dead ends, or a link between two one-ways, is a road)
     if (carriageAt(net, start) && carriageAt(net, end) && alongCarriage(net, start, end) && (stretchBetween(net, start, end) || stretchBetween(net, end, start))) {
-      const msg = isHighway(ROAD_TYPES[type]) ? "Runs along the carriageway: to lengthen a slip lane, draw on from where it starts" : "Runs along an existing road";
+      const msg = isHighway(ROAD_TYPES[type]) ? "Runs along the carriageway: draw on from a slip lane's start" : "Runs along an existing road";
       return { strokes: [], cost: 0, length: 0, errors: [{ msg, p: end.p }], crossings: [], kind: "road" };
     }
   }
   // a slip lane is part of its ramp: roads join the ramp beyond the gore (or the carriageway), not the lane
   for (const sn of [start, end]) {
     if (sn.seg !== undefined && slipLaneEnd(net, sn.seg)) {
-      return { strokes: [], cost: 0, length: 0, errors: [{ msg: "Can't join a slip lane: join its ramp past the gore", p: sn.p }], crossings: [], kind: "road" };
+      return { strokes: [], cost: 0, length: 0, errors: [{ msg: "Can't join a slip lane: join its ramp", p: sn.p }], crossings: [], kind: "road" };
     }
   }
   let slip: { ta?: V2; tb?: V2 } = slipTangents(net, start, end, type);
@@ -1520,7 +1520,7 @@ function planRoadOnce(net: RoadNetwork, world: BuildWorld, inp: PlanInput): Plan
   if (spans.length) plan.bridges = spans;
   if (asRamp && !piece && !plan.errors.length) {
     const sn = slip.ta ? start : end;
-    if (builtMinRadius(net, chain, sn, !!slip.ta, type) < ROAD_TYPES[type].minRadius * 0.98) plan.errors.push({ msg: "Too tight where it merges: draw the slip road longer", p: sn.p });
+    if (builtMinRadius(net, chain, sn, !!slip.ta, type) < ROAD_TYPES[type].minRadius * 0.98) plan.errors.push({ msg: "Too tight where it merges: draw it longer", p: sn.p });
   }
   if (piece) plan.note = piece.joined ? "Slip lanes joined" : `${Math.round(piece.length)} m slip lane`;
   else if (strokes.some(pavedPieces)) plan.note = `A dirt road's bridge is built as a paved ${ROAD_TYPES[PAVED_DECK].name.toLowerCase()}`;
@@ -1576,7 +1576,7 @@ function siteErrors(net: RoadNetwork, plan: Plan, start: Snap, end: Snap) {
   }
   plan.errors = out;
   const joined = (end.site ?? start.site)!;
-  plan.connects = joined.turned ? `Connects to ${joined.name}: its gate turns to this side` : `Connects to ${joined.name}`;
+  plan.connects = joined.turned ? `Connects to ${joined.name}, turning its gate` : `Connects to ${joined.name}`;
 }
 
 /** Directions of the roads at a snap (both ways along a road; each road out of a junction). */
@@ -1744,7 +1744,7 @@ function parallelStroke(net: RoadNetwork, st: Stroke, offset: number, start: Sna
     const lim = roadWidth(ROAD_TYPES[st.type]);
     for (let j = 0; j < cp.length - 1; j++) {
       if (pointSegDist2(q, cp[j], cp[j + 1]).d2 < lim * lim) {
-        errors.push({ msg: "The parallel road would start on top of this road: turn the other way, or start the pair afresh", p: q });
+        errors.push({ msg: "The parallel road would start on this road", p: q });
         break;
       }
     }
@@ -1790,7 +1790,7 @@ export function validateStrokes(
     if (!st.chain.length) {
       // (no road between two points well apart: a curve asked to turn back behind its start)
       const a0 = anchors[0]?.p ?? { x: 0, y: 0 }, a1 = anchors[anchors.length - 1]?.p ?? a0;
-      errors.push({ msg: dist(a0, a1) > MIN_SEG_LEN ? "Too sharp a turn back: click a point on the way round" : "Too short: drag further from the start", p: a0 });
+      errors.push({ msg: dist(a0, a1) > MIN_SEG_LEN ? "Too sharp a turn back, click a point on the way round" : "Too short: drag further from the start", p: a0 });
       continue;
     }
     const T = ROAD_TYPES[st.type];
@@ -1801,20 +1801,20 @@ export function validateStrokes(
     total += L;
     const hs = strokeHeights(net, st, pts, pl.cum);
     const mid = pts[Math.floor(pts.length / 2)];
-    if (L < MIN_SEG_LEN) { errors.push({ msg: `Too short: roads are at least ${MIN_SEG_LEN} m`, p: mid }); continue; }
+    if (L < MIN_SEG_LEN) { errors.push({ msg: `Too short: at least ${MIN_SEG_LEN} m`, p: mid }); continue; }
     // ramp grade (piece by piece where it has joint heights: a bridge's ramps)
     const dh = Math.abs(st.h1 - st.h0);
     if (st.hj && st.hj.length === st.chain.length + 1) {
       for (const [i, c] of st.chain.entries()) {
         const d = Math.abs(st.hj[i + 1] - st.hj[i]), l = makePolyline(sampleCubic(c, 2)).length;
-        if (d > 0.1 && d / l > MAX_GRADE * 1.02) { errors.push({ msg: `Ramp too short: needs ${Math.ceil(d / MAX_GRADE)} m to climb ${Math.round(d)} m, draw it longer`, p: cubicAt(c, 0.5) }); break; }
+        if (d > 0.1 && d / l > MAX_GRADE * 1.02) { errors.push({ msg: `Ramp too short: needs ${Math.ceil(d / MAX_GRADE)} m to climb ${Math.round(d)} m`, p: cubicAt(c, 0.5) }); break; }
       }
     } else if (dh > 0.1 && dh / L > MAX_GRADE) {
-      errors.push({ msg: `Ramp too short: needs ${Math.ceil(dh / MAX_GRADE)} m to climb ${Math.round(dh)} m, draw it longer`, p: mid });
+      errors.push({ msg: `Ramp too short: needs ${Math.ceil(dh / MAX_GRADE)} m to climb ${Math.round(dh)} m`, p: mid });
     }
     // curvature: show where it's too tight
     const r = minRadius(pts, 4);
-    if (r < T.minRadius * 0.98) errors.push({ msg: `Curve too tight for ${T.name} (needs ${T.minRadius} m radius): swing wider`, p: tightest(pts) });
+    if (r < T.minRadius * 0.98) errors.push({ msg: `Curve too tight: needs a ${T.minRadius} m radius`, p: tightest(pts) });
     // terrain
     let water = false, mountain = false, out = false;
     for (let i = 0; i < pts.length; i++) {
@@ -1823,8 +1823,8 @@ export function validateStrokes(
       if (world.isMountain(p)) mountain = true;
       if (hs[i] < LEVEL_H * 0.5 && world.isWater(p)) water = true;
     }
-    if (out) errors.push({ msg: "Outside the map: keep inside its edge", p: mid });
-    if (mountain) errors.push({ msg: "Mountain in the way: go round it", p: mid });
+    if (out) errors.push({ msg: "Outside the map", p: mid });
+    if (mountain) errors.push({ msg: "Mountain in the way", p: mid });
     if (water) errors.push({ msg: "Needs a bridge here: raise it with Page Up", p: mid });
     // buildings
     // roundabout islands can't be driven through (a bridge high enough over it is fine)
@@ -1834,7 +1834,7 @@ export function validateStrokes(
       for (const R of rings) for (let i = 0; i < pts.length && !inIsland; i++) {
         if (Math.abs(hs[i] - R.h) < CLEARANCE && dist(pts[i], R.c) < R.r - 3.2) inIsland = pts[i];
       }
-      if (inIsland) errors.push({ msg: "Can't cross a roundabout's centre: end on its ring instead", p: inIsland });
+      if (inIsland) errors.push({ msg: "Can't cross a roundabout's centre", p: inIsland });
     }
     // (a slip lane is checked where it will be built, beside the carriageway, not along the line it is drawn on)
     const vis = st.show ? chainPoints(st.show, 2) : pts;
@@ -1848,23 +1848,23 @@ export function validateStrokes(
     let prevS = -Infinity;
     for (const c of cx.crossings) {
       crossings.push(c.p);
-      if (c.angle < MIN_ARM_ANGLE) errors.push({ msg: `Crossing too shallow (${Math.round((c.angle * 180) / Math.PI)}°): cross at a wider angle`, p: c.p });
-      if (c.sPlan - prevS < 14) errors.push({ msg: "Junctions too close together: cross further apart, or bridge over with Page Up", p: c.p });
+      if (c.angle < MIN_ARM_ANGLE) errors.push({ msg: `Crossing too shallow: ${Math.round((c.angle * 180) / Math.PI)}°`, p: c.p });
+      if (c.sPlan - prevS < 14) errors.push({ msg: "Junctions too close together", p: c.p });
       prevS = c.sPlan;
       const s = net.segs.get(c.seg)!;
       for (const n of [s.a, s.b]) {
         if (isRingFiller(net, n)) continue; // moved to the new junction when built
         const d = dist(net.nodes.get(n)!.p, c.p);
-        if (d >= 3 && d < 12) errors.push({ msg: "Too close to a junction: cross at the junction itself, or 12 m from it", p: c.p });
+        if (d >= 3 && d < 12) errors.push({ msg: "Too close to a junction, cross at it or 12 m away", p: c.p });
       }
     }
     if (cx.crossings.length && L - cx.crossings[cx.crossings.length - 1].sPlan < 10 && own[1] && own[1].node === undefined && own[1].seg === undefined) {
-      errors.push({ msg: "Too close to a junction: end on the road, or carry on past it", p: pts[pts.length - 1] });
+      errors.push({ msg: "Too close to a junction, end on the road or carry on past it", p: pts[pts.length - 1] });
     }
     // overlaps: running along an existing road at the same level
     const glued = (id: number, p: V2) => slips.some((sl) => sl.segs.has(id) && dist(sl.p, p) < sl.r);
     const ov = overlapCheck(net, vis, visH, w, cx.crossings.map((c) => c.p), anchors.map((a) => a.p), ignore, (id, p) => !!skip?.(id, p) || glued(id, p));
-    if (ov) errors.push({ msg: "Overlaps an existing road: move it clear, or end on that road", p: ov });
+    if (ov) errors.push({ msg: "Overlaps a road", p: ov });
     // arm angles at anchors
     for (const [ai, a] of own.entries()) {
       const dirOut = ai === 0 ? norm(cubicTangent(st.chain[0], 0)) : scale(norm(cubicTangent(st.chain[st.chain.length - 1], 1)), -1);
@@ -1889,16 +1889,16 @@ export function validateStrokes(
         const ang = Math.acos(clamp(dot(d, dirOut), -1, 1));
         if (oneWayAll && ang < 0.02) continue; // exactly in line: a slip road glued alongside, not a sharp junction
         if (ang < minA) {
-          errors.push({ msg: `Angle too sharp (${Math.round((ang * 180) / Math.PI)}°, min ${Math.round((minA * 180) / Math.PI)}°): meet the road more squarely`, p: a.p });
+          errors.push({ msg: `Angle too sharp: ${Math.round((ang * 180) / Math.PI)}°, needs ${Math.round((minA * 180) / Math.PI)}°`, p: a.p });
           break;
         }
       }
-      if (a.node !== undefined && net.segsAt(a.node).length >= 6) errors.push({ msg: "Too many roads at this junction: join the road further along", p: a.p });
+      if (a.node !== undefined && net.segsAt(a.node).length >= 6) errors.push({ msg: "Too many roads at this junction", p: a.p });
     }
     cost += strokeCost(st, pts, hs, world);
   }
   if (kind === "roundabout") cost += ROUNDABOUT_COST;
-  if (cost > world.money() + 0.5) errors.push({ msg: `Not enough money (${fmt(cost)})`, p: anchors[anchors.length - 1]?.p ?? { x: 0, y: 0 } });
+  if (cost > world.money() + 0.5) errors.push({ msg: `Not enough money for ${fmt(cost)}`, p: anchors[anchors.length - 1]?.p ?? { x: 0, y: 0 } });
   // de-duplicate messages at nearly the same place
   const seen = new Set<string>();
   const errs = errors.filter((e) => { const k = e.msg; if (seen.has(k)) return false; seen.add(k); return true; });
@@ -2482,7 +2482,7 @@ export function planPave(net: RoadNetwork, world: BuildWorld, start: Snap, end: 
     pieces.push({ seg: sg.id, t0, t1, ...(T.bwd === 0 && x.back ? { flip: true } : {}) });
   }
   if (!pieces.length) return null;
-  if (cost > world.money() + 0.5) errors.push({ msg: `Not enough money (${fmt(cost)})`, p: end.p });
+  if (cost > world.money() + 0.5) errors.push({ msg: `Not enough money for ${fmt(cost)}`, p: end.p });
   const seen = new Set<string>();
   return {
     strokes: [], ghosts: [{ chain, h0: start.h, h1: end.h, type }], cost, length: pl.length, crossings: [], kind: "road",
@@ -2533,9 +2533,9 @@ export function upgradeCost(net: RoadNetwork, world: BuildWorld, segId: number, 
   const mid = pts[Math.floor(pts.length / 2)];
   if (T.unpaved) {
     // (a dirt road is only ever on the ground, with no turn lanes and no ring)
-    if (hs.some((h) => h > RAISED)) errors.push({ msg: "Dirt roads stay on the ground: a bridge stays paved", p: mid });
+    if (hs.some((h) => h > RAISED)) errors.push({ msg: "Dirt roads stay on the ground", p: mid });
     else if (s.ring) errors.push({ msg: "Roundabouts stay paved", p: mid });
-    else if (s.pk?.a || s.pk?.b) errors.push({ msg: "Take its turn lanes off first: a dirt road has none", p: mid });
+    else if (s.pk?.a || s.pk?.b) errors.push({ msg: "Take its turn lanes off first", p: mid });
   }
   if (g.minR < T.minRadius * 0.98) errors.push({ msg: `Curve too tight for ${T.name}`, p: mid });
   const w = roadWidth(T);

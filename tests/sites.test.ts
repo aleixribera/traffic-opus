@@ -239,7 +239,7 @@ describe("free placement and the gate", () => {
     road(g, across(GATE_REACH - 4, -160), across(GATE_REACH - 4, 160));
     expect(b.access).not.toBeNull();
     // (a road at its gate that leads nowhere: it says so, not "connected", play-test 2026-11-10)
-    expect(toasts.some((t) => t === "Food Plant has a road at its gate. Join it to your other roads and its trucks can start")).toBe(true);
+    expect(toasts.some((t) => t === "Food Plant has a road at its gate. Join it to your other roads")).toBe(true);
     expect(toasts.some((t) => t === "Food Plant connected: its trucks can start")).toBe(false);
     // its kerb is on the road's edge in front of the gate
     expect(rectDistance(b.front, b.c, b.hw, b.hd, b.rot)).toBeLessThan(GATE_REACH);

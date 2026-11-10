@@ -262,11 +262,11 @@ describe("automatic bridges", () => {
   it("says where to start when there's no room for a ramp", () => {
     const net = new RoadNetwork();
     const plan = planRoad(net, river, { start: free(v2(0, 110)), end: free(v2(0, 340)), mode: "straight", type: "street", bridges: true });
-    expect(plan.errors.some((e) => /^No room for the bridge's ramp over the water: start \d+ m further back$/.test(e.msg))).toBe(true);
+    expect(plan.errors.some((e) => /^Start \d+ m further back to ramp up over the water$/.test(e.msg))).toBe(true);
     // (and only that: not also the old "raise it with Page Up")
     expect(plan.errors.some((e) => e.msg.includes("Page Up"))).toBe(false);
     const tooShort = planRoad(net, river, { start: free(v2(0, 0)), end: free(v2(0, 230)), mode: "straight", type: "street", bridges: true });
-    expect(tooShort.errors.some((e) => /^No room for the bridge's ramp over the water: carry on \d+ m further$/.test(e.msg))).toBe(true);
+    expect(tooShort.errors.some((e) => /^Carry on \d+ m to ramp down from the bridge$/.test(e.msg))).toBe(true);
   });
 });
 

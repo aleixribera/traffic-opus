@@ -184,7 +184,7 @@ describe("a roundabout on a works' gate junction", () => {
     expect(g.build(plan)).toBe(false);
     B.gateAccess = ga; G.gateLink = gl;
     expect(toasts.length).toBe(1);
-    expect(toasts[0]).toMatch(/^Not built: a roundabout there would leave the Sawmill with no road to its gate/);
+    expect(toasts[0]).toMatch(/^Not built: a roundabout there would leave the Sawmill's gate with no road/);
     expect(g.money).toBe(money);
     expect([...g.net.segs.keys()].sort((x, y) => x - y)).toEqual(segs);
     expect([...g.net.nodes.keys()].sort((x, y) => x - y)).toEqual(nodes);

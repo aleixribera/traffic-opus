@@ -136,7 +136,7 @@ describe("one line at the pointer", () => {
   });
 
   it("a warning that does not stop the click leads, with the price beside it", () => {
-    const warn: PointerChip = { text: "Demolishes 2 buildings: $4,000 compensation", kind: "error", warn: true };
+    const warn: PointerChip = { text: "Demolishes 2 buildings, $4,000 compensation", kind: "error", warn: true };
     const line = pointerLine([info("240 m"), cost, info("Joins the street", 2), warn]);
     expect(line.head).toBe(warn);
     expect(line.cost).toBe(cost);
