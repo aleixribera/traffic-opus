@@ -15,6 +15,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.93", date: "2026-11-10", title: "Room to breathe",
+    notes: [
+      "New towns lay out wider blocks, keep more parks and gardens, and spread further out as they grow.",
+      "Shopfronts stand wall to wall only along one short Main Street by the hall, in a Town or a City. A Village keeps a few separate shops.",
+      "A City keeps a handful of towers by its hall instead of a ring of apartment blocks.",
+      "Houses have back gardens: a hedge or fence behind each one, often with a tree, so a block reads as rows of yards.",
+      "A town next to a neighbour now grows on its far side instead of stopping in a circle, so a City can pass 10,000 people.",
+      "Towns in older saves keep their old blocks.",
+    ],
+  },
+  {
     v: "v0.0.92", date: "2026-11-10", title: "One voice",
     notes: [
       "A town's panel says one thing: how it is doing, what to fix first with a button to show it, then the figures.",

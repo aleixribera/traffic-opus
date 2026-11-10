@@ -663,7 +663,7 @@ A town should visibly turn from a hamlet into a city over a playthrough: bigger,
   | Hamlet | houses | high-street shop-houses |
   | Village | houses, terraces in the middle | high street |
   | Town | row houses, brick apartment houses in the middle | department stores, office blocks |
-  | City | courtyard apartments, apartment towers in the core | grand stores, office towers |
+  | City | courtyard apartments (apartment towers wait for a Metropolis) | grand stores, office towers |
   | Metropolis | towers in the core | skyscrapers (the skyline) |
 
   The kinds keep their old keys in the code and the saves (`modernflats`, `mall`, `glasstower`...); what the
@@ -703,7 +703,8 @@ houses." "Let villages fully control themselves apart from just growing, let the
 cool layout aswell, not just squared, let them eventually build an outwards road that ends up connecting to maybe
 an external road, but don't overdo it, this is the player's job."
 
-- **A plan of its own (townplan.ts).** Every town still grows a street at a time on a lattice of 96 m blocks, laid
+- **A plan of its own (townplan.ts).** Every town still grows a street at a time on a lattice of blocks (128 m for
+  a town founded from 2026-11-10, 96 m for one from a save before: see "Open towns" below), laid
   out as a small American town that grew over time (PLAN_TOWN, 2026-11-09), seeded from the town and the same every
   time it is loaded. The main street runs along the road the town began on, straight through the hall's crossroads
   and bending gently once past the old town; the crossroads and the four blocks round it stay square, so the hall's
@@ -746,6 +747,49 @@ an external road, but don't overdo it, this is the player's job."
   ticker says "Alder Run built a road out to the north-east, joining yours" (or "... to Fort Pryor"). It builds
   only one, ever, and with nothing in reach it builds nothing at all, not even a stub: joining towns up stays
   the player's job.
+
+### Open towns and a short Main Street (owner, 2026-11-10)
+
+"Make towns less dense overall, grow more outward, have more empty space, the grids should also be a bit more
+open, not all crammed together, but keep the growth shape realistic, kind of as it is."
+
+- **A wider grid, the same shape.** A town founded today lays its plan on 128 m blocks (`OPEN_BLOCK`, was 96 m:
+  `t.block`, saved; a town from an older save has none and keeps 96 m). Its streets, quarters, closes and lean are
+  laid out exactly as before, a third further apart, and its radius for its people is a third wider with them. It
+  keeps a quarter more of its blocks as greens and 40% more of its house fronts as gardens. Every ring of denser
+  building is thinner, so most of a town, even a City, is houses with gardens:
+
+  | Size | Centre | Rings out from the hall (blocks) |
+  |---|---|---|
+  | Hamlet | shops to 0.75 | houses |
+  | Village | shop-houses to 1 | row houses to 2.25, then houses |
+  | Town | stores and offices to 1.25 | apartment houses to 1.75, row houses to 2.5 |
+  | City | grand stores and office towers to 1.25 | courtyard flats to 2, apartment houses to 2.75, row houses to 3.5 |
+  | Metropolis | skyscrapers to 1.25, office towers to 1.75 | towers to 2.25, then flats, apartment houses, row houses to 5.5 |
+
+  On seed 7, every need served twice over (homes per km² of built-up ground, the 200 m squares with a home on,
+  and m² of it per resident; v0.0.91 first): Village 280 and 1,013 m², now 218 and 1,553; Town 353 and 728, now
+  324 and 971; City of 6,500 423 and 585, now 355 and 850; City of 10,000 413 and 487, now 349 and 836. Nine homes
+  in ten stand within 800 m of the hall at Town size (was 605) and 1.9 km in a City of 10,000 (was 1.2 km), the
+  furthest 2.4 km out. A City's skyline is a handful of towers by its hall (five at 10,000 people): its apartment
+  towers wait for a Metropolis.
+- **Halfway to a neighbour is a line, not a circle.** A town never lays a street past half a block short of the
+  line halfway to another town; it was held to a circle of that radius all round, which kept a start town with a
+  hamlet 1.9 km off (where the first one springs up) under a kilometre across, and on the wider grid stopped it at
+  3,700 people. Now it is hemmed in toward its neighbour only, and grows on the other way: with a hamlet 1.9 km
+  off it grows past 10,000 people (tests/density.test.ts). A town of the older plans keeps the circle.
+- **The street wall is a short Main Street (towns.ts `MAIN_STREET`, `WALL_ZONES`).** Only a Town or a City has
+  one: the stretch of Main Street (the plan's line through the hall along the road it began on) within 1.25 blocks
+  of the hall in a Town, 2 in a City, 2.5 in a Metropolis. There the shops are built to the pavement shoulder to
+  shoulder (`b.wall`; models `*_w*` from tools/blender/town_g_wall.py, as wide as their lot): two and three storey
+  shop-houses in a Town; in a City a handful of towers on podiums by the hall, four to six storey blocks past them,
+  shop-houses at the ends. A front keeps clear of every other street by as much as a divided avenue and its
+  pavement take, so widening a side street never takes a corner of the wall. The town builds the wall first, from
+  the hall outward, and a shop already standing on that land is rebuilt into it one at a time. Everywhere else
+  shops stand apart as before: a Village's few by its hall, a Town's and a City's along its high streets.
+- **Gardens you can read.** Behind most homes the lot's back line is a hedge or a picket fence, so the middle of
+  a block reads as rows of gardens, and a deep back garden has a tree or two. Behind a front of the wall the
+  yard is paved only as deep as the building, its court left as grass with a tree or two.
 
 ### Town orders (owner, 2026-11-08)
 

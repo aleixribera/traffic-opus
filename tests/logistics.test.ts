@@ -7,7 +7,7 @@ import { HEAVY_UNITS, ROAD_TRAIN_UNITS, TRUCK_CLASSES, TRUCK_CLASS_ORDER, classO
 import { MILESTONES, unlockedBy, unlocksOf } from "../src/game/progression";
 import { PLACED_TABS } from "../src/game/placed";
 import { Game } from "../src/game/city";
-import { BLOCK, gridPt } from "../src/game/towns";
+import { blockOf, gridPt } from "../src/game/towns";
 import type { Building } from "../src/game/buildings";
 import type { PendingSpawn, Vehicle } from "../src/sim/traffic";
 import { placeAlong, road } from "./helpers";
@@ -406,7 +406,7 @@ describe("Logistics in the game", () => {
     g.start();
     g.money = 1e7;
     const t = g.towns.list[0];
-    const a = gridPt(t.c, t.ang, 1 + 320 / BLOCK, 0), b = gridPt(t.c, t.ang, 1 + 900 / BLOCK, 0);
+    const a = gridPt(t.c, t.ang, 1 + 320 / blockOf(t), 0, blockOf(t)), b = gridPt(t.c, t.ang, 1 + 900 / blockOf(t), 0, blockOf(t));
     road(g, a, b);
     return { g, a, b };
   }

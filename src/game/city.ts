@@ -1,8 +1,9 @@
 import { loadCompany, makeCompany, type Company } from "./company";
 import {
-  BUILDING_TYPES, DEMOLISH_PER_LEVEL, ROAD_TYPES, SIGNAL_COST, SIM, isHighway, roadWidth, takesGate, type RoadTypeId,
+  BUILDING_TYPES, DEMOLISH_PER_LEVEL, ROAD_TYPES, SIDEWALK, SIGNAL_COST, SIM, isHighway, roadGroup, roadWidth, takesGate,
+  type RoadTypeId,
 } from "../config";
-import { add, dist, dist2, rectCorners, rectDistance, scale, sub, type V2 } from "../core/math";
+import { add, dist, dist2, pointSegDist2, rectCorners, rectDistance, scale, sub, type V2 } from "../core/math";
 import { mulberry32 } from "../core/noise";
 import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/network";
 import {
@@ -12,7 +13,7 @@ import { fromLot, Traffic, type TrafficSave, type Trip, type Vehicle } from "../
 import { SITE_LEVELS, siteFrame } from "./sites";
 import { Terrain } from "../world/terrain";
 import { Buildings, TOWN_STREET, obbOverlap, type Building, type BuildingMove } from "./buildings";
-import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, type LotTemplate } from "./growables";
+import { LEVEL_LV, ZONE_GROUP, ZONE_LOTS, capacity, modelFit, wallLots, type LotTemplate } from "./growables";
 import { Progress, levelBy, levelCap, type Feature, type Milestone, type ProgressView } from "./progression";
 import { DAY, HOUR, Society } from "./society";
 import { PLACED, SHORE_REACH, type PlacedKind } from "./placed";
@@ -20,7 +21,7 @@ import { buildStep } from "./construction";
 import { Industry, MIN_DEPOSIT, PLANTS, PRODUCTS, isPlantKind, type Delivery, type Product } from "./industry";
 import { TRUCK_CLASS_ORDER, type TruckClass } from "./trucks";
 import { PARTS_FOR, SQUARE_INSET, TownSystem, type Spawned } from "./settlements";
-import { BLOCK, CARS_PER_LOAD, demandPerDay, gridPt, isHall, needsOf, smokeReach } from "./towns";
+import { BLOCK, CARS_PER_LOAD, blockOf, demandPerDay, gridPt, isHall, needsOf, smokeReach } from "./towns";
 import { F } from "../world/gen";
 import { Transit } from "./transit";
 import { Utilities } from "./utilities";
@@ -295,7 +296,7 @@ export class Game {
     // for a first farm, sawmill and food plant, still a Hamlet well short of the 150 goal)
     town.target = START_HAMLET_HH;
     // the road out of town, from the end of its main street
-    const a = gridPt(town.c, ang, 1, 0), b = gridPt(town.c, ang, 1 + 320 / BLOCK, 0);
+    const bk = blockOf(town), a = gridPt(town.c, ang, 1, 0, bk), b = gridPt(town.c, ang, 1 + 320 / bk, 0, bk);
     const plan = planRoad(this.net, this.world, { start: { p: a, h: 0, guides: [], node: this.nodeAt(a) }, end: { p: b, h: 0, guides: [] }, mode: "straight", type: "street" });
     if (!plan.errors.length) this.buildFree(plan);
     // it has stood a while: its first homes and its shop are up and lived in
@@ -1167,7 +1168,7 @@ export class Game {
 
   /** Would a lot (centre c, turned rot, half sizes hw x hd) cover any of a town's square (kept for its hall)? */
   onTownSquare(c: V2, rot: number, hw: number, hd: number): boolean {
-    const near = this.towns.list.filter((t) => dist(t.c, c) < Math.hypot(hw, hd) + BLOCK * 1.5);
+    const near = this.towns.list.filter((t) => dist(t.c, c) < Math.hypot(hw, hd) + blockOf(t) * 1.5);
     if (!near.length) return false;
     const u = { x: Math.cos(rot), y: Math.sin(rot) }, v = { x: -u.y, y: u.x };
     // every ~10 m over the lot (a square is a whole block, so none slips between)
@@ -1286,6 +1287,8 @@ export class Game {
     let n = 0;
     for (const c of cands) {
       if (!c.zone) continue;
+      // (a front of the street wall can be a single cell wide)
+      if (group === "com" && this.towns.wallCell(c)) { if (this.wallFits(c.block, c.col, 1, 3)) n++; continue; }
       const t = ZONE_LOTS[c.zone][ZONE_LOTS[c.zone].length - 1]; // (the smallest)
       for (let shift = 0; shift < t.w; shift++) {
         const col0 = c.col - shift;
@@ -1463,8 +1466,9 @@ export class Game {
         ux += Math.cos(c.rot); uy += Math.sin(c.rot);
       }
       const rot = Math.atan2(uy, ux), hw = (C.w * CELL) / 2, hd = (C.d * CELL) / 2;
-      // (nothing else of the town's or the company's in the way: a hall, another civic building, a site's fence)
-      if (this.buildings.list.some((o) => !o.zone && !s.gone.has(o.id) && dist(o.c, s.c) < hw + hd + o.hw + o.hd && obbOverlap(s.c, hw - 0.5, hd - 0.5, rot, o.c, o.hw, o.hd, o.rot))) continue;
+      // (nothing else of the town's or the company's in the way: a hall, another civic building, a site's fence, or a
+      // home beside it that stands a little over its cells, as one does when its street was re-laid since it was built)
+      if (this.buildings.list.some((o) => !s.gone.has(o.id) && dist(o.c, s.c) < hw + hd + o.hw + o.hd && obbOverlap(s.c, hw - 0.5, hd - 0.5, rot, o.c, o.hw, o.hd, o.rot))) continue;
       const away = { x: -Math.sin(rot) * blk.side, y: Math.cos(rot) * blk.side };
       const front = add(s.c, scale(away, -(hd + zoneEdge(g.width) - g.width / 2)));
       this.clearForTown(town, [...s.gone].map((id) => this.buildings.byId.get(id)).filter((b): b is Building => !!b));
@@ -1569,12 +1573,152 @@ export class Game {
   /** Try to grow a building on one of these candidate cells. */
   private grow(cands: Cell[], biggest = false, only?: LotTemplate[]): Building | null {
     if (!cands.length) return null;
+    // (a town's Main Street fills first, its wall from the hall outward: growWall)
+    const wall = cands.filter((c) => c.ok && !c.lot && c.zone && ZONE_GROUP[c.zone] === "com" && this.towns.wallCell(c));
+    if (!only && wall.length) {
+      const w = this.growWall(wall, biggest);
+      if (w) return w;
+    }
     for (let attempt = 0; attempt < 6; attempt++) {
       const c = cands[(this.rng() * cands.length) | 0];
-      if (c.lot || !c.ok || !c.zone) continue;
+      // (the wall's land grows only fronts of the wall, or its filling station)
+      if (!only && wall.includes(c)) continue;
+      const b = this.growAt(c, biggest, only);
+      if (b) return b;
+    }
+    return null;
+  }
+
+  /**
+   * The street wall (docs/design.md "Main Street"): from a Town on, the stretch of Main Street by the hall is built to
+   * the pavement, each front as wide as its lot, on the free front nearest the centre, so the wall grows outward
+   * from the hall with no gaps in it. A lot takes one to four cells of the free run it starts in, never leaving a
+   * single cell over where it can help it. Where the street bends too much for neighbours to share a wall, a
+   * detached building goes up instead. `free`: the town's free cells of its wall (TownSystem.wallCell).
+   */
+  private growWall(free: Cell[], biggest: boolean): Building | null {
+    const tid = this.cellTown(free[0]);
+    const town = tid === null ? undefined : this.towns.byId.get(tid);
+    if (!town) return null;
+    const d2 = (c: Cell) => (c.c.x - town.c.x) ** 2 + (c.c.y - town.c.y) ** 2;
+    free = [...free].sort((p, q) => d2(p) - d2(q));
+    let tries = 0;
+    for (const c of free) {
+      if (c.lot) continue;
+      if (++tries > 80) break;
+      const b = c.block;
+      if (!this.net.segs.get(b.seg)) continue;
+      // the free run of the street's front it stands in
+      const open = (k: number) => k >= 0 && k < b.cols && this.wallFits(b, k, 1, 1) && this.towns.wallCell(b.cells[k * DEPTH]);
+      if (!open(c.col)) {
+        // (a bend: a detached building)
+        const o = this.growAt(c, biggest);
+        if (o) return o;
+        continue;
+      }
+      let lo = c.col, hi = c.col + 1;
+      while (hi - lo < 9 && open(lo - 1)) lo--;
+      while (hi - lo < 9 && open(hi)) hi++;
+      const temps = wallLots(c.zone!)!;
+      // the widths that leave no single cell over, the widest first for a rebuild, else a mix
+      const all = [...new Set(temps.map((t) => t.w))].filter((w) => w <= hi - lo);
+      const good = all.filter((w) => hi - lo - w !== 1);
+      const widths = good.length ? good : all;
+      const order = biggest ? widths : shuffleWeighted(widths, this.rng);
+      // (built from the end of the run nearer the centre)
+      const nearLo = d2(b.cells[lo * DEPTH]) <= d2(b.cells[(hi - 1) * DEPTH]);
+      for (const w of order) {
+        const col0 = nearLo ? lo + Math.floor((c.col - lo) / w) * w : hi - w - Math.floor((hi - 1 - c.col) / w) * w;
+        if (col0 < lo || col0 + w > hi) continue;
+        // (where the land is too shallow for one front, another of the same width)
+        const fits = temps.filter((t) => t.w === w && this.wallFits(b, col0, w, t.d));
+        if (!fits.length) continue;
+        const made = this.placeWall(b, col0, fits[(this.rng() * fits.length) | 0], c.zone!);
+        if (made) return made;
+      }
+      // (land too shallow for any front of the wall: a small detached building, rather than a gap for good)
+      const o = this.growAt(c, biggest);
+      if (o) return o;
+    }
+    return null;
+  }
+
+  /** Can a wall lot of w x d cells stand at col0: free shop land on a straight stretch of street, clear of every building? */
+  private wallFits(b: Block, col0: number, w: number, d: number): boolean {
+    if (col0 < 0 || col0 + w > b.cols || d > DEPTH) return false;
+    const r0 = b.cells[col0 * DEPTH].rot;
+    for (let k = col0; k < col0 + w; k++) {
+      for (let r = 0; r < d; r++) {
+        const c = b.cells[k * DEPTH + r];
+        if (!c.ok || c.lot || !c.zone || ZONE_GROUP[c.zone] !== "com") return false;
+      }
+      if (Math.cos(b.cells[k * DEPTH].rot - r0) < WALL_STRAIGHT) return false;
+    }
+    // (straight on to its neighbours' columns too, or the walls beside it would not meet)
+    for (const k of [col0 - 1, col0 + w]) {
+      if (k >= 0 && k < b.cols && Math.cos(b.cells[k * DEPTH].rot - r0) < WALL_STRAIGHT) return false;
+    }
+    return this.sideClear(b, col0, w, d) && this.lotRect(b, col0, w, d) !== null;
+  }
+
+  /**
+   * Is a wall lot of w x d cells at col0 clear of every other street by as much as the widest street a lot can face
+   * takes up, pavement included? A front of the wall is built to its lot's edges, so one at a corner would otherwise
+   * be pulled down when the side street is widened.
+   */
+  private sideClear(b: Block, col0: number, w: number, d: number): boolean {
+    const corners: V2[] = [];
+    for (const k of [col0, col0 + w - 1]) for (const r of [0, d - 1]) {
+      const c = b.cells[k * DEPTH + r];
+      const u = { x: Math.cos(c.rot), y: Math.sin(c.rot) }, v = { x: -u.y, y: u.x };
+      const su = k === col0 ? -1 : 1;
+      for (const sv of [-1, 1]) corners.push({ x: c.c.x + (u.x * su + v.x * sv) * CELL / 2, y: c.c.y + (u.y * su + v.y * sv) * CELL / 2 });
+    }
+    const R = CELL * Math.max(w, d) + SIDE_CLEAR + 10, m = b.cells[col0 * DEPTH].c;
+    for (const id of this.net.segsNear(m.x - R, m.y - R, m.x + R, m.y + R)) {
+      if (id === b.seg) continue;
+      const pts = this.net.segGeom.get(id)?.center.pts;
+      if (!pts) continue;
+      for (let i = 0; i < pts.length - 1; i++) for (const p of corners) if (pointSegDist2(p, pts[i], pts[i + 1]).d2 < SIDE_CLEAR * SIDE_CLEAR) return false;
+    }
+    return true;
+  }
+
+  /** Could a front of the street wall stand where this building does: its street straight there, its land deep enough? */
+  wallCould(b: Building): boolean {
+    const blk = b.lot && this.zones.blocks.get(b.lot.block);
+    if (!b.lot || !blk || b.lot.col0 + b.lot.w > blk.cols) return false;
+    const r0 = blk.cells[b.lot.col0 * DEPTH].rot;
+    for (let k = b.lot.col0 - 1; k <= b.lot.col0 + b.lot.w; k++) {
+      if (k < 0 || k >= blk.cols) continue;
+      if (Math.cos(blk.cells[k * DEPTH].rot - r0) < WALL_STRAIGHT) return false;
+      if (k < b.lot.col0 || k >= b.lot.col0 + b.lot.w) continue;
+      for (let r = 0; r < 3; r++) {
+        const c = blk.cells[k * DEPTH + r];
+        if (!c.ok || (c.lot && c.lot !== b.id)) return false;
+      }
+    }
+    return true;
+  }
+
+  /** Stand a wall lot of template t at col0 (as deep as the shop land behind it reaches). */
+  private placeWall(b: Block, col0: number, t: LotTemplate, zone: ZoneId): Building | null {
+    let depth = t.d;
+    while (depth < DEPTH && this.wallFits(b, col0, t.w, depth + 1)) depth++;
+    for (; depth >= t.d; depth--) {
+      const rect = this.lotRect(b, col0, t.w, depth);
+      if (rect) return this.placeLot(b, col0, t, depth, zone, rect, true);
+    }
+    return null;
+  }
+
+  /** Try to grow a building of the cell's zone (or one of the templates given) on a lot that takes in the cell. */
+  private growAt(c: Cell, biggest = false, only?: LotTemplate[]): Building | null {
+    {
+      if (c.lot || !c.ok || !c.zone) return null;
       const b = c.block;
       const seg = this.net.segs.get(b.seg);
-      if (!seg) continue;
+      if (!seg) return null;
       const temps = only ?? ZONE_LOTS[c.zone];
       // (some variety between the two main sizes; the small ones only where nothing bigger fits)
       const order = !biggest && this.rng() < 0.35 && temps.length > 1 ? [temps[1], temps[0], ...temps.slice(2)] : temps;
@@ -1687,7 +1831,7 @@ export class Game {
     return d;
   }
 
-  private placeLot(b: Block, col0: number, t: LotTemplate, depth: number, zone: ZoneId, rect: LotRect): Building | null {
+  private placeLot(b: Block, col0: number, t: LotTemplate, depth: number, zone: ZoneId, rect: LotRect, wall = false): Building | null {
     const g = this.net.segGeom.get(b.seg);
     if (!g) return null;
     const cells: Cell[] = [];
@@ -1702,7 +1846,8 @@ export class Game {
     const tall = t.tall ? t.tall[0] + this.rng() * (t.tall[1] - t.tall[0]) : 1;
     const seg = this.net.segs.get(b.seg);
     // (a lot trimmed clear of its neighbours fits its model to what is left)
-    const fit = Math.min(modelFit(t, M.w, M.d), (2 * hw - 1.5) / M.w, (2 * hd - 3) / M.d);
+    // (a front in the street wall is exactly as wide as its lot: it shares a wall with its neighbours)
+    const fit = wall ? (2 * hw) / M.w : Math.min(modelFit(t, M.w, M.d), (2 * hw - 1.5) / M.w, (2 * hd - 3) / M.d);
     const bl: Building = {
       id: this.buildings.nextId++, town: seg?.town ?? this.towns.townAt(c)?.id, kind: t.model, c, rot, hw, hd, front,
       access: { seg: b.seg, s: sMid, p: front }, side: b.side, zone, lot: { block: b.key, col0, w: t.w, d: depth },
@@ -1713,6 +1858,7 @@ export class Game {
     // (from the moment the company can make construction parts, a town's blocks and towers are put up from them)
     const parts = PARTS_FOR[t.model];
     if (parts && this.placedUnlocked("constructionplant")) bl.site = { need: { parts }, got: {} };
+    if (wall) bl.wall = true;
     this.buildings.insert(bl);
     for (const cc of cells) cc.lot = bl.id;
     this.buildings.reattach();
@@ -2134,7 +2280,8 @@ export class Game {
     const B = this.buildings;
     for (const h of B.list) {
       if (!isHall(h.kind) || h.zone) continue;
-      const half = BLOCK / 2 - SQUARE_INSET;
+      const t = h.town === undefined ? undefined : this.towns.byId.get(h.town);
+      const half = (t ? blockOf(t) : BLOCK) / 2 - SQUARE_INSET;
       if (h.hw <= half + 0.25) continue;
       for (const c of this.lotCells(h)) if (c.lot === h.id) c.lot = 0;
       h.hw = h.hd = half;
@@ -2239,6 +2386,16 @@ const LOT_GIVE = 0.05;
  * cell, so each of its cells still has its centre on it (Game.lotCells).
  */
 const LOT_TRIM = 3;
+/** Neighbours in a street wall share a wall: the street may turn by this little (cosine) from one lot to the next. */
+const WALL_STRAIGHT = Math.cos(0.03);
+/** How far a front of the wall keeps from any street but its own (m): the widest a street a lot faces can be, pavement
+ * included, and a hand's width (Game.sideClear). */
+const SIDE_CLEAR = Math.max(...Object.values(ROAD_TYPES).filter((t) => t.allowsAccess).map((t) => roadWidth(t) / 2 + SIDEWALK[roadGroup(t)])) + 0.3;
+
+/** The widths in a random order that favours the wider ones. */
+function shuffleWeighted(ws: number[], rng: () => number): number[] {
+  return ws.map((w) => ({ w, k: Math.pow(rng(), 1 / (w + 0.5)) })).sort((p, q) => q.k - p.k).map((x) => x.w);
+}
 
 /** Whether the box [x0, x1] x [y0, y1] and the rectangle q (its corners in order) overlap by more than LOT_GIVE. */
 function lotsOverlap(x0: number, x1: number, y0: number, y1: number, q: V2[]): boolean {

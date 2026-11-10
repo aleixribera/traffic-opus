@@ -5,7 +5,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { Game } from "../src/game/city";
 import { HOUR } from "../src/game/society";
-import { BLOCK, gridPt } from "../src/game/towns";
+import { blockOf, gridPt } from "../src/game/towns";
 import { Industry, PRODUCTS } from "../src/game/industry";
 import { F } from "../src/world/gen";
 import { seasonMult } from "../src/game/calendar";
@@ -27,7 +27,7 @@ const compass = () => "N";
 function chain(g: Game) {
   g.start();
   const t = g.towns.list[0];
-  const end = gridPt(t.c, t.ang, 1 + 320 / BLOCK, 0);
+  const end = gridPt(t.c, t.ang, 1 + 320 / blockOf(t), 0, blockOf(t));
   let f: V2 | null = null, bd = Infinity;
   for (let r = 50; r < 1200 && !f; r += 25) for (let k = 0; k < 48; k++) {
     const p = { x: end.x + Math.cos((k / 48) * 6.283) * r, y: end.y + Math.sin((k / 48) * 6.283) * r };
@@ -38,7 +38,7 @@ function chain(g: Game) {
   const far = { x: f!.x + ((f!.x - end.x) / bd) * 80, y: f!.y + ((f!.y - end.y) / bd) * 80 };
   road(g, end, far);
   const farm = placeAlong(g, "farm", end, far, 35);
-  const foodplant = placeAlong(g, "foodplant", gridPt(t.c, t.ang, 1, 0), end, 35);
+  const foodplant = placeAlong(g, "foodplant", gridPt(t.c, t.ang, 1, 0, blockOf(t)), end, 35);
   return { t, farm, foodplant };
 }
 

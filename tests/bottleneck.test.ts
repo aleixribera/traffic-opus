@@ -7,7 +7,7 @@ import { Game } from "../src/game/city";
 import { HOUR } from "../src/game/society";
 import { buildTime } from "../src/game/construction";
 import { MILESTONES } from "../src/game/progression";
-import { BLOCK, demandPerDay, gridPt } from "../src/game/towns";
+import { blockOf, demandPerDay, gridPt } from "../src/game/towns";
 import { HIST_HOURS, Industry, PLANTS } from "../src/game/industry";
 import { F } from "../src/world/gen";
 import type { V2 } from "../src/core/math";
@@ -135,7 +135,7 @@ describe("the words", () => {
 function chain(g: Game) {
   g.start();
   const t = g.towns.list[0];
-  const end = gridPt(t.c, t.ang, 1 + 320 / BLOCK, 0);
+  const end = gridPt(t.c, t.ang, 1 + 320 / blockOf(t), 0, blockOf(t));
   let f: V2 | null = null, bd = Infinity;
   for (let r = 50; r < 1200 && !f; r += 25) for (let k = 0; k < 48; k++) {
     const p = { x: end.x + Math.cos((k / 48) * 6.283) * r, y: end.y + Math.sin((k / 48) * 6.283) * r };
@@ -146,7 +146,7 @@ function chain(g: Game) {
   const far = { x: f!.x + ((f!.x - end.x) / bd) * 80, y: f!.y + ((f!.y - end.y) / bd) * 80 };
   road(g, end, far);
   const farm = placeAlong(g, "farm", end, far, 35);
-  const foodplant = placeAlong(g, "foodplant", gridPt(t.c, t.ang, 1, 0), end, 35);
+  const foodplant = placeAlong(g, "foodplant", gridPt(t.c, t.ang, 1, 0, blockOf(t)), end, 35);
   return { t, farm, foodplant };
 }
 
@@ -609,7 +609,7 @@ describe("read off the game", () => {
 
   // (last: it places a second Food Plant in the shared game)
   it("a new works starting up beside one flat out: the advice is still how many more, the new one counted in (late save's Food row)", () => {
-    const second = placeAlong(g, "foodplant", gridPt(t.c, t.ang, 1, 0), gridPt(t.c, t.ang, 1 + 320 / BLOCK, 0), 90);
+    const second = placeAlong(g, "foodplant", gridPt(t.c, t.ang, 1, 0, blockOf(t)), gridPt(t.c, t.ang, 1 + 320 / blockOf(t), 0, blockOf(t)), 90);
     Object.assign(second, { built: 1, problem: "Waiting for crops" });
     second.plant!.site = undefined;
     second.plant!.hist = [];
