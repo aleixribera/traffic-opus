@@ -8,7 +8,7 @@ import { defineConfig } from "vitest/config";
  */
 export const SCENARIOS = [
   "gatecures", "junctionflow", "trailers", "rhythm", "gatejam", "signals", "saves", "roadtrain", "flow", "commerce",
-  "city", "transit", "convoy", "townplan", "spawn", "terrain", "economy", "zonecache", "fleet", "lots", "streetwall",
+  "city", "transit", "convoy", "townplan", "spawn", "terrain", "economy", "zonecache", "fleet", "lots", "streetwall", "deadlock",
 ].map((n) => `tests/${n}.test.ts`);
 const BALANCE = ["tests/balance.test.ts"];
 

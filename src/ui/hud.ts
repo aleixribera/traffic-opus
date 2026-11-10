@@ -17,7 +17,7 @@ import { PAL } from "../render/palette";
 import { F } from "../world/gen";
 import { DEPOSIT_KINDS } from "./depositMarks";
 import type { SignalPlan } from "../roads/network";
-import { GREEN, LEFT_GREEN, greenFor } from "../sim/traffic";
+import { GREEN, LEFT_GREEN, greenFor, stuckNow } from "../sim/traffic";
 import { SEASONS } from "../game/calendar";
 import type { GameAudio } from "../audio";
 import { ROAD_MODES, type App, type OverlayId, type RoadMode, type ToolId } from "../app";
@@ -1724,7 +1724,7 @@ export class Hud {
     const g = this.app.game;
     const flow = g.traffic.flowScore();
     let cars = 0, trucks = 0, standing = 0;
-    for (const v of g.traffic.vehicles) { if (v.truck) trucks++; else cars++; if (v.stuck >= STANDING_S && !v.dwell) standing++; }
+    for (const v of g.traffic.vehicles) { if (v.truck) trucks++; else cars++; if (stuckNow(v, STANDING_S)) standing++; }
     const all = cars + trucks;
     const jams = stuckSpots(g.traffic.stuckCars(STUCK_RAISE)).length;
     let len = 0;
@@ -1918,7 +1918,20 @@ export class Hud {
 
   /** A stuck-traffic diamond: the vehicles standing there and the junctions holding them (all chips select). */
   private fillStuck(m: PanelModel) {
-    this.setPanel(this.anatomy(m, { kind: "stuck", body: `<p class="small muted ip-note">Ringed on the map: the vehicles standing still, and the roads they are on.</p>` }));
+    if (!this.setPanel(this.anatomy(m, { kind: "stuck", body: `<p class="small muted ip-note">Ringed on the map: the vehicles standing still, and the roads they are on.</p>` }))) return;
+    // the one-click fix for a deadlock: lights on the junction it forms at (its whole cluster: Game.setSignal)
+    const b = this.panel.querySelector<HTMLButtonElement>(".ip-act-fix");
+    const act = m.status.act;
+    if (b && act) b.onclick = () => {
+      const g = this.app.game, plan = g.defaultSignal(act.node);
+      // (the junction changed since the panel was drawn: it can't take lights now, or has them)
+      if (!plan || g.net.nodes.get(act.node)?.signal) { this.lastPanel = ""; this.fillSel(); return; }
+      if (!g.setSignal(act.node, plan)) { this.toast("Not enough money", true); return; }
+      this.sfx.play("build");
+      this.toast("Traffic lights up: the deadlock clears as they take turns");
+      this.lastPanel = "";
+      this.fillSel();
+    };
   }
 
   /**
@@ -1947,6 +1960,7 @@ export class Hud {
     return `<header class="ip-head"><span class="svc-tag${/^(junction|roundabout|road:)/.test(m.icon) ? " lit" : ""}">${iconFor(m.icon)}</span><span class="ip-t"><span class="ip-tn">${escapeHtml(m.title)}</span>${m.sub ? `<small class="ip-ts">${escapeHtml(m.sub)}</small>` : ""}</span>${m.badge ? `<span class="lv-badge" title="Site level">${m.badge}</span>` : ""}${o.actions ?? ""}</header>
       <p class="ip-st ${st.tone}"><i aria-hidden="true"></i><span class="ip-st-t">${escapeHtml(st.text)}</span>${st.tag ? `<span class="ip-tag">${escapeHtml(st.tag)}</span>` : ""}</p>
       ${st.fix ? `<p class="ip-fix${st.show ? " has-show" : ""}"><span>${escapeHtml(st.fix)}</span>${st.show ? `<button class="fchip" data-k="building" data-id="${st.show.id}" title="Select your ${escapeHtml(BUILDING_TYPES[st.show.kind as BuildingKind]?.name ?? "works")} and fly to it">${iconFor(st.show.kind)}<span class="fc-t">Show it</span></button>` : ""}</p>` : ""}
+      ${st.act ? `<p class="ip-fixit"><button type="button" class="btn primary ip-act-fix" data-node="${st.act.node}"${st.act.cost > this.app.game.money ? " disabled" : ""}>${escapeHtml(st.act.label)}${st.act.cost > this.app.game.money ? " (not enough money)" : ""}</button></p>` : ""}
       ${o.summaryFirst ? `${keys}${lv}${o.lead ?? ""}${flow}` : `${o.lead ?? ""}${keys}${flow}${lv}`}${o.body ?? ""}${details}${o.danger ? `<footer class="ip-foot">${o.danger}</footer>` : ""}`;
   }
 
@@ -2313,7 +2327,7 @@ export class Hud {
       const stopArms = arms.filter((a) => !g.net.segs.get(a.seg)?.ring && ng.conns.some((c) => c.armIn === a.seg));
       body = `<p class="small muted">Unsignalled: cars give way by road priority. A stop sign makes an approach stop and give way to all the others. Lights stop traffic in turns and help busy crossings.</p>
         <div class="phase stops"><span class="ph-name">Stop signs</span><span class="ph-arms">${stopArms.map((a) => `<button class="arm stop-arm ${stops.includes(a.seg) ? "on stop" : ""}" data-seg="${a.seg}" aria-pressed="${stops.includes(a.seg)}" title="Stop sign on this approach">${compass(a.dir)}</button>`).join("")}</span></div>
-        <button class="btn primary add-sig" ${sigOn ? "" : "disabled"}>${sigOn ? `Add traffic lights · ${formatMoney(SIGNAL_COST)}` : `Traffic lights unlock with ${unlockedBy((u) => u.features?.includes("signals"))!.name}`}</button>`;
+        <button class="btn primary add-sig" ${sigOn ? "" : "disabled"}>${sigOn ? `Add traffic lights · ${formatMoney(g.lightsCost(this.panelNode))}` : `Traffic lights unlock with ${unlockedBy((u) => u.features?.includes("signals"))!.name}`}</button>`;
     } else {
       body = `<p class="muted small">The lights run on a fixed clock: ${GREEN} s of green for each phase (${LEFT_GREEN} s for a left-turn arrow), then amber and a moment of all red. Cars may turn right on red after stopping.</p>` + plan.phases.map((p, i) => `<div class="phase ${i === this.panelPhase ? "on" : ""}${live?.st === 0 && live.i === i ? " live" : ""}" data-i="${i}"${live?.st === 0 && live.i === i ? ` title="Green now"` : ""}>
           <span class="ph-name">${i + 1}. ${p.left ? "Left turns" : "All turns"}<button class="ph-left ${p.left ? "on" : ""}" data-i="${i}" aria-pressed="${!!p.left}" title="Only left turns (and U-turns) go in this phase">Left only</button></span>

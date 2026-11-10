@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { stuckSpots } from "../src/ui/stuckAlerts";
+import { RoadNetwork } from "../src/roads/network";
+import { Traffic, stuckNow, type Vehicle } from "../src/sim/traffic";
 
 // The stuck-traffic alert (src/ui/stuckAlerts.ts): cars that have stood still a long while are gathered into spots.
 
@@ -20,5 +22,17 @@ describe("Stuck traffic spots", () => {
 
   it("no stuck cars, no spots", () => {
     expect(stuckSpots([])).toEqual([]);
+  });
+});
+
+describe("What counts as stuck", () => {
+  it("a car that stood a long while and is driving off again is not stuck any more (review 2026-11-10, B1)", () => {
+    // (`stuck` runs down slower than it built up: before, a car that had stood five minutes still counted, alone on
+    // an open road at full speed, as a stuck "place" of its own for minutes after its jam had cleared)
+    const tr = new Traffic(new RoadNetwork(), { arrive: () => {}, fail: () => {} });
+    const car = (id: number, stuck: number, v: number) => ({ id, stuck, v, x: id * 500, y: 0 }) as unknown as Vehicle;
+    tr.vehicles.push(car(1, 300, 13.9), car(2, 300, 0), car(3, 300, 1.5), car(4, 20, 0));
+    expect(tr.stuckCars(90).map((c) => c.p.x)).toEqual([1000, 1500]);
+    expect(stuckNow(car(5, 300, 13.9), 90)).toBe(false);
   });
 });

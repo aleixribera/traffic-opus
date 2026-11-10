@@ -15,6 +15,16 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.102", date: "2026-11-10", title: "No more gridlock",
+    notes: [
+      "Fixed a lock where two cars at one junction each waited for the other forever, and the queue spread to the junctions around it.",
+      "Junctions a car length or two apart now work as one: a car only goes onto the short road between them when there is room beyond the far one, and lights on one cover them all.",
+      "Towns no longer lay a new junction right next to another.",
+      "If cars ever do end up waiting on each other in a ring, after a minute and a half one takes another way out. Its delivery runs late, so a jam still costs you.",
+      "The Traffic stuck panel calls a ring of waiting cars a deadlock, and offers lights for the whole cluster with one click.",
+    ],
+  },
+  {
     v: "v0.0.101", date: "2026-11-10", title: "Someone lives here",
     notes: [
       "Townspeople walk the squares and the pavements in front of shops: busiest at midday, few at night, fewer in winter.",

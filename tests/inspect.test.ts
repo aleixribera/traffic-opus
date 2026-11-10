@@ -250,15 +250,16 @@ describe("The inspector's panels", () => {
 
   it("a stuck diamond opens the vehicles standing there and the roads they hold up", () => {
     const v = truckOf(farm) ?? g.traffic.vehicles[0];
-    const was = v.stuck;
+    const was = v.stuck, wasV = v.v;
     v.stuck = 200;
+    v.v = 0; // (standing: a car driving off again isn't stuck, however long it stood)
     try {
       const m = stuckModel(g, { k: "stuck", id: 1, x: v.x + 20, y: v.y });
       expect(m.related.vehicles[0]).toBe(v.id);
       expect(m.related.rings![0]).toMatchObject({ r: STUCK_NEAR, tone: "spot" });
       expect(m.flow.find((r) => r.label === "Vehicles")!.chips.some((c) => c.ref?.k === "vehicle" && c.ref.id === v.id)).toBe(true);
       expect(stuckAt(g, { x: v.x + STUCK_NEAR * 2, y: v.y }).some((o) => o.id === v.id)).toBe(false);
-    } finally { v.stuck = was; }
+    } finally { v.stuck = was; v.v = wasV; }
   });
 
   it("a road: vehicles on it now, speed against the limit, how full; a junction: queues and the worst approach", () => {
