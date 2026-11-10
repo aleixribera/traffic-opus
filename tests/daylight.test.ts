@@ -109,6 +109,23 @@ describe("the light through a day", () => {
     expect(lightAt(r - 1.5, yd, "full").lamps).toBe(1);
     expect(lightAt(r + 1.5, yd, "full").lamps).toBe(0);
   });
+  it("dawn and dusk are ramps you can watch, not a jump (B11)", () => {
+    for (const yd of Object.values(MID)) {
+      const night = total(lightAt(0, yd, "full")), day = total(lightAt(12, yd, "full"));
+      // the biggest brightening in any quarter of an hour stays a small share of night-to-day
+      let step = 0;
+      for (let h = 0; h < 12; h += 1 / 60) step = Math.max(step, total(lightAt(h + 0.25, yd, "full")) - total(lightAt(h, yd, "full")));
+      expect(step / (day - night)).toBeLessThan(0.2);
+      // from the first paling of the sky to nine tenths of day takes two hours and more
+      let first = -1, most = -1;
+      for (let h = 0; h < 12; h += 1 / 60) {
+        const v = (total(lightAt(h, yd, "full")) - night) / (day - night);
+        if (first < 0 && v > 0.05) first = h;
+        if (most < 0 && v > 0.9) most = h;
+      }
+      expect(most - first).toBeGreaterThan(2.5);
+    }
+  });
   it("winter's 6 pm is night, summer's is still day", () => {
     expect(lightAt(18, MID.winter, "full").lamps).toBe(1);
     expect(lightAt(18, MID.summer, "full").lamps).toBe(0);

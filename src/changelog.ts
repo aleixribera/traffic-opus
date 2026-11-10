@@ -15,6 +15,16 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.101", date: "2026-11-10", title: "Someone lives here",
+    notes: [
+      "Townspeople walk the squares and the pavements in front of shops: busiest at midday, few at night, fewer in winter.",
+      "Town squares furnish themselves as the town grows: a memorial on a village green, market stalls on a town square, fountains on a city plaza, with benches, a newsstand and a phone box.",
+      "Big building sites waiting on materials are boarded up with posters until the slab is poured.",
+      "Snow settles on town lots and gardens in winter.",
+      "Dawn and dusk ramp the light up and down instead of jumping, and the night Map view is readable.",
+    ],
+  },
+  {
     v: "v0.0.100", date: "2026-11-10", title: "Off to a good start",
     notes: [
       "Your home town fills its first streets faster, so the first Village comes sooner. Towns that spring up later grow as before.",
