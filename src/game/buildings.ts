@@ -57,6 +57,11 @@ export interface Building {
   /** Built where a town pulled down older buildings for a denser one (see TownSystem.redevelop). */
   redev?: boolean;
   /**
+   * Part of a town's street wall (growables.ts WALL_LOTS): built to the pavement and as wide as its lot, so it shares
+   * a wall with the buildings beside it. No driveway: its customers pull up at the kerb.
+   */
+  wall?: boolean;
+  /**
    * A town building site waiting for materials the company trucks in (a block or tower from Town size is put up
    * from construction parts: see settlements.ts PARTS_FOR). It doesn't go up until every load is in.
    */

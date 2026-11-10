@@ -9,12 +9,13 @@ import type { Building } from "../game/buildings";
 import { SEASONAL, seasonMult } from "../game/calendar";
 import type { Game } from "../game/city";
 import { buildTime } from "../game/construction";
-import { Industry, PLANTS, PRODUCTS, type PlantKind, type Product } from "../game/industry";
+import { HIST_HOURS, Industry, PLANTS, PRODUCTS, powerPace, type PlantKind, type Product } from "../game/industry";
+import { unlockedBy } from "../game/progression";
 import { served, type Town } from "../game/settlements";
 import { SITE_LEVELS } from "../game/sites";
 import { HOUR } from "../game/society";
-import { demandPerDay, needsOf } from "../game/towns";
-import { loadsLately } from "./needs";
+import { SETTLING, demandPerDay, needsOf } from "../game/towns";
+import { loadsLately, townNeeds } from "./needs";
 
 // ------------------------------------------------------------------------------------------- the sums (pure)
 
@@ -140,6 +141,24 @@ export function canPerDay(g: Game, b: Building, p: Product): number {
   return Industry.perDay(b, p) * (SEASONAL[b.kind] ? seasonMult(b.kind, g.time) : 1);
 }
 
+/**
+ * Loads an hour a works reads as making, beside what it can make: the one pace its panel, its status and the town's
+ * advice all go by (paceOf). Never above what it can make: its output comes in whole batches, so the hours read can
+ * hold one more than its pace allows (a camp read "0.7/h, can 0.6": owner, 2026-11-10), and a works the status
+ * calls "At full output" shows exactly what it can make. Null: nothing made yet.
+ */
+export function shownRate(g: Game, b: Building, p: Product): { rate: number | null; can: number } {
+  const can = canPerDay(g, b, p) / 24;
+  const x = paceOf(b, p);
+  // (short of power it is not making all it can, whatever a lumpy few hours say)
+  if (x) return { rate: flatOut(g, b, p) && !/^(No power|Short of power)/.test(b.problem ?? "") ? can : Math.min(can, x.made / x.hours), can };
+  // (no pace yet: over the hours since its first load, fewer than PACE_HOURS of them)
+  const by = Industry.madeLately(b, p).byHour, first = by.findIndex((v) => v > 0);
+  if (first < 0) return { rate: null, can };
+  const w = by.slice(first);
+  return { rate: Math.min(can, w.reduce((a, v) => a + v, 0) / w.length), can };
+}
+
 /** The main product of a works (not its side product). */
 export function mainOf(k: PlantKind): Product | undefined {
   const D = PLANTS[k];
@@ -152,7 +171,7 @@ export function makerKind(p: Product): PlantKind | undefined {
   return ks.find((k) => mainOf(k) === p) ?? ks.find((k) => (PLANTS[k].outputs[p] ?? 0) > 0);
 }
 
-/** Loads of p a day a town would still take to fill every crate (0: it has plenty, or does not buy it yet). */
+/** Loads of p a day a town would still take to have plenty (0: it has plenty, or does not buy it yet). */
 export function townWants(t: Town, p: Product): number {
   if (!needsOf(t.pop).includes(p)) return 0;
   const want = demandPerDay(p, t.pop), got = loadsLately(t, p);
@@ -245,7 +264,7 @@ export function ceilingOf(g: Game, b: Building): Ceiling | null {
   }
   // one of the company's own works standing idle for it
   const waiting = g.industry.plants().find((o) => o.id !== b.id && hungryFor(g, o, p));
-  if (waiting) return { p, made, can, works: waiting, nextLevel, fix: ceilingFix({ works: nameOf(k), product: lower(p), taker: `Your ${nameOf(waiting.kind)}`, nextLevel }) };
+  if (waiting) return { p, made, can, works: waiting, nextLevel, fix: ceilingFix({ works: nameOf(k), product: lower(p), taker: `Your ${startUp(g, waiting) ? "new " : ""}${nameOf(waiting.kind)}`, nextLevel }) };
   return null;
 }
 
@@ -275,7 +294,24 @@ export function needHelp(g: Game, t: Town, p: Product): NeedHelp | null {
   // (every town's shortfall of it: new works feed them all)
   const total = Math.max(more, markets(g).reduce((a, x) => a + townWants(x, p), 0));
   // (a jam or a missing input: that works is the thing to look at, not another one)
-  const held = up.find((b) => steadyProblem(g, b));
+  // (one in real trouble before one only starting up, so the advice does not flick between the two as loads land)
+  const helds = up.filter((b) => steadyProblem(g, b));
+  const held = helds.find((b) => !startUp(g, b));
+  const starting = helds.filter((b) => startUp(g, b));
+  // (one new works starting up beside others flat out: the advice is still how many more, the new one counted in.
+  // The late save's Food row talked about the new Food Plant's first load with 1,055 loads a day still short)
+  const rest = up.filter((b) => !starting.includes(b));
+  if (!held && starting.length && rest.length && up.length === mine.length && rest.every((b) => flatOut(g, b, p))) {
+    const each = rest.reduce((a, b) => a + canPerDay(g, b, p), 0) / rest.length;
+    const n = worksFor(Math.max(0, total - starting.reduce((a, b) => a + canPerDay(g, b, p), 0)), each);
+    const also = `Your new ${nameOf(starting[0].kind)} is starting up${starting.length > 1 ? `, and ${starting.length - 1} more` : ""}.`;
+    if (n > 0) return { kind: "full", build: kind, n, works: rest[0].id, say: `${needHelpSay({ kind: "full", works: nameOf(rest[0].kind), have: rest.length, n })} ${also}` };
+  }
+  if (!held && starting.length) {
+    // (a works that has made nothing yet is starting up: it says when its first load comes, not that it is held up)
+    const su = startUp(g, starting[0])!;
+    return { kind: "held", works: starting[0].id, say: `Your ${nameOf(starting[0].kind)} is starting up. ${su.fix}` };
+  }
   if (held) {
     const problem = steadyProblem(g, held)!;
     // (short of an input whose makers are all flat out: the works to build is one of those, a step up the chain)
@@ -300,15 +336,42 @@ export function needHelp(g: Game, t: Town, p: Product): NeedHelp | null {
 }
 
 /**
- * The order to build a set of newly unlocked works in: one that feeds another comes before it (the mines, then the
- * power plant that burns the coal, then the smelter). Play-test 2026-11-09, B5: "which first? what feeds what?"
+ * The one piece of advice a town's panel gives (owner, 2026-11-10: a joined town said the same thing three times,
+ * once on its status line, once per need as a sentence and once per need as advice). About one need only: the first
+ * that has none coming, else the first running low, else the one its growth stands on. It says what to do (the works
+ * to build or to look at: needHelp), or failing that how much to bring. `works`: the one to show. Null when the town
+ * has what it needs, or is still settling in.
+ */
+export function townAdvice(g: Game, t: Town, joined: boolean): { p: Product; say: string; works?: number } | null {
+  if (t.pop < SETTLING || (t.spawned && !served(t))) return null;
+  const views = townNeeds(t);
+  const short = views.filter((v) => v.state === "none" || v.state === "low");
+  const worst = views.find((v) => v.state === "none") ?? short[0] ?? (t.trend < 0.5 && t.limit ? views.find((v) => v.p === t.limit && v.state !== "plenty") : undefined);
+  if (!worst) return null;
+  const nh = joined ? needHelp(g, t, worst.p) : null;
+  // (several short: which to see to first, so the line under the status is still one piece of advice)
+  const lead = short.length > 1 ? `Start with ${lower(worst.p)}. ` : "";
+  return { p: worst.p, say: lead + (nh ? nh.say : worst.say), works: nh && "works" in nh ? nh.works : undefined };
+}
+
+/**
+ * The order to build a set of newly unlocked works in. A works that powers the others comes first, when it can burn
+ * something the company already has (the Power Plant runs on the sawmills' wood chips): every works that draws
+ * power stands at 40% without it, so it is needed before any of them, not third (owner, 2026-11-10). After that, one
+ * that feeds another comes before it, and what feeds the power plant before the rest (the coal mine, then the iron
+ * mine, then the smelter). Play-test 2026-11-09, B5: "which first? what feeds what?"
  */
 export function buildOrder(ks: readonly PlantKind[]): PlantKind[] {
-  const left = [...ks], out: PlantKind[] = [];
   const makes = (k: PlantKind, p: string) => (PLANTS[k].outputs[p as Product] ?? 0) > 0;
+  const draws = ks.some((k) => PLANTS[k].power);
+  // (its other fuel is made by a works from an earlier goal: nothing in this set has to come before it)
+  const power = draws ? ks.filter((k) => PLANTS[k].makes && Object.keys(PLANTS[k].inputs).every((p) => !!PLANTS[k].alt?.[p as Product] && !ks.some((o) => makes(o, PLANTS[k].alt![p as Product]!)))) : [];
+  const left = ks.filter((k) => !power.includes(k)), out: PlantKind[] = [...power];
+  const feedsPower = (k: PlantKind) => power.some((w) => Object.keys(PLANTS[w].inputs).some((p) => makes(k, p)));
   while (left.length) {
-    const i = left.findIndex((k) => !Object.keys(PLANTS[k].inputs).some((p) => left.some((o) => o !== k && makes(o, p))));
-    out.push(...left.splice(Math.max(0, i), 1));
+    const free = left.filter((k) => !Object.keys(PLANTS[k].inputs).some((p) => left.some((o) => o !== k && makes(o, p))));
+    const next = free.find(feedsPower) ?? free[0] ?? left[0];
+    out.push(...left.splice(left.indexOf(next), 1));
   }
   return out;
 }
@@ -360,37 +423,6 @@ export const blockFix = (why: string | undefined): string => (why && BLOCK_FIX[w
 
 // ------------------------------------------------------------------------------------------- building sites
 
-// (what each site had when it was last looked at, an hour of game time apart: display only, gone with the building)
-const seen = new WeakMap<Building, { t: number; got: number }[]>();
-const siteGot = (b: Building) => {
-  const s = b.plant!.site!;
-  let got = 0, need = 0;
-  for (const p of Object.keys(s.need) as Product[]) { need += s.need[p]!; got += Math.min(s.need[p]!, s.got[p] ?? 0); }
-  return { got, need };
-};
-
-/** Note how far each building site has come (call it a few times a second: it keeps one reading an hour). */
-export function watchSites(g: Game) {
-  for (const b of g.industry.plants()) {
-    if (!b.plant?.site) continue;
-    const h = seen.get(b) ?? [];
-    const last = h[h.length - 1];
-    if (last && g.time < last.t) h.length = 0; // (a game loaded from before)
-    if (h.length && g.time - h[h.length - 1].t < HOUR) continue;
-    h.push({ t: g.time, got: siteGot(b).got });
-    if (h.length > 9) h.shift();
-    seen.set(b, h);
-  }
-}
-
-/** Loads an hour a site has been getting, over the hours it has been watched (0: none yet, or not watched long). */
-export function sitePace(b: Building, now: number): number {
-  const h = seen.get(b);
-  if (!h?.length || !b.plant?.site) return 0;
-  const span = (now - h[0].t) / HOUR;
-  return span >= 1 ? Math.max(0, siteGot(b).got - h[0].got) / span : 0;
-}
-
 /**
  * A works held up for an input says where its next load is (A13: a new Food Plant read "Waiting for crops: build or
  * connect a plant that makes it" for nine hours with two farms full): the nearest of the company's works that
@@ -430,16 +462,179 @@ export function nextLoad(g: Game, b: Building, p: Product): { from: Building | n
   return { from: o, hours, building: false, say: `Your ${where(o)} sends the next ${name}: ${aboutHours(hours)}` };
 }
 
+// ------------------------------------------------------------------------------------------- starting up, and waiting
+
+const where = (o: Building, from: Building) => {
+  const d = Math.hypot(o.c.x - from.c.x, o.c.y - from.c.y);
+  return `${nameOf(o.kind)} (${d < 950 ? `${Math.round(d / 10) * 10} m` : `${(d / 1000).toFixed(1)} km`})`;
+};
+
+/** Does a kind of works take a product in (as an input, or in place of one)? */
+const takes = (k: PlantKind, p: Product) => (PLANTS[k].inputs[p] ?? 0) > 0 || Object.values(PLANTS[k].alt ?? {}).includes(p);
+
+/**
+ * Hours a works takes over one batch of p: `whole` fully staffed and powered, and `left` for the batch in hand at
+ * the staff and power it has now (null: nobody at work). The sim's own sum (industry.ts produce), read out.
+ */
+export function batchHours(g: Game, b: Building, p: Product): { whole: number; left: number | null } {
+  const D = PLANTS[b.kind as PlantKind], P = b.plant!;
+  const can = canPerDay(g, b, p);
+  const whole = can > 0 ? ((D.outputs[p] ?? 1) * 24) / can : D.cycle / HOUR;
+  const staff = b.cap ? Math.min(1, g.people.workersAt(b.id) / b.cap) : 1;
+  const pw = D.power ? powerPace(g.utilities.supplyOf(b)) : 1;
+  return { whole, left: staff * pw > 0 ? ((1 - Math.min(1, P.prog)) * whole) / (staff * pw) : null };
+}
+
+/** Game hours a new works may stand without staff before that is trouble: its first workers are on their way. */
+export const START_HOURS = 6;
+// when each works was first seen open with nothing made yet (display only: not in the save)
+const openedAt = new WeakMap<Building, number>();
+
+/** Where the first load of a works will go, as the end of its starting-up line. */
+function firstTruck(g: Game, b: Building, p: Product): string {
+  if (PRODUCTS[p].price > 0) return " Then its first truck leaves for the shops.";
+  const mine = g.industry.plants().filter((o) => o.id !== b.id && takes(o.kind as PlantKind, p));
+  const near = (a: Building, c: Building) => Math.hypot(a.c.x - b.c.x, a.c.y - b.c.y) - Math.hypot(c.c.x - b.c.x, c.c.y - b.c.y);
+  const up = mine.filter(working).sort(near)[0];
+  if (up) return ` Then its first truck leaves for your ${where(up, b)}.`;
+  const going = [...mine].sort(near)[0];
+  if (going) return ` Your ${where(going, b)} takes it once it opens.`;
+  const k = (Object.keys(PLANTS) as PlantKind[]).find((x) => takes(x, p) && g.placedUnlocked(x));
+  return k ? ` Nothing of yours takes ${lower(p)} yet: build ${an(nameOf(k))} ${nameOf(k)} on its roads.` : "";
+}
+
+/**
+ * A works that is open and has made nothing yet is starting up, not in trouble (owner, 2026-11-10: "the first ten
+ * game hours are quiet": a new Farm read "No workers" in red, then "Working normally, 0.0/h"). It says what it is
+ * doing and when its first truck leaves: its workers on their way, the load of an input it waits for, or the batch in
+ * hand and how long that has to go. Null once it has made something, and for anything that is real trouble (no
+ * road, no works that makes its input, loads stuck in traffic, no staff after START_HOURS).
+ */
+export function startUp(g: Game, b: Building): { fix: string; hours: number | null } | null {
+  if (!working(b) || !b.placed || !b.access || hasMade(b)) return null;
+  // (a day on and still nothing made is no start-up any more, whatever holds it: its problem line says what)
+  if ((b.plant!.hist?.length ?? 0) >= HIST_HOURS) return null;
+  const k = b.kind as PlantKind, D = PLANTS[k];
+  if (D.logistics || D.mega || D.makes) return null;
+  const p = mainOf(k);
+  if (!p) return null;
+  if (!openedAt.has(b)) openedAt.set(b, g.time);
+  const pr = b.problem ?? "", bh = batchHours(g, b, p);
+  // (nobody at work yet, whether or not the sim has said so this hour)
+  if (pr.startsWith("No workers") || (!pr && bh.left === null)) {
+    if (pr && g.time - openedAt.get(b)! > START_HOURS * HOUR) return null;
+    return { hours: null, fix: `Its first workers are on their way from town. Once they start, its first load of ${lower(p)} takes ${aboutHours(bh.whole)}.` };
+  }
+  if (pr.startsWith("Waiting for")) {
+    if (pr.includes("stuck in traffic")) return null;
+    const q = (Object.keys(D.inputs) as Product[]).find((x) => pr.startsWith(`Waiting for ${lower(x)}`));
+    const next = q ? nextLoad(g, b, q) : null;
+    // (nothing of the company's makes it: that is the thing to build, not a wait)
+    if (!next?.from) return null;
+    return { hours: next.hours === null ? null : next.hours + bh.whole, fix: `${next.say}. Its first load of ${lower(p)} follows ${aboutHours(bh.whole)} after that.` };
+  }
+  if ((pr && !pr.startsWith("Not enough workers")) || bh.left === null) return null;
+  return { hours: bh.left, fix: `Its first load of ${lower(p)} is ready in ${aboutHours(bh.left)}.${firstTruck(g, b, p)}` };
+}
+
+/** What a works going up says about after it opens: when its first load follows, or what it will wait for. */
+export function afterOpening(g: Game, b: Building): string {
+  const k = b.kind as PlantKind, D = PLANTS[k];
+  const p = mainOf(k);
+  if (!p || D.logistics || D.mega || D.makes) return "";
+  const q = (Object.keys(D.inputs) as Product[])[0];
+  if (!q) return ` Its first load of ${lower(p)} follows ${aboutHours(batchHours(g, b, p).whole)} later.`;
+  const next = nextLoad(g, b, q);
+  return next.from && !next.building ? ` Then it takes ${lower(q)} from your ${where(next.from, b)}.` : ` ${next.say}.`;
+}
+
+/**
+ * A works whose yard fills because the works that will take its product is not open yet: it is waiting for that one,
+ * and says how far along it is (owner, 2026-11-10: an Iron Mine read "no smelter on its roads" with the Smelter a
+ * building site two fields away). `show`: the works it waits for. Null when one of the company's works that takes
+ * it is open (then the haul is the story), or the product is one the towns buy.
+ */
+export function waitsForSite(g: Game, b: Building): { text: string; tone: "bad" | ""; fix: string; show?: number } | null {
+  if (!working(b) || !b.problem) return null;
+  const m = /^Full of (.+?): its trucks can't keep up .*or no .+ on its roads$/.exec(b.problem) ?? /^The plants that will use (.+) are still building sites$/.exec(b.problem);
+  if (!m) return null;
+  const p = (Object.keys(PLANTS[b.kind as PlantKind].outputs) as Product[]).find((q) => lower(q) === m[1]);
+  if (!p || PRODUCTS[p].price > 0) return null;
+  const mine = g.industry.plants().filter((o) => o.id !== b.id && takes(o.kind as PlantKind, p));
+  if (mine.some(working)) return null;
+  const d = (o: Building) => Math.hypot(o.c.x - b.c.x, o.c.y - b.c.y);
+  const o = [...mine].sort((x, y) => d(x) - d(y))[0];
+  if (o) {
+    const how = o.plant!.site ? `is a building site: ${siteStatus(o).line}` : `is going up: it opens in ${aboutHours(((1 - o.built) * buildTime(o.kind)) / HOUR)}`;
+    return { text: `Waiting for your ${nameOf(o.kind)} to open`, tone: "", fix: `Your ${where(o, b)} ${how}. It takes ${lower(p)} once it opens. Until then this yard fills.`, show: o.id };
+  }
+  const ks = (Object.keys(PLANTS) as PlantKind[]).filter((x) => takes(x, p));
+  const k = ks.find((x) => g.placedUnlocked(x));
+  if (k) return { text: `Nothing of yours takes ${lower(p)} yet`, tone: "bad", fix: `Build ${an(nameOf(k))} ${nameOf(k)} on its roads: it takes ${lower(p)}. Until then this yard fills.` };
+  const goal = ks.length ? unlockedBy((u) => u.buildings?.includes(ks[0])) : undefined;
+  const a = ks.length ? an(nameOf(ks[0])) : "";
+  return ks.length ? { text: `Nothing takes ${lower(p)} yet`, tone: "", fix: `${a[0].toUpperCase()}${a.slice(1)} ${nameOf(ks[0])} takes it${goal ? `: that opens with the goal “${goal.name}”` : ""}. Until then this yard fills.` } : null;
+}
+
+/**
+ * What to do about a works short of power, said for the map as it is (owner, 2026-11-10: a Coal Mine read "Build a
+ * power plant within reach" with one 290 m away, standing dark for want of coal). The power plant that reaches it
+ * and why it gives too little; else the one going up; else the one too far off; else build one. `show`: the power
+ * plant to look at; `back`: its power came back since the sim's hourly line was written. Null when it is not short of
+ * power.
+ */
+export function powerFix(g: Game, b: Building): { fix: string; show?: number; back?: boolean } | null {
+  if (!b.problem || !/^(No power|Short of power)/.test(b.problem)) return null;
+  const d = (o: Building) => Math.hypot(o.c.x - b.c.x, o.c.y - b.c.y);
+  const makers = g.buildings.list.filter((o) => o.plant && (PLANTS[o.kind as PlantKind]?.makes ?? 0) > 0).sort((x, y) => d(x) - d(y));
+  const reach = (o: Building) => PLANTS[o.kind as PlantKind].reach ?? 0;
+  const near = makers.filter((o) => working(o) && g.utilities.reaches(o, b));
+  if (near.length) {
+    // (its problem line is the sim's hourly one; power is shared out eight times an hour: it can be back already)
+    if (g.utilities.supplyOf(b) >= 0.999) return { fix: "It is up to pace again within the hour.", show: near[0].id, back: true };
+    // (out of fuel: the trouble is its coal, so say where the next load is; making some but not enough: another)
+    const dark = near.find((o) => g.utilities.outputOf(o) <= 0);
+    if (dark) {
+      const P = dark.plant!, D = PLANTS[dark.kind as PlantKind];
+      if (!D.mega && (P.stock.coal ?? 0) < 1) {
+        const next = nextLoad(g, dark, "coal");
+        // (the coal it waits for is this very mine's, coming slowly for want of the power it would give back)
+        const then = !next.from ? "It burns coal, or your sawmills' wood chips: join one to it by road."
+          : next.from.id === b.id ? `This mine sends it coal${next.hours !== null ? `: the next load in ${aboutHours(next.hours)}` : ""}. Without power that comes slowly; wood chips from a sawmill would start it sooner.`
+          : `Its next coal comes from your ${nameOf(next.from.kind)}${next.hours !== null ? `: ${aboutHours(next.hours)}` : ""}.`;
+        return { fix: `Your ${where(dark, b)} has nothing to burn. ${then}`, show: dark.id };
+      }
+      return { fix: `Your ${where(dark, b)} makes no power: ${dark.problem ? dark.problem.split(": ")[0].toLowerCase() : "it has nobody at work"}.`, show: dark.id };
+    }
+    return { fix: `Your ${where(near[0], b)} cannot power everything in its reach. Build another Power Plant nearby.`, show: near[0].id };
+  }
+  const going = makers.find((o) => !working(o) && d(o) <= reach(o));
+  if (going) {
+    const how = going.plant!.site ? `is a building site: ${siteStatus(going).line}` : `is going up: it opens in ${aboutHours(((1 - going.built) * buildTime(going.kind)) / HOUR)}`;
+    return { fix: `Your ${where(going, b)} ${how}. It powers this works once it opens.`, show: going.id };
+  }
+  const far = makers.find(working);
+  if (far) {
+    const r = reach(far);
+    const why = d(far) > r ? `is too far: power reaches ${r / 1000} km` : "is not on the same roads";
+    return { fix: `Your ${where(far, b)} ${why}. Build a Power Plant within ${PLANTS.coalplant.reach! / 1000} km of this works, on its roads.`, show: far.id };
+  }
+  return { fix: `Build a Power Plant within ${PLANTS.coalplant.reach! / 1000} km of it, on its roads. It burns coal, or your sawmills' wood chips.` };
+}
+
 /** Has a works made anything yet (false: it is starting up, not in trouble)? */
 export function hasMade(b: Building): boolean {
   const k = b.kind as PlantKind;
   return (Object.keys(PLANTS[k].outputs) as Product[]).some((p) => Industry.madeLately(b, p).made > 0) || (b.plant?.last.made ?? 0) > 0 || (b.plant?.now.made ?? 0) > 0;
 }
 
-/** The whole line for a company building site: loads in, and about how long till it opens. */
-export function siteStatus(g: Game, b: Building): { line: string; hours: number | null; slow: boolean } {
-  const { got, need } = siteGot(b);
-  const pace = sitePace(b, g.time);
-  const hours = siteHours(need - got, pace, buildTime(b.kind) / HOUR);
-  return { line: siteLine(got, need, hours), hours, slow: hours !== null && hours > 36 };
+/**
+ * The whole line for a company building site: loads in, and about how long till it opens. The count and the pace
+ * are the sim's own (Industry.siteEta: one source, so the panel, the goal line and the tests read the same figures);
+ * the words and the build time added on are the interface's.
+ */
+export function siteStatus(b: Building): { line: string; got: number; need: number; hours: number | null; slow: boolean } {
+  const e = Industry.siteEta(b) ?? { got: 0, need: 0, perHour: 0, hours: 0 };
+  const hours = siteHours(e.need - e.got, e.perHour, buildTime(b.kind) / HOUR);
+  return { line: siteLine(e.got, e.need, hours), got: e.got, need: e.need, hours, slow: hours !== null && hours > 36 };
 }

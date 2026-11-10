@@ -15,6 +15,40 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.94", date: "2026-11-10", title: "Loads a day",
+    notes: [
+      "Goods are counted one way everywhere: loads a day. A town's needs are bars on one scale, so the biggest ask looks biggest.",
+      "Economy shows each works as a bar of what it made against what it can make.",
+      "While a panel is open, the current goal stays in a strip above it. Click it to go back to the goals.",
+      "Text is larger and comes in fewer sizes, so panels read at a glance.",
+      "Demolish sits on its own at the foot of each panel, away from Close.",
+      "The radio says what is playing. Far out, a town shows one short line of what it needs instead of a pile of icons.",
+    ],
+  },
+  {
+    v: "v0.0.93", date: "2026-11-10", title: "Room to breathe",
+    notes: [
+      "New towns lay out wider blocks, keep more parks and gardens, and spread further out as they grow.",
+      "Shopfronts stand wall to wall only along one short Main Street by the hall, in a Town or a City. A Village keeps a few separate shops.",
+      "A City keeps a handful of towers by its hall instead of a ring of apartment blocks.",
+      "Houses have back gardens: a hedge or fence behind each one, often with a tree, so a block reads as rows of yards.",
+      "A town next to a neighbour now grows on its far side instead of stopping in a circle, so a City can pass 10,000 people.",
+      "Towns in older saves keep their old blocks.",
+    ],
+  },
+  {
+    v: "v0.0.92", date: "2026-11-10", title: "One voice",
+    notes: [
+      "A town's panel says one thing: how it is doing, what to fix first with a button to show it, then the figures.",
+      "Numbers agree everywhere. A works short of power never shows its full rate, a new works counts toward the advice while it starts up, and arrival times come from one place.",
+      "Power and road messages name the cause and the fix: which plant is dark, which is at its limit and what to build, and a site with no road says so first.",
+      "The road pointer reads as one short line. The catalog fills its bands. A works shows its gate when you place it and when you select it.",
+      "An arrow at the screen edge points to fertile soil, and the goal pointer pulses.",
+      "Far out, town names thin out instead of piling up. Money and the clock no longer jitter.",
+      "Tips step aside while you place the building they talk about, and the wrong tips for the moment are gone.",
+    ],
+  },
+  {
     v: "v0.0.91", date: "2026-11-10", title: "The lie of the land",
     notes: [
       "The seasons read as seasons: a green spring, a summer that dries only the driest ground, a gold and red autumn, and snow that lies evenly.",

@@ -15,16 +15,16 @@ import { F, MOUNTAIN_STEPS } from "../world/gen";
 import { townName } from "./names";
 import type { Building } from "./buildings";
 import type { Game } from "./city";
-import { ZONE_GROUP, ZONE_LOTS } from "./growables";
+import { ZONE_GROUP, ZONE_LOTS, wallLots } from "./growables";
 import type { Product } from "./industry";
 import { townBoost } from "./megaprojects";
 import { PARK_SMOKE } from "./parks";
 import { DAY, HOUR } from "./society";
 import { deliveredLately, dipIn, landedGrace, rollGrace, type Grace } from "./supply";
 import {
-  BLOCK, CAR_SCRAP, HALLS, HIGH_STREET, NOISE, NUISANCE_HOMES, NUISANCE_SHOPS, NUISANCE_STREET, REDEV_SHARE, SEED_EDGES, TOWN_SIZES, buys, comfortOf,
-  demandPerDay, edgeKey, gridPt, growthPerDay, highLine, highStreetReach, motoring, needsOf, nextEdge, nuisanceAt, redevPerDay, ringZone, sizeOf,
-  smokeReach, supplyShare, townRadius, type GridEdge, type Nuisance,
+  BLOCK, CAR_SCRAP, HALLS, OPEN_BLOCK, blockOf, NOISE, NUISANCE_HOMES, NUISANCE_SHOPS, NUISANCE_STREET, REDEV_SHARE, SEED_EDGES, TOWN_SIZES, buys, comfortOf,
+  demandPerDay, edgeKey, gridPt, growthPerDay, motoring, needsOf, nextEdge, nuisanceAt, redevPerDay, ringZone, sizeOf,
+  smokeReach, supplyShare, townRadius, wallZone, onMain, HIGH_STREET, highLine, highStreetReach, MAIN_STREET, type GridEdge, type Nuisance,
   HOLD_FROM, PER_HOME, SETTLING, SHRINK_AFTER, SHRINK_RATE, SUPPLY_HOURS, averageSupply, countsForShrinking, growthShare, supplyLevel, supportOf,
   growthBand, growthLine, type GrowthBand,
 } from "./towns";
@@ -208,6 +208,8 @@ export interface Town {
   fixed?: boolean;
   /** its street plan: PLAN_TOWN for every new town; PLAN_ORGANIC (v0.0.69) and PLAN_GRID (the old square grid) for towns from older saves */
   layout: number;
+  /** metres between its parallel streets (towns.ts blockOf): OPEN_BLOCK for every new town; none for one from an older save (BLOCK) */
+  block?: number;
   /** streets it has widened itself (docs/design.md, "Towns run themselves") */
   widened?: number;
   /** game day it built its one road out of town, if it has */
@@ -304,7 +306,7 @@ export class TownSystem {
     const w = this.g.world;
     if (!w.inBounds(p)) return "Outside the map";
     for (const [i, j] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const q = { x: p.x + i * BLOCK * 0.5, y: p.y + j * BLOCK * 0.5 };
+      const q = { x: p.x + i * OPEN_BLOCK * 0.5, y: p.y + j * OPEN_BLOCK * 0.5 };
       if (w.isWater(q)) return "Too close to water";
       if (w.isMountain(q)) return "Too close to the mountains";
     }
@@ -335,7 +337,7 @@ export class TownSystem {
       id, name: o.name ?? this.newName(), c: { ...p }, ang: o.ang ?? this.siteAngle(p), built: new Set(), failed: new Set(),
       target: START_HOUSEHOLDS, today: {}, yesterday: {}, supply: {}, trend: 0, founded: this.g.time,
       size: 0, hall: 0, sq: [1, 1], hist: { pop: [], households: [], days: [] }, redevAt: -Infinity, redevToday: 0,
-      layout: PLAN_TOWN, pop: 0, households: 0, homes: 0, shops: 0, reach: BLOCK,
+      layout: PLAN_TOWN, pop: 0, households: 0, homes: 0, shops: 0, reach: OPEN_BLOCK, block: OPEN_BLOCK,
     };
     this.list.push(t);
     this.byId.set(id, t);
@@ -470,8 +472,8 @@ export class TownSystem {
     const net = this.g.net;
     for (const t of this.list) {
       const P = this.planOf(t);
-      P.index(t.reach / BLOCK + 1);
-      const R = Math.max(1.25, this.highReach.get(t.id) ?? 0) * BLOCK;
+      P.index(t.reach / blockOf(t) + 1);
+      const R = Math.max(1.25, this.highReach.get(t.id) ?? 0) * blockOf(t);
       for (const id of net.segsNear(t.c.x - R, t.c.y - R, t.c.x + R, t.c.y + R)) {
         const pts = net.segGeom.get(id)?.center.pts;
         if (!pts || pts.length < 2) continue;
@@ -486,9 +488,9 @@ export class TownSystem {
 
   planOf(t: Town): TownPlan {
     let P = this.plans.get(t.id);
-    if (!P || P.c.x !== t.c.x || P.c.y !== t.c.y || P.ang !== t.ang || P.style !== t.layout) {
+    if (!P || P.c.x !== t.c.x || P.c.y !== t.c.y || P.ang !== t.ang || P.style !== t.layout || P.block !== blockOf(t)) {
       const seed = (Math.imul(this.g.seed, 7919) + Math.imul(t.id, 104729) + Math.imul(Math.round(t.c.x), 31) + Math.round(t.c.y)) | 0;
-      P = new TownPlan(t.c, t.ang, t.layout, seed, this.g.world);
+      P = new TownPlan(t.c, t.ang, t.layout, seed, this.g.world, blockOf(t));
       this.plans.set(t.id, P);
     }
     P.sq = t.sq;
@@ -530,7 +532,7 @@ export class TownSystem {
    */
   private reachAt(t: Town, r: number): number {
     const b = r + 0.6;
-    return (t.layout === PLAN_GRID ? b : Math.ceil(b * 4) / 4) * BLOCK;
+    return (t.layout === PLAN_GRID ? b : Math.ceil(b * 4) / 4) * blockOf(t);
   }
 
   private updateReach(t: Town) {
@@ -554,7 +556,8 @@ export class TownSystem {
     };
     // (never past halfway to the next town, so two towns' grids don't grow into each other)
     let room = Infinity;
-    for (const o of this.list) if (o !== t) room = Math.min(room, dist(o.c, t.c) / 2 - BLOCK / 2);
+    const others = this.list.filter((o) => o !== t);
+    for (const o of others) room = Math.min(room, dist(o.c, t.c) / 2 - blockOf(t) / 2);
     // (a town out of land below the size its households want reaches as far as they would take it: by its people
     // alone, a town whose land filled up first would wait for growth that needs the land)
     const wants = t.households > 0 ? (t.target * t.pop) / t.households : t.pop;
@@ -569,8 +572,13 @@ export class TownSystem {
     if (lean) this.leanFor(t, P);
     const cost = (e: GridEdge) => {
       if (!P.has(e)) return Infinity;
-      // (never past halfway to the next town, however far it leans that way)
-      if (lean && P.r(e[2], e[3]) * BLOCK > room) return Infinity;
+      // (never past halfway to the next town, however far it leans that way: half a block short of the line halfway
+      // between them, so it is hemmed in toward a neighbour and free to grow the other way; a town of the older plans
+      // keeps to the circle of that radius instead, below)
+      if (lean) {
+        const q = P.pt(e[2], e[3]);
+        if (!q || others.some((o) => dist(q, o.c) - dist(q, t.c) < blockOf(t))) return Infinity;
+      }
       if (!N.length) return 0;
       const a = P.at((e[0] + e[2]) / 2, (e[1] + e[3]) / 2), b = P.pt(e[2], e[3])!;
       const n = Math.max(nuisanceAt(a, N), nuisanceAt(b, N));
@@ -578,11 +586,12 @@ export class TownSystem {
     };
     const rOf = lean ? (i: number, j: number) => P.growR(i, j) : (i: number, j: number) => P.r(i, j);
     const cap = lean ? Infinity : room;
-    const radius = (pop: number) => Math.min(townRadius(pop) * (N.length ? this.stretch(t, townRadius(pop)) : 1), cap) / BLOCK;
+    const tr = (pop: number) => townRadius(pop, blockOf(t));
+    const radius = (pop: number) => Math.min(tr(pop) * (N.length ? this.stretch(t, tr(pop)) : 1), cap) / blockOf(t);
     // (out of land below what its households want, it reaches a little past that radius too: a bent plan puts its
     // next ring of nodes a block or so further out than a square grid would)
     return nextEdge(t.built, t.failed, radius(t.pop), jit, cost, rOf)
-      ?? (wants > t.pop ? nextEdge(t.built, t.failed, Math.min(radius(wants) + 1, cap / BLOCK), jit, cost, rOf) : null);
+      ?? (wants > t.pop ? nextEdge(t.built, t.failed, Math.min(radius(wants) + 1, cap / blockOf(t)), jit, cost, rOf) : null);
   }
 
   /** the roads that aren't a town's own, as a signature, and the network version it was taken at (leanFor) */
@@ -613,7 +622,7 @@ export class TownSystem {
       const th = (k / N) * Math.PI * 2, u = { x: Math.cos(th), y: Math.sin(th) };
       let bad = 0, all = 0, blocked = false;
       for (let s = 1; s <= 12; s++) {
-        const p = { x: c.x + u.x * s * BLOCK * 0.9, y: c.y + u.y * s * BLOCK * 0.9 };
+        const p = { x: c.x + u.x * s * blockOf(t) * 0.9, y: c.y + u.y * s * blockOf(t) * 0.9 };
         const wt = 1 / (1 + s / 4);
         let v = 0;
         if (blocked || w.isWater(p) || w.isMountain(p)) { v = 1; blocked = true; }
@@ -629,7 +638,7 @@ export class TownSystem {
     // what draws it, and what puts it off: a lobe round the way to each
     const lobe = (q: V2, wt: number, into: Float64Array) => {
       const d = dist(q, c);
-      if (d < BLOCK * 1.5 || d > LEAN_REACH) return;
+      if (d < blockOf(t) * 1.5 || d > LEAN_REACH) return;
       const ang = Math.atan2(q.y - c.y, q.x - c.x);
       for (let k = 0; k < N; k++) {
         const cs = Math.cos(ang - (k / N) * Math.PI * 2);
@@ -663,7 +672,7 @@ export class TownSystem {
     for (const t of this.list) {
       if (t.layout === PLAN_GRID || !t.built.size) continue;
       const P = this.planOf(t);
-      const K = Math.ceil(t.reach / BLOCK) + 1;
+      const K = Math.ceil(t.reach / blockOf(t)) + 1;
       for (let fi = -K; fi < K; fi++) for (let fj = -K; fj < K; fj++) {
         // (a loop drive's green is drawn whole, from the first block inside it)
         const loop = P.loopGreen(fi, fj);
@@ -763,7 +772,7 @@ export class TownSystem {
         }
         return c;
       };
-      const R = BLOCK;
+      const R = blockOf(t);
       let clear = pts.length >= 8;
       if (clear) for (const b of this.g.buildings.list) if (dist(b.c, mid) < R && inside(b.c)) { clear = false; break; }
       if (clear) {
@@ -877,7 +886,7 @@ export class TownSystem {
     const geo = net.segGeom.get(best)!;
     const mid = geo.center.pts[Math.floor(geo.center.pts.length / 2)];
     const P = this.planOf(t);
-    P.index(t.reach / BLOCK + 1);
+    P.index(t.reach / blockOf(t) + 1);
     const hit = P.edgeAt(mid, this.leaves(first, first.a), 10, 0.6);
     let n = 0;
     for (const id of run) if (this.g.upgradeFree(id, to)) n++;
@@ -1040,7 +1049,7 @@ export class TownSystem {
   private gridOf(t: Town, p: V2): { a: number; b: number } {
     const dx = p.x - t.c.x, dy = p.y - t.c.y;
     const u = { x: Math.cos(t.ang), y: Math.sin(t.ang) };
-    return { a: (dx * u.x + dy * u.y) / BLOCK, b: (-dx * u.y + dy * u.x) / BLOCK };
+    return { a: (dx * u.x + dy * u.y) / blockOf(t), b: (-dx * u.y + dy * u.x) / blockOf(t) };
   }
 
   /** Whether p is on a town's square (the quadrant beside the centre cross kept for its hall). */
@@ -1057,11 +1066,11 @@ export class TownSystem {
     for (const sq of [[1, 1], [-1, 1], [-1, -1], [1, -1]] as [number, number][]) {
       let score = 0;
       for (const [i, j] of [[0.5, 0.5], [0.15, 0.15], [0.85, 0.15], [0.15, 0.85], [0.85, 0.85]]) {
-        const p = gridPt(t.c, t.ang, i * sq[0], j * sq[1]);
+        const p = gridPt(t.c, t.ang, i * sq[0], j * sq[1], blockOf(t));
         if (w.isWater(p) || w.isMountain(p) || !w.inBounds(p)) score += 100;
       }
-      const c = gridPt(t.c, t.ang, sq[0] * 0.5, sq[1] * 0.5);
-      for (const b of this.g.buildings.list) if (b.zone && dist(b.c, c) < BLOCK * 0.5) score++;
+      const c = gridPt(t.c, t.ang, sq[0] * 0.5, sq[1] * 0.5, blockOf(t));
+      for (const b of this.g.buildings.list) if (b.zone && dist(b.c, c) < blockOf(t) * 0.5) score++;
       if (score < bs) { bs = score; best = sq; }
     }
     return best;
@@ -1071,9 +1080,9 @@ export class TownSystem {
   private squareLot(t: Town): { c: V2; front: V2; half: number } {
     const [si, sj] = t.sq;
     return {
-      c: gridPt(t.c, t.ang, si * 0.5, sj * 0.5),
-      front: gridPt(t.c, t.ang, si * 0.5, sj * (roadWidth(ROAD_TYPES.street) / 2 / BLOCK)),
-      half: BLOCK / 2 - SQUARE_INSET,
+      c: gridPt(t.c, t.ang, si * 0.5, sj * 0.5, blockOf(t)),
+      front: gridPt(t.c, t.ang, si * 0.5, sj * (roadWidth(ROAD_TYPES.street) / 2 / blockOf(t)), blockOf(t)),
+      half: blockOf(t) / 2 - SQUARE_INSET,
     };
   }
 
@@ -1173,7 +1182,7 @@ export class TownSystem {
 
   /** What the town plans for a cell's land at its size (planZone, on the street the cell fronts). */
   planZoneAt(t: Town, c: Cell): ZoneId {
-    this.planOf(t).index(t.reach / BLOCK + 1);
+    this.planOf(t).index(t.reach / blockOf(t) + 1);
     return this.planZone(t, c.c, c.rot, t.size, this.frontOf(t, c));
   }
 
@@ -1181,7 +1190,7 @@ export class TownSystem {
   private zoneFor(t: Town, c: Cell, size: number): ZoneId | null {
     if (this.onSquare(t, c.c)) return null;
     const P = this.planOf(t);
-    P.index(t.reach / BLOCK + 1);
+    P.index(t.reach / blockOf(t) + 1);
     const own = this.frontOf(t, c);
     // keep clear of the streets still to come, so the town never has to clear a home to lay one
     if (P.nearOpen(c.c, CORRIDOR, own?.k ?? null, (k) => !t.built.has(k) && !t.failed.has(k))) return null;
@@ -1196,23 +1205,53 @@ export class TownSystem {
   }
 
   /**
-   * What a town plans for land at p fronting a street that runs at angle rot: its ring for its size, or shops and
-   * offices along its high streets (HIGH_STREET). `own` is the planned street it fronts, when already known.
+   * What a town plans for land at p fronting a street that runs at angle rot: its ring for its size; shops and offices
+   * along its high streets (HIGH_STREET); the street wall along the short stretch of Main Street by the hall, from a
+   * Town on (towns.ts MAIN_STREET, WALL_ZONES), taller toward the hall. `own` is the planned street it fronts, when
+   * already known.
    */
   planZone(t: Town, p: V2, rot: number, size = t.size, own?: EdgeHit | null): ZoneId {
-    const r = dist(p, t.c) / BLOCK;
+    const r = dist(p, t.c) / blockOf(t);
     const ring = ringZone(size, r);
     const hs = HIGH_STREET[Math.min(HIGH_STREET.length - 1, size)];
-    if (!hs || ZONE_GROUP[ring] === "com" || r >= (this.highReach.get(t.id) ?? 0)) return ring;
+    const main = MAIN_STREET[Math.min(MAIN_STREET.length - 1, size)];
+    const high = hs && ZONE_GROUP[ring] !== "com" && r < (this.highReach.get(t.id) ?? 0);
+    if (!high && r >= main) return ring;
     // the line of the plan the street it fronts is on (a lot is never more than half a block deep)
     if (own === undefined) {
       const P = this.planOf(t);
-      P.index(t.reach / BLOCK + 1);
-      own = P.edgeAt(p, fromAngle(rot), BLOCK / 2, 0.8);
+      P.index(t.reach / blockOf(t) + 1);
+      own = P.edgeAt(p, fromAngle(rot), blockOf(t) / 2, 0.8);
     }
     if (!own) return ring;
+    if (onMain(own.e)) {
+      const w = wallZone(size, r);
+      if (w) return w;
+    }
+    if (!high) return ring;
     const line = own.e[1] === own.e[3] ? own.e[1] : own.e[0];
     return highLine(size, Math.abs(line)) ? hs : ring;
+  }
+
+  /**
+   * Is land at p, fronting the planned street `own`, part of a town's street wall (the stretch of Main Street by its
+   * hall: towns.ts MAIN_STREET)? Its shops are built to the pavement, shoulder to shoulder.
+   */
+  private wallOn(t: Town, p: V2, own: EdgeHit | null): boolean {
+    return !!own && onMain(own.e) && wallZone(t.size, dist(p, t.c) / blockOf(t)) !== null;
+  }
+
+  /** Is a free cell part of its town's street wall? (city.ts grows a front of the wall there) */
+  wallCell(c: Cell): boolean {
+    const t = this.townAt(c.c);
+    if (!t || t.size < 2 || !c.zone || ZONE_GROUP[c.zone] !== "com") return false;
+    this.planOf(t).index(t.reach / blockOf(t) + 1);
+    return this.wallOn(t, c.c, this.frontOf(t, c));
+  }
+
+  /** Does a town building stand on its street wall's land (as redevZone found the street it fronts)? */
+  private wallLand(t: Town, b: Building): boolean {
+    return t.size >= 2 && this.wallOn(t, b.c, this.bfrontOf(t, b));
   }
 
   // ------------------------------------------------------------------ redevelopment
@@ -1248,18 +1287,28 @@ export class TownSystem {
     this.g.rebuildLots(t.id, [best.id], best.zone, block, col0, col0 + w, "fuelstation");
   }
 
+  /** The planned street a town building fronts. */
+  private bfrontOf(t: Town, b: Building): EdgeHit | null {
+    const P = this.planOf(t);
+    let got = this.bfronts.get(b);
+    if (!got || got.P !== P) {
+      P.index(t.reach / blockOf(t) + 1);
+      this.bfronts.set(b, (got = { P, hit: P.edgeAt(b.front, fromAngle(b.rot), 10, 0.7) }));
+    }
+    return got.hit;
+  }
+
   /** The denser zone an old building's land now has, or null when it is as dense as its ring wants. */
   redevZone(t: Town, b: Building): ZoneId | null {
     // (a filling station stays where it is: the town would only have to open another)
     if (!b.zone || BUILDING_TYPES[b.kind].fuel) return null;
-    const P = this.planOf(t);
-    let got = this.bfronts.get(b);
-    if (!got || got.P !== P) {
-      P.index(t.reach / BLOCK + 1);
-      this.bfronts.set(b, (got = { P, hit: P.edgeAt(b.front, fromAngle(b.rot), 10, 0.7) }));
+    const hit = this.bfrontOf(t, b);
+    const want = this.planZone(t, b.c, b.rot, t.size, hit);
+    // (a detached shop from the town's first days, standing where its street wall now runs, is rebuilt as part of it)
+    // (once: one that could not be, for a bend in the street or shallow land, is left as it is)
+    if (want === b.zone) {
+      return ZONE_GROUP[want] === "com" && !b.wall && !b.redev && t.size >= 2 && this.wallOn(t, b.c, hit) && this.g.wallCould(b) ? want : null;
     }
-    const want = this.planZone(t, b.c, b.rot, t.size, got.hit);
-    if (want === b.zone) return null;
     // (nobody builds denser homes in a plant's smoke)
     if (ZONE_GROUP[want] === "res" && this.nuisanceAt(b.c) > NUISANCE_HOMES) return null;
     const g0 = ZONE_GROUP[b.zone], g1 = ZONE_GROUP[want];
@@ -1301,7 +1350,10 @@ export class TownSystem {
       const z = this.redevZone(t, b);
       if (z) cands.push({ b, z, d: dist(b.c, t.c) });
     }
-    cands.sort((p, q) => p.d - q.d);
+    // (centre first; a home standing where the street wall is to run before the rest, so the wall is never kept
+    // waiting behind the flats of a whole ring)
+    const forWall = (c: { b: Building; z: ZoneId }) => (ZONE_GROUP[c.b.zone!] === "res" && ZONE_GROUP[c.z] === "com" ? 0 : 1);
+    cands.sort((p, q) => forWall(p) - forWall(q) || p.d - q.d);
     // (a building whose street front has no room for what its land wants waits a day before it is looked at again,
     // so it never keeps the ones behind it from their turn)
     if (this.stuck.size > 4000) for (const [id, at] of this.stuck) if (this.g.time - at >= DAY) this.stuck.delete(id);
@@ -1323,8 +1375,11 @@ export class TownSystem {
   private redevRun(t: Town, b: Building, z: ZoneId): { ids: number[]; block: string; lo: number; hi: number } | null {
     const blk = this.g.zones.blocks.get(b.lot!.block);
     if (!blk) return null;
-    const temps = ZONE_LOTS[z];
-    const target = temps[0].w, minW = Math.min(target, temps[1]?.w ?? target);
+    // (a front of the street wall can be as narrow as one cell: it only takes its neighbours for the width of the
+    // widest building of its zone)
+    const walled = ZONE_GROUP[z] === "com" && this.wallLand(t, b);
+    const temps = walled ? wallLots(z)! : ZONE_LOTS[z];
+    const target = temps[0].w, minW = walled ? 1 : Math.min(target, temps[1]?.w ?? target);
     let lo = b.lot!.col0, hi = lo + b.lot!.w;
     const ids = [b.id];
     // a neighbour joins if it is waiting for the same zone; empty land beside joins too
@@ -1411,6 +1466,7 @@ export class TownSystem {
     // homes, a few at a time
     for (let n = Math.min(3, Math.ceil(short / 2)); n > 0; n--) if (!this.g.growIn(t.id, "res")) break;
     // about one shop for every HH_PER_SHOP households, and its filling stations from Town size
+    // (the street wall first, from the hall outward: city.ts growWall)
     if (t.shops < this.shopsWanted(t)) this.g.growIn(t.id, "com");
     const stations = this.buildingsOf(t).filter((b) => BUILDING_TYPES[b.kind].fuel).length;
     if (stations < this.stationsWanted(t) && !this.g.growIn(t.id, "com", "fuelstation")) this.stationOnShop(t);
@@ -1545,6 +1601,7 @@ export class TownSystem {
         today: t.today, yesterday: t.yesterday, supply: t.supply, trend: t.trend, founded: t.founded,
         size: t.size, hall: t.hall, sq: t.sq, hist: t.hist, redevToday: t.redevToday, ...(t.cars ? { cars: t.cars } : {}),
         ...(t.spawned ? { spawned: true } : {}), hours: t.hours ?? [], hourNow: t.hourNow ?? {}, layout: t.layout,
+        ...(t.block !== undefined ? { block: t.block } : {}),
         ...(t.widened ? { widened: t.widened } : {}), ...(t.outward !== undefined ? { outward: t.outward } : {}),
         ...(t.lack ? { lack: t.lack } : {}), ...(t.grace ? { grace: t.grace } : {}),
       })),

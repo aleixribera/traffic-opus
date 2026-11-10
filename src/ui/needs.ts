@@ -1,31 +1,32 @@
 // A town's needs in words a child can read (docs/design.md, "Towns grow into cities", 2026-11-08): per product one
-// state ("Plenty", "Enough", "Running low", "None!"), a row of crates for the loads it is getting a day against the
-// loads it wants, and one plain sentence of what to do. The same states tint the needs on the town's map label.
+// state ("Plenty", "Enough", "Running low", "None!"), a bar of the loads a day it is getting against the loads a day
+// it wants, and one plain sentence of what to do. Goods are counted in one unit wherever a player sees them: loads a
+// day (design audit 2026-11-10, F05 and F25: the crates read as a second unit). The same states tint the needs on the town's map label.
 // Pure over the town, so tests check every word against the sim (towns.ts growthPerDay, settlements.ts hourly).
 
 import { PRODUCTS, type Product } from "../game/industry";
 import { served, type Town } from "../game/settlements";
 import { ENOUGH, deliveredLately } from "../game/supply";
-import { SETTLING, demandPerDay, growthPerDay, needFrom, needsOf, nextNeed } from "../game/towns";
+import { SETTLING, SUPPLY_HOURS, SUPPLY_WARMUP, demandPerDay, growthPerDay, needFrom, needsOf, nextNeed } from "../game/towns";
 
 export type NeedState = "plenty" | "enough" | "low" | "none";
 
 /** The one word for each state (never colour alone: the word says it too). */
 export const NEED_WORD: Record<NeedState, string> = { plenty: "Plenty", enough: "Enough", low: "Running low", none: "None!" };
 
-// (a need supplied this well lets the town grow: supply.ts ENOUGH, 80% of a day's needs and up)
+// (a need supplied this well lets the town grow: supply.ts ENOUGH, 85% of a day's needs and up)
 export { ENOUGH };
-/** Most crates drawn in a row; past that each crate stands for several loads (a round number of them). */
-export const MAX_CRATES = 10;
+/** A need is read in at most this many steps: under one step's worth coming, it reads "None!". */
+export const STEPS = 10;
 
 /**
- * The state a share of a day's need (0..1+) reads as: "None!" while not one crate's worth is coming (`crate`: the
- * share one crate stands for), so the word and the picture always agree.
+ * The state a share of a day's need (0..1+) reads as: "None!" while not one step's worth is coming (`step`: the
+ * share one step stands for, a round number of loads: loadStep), so a trickle of one load into a city reads "None!".
  */
-export function needState(share: number, crate: number): NeedState {
+export function needState(share: number, step: number): NeedState {
   if (share >= 1 - 1e-9) return "plenty";
   if (share >= ENOUGH) return "enough";
-  if (share < crate - 1e-9) return "none";
+  if (share < step - 1e-9) return "none";
   return "low";
 }
 
@@ -42,24 +43,46 @@ export const HOLD_BAND = 0.05;
 const shownLast = new WeakMap<Town, Partial<Record<Product, NeedState>>>();
 
 /** The state to show, given the one shown last: "Plenty" keeps its word through a slip of less than HOLD_BAND. */
-export function heldState(share: number, crate: number, last: NeedState | undefined): NeedState {
-  const now = needState(share, crate);
+export function heldState(share: number, step: number, last: NeedState | undefined): NeedState {
+  const now = needState(share, step);
   if (last === "plenty" && now === "enough" && share >= 1 - HOLD_BAND - 1e-9) return "plenty";
   return now;
 }
 
-/** Loads one crate stands for, a round number, so a need of any size fits in MAX_CRATES: 1, 2, 3, 4, 5, 6, 8, 10, 20... */
-export function loadsPerCrate(want: number): number {
-  const need = want / MAX_CRATES;
+/** Loads one step stands for, a round number, so a need of any size reads in STEPS: 1, 2, 3, 4, 5, 6, 8, 10, 20... */
+export function loadStep(want: number): number {
+  const need = want / STEPS;
   for (let k = 1; ; k *= 10) for (const m of [1, 2, 3, 4, 5, 6, 8]) if (m * k >= need - 1e-9) return m * k;
+}
+
+/**
+ * Loads a day a supply comes to, read over the hours since its first load in the two days kept (never fewer than
+ * SUPPLY_WARMUP), the hour under way included: the way the town's growth reads it (towns.ts averageSupply: "the
+ * hours before there was any are no shortfall"). 0 when nothing has landed in that time.
+ */
+export function sinceFirstLoad(t: Town, p: Product): number {
+  const hs = (t.hours ?? []).slice(-SUPPLY_HOURS), now = t.hourNow?.[p] ?? 0;
+  let n = now, since = now > 0 ? 1 : 0;
+  // (oldest first: the first hour with a load sets how long the supply has been coming, the hour under way included)
+  for (let i = hs.length - 1; i >= 0; i--) {
+    const k = hs[i][p] ?? 0;
+    if (k > 0) { n += k; since = hs.length - i + 1; }
+  }
+  return since ? (n * 24) / Math.max(since, SUPPLY_WARMUP) : 0;
 }
 
 /**
  * Loads of a product a town is getting a day at the moment, as its people see it: what has landed lately (supply.ts
  * deliveredLately), or, while a need that has just fallen below "Enough" is in its grace, what it read before.
+ *
+ * A supply less than two days old is read over the hours since its first load (sinceFirstLoad), as the town's growth
+ * reads it. Before, the panel spread a new plant's first loads over the whole day gone by: a hamlet with a Food
+ * Plant sending 24 loads a day against the 10 it wants read "Running low, bring 7 more", was told to build a second
+ * plant, and said "Growing fast" on the line above, because its growth already counted the supply in full (owner,
+ * 2026-11-10: "numbers that disagree side by side").
  */
 export function loadsLately(t: Town, p: Product): number {
-  return t.grace?.[p]?.got ?? deliveredLately(t, p);
+  return Math.max(t.grace?.[p]?.got ?? deliveredLately(t, p), sinceFirstLoad(t, p));
 }
 
 export interface NeedView {
@@ -70,10 +93,10 @@ export interface NeedView {
   /** loads a day it gets, and wants to grow */
   got: number;
   want: number;
-  /** whole loads a day still missing to fill every crate (0 when full) */
+  /** whole loads a day still missing for "Plenty" (0 when it has plenty) */
   more: number;
-  /** the crates: how many, how many filled, and the loads each stands for */
-  crates: { n: number; full: number; per: number };
+  /** how full its bar is, 0..1: what it gets of what it wants (1 when the word is "Plenty", held or not) */
+  fill: number;
   /** the one plain sentence: what to do */
   say: string;
 }
@@ -89,13 +112,12 @@ export const isAre = (name: string) => (/[^s]s$/i.test(name) ? "are" : "is");
 export function needView(t: Town, p: Product, joined = false): NeedView {
   const want = demandPerDay(p, t.pop), got = loadsLately(t, p);
   const share = want > 0 ? got / want : 1;
-  const per = loadsPerCrate(want), n = Math.max(1, Math.ceil(want / per - 1e-6));
-  // (a "Plenty" held for the eye: HOLD_BAND. The crates follow the word, so a held "Plenty" still fills every crate)
+  // (a "Plenty" held for the eye: HOLD_BAND. The bar follows the word, so a held "Plenty" is still a full bar)
   const last = shownLast.get(t) ?? {};
-  const state = heldState(share, per / want, last[p]);
+  const state = heldState(share, want > 0 ? loadStep(want) / want : 0, last[p]);
   last[p] = state;
   shownLast.set(t, last);
-  const full = state === "plenty" ? n : Math.min(n, Math.floor(got / per + 1e-6));
+  const fill = state === "plenty" ? 1 : Math.max(0, Math.min(1, share));
   const more = state === "plenty" ? 0 : Math.max(1, Math.ceil(want - got - 1e-6));
   const name = PRODUCTS[p].name, low = name.toLowerCase();
   let say: string;
@@ -104,11 +126,11 @@ export function needView(t: Town, p: Product, joined = false): NeedView {
   // (the need its proven supply runs out on, with the town stood still at what that supply carries: "Enough" holds
   // it, a little more lets it grow again)
   else if (state === "enough" && t.limit === p && t.trend < 0.5) say = `Just enough to hold steady. ${more} more ${loads(more)} a day and it grows again.`;
-  else if (state === "enough") say = `Enough to grow. ${more} more ${loads(more)} a day fills every crate.`;
+  else if (state === "enough") say = `Enough to grow. ${more} more ${loads(more)} a day and it has plenty.`;
   else if (state === "low") say = `Bring ${more} more ${loads(more)} of ${low} a day.`;
   else if (got < 0.05) say = `No ${low} ${isAre(low)} coming. Bring ${more} ${loads(more)} a day.`;
   else say = `Almost no ${low} ${isAre(low)} coming. Bring ${more} more ${loads(more)} a day.`;
-  return { p, name, state, word: NEED_WORD[state], got, want, more, crates: { n, full, per }, say };
+  return { p, name, state, word: NEED_WORD[state], got, want, more, fill, say };
 }
 
 /** Everything a town needs now, read out, in the order the needs opened. */
@@ -126,6 +148,10 @@ export function comingNeeds(pop: number): { products: Product[]; pop: number } |
 
 export type GrowthWord = "Settling in" | "Shrinking" | "Not growing" | "Growing slowly" | "Growing" | "Growing fast";
 
+/** "food is running low", "food and planks are running low", and past two "3 needs are running low". */
+const runningLow = (names: string[]): string =>
+  names.length > 2 ? `${names.length} needs are running low` : names.length === 2 ? `${names[0]} and ${names[1]} are running low` : `${names[0]} ${isAre(names[0])} running low`;
+
 /** Its pace against its best (every need met in full) at or above which a town is "Growing fast", and "Growing". */
 export const GROW_FAST = 0.95, GROW_OK = 0.5;
 
@@ -138,12 +164,16 @@ export const GROW_FAST = 0.95, GROW_OK = 0.5;
 export function growthOf(t: Town): { word: GrowthWord; tone: "good" | "bad" | ""; why: string } {
   if (t.pop < SETTLING) return { word: "Settling in", tone: "", why: "" };
   const short = townNeeds(t).filter((v) => v.state === "low" || v.state === "none").map((v) => v.name.toLowerCase());
-  const why = short.length ? `needs ${short.length > 1 ? `${short.slice(0, -1).join(", ")} and ${short[short.length - 1]}` : short[0]}` : "";
+  // (one or two short: named. More: counted, the rows under the line name them, and the line stays one line)
+  const why = short.length > 2 ? `short of ${short.length} needs` : short.length ? `needs ${short.join(" and ")}` : "";
   if (t.trend <= -0.5) return { word: "Shrinking", tone: "bad", why };
   // (stood still with every need at "Enough" or better: what its supply runs out on first, settlements.ts limit)
   if (t.trend < 0.5) return { word: "Not growing", tone: short.length ? "bad" : "", why: why || (t.limit ? `needs more ${PRODUCTS[t.limit].name.toLowerCase()}` : "") };
   const best = growthPerDay(t.pop);
   const k = best > 0 ? t.trend / best : 1;
+  // (still growing on the two days behind it while a need has run short over the last one: it says both, so the
+  // line never reads "Growing fast" over a row that reads "Running low")
+  if (k >= GROW_OK && short.length) return { word: "Growing", tone: "", why: `but ${runningLow(short)}` };
   if (k >= GROW_FAST) return { word: "Growing fast", tone: "good", why: "" };
   if (k >= GROW_OK) return { word: "Growing", tone: "good", why: "" };
   return { word: "Growing slowly", tone: "", why: short.length ? why.replace(/^needs /, "needs more ") : "" };
@@ -154,6 +184,22 @@ export function growthOf(t: Town): { word: GrowthWord; tone: "good" | "bad" | ""
  * reaches it yet (`joined`: one does now, and it waits for its first load).
  */
 export type LabelNeeds = { kind: "calm" } | { kind: "noroad"; needs: Product[]; joined: boolean } | { kind: "needs"; needs: { p: Product; state: NeedState }[] };
+
+/**
+ * What a town's map label says in one chip when zoomed far out, where a row of need discs is too small to read and
+ * heaps on its neighbours (design audit 2026-11-10, F27, F41, F42): the needs in trouble named, "Needs food and
+ * planks", past two counted, "Short of 3 needs", in the words of the town's own growth line. "bad" while one has none
+ * coming. Null: nothing to say.
+ */
+export function labelSummary(ln: LabelNeeds): { text: string; tone: "bad" | "low" | "" } | null {
+  if (ln.kind === "calm") return null;
+  if (ln.kind === "noroad") return { text: ln.joined ? "First load due" : "No road yet", tone: "" };
+  const short = ln.needs.filter((n) => n.state === "low" || n.state === "none");
+  if (!short.length) return null;
+  const names = short.map((n) => PRODUCTS[n.p].name.toLowerCase());
+  const text = short.length > 2 ? `Short of ${short.length} needs` : `Needs ${names.join(" and ")}`;
+  return { text, tone: short.some((n) => n.state === "none") ? "bad" : "low" };
+}
 
 export function labelNeeds(t: Town, joined = false): LabelNeeds {
   if (t.spawned && !served(t)) return { kind: "noroad", needs: needsOf(t.pop), joined };

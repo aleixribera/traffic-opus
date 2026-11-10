@@ -696,7 +696,7 @@ A town should visibly turn from a hamlet into a city over a playthrough: bigger,
   | Hamlet | houses | high-street shop-houses |
   | Village | houses, terraces in the middle | high street |
   | Town | row houses, brick apartment houses in the middle | department stores, office blocks |
-  | City | courtyard apartments, apartment towers in the core | grand stores, office towers |
+  | City | courtyard apartments (apartment towers wait for a Metropolis) | grand stores, office towers |
   | Metropolis | towers in the core | skyscrapers (the skyline) |
 
   The kinds keep their old keys in the code and the saves (`modernflats`, `mall`, `glasstower`...); what the
@@ -713,15 +713,16 @@ A town should visibly turn from a hamlet into a city over a playthrough: bigger,
   The map shows each town's label with an icon for any need in shortage.
 - **Needs a child can read (owner, 2026-11-08: "I don't understand this part. Can you make it easier to see, like
   for children almost, and also add icons to the town").** Each need in the town panel is its picture, its name, one
-  word ("Plenty", "Enough", "Running low", "None!") and a row of crates: the loads a day coming, filled, against the
-  loads a day it wants (at most ten crates; past ten loads each crate stands for a round number of them, said under
-  the row). Under that, one sentence of what to do ("Bring 4 more loads of food a day", "Food is fine"). The words
+  word ("Plenty", "Enough", "Running low", "None!") and a bar: the loads a day coming, filled, against the loads a
+  day it wants, with the figure under it ("0 of 518 loads a day"). The bars share one scale: a track's length is its
+  want against the town's biggest want, so a small need draws a short track. Under that, one sentence of what to do ("Bring 4 more loads of food a day", "Food is fine"). The words
   follow the sim: "Enough" from 85% of a day's need (where a town starts to grow), "Plenty" from
-  all of it (where it grows at its full pace), "None!" while not one crate's worth is coming. The need still to come shows greyed: "Soon: Planks, when
-  it reaches 100 people". The figures (loads a day, what the shops buy at most, today's tally) sit in the row's
+  all of it (where it grows at its full pace), "None!" while not one step's worth (a tenth of the want, rounded) is coming. The need still to come shows greyed: "Soon: Planks, when
+  it reaches 100 people". The rest (what the shops buy at most, today's tally) sits in the row's
   tooltip and under Details. On the map, a town's nameplate shows its needs only while one wants seeing to: each
-  picture on a disc ringed green, ochre or brick (with a "!" for none), the fine ones smaller; zoomed far out only the
-  needs in trouble stay. A town no road reaches yet shows its needs greyed with "No road yet". The supply bar is gone.
+  picture on a disc ringed green, ochre or brick (with a "!" for none at its bottom right), the fine ones smaller.
+  Zoomed far out the discs give way to one chip ("Short of 5 needs", or "Needs food and planks" for one or two), so
+  they never pile on each other or the plate. A town no road reaches yet shows its needs greyed with "No road yet". The supply bar is gone.
 - **Growth in words, no numbers (owner, 2026-11-08: "remove the numbers and just tell the player 'growing' and
   'growing a lot'").** A town's panel, the Towns list and its status say "Shrinking", "Not growing", "Growing
   slowly", "Growing" or "Growing fast", with the reason when it is held back ("Not growing, needs food"). The word is
@@ -743,7 +744,8 @@ houses." "Let villages fully control themselves apart from just growing, let the
 cool layout aswell, not just squared, let them eventually build an outwards road that ends up connecting to maybe
 an external road, but don't overdo it, this is the player's job."
 
-- **A plan of its own (townplan.ts).** Every town still grows a street at a time on a lattice of 96 m blocks, laid
+- **A plan of its own (townplan.ts).** Every town still grows a street at a time on a lattice of blocks (128 m for
+  a town founded from 2026-11-10, 96 m for one from a save before: see "Open towns" below), laid
   out as a small American town that grew over time (PLAN_TOWN, 2026-11-09), seeded from the town and the same every
   time it is loaded. The main street runs along the road the town began on, straight through the hall's crossroads
   and bending gently once past the old town; the crossroads and the four blocks round it stay square, so the hall's
@@ -787,6 +789,49 @@ an external road, but don't overdo it, this is the player's job."
   ticker says "Alder Run built a road out to the north-east, joining yours" (or "... to Fort Pryor"). It builds
   only one, ever, and with nothing in reach it builds nothing at all, not even a stub: joining towns up stays
   the player's job.
+
+### Open towns and a short Main Street (owner, 2026-11-10)
+
+"Make towns less dense overall, grow more outward, have more empty space, the grids should also be a bit more
+open, not all crammed together, but keep the growth shape realistic, kind of as it is."
+
+- **A wider grid, the same shape.** A town founded today lays its plan on 128 m blocks (`OPEN_BLOCK`, was 96 m:
+  `t.block`, saved; a town from an older save has none and keeps 96 m). Its streets, quarters, closes and lean are
+  laid out exactly as before, a third further apart, and its radius for its people is a third wider with them. It
+  keeps a quarter more of its blocks as greens and 40% more of its house fronts as gardens. Every ring of denser
+  building is thinner, so most of a town, even a City, is houses with gardens:
+
+  | Size | Centre | Rings out from the hall (blocks) |
+  |---|---|---|
+  | Hamlet | shops to 0.75 | houses |
+  | Village | shop-houses to 1 | row houses to 2.25, then houses |
+  | Town | stores and offices to 1.25 | apartment houses to 1.75, row houses to 2.5 |
+  | City | grand stores and office towers to 1.25 | courtyard flats to 2, apartment houses to 2.75, row houses to 3.5 |
+  | Metropolis | skyscrapers to 1.25, office towers to 1.75 | towers to 2.25, then flats, apartment houses, row houses to 5.5 |
+
+  On seed 7, every need served twice over (homes per km² of built-up ground, the 200 m squares with a home on,
+  and m² of it per resident; v0.0.91 first): Village 280 and 1,013 m², now 218 and 1,553; Town 353 and 728, now
+  324 and 971; City of 6,500 423 and 585, now 355 and 850; City of 10,000 413 and 487, now 349 and 836. Nine homes
+  in ten stand within 800 m of the hall at Town size (was 605) and 1.9 km in a City of 10,000 (was 1.2 km), the
+  furthest 2.4 km out. A City's skyline is a handful of towers by its hall (five at 10,000 people): its apartment
+  towers wait for a Metropolis.
+- **Halfway to a neighbour is a line, not a circle.** A town never lays a street past half a block short of the
+  line halfway to another town; it was held to a circle of that radius all round, which kept a start town with a
+  hamlet 1.9 km off (where the first one springs up) under a kilometre across, and on the wider grid stopped it at
+  3,700 people. Now it is hemmed in toward its neighbour only, and grows on the other way: with a hamlet 1.9 km
+  off it grows past 10,000 people (tests/density.test.ts). A town of the older plans keeps the circle.
+- **The street wall is a short Main Street (towns.ts `MAIN_STREET`, `WALL_ZONES`).** Only a Town or a City has
+  one: the stretch of Main Street (the plan's line through the hall along the road it began on) within 1.25 blocks
+  of the hall in a Town, 2 in a City, 2.5 in a Metropolis. There the shops are built to the pavement shoulder to
+  shoulder (`b.wall`; models `*_w*` from tools/blender/town_g_wall.py, as wide as their lot): two and three storey
+  shop-houses in a Town; in a City a handful of towers on podiums by the hall, four to six storey blocks past them,
+  shop-houses at the ends. A front keeps clear of every other street by as much as a divided avenue and its
+  pavement take, so widening a side street never takes a corner of the wall. The town builds the wall first, from
+  the hall outward, and a shop already standing on that land is rebuilt into it one at a time. Everywhere else
+  shops stand apart as before: a Village's few by its hall, a Town's and a City's along its high streets.
+- **Gardens you can read.** Behind most homes the lot's back line is a hedge or a picket fence, so the middle of
+  a block reads as rows of gardens, and a deep back garden has a tree or two. Behind a front of the wall the
+  yard is paved only as deep as the building, its court left as grass with a tree or two.
 
 ### Town orders (owner, 2026-11-08)
 
@@ -946,14 +991,14 @@ no longer applies; it names a town only when that town is the one that needs it 
 |---|---|
 | Start a food chain | no farm placed. Worded for the map: place one on soil within reach of a road, or, when no fertile soil lies near any road, lay a road out to some first. Names the biggest reachable town that wants food. |
 | No road reaches your site | a site's roads reach no town and no other site (placed out past where its gate street reaches) |
-| Build a Food plant | a farm and no food plant |
+| Build a Food Plant | a farm and no food plant |
 | Nobody to sell to | a built plant whose roads reach no buyer |
 | Traffic is stuck | four or more vehicles stand together (the Traffic stuck sign is up). It says more works will not help till it moves, and names the three ways out: a turn lane, lights, a second road. While it shows, no later tip does. |
 | A works is at full output | a works is flat out and a town still asks for more of what it makes, or (a step up the chain) the works that feeds the town's supplier is flat out. Says what to build. |
-| Planks | no sawmill, and a town is at 60% of the size that wants planks (names it, "will want" or "wants now") |
+| Planks | no sawmill, the first food has landed (one chain at a time), and a town is at 60% of the size that wants planks (names it, "will want" or "wants now") |
 | A new town has no road | a town that sprang up isn't joined by road to another town or to a works that makes something it buys (a stub of road out of it, or a logging camp at its edge, is not a road to it) |
 | A site waits for something | a building site needs a product none of the company's plants makes |
-| Where a deposit lies | a mined kind is unlocked and none placed: the nearest deposit's distance and direction |
+| Where a deposit lies | a mined kind is unlocked by one of the last two goals reached and none placed: the nearest deposit's distance and direction, in the order to build them (the power plant first). None once every goal is reached |
 | Power | a built plant draws power and no power plant is placed |
 | Construction parts | the construction plant is unlocked, none placed, and a town's new blocks wait for parts |
 | Fresh milk | the dairy farm is unlocked and none placed |
@@ -962,7 +1007,8 @@ no longer applies; it names a town only when that town is the one that needs it 
 Cut: the "keep the town fed" filler, and the "build X next" tips for each later plant (the goals card's unlock
 line already says what opened). Each tip has a dismiss button; the pause menu's Tips switch turns them all off,
 and turning it back on brings every dismissed tip back. Both are kept per browser (`flowtown.tips.off`,
-`flowtown.tips.dismissed`). The category button a tip points at gets a still marker, no pulse.
+`flowtown.tips.dismissed`). The category button a tip points at gets a still marker, no pulse. A tip that says to
+take a works in hand steps aside while that works is in hand: the tool options say how to place it.
 
 ## Reading the game (play-test 2026-11-09)
 
@@ -973,22 +1019,66 @@ The play-test's finding was that the game knew what was wrong and did not say it
 
 | Line | When | It says |
 |---|---|---|
-| Building site / Under construction | not open yet | loads still to come, hours to go at the pace they arrive, where the next comes from |
+| Building site / Under construction | not open yet | loads still to come, hours to go at the pace they arrive, where the next comes from. With no road to its gate that comes first, in red: nothing can come till it has one |
 | Starting up | open, waiting for an input, has made nothing yet | where the first load comes from and when. Not trouble: no mark on the map |
-| Waiting for X | short of an input | the works that sends it and when; if that one is flat out, "Build another". With the loads stuck in traffic it says to clear the jam and never to build |
+| Waiting for X | short of an input | the works that sends it and when; if that one is flat out, "Build another". With the loads stuck in traffic it says to clear the jam and never to build. A sender short of power "works at 40%, so its loads come slowly". A power plant whose coal mine waits on its own power names the wood chips that get both going |
+| No power / Short of power | it draws power and gets too little | where its power would come from, in this order: the plant in reach that is out of coal (and where its next coal is), the plant in reach that cannot power everything, the plant going up, the plant too far or on other roads, else build one within its reach on its roads. Show it goes to that plant. "Power back on" when power came back since the sim's hourly line |
 | No buyer for X yet | nobody on its roads buys what it makes | the town that will and from how many people ("Towns buy planks from 100 people. Alder Run has 77") |
-| At full output | flat out while a town or one of the company's works would take more | who would take more, and the two ways out: build another, or wait for the next level |
+| At full output | flat out while a town or one of the company's works would take more | who would take more, and the two ways out: build another, or wait for the next level. A power plant whose reach wants more than it makes says so in MW |
 | Working normally | none of the above | |
 
 "Waiting for X" is read steadily (under its pace with an empty yard), not from the sim's own line, which comes and
-goes with every load that lands. The panel, the mark on the map, the Economy rows and the town's advice all go by
+goes with every load that lands. "Starting up" ends a day after opening, whatever holds it. The figure in the panel
+("0.4/h, can 0.4") is the same pace the status goes by, never above what it can make, never the good green under
+a red status, and never "all it can" for a works short of power. The panel, the mark on the map, the Economy rows and the town's advice all go by
 the same reading. A works is flat out only from 60% of what it can make over its last hours, so one early batch
 does not count.
 
 **A town's need** says how much is missing and then what to do about it, with a Show it button to the works in
 question: nothing of yours makes it (build one), your works are at full output (build about N more), or one is
 held up (look at it). The advice goes a step up the chain when the works that feeds the town's supplier is the one
-flat out. A town no road reaches says only that.
+flat out. A new works starting up beside others flat out is counted in ("Build about 3 more. Your new Food Plant
+is starting up."); one in real trouble is named before one only starting up. A town no road reaches says only that.
+A town's panel says it once: one status line, one piece of advice with Show it, then the figures per need.
+
+**The goal line.** Under the goal being worked on, one line in the same voice as the panels: WHERE (the soil for the
+first farm, with its distance and direction) until there is a works to talk about, then NOW (the works the goal
+waits on and its status line, with when its first truck leaves). A click flies to it. The first ten game hours
+are quiet by design; the line counts them down, so the wait reads as a wait. While a panel is open the goal and its
+NOW line sit in a strip above the panel, so the next step never leaves the screen; a click on the strip closes the
+panel and shows the Goals card. With every goal reached there is no strip.
+
+**One unit for goods: loads a day.** Every place a player sees an amount of goods says it in loads a day: the
+town's needs, a works' output ("10 loads, iron ore a day, can 10"), the Economy window ("Crops 4 of 6": made in the
+last 24 hours against what the works can make, with a bar for the ratio) and the hourly chart's full-pace line.
+
+**Type scale.** Four steps (src/ui/theme.css): 12 px only for short UPPERCASE kickers (and chart axis labels), body
+14 px at 1600 wide rising to 16 px, titles 18 to 20 px, headlines 24 px. No lower-case sentence is under 14 px.
+
+**Demolish** sits alone in a footer at the bottom of a works panel, away from Close, and still takes two clicks.
+
+**The radio** in the status bar says what it is: a RADIO kicker over the tune in quotes, "Tuning in", "Off" or
+"Sound muted".
+
+**The first goal's pointer.** Until a farm is placed, a brass plate at the screen edge points at the fertile soil
+with its distance, at any turn and tilt, and flies there on a click; with the soil on screen it becomes a pin on
+it ("Place your farm here"). The camera is not opened further out to show it.
+
+**The gate mark.** A works being placed, and a selected works, show where the gate is and which way it faces:
+a ring at the gate, a stem out to a GATE plate, brass when a road joins it, red ("no road yet") when none does. A
+site with no road turns its gate to a road drawn to the back of its plot (the road tool says "its gate turns to
+this side"), and the mark follows.
+
+**One line at the pointer.** A tool says one thing by the cursor: whatever stops the click, else a warning, else
+the note that matters most (what the road joins beats its length), with the price beside it. The rest (length,
+climb, bridge, angle) sit still in the tool options card (src/ui/pointer.ts).
+
+**Town names at far zoom** do not heap up: the biggest keeps its plate in full, a smaller one is cut to its name,
+stacked just clear of what it hits, or left out till there is room (src/ui/labels.ts, declutter). Works plates
+keep clear of the names.
+
+**The catalog** fills its fixed width: up to four cards are wide plates with a sentence each, more share the row
+in equal columns, and a tab too long for a row splits into even rows (src/ui/catalog.ts).
 
 **A new town** reads "No road yet" on its label and panel, then "First load due" / "Joined by road" once a road
 joins it to somewhere a load can come from, until its first load lands.

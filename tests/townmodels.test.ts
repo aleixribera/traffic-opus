@@ -4,9 +4,9 @@
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { BUILDING_TYPES, type BuildingKind } from "../src/config";
-import { ZONE_GROUP, ZONE_LOTS, modelFit } from "../src/game/growables";
-import type { ZoneId } from "../src/game/zones";
-import { TOWN_MODELS, TOWN_VARIANTS, Variety, townChoices, townModel } from "../src/render/townmodels";
+import { WALL_LOTS, ZONE_GROUP, ZONE_LOTS, modelFit } from "../src/game/growables";
+import { CELL, type ZoneId } from "../src/game/zones";
+import { TOWN_MODELS, TOWN_VARIANTS, WALL_MODELS, Variety, townChoices, townModel, wallChoices } from "../src/render/townmodels";
 import { HOME_VARIANTS, LIT_KINDS, PROP_MODELS, litKind } from "../src/render/models";
 
 // (node's fs, untyped here: the project's types are the browser's)
@@ -70,6 +70,7 @@ describe("the towns' models", () => {
       for (const m of TOWN_MODELS[k].slice(1)) expect(TOWN_VARIANTS, m).toContain(m);
     }
     expect(HOME_VARIANTS).toEqual(TOWN_VARIANTS);
+    for (const W of Object.values(WALL_MODELS)) for (const m of [...W.mid, ...W.left, ...W.right]) expect(TOWN_VARIANTS, m).toContain(m);
     // (two or three models a kind, at the least, but the one filling station)
     for (const k of KINDS) if (k !== "fuelstation") expect(TOWN_MODELS[k].length, k).toBeGreaterThanOrEqual(3);
   });
@@ -199,6 +200,81 @@ describe("the model a lot is drawn with", () => {
       expect(c.length).toBeGreaterThanOrEqual(3);
     }
     expect(townChoices("factory", 1, 1, 5, design)).toEqual(["factory"]);
+  });
+});
+
+describe("the street wall's models (tools/blender/town_g_wall.py)", () => {
+  const WALL = Object.entries(WALL_MODELS).flatMap(([k, W]) => [...W.mid, ...W.left, ...W.right].map((m) => [k as BuildingKind, m] as const));
+
+  it("each is its kind's footprint from lot line to lot line, made for a lot of whole cells, its front wall where it says", () => {
+    expect(WALL.length).toBeGreaterThanOrEqual(30);
+    for (const [k, m] of WALL) {
+      const g = glb(m), T = BUILDING_TYPES[k];
+      // (party walls: the model is exactly as wide as its lot, so two side by side meet)
+      expect(Math.abs(g.min[0] + T.w / 2), `${m} left wall`).toBeLessThan(0.02);
+      expect(Math.abs(g.max[0] - T.w / 2), `${m} right wall`).toBeLessThan(0.02);
+      expect(Math.abs(g.min[1]), `${m} on the ground`).toBeLessThan(0.01);
+      expect(g.tris, m).toBeLessThanOrEqual(2500);
+      const d = design(m);
+      expect(d, `${m} design`).toBeDefined();
+      const cells = (d![0] * T.w) / CELL;
+      expect(Math.abs(cells - Math.round(cells)), `${m}: ${cells} cells`).toBeLessThan(0.01);
+      expect(Math.round(cells)).toBeGreaterThanOrEqual(1);
+      expect(Math.round(cells)).toBeLessThanOrEqual(4);
+      // its front wall (the body's street side) stands inside the lot, and it has no alley: it is built to the pavement
+      const body = empty(g, /^body_?\d+/)[0];
+      expect(body, `${m} body`).toBeDefined();
+      // (in metres as it stands, fitted to its lot: inside the shallowest wall lot of its kind and width)
+      const deep = Math.min(...Object.values(WALL_LOTS).flat().filter((t) => t.model === k && t.w === Math.round(cells)).map((t) => t.d));
+      expect((body.p[2] + body.s[2]) * (Math.round(cells) * CELL) / T.w, `${m} front wall`).toBeLessThanOrEqual((deep * CELL) / 2 + 0.05);
+      expect(body.p[2] + body.s[2], `${m} front wall`).toBeGreaterThan(0);
+      expect(empty(g, /^via_?\d+/)[0], `${m} alley`).toBeUndefined();
+      const lit = new Set(g.materials.map((x) => LIT_KINDS[litKind(x)]).filter((x) => x !== undefined));
+      expect(lit.has("shop") || lit.has("office"), `${m} lit glass`).toBe(true);
+    }
+  });
+
+  it("there is one for every lot of the wall, at every height it is built, never stretched by more than a storey in six", () => {
+    const used = new Set<string>();
+    for (const zone of Object.keys(WALL_LOTS) as (keyof typeof WALL_LOTS)[]) {
+      for (const t of WALL_LOTS[zone]) {
+        const fit = (t.w * CELL) / BUILDING_TYPES[t.model].w;
+        const talls = t.tall ? [t.tall[0], (t.tall[0] + t.tall[1]) / 2, t.tall[1]] : [1];
+        for (const tall of talls) {
+          for (const corner of [-1, 0, 1] as const) {
+            for (let id = 1; id < 60; id++) {
+              const c = wallChoices(t.model, fit, tall, id, corner, design);
+              const where = `${zone} ${t.model} ${t.w} cells tall ${tall} corner ${corner}`;
+              expect(c.length, where).toBeGreaterThan(0);
+              expect(new Set(c).size).toBe(c.length);
+              for (const m of c) {
+                used.add(m);
+                const d = design(m)!;
+                expect(Math.abs(Math.log(fit / d[0])), `${where}: ${m}`).toBeLessThan(0.03);
+                expect(Math.abs(Math.log(tall / d[1])), `${where}: ${m}`).toBeLessThan(Math.log(1.17));
+              }
+            }
+          }
+        }
+      }
+    }
+    // every model made is drawn somewhere, and a row of shop-houses is not one model over and over
+    for (const [, m] of WALL) expect(used.has(m), `${m} is never drawn`).toBe(true);
+    const two = (2 * CELL) / BUILDING_TYPES.highstreet.w;
+    expect(new Set(Array.from({ length: 60 }, (_, id) => wallChoices("highstreet", two, 1, id, 0, design)[0])).size).toBeGreaterThanOrEqual(3);
+  });
+
+  it("a corner building stands where a side street passes, and only there", () => {
+    const two = (2 * CELL) / BUILDING_TYPES.highstreet.w, three = (3 * CELL) / BUILDING_TYPES.highstreet.w;
+    for (const fit of [two, three]) {
+      const left = wallChoices("highstreet", fit, 1, 5, -1, design), right = wallChoices("highstreet", fit, 1, 5, 1, design);
+      const mid = wallChoices("highstreet", fit, 1, 5, 0, design);
+      for (const m of mid) expect(WALL_MODELS.highstreet.mid).toContain(m);
+      if (left.some((m) => WALL_MODELS.highstreet.left.includes(m))) for (const m of left) expect(WALL_MODELS.highstreet.left).toContain(m);
+      if (right.some((m) => WALL_MODELS.highstreet.right.includes(m))) for (const m of right) expect(WALL_MODELS.highstreet.right).toContain(m);
+    }
+    // (a kind with no wall models: none, and the building is drawn detached)
+    expect(wallChoices("mall", 1, 1, 5, 0, design)).toEqual([]);
   });
 });
 

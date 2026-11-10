@@ -120,6 +120,8 @@ describe("plans", () => {
     g.start();
     const d = g.towns.toJSON();
     delete (d.towns[0] as { layout?: number }).layout;
+    // (nor a block of its own: the old grid's)
+    delete (d.towns[0] as { block?: number }).block;
     g.towns.load(d);
     const t = g.towns.list[0];
     expect(t.layout).toBe(PLAN_GRID);

@@ -71,8 +71,13 @@ days apart). Seasons last 16 days and autumn is a freight rush. PC only (mouse a
 
 ## How work is done here
 
-- One change, one branch, one worktree. Run `npx vitest run --exclude tests/balance.test.ts` (a minute or two) and
-  `npx tsc --noEmit -p .` in the foreground before every commit.
+- One change, one branch, one worktree. Tests come in three sets (`vite.config.ts`):
+  - **While working:** run only the test files for what you touched, by name (`npx vitest run tests/towns.test.ts`).
+  - **Before every commit:** `npm test`, the quick set (about 770 tests, under a minute), and `npx tsc --noEmit -p .`.
+    Both run in the foreground. If you changed the sim, also run the scenario files that cover it, by name.
+  - **At integration only:** `npm run test:full` adds the long traffic and town scenarios (about 3 minutes on all
+    cores). `npm run test:balance` plays whole games, so run it only when you need a balance measurement.
+  - Never leave a test run or dev server going when you finish.
 - **Done means you watched it work**: `npx vite --port <your own port> --strictPort`, drive it with
   `playwright-cli -s=<your own session>` at 1600×900, and look at the screenshots. `window.app` is the game
   (`app.game`, `app.view`, `app.lookAt(p, halfH)`, `app.setSpeed(n)`); `__env.set({hour, season, day})` fixes the

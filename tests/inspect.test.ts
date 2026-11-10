@@ -5,7 +5,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { Game } from "../src/game/city";
 import { HOUR } from "../src/game/society";
-import { BLOCK, gridPt } from "../src/game/towns";
+import { blockOf, gridPt } from "../src/game/towns";
 import { Industry, PRODUCTS } from "../src/game/industry";
 import { F } from "../src/world/gen";
 import { seasonMult } from "../src/game/calendar";
@@ -13,12 +13,13 @@ import type { V2 } from "../src/core/math";
 import type { Building } from "../src/game/buildings";
 import {
   GROUND_HILLS, GROUND_WATER, STUCK_NEAR, TradeLedger, WORK_LINE, approaches, congestion, extractorFor, fmtNum, fmtRate, groundAt,
-  groundModel, homeModel, junctionModel, metresLeft, modelOf, patchAt, rateLately, roadModel, routeLine, routesThrough, siteModel,
+  groundModel, homeModel, junctionModel, metresLeft, modelOf, patchAt, roadModel, routeLine, routesThrough, siteModel,
   splitProblem, stuckAt, stuckModel, townModel, townStatus, trucksOut, vehicleModel, vehiclesOnSeg, waitTone, type Sel,
 } from "../src/ui/inspect";
 import { dkDir, dkSeg } from "../src/sim/router";
 import { junctionAt, pickAt, pickRadius, poseOf, vehicleAt } from "../src/ui/pick";
 import { placeAlong, road } from "./helpers";
+import { shownRate } from "../src/ui/bottleneck";
 
 const compass = () => "N";
 
@@ -26,7 +27,7 @@ const compass = () => "N";
 function chain(g: Game) {
   g.start();
   const t = g.towns.list[0];
-  const end = gridPt(t.c, t.ang, 1 + 320 / BLOCK, 0);
+  const end = gridPt(t.c, t.ang, 1 + 320 / blockOf(t), 0, blockOf(t));
   let f: V2 | null = null, bd = Infinity;
   for (let r = 50; r < 1200 && !f; r += 25) for (let k = 0; k < 48; k++) {
     const p = { x: end.x + Math.cos((k / 48) * 6.283) * r, y: end.y + Math.sin((k / 48) * 6.283) * r };
@@ -37,7 +38,7 @@ function chain(g: Game) {
   const far = { x: f!.x + ((f!.x - end.x) / bd) * 80, y: f!.y + ((f!.y - end.y) / bd) * 80 };
   road(g, end, far);
   const farm = placeAlong(g, "farm", end, far, 35);
-  const foodplant = placeAlong(g, "foodplant", gridPt(t.c, t.ang, 1, 0), end, 35);
+  const foodplant = placeAlong(g, "foodplant", gridPt(t.c, t.ang, 1, 0, blockOf(t)), end, 35);
   return { t, farm, foodplant };
 }
 
@@ -57,13 +58,17 @@ describe("The inspector's panels", () => {
     }
   }, 240_000);
 
-  it("a producing site: output an hour (made vs can make), what it earns or ships, and trucks out of the fleet", () => {
+  it("a producing site: output a day (made vs can make), what it earns or ships, and trucks out of the fleet", () => {
     const m = siteModel(g, farm, led);
     expect(m.keys).toHaveLength(3);
     // (its pace now, the season's swing included: a farm in autumn can make more than its year-round pace)
-    const r = rateLately(farm, "crops"), can = (Industry.perDay(farm, "crops") / 24) * seasonMult("farm", g.time);
+    // (one source with its status and the town's advice, and never above what it can make)
+    const { rate: r, can } = shownRate(g, farm, "crops");
+    expect(can).toBeCloseTo((Industry.perDay(farm, "crops") / 24) * seasonMult("farm", g.time));
     expect(r).not.toBeNull();
-    expect(m.keys[0]).toMatchObject({ value: fmtRate(r!), unit: "/h", label: `crops, can ${fmtRate(can)}` });
+    expect(r!).toBeLessThanOrEqual(can + 1e-9);
+    // (in loads a day, the unit the town panel and the goals count in)
+    expect(m.keys[0]).toMatchObject({ value: fmtRate(r! * 24), unit: " loads", label: `crops a day, can ${fmtRate(can * 24)}` });
     // crops only feed your own plants: no price, so it shows what it shipped, not a "profit" that's only costs
     expect(m.keys[1].label).toMatch(/shipped, last hour$/);
     expect(m.keys[1].value).toBe(String(farm.plant!.last.sent));

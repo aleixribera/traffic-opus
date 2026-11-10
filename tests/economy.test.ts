@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { Game, START_MONEY } from "../src/game/city";
 import { DAY, HOUR } from "../src/game/society";
-import { BLOCK, gridPt } from "../src/game/towns";
+import { blockOf, gridPt } from "../src/game/towns";
 import { HIST_HOURS, Industry, MIN_DEPOSIT, PLANTS } from "../src/game/industry";
 import { levelMult } from "../src/game/sites";
 import { F } from "../src/world/gen";
@@ -27,7 +27,7 @@ function run(g: Game, hours: number, each?: () => void) {
 function chain(g: Game) {
   g.start();
   const t = g.towns.list[0];
-  const end = gridPt(t.c, t.ang, 1 + 320 / BLOCK, 0);
+  const end = gridPt(t.c, t.ang, 1 + 320 / blockOf(t), 0, blockOf(t));
   // the nearest patch of fertile soil (a farm's lot all on it) to the end of the road
   let f: V2 | null = null, bd = Infinity;
   for (let r = 50; r < 1200 && !f; r += 25) for (let k = 0; k < 48; k++) {
@@ -40,7 +40,7 @@ function chain(g: Game) {
   const far = { x: f!.x + ((f!.x - end.x) / bd) * 80, y: f!.y + ((f!.y - end.y) / bd) * 80 };
   road(g, end, far);
   const farm = placeAlong(g, "farm", end, far, 35);
-  const foodplant = placeAlong(g, "foodplant", gridPt(t.c, t.ang, 1, 0), end, 35);
+  const foodplant = placeAlong(g, "foodplant", gridPt(t.c, t.ang, 1, 0, blockOf(t)), end, 35);
   return { t, farm, foodplant };
 }
 

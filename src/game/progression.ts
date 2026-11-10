@@ -107,10 +107,11 @@ export const MILESTONES: Milestone[] = [
     unlocks: { features: ["roundabout"], roads: ["streetM"], towns: 1 },
   },
   {
-    // (tier 2 opens whole: the iron mine, coal mine, power plant and smelter of the steel chain)
+    // (tier 2 opens whole: the power plant, coal mine, iron mine and smelter of the steel chain. Listed in the order
+    // to build them: the power plant first, since the other three stand at 40% without it. Owner, 2026-11-10)
     id: "village", name: "Village", goal: "Grow a town to Village size: 300 people",
     measure: (v) => [biggest(v), 300],
-    unlocks: { buildings: ["ironmine", "coalmine", "coalplant", "smelter"], trucks: ["heavy"], grant: 80000 },
+    unlocks: { buildings: ["coalplant", "coalmine", "ironmine", "smelter"], trucks: ["heavy"], grant: 80000 },
   },
   {
     id: "planks10", name: "Sawn timber", goal: "Saw 10 loads of planks",

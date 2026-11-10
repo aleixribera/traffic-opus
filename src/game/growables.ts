@@ -33,6 +33,30 @@ export const ZONE_LOTS: Record<ZoneId, LotTemplate[]> = {
   comTower: [{ w: 4, d: 4, model: "glasstower", tall: [0.95, 1.35] }, { w: 4, d: 4, model: "tower", tall: [1.3, 1.7] }, { w: 3, d: 3, model: "glasstower", tall: [0.9, 1.1] }, { w: 2, d: 2, model: "office", tall: [1.6, 2] }],
 };
 
+/**
+ * The lots of a town's street wall (towns.ts MAIN_STREET, WALL_ZONES; docs/design.md "Main Street"), widest first:
+ * fronts of one to four cells built to the pavement, each as wide as its lot so that neighbours share a wall. Every
+ * zone has every width down to a single cell, so a stretch of street of any length fills with no gap left in it.
+ * Shop-houses on a town's Main Street; office blocks and department stores further in, in a city; towers on a podium
+ * by a city's hall, taller in a metropolis. A front holds the jobs any lot of its size and zone holds (capacity). (The heights are those the wall's models are made at, town_g_wall.py, so a
+ * storey is never stretched by more than a tenth.)
+ */
+export const WALL_LOTS: Record<Exclude<ZoneId, `res${string}`>, LotTemplate[]> = {
+  comLow: [{ w: 3, d: 3, model: "highstreet" }, { w: 2, d: 3, model: "highstreet" }, { w: 1, d: 3, model: "shop" }],
+  comMid: [{ w: 4, d: 3, model: "store" }, { w: 3, d: 3, model: "office" }, { w: 2, d: 3, model: "office" }, { w: 1, d: 3, model: "shop", tall: [1.25, 1.4] }],
+  comHigh: [
+    { w: 4, d: 4, model: "tower" }, { w: 4, d: 4, model: "glasstower" }, { w: 3, d: 3, model: "tower" },
+    { w: 2, d: 3, model: "office", tall: [1.25, 1.5] }, { w: 1, d: 3, model: "shop", tall: [1.4, 1.6] },
+  ],
+  comTower: [
+    { w: 4, d: 4, model: "glasstower", tall: [1.3, 1.5] }, { w: 4, d: 4, model: "tower", tall: [1.3, 1.5] },
+    { w: 3, d: 3, model: "tower", tall: [1, 1.15] }, { w: 2, d: 3, model: "office", tall: [1.3, 1.5] }, { w: 1, d: 3, model: "shop", tall: [1.5, 1.7] },
+  ],
+};
+
+/** The wall lots of a zone (none for homes). */
+export const wallLots = (zone: ZoneId): LotTemplate[] | undefined => (WALL_LOTS as Partial<Record<ZoneId, LotTemplate[]>>)[zone];
+
 /** Households (residential) or jobs (everything else) per lot cell at level 1. */
 const PER_CELL: Record<ZoneId, number> = {
   resLow: 0, // one household, whatever the lot
@@ -51,7 +75,7 @@ export const ZONE_GROUP: Record<ZoneId, ZoneGroup> = {
   comLow: "com", comMid: "com", comHigh: "com", comTower: "com",
 };
 
-/** Households or jobs on a lot of w x d cells at a level (1-5). */
+/** Households (residential) or jobs (everything else) on a lot of w x d cells at a level (1-5). */
 export function capacity(zone: ZoneId, w: number, d: number, level: number, tall = 1): number {
   const lv = 1 + 0.18 * (level - 1);
   if (zone === "resLow") return 1;

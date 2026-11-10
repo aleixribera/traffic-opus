@@ -26,8 +26,30 @@ export const TOWN_MODELS: Record<string, string[]> = {
   fuelstation: ["fuelstation"],
 };
 
+/**
+ * The models of the street wall (tools/blender/town_g_wall.py; docs/design.md "The street wall"): fronts built to the
+ * pavement, each exactly as wide as its lot (its `design` fit is its width in zone cells), with no alley and no
+ * parking, so neighbours share a wall. `mid`: for anywhere in a row. `left` and `right`: corner buildings, a second
+ * front on the side street that passes on that side (seen from the street in front).
+ */
+export const WALL_MODELS: Record<string, { mid: string[]; left: string[]; right: string[] }> = {
+  highstreet: {
+    mid: ["highstreet_wa", "highstreet_wb", "highstreet_wc", "highstreet_wd", "highstreet_we", "highstreet_wf", "highstreet_wg"],
+    left: ["highstreet_wk", "highstreet_wm"],
+    right: ["highstreet_wl", "highstreet_wn"],
+  },
+  shop: { mid: ["shop_wa", "shop_wb", "shop_wc", "shop_wt", "shop_wu"], left: [], right: [] },
+  office: { mid: ["office_wa", "office_wb", "office_wc", "office_wd", "office_we", "office_wt"], left: ["office_wk"], right: ["office_wl"] },
+  store: { mid: ["store_wa", "store_wb"], left: [], right: [] },
+  tower: { mid: ["tower_wa", "tower_wb", "tower_wc", "tower_wd", "tower_wt"], left: [], right: [] },
+  glasstower: { mid: ["glasstower_wa", "glasstower_wb", "glasstower_wt"], left: [], right: [] },
+};
+
 /** The models to load besides the kinds' own. */
-export const TOWN_VARIANTS: string[] = Object.entries(TOWN_MODELS).flatMap(([kind, ms]) => ms.filter((m) => m !== kind));
+export const TOWN_VARIANTS: string[] = [
+  ...Object.entries(TOWN_MODELS).flatMap(([kind, ms]) => ms.filter((m) => m !== kind)),
+  ...Object.values(WALL_MODELS).flatMap((w) => [...w.mid, ...w.left, ...w.right]),
+];
 
 /** How far (in log scale, fit and tall together) a model may be from the best match and still be picked. */
 const NEAR = 0.07;
@@ -51,6 +73,35 @@ export function townChoices(kind: string, fit: number, tall: number, id: number,
   const near = cost.filter((c) => c[1] <= best + NEAR).map((c) => c[0]);
   const k = h % near.length;
   return [...near.slice(k), ...near.slice(0, k)];
+}
+
+/** A wall model fits a lot of its own width only (fit, in log scale). */
+const WALL_FIT = 0.03;
+
+/**
+ * The models a front of the street wall may be drawn with: those of its kind made for a lot exactly as wide as its
+ * own, the nearest its height; a corner building's (`corner`: -1 a side street on its left, 1 on its right, 0 none)
+ * where there is one that wide. Empty: none is loaded for that width (it is then drawn as a detached building).
+ */
+export function wallChoices(kind: string, fit: number, tall: number, id: number, corner: -1 | 0 | 1, design: (model: string) => [number, number] | undefined): string[] {
+  const W = WALL_MODELS[kind];
+  if (!W) return [];
+  const near = (ms: string[], limit = Infinity): string[] => {
+    const cost: [string, number][] = [];
+    for (const m of ms) {
+      const d = design(m);
+      if (d && Math.abs(Math.log(fit / d[0])) <= WALL_FIT) cost.push([m, Math.abs(Math.log(tall / d[1]))]);
+    }
+    if (!cost.length) return [];
+    const best = Math.min(...cost.map((c) => c[1]));
+    return best > limit ? [] : cost.filter((c) => c[1] <= best + NEAR).map((c) => c[0]);
+  };
+  // (a corner building only where one stands about as tall as the lot wants)
+  const side = corner < 0 ? near(W.left, 0.12) : corner > 0 ? near(W.right, 0.12) : [];
+  const ms = side.length ? side : near(W.mid);
+  if (!ms.length) return [];
+  const k = (Math.imul(id + 7, 2246822519) >>> 0) % ms.length;
+  return [...ms.slice(k), ...ms.slice(0, k)];
 }
 
 /** The model for a building, by its lot, height and id alone (the first of its choices). */
