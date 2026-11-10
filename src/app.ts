@@ -68,7 +68,8 @@ import { newOrbit, orbitStep, type OrbitDrag } from "./ui/orbit";
 import { TILT_MIN, loadCameraView, loadTilt, loadTurn, saveCameraView, saveTilt, saveTurn, type CameraView } from "./ui/cameraSetting";
 import { groundAt, isMined, modelOf, worksCalm } from "./ui/inspect";
 import type { Sel } from "./ui/inspect";
-import { Roads3D } from "./render/roads3d";
+import { RIBBONS_SEE, Roads3D } from "./render/roads3d";
+import { disposeTree, modelGeometries } from "./render/dispose";
 import { RoadsFar } from "./render/roadsFar";
 import { MapLabels } from "./ui/labels";
 import { MapIcons } from "./ui/mapIcons";
@@ -715,6 +716,12 @@ export class App {
     this.syncRise();
     this.hud?.cameraPose(this.view.rot, this.view.tilt);
     this.hud?.clearBanners();
+    // (the old game's roads, cars, lamps and the rest hand back their buffers and materials: three.js frees nothing
+    // by itself, and every load would leave the last map in video memory; the shared Blender models stay)
+    if (this.roads) {
+      const keep = modelGeometries(this.models);
+      for (const l of [this.roads, this.roadsFar, this.vehicles, this.buildings3d, this.transit3d, this.parks3d, this.greens3d, this.lamps, this.signals]) disposeTree(l.group, keep);
+    }
     for (const c of [...this.worldRoot.children]) this.worldRoot.remove(c);
     const small = Math.min(window.innerWidth, window.innerHeight) < 700;
     // (no trees on roads, their verges, sites or plots: they give way round whatever is built)
@@ -2254,6 +2261,7 @@ export class App {
     // (the clock counts every game minute; the rest of the bar every quarter second)
     this.hud?.clock();
     this.buildings3d.frameConstruction();
+    this.buildings3d.lod(this.view.mpp);
     this.hudT += dt;
     if (this.hudT > 0.25) {
       this.hudT = 0;
@@ -2271,6 +2279,7 @@ export class App {
     // far out: no cars, no shadow map (the ground draws its own hill shadows)
     const far = this.view.halfH > 1800;
     this.vehicles.group.visible = !far;
+    this.roads.group.visible = this.view.mpp < RIBBONS_SEE;
     this.view.sun.castShadow = this.view.halfH < 2400;
     // the trees make way for what was just built (and come back where it was removed)
     if (this.forestDue && now - this.forestAt > 250) {

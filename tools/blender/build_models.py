@@ -1316,6 +1316,38 @@ def b_picket(M, P):
     return L
 
 
+def _open_box(M, x0, x1, y0, y1, z0, z1, m):
+    """A box standing on the ground, without the bottom face no one sees: 10 triangles."""
+    fs = box(M, x0, x1, y0, y1, z0, z1, m)
+    bmesh.ops.delete(M.bm, geom=[fs[0]], context="FACES_ONLY")
+
+
+def b_hedge_far(M, P):
+    """The hedge from a little way off (the game draws it once a pixel is a fifth of a metre or more): its three
+    clipped lengths at their own heights and greens, square-cut, down to the ground. A town holds thousands of
+    these; 30 faces instead of 176."""
+    L = Lot(4.0, 0.8)
+    L.bays = []
+    for x0, x1, h, w, m in ((-2.0, -0.45, 0.98, 0.37, "hg_leaf"), (-0.75, 0.85, 1.04, 0.38, "hg_leaf2"),
+                            (0.55, 2.0, 0.95, 0.365, "hg_leaf")):
+        _open_box(M, x0, x1, -w, w, 0, h, P[m])
+    return L
+
+
+def b_picket_far(M, P):
+    """The picket fence from a little way off: its capped posts on the same beat, and the pickets, too fine to tell
+    apart from there, as one low white board on the street side (in the posts' paler white, as the gaps between the
+    pickets show through). 50 faces instead of 300."""
+    L = Lot(4.0, 0.24)
+    L.bays = []
+    for x in (-2.0, 0.0):
+        x0 = max(x - 0.08, -2.0)
+        _open_box(M, x0, x0 + 0.16, -0.08, 0.08, 0, 1.12, P["pk_post"])
+        box(M, x0 - 0.02, x0 + 0.18, -0.11, 0.11, 1.12, 1.19, P["pk_white"])
+    _open_box(M, -1.9, 2.0, -0.05, 0.0, 0.06, 1.0, P["pk_post"])
+    return L
+
+
 # ------------------------------------------------------------------ bridges (pieces the road renderer places)
 # Every piece is built for a 10 m wide deck, across the road along X and along it Y; the game scales X to the
 # deck's real width. A pier and an abutment stand on the ground and reach the underside of a 6 m deck (z = 5.1;
@@ -4748,6 +4780,8 @@ BUILDINGS = {
     "fence": (b_fence, 9.0, 0.28, 0),
     "hedge": (b_hedge, 4.0, 0.8, 0),
     "picket": (b_picket, 4.0, 0.2, 0),
+    "hedge_far": (b_hedge_far, 4.0, 0.8, 0),
+    "picket_far": (b_picket_far, 4.0, 0.2, 0),
     "streetlamp": (b_streetlamp, 0.88, 2.05, 0),
     "signal": (b_signal, 0.59, 0.59, 0),
     "floodmast": (b_floodmast, 2.3, 2.15, 0),

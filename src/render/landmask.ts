@@ -98,21 +98,27 @@ export function rasterPlots(list: readonly MaskPlot[]): { data: Uint8Array; w: n
     const r = Math.abs(ux) * hw + Math.abs(uy) * hd + reach, s = Math.abs(uy) * hw + Math.abs(ux) * hd + reach;
     const i0 = Math.max(0, Math.floor((b.c.x - r - x0) / texel)), i1 = Math.min(w - 1, Math.ceil((b.c.x + r - x0) / texel));
     const j0 = Math.max(0, Math.floor((b.c.y - s - y0) / texel)), j1 = Math.min(h - 1, Math.ceil((b.c.y + s - y0) / texel));
+    // (Math.sqrt, not Math.hypot, and rounding by hand: this runs for every texel round every lot, some half a million
+    // times a build)
+    const bhw = b.hw, bhd = b.hd, cx = b.c.x, cy = b.c.y;
     for (let j = j0; j <= j1; j++) {
-      const dy = y0 + (j + 0.5) * texel - b.c.y;
+      const dy = y0 + (j + 0.5) * texel - cy;
       for (let i = i0; i <= i1; i++) {
-        const dx = x0 + (i + 0.5) * texel - b.c.x;
+        const dx = x0 + (i + 0.5) * texel - cx;
         // (along the frontage, and across it)
         const a = Math.abs(dx * ux + dy * uy), d = Math.abs(-dx * uy + dy * ux);
         const o = (j * w + i) * 4;
         if (ch === 0) {
-          const out = Math.hypot(Math.max(0, a - b.hw), Math.max(0, d - b.hd));
-          const n = Math.round(Math.max(0, 1 - out / FALL) * 255);
-          if (n > data[o + 3]) data[o + 3] = n;
+          const ea = a > bhw ? a - bhw : 0, ed = d > bhd ? d - bhd : 0;
+          const out = Math.sqrt(ea * ea + ed * ed);
+          if (out < FALL) {
+            const n = ((1 - out / FALL) * 255 + 0.5) | 0;
+            if (n > data[o + 3]) data[o + 3] = n;
+          }
         }
-        const k = Math.min(1, Math.max(0, (hw - a) / soft + 0.5)) * Math.min(1, Math.max(0, (hd - d) / soft + 0.5));
-        if (k <= 0) continue;
-        const v = Math.round(k * 255);
+        const ka = (hw - a) / soft + 0.5, kd = (hd - d) / soft + 0.5;
+        if (ka <= 0 || kd <= 0) continue;
+        const v = ((ka < 1 ? ka : 1) * (kd < 1 ? kd : 1) * 255 + 0.5) | 0;
         if (v > data[o + ch]) data[o + ch] = v;
       }
     }

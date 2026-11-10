@@ -15,6 +15,16 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.99", date: "2026-11-10", title: "Lighter",
+    notes: [
+      "A big map draws about half as much at every zoom, so it runs smoother on the same machine.",
+      "Hedges and fences far off use simpler models, and buildings off screen are skipped.",
+      "Loading a save no longer leaves the old map in memory.",
+      "Laying a road next to a town is faster.",
+      "With the sound muted, the game stops working on sound altogether.",
+    ],
+  },
+  {
     v: "v0.0.98", date: "2026-11-10", title: "Why it grows",
     notes: [
       "A town says how it is growing and why: growing, growing slowly, holding or shrinking, and the need that holds it back.",

@@ -128,7 +128,7 @@ export const VEHICLE_MODELS = [
   "carrier", "heavy_carrier", "rt_carrier_a", "rt_carrier_b", "motorcar",
 ] as const;
 /** Street furniture, drawn on its own (not a lot). */
-export const PROP_MODELS = ["busstop", "fence", "hedge", "picket", "bridge_pier", "bridge_abutment", "bridge_pylon", "bridge_truss", "streetlamp", "signal", "floodmast", "telegraphpole", "telegraphwire", "billboard_a", "billboard_b", "billboard_c", "land_hedgerow_a", "land_hedgerow_b", "land_gate", "land_haystack", "land_reeds", "land_hedgerow_a_far", "land_hedgerow_b_far", "land_haystack_far", "land_reeds_far", ...CON_MODELS] as const;
+export const PROP_MODELS = ["busstop", "fence", "hedge", "picket", "hedge_far", "picket_far", "bridge_pier", "bridge_abutment", "bridge_pylon", "bridge_truss", "streetlamp", "signal", "floodmast", "telegraphpole", "telegraphwire", "billboard_a", "billboard_b", "billboard_c", "land_hedgerow_a", "land_hedgerow_b", "land_gate", "land_haystack", "land_reeds", "land_hedgerow_a_far", "land_hedgerow_b_far", "land_haystack_far", "land_reeds_far", ...CON_MODELS] as const;
 export type VehicleKind = (typeof VEHICLE_MODELS)[number];
 
 /**

@@ -89,8 +89,20 @@ export class Wireless {
     if (on === this.on) return;
     this.on = on;
     if (on) { this.band.gain.setTargetAtTime(BAND, this.e.now, 0.05); this.startAt = this.e.now + 1.2; }
-    else this.hush();
+    else { this.hush(); this.dropHorn(); }
     if (!on) this.onTune?.("");
+  }
+
+  /** The set switched off: the horn's two oscillators stop once it has faded (they would run on, silent, for good). */
+  private dropHorn() {
+    const h = this.horn;
+    if (!h) return;
+    this.horn = null;
+    const end = this.e.now + 0.4;
+    h.osc.onended = () => { h.osc.disconnect(); h.lfo.disconnect(); h.amp.disconnect(); };
+    h.osc.stop(end);
+    h.lfo.stop(end);
+    this.e.held -= 2;
   }
 
   /** Turn to another tune. */
