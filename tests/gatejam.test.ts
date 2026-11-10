@@ -15,7 +15,20 @@ import { buildGateJam, runGateJam } from "./gatejam.scenario";
 describe("one sawmill, two towns and eight building sites on one road", () => {
   it("gets slow, never seizes: nobody stands, its trucks keep moving, the towns keep their planks, the sites go up", () => {
     const s = buildGateJam({ sites: 2, pop: 600 });
-    const r = runGateJam(s, 2.5);
+    // (each hour: the sites part-way through their planks, and what each says of how long it will be)
+    let partBuilt = 0, timed = 0;
+    const r = runGateJam(s, 2.5, () => {
+      for (const b of s.sites) {
+        const site = b.plant!.site;
+        if (!site || !((site.got.planks ?? 0) > 0)) continue;
+        partBuilt++;
+        const e = Industry.siteEta(b)!;
+        expect(e.need).toBe(site.need.planks);
+        expect(e.got).toBe(site.got.planks);
+        expect(e.got).toBeLessThan(e.need);
+        if (e.perHour > 0 && e.hours !== null && e.hours > 0 && e.hours < 24 * 6) timed++;
+      }
+    });
     // no vehicle stands five game minutes (it was 25 by the end of the first day and 98 and more by the fourth);
     // nobody waits two at a junction, and the jam breaker and the drivers' giving up, the last resorts, never fire
     expect(r.standing).toBe(0);
@@ -35,15 +48,9 @@ describe("one sawmill, two towns and eight building sites on one road", () => {
     // the sites go up all the same, nearest done first: the first mine inside half a real hour
     expect(r.firstMine).not.toBeNull();
     expect(r.firstMine!).toBeLessThan(30);
-    // and every site still waiting says how long it will be, from the loads it has had
-    const waiting = s.sites.filter((b) => b.plant!.site && (b.plant!.site.got.planks ?? 0) > 0);
-    expect(waiting.length).toBeGreaterThan(0);
-    for (const b of waiting) {
-      const e = Industry.siteEta(b)!;
-      expect(e.need).toBe(b.plant!.site!.need.planks);
-      expect(e.got).toBe(b.plant!.site!.got.planks);
-      expect(e.got).toBeLessThan(e.need);
-    }
-    expect(waiting.some((b) => { const e = Industry.siteEta(b)!; return e.perHour > 0 && e.hours !== null && e.hours > 0 && e.hours < 24 * 6; })).toBe(true);
+    // and every site part-way through says how long it will be, from the loads it has had (one at a time gets the
+    // planks, nearest first: at any one hour there may be none part-way)
+    expect(partBuilt).toBeGreaterThan(5);
+    expect(timed).toBeGreaterThan(partBuilt / 2);
   }, 240000);
 });

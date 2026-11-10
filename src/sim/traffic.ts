@@ -233,6 +233,11 @@ export const LONG = 10;
  */
 export const TRAIN = 16;
 /**
+ * The most a trailer is drawn folded against the piece that pulls it (rad, 75 degrees: past that a real one has
+ * jack-knifed). Through any turn the roads can make a road train bends about 65 degrees at the most.
+ */
+export const MAX_BEND = (75 * Math.PI) / 180;
+/**
  * The jam breaker, a last resort (owner, 2026-11-08: "let infinite traffic jams get a bit fixed into non infinite
  * ones"). The give-way rules are meant never to lock, but a city is big and odd layouts get built, and a spot that
  * locks solid would stand forever. So: where cars have stood JAM_BREAK s at a junction (the stuck alert has been up
@@ -434,6 +439,11 @@ export class Traffic {
       const courtesy = o.v < 4 && ls - len - o.s > 1.5 + (o.v * o.v) / (2 * SIM.idm.b) + o.v * 0.8;
       if (o.s <= ls && ls - o.s < Math.max(10, o.v * headway) && !courtesy) { p.why = "oncoming"; p.blocker = o.id; return "wait"; }
     }
+    // a body whose front has gone on into the junction ahead (or beyond it) but whose tail is still on this lane,
+    // across the mouth: not out into it (trucks at a works' gate were drawn through the one before them, which was
+    // waiting at the line a few metres on)
+    for (const c of lane.outs) for (const o of c.occ as Vehicle[]) if (lane.pl.length + o.s - o.len < ls + len + 3) { p.why = "occupied"; p.blocker = o.id; return "wait"; }
+    for (const t of this.tails.get(lane) ?? []) if (t.rear < ls + len + 3 && this.vehicles.includes(t.v) && t.v.edge !== lane) { p.why = "occupied"; p.blocker = t.v.id; return "wait"; }
     // incoming vehicles from the connector feeding this lane near the start
     if (ls < 12) for (const c of lane.ins) if ((c.occ as Vehicle[]).length) { p.why = "junction"; return "wait"; }
     if (crossing) {
@@ -2783,15 +2793,31 @@ export class Traffic {
       const o = order[j] * 3, extra = want[order[j]] - acc;
       pts[o] = px - bx * extra; pts[o + 1] = py - by * extra; pts[o + 2] = ph;
     }
+    // A trailer rides the rear axle of the piece ahead of it (the fifth wheel), and folds against it no further than
+    // MAX_BEND: where the path behind doubles back tighter than a real one could follow (a hairpin, a tail laid
+    // sideways into a lot), the trailer swings round on its kingpin instead of being drawn jack-knifed across the
+    // tractor, and the ones behind it follow its rear axle, not the path, till the train has straightened out.
+    let hitched = false, bent = false, pa = 0, hx = 0, hy = 0;
     for (let n = 0; n < U.length; n++) {
       const u = U[n], p = n * 6, q = p + 3;
-      const dx = pts[p] - pts[q], dy = pts[p + 1] - pts[q + 1];
-      const a = Math.atan2(dy, dx), cx = Math.cos(a), sy = Math.sin(a);
+      const Px = hitched && bent ? hx : pts[p], Py = hitched && bent ? hy : pts[p + 1];
+      const dx = Px - pts[q], dy = Py - pts[q + 1];
+      let a = Math.atan2(dy, dx);
+      if (hitched) {
+        let d = a - pa;
+        while (d > Math.PI) d -= 2 * Math.PI;
+        while (d < -Math.PI) d += 2 * Math.PI;
+        if (Math.abs(d) > MAX_BEND) { a = pa + Math.sign(d) * MAX_BEND; bent = true; }
+      } else bent = false;
+      const cx = Math.cos(a), sy = Math.sin(a);
       // the middle of the piece, from its pivot back along its heading
       const back = u.len / 2 - u.pivot;
       const o = n * 4;
-      v.uPose![o] = pts[p] - cx * back; v.uPose![o + 1] = pts[p + 1] - sy * back;
+      v.uPose![o] = Px - cx * back; v.uPose![o + 1] = Py - sy * back;
       v.uPose![o + 2] = (pts[p + 2] + pts[q + 2]) / 2; v.uPose![o + 3] = a;
+      const nx = U[n + 1];
+      hitched = !!nx && Math.abs(nx.at + nx.pivot - (u.at + u.axle)) < 0.05;
+      if (hitched) { const wb = Math.sqrt(dx * dx + dy * dy); hx = Px - cx * wb; hy = Py - sy * wb; pa = a; }
     }
   }
   private tmpA = [0, 0, 0];

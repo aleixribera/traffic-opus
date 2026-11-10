@@ -232,7 +232,8 @@ export function jamStats(s: GateJam): JamStats {
   for (const t of g.trips()) {
     const h = t.haul;
     if (!h || h.done || h.big || h.plant !== mill.id) continue;
-    if (pend.has(t)) atGate++;
+    // (waiting in its own yard to pull out; one waiting at a customer's kerb for the way home is on its way back)
+    if (pend.has(t) && h.leg === "out") atGate++;
     else if (h.leg === "out") out++;
     else back++;
   }

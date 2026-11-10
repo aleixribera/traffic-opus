@@ -166,7 +166,8 @@ describe("a save keeps the traffic", () => {
       if (v.uPose && w.uPose) {
         trains++;
         const o = v.uPose.length - 4;
-        expect(Math.hypot(w.uPose[o] - v.uPose[o], w.uPose[o + 1] - v.uPose[o + 1]), `trailer of ${v.id} moved`).toBeLessThan(0.25);
+        // (one still coming out of its driveway: as its body above)
+        expect(Math.hypot(w.uPose[o] - v.uPose[o], w.uPose[o + 1] - v.uPose[o + 1]), `trailer of ${v.id} moved`).toBeLessThan(v.lat !== 0 && !v.lcFrom ? 0.6 : 0.25);
       }
     }
     expect(trains).toBeGreaterThan(3);
