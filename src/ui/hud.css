@@ -518,6 +518,10 @@ kbd { font: 600 var(--t-sm)/1 var(--f-text); padding: 3px 6px; border: 1px solid
 .loading { position: fixed; inset: 0; display: grid; place-items: center; background: var(--plate); z-index: 5; font: 600 var(--t-xs)/1 var(--f-text); text-transform: uppercase; letter-spacing: 0.14em; color: var(--cream-2); transition: opacity .3s; }
 .loading .bar { width: 200px; margin-top: 12px; height: 6px; }
 .loading .bar i { background: var(--ochre); width: 0; transition: width .2s; }
+.gl-notice { z-index: 50; text-transform: none; letter-spacing: 0; }
+.gl-notice > div { max-width: 460px; padding: 0 16px; }
+.gl-notice h2 { font: 600 22px/1.2 var(--f-display, var(--f-text)); text-transform: uppercase; letter-spacing: 0.04em; color: var(--cream); margin: 0 0 10px; }
+.gl-notice p { font: 400 15px/1.5 var(--f-text); color: var(--cream-2); margin: 0 0 16px; }
 
 /* ------------------------------------------------------------ narrower desktop windows */
 @media (max-width: 1100px) {

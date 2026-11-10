@@ -56,8 +56,45 @@ async function boot() {
   if (q.has("audiotest")) void import("./audio/harness");
 }
 
+/**
+ * A plain notice over the game, with one way on (the start-up failure and a graphics card that drops the game's
+ * picture). A browser out of 3D contexts (many tabs or games open, a GPU that crashed) says only "Error creating
+ * WebGL context": the player is told what to do about it, not that.
+ */
+function notice(title: string, body: string, act: string, go: () => void) {
+  document.getElementById("loading")?.remove();
+  const n = document.createElement("div");
+  n.className = "loading gl-notice";
+  n.setAttribute("role", "alertdialog");
+  n.innerHTML = `<div><h2></h2><p></p><button class="btn" type="button"></button></div>`;
+  n.querySelector("h2")!.textContent = title;
+  n.querySelector("p")!.textContent = body;
+  const b = n.querySelector("button")!;
+  b.textContent = act;
+  b.onclick = go;
+  document.body.append(n);
+  b.focus();
+}
+
+const GL_FIX = "Close a few browser tabs or other games and try again. If it keeps happening, restart the browser and check that hardware acceleration is on in its settings.";
+
 boot().catch((e) => {
   console.error(e);
-  const l = document.getElementById("loading");
-  if (l) l.textContent = "Couldn't start the game: " + (e?.message ?? e);
+  const msg = String(e?.message ?? e);
+  if (/webgl/i.test(msg)) notice("The game couldn't start its 3D view", `Your browser didn't give it the graphics it needs. ${GL_FIX}`, "Try again", () => location.reload());
+  else notice("The game couldn't start", msg, "Try again", () => location.reload());
 });
+
+// the graphics card dropped the game's picture mid-game (a driver reset, too many 3D tabs): the game is saved and
+// comes back where it was on a reload of the last city
+document.getElementById("game")?.addEventListener("webglcontextlost", (e) => {
+  e.preventDefault();
+  const app = (window as unknown as { app?: App }).app;
+  try { if (app?.game && app.mode === "play") app.saves.autosave(app.game); } catch (err) { console.error(err); }
+  notice("The 3D view stopped", `The graphics card dropped the game's picture. Your city is saved. ${GL_FIX}`, "Reload my city", () => {
+    const u = new URL(location.href);
+    u.searchParams.delete("new");
+    u.searchParams.set("play", "");
+    location.href = u.toString();
+  });
+}, false);

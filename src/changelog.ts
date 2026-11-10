@@ -15,6 +15,14 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.98", date: "2026-11-10", title: "Why it grows",
+    notes: [
+      "A town says how it is growing and why: growing, growing slowly, holding or shrinking, and the need that holds it back.",
+      "A works short of workers never reads \"At full output\". It names the towns its staff come from and says they need to grow, or another town needs linking to its roads.",
+      "If the browser can't start the game's 3D view, or the graphics card drops it mid-game, the game says what to do. Your city is saved, and one click brings it back.",
+    ],
+  },
+  {
     v: "v0.0.97", date: "2026-11-10", title: "Every counter in town",
     notes: [
       "Trucks share a town's shops between them instead of all unloading at the one nearest the works.",
