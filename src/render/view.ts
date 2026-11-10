@@ -205,6 +205,44 @@ export class View {
     this.sun.intensity = (m / Math.max(0.05, this.sunDir.y)) * Math.PI;
   }
 
+  /**
+   * The sun's shadows on or off. The light always casts (turning castShadow off and on changes every lit material's
+   * shader, and each change compiled them all again: a stall of a tenth of a second or more on the first far zoom
+   * and at every dusk); off, the shadow map is simply not drawn and counts for nothing.
+   */
+  shadows(on: boolean) {
+    this.sun.castShadow = true;
+    this.renderer.shadowMap.autoUpdate = on;
+    this.sun.shadow.intensity = on ? 1 : 0;
+  }
+
+  /**
+   * Compile every material in the scene now (loading), the hidden ones too, so the first look at a far zoom, or the
+   * first lamp lit, doesn't stop the game while its shaders compile.
+   */
+  warm() {
+    const hidden: THREE.Object3D[] = [], culled: THREE.Object3D[] = [];
+    this.scene.traverse((o) => {
+      if (!o.visible) { hidden.push(o); o.visible = true; }
+      if (o.frustumCulled) { culled.push(o); o.frustumCulled = false; }
+    });
+    this.updateCamera();
+    const r = this.renderer, auto = r.shadowMap.autoUpdate;
+    try {
+      r.compile(this.scene, this.camera);
+      // (and one draw of everything into a single pixel, which sends every model to the GPU now; the next frame paints over it)
+      r.shadowMap.autoUpdate = false;
+      r.setScissorTest(true);
+      r.setScissor(0, 0, 1, 1);
+      r.render(this.scene, this.camera);
+    } finally {
+      r.setScissorTest(false);
+      r.shadowMap.autoUpdate = auto;
+      for (const o of hidden) o.visible = false;
+      for (const o of culled) o.frustumCulled = true;
+    }
+  }
+
   render() {
     this.updateCamera();
     this.renderer.render(this.scene, this.camera);

@@ -32,6 +32,8 @@ const ORBIT_TILT = 0.003;
 const KEY_TILT = 0.8;
 /** How quickly the keys' pull on the camera comes on and lets go (1/s: most of it within a tenth of a second). */
 const KEY_EASE = 16;
+/** How long a frame may spend laying out the buildings the sim changed (ms; render/buildings3d.ts work). */
+const LAYOUT_MS = 4;
 
 /**
  * How a new company opens (App.frameStart): the half height it may open at (m: close enough for the hamlet's houses
@@ -181,7 +183,14 @@ export class App {
   pops = new Pops();
   /** Shift + wheel scrolling not yet turned into a whole degree (px) */
   private turnWheel = 0;
-  private treesDue: ReturnType<typeof setTimeout> | 0 = 0;
+  /** when the street trees are due a look (performance.now ms; 0: not due): they make way for new driveways */
+  private treesDue = 0;
+  /** The sim is stepping (game.update): what it changes is laid out over the next frames, not in the step (B12). */
+  private simming = false;
+  /** A whole layout of the buildings is under way in slices: its follow-ups are due when it goes in. */
+  private layoutFollow = false;
+  /** The heavy work left this frame may still take: one big rebuild a frame (spend). */
+  private heavy = 0;
   private iconT = 0;
   private labelKey = "";
   vehicles!: Vehicles3D;
@@ -762,6 +771,8 @@ export class App {
     this.vehicles.attach(this.view, () => this.game.company?.herald);
     this.buildings3d?.disposeExtras();
     this.buildings3d = new Buildings3D(this.models, () => this.game.time, g.net);
+    this.treesDue = 0;
+    this.layoutFollow = false;
     this.vehicles.lotOf = (id) => { const b = g.buildings.byId.get(id); return b ? this.buildings3d.lotWay(b) : null; };
     this.transit3d = new Transit3D(this.models.props.get("busstop"));
     this.parks3d = new Parks3D(this.models);
@@ -799,12 +810,17 @@ export class App {
       // (a delivery or a by-product leaving only pops over the map: nothing else on screen changes)
       if (e.t === "delivery") { this.camera.note(e.d.to.c.x, e.d.to.c.y); if (this.mode !== "menu") this.pops.delivery(e.d, this.view); if (e.d.lost > 0 && this.mode === "play") this.audio.sting("spoil"); return; }
       if (e.t === "shipped") { if (this.mode !== "menu") this.pops.shipped(e.from, e.to, e.p, this.view); return; }
-      if (e.t === "roads") { this.roads.apply(e.cs); this.forestDue = true; this.roadsFar.invalidate(); this.buildings3d.rebuildDrives(g.buildings.list); this.dirtyPreview = true; }
+      if (e.t === "roads") {
+        this.roads.apply(e.cs); this.forestDue = true; this.roadsFar.invalidate(); this.dirtyPreview = true;
+        // (a town laying its own streets: the driveways follow over the next frames; the player's road, at once)
+        if (this.simming) this.buildings3d.rebuildSoon(g.buildings.list, true);
+        else this.buildings3d.rebuildDrives(g.buildings.list);
+      }
       else if (e.t === "buildings") {
-        this.buildings3d.rebuild(g.buildings.list); this.roads.refreshGates(); this.roads.refreshLook(); this.forestDue = true; this.applyTint(); this.dirtyPreview = true;
-        { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }
-        // (street trees make way for new driveways: at most twice a second while a town grows)
-        if (!this.treesDue) this.treesDue = setTimeout(() => { this.treesDue = 0; this.roads.refreshTrees(); }, 500);
+        // (what the sim changed is laid out over the next frames, the old layout drawn meanwhile; the player's own
+        // edit, or a load, at once)
+        if (this.simming) { this.buildings3d.rebuildSoon(g.buildings.list); this.layoutFollow = true; }
+        else { this.buildings3d.rebuild(g.buildings.list); this.afterLayout(); }
       }
       else if (e.t === "zones") this.dirtyPreview = true;
       else if (e.t === "milestone") { if (this.mode === "play") this.hud?.milestone(e.m, e.towns); }
@@ -833,6 +849,9 @@ export class App {
     this.cancelStroke();
     this.selected = null;
     this.hud?.refresh();
+    // every material's shaders compiled now, while the game opens, not on the first far zoom (review 2026-11-10, B12)
+    this.roadsFar.prepare();
+    this.view.warm();
   }
 
   // ---------------------------------------------------------------- tools
@@ -2136,16 +2155,17 @@ export class App {
     this.view.setLight(L.amb, L.sun, L.dir);
     this.smoke.setLight(L.amb, L.sun, L.dir);
     this.birds.setLight(L.amb, L.sun, L.dir);
-    // (no shadow map once the direct light is too faint to cast one)
-    if (L.shade < 0.04) this.view.sun.castShadow = false;
+    // (no shadow map far out, where the ground draws its own hill shadows, nor once the direct light is too faint to
+    // cast one)
+    this.view.shadows(this.view.halfH < 2400 && L.shade >= 0.04);
     // the fields follow the season shown (the menu's and the dev hook's too)
     const look = fieldLook(this.dayCycle.lookTime(g.time));
     if (look !== this.fieldsWere) {
-      if (this.fieldsWere) { this.buildings3d.rebuild(g.buildings.list); this.applyTint(); }
+      if (this.fieldsWere) { this.buildings3d.rebuildSoon(g.buildings.list); this.layoutFollow = true; }
       this.fieldsWere = look;
     }
     const sig = `${this.roads.lampVersion}:${this.buildings3d.version}`;
-    if (sig !== this.lampSig) {
+    if (sig !== this.lampSig && (!this.lampSig || this.spend())) {
       this.lampSig = sig;
       this.lamps.setStatic([...this.roads.lamps, ...this.buildings3d.floods], this.buildings3d.windows);
     }
@@ -2159,8 +2179,28 @@ export class App {
     this.lamps.update(L.lamps, this.dayCycle.hour, this.view.mpp, this.roads.signalHeads, lum(L.amb) + lum(L.sun));
   }
 
+  /** What follows the buildings being laid out again: the gates, the look of the roads, the trees, the greens. */
+  private afterLayout() {
+    const g = this.game;
+    this.roads.refreshGates(); this.roads.refreshLook(); this.forestDue = true; this.applyTint(); this.dirtyPreview = true;
+    { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }
+    // (street trees make way for new driveways: at most twice a second while a town grows)
+    if (!this.treesDue) this.treesDue = performance.now() + 500;
+  }
+
+  /**
+   * One heavy rebuild a frame (a layout going in, the lamps, the smoke, the trees, the ground's mask): each waits its
+   * turn rather than land in the same frame as the others (review 2026-11-10, B12). True: go ahead now.
+   */
+  private spend(): boolean {
+    if (this.heavy <= 0) return false;
+    this.heavy--;
+    return true;
+  }
+
   frame = () => {
     const now = performance.now();
+    this.heavy = 1;
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     const g = this.game;
@@ -2227,7 +2267,11 @@ export class App {
       v.cx = M.c.x - Math.cos(v.rot) * W * 0.14;
       v.cy = M.c.y - Math.sin(v.rot) * W * 0.14;
     }
-    g.update(dt);
+    this.simming = true;
+    try { g.update(dt); } finally { this.simming = false; }
+    // the buildings the sim changed, laid out a slice a frame; in whole, with what follows, when ready
+    if (this.layoutFollow && !this.buildings3d.busy && this.spend()) { this.layoutFollow = false; this.afterLayout(); }
+    else if (this.buildings3d.busy && this.spend()) this.buildings3d.work(LAYOUT_MS);
     this.audio.update(dt);
     this.vehicles.update(g.traffic, g.alpha);
     this.parks3d.update(g.parks.links, g.time + g.alpha * SIM.dt);
@@ -2267,11 +2311,12 @@ export class App {
       this.hudT = 0;
       this.rememberView();
       this.hud?.tick();
-      if (this.buildings3d.updateConstruction()) { this.buildings3d.rebuild(this.game.buildings.list); this.applyTint(); }
+      if (this.buildings3d.updateConstruction()) { this.buildings3d.rebuildSoon(this.game.buildings.list); this.layoutFollow = true; }
       if ((this.overlay !== "none" && this.overlay !== "flow") || this.st.tool === "place") this.applyTint();
     }
     this.saveT += dt;
-    if (this.saveT > 60) { this.saveT = 0; if (this.mode === "play") void this.saves.autosaveSoon(g); }
+    // (in a frame of its own: no layout or rebuild lands with it)
+    if (this.saveT > 60 && this.spend()) { this.saveT = 0; if (this.mode === "play") void this.saves.autosaveSoon(g); }
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - dt * 4);
       this.hud?.shake(this.shake);
@@ -2280,9 +2325,8 @@ export class App {
     const far = this.view.halfH > 1800;
     this.vehicles.group.visible = !far;
     this.roads.group.visible = this.view.mpp < RIBBONS_SEE;
-    this.view.sun.castShadow = this.view.halfH < 2400;
     // the trees make way for what was just built (and come back where it was removed)
-    if (this.forestDue && now - this.forestAt > 250) {
+    if (this.forestDue && now - this.forestAt > 250 && this.spend()) {
       this.forestDue = false;
       this.forestAt = now;
       this.terrain3d.invalidateTrees(this.forest.setShapes(clearShapes(g.net, g.buildings.list)));
@@ -2293,7 +2337,7 @@ export class App {
     // the trees stand in 3D near in; farther out the ground paints their crowns. The planted ones (streets, greens,
     // squares, front gardens) are handed over whenever their lists change
     const tv = `${this.roads.treeVersion}:${this.greens3d.treeVersion}:${this.buildings3d.treeVersion}`;
-    if (tv !== this.treeSig) {
+    if (tv !== this.treeSig && (!this.treeSig || this.spend())) {
       this.treeSig = tv;
       this.trees3d.setPlanted([...this.roads.streetTrees, ...this.greens3d.trees, ...this.buildings3d.squareTrees, ...this.buildings3d.stripTrees]);
     }
@@ -2301,7 +2345,7 @@ export class App {
     this.terrain3d.shared.uPaint.value = this.trees3d.paint;
     this.terrain3d.crownsSoon = this.trees3d.handoverNear;
     // the works smoke, the chimneys too in the cold, and the dirt roads raise dust (not on the data maps)
-    if (this.buildings3d.version !== this.smokeSig) {
+    if (this.buildings3d.version !== this.smokeSig && (this.smokeSig < 0 || this.spend())) {
       this.smokeSig = this.buildings3d.version;
       this.smoke.setEmitters(this.buildings3d.emitters);
     }
@@ -2310,7 +2354,9 @@ export class App {
     // and over the woods and the fields a few birds wheel
     this.birds.update(this.view.camera, this.view.mpp, g.paused ? 0 : dt);
     if (this.terrain3d.shared.uOverlay.value >= 0.5) this.birds.mesh.visible = false;
-    this.landMask.update(g.buildings.list, this.buildings3d.version);
+    if (this.landMask.due(this.buildings3d.version) && this.spend()) this.landMask.update(g.buildings.list, this.buildings3d.version);
+    // the street trees, making way for new driveways
+    if (this.treesDue && now >= this.treesDue && this.spend()) { this.treesDue = 0; this.roads.refreshTrees(); }
     this.terrain3d.update(this.view);
     this.roadsFar.update(this.view.mpp, this.view.w, this.view.h);
     this.labels.update(this.view);
