@@ -84,8 +84,8 @@ Our own names, look and art throughout.
   Villages buy milk and cheese as extras (they add to growth but never hold it back). The panel shows the share
   that arrived fresh and what spoiled. The answer is a nearer buyer or a quicker road, never a purchase.
   **In the world:**
-  - The reefer bodies (light, heavy and road-train) are banded in their load's colour (blue for milk, gold for
-    cheese) with a dark fridge unit.
+  - The reefer bodies (light, heavy and road-train) are insulated vans iced through the roof: cream panels
+    over the company's colour, banded in their load's colour (blue for milk, gold for cheese).
   - Every reefer on screen carries a ring that runs down its shelf time: teal, amber in the last third, then red
     and pulsing once it spoils.
   - At the shop a fresh load pops "Fresh +$", a late one pops "47% fresh −$1,440 spoiled".
@@ -220,13 +220,14 @@ manages or approves it; their part is the road it takes.
   - A piece with nowhere to go waits in the yard.
 - **The convoy.** It is one vehicle in the traffic sim, 33 m long, drawn piece by piece along the path its
   front drove, like a road train. Front to back:
-  - a yellow pilot car;
-  - the haulier's red tractor;
-  - a low-loader with the piece chained down on cribs: a blue-grey generator stator, or a pair of grey plate
-    girders, with red flags at its widest and an OVERSIZE LOAD banner on the back;
+  - a pilot car in the company's colours;
+  - the heavy-haul tractor, in the company's colours too;
+  - a low-loader with the piece chained down on cribs: a blue-grey steam turbine casing, or a pair of
+    red-oxide plate girders braced together, with red flags at its widest and a lettered board on the back;
   - a trailing escort car.
 
-  All of these are Blender models. The cars carry roof boards, and amber beacons flash on every vehicle at
+  All of these are Blender models. The cars carry cream roof boards and a red flag on each front wing, and
+  amber beacons flash on every vehicle at
   1.6 Hz, each on its own beat, throwing a glow on the road around them.
 - **In traffic.** It crawls at 8.5 m/s at most, pulls away slowly and never changes lane to overtake, so
   traffic queues behind it. The same junction and roundabout rules as long vehicles apply. There are no route
@@ -358,7 +359,8 @@ visuals." Time to enjoy the scenery: the light moves through the day, and the ma
   at night is a row of lit shop fronts under its signs.
 - **Works** get lattice floodlight masts (a Blender model) round the yard as built so far, throwing an even
   white light over it; farms work by daylight and have none.
-- **Vehicles** carry headlights (a beam on the road ahead) and red tail lights; **signals** keep a halo so they
+- **Vehicles** carry headlights (a beam on the road ahead, a glow on each lamp) and red tail lights, each on
+  its model's own lamp; **signals** keep a halo so they
   read at night. The HUD, labels and overlays are unaffected: an overlay lifts the night most of the way to day
   so its colours read.
 - **No real lights.** The lamps, windows and beams are instanced quads that brighten what is under them (a little
@@ -1298,6 +1300,56 @@ origin, front and entrance are what they were.
     both. Three hoardings, at least 160 m apart, no trees in front of them.
   - It never stands on a road, a driveway, a lot, a works site or water (tests/furniture.test.ts), and it is
     not drawn from far up: wires above 0.26 m a pixel, poles above 0.56, billboards above 1.0.
+
+### Look: the vehicles of 1925-1940 (2026-11-10)
+
+Everything on the road is of the years the towns are: built in Blender (tools/blender/vehicles_*.py, run by
+build_models.py), flat colour, the shape doing the work, and exaggerated where the camera looks from (wings,
+running boards, the spare, the load). Nothing here is in the game's state. Every model keeps the length, width,
+origin, front and axles the simulation drives, so the traffic is what it was (tests/vehicles.test.ts holds each
+model to the sim's numbers, tests/smooth.test.ts is unchanged).
+
+- **Cars.** Four bodies on separate wings and running boards, upright grille, round headlamps on a bar, a
+  spare on the back: a saloon, a coupe with a canvas top, an open tourer and a pickup. One car in six is a
+  tradesman's van with a cloth roof and a lettered board. Which car and which paint a townsperson has is fixed
+  by the vehicle (`carLook` in src/render/carlook.ts): black, bottle green, maroon, navy, cream, greys, buff,
+  brown, brick and slate, about half of the coloured ones with wings in their own colour a shade deeper, the
+  rest on black wings, and a few two-tones. The colours are a step lighter than the enamel was, and black is
+  rarer, so a car stands off the asphalt from far up.
+- **The Motor Works car** is the one modern shape on the road, a streamliner in one of four liveries: the
+  thing the works exists to make.
+- **The bus** is a bonneted coach: a long body with separate windows, a waistband in cream, a clerestory and
+  luggage on the roof, a destination board. Its body wears its line's colour.
+- **Lorries** have a long bonnet, a separate cab and a body that says what they carry, in the company's
+  colours (the herald's field as the paint, its ink as the lettering colour; `fleetLivery`):
+  - a canvas tilt over hoops, roped down, dyed toward its load's colour (plain canvas when empty);
+  - a tipper with its load in heaps (an empty one shows its scoured steel floor);
+  - a riveted tank with filler domes on a cradle, in its product's colour;
+  - a staked platform with the load in stacks on bearers (bare when empty);
+  - a coach-built insulated van for milk and cheese: cream panels over the company's colour, the whole roof
+    in its lettering colour with ice hatches, a band in its load's colour (blue for milk, gold for cheese);
+  - a two-deck transporter with the Motor Works' cars on it.
+  The heavy class is visibly heavier: twin steering axles, a tandem behind, a taller bonnet with a strip down
+  it, a headboard over the cab. A road train is a tractor and two trailers of the same body.
+- **The convoy** is the company's own set piece: a pilot car and an escort car in its colours with a cream
+  roof board, amber lamps and a red flag on each front wing; the heavy-haul tractor; and a low-loader with a
+  timbered well carrying a steam turbine's casing (steam chest on top, the exhaust boarded over) or a pair of
+  red-oxide plate girders braced together, flagged in red at the widest.
+- **Night.** Every model has lamp lenses (`lamp`, `tail`); the headlamp and tail-light glows sit on them, so
+  they stay on the vehicle at every turn of the camera. Only the front of a train lights its headlamps and
+  only its last piece its tail lights.
+- **Parked cars** are the same cars (src/render/parked3d.ts), instanced, standing in the bays of the lots'
+  yards. They are dressing: the sim counts none of them, and its own trips use the bays left free. About six
+  bays in ten keep a car, and whether it is in follows the hour (`parkedAt`): a home's car is there at night
+  and out by day (a third never go out), a shop's, an office's or a works' comes in the morning and leaves in
+  the evening (one in eight stays the night). Each car keeps its own hours, so a lot fills and empties over a
+  couple of hours, and a car seen arriving or leaving grows in or shrinks away as the traffic's do. Nobody
+  parks to the inch: each stands a hand's breadth off, a degree or two askew, one in three backed in
+  (`parkedStance`).
+- **Cost.** One draw call per kind of vehicle, each instance carrying its three paints (src/render/
+  vehiclepaint.ts). Past 0.72 m a pixel a car is its far model (about 60 triangles); parked cars are redrawn
+  only when the view, the hour or the buildings change, and not at all past 4.2 m a pixel. Triangle counts are
+  in public/models/README.md.
 
 ## Sound
 
