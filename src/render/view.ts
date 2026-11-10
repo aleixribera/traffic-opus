@@ -1,12 +1,17 @@
 import * as THREE from "three";
 import { clamp, type V2 } from "../core/math";
-import { cameraRig, groundBounds, groundRay, screenToGround, shadowFit, worldToScreen, TILT_DEFAULT, TILT_MAX, type GroundRay } from "./viewmath";
+import { cameraRig, groundBounds, groundRay, risenTilt, screenToGround, shadowFit, worldToScreen, MIN_HALF_H, TILT_DEFAULT, TILT_MAX, type GroundRay } from "./viewmath";
 
 /**
  * The Diorama camera: an orthographic view of the ground, turned and pitched. World (x, y) maps to three (x, z);
  * height is three y. The view can turn about the vertical: at rot = 0 screen up is north (-y); positive rot turns the
  * map anticlockwise on screen by that many radians (screen right = (cos rot, sin rot) in world). `tilt` pitches it
  * from straight down (0: the Map view) toward the horizon. The sun stays put in the world.
+ *
+ * Two pitches, one written and one read. `pitch` is what the camera is asked for: the player's own (the Camera
+ * setting, the tilt keys, a drag) or a cinematic shot's. `tilt` is what is drawn, and is never set: for the player's
+ * view it is the pitch eased up to straight down as the camera pulls far back (viewmath.risenTilt), so everything
+ * that turns pixels into the world or back reads `tilt` and stays right at every zoom.
  *
  * A pixel is a line of sight, not a ground point, so everything that goes between pixels and the world uses the two
  * helpers here: screenToGround (where the pixel's line of sight meets a height) and worldToScreen. The geometry
@@ -23,9 +28,14 @@ export class View {
   cy = 1200;
   halfH = 160;
   rot = 0;
-  /** The pitch from straight down, radians (0: the Map view; TILT_MAX: as low as it goes). */
-  tilt = TILT_DEFAULT;
-  minHalfH = 28;
+  /** The pitch asked for, radians from straight down (0: the Map view; TILT_MAX: as low as it goes). */
+  pitch = TILT_DEFAULT;
+  /**
+   * Whether the camera rises to straight down as it pulls far back. On for the player's own view; the cinematic
+   * cameras and the title menu's backdrop film at the pitch they ask for (App.syncRise is the one place that sets it).
+   */
+  rise = true;
+  minHalfH = MIN_HALF_H;
   maxHalfH = 30000;
   w = 1;
   h = 1;
@@ -61,6 +71,12 @@ export class View {
     this.updateCamera();
   }
 
+  /** The pitch drawn, radians from straight down: the pitch asked for, eased out with the zoom while `rise` is on. */
+  get tilt(): number {
+    const p = clamp(this.pitch, 0, TILT_MAX);
+    return this.rise ? risenTilt(p, this.halfH) : p;
+  }
+
   /** Metres per CSS pixel. */
   get mpp() {
     return (this.halfH * 2) / this.h;
@@ -75,7 +91,7 @@ export class View {
   }
 
   updateCamera() {
-    this.tilt = clamp(this.tilt, 0, TILT_MAX);
+    this.pitch = clamp(this.pitch, 0, TILT_MAX);
     const halfW = this.halfH * (this.w / this.h);
     const c = this.camera;
     c.left = -halfW;
@@ -157,7 +173,10 @@ export class View {
     return groundBounds(this, hMax, pad);
   }
 
-  /** Zoom by `factor`, keeping the ground point under pixel (px, py) in place. */
+  /**
+   * Zoom by `factor`, keeping the ground point under pixel (px, py) in place. The pitch drawn changes with the zoom
+   * (the camera rises as it pulls back), and `before` and `after` are each taken at their own: the point holds.
+   */
   zoomAt(px: number, py: number, factor: number) {
     const before = this.screenToGround(px, py);
     this.halfH = clamp(this.halfH * factor, this.minHalfH, this.maxHalfH);

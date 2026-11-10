@@ -11,6 +11,7 @@ import type { Traffic } from "../sim/traffic";
 import { PAL } from "./palette";
 import { MeshBatch } from "./batch";
 import { ENV, ENV_GLSL, seasonal } from "./envShader";
+import { signalPost, type SignalSpot } from "./signals3d";
 import type { MergedModel } from "./models";
 import type { LampSpot } from "./lamps3d";
 
@@ -21,6 +22,11 @@ const SUN_OFF = { x: 0.42, y: 0.62 };
 /** The bridge pieces (tools/blender/build_models.py) are built for a 10 m deck; piers and abutments reach the
  * underside of a 6 m deck (5.1 m). */
 const PIECE_W = 10, PIECE_H = 5.1;
+/** A ramp's foot: the height it comes down through where its abutment stands (m; piers stop a little above). */
+const FOOT_H = 2.6;
+/** The abutment piece: how far its breast wall's back lies from its middle (m), and how far its breast wall stands
+ * out past the edge of the 10 m deck it was built for (m each side). */
+const ABUT_FACE = 4, ABUT_OUT = 0.6;
 
 /** What the road renderer needs from outside for bridges: the Blender bridge pieces, and where the water is. */
 /** Grid (m) the driveways are bucketed in when placing street trees. */
@@ -578,11 +584,15 @@ export class Roads3D {
   // bridges: cream concrete parapets along a raised road's edges, the Blender piers, abutments, pylons and truss
   // panels, and a soft drop shadow on the ground or water down-right of the deck
   private parapetMat = new THREE.MeshLambertMaterial({ color: PAL.parapet });
+  private approachMat = new THREE.MeshLambertMaterial({ color: PAL.approach });
   private pieceMat = new THREE.MeshLambertMaterial({ vertexColors: true });
   private dropMat = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, transparent: true, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
   // signal heads drawn as coloured dots at the stop line
   private lights: THREE.InstancedMesh;
   private lightRefs: { node: number; arm: number; turns: string[]; x: number; y: number; h: number }[] = [];
+  /** The signals to stand at the junctions' arms (render/signals3d.ts), and a count that moves when they change. */
+  signalSpots: SignalSpot[] = [];
+  signalVersion = 0;
   // turn arrows painted on the lanes coming into a junction
   private arrowMat = new THREE.MeshLambertMaterial({ color: PAL.lane, side: THREE.DoubleSide });
   // stop signs: a red octagon at the kerb (white rim)
@@ -973,8 +983,12 @@ export class Roads3D {
       dm.castShadow = true;
       extra.push(dm);
       // parapets along both edges wherever it's up off the ground
-      const pg = parapetGeo(pts, hs, (i, side) => (edges ? (side > 0 ? edges.r[i] : edges.l[i]) : halfW * side));
+      const pg = parapetGeo(pts, hs, (i, side) => (edges ? (side > 0 ? edges.r[i] : edges.l[i]) : halfW * side), lat);
       if (pg) { const pm = new THREE.Mesh(pg, this.parapetMat); pm.castShadow = true; pm.receiveShadow = true; extra.push(pm); }
+      // the solid approach its ramps land on
+      const edgeAt = (i: number, side: number) => (edges ? (side > 0 ? edges.r[i] : edges.l[i]) : halfW * side);
+      const ag = approachGeo(pts, hs, edgeAt, (ABUT_OUT - 0.05) * ((halfW * 2) / PIECE_W), lat, this.parts?.isWater);
+      if (ag) { const am = new THREE.Mesh(ag, this.approachMat); am.castShadow = true; am.receiveShadow = true; extra.push(am); }
       // its shadow on the ground or the water, down-right of the deck (the shadow map alone is a thin sliver)
       const sg = dropShadowGeo(pts, hs, halfW);
       if (sg) { const sm = new THREE.Mesh(sg, this.dropMat); sm.renderOrder = 1; extra.push(sm); }
@@ -999,10 +1013,10 @@ export class Roads3D {
     return o;
   }
 
-  /** Is another road (not this one, and lower) under the point, so a pier can't stand there? */
-  private roadUnder(id: number, p: V2, reach: number): boolean {
+  /** Is another road (not this one, nor one of `but`) under the point, so a pier can't stand there? */
+  private roadUnder(id: number, p: V2, reach: number, but?: Set<number>): boolean {
     for (const sid of this.net.segsNear(p.x - reach - 20, p.y - reach - 20, p.x + reach + 20, p.y + reach + 20)) {
-      if (sid === id) continue;
+      if (sid === id || but?.has(sid)) continue;
       const s = this.net.segs.get(sid), g = this.net.segGeom.get(sid);
       if (!s || !g) continue;
       const c = polyClosest(g.center, p);
@@ -1014,7 +1028,10 @@ export class Roads3D {
   /**
    * The bridge under (and over) a raised road: concrete piers where it's high enough, clear of the roads below
    * (a short span over a road needs none); on a long deck over water, a steel through truss on piers further
-   * apart; and where a deck meets a ramp down, an abutment with a Deco pylon either side.
+   * apart; where a level deck meets a ramp down, a pier under the joint and a Deco pylon either side; and at a ramp's
+   * foot, where it comes down too low for piers, the abutment: a breast wall across under the deck and wing walls
+   * stepping down either side. (The abutment used to stand at the deck's end, under a ramp that carries on at
+   * nearly the deck's height on piers of its own: from the side its steps hung in the air.)
    */
   private bridgePieces(id: number, pts: V2[], hs: number[], ss: number[], halfW: number): THREE.Mesh[] {
     const out: THREE.Mesh[] = [];
@@ -1050,18 +1067,21 @@ export class Roads3D {
       const o = this.piece("bridge_pier", c.p, 0, c.dir, sx, Math.max(0.2, (c.h + LIFT - DECK) / PIECE_H), 1);
       if (o) out.push(o);
     }
-    // the deck's ends: where it meets a road going down (a ramp), an abutment and two pylons
+    // the deck's ends: where it meets a road going down (a ramp), a pier under the joint and two pylons on it
     if (deck) {
       const s = this.net.segs.get(id)!;
       for (const [node, i, sgn] of [[s.a, 0, -1], [s.b, pts.length - 1, 1]] as const) {
         const nh = this.net.nodes.get(node)?.h ?? hs[i];
-        const down = this.net.segsAt(node).some((o) => o.id !== id && Math.min(...(this.net.segGeom.get(o.id)?.hs ?? [nh])) < nh - 1.5);
+        const others = this.net.segsAt(node).filter((o) => o.id !== id);
+        const down = others.some((o) => Math.min(...(this.net.segGeom.get(o.id)?.hs ?? [nh])) < nh - 1.5);
         if (!down) continue;
         const d = i === 0 ? norm(sub(pts[1], pts[0])) : norm(sub(pts[i], pts[i - 1]));
         const outDir = { x: d.x * sgn, y: d.y * sgn };
         const e = pts[i];
-        const ab = this.piece("bridge_abutment", add(e, scale(outDir, 4)), 0, outDir, sx, Math.max(0.2, (hs[i] + LIFT - DECK) / PIECE_H), 1);
-        if (ab) out.push(ab);
+        if (!this.roadUnder(id, e, 6, new Set(others.map((o) => o.id)))) {
+          const pier = this.piece("bridge_pier", e, 0, d, sx, Math.max(0.2, (hs[i] + LIFT - DECK) / PIECE_H), 1);
+          if (pier) out.push(pier);
+        }
         const r = right(d);
         for (const side of [-1, 1]) {
           const q = add(add(e, scale(r, side * (halfW + 0.85))), scale(outDir, 0.9));
@@ -1069,6 +1089,18 @@ export class Roads3D {
           if (py) out.push(py);
         }
       }
+    }
+    // a ramp's foot: where it comes down through FOOT_H (lower than that it has no piers), the abutment, turned to
+    // face down the ramp: its wing walls step down against the solid approach the ramp runs on from there (approachGeo)
+    for (let i = 0; i < pts.length - 1; i++) {
+      const h0 = hs[i], h1 = hs[i + 1];
+      if ((h0 - FOOT_H) * (h1 - FOOT_H) > 0 || h0 === h1) continue;
+      const t = (FOOT_H - h0) / (h1 - h0), sgn = h1 < h0 ? 1 : -1;
+      const c = { x: pts[i].x + (pts[i + 1].x - pts[i].x) * t, y: pts[i].y + (pts[i + 1].y - pts[i].y) * t };
+      const fwd = norm(sub(pts[i + 1], pts[i])), dn = { x: fwd.x * sgn, y: fwd.y * sgn };
+      if (this.parts.isWater?.(c) || this.roadUnder(id, c, 6)) continue;
+      const ab = this.piece("bridge_abutment", add(c, scale(dn, ABUT_FACE)), 0, dn, sx, Math.max(0.2, (FOOT_H + LIFT - DECK) / PIECE_H), 1);
+      if (ab) out.push(ab);
     }
     return out;
   }
@@ -1413,6 +1445,8 @@ export class Roads3D {
 
   private collectLights() {
     this.lightRefs = [];
+    this.signalSpots = [];
+    this.signalVersion++;
     for (const [id, n] of this.net.nodes) {
       if (!n.signal) continue;
       const ng = this.net.nodeGeom.get(id);
@@ -1421,6 +1455,10 @@ export class Roads3D {
         // one dot per incoming lane, at the stop line
         const g = this.net.segGeom.get(a.seg);
         if (!g) continue;
+        // (and one signal standing at the arm, for the lanes that come in on it)
+        const armTurns = new Set<string>();
+        for (const l of g.lanes) if (l.to === id) for (const c of l.outs.length ? l.outs : [{ turn: "S" }]) armTurns.add(c.turn as string);
+        if (armTurns.size) this.signalSpots.push({ node: id, arm: a.seg, turns: [...armTurns], h: n.h + LIFT, ...signalPost(n.p, a, n.h > 0.3) });
         for (const l of g.lanes) {
           if (l.to !== id) continue;
           const p = l.pl.pts[l.pl.pts.length - 1];
@@ -1609,36 +1647,110 @@ function deckSides(pts: V2[], hs: number[], halfW: number, lift: number, edges?:
   return g;
 }
 
-/** Cream concrete parapets along both edges of a raised road (where it's more than ~1 m up): a 0.35 m wall, 0.95 m
- * tall, its outer face flush with the deck's edge. null if no part of it is raised. */
-function parapetGeo(pts: V2[], hs: number[], edge: (i: number, side: number) => number): THREE.BufferGeometry | null {
+type P3 = [number, number, number];
+/** A quad into a flat list of triangle corners, wound so that it faces along (nx, ny, nz). */
+function quadFacing(pos: number[], p0: P3, p1: P3, p2: P3, p3: P3, nx: number, ny: number, nz: number) {
+  // (which way it is wound now, from its two diagonals: that holds even where one corner is pinched shut)
+  const ux = p2[0] - p0[0], uy = p2[1] - p0[1], uz = p2[2] - p0[2];
+  const vx = p3[0] - p1[0], vy = p3[1] - p1[1], vz = p3[2] - p1[2];
+  const flip = (uy * vz - uz * vy) * nx + (uz * vx - ux * vz) * ny + (ux * vy - uy * vx) * nz < 0;
+  const q = flip ? [p0, p3, p2, p0, p2, p1] : [p0, p1, p2, p0, p2, p3];
+  for (let k = 0; k < 6; k += 3) {
+    // (a corner pinched shut, where a wall starts from nothing, leaves a triangle with no area: left out)
+    const [a, b, c] = [q[k], q[k + 1], q[k + 2]];
+    const ex = b[0] - a[0], ey = b[1] - a[1], ez = b[2] - a[2], fx = c[0] - a[0], fy = c[1] - a[1], fz = c[2] - a[2];
+    if ((ey * fz - ez * fy) ** 2 + (ez * fx - ex * fz) ** 2 + (ex * fy - ey * fx) ** 2 < 1e-12) continue;
+    pos.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
+  }
+}
+
+/**
+ * The solid approach under a ramp's foot: from where the ramp comes down through FOOT_H (its abutment stands there)
+ * to where its underside meets the ground, concrete walls under both edges, standing out `ledge` m like the
+ * abutment's breast wall, with the ledge's top between wall and deck, and a wall across at the high end. So a ramp
+ * lands on a block of concrete, as a real bridge approach does, instead of rising out of the grass as a thin slab with
+ * daylight under it. Not over water (`skip`). null where the road never comes that low.
+ */
+export function approachGeo(pts: V2[], hs: number[], edge: (i: number, side: number) => number, ledge: number, lat?: Lat, skip?: (p: V2) => boolean): THREE.BufferGeometry | null {
   const pos: number[] = [];
-  const idx: number[] = [];
+  const top = FOOT_H - 0.05; // (its high end lies inside the breast wall's thickness)
+  const under = (h: number) => Math.max(0.02, h + LIFT - DECK);
+  for (let i = 0; i < pts.length - 1; i++) {
+    const h0 = hs[i], h1 = hs[i + 1];
+    if (Math.min(h0, h1) >= top || under(Math.max(h0, h1)) <= 0.03) continue;
+    const t0 = h0 > top ? (h0 - top) / (h0 - h1) : 0, t1 = h1 > top ? (top - h0) / (h1 - h0) : 1;
+    const A = pts[i], B = pts[i + 1], ra = latAt(pts, i, lat), rb = latAt(pts, i + 1, lat);
+    if (skip?.(A) || skip?.(B)) continue;
+    const sec = (t: number, side: number) => {
+      const x = A.x + (B.x - A.x) * t, z = A.y + (B.y - A.y) * t;
+      const r = norm({ x: ra.x + (rb.x - ra.x) * t, y: ra.y + (rb.y - ra.y) * t });
+      const u = edge(i, side) + (edge(i + 1, side) - edge(i, side)) * t, y = under(h0 + (h1 - h0) * t);
+      const at = (w: number, yy: number): P3 => [x + r.x * w, yy, z + r.y * w];
+      return { r, to: at(u + side * ledge, y), bo: at(u + side * ledge, 0), ti: at(u - side * 0.3, y) };
+    };
+    const f = sub(B, A);
+    const ends: { a: ReturnType<typeof sec>; b: ReturnType<typeof sec> }[] = [];
+    for (const side of [-1, 1]) {
+      const a = sec(t0, side), b = sec(t1, side);
+      quadFacing(pos, a.to, a.bo, b.bo, b.to, a.r.x * side, 0, a.r.y * side); // the wall
+      quadFacing(pos, a.ti, a.to, b.to, b.ti, 0, 1, 0); // the ledge
+      ends.push({ a, b });
+    }
+    // the wall across, where it stops short of the span's end (the high end, under the deck)
+    if (t0 > 0) quadFacing(pos, ends[0].a.to, ends[0].a.bo, ends[1].a.bo, ends[1].a.to, -f.x, 0, -f.y);
+    if (t1 < 1) quadFacing(pos, ends[0].b.to, ends[0].b.bo, ends[1].b.bo, ends[1].b.to, f.x, 0, f.y);
+  }
+  if (!pos.length) return null;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+/** How tall a raised road's parapet stands where the road is `h` up: nothing on the ground, growing out of the kerb
+ * as a ramp lifts off and full height from about 1.8 m up, so a ramp's wall rises with it instead of starting as a
+ * blunt end. */
+export function parapetRise(h: number): number {
+  return smoothstep(clamp((h - 0.5) / 1.3, 0, 1));
+}
+
+/**
+ * Cream concrete parapets along both edges of a raised road: a 0.4 m wall, 0.95 m tall where the road is well up
+ * (parapetRise), standing a hair proud of the deck's edge and lapping a little down its side as a coping, so no face
+ * of it lies in the deck's own side (the two flickered into each other seen from the side). Each run is a closed
+ * section, its faces wound outward and capped at both ends. null if no part of the road is raised.
+ */
+export function parapetGeo(pts: V2[], hs: number[], edge: (i: number, side: number) => number, lat?: Lat): THREE.BufferGeometry | null {
   const n = pts.length;
-  const up = (i: number) => hs[i] > 1;
-  if (!hs.some((h) => h > 1)) return null;
-  const T = 0.35, H = 0.95;
+  const T = 0.35, H = 0.95, OUT = 0.05, LAP = 0.12;
+  const rise = hs.map((h) => parapetRise(h));
+  if (!rise.some((k) => k > 0)) return null;
+  const pos: number[] = [];
+  const quad = (p0: P3, p1: P3, p2: P3, p3: P3, nx: number, ny: number, nz: number) => quadFacing(pos, p0, p1, p2, p3, nx, ny, nz);
   for (const side of [-1, 1]) {
+    const sec = (j: number) => {
+      const r = latAt(pts, j, lat), u = edge(j, side), y = hs[j] + LIFT, k = rise[j];
+      const at = (w: number, z: number): P3 => [pts[j].x + r.x * w, z, pts[j].y + r.y * w];
+      const lap = LAP * Math.min(1, k * 4);
+      return { r, ib: at(u - side * T, y), it: at(u - side * T, y + H * k), ot: at(u + side * OUT, y + H * k), ob: at(u + side * OUT, y - lap), ub: at(u, y - lap) };
+    };
     for (let i = 0; i < n - 1; i++) {
-      if (!up(i) || !up(i + 1)) continue;
-      // three faces (inner, top, outer) as separate quads so they shade flat
-      const q = (j: number) => {
-        const r = lateralAt(pts, j), u = edge(j, side), y = hs[j] + LIFT;
-        const at = (w: number, z: number) => [pts[j].x + r.x * w, z, pts[j].y + r.y * w];
-        return { ib: at(u - side * T, y), it: at(u - side * T, y + H), ot: at(u, y + H), ob: at(u, y - 0.15) };
-      };
-      const a = q(i), b = q(i + 1);
-      for (const [p0, p1, p2, p3] of [[a.ib, a.it, b.it, b.ib], [a.it, a.ot, b.ot, b.it], [a.ot, a.ob, b.ob, b.ot]]) {
-        const k = pos.length / 3;
-        pos.push(...p0, ...p1, ...p2, ...p3);
-        idx.push(k, k + 1, k + 2, k, k + 2, k + 3, k, k + 2, k + 1, k, k + 3, k + 2); // both windings
-      }
+      if (rise[i] <= 0 && rise[i + 1] <= 0) continue;
+      const a = sec(i), b = sec(i + 1);
+      const ox = (a.r.x + b.r.x) * side, oz = (a.r.y + b.r.y) * side;
+      quad(a.ib, a.it, b.it, b.ib, -ox, 0, -oz); // the face to the road
+      quad(a.it, a.ot, b.ot, b.it, 0, 1, 0); // the top
+      quad(a.ot, a.ob, b.ob, b.ot, ox, 0, oz); // the face outward
+      quad(a.ob, a.ub, b.ub, b.ob, 0, -1, 0); // under the coping
+      // the ends of a run that stops at full height (a road's end at a junction up in the air)
+      const d = sub(pts[i + 1], pts[i]);
+      if (rise[i] > 0 && i === 0) quad(a.ib, a.it, a.ot, a.ob, -d.x, 0, -d.y);
+      if (rise[i + 1] > 0 && i === n - 2) quad(b.ib, b.it, b.ot, b.ob, d.x, 0, d.y);
     }
   }
   if (!pos.length) return null;
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-  g.setIndex(idx);
   g.computeVertexNormals();
   return g;
 }

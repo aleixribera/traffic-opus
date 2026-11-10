@@ -15,6 +15,18 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.86", date: "2026-11-10", title: "The camera, finished",
+    notes: [
+      "Pull back and the camera rises to a flat map; zoom in and your own tilt comes back.",
+      "A new company opens close on its hamlet. A save opens where you left the camera.",
+      "A middle-button drag now turns or tilts, not both at once, unless you drag clearly on the diagonal.",
+      "Camera keys and the wheel ease in and out. Y lifts the camera towards straight down, H lowers it towards the horizon.",
+      "Traffic lights stand at their junctions with lit lenses.",
+      "Bridges have clean sides: a closed parapet, a pier at the joint and a solid approach.",
+      "Notes at the cursor no longer run off the edge of the screen.",
+    ],
+  },
+  {
     v: "v0.0.85", date: "2026-11-10", title: "Second look",
     notes: [
       "The spoiled-goods sound plays once, not for every late truck on a slow route.",

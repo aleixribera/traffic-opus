@@ -294,7 +294,7 @@ export class CameraDirector {
     if (!this.saved) {
       // (the cinematic cameras always film the Diorama; the player's own view, the Map view too, is what they give back)
       app.finishTilt();
-      this.saved = { cx: view.cx, cy: view.cy, h: view.halfH, rot: view.rot, tilt: view.tilt, overlay: app.overlay, tool: app.st.tool, paused: app.game.paused };
+      this.saved = { cx: view.cx, cy: view.cy, h: view.halfH, rot: view.rot, tilt: view.pitch, overlay: app.overlay, tool: app.st.tool, paused: app.game.paused };
       app.enterCinema();
     }
     this.mode = kind;
@@ -325,12 +325,18 @@ export class CameraDirector {
     this.shot = null;
     this.hintEl.hidden = true;
     if (s && restore) {
-      view.cx = s.cx; view.cy = s.cy; view.halfH = s.h; view.rot = s.rot; view.tilt = s.tilt;
+      view.cx = s.cx; view.cy = s.cy; view.halfH = s.h; view.rot = s.rot; view.pitch = s.tilt;
       app.leaveCinema(s.overlay, s.tool, s.paused);
     } else app.leaveCinema("none", "inspect", false);
     this.saved = null;
     this.outro = OUTRO;
     this.black = 1;
+  }
+
+  /** Where the player's own camera is: the view itself, or the one a cinematic mode will give back. */
+  playerView(): { cx: number; cy: number; halfH: number } {
+    const s = this.saved, v = this.app.view;
+    return this.cinematic && s ? { cx: s.cx, cy: s.cy, halfH: s.h } : { cx: v.cx, cy: v.cy, halfH: v.halfH };
   }
 
   /** The pitch the view goes back to when the cinematic mode ends (the Camera setting was changed meanwhile). */
@@ -439,14 +445,14 @@ export class CameraDirector {
       view.cx = this.rideCam.x;
       view.cy = this.rideCam.y;
       view.halfH = this.pose.h;
-      view.tilt = this.pose.tilt;
+      view.pitch = this.pose.tilt;
       if (s.chase && !this.lost) view.rot = easeAngle(view.rot, chaseRot(this.vang), 1 - Math.exp(-dt * 0.9));
     } else {
       view.cx = this.pose.x;
       view.cy = this.pose.y;
       view.halfH = this.pose.h;
       view.rot = this.pose.rot;
-      view.tilt = this.pose.tilt;
+      view.pitch = this.pose.tilt;
     }
     this.black = fadeAt(this.shotT, s.dur);
   }

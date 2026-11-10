@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { GESTURE_GAP, WheelReader, dragStarted, wheelDevice, wheelPan, wheelZoomFactor, type WheelSample } from "../src/ui/wheel";
 import { View } from "../src/render/view";
+import { MIN_HALF_H, RISE_FROM, RISE_TO } from "../src/render/viewmath";
 
 const ev = (deltaY: number, o: Partial<WheelSample> = {}): WheelSample => ({ deltaX: 0, deltaY, deltaMode: 0, ctrlKey: false, timeStamp: 0, ...o });
 
-/** A View without a renderer: just its camera numbers (the pan and zoom maths need nothing else). */
+/**
+ * A View without a renderer: just its camera numbers (the pan and zoom maths need nothing else). `tilt` is the
+ * pitch asked for; what is drawn eases out with the zoom, as in the game.
+ */
 function view(cx = 1000, cy = 2000, halfH = 160, rot = 0, tilt = 0): View {
   const v = Object.create(View.prototype) as View;
-  Object.assign(v, { cx, cy, halfH, rot, tilt, w: 1920, h: 1080, minHalfH: 28, maxHalfH: 30000 });
+  Object.assign(v, { cx, cy, halfH, rot, pitch: tilt, rise: true, w: 1920, h: 1080, minHalfH: MIN_HALF_H, maxHalfH: 30000 });
   return v;
 }
 
@@ -152,6 +156,47 @@ describe("how far it zooms and pans", () => {
         expect(v.halfH).not.toBeCloseTo(h0, 3);
       }
     }
+  });
+
+  it("a zoom stays anchored on the cursor all the way out and back in, while the camera rises and comes back down", () => {
+    for (const [rot, tilt] of [[0, 0.7], [1.2, 0.7], [-2.6, 1.0], [3.0, 0.4]]) {
+      const v = view(1000, 2000, 120, rot, tilt);
+      const px = 1500, py = 210;
+      const g = v.screenToGround(px, py);
+      let flat = false, mid = false;
+      // out, a frame of the eased zoom at a time, through the band where the pitch drawn eases up to straight down
+      while (v.halfH < RISE_TO * 2) {
+        const t0 = v.tilt;
+        v.zoomAt(px, py, 1.03);
+        const s = v.worldToScreen(g.x, g.y);
+        expect(s.x).toBeCloseTo(px, 6);
+        expect(s.y).toBeCloseTo(py, 6);
+        // (the camera only ever climbs on the way out, and never by a jump: a couple of degrees a frame at the very most)
+        expect(v.tilt).toBeLessThanOrEqual(t0 + 1e-12);
+        expect(t0 - v.tilt).toBeLessThan(0.04);
+        if (v.halfH > RISE_FROM && v.halfH < RISE_TO && v.tilt > 0 && v.tilt < tilt) mid = true;
+        if (v.tilt === 0) flat = true;
+      }
+      expect(mid).toBe(true);
+      expect(flat).toBe(true);
+      // the pitch the player chose is untouched by the zoom
+      expect(v.pitch).toBe(tilt);
+      // and back in: the same ground under the cursor, the player's own pitch back on screen
+      while (v.halfH > 120) {
+        v.zoomAt(px, py, wheelZoomFactor(ev(-100), "zoom"));
+        const s = v.worldToScreen(g.x, g.y);
+        expect(s.x).toBeCloseTo(px, 6);
+        expect(s.y).toBeCloseTo(py, 6);
+      }
+      expect(v.tilt).toBe(tilt);
+    }
+  });
+
+  it("a camera that films at its own pitch (a Tour shot, the title backdrop) does not rise with the zoom", () => {
+    const v = view(1000, 2000, 3000, 0.4, 0.8);
+    expect(v.tilt).toBe(0);
+    v.rise = false;
+    expect(v.tilt).toBe(0.8);
   });
 
   it("many small pinch events zoom as far as one big one", () => {

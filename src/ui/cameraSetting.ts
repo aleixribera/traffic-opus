@@ -11,7 +11,7 @@ import { TILT_DEFAULT, TILT_MAX } from "../render/viewmath";
 export type CameraView = "diorama" | "map";
 
 export const CAMERA_VIEWS: { id: CameraView; name: string; blurb: string }[] = [
-  { id: "diorama", name: "Diorama", blurb: "The tilted view: buildings, bridges and trucks stand up off the ground" },
+  { id: "diorama", name: "Diorama", blurb: "The tilted view: buildings, bridges and trucks stand up off the ground. Far out it flattens into a map" },
   { id: "map", name: "Map", blurb: "Straight down, like a map. Nothing tilts unless you tilt it" },
 ];
 

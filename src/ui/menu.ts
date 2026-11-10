@@ -181,7 +181,7 @@ export class MainMenu {
       const last = app.saves.latest();
       const d = last ? app.saves.load(last.id) : null;
       if (!d) { this.hud.toast("That save is unreadable", true); return; }
-      try { app.loadGame(d); } catch { this.hud.toast("That save is from an older version", true); return; }
+      try { app.loadGame(d, app.saves.viewOf(last!.id)); } catch { this.hud.toast("That save is from an older version", true); return; }
       app.setMode("play");
     } else if (a === "new") {
       app.newGame(app.saves.latest() ? 1 + Math.floor(Math.random() * 9999) : 7);

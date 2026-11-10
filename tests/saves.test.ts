@@ -105,6 +105,28 @@ describe("saves", () => {
     expect(new Saves().load("old")).toEqual(state);
   });
 
+  it("a save remembers where the camera was, and gives it back to open on", async () => {
+    const saves = new Saves();
+    let at = { cx: 1234.5, cy: -678.9, halfH: 180 };
+    saves.where = () => at;
+    saves.save(stubGame(bigState(20)), "A", "a");
+    at = { cx: 10, cy: 20, halfH: 900 };
+    await saves.saveSoon(stubGame(bigState(20)), "Quicksave", "quick");
+    expect(saves.viewOf("a")).toEqual({ cx: 1234.5, cy: -678.9, halfH: 180 });
+    expect(saves.viewOf("quick")).toEqual({ cx: 10, cy: 20, halfH: 900 });
+    // a save from before the camera was kept, one made with no view of the player's own, a broken one: none
+    saves.where = null;
+    saves.save(stubGame(bigState(20)), "B", "b");
+    expect(saves.viewOf("b")).toBeNull();
+    saves.where = () => undefined;
+    saves.save(stubGame(bigState(20)), "C", "c");
+    expect(saves.viewOf("c")).toBeNull();
+    saves.where = () => ({ cx: NaN, cy: 0, halfH: 100 });
+    saves.save(stubGame(bigState(20)), "D", "d");
+    expect(saves.viewOf("d")).toBeNull();
+    expect(saves.viewOf("nope")).toBeNull();
+  });
+
   it("a save that can't fit fails without touching the one already there", () => {
     const saves = new Saves();
     expect(saves.save(stubGame(bigState(100)), "A", "a")).not.toBeNull();

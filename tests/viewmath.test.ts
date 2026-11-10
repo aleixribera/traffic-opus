@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as THREE from "three";
 import {
   cameraRig, footprint, groundBounds, groundRay, rayAt, screenToGround, shadowFit, worldToScreen,
-  CASTER_H, TILT_DEFAULT, TILT_MAX, type ViewPose,
+  frameFit, riseShare, risenTilt, CASTER_H, RISE_FROM, RISE_TO, TILT_DEFAULT, TILT_MAX, type ViewPose,
 } from "../src/render/viewmath";
 
 const deg = (d: number) => (d * Math.PI) / 180;
@@ -113,6 +113,66 @@ describe("the Diorama camera's maths", () => {
     const foot = worldToScreen(v, 1300, 800, 0), roof = worldToScreen(v, 1300, 800, 20);
     expect(roof.x).toBeCloseTo(foot.x, 9);
     expect(foot.y - roof.y).toBeCloseTo((20 * Math.sin(TILT_DEFAULT)) / m, 9);
+  });
+
+  it("the camera rises as it pulls back: the player's pitch close in, straight down far out, eased between", () => {
+    // close in, the pitch asked for; far out, straight down
+    for (const h of [28, 110, 260, RISE_FROM]) expect(risenTilt(TILT_DEFAULT, h)).toBe(TILT_DEFAULT);
+    for (const h of [RISE_TO, 4000, 30000]) expect(risenTilt(TILT_MAX, h)).toBe(0);
+    // the far views the tilt only squashed are (nearly) the map again; a town seen whole still stands up
+    expect(risenTilt(TILT_DEFAULT, 1200)).toBeLessThan(deg(16));
+    expect(risenTilt(TILT_DEFAULT, 1600)).toBeLessThan(deg(5));
+    expect(risenTilt(TILT_DEFAULT, 650)).toBeGreaterThan(deg(32));
+    // eased: it never goes back, and never jumps, in the pitch or in how fast the pitch changes (per 2% of zoom)
+    let prev = 1, prevStep = 0;
+    for (let h = RISE_FROM * 0.9; h < RISE_TO * 1.1; h *= 1.02) {
+      const k = riseShare(h), step = prev - k;
+      expect(k).toBeGreaterThanOrEqual(0);
+      expect(k).toBeLessThanOrEqual(1);
+      expect(step).toBeGreaterThanOrEqual(0);
+      expect(step).toBeLessThan(0.03);
+      expect(Math.abs(step - prevStep)).toBeLessThan(0.002);
+      prev = k; prevStep = step;
+    }
+    // the Map view stays the Map view at every zoom
+    for (const h of [100, 900, 5000]) expect(risenTilt(0, h)).toBe(0);
+  });
+
+  it("framing a place: everything inside the clear part of the screen, as close as that allows, at any turn and pitch", () => {
+    // a hamlet: a ring of houses, a few strung out along the road north, each a point on the ground and one at its roof
+    const pts: { x: number; y: number; h: number }[] = [];
+    for (let i = 0; i < 16; i++) { const a = (i / 16) * 2 * Math.PI, x = Math.cos(a) * 130, y = Math.sin(a) * 120; pts.push({ x, y, h: 0 }, { x, y, h: 9 }); }
+    for (const y of [-180, -215]) pts.push({ x: -90, y, h: 0 }, { x: -90, y, h: 9 });
+    const inset = { l: 40, t: 84, r: 330, b: 96 };
+    for (const [w, h] of [[1600, 900], [1920, 1080]]) for (const tilt of TILTS) for (const rot of TURNS) {
+      const f = frameFit(pts, rot, tilt, w, h, inset, 60, 400);
+      const v = pose({ cx: f.cx, cy: f.cy, halfH: f.halfH, rot, tilt, w, h });
+      let l = Infinity, r = -Infinity, t = Infinity, b = -Infinity;
+      for (const p of pts) {
+        const s = worldToScreen(v, p.x, p.y, p.h);
+        l = Math.min(l, s.x); r = Math.max(r, s.x); t = Math.min(t, s.y); b = Math.max(b, s.y);
+      }
+      // inside the clear rectangle, touching it on one pair of sides (as close as it goes), centred in it
+      expect(l).toBeGreaterThanOrEqual(inset.l - 1e-6);
+      expect(r).toBeLessThanOrEqual(w - inset.r + 1e-6);
+      expect(t).toBeGreaterThanOrEqual(inset.t - 1e-6);
+      expect(b).toBeLessThanOrEqual(h - inset.b + 1e-6);
+      expect(Math.min(l - inset.l, t - inset.t)).toBeLessThan(1e-6);
+      expect(l - inset.l).toBeCloseTo(w - inset.r - r, 6);
+      expect(t - inset.t).toBeCloseTo(h - inset.b - b, 6);
+    }
+    // the zoom is held between its limits, and the place stays in the middle of the clear part either way
+    const near = frameFit(pts, 0.4, TILT_DEFAULT, 1600, 900, inset, 300, 400), far = frameFit(pts, 0.4, TILT_DEFAULT, 1600, 900, inset, 60, 90);
+    expect(near.halfH).toBe(300);
+    expect(far.halfH).toBe(90);
+    for (const f of [near, far]) {
+      const v = pose({ cx: f.cx, cy: f.cy, halfH: f.halfH, rot: 0.4, w: 1600, h: 900 });
+      let l = Infinity, r = -Infinity;
+      for (const p of pts) { const s = worldToScreen(v, p.x, p.y, p.h); l = Math.min(l, s.x); r = Math.max(r, s.x); }
+      expect((l + r) / 2).toBeCloseTo((inset.l + 1600 - inset.r) / 2, 6);
+    }
+    // nothing to frame: the origin, at the closest allowed
+    expect(frameFit([], 0, 0, 1600, 900, inset, 110, 175).halfH).toBe(110);
   });
 
   it("the footprint is the ground the screen's corners see", () => {

@@ -13,7 +13,14 @@ export interface SaveMeta {
   auto?: boolean;
   v?: number; // save format (see SAVE_V; older ones can't be loaded)
   company?: Company; // whose save it is (saves from before companies had names have none)
+  view?: SavedView; // where the camera was (saves from before v0.0.83 have none: they open on the biggest town)
 }
+
+/**
+ * Where the camera was when the game was saved: the place and the zoom. (The turn and the pitch are the player's
+ * own, kept with the Camera setting, not with a save.)
+ */
+export interface SavedView { cx: number; cy: number; halfH: number }
 
 const INDEX = "flowtown.saves";
 const PREFIX = "flowtown.save.";
@@ -77,6 +84,8 @@ export class Saves {
   private ticket = new Map<string, number>();
   private tickets = 0;
   thumb: (() => string | undefined) | null = null;
+  /** Where the player's camera is now, for the save to open on (nothing while there is no view of the player's own). */
+  where: (() => SavedView | undefined) | null = null;
 
   list(): SaveMeta[] {
     try {
@@ -119,7 +128,8 @@ export class Saves {
   }
 
   private meta(game: Game, name: string, id: string, auto: boolean): SaveMeta {
-    return { id, name, level: game.progress.done.length, playtime: game.playtime, residents: game.people.stats.population, savedAt: Date.now(), auto, v: SAVE_V, company: game.company && { name: game.company.name, herald: { ...game.company.herald } } };
+    const view = this.where?.();
+    return { id, name, level: game.progress.done.length, playtime: game.playtime, residents: game.people.stats.population, savedAt: Date.now(), auto, v: SAVE_V, company: game.company && { name: game.company.name, herald: { ...game.company.herald } }, ...(view ? { view } : {}) };
   }
 
   private write(id: string, data: string, meta: SaveMeta): boolean {
@@ -156,6 +166,12 @@ export class Saves {
     } catch {
       return null;
     }
+  }
+
+  /** Where the camera was when a save was made, if it says. */
+  viewOf(id: string): SavedView | null {
+    const v = this.list().find((m) => m.id === id)?.view;
+    return v && [v.cx, v.cy, v.halfH].every((n) => Number.isFinite(n)) && v.halfH > 0 ? v : null;
   }
 
   latest(): SaveMeta | null {

@@ -28,6 +28,18 @@ const MENU_SWAY_S = 110;
  */
 const ORBIT_TURN = 0.005;
 const ORBIT_TILT = 0.003;
+/** The tilt keys: radians a second (the whole range in a second and a bit). */
+const KEY_TILT = 0.8;
+/** How quickly the keys' pull on the camera comes on and lets go (1/s: most of it within a tenth of a second). */
+const KEY_EASE = 16;
+
+/**
+ * How a new company opens (App.frameStart): the half height it may open at (m: close enough for the hamlet's houses
+ * to read as models, never so close that a part of it is cut off for nothing), and the screen kept clear at each
+ * edge (CSS px: the top bar, the goals panel on the right, the bottom bar, and a little air).
+ */
+const START_HALF_H: [number, number] = [110, 175];
+const START_INSET = { l: 40, t: 84, r: 330, b: 96 };
 
 /** How far outside a waiting site's gate the road tool snaps a road's end (m): clear of the fence, well in reach. */
 const GATE_SNAP = 7;
@@ -48,7 +60,8 @@ import type { ModelSet } from "./render/models";
 import { Preview3D } from "./render/preview3d";
 import { Highlight3D } from "./render/highlight3d";
 import { buildingOn, deckOn, heightsOn, junctionOn, pickOn, straightDown } from "./ui/pick";
-import { rayAt, TILT_MAP, TILT_MAX, type GroundRay } from "./render/viewmath";
+import { frameFit, rayAt, riseShare, TILT_MAP, TILT_MAX, type GroundRay } from "./render/viewmath";
+import { newOrbit, orbitStep, type OrbitDrag } from "./ui/orbit";
 import { TILT_MIN, loadCameraView, loadTilt, loadTurn, saveCameraView, saveTilt, saveTurn, type CameraView } from "./ui/cameraSetting";
 import { groundAt, isMined } from "./ui/inspect";
 import type { Sel } from "./ui/inspect";
@@ -66,12 +79,13 @@ import { Smoke } from "./render/smoke";
 import { Birds } from "./render/birds";
 import { Vehicles3D } from "./render/vehicles3d";
 import { Lamps3D } from "./render/lamps3d";
+import { Signals3D } from "./render/signals3d";
 import { DayCycle } from "./render/daycycle";
 import { fieldLook } from "./game/calendar";
 import { Transit3D, legPoints } from "./render/transit3d";
 import { STOP_COST } from "./game/transit";
 import { View } from "./render/view";
-import { Saves } from "./game/saves";
+import { Saves, type SavedView } from "./game/saves";
 import { PLACED, type PlacedKind } from "./game/placed";
 import type { Hud, Chip } from "./ui/hud";
 import { CameraDirector } from "./ui/camera";
@@ -193,6 +207,8 @@ export class App {
   /** The lamps, floodlights, lit windows and vehicle lights. */
   lamps!: Lamps3D;
   private lampSig = "";
+  signals!: Signals3D;
+  private signalsWere = -1;
   private fieldsWere = "";
   selected: Building | null = null;
   /** what the inspector has selected (the HUD sets it; one at a time) */
@@ -217,6 +233,16 @@ export class App {
   private dioTilt = loadTilt();
   /** The view easing between the Diorama and the Map view. */
   private tiltAnim: { from: number; to: number; t: number } | null = null;
+  /** The keys' pull on the camera, eased: across and down the screen, the turn, the zoom (each -1 to 1). */
+  private keyCam = { x: 0, y: 0, turn: 0, zoom: 0 };
+  /** A tilt key is held (the view settles when it is let go). */
+  private pitching = false;
+  /** A wheel zoom easing in: the pixel whose ground it holds still, and the zoom it is going to. */
+  private zoomEase: { px: number; py: number; to: number } | null = null;
+  /** A drag that turns and tilts the camera, under way: how far it has gone and which of the two it has started. */
+  private orbit: OrbitDrag | null = null;
+  /** Camera hints lately shown, and when each may be shown again (ms). */
+  private hinted = new Map<string, number>();
   /** The view last frame (anything that moves it moves what is under the cursor) and as last saved. */
   private viewKey = "";
   private viewSaved = "";
@@ -293,10 +319,11 @@ export class App {
     if (this.mode === "menu" && m !== "menu") {
       this.menuCam = null;
       this.tiltAnim = null;
-      this.view.tilt = this.camView === "map" ? 0 : this.dioTilt;
+      this.view.pitch = this.camView === "map" ? 0 : this.dioTilt;
       if (m === "play") this.view.rot = loadTurn();
     }
     this.mode = m;
+    this.syncRise();
     document.body.classList.toggle("in-menu", m === "menu");
     document.body.classList.toggle("exploring", m === "explore");
     if (m === "menu") { this.camera.reset(); this.cancelStroke(); this.selected = null; this.setTool({ tool: "inspect" }); this.hasCursor = false; this.hud?.chips(null); }
@@ -325,15 +352,52 @@ export class App {
     const g = new Game(seed);
     g.start();
     this.setGame(g);
-    // open on the starting hamlet
-    const t = g.towns.list[0];
-    this.view.cx = t?.c.x ?? 0;
-    this.view.cy = t?.c.y ?? 0;
-    this.view.halfH = 260;
+    this.zoomEase = null;
+    this.frameStart();
   }
 
-  loadGame(data: ReturnType<Game["serialize"]>) {
+  /**
+   * A new company opens on its hamlet, close enough that its houses stand up as models: every building of it inside
+   * the part of the screen the bars and the goals panel leave clear, at the player's own turn and pitch.
+   */
+  private frameStart() {
+    const g = this.game, v = this.view, t = g.towns.list[0];
+    v.resize();
+    const pts: { x: number; y: number; h: number }[] = [];
+    for (const b of g.buildings.list) {
+      if (t && b.town !== t.id && Math.hypot(b.c.x - t.c.x, b.c.y - t.c.y) > t.reach * 2) continue;
+      const top = this.buildings3d.topOf(b);
+      for (const c of rectCorners(b.c, b.hw, b.hd, b.rot)) pts.push({ x: c.x, y: c.y, h: 0 }, { x: c.x, y: c.y, h: top });
+    }
+    if (!pts.length) pts.push({ x: t?.c.x ?? 0, y: t?.c.y ?? 0, h: 0 });
+    const f = frameFit(pts, v.rot, clamp(v.pitch, 0, TILT_MAX), v.w, v.h, START_INSET, START_HALF_H[0], START_HALF_H[1]);
+    v.cx = f.cx;
+    v.cy = f.cy;
+    v.halfH = f.halfH;
+  }
+
+  /**
+   * Open a saved game, with the camera where it was when it was saved (`at`: Saves.viewOf). A save that does not
+   * say (an older one, the showcase) opens on its biggest town, never on wherever the last game's camera was.
+   */
+  loadGame(data: ReturnType<Game["serialize"]>, at?: SavedView | null) {
     this.setGame(Game.load(data));
+    const v = this.view;
+    this.zoomEase = null;
+    if (at) { v.cx = at.cx; v.cy = at.cy; v.halfH = clamp(at.halfH, v.minHalfH, v.maxHalfH); this.clampView(); return; }
+    let big = this.game.towns.list[0];
+    for (const t of this.game.towns.list) if (t.pop > big.pop) big = t;
+    if (!big) return;
+    v.cx = big.c.x;
+    v.cy = big.c.y;
+    v.halfH = clamp(Math.max(220, big.reach * 1.1), v.minHalfH, 420);
+  }
+
+  /** Where the player's own camera is (what a save opens on): not a cinematic shot, nor the title menu's backdrop. */
+  savedView(): SavedView | undefined {
+    if (this.mode !== "play") return undefined;
+    const p = this.camera.playerView();
+    return { cx: Math.round(p.cx * 10) / 10, cy: Math.round(p.cy * 10) / 10, halfH: Math.round(p.halfH * 10) / 10 };
   }
 
   /**
@@ -434,45 +498,78 @@ export class App {
     // (a cinematic camera, and the title menu's, keep their own tilt: they come back to this one)
     if (this.mode === "menu") this.tiltAnim = null;
     else if (this.camera.cinematic) this.camera.returnTilt(to);
-    else if (!ease || reducedMotion() || Math.abs(this.view.tilt - to) < 1e-4) { this.tiltAnim = null; this.view.tilt = to; }
-    else this.tiltAnim = { from: this.view.tilt, to, t: 0 };
+    else if (!ease || reducedMotion() || Math.abs(this.view.pitch - to) < 1e-4) { this.tiltAnim = null; this.view.pitch = to; }
+    else this.tiltAnim = { from: this.view.pitch, to, t: 0 };
     this.dirtyPreview = true;
     this.hud?.refresh();
   }
 
   /** End the easing between the two views at once, where it was going. */
   finishTilt() {
-    if (this.tiltAnim) { this.view.tilt = this.tiltAnim.to; this.tiltAnim = null; }
+    if (this.tiltAnim) { this.view.pitch = this.tiltAnim.to; this.tiltAnim = null; }
   }
 
   /** M: the Map view, or back to the Diorama. */
   toggleMapView() {
     this.setCameraView(this.camView === "map" ? "diorama" : "map");
+    // (far out both views look straight down: say so, or M seems to do nothing)
+    if (this.camView === "diorama" && this.risen) this.cameraHint("far", "Diorama. Zoom in and the camera tilts");
+  }
+
+  /** The Diorama's own pitch, as the player left it (radians from straight down). */
+  get dioPitch(): number {
+    return this.dioTilt;
+  }
+
+  /** The player's view is so far out that the camera has risen to straight down (render/viewmath.ts riseShare). */
+  private get risen(): boolean {
+    return this.view.rise && riseShare(this.view.halfH) < 0.04;
   }
 
   /**
-   * Pitch the camera by hand, by `d` radians (down toward the horizon when positive). A middle-drag never tilts the
-   * Map view (it only turns it: a map stays a map until the player asks for the tilt with a key or the control).
+   * The cinematic cameras and the title menu's backdrop film at the pitch they ask for; the player's own view rises
+   * to straight down as it pulls far back. The one place that says which (View.rise).
    */
-  pitchBy(d: number, how: "drag" | "ask" = "ask") {
+  private syncRise() {
+    this.view.rise = this.mode !== "menu" && !this.camera?.cinematic;
+  }
+
+  /** One calm line about the camera, and not again for a while (a held key or a long drag asks every frame). */
+  private cameraHint(id: string, msg: string) {
+    const now = performance.now();
+    if (now < (this.hinted.get(id) ?? 0)) return;
+    this.hinted.set(id, now + 20000);
+    this.hud?.toast(msg);
+  }
+
+  /**
+   * Pitch the camera by hand, by `d` radians (down toward the horizon when positive): the tilt keys, a middle-drag,
+   * the camera block. It is the player's own pitch that changes (View.pitch); what is drawn follows it, eased out
+   * with the zoom. So far out that the camera has risen to straight down there is nothing to see change: the pitch
+   * is left alone and one line says why. settleView ends it (a key let go, the button up).
+   */
+  pitchBy(d: number) {
     if (this.camera.cinematic || this.mode === "menu" || !d) return;
-    if (how === "drag" && this.camView === "map") return;
+    if (this.risen) { this.cameraHint("far", "Zoom in to tilt the camera. This far out it looks straight down"); return; }
     this.tiltAnim = null;
     // (asked down out of the Map view: past its catch at once, or a slow key would never get out of it)
-    const from = how === "ask" && d > 0 && this.view.tilt + d <= TILT_MAP ? TILT_MAP : this.view.tilt;
-    this.view.tilt = clamp(from + d, 0, TILT_MAX);
-    if (how === "ask") this.settleView();
+    const from = d > 0 && this.view.pitch + d <= TILT_MAP ? TILT_MAP : this.view.pitch;
+    this.view.pitch = clamp(from + d, 0, TILT_MAX);
     this.dirtyPreview = true;
   }
 
   /**
-   * After a pitch by hand, the setting follows what is on screen, so it always tells the truth: straight down is the
-   * Map view, anything else the Diorama (whose pitch is remembered).
+   * A pitch by hand is over (the key let go, the button up): the setting follows the pitch the player chose, so it
+   * always tells the truth. Straight down is the Map view, anything else the Diorama, whose pitch is remembered.
+   * Tilting all the way up to the Map view leaves the Diorama's pitch as it was before, so M brings that back and
+   * not a view a hair off straight down. It goes by the player's own pitch, never by what is drawn: zooming far out,
+   * where the camera rises to straight down by itself, changes nothing here.
    */
   settleView() {
-    const flat = this.view.tilt <= TILT_MAP;
-    if (flat) this.view.tilt = 0;
-    else this.dioTilt = Math.max(this.view.tilt, TILT_MIN);
+    this.orbit = null;
+    const flat = this.view.pitch <= TILT_MAP;
+    if (flat) this.view.pitch = 0;
+    else this.dioTilt = Math.max(this.view.pitch, TILT_MIN);
     const v: CameraView = flat ? "map" : "diorama";
     if (v === this.camView) return;
     this.camView = v;
@@ -484,13 +581,21 @@ export class App {
    * Turn and tilt the camera by a drag of (dx, dy) pixels: sideways turns it about the middle of the screen, up and
    * down tilts it (the middle button, and the camera control for a touchpad with none). The drag takes hold of the
    * near side of the map, as on a turntable: drag right and the ground in front comes round to the right (the same
-   * way E turns it), drag up and the camera drops toward the horizon. Seen at a tilt the near side is what the eye
-   * holds on to; the old straight-down sign (the far side following the pointer) read as inverted.
+   * way E turns it), drag up and the camera drops toward the horizon, drag down and it climbs toward straight down.
+   *
+   * Each of the two starts only once the drag has clearly gone its way (orbitStep), so a sideways drag that wanders
+   * a little never moves the pitch and a drag up or down never turns the map; a diagonal drag does both. settleView
+   * ends the drag.
    */
   orbitBy(dx: number, dy: number) {
     if (this.camera.cinematic || this.mode === "menu") return;
-    if (dx) this.view.rotateAt(this.view.w / 2, this.view.h / 2, dx * ORBIT_TURN);
-    this.pitchBy(-dy * ORBIT_TILT, "drag");
+    const o = this.orbit ??= newOrbit();
+    // (the Map view is harder to tip: a map stays a map unless the drag plainly goes up the screen)
+    const step = orbitStep(o, dx, dy, this.camView === "map" && this.view.pitch <= TILT_MAP);
+    if (step.turn) this.view.rotateAt(this.view.w / 2, this.view.h / 2, step.turn * ORBIT_TURN);
+    if (step.tilt) this.pitchBy(-step.tilt * ORBIT_TILT);
+    // (dragged down in the Map view: it is as high as it goes, and the way to tilt is the other way)
+    else if (o.ay > 40 && o.ay > Math.abs(o.ax) && this.view.pitch <= TILT_MAP && !this.risen) this.cameraHint("up", "Drag up to tilt the camera, or press H");
     this.dirtyPreview = true;
   }
 
@@ -552,6 +657,7 @@ export class App {
   /** It ends: the tool, info view and pause as they were. */
   leaveCinema(overlay: OverlayId, tool: ToolId, paused: boolean) {
     document.body.classList.remove("cinema");
+    this.syncRise();
     this.keys.clear();
     this.preview.group.visible = true;
     if (overlay !== "none") this.setOverlay(overlay);
@@ -577,7 +683,8 @@ export class App {
     // the view as the player left it: the turn, and the Diorama or the Map view (the Camera setting)
     this.view.rot = loadTurn();
     this.tiltAnim = null;
-    this.view.tilt = this.camView === "map" ? 0 : this.dioTilt;
+    this.view.pitch = this.camView === "map" ? 0 : this.dioTilt;
+    this.syncRise();
     this.hud?.cameraPose(this.view.rot, this.view.tilt);
     this.hud?.clearBanners();
     for (const c of [...this.worldRoot.children]) this.worldRoot.remove(c);
@@ -625,6 +732,8 @@ export class App {
     this.vehicles.lamps = this.lamps;
     this.buildings3d.seasonClock = () => this.dayCycle.lookTime(this.game.time);
     this.lampSig = "";
+    this.signals = new Signals3D(this.models.props.get("signal"));
+    this.signalsWere = -1;
     this.camera?.reset();
     // (the old game's selection would name something else, or nothing, in this one)
     this.hud?.closePanels();
@@ -632,7 +741,7 @@ export class App {
     this.highlight.set(null);
     this.highlight.hoverV = null;
     this.glide = null;
-    this.worldRoot.add(this.terrain3d.group, this.trees3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.greens3d.group, this.lamps.group, this.fireworks.group, this.birds.mesh, this.smoke.mesh);
+    this.worldRoot.add(this.terrain3d.group, this.trees3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.greens3d.group, this.lamps.group, this.signals.group, this.fireworks.group, this.birds.mesh, this.smoke.mesh);
     this.roads.rebuildAll();
     this.buildings3d.rebuild(g.buildings.list);
     { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }
@@ -834,7 +943,15 @@ export class App {
         if (followOn("pan") === "end") this.camera.stopFollow();
         this.glide = null;
         this.view.pan(d.dx, d.dy);
-      } else this.view.zoomAt(at.x, at.y, wheelZoomFactor(e, act, this.view.h));
+      } else {
+        const f = wheelZoomFactor(e, act, this.view.h);
+        // a wheel notch eases in over a few frames, about the ground under the cursor (the pitch drawn changes with
+        // the zoom, and a whole notch at once would jolt it); a pinch follows the fingers as they move
+        if (act === "zoom" && !reducedMotion() && !this.glide) {
+          const from = this.zoomEase?.to ?? this.view.halfH;
+          this.zoomEase = { px: at.x, py: at.y, to: clamp(from * f, this.view.minHalfH, this.view.maxHalfH) };
+        } else { this.zoomEase = null; this.view.zoomAt(at.x, at.y, f); }
+      }
       this.clampView();
       this.updateCursor(at);
     };
@@ -1150,7 +1267,7 @@ export class App {
   quickLoad() {
     const d = this.saves.load("quick");
     if (!d) { this.reject("No quicksave yet (F5 saves)"); return; }
-    try { this.loadGame(d); } catch (e) { this.reject(String(e).includes("older version") ? "That quicksave is from an older version" : "Couldn't load the quicksave"); return; }
+    try { this.loadGame(d, this.saves.viewOf("quick")); } catch (e) { this.reject(String(e).includes("older version") ? "That quicksave is from an older version" : "Couldn't load the quicksave"); return; }
     this.hud?.toast("Quickload");
   }
 
@@ -1934,6 +2051,11 @@ export class App {
       this.lampSig = sig;
       this.lamps.setStatic([...this.roads.lamps, ...this.buildings3d.floods], this.buildings3d.windows);
     }
+    if (this.roads.signalVersion !== this.signalsWere) {
+      this.signalsWere = this.roads.signalVersion;
+      this.signals.setSpots(this.roads.signalSpots);
+    }
+    this.signals.update(g.traffic, this.view.mpp);
     this.lamps.showCars(!far);
     const lum = (c: readonly number[]) => c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
     this.lamps.update(L.lamps, this.dayCycle.hour, this.view.mpp, this.roads.signalHeads, lum(L.amb) + lum(L.sun));
@@ -1944,43 +2066,62 @@ export class App {
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     const g = this.game;
-    // keyboard panning
-    const pan = 520 * dt * (this.view.halfH / 170) ** 0.85;
-    let mx = 0, my = 0;
-    if (this.keys.has("w") || this.keys.has("ArrowUp")) my -= 1;
-    if (this.keys.has("s") || this.keys.has("ArrowDown")) my += 1;
-    if (this.keys.has("a") || this.keys.has("ArrowLeft")) mx -= 1;
-    if (this.keys.has("d") || this.keys.has("ArrowRight")) mx += 1;
-    // Q/E turn the view, R/F zoom (CS2)
-    const turn = (this.keys.has("e") ? 1 : 0) - (this.keys.has("q") ? 1 : 0);
-    const zoom = (this.keys.has("f") ? 1 : 0) - (this.keys.has("r") ? 1 : 0);
-    // (keys held from before a cinematic camera started don't steer it)
-    if (this.camera.cinematic) { mx = 0; my = 0; }
+    this.syncRise();
+    // The camera from the keys: W A S D or the arrows move it along the screen's own axes, Q/E turn it, R/F zoom
+    // (CS2), Y/H tilt it. Not with Ctrl held (Ctrl+S saves, Ctrl+Y is redo), nor while a cinematic camera films.
+    const held = (...ks: string[]) => ks.some((k) => this.keys.has(k));
+    const free = !this.camera.cinematic && !held("Control", "Meta");
+    let mx = free ? (held("d", "ArrowRight") ? 1 : 0) - (held("a", "ArrowLeft") ? 1 : 0) : 0;
+    let my = free ? (held("s", "ArrowDown") ? 1 : 0) - (held("w", "ArrowUp") ? 1 : 0) : 0;
+    const turn = free ? (held("e") ? 1 : 0) - (held("q") ? 1 : 0) : 0;
+    const zoom = free ? (held("f") ? 1 : 0) - (held("r") ? 1 : 0) : 0;
+    // Y up toward the Map view, H down toward the horizon
+    const pitch = free ? (held("h") ? 1 : 0) - (held("y") ? 1 : 0) : 0;
     if ((mx || my) && (this.camera.following !== null || this.glide)) { this.camera.stopFollow(); this.glide = null; }
-    if (mx || my) {
-      const c = Math.cos(this.view.rot), s = Math.sin(this.view.rot);
-      this.view.cx += (mx * c - my * s) * pan;
-      this.view.cy += (mx * s + my * c) * pan;
+    // (a diagonal is no faster than a straight run)
+    if (mx && my) { mx *= Math.SQRT1_2; my *= Math.SQRT1_2; }
+    // each eases in and out over a few frames, so the camera starts and stops softly instead of at full speed
+    const K = this.keyCam, ease = reducedMotion() ? 1 : 1 - Math.exp(-dt * KEY_EASE);
+    const toward = (v: number, to: number) => { const n = v + (to - v) * ease; return Math.abs(n - to) < 0.01 ? to : n; };
+    K.x = toward(K.x, mx); K.y = toward(K.y, my); K.turn = toward(K.turn, turn); K.zoom = toward(K.zoom, zoom);
+    if (this.camera.cinematic || this.mode === "menu") K.x = K.y = K.turn = K.zoom = 0;
+    if (K.x || K.y) {
+      // (at the same speed on screen whichever way: at a tilt the ground up the screen is foreshortened, so the
+      // camera covers more of it going up or down than going across)
+      const px = (520 * dt * (this.view.halfH / 170) ** 0.85) / this.view.mpp;
+      const v = this.view.screenVec(K.x * px, K.y * px);
+      this.view.cx += v.x;
+      this.view.cy += v.y;
     }
-    // Y/H tilt it: Y up toward the Map view, H down toward the horizon (not with Ctrl held: Ctrl+Y is redo)
-    const pitch = this.keys.has("Control") || this.keys.has("Meta") ? 0 : (this.keys.has("h") ? 1 : 0) - (this.keys.has("y") ? 1 : 0);
-    if (turn && !this.camera.cinematic) this.view.rotateAt(this.view.w / 2, this.view.h / 2, turn * 1.5 * dt);
-    if (zoom && !this.camera.cinematic) this.view.zoomAt(this.view.w / 2, this.view.h / 2, Math.exp(zoom * 2.2 * dt));
-    if (pitch) this.pitchBy(pitch * 0.9 * dt);
-    if (mx || my || turn || zoom) this.clampView();
+    if (K.turn) this.view.rotateAt(this.view.w / 2, this.view.h / 2, K.turn * 1.5 * dt);
+    if (K.zoom) { this.zoomEase = null; this.view.zoomAt(this.view.w / 2, this.view.h / 2, Math.exp(K.zoom * 2.2 * dt)); }
+    // a wheel notch easing in (most of it within a tenth of a second)
+    if (this.zoomEase) {
+      const Z = this.zoomEase, v = this.view;
+      if (this.camera.cinematic || this.glide || this.mode === "menu") this.zoomEase = null;
+      else {
+        const r = Z.to / v.halfH, last = Math.abs(Math.log(r)) < 0.004;
+        v.zoomAt(Z.px, Z.py, last ? r : Math.pow(r, 1 - Math.exp(-dt * 16)));
+        this.clampView();
+        if (last) this.zoomEase = null;
+      }
+    }
+    if (pitch) { this.pitchBy(pitch * KEY_TILT * dt); this.pitching = true; }
+    else if (this.pitching) { this.pitching = false; this.settleView(); }
+    if (K.x || K.y || K.turn || K.zoom) this.clampView();
     // easing between the Diorama and the Map view (M, the Camera setting): 0.4 s
     if (this.tiltAnim) {
       const A = this.tiltAnim;
       A.t += dt;
       const k = Math.min(1, A.t / 0.4), e = k * k * (3 - 2 * k);
-      this.view.tilt = A.from + (A.to - A.from) * e;
+      this.view.pitch = A.from + (A.to - A.from) * e;
       if (k >= 1) this.tiltAnim = null;
     }
     // the title menu's backdrop: the Diorama, swaying slowly round the town (still, with reduced motion asked for)
     if (this.mode === "menu" && this.menuCam) {
       const M = this.menuCam, v = this.view;
       if (!reducedMotion()) M.t += dt;
-      v.tilt = MENU_TILT;
+      v.pitch = MENU_TILT;
       v.halfH = M.halfH;
       v.rot = M.rot + MENU_SWAY * Math.sin((M.t * 2 * Math.PI) / MENU_SWAY_S);
       // (the town a little right of the middle, clear of the menu card, whichever way the camera has swung)

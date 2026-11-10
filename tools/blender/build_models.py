@@ -126,6 +126,9 @@ def palette():
         # masts with dark lamp housings
         "lp_iron": "#2f3d36", "lp_iron2": "#3d4c44", "lp_glass": "#f3e8c6", "fl_steel": "#8d918c",
         "fl_house": "#474c4a", "fl_lens": "#eef0ea",
+        # traffic signals: the street lamps' iron and brass, and three lenses of dark glass (the engine lights the
+        # one that shows)
+        "sg_red": "#5c211d", "sg_amber": "#5f4a1b", "sg_green": "#1e4a31",
         # utilities: wind (white tower, grey nacelle), coal (warm grey brick, red-white chimney, pale cooling
         # tower), solar (deep blue panels on grass), water (white + blue), sewage (sand concrete, olive roof)
         "tb_white": "#f2f3f1", "tb_grey": "#bfc4ca", "gravel": "#d3cbb9", "concrete": "#c8c6c0",
@@ -1528,7 +1531,7 @@ def b_bridge_pylon(M, P):
 # ------------------------------------------------------------------ lights (the lamps layer places them)
 
 # Models whose origin is the foot of a post (the lamps layer stands them there), not their footprint's middle.
-POST_ORIGIN = {"streetlamp", "floodmast", "con_crane"}
+POST_ORIGIN = {"streetlamp", "signal", "floodmast", "con_crane"}
 
 
 def b_streetlamp(M, P):
@@ -1564,6 +1567,44 @@ def b_streetlamp(M, P):
     cyl(M, 0, cy, 0.3, 5.58, 5.62, brass, n=10)
     revolve(M, 0, cy, [(0.0, 5.18), (0.17, 5.22), (0.27, 5.36), (0.29, 5.48), (0.27, 5.58), (0.0, 5.58)], glass, n=10)
     cone(M, 0, cy, 0.05, 5.18, 5.08, brass, n=6)
+    return L
+
+
+def b_signal(M, P):
+    """A 1930s pedestal traffic signal, standing on the pavement at a junction's corner: the street lamp's stepped
+    octagonal base and fluted shaft with brass bands, up to a cast-iron head with a brass foot band, a stepped Deco
+    cap and a finial. Three hooded lenses face the traffic it holds (-Y, the game's +z): red 3.8 m up, amber 3.48,
+    green 3.16, each 0.17 m out from the post's middle. The lenses are dark glass: the engine lights the one that
+    shows. Top-down: a dark dot, the cap's stepped square and the three hoods' lip in front of it."""
+    L = Lot(0.8, 0.9)
+    L.bays = []
+    iron, iron2, brass = P["lp_iron"], P["lp_iron2"], P["br_brass"]
+    # base and shaft, as the street lamp's but shorter
+    cyl(M, 0, 0, 0.32, 0.0, 0.16, iron, n=8)
+    cyl(M, 0, 0, 0.25, 0.16, 0.38, iron2, n=8)
+    revolve(M, 0, 0, [(0.22, 0.38), (0.17, 0.56), (0.11, 0.8), (0.0, 0.8)], iron, n=8)
+    revolve(M, 0, 0, [(0.095, 0.8), (0.075, 2.9), (0.0, 2.9)], iron, n=8, rot=math.pi / 8)
+    for z in (0.95, 2.6):
+        cyl(M, 0, 0, 0.11, z, z + 0.07, brass, n=8)
+    cyl(M, 0, 0, 0.13, 2.84, 2.94, iron2, n=8)
+    # the head: a tall case, a brass band at its foot, a stepped cap and a finial
+    hw, hd = 0.19, 0.15
+    box(M, -hw, hw, -hd, hd, 2.94, 4.02, iron)
+    box(M, -hw - 0.02, hw + 0.02, -hd - 0.02, hd + 0.02, 2.94, 2.99, brass)
+    box(M, -hw - 0.03, hw + 0.03, -hd - 0.03, hd + 0.03, 4.02, 4.07, iron2)
+    box(M, -hw + 0.04, hw - 0.04, -hd + 0.03, hd - 0.03, 4.07, 4.13, iron)
+    cone(M, 0, 0, 0.06, 4.13, 4.32, brass, n=6)
+    # the lenses: a rim, the glass, and a hood over each (a roof and two cheeks tapering to the front)
+    for z, glass in ((3.8, P["sg_red"]), (3.48, P["sg_amber"]), (3.16, P["sg_green"])):
+        def ring(y, r):
+            return [(r * math.cos(2 * math.pi * k / 10), y, z + r * math.sin(2 * math.pi * k / 10)) for k in range(10)]
+        M.loft(ring(-hd, 0.125), ring(-hd - 0.02, 0.125), iron2)
+        M.loft(ring(-hd - 0.02, 0.105), ring(-hd - 0.035, 0.105), glass)
+        box(M, -0.14, 0.14, -hd - 0.14, -hd, z + 0.12, z + 0.145, iron)
+        for sx in (-1, 1):
+            x0, x1 = sorted((sx * 0.14, sx * 0.115))
+            M.loft([(x0, -hd, z - 0.02), (x1, -hd, z - 0.02), (x1, -hd, z + 0.12), (x0, -hd, z + 0.12)],
+                   [(x0, -hd - 0.14, z + 0.09), (x1, -hd - 0.14, z + 0.09), (x1, -hd - 0.14, z + 0.12), (x0, -hd - 0.14, z + 0.12)], iron)
     return L
 
 
@@ -5047,6 +5088,7 @@ BUILDINGS = {
     "hedge": (b_hedge, 4.0, 0.8, 0),
     "picket": (b_picket, 4.0, 0.2, 0),
     "streetlamp": (b_streetlamp, 0.88, 2.05, 0),
+    "signal": (b_signal, 0.59, 0.59, 0),
     "floodmast": (b_floodmast, 2.3, 2.15, 0),
     "bridge_pier": (b_bridge_pier, 12.0, 3.2, 0),
     "bridge_abutment": (b_bridge_abutment, 15.8, 8.0, 0),
