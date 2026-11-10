@@ -546,10 +546,33 @@ itself across modes; you build tracks, docks and the transfer points, never line
   | City | 6,000+ | + electronics and machinery |
 
   Supply is the loads a day of each need delivered, averaged over the last 48 game hours (32 minutes at 1x) and
-  rolling hour by hour. Towns grow hour by hour on it. Good supply speeds growth, bigger and denser buildings, and
-  more workers; a long shortfall shrinks the town, slowly (a need that opens ahead of the town's size, a hamlet's
-  planks, only stalls it). A small town grows fastest for its size (several times faster at a few dozen people,
-  tapering off by 450), so the first hour moves.
+  rolling hour by hour. Towns grow hour by hour on it, in bands (below). Good supply speeds growth, bigger and denser
+  buildings, and more workers; a long shortfall shrinks the town, slowly (a need that opens ahead of the town's size,
+  a hamlet's planks, only stalls it). A small town grows fastest for its size (several times faster at a few dozen
+  people, tapering off by 380), so the first hour moves.
+- **What a town uses (owner, 2026-11-10: "lower level demands grow too much on larger cities... focus should go
+  instead to getting those new resources... especially with food"; planks and cement "still grow the demand a little
+  bit, but not much").** Each need is heaviest for its size where it opens: from the people it opens at to the next
+  size line it rises steeply from a few loads a day (so a size's new needs start small and the player has time to
+  build their chains), and past that line it grows slower than the town (towns.ts `demandPerDay`, one continuous
+  curve, no jump at a size line). So by the end of each size the needs it added are the biggest share of its loads,
+  and a town's total loads grow slower than its people: the difficulty of a bigger town is the traffic of its new
+  chains, not ever more food. Loads a day:
+
+  | Need | 100 | 300 | 1,500 | 6,000 | 15,000 |
+  |---|---|---|---|---|---|
+  | food | 6 | 18 | 46 | 102 | 174 |
+  | planks | 2 | 6 | 30 | 52 | 75 |
+  | cement | | | 26 | 45 | 65 |
+  | household goods | | | 8 | 105 | 159 |
+  | fuel | | | 7 | 95 | 144 |
+  | electronics | | | | 26 | 176 |
+  | machinery | | | | 20 | 145 |
+  | all | 8 | 24 | 117 | 445 | 938 |
+
+  Before (until v0.0.91) each head ate 1.6x more at each size: food alone was 60 loads a day at 300, 480 at 1,500
+  and 3,072 at 6,000, so two or three Villages of 300 jammed their roads with food trucks and nobody got past steel.
+  The extras (milk, cheese, cars and the rest) follow the same shape from where they open.
 - **Steady growth on a proven supply (owner, 2026-11-08: "it should be 100% sure the supplies will continue before
   growing crazily"; "the last 48h-72h average or something"; "keep the early game fast as it is now, but more
   'sure' before growing").** Towns used to grow while the last day's supply covered 80% of their needs, overshoot
@@ -557,24 +580,34 @@ itself across modes; you build tracks, docks and the transfer points, never line
   - *Proven supply* is the 48-hour average above. A supply that began less than two days ago is averaged over the
     hours since its first load (the empty hours before it are not a shortfall), but over at least 8 hours, so a
     first truckload alone never counts as a supply.
-  - *Grow only toward what it supports.* A town grows toward the people whose needs its proven supply covers 80%
-    of (the "supplied" bar of the panels), each size eating 1.6x a head more. The worst-supplied need sets the
-    level and the panel names it. It eases in over the last stretch and never passes it. The further the supply
-    runs ahead of the town, the faster it fills in (up to 4/3 of the base pace at three times its needs). The
-    safety is in time, not in quantity: two days of proof before growing. (A bigger margin, tried at 100% and 110%,
-    stalled the start town: its plants are worked by its own people.)
-  - *Crossing a size line.* A supply that covers a size's people all the way to the next size line carries the town
-    3% past the line on the appetite it had. Beyond that it needs the new size's appetite covered.
-  - *Shrinking, with hysteresis.* A town shrinks only after 48 hours in a row of its supply covering less than 85%
-    of what its households need, judged on the better of the two-day and the last day's average, so a day without
-    deliveries, made good since, never counts. Then it loses at most 3% of its households a day, never below what
-    the supply still covers. A town held back by a need it can't buy yet, or one opened ahead of its size, holds
-    rather than shrinks.
-  - Measured with steady deliveries of 100 food, 40 planks and 20 cement a day, no traffic (households every 6 h,
-    tests/growth.test.ts): the start town rises without a dip to 257 households (about 620 people) by day 2.5 and
-    holds there; its people vary by 1-2% as homes are rebuilt (before: up to ~660 people with dips back to ~620, and a day without deliveries cost 30 people in a
-    day). A day without deliveries now changes nothing. A cut lets it hold two days, then lose about 1% of its
-    people a day (633 to 551 over four days; before, 624 to 433 by day 14, much of it at once).
+  - *Growth in bands (owner, 2026-11-10: "full resources should just be a slow daily increase of population, and
+    barely reaching it should grow very very little, and then have a wide margin for no growth, and then a zone for
+    decreasing").* A town's supply level is the share of a day's use it has been getting of its worst-supplied need
+    (towns.ts `supplyLevel`), and:
+    - *100% and over:* it grows at its full pace, a few percent of its homes a day: a Village 6%, a Town 4.5%, a
+      City and up 3.5% (a hamlet much faster, up to 21 times at a few dozen people, fading out by 380, so the first
+      Village comes in about half an hour). With every need met in full, measured on the pace alone: a hamlet of 80
+      to a Village 1.2 days (20 minutes at 1x), a Village to a Town 24 days (6.5 hours), a Town to a City 31 days
+      (8.2 hours). Before: 0.8 days, 4.9 and 6.4. In the balance run (the scripted company, seed 7) the first
+      Village comes on day 2.0 (32 minutes, as before) and first cement and steel at 80 and 88 minutes, with every
+      town fed in full (before: its start town stalled at 315 people with its food down to 28% by day 6, and up to
+      304 company trucks on the road against 213).
+    - *85% to 100%:* it grows a little, rising smoothly as the square of the way from 85% to 100% (90% grows at a
+      ninth of the pace, 95% at four ninths).
+    - *60% to 85%:* it holds: no growth and no loss.
+    - *Under 60% for 48 hours in a row* (judged on the better of the two-day and the last day's average, so a day
+      without deliveries, made good since, never counts): it shrinks, 3% of its households a day at most, never
+      below the people its supply still covers 60% of. A need it can't buy yet, or one opened ahead of its size,
+      holds it rather than shrinks it.
+    There is no extra push for supply far ahead of the town, and no carrying over a size line: the curve is
+    continuous, so the next size's first needs are small. A town that has just reached a size line keeps growing as
+    long as it is supplied. 85% is the "supplied" bar of the panels and the goals ("Enough"). Supply the old
+    curve set up still covers more of the new one, so an old save's towns load growing, not shrinking.
+  - Measured with steady deliveries of 20 food, 8 planks and 6 cement a day, no traffic (households every 6 h,
+    tests/growth.test.ts): the start town rises without a dip from 78 households to 142 by day 2, then ever slower
+    as it nears the people that supply covers: 167 by day 6, 177 (449 people) by day 15, adding half a household a
+    day. A day without deliveries changes nothing. A cut lets it hold two days (167 households), then lose about 3%
+    a day (166 to 134 over seven days).
   - The town panel shows the same two-day average in its needs ("X a day (2-day average) of Y needed"), what its
     supply supports ("supplies support N"), and what holds it back and how many more loads a day would grow it.
 - **Loads that land in time (owner, 2026-11-09: "deliveries to towns seem to always be late"; "add an invisible
@@ -672,7 +705,9 @@ A town should visibly turn from a hamlet into a city over a playthrough: bigger,
 - **Redevelopment, not just sprawl.** When a town reaches a size, its inner rings are rezoned denser. Old
   buildings in a denser ring are pulled down one at a time, centre first, and rebuilt (a construction site,
   then the new building). So the houses you saw at the start become terraces, then flats, then towers, while
-  the edge keeps growing new houses.
+  the edge keeps growing new houses. A town rebuilds as it grows, not by the calendar: one old building for every
+  ten households it grows by (REDEV_HOUSEHOLDS), so a town growing slowly spreads outward as a fast one does
+  rather than packing the same people into its centre, and one that holds rebuilds nothing.
 - **Each new size is a moment:** a banner ("Millbrook is now a Town"), the hall goes up as a building site,
   the label shows the new size.
 - **Towns are inspectable.** Click a town (label or hall) for its panel: population over time, supply per need
@@ -683,8 +718,8 @@ A town should visibly turn from a hamlet into a city over a playthrough: bigger,
   word ("Plenty", "Enough", "Running low", "None!") and a bar: the loads a day coming, filled, against the loads a
   day it wants, with the figure under it ("0 of 518 loads a day"). The bars share one scale: a track's length is its
   want against the town's biggest want, so a small need draws a short track. Under that, one sentence of what to do ("Bring 4 more loads of food a day", "Food is fine"). The words
-  follow the sim: "Enough" from 80% of a day's need (where growthPerDay grows a town at full pace), "Plenty" from
-  all of it, "None!" while not one step's worth (a tenth of the want, rounded) is coming. The need still to come shows greyed: "Soon: Planks, when
+  follow the sim: "Enough" from 85% of a day's need (where a town starts to grow), "Plenty" from
+  all of it (where it grows at its full pace), "None!" while not one step's worth (a tenth of the want, rounded) is coming. The need still to come shows greyed: "Soon: Planks, when
   it reaches 100 people". The rest (what the shops buy at most, today's tally) sits in the row's
   tooltip and under Details. On the map, a town's nameplate shows its needs only while one wants seeing to: each
   picture on a disc ringed green, ochre or brick (with a "!" for none at its bottom right), the fine ones smaller.
@@ -696,6 +731,13 @@ A town should visibly turn from a hamlet into a city over a playthrough: bigger,
   its pace against its own best (every need met in full), so it means the same in a hamlet and a city: all needs
   "Enough" reads "Growing", all "Plenty" "Growing fast" (95% of its best and up; 50% for "Growing"), one running low
   holds it to a trickle, "Growing slowly". The figure in households a day stays under Details only.
+  - *Honest about the bands (2026-11-10).* With growth in bands the line says which band the town is in and where
+    the next one starts (towns.ts `growthLine`, for the panel to call): "Growing: fully supplied", "Growing
+    slowly: 92% supplied, full pace from 100%", "Holding steady: 72% supplied, grows from 85%", "Short of supplies:
+    48% supplied, holds from 60%" and, once the shortfall has lasted two days, "Shrinking: 48% supplied, holds from
+    60%". A town still settling its first streets: "Settling in". `townGrowth(town)` (settlements.ts) gives the
+    panel all of it at once: the band ("fast", "slow", "hold", "shrink"), that line, the supply level and the need
+    that sets it.
 
 ### Towns run themselves (owner, 2026-11-08)
 
@@ -724,10 +766,11 @@ an external road, but don't overdo it, this is the player's job."
   sixth of the house and terrace fronts are left as gardens (26 m gaps between homes). Lots keep 12 m clear of
   the streets still to come. The town's radius for its people grows faster (200 + 12·√people m, up to 2.2 km;
   was 150 + 9·√people, up to 1.6 km), so it spreads instead of packing in. On seed 7, with every need well served
-  (twice what it uses: `Game.fastForward` with `ample` 2), the start town reaches Village on day 2.1, Town on day
-  7.0 and City on day 13.5 (the growth before steady growth, on the same supply: 2.0, 7.4 and 15.1). With every
-  need met exactly (`ample` 1, the tests' default) it grows a step behind its own supply, as steady growth means
-  it to: Village on day 10.7, Town on day 20.0, City on day 29.7 (before: 4.9, 11.8 and 20.5). A real supply
+  (twice what it uses: `Game.fastForward` with `ample` 2), the start town reaches Village on day 1.8, Town on day
+  27 and City on day 62 since growth went to bands (2026-11-10; before: 2.1, 7.0 and 13.5). With every need met
+  exactly (`ample` 1, the tests' default) it grows a step behind its own supply, as steady growth means it to:
+  Village on day 11, Town on day 61 (before: 10.7 and 20.0). Tests that want a Town or a City in a few days pass
+  `fastForward` a `pace`, a multiple of the growth of play. A real supply
   doesn't shrink to fit the town like that. At Town size it
   houses 4.4 homes a hectare within 150 m of its hall (was 7.2) and reaches 720 m out (was 547). At City size it
   has 6.5 homes a hectare within 150 m (was 68) and reaches 1.3 km. It lays about a third more street for the same
@@ -1094,9 +1137,12 @@ as soon as that ground is on screen or under the building. Edge pointers stay cl
 - **The map paces itself by tier, not by land.** There is no land cap and nothing to buy before building: each
   tier's plants unlock with milestones, and its deposits lie kilometres further out than the last, so the
   company's reach grows with the roads it can afford to run out to them.
-- **Demand rises exponentially.** From the mid game it should be obvious that each town size multiplies its
-  needs (per-resident use rises with size, and towns grow faster when supplied). In the long road phase that
-  means bigger trucks, more of them, highways and interchanges; only once volumes outgrow even that do rail
+- **Each size brings new chains (owner, 2026-11-10).** From the mid game the pressure is each size's new needs,
+  which start small and grow to the biggest share of a town's loads, not ever more of the old ones: a town's total
+  loads grow slower than its people (see "What a town uses"). Growth is a slow daily increase, so a size takes
+  hours of play once past the Village, and what the player builds in that time is the next chain and the roads it
+  needs. With more towns and more chains the volumes still climb: bigger trucks, more of them, highways and
+  interchanges; only once volumes outgrow even that do rail
   trunks with truck feeders arrive, then barges. The late game is borderline-madness logistics: huge flows,
   terminals jammed by feeders, crossings to grade-separate.
 - Speed controls up to very fast; the sim must stay smooth at that speed.

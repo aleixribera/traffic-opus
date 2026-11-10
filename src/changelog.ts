@@ -15,6 +15,15 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.96", date: "2026-11-10", title: "New wants, not more of the old",
+    notes: [
+      "A town wants each good most at the size that opened it. Food, planks and cement grow only a little after that, so a City asks mostly for what is new to it.",
+      "Towns grow in bands. With all they need, a town grows slowly and steadily. Just over the bar, it barely grows. Between 60% and 85% it holds. Under 60% for two days, it starts to shrink.",
+      "Towns rebuild old houses as they grow, not on a timer.",
+      "A works short of power shows what it really makes, not its full rate.",
+    ],
+  },
+  {
     v: "v0.0.95", date: "2026-11-10", title: "Say what's missing",
     notes: [
       "Every button on the top bar has its name under it. The Progression window is now Goals, and Transportation is now Traffic.",

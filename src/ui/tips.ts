@@ -10,6 +10,7 @@ import { GATE_LINK_REACH, type Game } from "../game/city";
 import { PLANTS, PRODUCTS, SHELF, UNPOWERED, type PlantKind, type Product } from "../game/industry";
 import { compassWords, type Town } from "../game/settlements";
 import { needFrom, needsOf } from "../game/towns";
+import { ENOUGH } from "../game/supply";
 import { F } from "../world/gen";
 import { MILESTONES } from "../game/progression";
 import { buildOrder, needHelp, shortfalls, worstCeiling } from "./bottleneck";
@@ -30,7 +31,7 @@ const km = (m: number) => `${(m / 1000).toFixed(1)} km`;
 const lower = (k: PlantKind) => BUILDING_TYPES[k].name.toLowerCase();
 
 /** A town wants this product and isn't getting most of it (or hasn't had any yet). */
-export const wants = (t: Town, p: Product): boolean => needsOf(t.pop).includes(p) && (t.supply[p] ?? 0) < 0.8;
+export const wants = (t: Town, p: Product): boolean => needsOf(t.pop).includes(p) && (t.supply[p] ?? 0) < ENOUGH;
 
 /** Cached per road network version and building count: these walk the roads (a new site can join others by its gate alone). */
 const memo = new WeakMap<Game, { v: string; soil?: boolean; joined: Map<number, boolean>; cut: Map<number, boolean> }>();

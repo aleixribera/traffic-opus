@@ -10,7 +10,7 @@
 import type { RoadTypeId } from "../config";
 import { PLANTS, type PlantKind, type Product } from "./industry";
 import type { PlacedKind } from "./placed";
-import { needsOf, sizeOf } from "./towns";
+import { GROW_FROM, needsOf, sizeOf } from "./towns";
 import type { TruckClass } from "./trucks";
 
 export type Feature = "roundabout" | "signals" | "parallel" | "transit";
@@ -75,10 +75,9 @@ export const FIRST_CAP = 2;
 /** How many milestones are open at once. */
 export const OPEN_AT_ONCE = 3;
 
-/** Every need of a town's size supplied over the last full day (at least 80% of each). */
-/** A town gets at least 80% of each of its needs (of only these products, when given). */
+/** A town gets enough of each of its needs to grow (GROW_FROM, 85%; of only these products, when given). */
 export const fullySupplied = (t: ProgressView["towns"][number], only?: Product[]) =>
-  needsOf(t.pop).every((p) => (only && !only.includes(p)) || (t.supply[p] ?? 0) >= 0.8);
+  needsOf(t.pop).every((p) => (only && !only.includes(p)) || (t.supply[p] ?? 0) >= GROW_FROM - 1e-9);
 
 const n = (o: Partial<Record<Product, number>>, p: Product) => o[p] ?? 0;
 const biggest = (v: ProgressView) => v.towns.reduce((a, t) => Math.max(a, t.pop), 0);

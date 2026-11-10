@@ -41,8 +41,9 @@ describe("the daily rhythm", () => {
       else if (starts[kind]) starts[kind][h]++;
       return travel(c, from, to, kind);
     };
-    // the save loads at 6:00 with everyone at home: let the first day settle, then watch three days (longer and the
-    // showcase's town has grown a size and put twice the cars on the road: that is growth, not the time of day)
+    // the save loads at 6:00 with everyone at home: let the first day settle, then watch six days (any one day's hour
+    // is a few cars either way. Before the slower growth of 2026-11-10 six days saw the showcase's town grow a size and
+    // put twice the cars on the road, so it watched three; now its towns grow by a tenth over the six, 553 to 602)
     const step = 1 / 15;
     const cars = Array(24).fill(0), samples = Array(24).fill(0);
     const run = (hours: number, watch: boolean) => {
@@ -58,11 +59,11 @@ describe("the daily rhythm", () => {
     };
     run(20, false);
     for (const k in starts) starts[k].fill(0);
-    run(72, true);
+    run(144, true);
     const sum = (k: string, a: number, b: number) => starts[k].slice(a, b).reduce((s, x) => s + x, 0);
     // cars on the road by hour. The owner's rule is a mild swing, the busiest hour about 1.5-1.8x the quietest: ten
     // of these runs with the dice thrown differently average 1.71 (41 cars at 7:00, 40 at 18:00, 24 at 0:00-2:00).
-    // One run's single hours are three samples of a few dozen cars, so its own busiest over quietest hour reads
+    // One run's single hours are six samples of a few dozen cars, so its own busiest over quietest hour reads
     // anywhere from 1.55 to 2.15: here it only has to be a rhythm (not flat) without a spike or a dead hour, and the
     // mildness is judged on whole rushes against the whole small hours, which one run does resolve (about 1.6)
     const on = cars.map((c, h) => c / samples[h]);
@@ -79,9 +80,10 @@ describe("the daily rhythm", () => {
     expect((busiest >= 6 && busiest < 10) || (busiest >= 16 && busiest < 20)).toBe(true);
     expect(night).toBeLessThan(0.8 * Math.min(morning, evening));
     expect(night).toBeLessThan(mean(9, 17));
-    // (cars on the road at lunch only must not dip under the late morning: a town of 500 sends out about fifty lunch
-    // trips, a few cars an hour, which one run's dice can hide; the trip counts below are where the lunch bump is proved)
-    expect(lunch).toBeGreaterThan(0.85 * mean(10, 12));
+    // (a bump over the hours either side of it, not a dip: the hour or two before it can still carry the tail of the
+    // morning rush, more so in a bigger town, and a town of 500 sends out about fifty lunch trips, a few cars an hour,
+    // which one run's dice can hide; the trip counts below are where the lunch bump is proved)
+    expect(lunch).toBeGreaterThan(0.85 * (mean(10, 12) + mean(14, 16)) / 2);
     expect(lunch).toBeLessThan(Math.min(morning, evening));
     // the morning commute leaves before the day shifts (the early shift's in the small hours); the evening one comes
     // home after them

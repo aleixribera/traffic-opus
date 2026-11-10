@@ -111,7 +111,7 @@ describe("Milestones", () => {
     const town = { food: 1, planks: 1, cement: 1, goods: 1, fuel: 1 };
     expect(sup.measure(view({ towns: [{ pop: 5000, supply: town }] }))[0]).toBe(0);
     expect(sup.measure(view({ towns: [{ pop: 6500, supply: town }] }))[0]).toBe(0);
-    expect(sup.measure(view({ towns: [{ pop: 6500, supply: { ...town, electronics: 0.9, machinery: 0.8 } }] }))[0]).toBe(1);
+    expect(sup.measure(view({ towns: [{ pop: 6500, supply: { ...town, electronics: 0.9, machinery: 0.85 } }] }))[0]).toBe(1);
   });
 
   it("tier 3 milestones measure fuel, goods and parts, and a Town supplied in everything", () => {

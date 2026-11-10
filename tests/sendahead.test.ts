@@ -11,7 +11,7 @@ import type { Building } from "../src/game/buildings";
 import { Industry, type IndustryHost, type PlantKind } from "../src/game/industry";
 import type { Town } from "../src/game/settlements";
 import { HOUR } from "../src/game/society";
-import { GRACE } from "../src/game/supply";
+import { ENOUGH, GRACE } from "../src/game/supply";
 import { averageSupply, demandPerDay } from "../src/game/towns";
 import type { PendingSpawn, Vehicle } from "../src/sim/traffic";
 import { needView } from "../src/ui/needs";
@@ -133,7 +133,7 @@ describe("deliveries that land in time", () => {
     // one light truck shuttling food: a load every T hours, just over the line on average (Enough), T such that the
     // two-day window holds c or c + 1 of them and with c it reads under the line, for an hour or so a cycle, before
     // the next lands
-    const D = demandPerDay("food", t.pop), line = 0.8 * D;
+    const D = demandPerDay("food", t.pop), line = ENOUGH * D;
     const c = Math.ceil(2 * line) - 1;
     const trip = Math.floor((48 / (c + 0.7) / 2) * 8) / 8;
     expect(24 / (2 * trip)).toBeGreaterThanOrEqual(line);
@@ -154,7 +154,7 @@ describe("deliveries that land in time", () => {
     expect([...seen].sort()).not.toContain("low");
     expect(seen.has("enough")).toBe(true);
     expect(dips).toBeGreaterThan(0);
-    expect((t.rate!.food ?? 0) / D).toBeGreaterThan(0.8);
+    expect((t.rate!.food ?? 0) / D).toBeGreaterThan(ENOUGH);
   });
 
   it("a town about to dip has its load sent ahead of a nearer buyer, without waiting for a full truck, and it lands first", () => {
@@ -221,7 +221,7 @@ describe("a grace before a dip shows", () => {
 
   it("a dip shorter than the grace never shows, and never moves the averages its growth and goals go on", () => {
     aboutToDip();
-    const line = 0.8 * demandPerDay("food", t.pop);
+    const line = ENOUGH * demandPerDay("food", t.pop);
     expect(state()).toBe("enough");
     for (let i = 0; i < 2; i++) {
       hour();
@@ -231,7 +231,7 @@ describe("a grace before a dip shows", () => {
       if (i === 0) expect(averageSupply(t.hours!).food).toBeLessThan(line);
       expect(state()).toBe("enough");
       expect(t.rate!.food).toBeGreaterThanOrEqual(line - 1e-9);
-      expect(t.supply.food).toBeGreaterThanOrEqual(0.8 - 1e-9);
+      expect(t.supply.food).toBeGreaterThanOrEqual(ENOUGH - 1e-9);
     }
     // two deliveries' worth lands within the grace: nothing was ever shown, and the dip never counted
     g.towns.sold(t.id, "food", 0.6 * demandPerDay("food", t.pop));
@@ -242,7 +242,7 @@ describe("a grace before a dip shows", () => {
 
   it("a dip longer than the grace shows once the grace is out, and counts only from then on", () => {
     aboutToDip();
-    const line = 0.8 * demandPerDay("food", t.pop);
+    const line = ENOUGH * demandPerDay("food", t.pop);
     const states: string[] = [], rates: number[] = [], landed: number[] = [];
     for (let i = 0; i < 6; i++) {
       hour();

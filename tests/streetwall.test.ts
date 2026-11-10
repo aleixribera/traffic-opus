@@ -120,7 +120,9 @@ describe("a town", () => {
     g.unlockAll();
     g.money = 1e7;
     t = g.towns.list[0];
-    for (let d = 0; d < 240 && t.pop < 2200; d++) g.fastForward(t.id, 6);
+    // (every need served twice over, as tests/density.test.ts grows its town: on exactly what it uses a town now takes
+    // about two months to reach Town size, past the 60 days this gives it; twice over, about four weeks)
+    for (let d = 0; d < 240 && t.pop < 2200; d++) g.fastForward(t.id, 6, 2);
     // a few days at that size, for the homes on Main Street by the hall to make way for the row
     const hold = t.target;
     for (let d = 0; d < 6; d++) { t.target = hold; g.fastForward(t.id, 24); t.target = hold; }
