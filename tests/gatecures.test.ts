@@ -56,8 +56,10 @@ describe("lights on a works' gate junction", () => {
     // nobody stands five game minutes, anywhere; the longest stand is a couple of reds (it was 451 s, with the towns
     // at a third of their planks and the sawmill at one load an hour: the trucks turning in off the paved side had
     // the right of way over the dirt side, and a truck waiting for a green read as "held up", so none was sent)
+    // (since towns buy only their demand, v0.0.105, a returning empty truck can give way for 140 s at a town's T
+    // junction away from the gate; the gate itself is held to one cycle below)
     expect(r.standing).toBe(0);
-    expect(r.longest).toBeLessThan(2 * cycle);
+    expect(r.longest).toBeLessThan(3 * cycle);
     expect(r.breaks).toBe(0);
     expect(r.quits).toBe(0);
     // the gate's own green clears it: trucks come out all the time, none waits much more than one cycle for it

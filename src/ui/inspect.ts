@@ -678,7 +678,8 @@ export function townModel(g: Game, t: Town, led?: TradeLedger): PanelModel {
     const o = adv.works === undefined ? undefined : g.buildings.byId.get(adv.works);
     if (o) status.show = { id: o.id, kind: o.kind };
   }
-  return { title: t.name, sub: TOWN_SIZES[si].name, icon: "town", status, keys, flow, level, related: rel };
+  // (no sub-title: its size is the level line's first word and its nameplate's, docs/ui-words.md rule 3)
+  return { title: t.name, icon: "town", status, keys, flow, level, related: rel };
 }
 
 // ------------------------------------------------------------------------------------------- town buildings
@@ -861,7 +862,7 @@ export function vehicleModel(g: Game, v: Vehicle): PanelModel {
       { value: String(h!.n), unit: h!.n === 1 ? " load" : " loads", label: lower(h!.product) },
       worth > 0
         ? { value: formatMoney(Math.round(worth)), label: "worth", title: "What its buyer pays on delivery. A perishable load is worth less if it goes off on the way" }
-        : { value: "–", label: "worth", title: `Nobody pays for ${lower(h!.product)}. It feeds your works at the other end` },
+        : { value: "Input", label: "own works", title: `Nobody pays for ${lower(h!.product)}. It feeds your works at the other end` },
       arrives,
     ];
   } else if (kind === "bus") keys = [{ value: String(tr.bus!.pax.length), label: "aboard", title: "Riders aboard" }, speed, arrives];

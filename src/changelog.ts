@@ -15,6 +15,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.106", date: "2026-11-11", title: "Say it once",
+    notes: [
+      "Every word in the game was gone over: each fact shows once, panels lead with a state and a number, and help moved into tooltips.",
+      "A new company opens calm: one goal, one arrow to it, no tip box. The goal says what to build and where.",
+      "Panels lost their sub-titles and how-to paragraphs. Key-number captions fit on one line, and red is kept for trouble.",
+      "A works whose towns are full says so calmly and names them; it no longer claims nobody buys its goods.",
+      "Locked build cards say plainly what opens them. Upkeep and the one-line description show under the cards.",
+      "A plot you can't build on shows its real reason, not a power warning. Road errors and building messages are short.",
+    ],
+  },
+  {
     v: "v0.0.105", date: "2026-11-10", title: "Only what they need",
     notes: [
       "Towns buy what they use and no more. Their shops used to take three times their need, so any spare load sold somewhere; now a full town turns loads away, and they wait at your works or go to a warehouse.",

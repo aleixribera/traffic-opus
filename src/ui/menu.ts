@@ -57,7 +57,10 @@ export class MainMenu {
     // (the explore strip sits in the middle of the top edge, but never over the top bar, which grows a button when
     // the map is turned)
     const bar = document.querySelector(".corner.tl");
-    if (bar) new ResizeObserver(() => this.placeStrip()).observe(bar);
+    const ro = new ResizeObserver(() => this.placeStrip());
+    if (bar) ro.observe(bar);
+    const tr = document.querySelector(".corner.tr");
+    if (tr) ro.observe(tr);
     window.addEventListener("resize", () => this.placeStrip());
     app.onMode((m) => {
       this.root.hidden = m !== "menu";
@@ -68,12 +71,19 @@ export class MainMenu {
   }
 
   /** The showcase save, fetched once. */
-  /** The explore strip at the middle of the top edge, or just right of the top bar when the bar reaches past it. */
+  /**
+   * The explore strip at the middle of the top edge, or just right of the top bar when the bar reaches past it; under
+   * the top bar when the panels at the top right would cover it (a narrow window with a panel open).
+   */
   private placeStrip(): void {
     if (this.strip.hidden) return;
     const bar = document.querySelector(".corner.tl")?.getBoundingClientRect();
+    const right = document.querySelector(".corner.tr")?.getBoundingClientRect();
     const w = this.strip.offsetWidth;
-    this.strip.style.left = `${Math.max(window.innerWidth / 2 - w / 2, (bar?.right ?? 0) + 12)}px`;
+    const left = Math.max(window.innerWidth / 2 - w / 2, (bar?.right ?? 0) + 12);
+    const clear = !right || right.height < 1 || left + w + 12 <= right.left;
+    this.strip.style.left = `${clear ? left : (bar?.left ?? 10)}px`;
+    this.strip.style.top = clear ? "" : `${(bar?.bottom ?? 0) + 8}px`;
   }
 
   private async showcase(): Promise<SaveData | null> {

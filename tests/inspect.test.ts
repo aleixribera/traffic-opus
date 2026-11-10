@@ -144,8 +144,8 @@ describe("The inspector's panels", () => {
     // (its load is said once, in its first key number: no subtitle, no cargo row)
     expect(m.sub).toBeUndefined();
     // crops feed your own food plant: nobody pays for them, so no cargo value
-    expect(m.keys.map((k) => k.label)).toEqual(["crops", "worth", "arrives"]);
-    expect(m.keys[1].value).toBe("–");
+    expect(m.keys.map((k) => k.label)).toEqual(["crops", "own works", "arrives"]);
+    expect(m.keys[1].value).toBe("Input");
     expect(m.keys[2].title).toMatch(/^[\d.]+ k?m to go/);
     expect(m.keys[0].value).toBe(String(h.n));
     expect(metresLeft(g, v)).toBeGreaterThan(0);
