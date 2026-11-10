@@ -776,7 +776,10 @@ vec3 groundColor(vec2 p) {
     // snow: drifts with a lit and a shaded side, thin under the trees, on trodden and wind-scoured ground, and
     // gone from the water's edge; a hedge's shadow lies on it
     if (envSnow > 0.001) {
-      sn = envSnowOf(snowN, -0.3 + fo * 0.72 + works * 0.6 + heath * 0.2 + (1.0 - smoothstep(0.0, 2.5, land)) * 0.9 * (1.0 - envFrost) + smoothstep(0.6, 0.9, dryK) * 0.2);
+      // (a town's trees are a park's or a garden's, standing apart on open lawn: the snow lies under them as on the
+      // rest of the town, not thinned as under a wood's closed canopy, which drew a town's blocks as bare dun ground)
+      float foSnow = fo * (1.0 - max(townG, smoothstep(0.1, 0.7, town)));
+      sn = envSnowOf(snowN, -0.3 + foSnow * 0.72 + works * 0.6 + heath * 0.2 + (1.0 - smoothstep(0.0, 2.5, land)) * 0.9 * (1.0 - envFrost) + smoothstep(0.6, 0.9, dryK) * 0.2);
       float e = rnoise((p + uSun * 5.0) / 31.0) - rnoise((p - uSun * 5.0) / 31.0);
       vec3 sc = envSnowCol(p) * (1.0 + clamp(e * 0.45, -0.1, 0.06)) * mix(vec3(1.0), vec3(0.9, 0.94, 1.0), clamp(-e * 2.0, 0.0, 1.0));
       under = mix(under, sc, sn);

@@ -183,6 +183,8 @@ export class App {
   private turnWheel = 0;
   private treesDue: ReturnType<typeof setTimeout> | 0 = 0;
   private iconT = 0;
+  /** The building whose map mark was under the pointer at the last icon set (-1: none). */
+  private iconHover = -1;
   private labelKey = "";
   vehicles!: Vehicles3D;
   buildings3d!: Buildings3D;
@@ -2132,7 +2134,7 @@ export class App {
   /** The light and the season for this frame, and the lamps that go with them. */
   private dayFrame(dt: number, far: boolean) {
     const g = this.game;
-    const L = this.dayCycle.update(g.time + g.alpha * SIM.dt, dt, this.mode === "menu", this.overlay !== "none", this.mode === "menu" ? 0 : farLift(this.view.halfH));
+    const L = this.dayCycle.update(g.time + g.alpha * SIM.dt, dt, this.mode === "menu", this.overlay !== "none", this.mode === "menu" ? 0 : farLift(this.view.halfH), this.mode !== "menu" && this.camView === "map");
     this.view.setLight(L.amb, L.sun, L.dir);
     this.smoke.setLight(L.amb, L.sun, L.dir);
     this.birds.setLight(L.amb, L.sun, L.dir);
@@ -2328,6 +2330,10 @@ export class App {
     if (this.iconT > 0.4) {
       this.iconT = 0;
       this.icons.set(this.bare ? [] : g.buildings.list, this.view);
+      // (the set is new: a roundel or plate may have come or gone under a still pointer, and the name by the pointer
+      // must follow, or it went on naming a works whose mark had moved away: review 2026-11-10, B13)
+      const ih = this.hasCursor ? this.icons.hit(this.cursorPx.x, this.cursorPx.y)?.b.id ?? -1 : -1;
+      if (ih !== this.iconHover) { this.iconHover = ih; this.dirtyPreview = true; }
       this.townLabels();
       this.convoyTags.sync(g.traffic.vehicles, g.buildings.byId, this.bare);
       this.townPings.sync(g.towns.list, g.time, served, this.bare);

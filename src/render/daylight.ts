@@ -108,29 +108,44 @@ export interface Light {
 }
 
 // The light by the sun's height: ambient and direct on a flat top. Noon sums to 1 (the palette as drawn); dawn is
-// pale gold and rose, the evening deeper gold; the blue hour after sunset; a moonlit blue night.
+// pale gold and rose, the evening deeper gold; the blue hour after sunset; a moonlit blue night. Below the horizon the
+// keys are on the twilight's own scale (`twilight`), so the sky pales for well over an hour before sunrise and keeps
+// its glow as long after sunset: a dawn you watch come, not dark one moment and day the next (review 2026-11-10, B11).
 interface Key { e: number; amb: RGB; sun: RGB }
 const NOON_KEY: Key = { e: 40, amb: [0.64, 0.64, 0.64], sun: [0.36, 0.36, 0.36] };
 const DUSK: Key[] = [
   { e: -16, amb: [0.165, 0.19, 0.265], sun: [0, 0, 0] },
-  { e: -9, amb: [0.2, 0.215, 0.31], sun: [0, 0, 0] },
-  { e: -4, amb: [0.3, 0.28, 0.42], sun: [0, 0, 0] },
+  { e: -11, amb: [0.185, 0.2, 0.29], sun: [0, 0, 0] },
+  { e: -6.5, amb: [0.23, 0.235, 0.34], sun: [0, 0, 0] },
+  { e: -3, amb: [0.32, 0.29, 0.42], sun: [0, 0, 0] },
   { e: 0, amb: [0.44, 0.36, 0.4], sun: [0.06, 0.025, 0.01] },
   { e: 4, amb: [0.5, 0.42, 0.4], sun: [0.3, 0.16, 0.06] },
   { e: 10, amb: [0.56, 0.5, 0.46], sun: [0.42, 0.29, 0.15] },
-  { e: 20, amb: [0.62, 0.6, 0.57], sun: [0.39, 0.34, 0.27] },
+  // (as bright in all as the morning's at the same height: else a winter's low noon is outshone by its morning)
+  { e: 20, amb: [0.6358, 0.6158, 0.5858], sun: [0.39, 0.34, 0.27] },
   NOON_KEY,
 ];
 const DAWN: Key[] = [
   { e: -16, amb: [0.165, 0.19, 0.265], sun: [0, 0, 0] },
-  { e: -9, amb: [0.21, 0.225, 0.32], sun: [0, 0, 0] },
-  { e: -4, amb: [0.33, 0.31, 0.44], sun: [0, 0, 0] },
+  { e: -11, amb: [0.19, 0.205, 0.295], sun: [0, 0, 0] },
+  { e: -6.5, amb: [0.245, 0.25, 0.355], sun: [0, 0, 0] },
+  { e: -3, amb: [0.34, 0.31, 0.44], sun: [0, 0, 0] },
   { e: 0, amb: [0.46, 0.4, 0.45], sun: [0.07, 0.04, 0.03] },
   { e: 4, amb: [0.52, 0.47, 0.47], sun: [0.3, 0.2, 0.12] },
   { e: 10, amb: [0.58, 0.55, 0.52], sun: [0.38, 0.3, 0.2] },
   { e: 20, amb: [0.63, 0.62, 0.6], sun: [0.37, 0.34, 0.29] },
   NOON_KEY,
 ];
+/**
+ * The sun's height on the light's scale. The sun climbs about 15 degrees an hour near the horizon, which put the whole
+ * twilight into one hour and sunrise's gold into half of one; on this scale the twilight takes about two hours and
+ * the first twenty degrees ease in, then it is the sun's own height (less four degrees) for the rest of the day.
+ */
+export function twilight(e: number): number {
+  if (e < 0) return e * TWILIGHT_PACE;
+  return e < RISE_E ? e * RISE_PACE + ((1 - RISE_PACE) * e * e) / (2 * RISE_E) : e - ((1 - RISE_PACE) * RISE_E) / 2;
+}
+const TWILIGHT_PACE = 0.5, RISE_PACE = 0.45, RISE_E = 24;
 /** The moon's light on a flat top at full night. */
 const MOONLIGHT: RGB = [0.055, 0.066, 0.09];
 /** The darkest a flat top gets, by setting (luminance against the noon palette). */
@@ -141,7 +156,8 @@ function keyAt(keys: Key[], e: number): { amb: RGB; sun: RGB } {
   for (let i = 1; i < keys.length; i++) {
     const b = keys[i];
     if (e > b.e) continue;
-    const a = keys[i - 1], t = ramp(a.e, b.e, e);
+    // (straight between keys: eased, each key's middle was twice as steep, and sunrise one step)
+    const a = keys[i - 1], t = (e - a.e) / (b.e - a.e);
     return { amb: mix3(a.amb, b.amb, t), sun: mix3(a.sun, b.sun, t) };
   }
   return keys[keys.length - 1];
@@ -153,14 +169,14 @@ export function lightAt(hour: number, yday: number, mode: NightMode): Light {
     const d = [-0.42, 1, -0.62], n = Math.hypot(d[0], d[1], d[2]);
     return { amb: [...NOON_KEY.amb], sun: [...NOON_KEY.sun], dir: [d[0] / n, d[1] / n, d[2] / n], lamps: 0, dark: 0, shade: 1, shadowLen: 1, height: 53 };
   }
-  const e = sunHeight(hour, yday);
+  const e = sunHeight(hour, yday), te = twilight(e);
   // the dawn and the dusk tables, blended by the hour: all dawn at 6, all dusk at 18, half and half at noon and
   // midnight, so nothing jumps
-  const dawnK = keyAt(DAWN, e), duskK = keyAt(DUSK, e);
+  const dawnK = keyAt(DAWN, te), duskK = keyAt(DUSK, te);
   const t = 0.5 + 0.5 * Math.sin(((hour - NOON) / 24) * 2 * Math.PI);
   let amb = mix3(dawnK.amb, duskK.amb, t), sun = mix3(dawnK.sun, duskK.sun, t);
   // the moon takes over the direct light once the sun is well down
-  const moon = ramp(-5, -13, e);
+  const moon = ramp(-2, -6.5, te);
   sun = mix3(sun, MOONLIGHT, moon);
   // the setting's floor: soft nights lift the darkness, and lose some of the blue as they do
   const floor = NIGHT_FLOOR[mode];
@@ -171,7 +187,7 @@ export function lightAt(hour: number, yday: number, mode: NightMode): Light {
   }
   // the direct light's direction: the sun's, low suns clamped so shadows stay sane; the moon's at night (the swap
   // happens with both too faint to see)
-  const useMoon = e < -4;
+  const useMoon = te < -2.5;
   const b = useMoon ? MOON.bearing : sunBearing(hour, yday);
   const h = useMoon ? MOON.height : Math.max(SHADOW_MIN, e) * RAD;
   const dir: [number, number, number] = [Math.cos(b) * Math.cos(h), Math.sin(h), Math.sin(b) * Math.cos(h)];
@@ -181,8 +197,8 @@ export function lightAt(hour: number, yday: number, mode: NightMode): Light {
   const shadowLen = Math.min(1.3, Math.max(0.8, (1 / Math.tan(h)) / 0.75));
   return {
     amb, sun, dir,
-    lamps: ramp(5, -5, e),
-    dark: ramp(4, -6, e),
+    lamps: ramp(5, -3.5, te),
+    dark: ramp(5, -4, te),
     shade, shadowLen, height: e,
   };
 }
