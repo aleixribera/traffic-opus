@@ -150,6 +150,18 @@ const STRIP_CHUNK = 256;
  * this zoom the calls cost more than the squares left undrawn save.)
  */
 export const BUILD_NEAR_TO = 0.55;
+/**
+ * Past this many metres a pixel the family homes are drawn as their far models (models.ts FAR_MODELS): a house is
+ * a dozen pixels across there and its windows two, which the far model keeps; its window frames, fence boards and
+ * bevels are under a pixel (side by side on a late map at 0.56, the two differ in a few hundred pixels of the
+ * screen). Most of a grown map's triangles were its houses. The same zoom as the whole-map meshes start.
+ */
+export const HOUSE_FAR_FROM = BUILD_NEAR_TO;
+/**
+ * Past this the garden hedges and fences (a few tenths of a pixel wide there) are drawn as their flattest models,
+ * a top and two sides (6 triangles to the far model's 30 or 50): only the speck of green or white they leave shows.
+ */
+export const STRIP_FLAT_FROM = 2.0;
 const BUILD_CHUNK = 512;
 /** How far a corner lot's side, and a town square's edges, reach out to a kerb (m). */
 const SIDE_REACH = 14, SQUARE_REACH = 16;
@@ -244,6 +256,9 @@ class Quads {
 }
 
 /** The front strips laid out (render/buildings3d.ts stripsPlan): what commitStrips draws. */
+/** Which of a garden hedge's or fence's models is drawn (Buildings3D.lod). */
+type StripLod = "near" | "far" | "flat";
+
 interface StripPlan {
   /** the strips' lawns, paving, hedges and fences, made ahead and not yet shown (the hedges' and fences' near or far: userData.lod) */
   meshes: THREE.InstancedMesh[];
@@ -771,6 +786,9 @@ export class Buildings3D {
       });
       const mesh = meshOf(mm.geo, ps, false);
       mesh.userData.model = model;
+      // (and its far model, if it has one: lod() swaps them)
+      const far = this.models.far?.get(model);
+      if (far) { mesh.userData.full = mm.geo; mesh.userData.far = far.geo; }
       mesh.boundingSphere = sphereAround(squares.map((q) => q.nm.boundingSphere!));
       plans.push({ model, ps, mesh, squares });
     }
@@ -785,6 +803,7 @@ export class Buildings3D {
     for (const { model, ps, mesh, squares } of plans) {
       ps.forEach((p, i) => { if (this.rise(p) < 1 || p.b.built < 1) this.building.push({ p, i }); });
       mesh.visible = !this.nearOn;
+      if (this.housesFar && mesh.userData.far) mesh.geometry = mesh.userData.far;
       this.meshes.set(model, mesh);
       this.group.add(mesh);
       for (const { ps: sq, nm } of squares) {
@@ -1430,10 +1449,11 @@ export class Buildings3D {
     // plain numbers: a sort with a compare function took some 25 ms over a big map's hundred thousand)
     for (const kind of ["hedge", "picket"] as const) {
       const mm = this.models.props.get(kind), far = this.models.props.get(`${kind}_far`) ?? mm;
-      if (!mm || !far) continue;
-      // (bounded as the bigger of the two models)
-      for (const g of [mm.geo, far.geo]) if (!g.boundingSphere) g.computeBoundingSphere();
-      const geo = mm.geo.boundingSphere!.radius >= far.geo.boundingSphere!.radius ? mm.geo : far.geo;
+      const flat = this.models.props.get(`${kind}_flat`) ?? far;
+      if (!mm || !far || !flat) continue;
+      // (bounded as the biggest of the models)
+      for (const g of [mm.geo, far.geo, flat.geo]) if (!g.boundingSphere) g.computeBoundingSphere();
+      const geo = [mm.geo, far.geo, flat.geo].reduce((a, b) => (b.boundingSphere!.radius > a.boundingSphere!.radius ? b : a));
       for (const [list, shadow] of [[props[kind], true], [backs[kind], false]] as const) {
         if (!list.length) continue;
         yield;
@@ -1452,10 +1472,10 @@ export class Buildings3D {
           list[at].toArray(all, i * 16);
         }
         cuts.push(n);
-        const add = (g: THREE.BufferGeometry, from: number, to: number, lod: "near" | "far") => {
+        const add = (g: THREE.BufferGeometry, from: number, to: number, lod: StripLod) => {
           const m = new THREE.InstancedMesh(g, this.mat, to - from);
           (m.instanceMatrix.array as Float32Array).set(all.subarray(from * 16, to * 16));
-          m.castShadow = shadow;
+          m.castShadow = shadow && lod !== "flat";
           m.receiveShadow = true;
           m.userData.lod = lod;
           meshes.push(m);
@@ -1467,7 +1487,9 @@ export class Buildings3D {
           const m = add(mm.geo, cuts[r], cuts[r + 1], "near");
           spheres.push((m.boundingSphere = sphereOf(geo, all, cuts[r], cuts[r + 1])));
         }
-        add(far.geo, 0, n, "far").boundingSphere = sphereAround(spheres);
+        const whole = sphereAround(spheres);
+        add(far.geo, 0, n, "far").boundingSphere = whole;
+        add(flat.geo, 0, n, "flat").boundingSphere = whole;
       }
     }
     return { meshes, trees };
@@ -1481,14 +1503,20 @@ export class Buildings3D {
     this.strips = P.meshes;
     this.stripTrees = P.trees;
     this.treeVersion++;
-    for (const m of this.strips) if (m.userData.lod) m.visible = (m.userData.lod === "far") === this.far;
+    for (const m of this.strips) if (m.userData.lod) m.visible = this.stripShown(m.userData.lod);
     for (const o of this.strips) this.group.add(o);
   }
 
-  /** Drawing the garden hedges and fences as their far models (past STRIP_FAR_FROM metres a pixel). */
-  private far = false;
+  /** The garden hedges and fences: drawn as their near models, their far ones (past STRIP_FAR_FROM metres a pixel), or their flat ones (past STRIP_FLAT_FROM). */
+  private stripLod: StripLod = "near";
+  /** Drawing the family homes as their far models (past HOUSE_FAR_FROM). */
+  private housesFar = false;
 
-  /** Every frame: the garden hedges and fences near in or far off, by how many metres a pixel is. */
+  private stripShown(lod: StripLod): boolean {
+    return lod === this.stripLod;
+  }
+
+  /** Every frame: the buildings, homes and garden hedges and fences drawn near in or far off, by how many metres a pixel is. */
   lod(mpp: number) {
     const near = mpp <= BUILD_NEAR_TO;
     if (near !== this.nearOn) {
@@ -1496,10 +1524,15 @@ export class Buildings3D {
       for (const m of this.meshes.values()) m.visible = !near;
       for (const m of this.nearMeshes) m.visible = near;
     }
-    const far = mpp > STRIP_FAR_FROM;
-    if (far === this.far) return;
-    this.far = far;
-    for (const o of this.strips) if (o.userData.lod) o.visible = (o.userData.lod === "far") === far;
+    const houses = mpp > HOUSE_FAR_FROM;
+    if (houses !== this.housesFar) {
+      this.housesFar = houses;
+      for (const m of this.meshes.values()) if (m.userData.far) m.geometry = houses ? m.userData.far : m.userData.full;
+    }
+    const strip = mpp > STRIP_FLAT_FROM ? "flat" : mpp > STRIP_FAR_FROM ? "far" : "near";
+    if (strip === this.stripLod) return;
+    this.stripLod = strip;
+    for (const o of this.strips) if (o.userData.lod) o.visible = this.stripShown(o.userData.lod);
   }
 
   /**
