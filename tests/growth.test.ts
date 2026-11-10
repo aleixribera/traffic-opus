@@ -5,7 +5,8 @@ import { Game } from "../src/game/city";
 import { HOUR, DAY } from "../src/game/society";
 import { type Product } from "../src/game/industry";
 import { buildStep } from "../src/game/construction";
-import { SHRINK_AFTER, SHRINK_RATE, averageSupply } from "../src/game/towns";
+import { SHRINK_AFTER, SHRINK_RATE, averageSupply, demandPerDay } from "../src/game/towns";
+import { townGrowth, type Town } from "../src/game/settlements";
 
 const STEADY: Partial<Record<Product, number>> = { food: 20, planks: 8, cement: 6 };
 
@@ -121,3 +122,22 @@ describe("a save from before the demand rework", () => {
     for (const t of g.towns.list) if (homes.has(t.id)) expect(t.households, t.name).toBeGreaterThanOrEqual(homes.get(t.id)!);
   });
 }, 600_000);
+
+describe("townGrowth: the band and line the town panel shows", () => {
+  // (stand-in towns: only what townGrowth reads)
+  const town = (pop: number, food: number, lack = 0) => /* (under 100 people: food is its only need) */ ({ pop, rate: { food }, lack, hours: [] }) as unknown as Town;
+  const food = (pop: number) => demandPerDay("food", pop);
+  it("fast at full supply, slow just under it, hold through the wide middle, shrink only once the shortfall has lasted", () => {
+    expect(townGrowth(town(90, food(90) * 1.1))).toMatchObject({ band: "fast", line: "Growing: fully supplied", by: "food" });
+    expect(townGrowth(town(90, food(90) * 0.92))).toMatchObject({ band: "slow", line: "Growing slowly: 92% supplied, full pace from 100%" });
+    expect(townGrowth(town(90, food(90) * 0.72))).toMatchObject({ band: "hold", line: "Holding steady: 72% supplied, grows from 85%" });
+    expect(townGrowth(town(90, food(90) * 0.48))).toMatchObject({ band: "hold", line: "Short of supplies: 48% supplied, holds from 60%" });
+    expect(townGrowth(town(90, food(90) * 0.48, SHRINK_AFTER))).toMatchObject({ band: "shrink", line: "Shrinking: 48% supplied, holds from 60%" });
+    expect(townGrowth(town(90, food(90) * 0.72, SHRINK_AFTER)).band).toBe("hold");
+    expect(townGrowth(town(90, food(90) * 0.72)).level).toBeCloseTo(0.72, 6);
+  });
+  it("a town still settling in grows whatever its supply", () => {
+    expect(townGrowth(town(40, 0))).toMatchObject({ band: "slow", line: "Settling in" });
+    expect(townGrowth(town(40, food(40) * 2)).band).toBe("fast");
+  });
+});

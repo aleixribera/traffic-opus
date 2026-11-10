@@ -610,7 +610,8 @@ describe("Balance: the game to Town size", () => {
     expect(at("food10")).toBeLessThan(at("village"));
     expect(at("village")).toBeLessThan(at("steel"));
     expect(at("heavy")).toBeLessThan(at("cement"));
-    expect(at("steel")).toBeLessThan(at("cement"));
+    // (steel opens nothing cement needs: Steady trade opens the quarry and the cement works, so either may come first;
+    // with towns that eat less, the cement chain now often wins while the smelter waits on its far iron ore)
     // never more than OPEN_AT_ONCE ahead of the first one not reached
     for (const [i, id] of ids.entries()) expect(MILESTONES.findIndex((m) => m.id === id)).toBeLessThan(i + OPEN_AT_ONCE + 1);
     if (!T3) return;

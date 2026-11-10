@@ -1465,6 +1465,11 @@ export class Game {
       const rot = Math.atan2(uy, ux), hw = (C.w * CELL) / 2, hd = (C.d * CELL) / 2;
       // (nothing else of the town's or the company's in the way: a hall, another civic building, a site's fence)
       if (this.buildings.list.some((o) => !o.zone && !s.gone.has(o.id) && dist(o.c, s.c) < hw + hd + o.hw + o.hd && obbOverlap(s.c, hw - 0.5, hd - 0.5, rot, o.c, o.hw, o.hd, o.rot))) continue;
+      // (and a home or shop on a neighbouring block whose lot reaches over it, round a corner, makes way too; one of
+      // another town's rules the spot out)
+      const over = this.buildings.list.filter((o) => o.zone && !s.gone.has(o.id) && dist(o.c, s.c) < hw + hd + o.hw + o.hd && obbOverlap(s.c, hw - 0.5, hd - 0.5, rot, o.c, o.hw - 0.5, o.hd - 0.5, o.rot));
+      if (over.some((o) => o.town !== town)) continue;
+      for (const o of over) s.gone.add(o.id);
       const away = { x: -Math.sin(rot) * blk.side, y: Math.cos(rot) * blk.side };
       const front = add(s.c, scale(away, -(hd + zoneEdge(g.width) - g.width / 2)));
       this.clearForTown(town, [...s.gone].map((id) => this.buildings.byId.get(id)).filter((b): b is Building => !!b));

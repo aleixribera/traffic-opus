@@ -223,19 +223,19 @@ const RATE = [0.1, 0.06, 0.045, 0.035, 0.025];
 /** People to a household, about (to put a pace in households a day from a population). */
 export const PER_HOME = 2.5;
 /**
- * The early boost: a hamlet settling its first streets grows several times faster than a village, fading out by
+ * The early boost: a hamlet settling its first streets grows up to 21 times faster than a village, fading out by
  * EARLY_TO people, so the first hour moves (docs/design.md "Pacing": a Village in 20 to 30 minutes). Past it a town
  * grows at the plain pace of its size.
  */
-export const EARLY = 12, EARLY_TO = 380;
+export const EARLY = 20, EARLY_TO = 380;
 export const earlyBoost = (pop: number): number => 1 + EARLY * Math.max(0, 1 - pop / EARLY_TO);
 /** Below this many people a town is still settling: it fills its first streets whether supplied or not. */
 export const SETTLING = 60;
 
 /**
- * Households a day a town grows by with every need met in full (at least one): a hamlet of 80 by about an extra
- * household for every one it has, a Village of 300 by a fifth of its homes, past 380 a Village by 6% a day, a Town
- * 4.5%, a City 3.5%.
+ * Households a day a town grows by with every need met in full (at least one): a hamlet of 80 by one and two thirds
+ * households for every one it has (a Village in about 20 minutes at 1x), a Village of 300 by a third of its homes,
+ * past 380 a Village by 6% a day, a Town 4.5%, a City 3.5% (a size in six to eight hours at 1x).
  */
 export function growthPerDay(pop: number): number {
   return Math.max(1, (pop / PER_HOME) * RATE[sizeOf(pop)] * earlyBoost(pop));
@@ -252,10 +252,14 @@ export function growthShare(level: number): number {
   return x * x;
 }
 
-/** The band a supply level puts a town in. */
-export type GrowthBand = "full" | "growing" | "holding" | "shrinking";
-export function growthBand(level: number): GrowthBand {
-  return level >= 1 ? "full" : level > GROW_FROM ? "growing" : level >= HOLD_FROM ? "holding" : "shrinking";
+/**
+ * The band a town's growth is in: "fast" at its full pace (100% supplied and over), "slow" from GROW_FROM, "hold"
+ * from HOLD_FROM, and below that "hold" too until its shortfall has lasted SHRINK_AFTER hours (`shrinking`), then
+ * "shrink".
+ */
+export type GrowthBand = "fast" | "slow" | "hold" | "shrink";
+export function growthBand(level: number, shrinking = false): GrowthBand {
+  return level >= 1 ? "fast" : level > GROW_FROM ? "slow" : level < HOLD_FROM && shrinking ? "shrink" : "hold";
 }
 
 /**
@@ -267,11 +271,11 @@ export function growthBand(level: number): GrowthBand {
 export function growthLine(level: number, pop: number, shrinking = false): string {
   if (pop < SETTLING) return "Settling in";
   const pc = (x: number) => `${Math.floor(x * 100 + 1e-6)}%`;
+  if (level < HOLD_FROM) return `${shrinking ? "Shrinking" : "Short of supplies"}: ${pc(level)} supplied, holds from ${pc(HOLD_FROM)}`;
   switch (growthBand(level)) {
-    case "full": return "Growing: fully supplied";
-    case "growing": return `Growing slowly: ${pc(level)} supplied, full pace from 100%`;
-    case "holding": return `Holding steady: ${pc(level)} supplied, grows from ${pc(GROW_FROM)}`;
-    default: return `${shrinking ? "Shrinking" : "Short of supplies"}: ${pc(level)} supplied, holds from ${pc(HOLD_FROM)}`;
+    case "fast": return "Growing: fully supplied";
+    case "slow": return `Growing slowly: ${pc(level)} supplied, full pace from 100%`;
+    default: return `Holding steady: ${pc(level)} supplied, grows from ${pc(GROW_FROM)}`;
   }
 }
 

@@ -178,11 +178,15 @@ describe("growth in bands", () => {
     expect(growthShare(1.8)).toBe(1);
     // rising smoothly all the way
     for (let x = GROW_FROM; x < 1; x += 0.01) expect(growthShare(x + 0.01)).toBeGreaterThanOrEqual(growthShare(x));
-    expect(growthBand(1.2)).toBe("full");
-    expect(growthBand(0.9)).toBe("growing");
-    expect(growthBand(0.85)).toBe("holding");
-    expect(growthBand(0.6)).toBe("holding");
-    expect(growthBand(0.59)).toBe("shrinking");
+    expect(growthBand(1.2)).toBe("fast");
+    expect(growthBand(1)).toBe("fast");
+    expect(growthBand(0.9)).toBe("slow");
+    expect(growthBand(0.85)).toBe("hold");
+    expect(growthBand(0.6)).toBe("hold");
+    // (short of supplies, but not two days of it yet: it holds; then it shrinks)
+    expect(growthBand(0.59)).toBe("hold");
+    expect(growthBand(0.59, true)).toBe("shrink");
+    expect(growthBand(0.7, true)).toBe("hold");
   });
 
   it("says how it grows in one plain line, its supply level and the next band's line", () => {

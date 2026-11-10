@@ -585,10 +585,13 @@ itself across modes; you build tracks, docks and the transfer points, never line
     decreasing").* A town's supply level is the share of a day's use it has been getting of its worst-supplied need
     (towns.ts `supplyLevel`), and:
     - *100% and over:* it grows at its full pace, a few percent of its homes a day: a Village 6%, a Town 4.5%, a
-      City and up 3.5% (a hamlet much faster, fading out by 380 people, so the first Village comes in about half an
-      hour). With every need met in full, measured on the pace alone: a hamlet of 80 to a Village 1.9 days (30
-      minutes at 1x), a Village to a Town 25 days (6.6 hours), a Town to a City 31 days (8.2 hours). Before: 0.8
-      days, 4.9 and 6.4.
+      City and up 3.5% (a hamlet much faster, up to 21 times at a few dozen people, fading out by 380, so the first
+      Village comes in about half an hour). With every need met in full, measured on the pace alone: a hamlet of 80
+      to a Village 1.2 days (20 minutes at 1x), a Village to a Town 24 days (6.5 hours), a Town to a City 31 days
+      (8.2 hours). Before: 0.8 days, 4.9 and 6.4. In the balance run (the scripted company, seed 7) the first
+      Village comes on day 2.0 (32 minutes, as before) and first cement and steel at 80 and 88 minutes, with every
+      town fed in full (before: its start town stalled at 315 people with its food down to 28% by day 6, and up to
+      304 company trucks on the road against 213).
     - *85% to 100%:* it grows a little, rising smoothly as the square of the way from 85% to 100% (90% grows at a
       ninth of the pace, 95% at four ninths).
     - *60% to 85%:* it holds: no growth and no loss.
@@ -601,10 +604,10 @@ itself across modes; you build tracks, docks and the transfer points, never line
     long as it is supplied. 85% is the "supplied" bar of the panels and the goals ("Enough"). Supply the old
     curve set up still covers more of the new one, so an old save's towns load growing, not shrinking.
   - Measured with steady deliveries of 20 food, 8 planks and 6 cement a day, no traffic (households every 6 h,
-    tests/growth.test.ts): the start town rises without a dip from 58 households to 146 by day 3, then ever slower
-    as it nears the people that supply covers: 166 by day 6, 182 (437 people) by day 15, adding a household a day.
-    A day without deliveries changes nothing. A cut lets it hold two days (166-167 households), then lose about 3%
-    a day (166 to 135 over seven days).
+    tests/growth.test.ts): the start town rises without a dip from 78 households to 142 by day 2, then ever slower
+    as it nears the people that supply covers: 167 by day 6, 177 (449 people) by day 15, adding half a household a
+    day. A day without deliveries changes nothing. A cut lets it hold two days (167 households), then lose about 3%
+    a day (166 to 134 over seven days).
   - The town panel shows the same two-day average in its needs ("X a day (2-day average) of Y needed"), what its
     supply supports ("supplies support N"), and what holds it back and how many more loads a day would grow it.
 - **Loads that land in time (owner, 2026-11-09: "deliveries to towns seem to always be late"; "add an invisible
@@ -729,7 +732,9 @@ A town should visibly turn from a hamlet into a city over a playthrough: bigger,
     the next one starts (towns.ts `growthLine`, for the panel to call): "Growing: fully supplied", "Growing
     slowly: 92% supplied, full pace from 100%", "Holding steady: 72% supplied, grows from 85%", "Short of supplies:
     48% supplied, holds from 60%" and, once the shortfall has lasted two days, "Shrinking: 48% supplied, holds from
-    60%". A town still settling its first streets: "Settling in".
+    60%". A town still settling its first streets: "Settling in". `townGrowth(town)` (settlements.ts) gives the
+    panel all of it at once: the band ("fast", "slow", "hold", "shrink"), that line, the supply level and the need
+    that sets it.
 
 ### Towns run themselves (owner, 2026-11-08)
 
@@ -757,10 +762,10 @@ an external road, but don't overdo it, this is the player's job."
   sixth of the house and terrace fronts are left as gardens (26 m gaps between homes). Lots keep 12 m clear of
   the streets still to come. The town's radius for its people grows faster (200 + 12·√people m, up to 2.2 km;
   was 150 + 9·√people, up to 1.6 km), so it spreads instead of packing in. On seed 7, with every need well served
-  (twice what it uses: `Game.fastForward` with `ample` 2), the start town reaches Village on day 3, Town on day
-  29 and City on day 64 since growth went to bands (2026-11-10; before: 2.1, 7.0 and 13.5). With every need met
+  (twice what it uses: `Game.fastForward` with `ample` 2), the start town reaches Village on day 1.8, Town on day
+  27 and City on day 62 since growth went to bands (2026-11-10; before: 2.1, 7.0 and 13.5). With every need met
   exactly (`ample` 1, the tests' default) it grows a step behind its own supply, as steady growth means it to:
-  Village on day 13, Town on day 63 (before: 10.7 and 20.0). Tests that want a Town or a City in a few days pass
+  Village on day 11, Town on day 61 (before: 10.7 and 20.0). Tests that want a Town or a City in a few days pass
   `fastForward` a `pace`, a multiple of the growth of play. A real supply
   doesn't shrink to fit the town like that. At Town size it
   houses 4.4 homes a hectare within 150 m of its hall (was 7.2) and reaches 720 m out (was 547). At City size it

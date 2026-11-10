@@ -26,6 +26,7 @@ import {
   demandPerDay, edgeKey, gridPt, growthPerDay, highLine, highStreetReach, motoring, needsOf, nextEdge, nuisanceAt, redevPerDay, ringZone, sizeOf,
   smokeReach, supplyShare, townRadius, type GridEdge, type Nuisance,
   HOLD_FROM, PER_HOME, SETTLING, SHRINK_AFTER, SHRINK_RATE, SUPPLY_HOURS, averageSupply, countsForShrinking, growthShare, supplyLevel, supportOf,
+  growthBand, growthLine, type GrowthBand,
 } from "./towns";
 import { LEAN_N as LEAN_DIRS, PLAN_GRID, PLAN_TOWN, TownPlan, type EdgeHit } from "./townplan";
 import { CELL, DEPTH, ZONE_RANK, zoneEdge, type Cell, type ZoneId } from "./zones";
@@ -64,6 +65,21 @@ export interface Spawned {
 /** Has a town ever had a load delivered (a town that sprang up keeps its marker till then)? */
 export function served(t: Town): boolean {
   return Object.keys(t.today).length > 0 || Object.keys(t.yesterday).length > 0 || t.hist.days.some((d) => Object.keys(d.loads).length > 0);
+}
+
+/**
+ * A town's growth as the panel shows it (docs/design.md "Growth in words"): its band ("fast" at full pace, "slow",
+ * "hold", "shrink" once a shortfall has lasted SHRINK_AFTER hours), the plain line for it ("Holding steady: 72%
+ * supplied, grows from 85%"), its supply level (the share of a day's use of its worst-supplied need it has been
+ * getting, over the last two days) and that need (null with none). A town still settling its first streets grows
+ * whatever its supply: "slow" (or "fast" if fully supplied), "Settling in".
+ */
+export function townGrowth(t: Town): { band: GrowthBand; line: string; level: number; by: Product | null } {
+  const { level, by } = supplyLevel(t.rate ?? averageSupply(t.hours ?? []), t.pop);
+  const shrinking = (t.lack ?? 0) >= SHRINK_AFTER;
+  // (a town settling its first streets grows whatever its supply)
+  const band = growthBand(level, shrinking);
+  return { band: t.pop < SETTLING && level < 1 ? "slow" : band, line: growthLine(level, t.pop, shrinking), level, by };
 }
 
 /** A compass point, in words, from a to b (north is -y on the map). */
