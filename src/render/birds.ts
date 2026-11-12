@@ -242,7 +242,9 @@ void main() {
     this.U.uMpp.value = mpp;
     // by day only, and not from so far off that a bird is less than a speck
     const day = 1 - THREE.MathUtils.smoothstep(ENV.uNight.value.x, 0.12, 0.45);
-    const fade = day * (1 - THREE.MathUtils.smoothstep(mpp, BIRD_MPP * 0.72, BIRD_MPP));
+    // (and in rain or snow most of them sit it out)
+    const wx = ENV.uWeather.value, sheltering = 1 - 0.85 * Math.min(1, wx.y * 1.6 + wx.w * 1.2);
+    const fade = day * sheltering * (1 - THREE.MathUtils.smoothstep(mpp, BIRD_MPP * 0.72, BIRD_MPP));
     this.U.uFade.value = fade;
     this.U.uShare.value = flying(ENV.uSeasonB.value.x);
     this.mesh.visible = fade > 0 && this.fields !== null;

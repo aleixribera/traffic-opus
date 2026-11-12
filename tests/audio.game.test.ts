@@ -3,6 +3,7 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 import { GameAudio } from "../src/audio";
+import { allKeys } from "../src/audio/bank";
 
 /** An audio node (or the context's destination): every parameter can be set and scheduled, every call does nothing. */
 function fakeNode(): unknown {
@@ -68,6 +69,64 @@ describe("the moments' stings", () => {
     // (each sting is a few seconds long: only those that can start within 5 s are kept)
     expect(played()).toBeGreaterThanOrEqual(2);
     expect(played()).toBeLessThan(8);
+  });
+});
+
+describe("a dedication", () => {
+  /** The sound with the band's notes and the ident, the radio naming its tunes from these towns, its first tune on. */
+  function onAir(towns: string[]) {
+    const s = started(["sting:dedication", ...allKeys().filter((k) => /^(piano|bass|drum):/.test(k))]);
+    (s.audio as unknown as { radio: { source: () => { towns: string[]; company: string } } }).radio.source = () => ({ towns, company: "Tri-State Motor Freight" });
+    let t = 1;
+    for (; t < 6; t += 0.05) { s.at(t); s.audio.update(0.05); }
+    const run = (secs: number, until?: (tune: string) => boolean) => {
+      for (const end = t + secs; t < end && !(until && until(s.audio.tune)); t += 0.05) { s.at(t); s.audio.update(0.05); }
+      return s.audio.tune;
+    };
+    return { ...s, run };
+  }
+
+  it("chimes the station's ident, and the next tune is named for the town", () => {
+    const { audio, played, run } = onAir(["Ely", "Poplar Creek", "Ashby"]);
+    expect(audio.tune).not.toBe("");
+    const before = played();
+    const names: string[] = [];
+    audio.onChange = () => names.push(audio.tune);
+    expect(audio.dedicate("Poplar Creek")).toBe(true);
+    expect(played()).toBe(before + 1);
+    // (the old tune's name goes from the radio as it fades)
+    expect(names[0]).toBe("");
+    const tune = run(8, (x) => x.includes("Poplar Creek"));
+    expect(tune).toContain("Poplar Creek");
+    // (it keeps playing, without a fault)
+    run(4);
+    expect(audio.debug().state).not.toBe("off");
+    expect(audio.tune).toBe(tune);
+  });
+
+  it("a town no longer on the map (another save opened) names nothing", () => {
+    const towns = ["Poplar Creek"];
+    const { audio, run } = onAir(towns);
+    expect(audio.dedicate("Poplar Creek")).toBe(true);
+    towns.splice(0, 1, "Ely");
+    const tune = run(8, (x) => x !== "");
+    expect(tune).not.toBe("");
+    expect(tune).not.toContain("Poplar Creek");
+  });
+
+  it("nothing goes out before the sound has started", () => {
+    const audio = new GameAudio({ worker: false });
+    expect(audio.dedicate("Poplar Creek")).toBe(false);
+  });
+});
+
+describe("a dedication, held back", () => {
+  it("nothing goes out with the wireless off", () => {
+    const { audio, at, played } = started(["sting:dedication"]);
+    audio.set({ wireless: false });
+    at(3);
+    expect(audio.dedicate("Poplar Creek")).toBe(false);
+    expect(played()).toBe(0);
   });
 });
 

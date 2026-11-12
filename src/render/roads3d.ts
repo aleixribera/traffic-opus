@@ -79,8 +79,8 @@ export function makeRoadMaterial(opts: { color?: number; opacity?: number; marki
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms, ENV);
     sh.vertexShader = sh.vertexShader
-      .replace("#include <common>", "#include <common>\nattribute vec4 aRoad;\nattribute vec2 aFlow;\nattribute vec3 aMed;\nattribute vec2 aClip;\nattribute vec4 aPock;\nattribute float aRur;\nvarying vec4 vRoad;\nvarying vec2 vFlow;\nvarying vec3 vMed;\nvarying vec2 vClip;\nvarying vec4 vPock;\nvarying float vRur;")
-      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRoad = aRoad;\nvFlow = aFlow;\nvMed = aMed;\nvClip = aClip;\nvPock = aPock;\nvRur = aRur;");
+      .replace("#include <common>", "#include <common>\nattribute vec4 aRoad;\nattribute vec2 aFlow;\nattribute vec3 aMed;\nattribute vec2 aClip;\nattribute vec4 aPock;\nattribute float aRur;\nvarying vec2 vRW;\nvarying vec4 vRoad;\nvarying vec2 vFlow;\nvarying vec3 vMed;\nvarying vec2 vClip;\nvarying vec4 vPock;\nvarying float vRur;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRW = (modelMatrix * vec4(transformed, 1.0)).xz;\nvRoad = aRoad;\nvFlow = aFlow;\nvMed = aMed;\nvClip = aClip;\nvPock = aPock;\nvRur = aRur;");
     sh.fragmentShader = sh.fragmentShader
       .replace(
         "#include <common>",
@@ -89,6 +89,7 @@ uniform vec3 uRoad; uniform vec3 uEdge; uniform vec3 uLane; uniform vec3 uCentre
 ${ENV_GLSL}
 uniform vec3 uGrass;
 uniform float uFlowMode; uniform float uMarkings; uniform float uArrows; uniform float uHw;
+varying vec2 vRW;
 varying vec4 vRoad; varying vec2 vFlow; varying vec3 vMed; varying vec2 vClip; varying vec4 vPock; varying float vRur;
 float band(float x, float w) { float f = fwidth(x) * 0.8 + 1e-4; return 1.0 - smoothstep(w - f, w + f, abs(x)); }
 // a brick street (u across, v along, m): bricks laid across it in running bond, each its own shade; the joints and
@@ -117,6 +118,8 @@ vec3 flowTint(float r) {
         `#include <color_fragment>
 {
   float u = vRoad.x, v = vRoad.y, f = vRoad.z, b = vRoad.w;
+  // (the puddles lie on the ground: the same across a junction and the roads into it)
+  float rMpp = fwidth(vRW.x) + fwidth(vRW.y);
   vec3 c = uRoad;
   // (vRur below 0: a town's Main Street, in brick)
   if (vRur < -0.5) c = brickAt(u, v);
@@ -215,6 +218,9 @@ vec3 flowTint(float r) {
       c = mix(c, envSnowCol(vec2(u * 4.0, v)) * 0.86, bank * 0.9);
     }
   }
+  // after rain: the asphalt dark and wet, puddles along it (a country road's worn edge holds more); not on the
+  // traffic flow map, whose colours have to read
+  if (envWet > 0.001 && uFlowMode < 0.5) envPuddle(c, vRW, 0.1 + 0.6 * clamp(vRur, 0.0, 1.0), rMpp);
   diffuseColor.rgb = envGrade(diffuseColor.rgb * c);
 }`,
       );
@@ -268,7 +274,7 @@ function makeDirtMaterial(fringe = false) {
     uFlowMode: { value: 0 },
   };
   mat.onBeforeCompile = (sh) => {
-    Object.assign(sh.uniforms, uniforms);
+    Object.assign(sh.uniforms, uniforms, ENV);
     sh.vertexShader = sh.vertexShader
       .replace("#include <common>", `#include <common>\nvarying vec2 vDW;\n${fringe ? "attribute float aFr;\nvarying float vFr;" : "attribute vec4 aRoad;\nattribute vec2 aFlow;\nattribute vec3 aMed;\nvarying vec4 vRoad;\nvarying vec2 vFlow;\nvarying float vEnd;"}`)
       .replace("#include <begin_vertex>", `#include <begin_vertex>\nvDW = (modelMatrix * vec4(transformed, 1.0)).xz;\n${fringe ? "vFr = aFr;" : "vRoad = aRoad;\nvFlow = aFlow;\nvEnd = aMed.z;"}`);
@@ -278,6 +284,7 @@ function makeDirtMaterial(fringe = false) {
         `#include <common>
 uniform vec3 uDirt; uniform vec3 uDirtLight; uniform vec3 uDirtRut; uniform vec3 uDirtEdge; uniform float uFlowMode;
 varying vec2 vDW;
+${ENV_GLSL}
 ${fringe ? "varying float vFr;" : "varying vec4 vRoad; varying vec2 vFlow; varying float vEnd;"}
 ${DIRT_NOISE}
 vec3 flowTint(float r) {
@@ -296,12 +303,15 @@ vec3 flowTint(float r) {
   float a = 1.0 - smoothstep(0.28, 0.78, t);
   if (a < 0.01) discard;
   vec3 c = mix(dirtBase(vDW), uDirtEdge, clamp(vFr * 0.9, 0.0, 1.0));
+  c *= 1.0 - 0.28 * envWet;
   diffuseColor.rgb *= c;
   diffuseColor.a *= a;
 }`
           : `#include <color_fragment>
 {
   float u = vRoad.x, f = vRoad.z;
+  float dMpp = fwidth(vDW.x) + fwidth(vDW.y);
+  float ruts = 0.0;
   vec3 c = dirtBase(vDW);
   if (f >= 0.0) {
     // the wheel ruts: one pair down the middle, where everything drives with nothing coming the other way (a 1.6 m
@@ -317,7 +327,10 @@ vec3 flowTint(float r) {
     float wear = (0.7 + 0.6 * dNoise(vDW * 0.9)) * smoothstep(0.5, 7.0, vEnd);
     c = mix(c, uDirtLight * 1.03, (1.0 - smoothstep(0.2, 0.5, au)) * 0.3 * wear);
     c = mix(c, uDirtRut, clamp((rutMain * 0.62 + lane * 0.22) * wear, 0.0, 0.8));
+    ruts = clamp((rutMain + lane * 0.5) * wear, 0.0, 1.0);
   }
+  // after rain: mud, and water standing in the ruts
+  if (envWet > 0.001 && uFlowMode < 0.5) envPuddle(c, vDW, 1.0 + 1.6 * ruts, dMpp);
   if (uFlowMode > 0.5) {
     float r = (vRoad.w > 0.0 && u < 0.0) ? vFlow.y : vFlow.x;
     vec3 t = flowTint(r);

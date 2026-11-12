@@ -7,7 +7,7 @@ import { type Inst, air, note, register } from "./instruments";
 
 export type StingId =
   | "milestone" | "money" | "newTown" | "townGrew" | "spring" | "summer" | "autumn" | "winter"
-  | "convoyOut" | "convoyIn" | "landmark" | "orderDone" | "orderOpen" | "spoil" | "gaveUp" | "church";
+  | "convoyOut" | "convoyIn" | "landmark" | "orderDone" | "orderOpen" | "spoil" | "gaveUp" | "church" | "dedication";
 
 /** [instrument, MIDI note, start (s), length (s), level] */
 type N = [Inst, number, number, number, number];
@@ -81,6 +81,13 @@ export const STINGS: Record<StingId, Score> = {
   },
   // Sunday: one toll of the church bell (struck several times by the director)
   church: { len: 2.6, notes: [["bell", 65, 0, 2.2, 0.9]] },
+  // the station's ident before a dedication: four soft chimes climbing, a held bell under the last (quieter than
+  // the moments: it is the station talking, not the game)
+  dedication: {
+    len: 2.4,
+    lvl: 0.09,
+    notes: [["glock", 77, 0, 0.5, 0.42], ["glock", 81, 0.2, 0.5, 0.42], ["glock", 84, 0.4, 0.5, 0.44], ["glock", 86, 0.6, 1.2, 0.46], ["bell", 65, 0.6, 1.6, 0.3], ["bell", 72, 0.6, 1.4, 0.18]],
+  },
 };
 
 export const STING_IDS = Object.keys(STINGS) as StingId[];

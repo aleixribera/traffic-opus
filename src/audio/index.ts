@@ -27,7 +27,7 @@ export const DEFAULT_SETTINGS: AudioSettings = { ...DEFAULT_LEVELS, wireless: tr
 const KEY = "flowtown.audio";
 
 /** What the sound reads of the app: the game, the camera, the hour and day shown. */
-export interface AudioHost { game: Game; view: Ear; dayCycle: { hour: number; yday: number } }
+export interface AudioHost { game: Game; view: Ear; dayCycle: { hour: number; yday: number; weather?: { rain: number; snow: number; wet: number } } }
 
 /** The six sounds the old beeper had (ui/sfx.ts): its call sites still work. */
 type OldKind = "build" | "remove" | "place" | "error" | "level" | "click";
@@ -208,6 +208,22 @@ export class GameAudio {
     if (e.shot(`sting:${id}`, e.ui, STING_GAIN, { prio: 2, when: at })) this.stingFree = at + b.duration * 0.8;
   }
 
+  /**
+   * A dedication (audio/dedication.ts): the station's ident chimes (after any moment's sting still sounding), the
+   * tune playing fades under it, and the next one, named for `town`, starts after. False when nothing would be heard
+   * (the wireless off, the sound muted or not yet started).
+   */
+  dedicate(town: string): boolean {
+    if (!this.settings.wireless || this.silent) return false;
+    const e = this.eng, radio = this.radio;
+    // (no sound started yet, or asleep: nothing would be heard, so nothing is said)
+    if (!e || !radio || e.ctx.state !== "running") return false;
+    const at = Math.max(e.now, this.stingFree);
+    this.sting("dedication");
+    radio.dedicate(town, at + 2.2);
+    return true;
+  }
+
   /** The season's title card dropping in (0 spring .. 3 winter). */
   season(i: number) { this.sting(SEASON_STING[((i % 4) + 4) % 4]); }
 
@@ -244,6 +260,8 @@ export class GameAudio {
       if (host && this.acc >= LOOK) {
         const g = host.game, day = host.dayCycle;
         const scene = this.reader.read(g, host.view, day.hour, Math.floor(day.yday / SEASON_DAYS) % 4, this.acc);
+        const wx = day.weather;
+        scene.rain = wx?.rain ?? 0; scene.snow = wx?.snow ?? 0; scene.wet = wx?.wet ?? 0;
         this.world!.apply(mixFor(scene, this.mix), scene, this.reader.where, this.acc, Math.floor(day.yday) % 7 === 6);
         this.acc = 0;
         // a driver who gave up in a jam (not more than one sigh every half minute)

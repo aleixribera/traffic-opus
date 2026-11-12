@@ -11,7 +11,7 @@ import type { ShotId } from "./sounds";
 
 /** Each layer's level when the mixer says 1 (set by ear's stand-in: the measured renders, see audio/harness.ts). */
 export const TRIM = {
-  wind: 0.6, air: 0.4, hum: 0.8, tyres: 2.4, water: 0.55, crickets: 0.5, murmur: 1.0,
+  wind: 0.6, air: 0.4, hum: 0.8, tyres: 2.4, water: 0.55, rain: 0.32, crickets: 0.5, murmur: 1.0,
   eng: 1.7, idle: 1.1, pass: 1.5, works: 2.1,
   bird: 0.24, owl: 0.3, horn: 0.5, gate: 0.5, event: 0.55, town: 0.4, clock: 0.6, build: 0.7, pop: 0.8,
 };
@@ -37,6 +37,7 @@ export class World {
   private tyreF: BiquadFilterNode;
   private tyreG: GainNode;
   private water: Loop;
+  private rain: Loop;
   private crickets: Loop;
   private murmur: Loop;
   private eng: Loop[];
@@ -74,6 +75,7 @@ export class World {
     this.tyreF = filter("bandpass", 1000, 0.8); this.tyreG = gain();
     bus.connect(this.tyreF); this.tyreF.connect(this.tyreG); this.tyreG.connect(out);
     this.water = new Loop(e, "bed:water", out);
+    this.rain = new Loop(e, "bed:rain", out);
     this.crickets = new Loop(e, "bed:crickets", out);
     this.murmur = new Loop(e, "bed:murmur", out, { pan: true });
     this.eng = ["carBed", "lightBed", "heavyBed", "trainBed"].map((k) => new Loop(e, `bed:${k}`, out));
@@ -117,6 +119,8 @@ export class World {
       this.tyreF.frequency.setTargetAtTime(m.tyreHz, t, 0.5);
     }
     this.water.set(m.water * TRIM.water, dt, 1, 0.6);
+    // (a shower comes on and dies away over game minutes: the bed follows it slowly)
+    this.rain.set(m.rain * TRIM.rain, dt, 1, 1.5);
     this.crickets.set(m.crickets * TRIM.crickets, dt, 1, 0.8);
     this.murmur.set(m.murmur * TRIM.murmur, dt, 1, 0.6);
     this.murmur.pan?.pan.setTargetAtTime(w.town * 0.5, t, 0.5);
@@ -253,7 +257,7 @@ export class World {
   /** Sources this layer holds now (for the stats). */
   get loops(): number {
     let n = this.pink.on ? 1 : 0;
-    for (const l of [this.water, this.crickets, this.murmur, this.idle, ...this.eng, ...this.works.map((x) => x.loop), ...this.pass.map((x) => x.loop)]) if (l.on) n++;
+    for (const l of [this.water, this.rain, this.crickets, this.murmur, this.idle, ...this.eng, ...this.works.map((x) => x.loop), ...this.pass.map((x) => x.loop)]) if (l.on) n++;
     return n;
   }
 }

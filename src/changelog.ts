@@ -15,6 +15,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.108", date: "2026-11-12", title: "Weather",
+    notes: [
+      "Passing showers in spring and autumn, morning mist on autumn days, and snow showers in winter. The clock shows the weather.",
+      "Rain darkens the roads and leaves puddles that dry off over an hour or two. It never slows a car or changes a route.",
+      "Rain and wind in the soundscape.",
+      "The radio now and then dedicates a tune to a town that grew, or to a jam you cleared.",
+      "A convoy leaving a works says what it carries and where, with a Follow button. Hazard tape marks it on the road.",
+      "Notices no longer slide under the top bar.",
+    ],
+  },
+  {
     v: "v0.0.107", date: "2026-11-12", title: "Roads that land",
     notes: [
       "A raised road drawn up from a street now bridges the roads on its way, instead of a false \"Ramp too short\".",

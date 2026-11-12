@@ -1,0 +1,26 @@
+/* The station's dedication card (ui/radioCard.ts): a slip standing on the radio in the bottom bar, in the radio's own
+   lettering (the radio's glyph beside the announcer's line). Tokens: theme.css. */
+.radio-card {
+  position: fixed; bottom: calc(var(--bar-h) + 10px); right: 16px; width: 360px; max-width: calc(100vw - 16px);
+  pointer-events: auto; padding: 9px 36px 10px 14px;
+  background: var(--plate); color: var(--cream);
+  border: 1px solid var(--edge); border-top: 3px solid var(--ochre); border-radius: 1px;
+  outline: 1px solid var(--pin); outline-offset: -5px;
+  box-shadow: var(--shadow);
+  animation: rc-in .24s ease-out;
+}
+.radio-card[hidden] { display: none; }
+.radio-card.out { opacity: 0; transform: translateY(6px); transition: opacity .24s ease-in, transform .24s ease-in; }
+.radio-card p { margin: 0; }
+.rc-line { display: flex; align-items: flex-start; gap: 8px; font: 500 var(--t-sm)/1.35 var(--f-text); color: var(--cream); text-wrap: pretty; }
+.rc-line svg { flex: none; margin-top: 2px; color: var(--ochre-hi); }
+.rc-line b { font-weight: 700; color: var(--ochre-hi); }
+.rc-x { position: absolute; top: 4px; right: 4px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--r); background: none; color: var(--cream-3); cursor: pointer; }
+.rc-x:hover { background: var(--plate-2); color: var(--cream); }
+.rc-x:focus-visible { outline: 2px solid var(--ochre); outline-offset: 1px; }
+@keyframes rc-in { from { opacity: 0; transform: translateY(8px); } }
+@media (prefers-reduced-motion: reduce) {
+  .radio-card { animation: rc-fade .2s linear; }
+  .radio-card.out { transform: none; }
+  @keyframes rc-fade { from { opacity: 0; } }
+}

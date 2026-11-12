@@ -32,7 +32,7 @@ const LEVEL = { piano: 0.5, comp: 0.24, bass: 0.5, lead: 0.26, tap: 0.5, swish: 
 const BAND = 0.75, CRACKLE = 0.16;
 /** The band without the set, brought to the same loudness. */
 const CLEAN = 1.75;
-const namesOf = (s: NameSource) => s.company + "|" + s.towns.join("|");
+const namesOf = (s: NameSource) => (s.dedicate ? "!" : "") + s.company + "|" + s.towns.join("|");
 
 const nearest = (bases: number[], m: number) => { let b = bases[0]; for (const x of bases) if (Math.abs(x - m) < Math.abs(b - m)) b = x; return b; };
 
@@ -71,6 +71,8 @@ export class Wireless {
   /** since when (context time) a tune due to start has waited for the worker's */
   private waitFrom = 0;
   private hornAsked = false;
+  /** a dedication: the town the next tune is named for */
+  private forced: string | null = null;
 
   constructor(private e: Engine, opts: { worker?: boolean } = {}) {
     if (opts.worker && typeof Worker !== "undefined") {
@@ -124,7 +126,7 @@ export class Wireless {
     this.on = on;
     this.waitFrom = 0;
     if (on) { this.band.gain.setTargetAtTime(BAND, this.e.now, 0.05); this.startAt = this.e.now + 1.2; }
-    else { this.hush(); this.dropHorn(); }
+    else { this.hush(); this.dropHorn(); this.forced = null; }
     if (!on) this.onTune?.("");
   }
 
@@ -148,12 +150,39 @@ export class Wireless {
     this.startAt = this.e.now + 0.9;
   }
 
-  /** Cut the band off (what is already set down fades with it). */
-  private hush() {
+  /**
+   * A dedication (audio/dedication.ts): the tune playing fades away, and at `at` (context time, after the station's
+   * ident) the next one starts, named for `town`.
+   */
+  dedicate(town: string, at: number) {
+    if (!this.on) return;
+    const t = this.e.now;
+    const had = this.tune !== null;
+    this.hush(0.45);
+    // (the tune is gone: the radio stops showing its name)
+    if (had) this.onTune?.("");
+    this.band.gain.setTargetAtTime(BAND, Math.max(t + 1.6, at - 0.2), 0.05);
+    this.forced = town;
+    this.startAt = Math.max(t + 1.8, at);
+    // (whatever was written ahead was written for no one in particular)
+    this.ahead = null;
+    this.writing = null;
+  }
+
+  /** Where the names come from now: the dedication's town, while one waits (and only while it is on this map: another
+   * save may have been opened since). */
+  private src(): NameSource {
+    const s = this.source();
+    if (this.forced && !s.towns.includes(this.forced)) this.forced = null;
+    return this.forced ? { towns: [this.forced], company: s.company, dedicate: true } : s;
+  }
+
+  /** Cut the band off (what is already set down fades with it), in `tau` seconds' time constant. */
+  private hush(tau = 0.07) {
     const t = this.e.now;
     this.waitFrom = 0;
     this.band.gain.cancelScheduledValues(t);
-    this.band.gain.setTargetAtTime(0, t, 0.07);
+    this.band.gain.setTargetAtTime(0, t, tau);
     this.tune = null;
     if (this.horn) {
       const h = this.horn;
@@ -171,8 +200,8 @@ export class Wireless {
   private prepare() {
     if (this.ahead || this.writing) return;
     if (this.writer) {
-      const mood = this.mood(), src = this.source();
-      const ask: WriteAsk = { id: ++this.asks, seed: this.seed(), mood, src: { towns: [...src.towns], company: src.company }, avoid: [...this.recent] };
+      const mood = this.mood(), src = this.src();
+      const ask: WriteAsk = { id: ++this.asks, seed: this.seed(), mood, src: { towns: [...src.towns], company: src.company, dedicate: src.dedicate }, avoid: [...this.recent] };
       this.writing = { id: ask.id, mood, names: namesOf(src) };
       this.writer.postMessage(ask);
       return;
@@ -181,7 +210,7 @@ export class Wireless {
     this.asked = idleCall(() => {
       this.asked = false;
       if (this.ahead) return;
-      const mood = this.mood(), src = this.source();
+      const mood = this.mood(), src = this.src();
       this.ahead = { mood, names: namesOf(src), tune: sheetOf(compose(this.seed(), mood, src, new Set(this.recent))) };
     }, 5000);
   }
@@ -194,7 +223,7 @@ export class Wireless {
 
   /** Start the next tune; false while it waits for the worker to write it. */
   private begin(): boolean {
-    const e = this.e, avoid = new Set(this.recent), mood = this.mood(), src = this.source(), names = namesOf(src), a = this.ahead;
+    const e = this.e, avoid = new Set(this.recent), mood = this.mood(), src = this.src(), names = namesOf(src), a = this.ahead;
     // (the one written ahead, unless the hour has turned since, or another save was loaded: a night tune is not
     // played at noon, nor one named after a town that is not on this map)
     let tune = a && a.mood === mood && a.names === names && !avoid.has(a.tune.name) ? a.tune : null;
@@ -210,6 +239,7 @@ export class Wireless {
       tune = sheetOf(compose(this.seed(), mood, src, avoid));
     }
     this.waitFrom = 0;
+    this.forced = null;
     this.recent.push(tune.name);
     if (this.recent.length > 24) this.recent.shift();
     this.tune = tune;

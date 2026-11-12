@@ -103,7 +103,7 @@ function vocal(r: Rnd, dur: number, f0: (t: number) => number, F1: (t: number) =
 // ------------------------------------------------------------------ the catalogue
 
 export type BedId =
-  | "pink" | "water" | "crickets" | "murmur" | "crackle" | "gravel"
+  | "pink" | "water" | "rain" | "crickets" | "murmur" | "crackle" | "gravel"
   | "car" | "light" | "heavy" | "train" | "carBed" | "lightBed" | "heavyBed" | "trainBed" | "idle"
   | "saw" | "furnace" | "crusher" | "turbine" | "pumpjack" | "hiss" | "lightmach" | "tractor" | "kiln" | "glass" | "assembly";
 
@@ -132,6 +132,28 @@ export const BEDS: Record<BedId, Recipe> = {
       tone(x, at, 0.05, (t) => f * (1 + 9 * t), (t) => a * Math.exp(-t / 0.014) * Math.min(1, t / 0.002));
     }
     mix(x, filt(pink(N, r), "bp", 900, 0.5), 0, 0.12);
+    return level(loopify(x, n), 0.1);
+  },
+
+  /**
+   * rain over a town, heard from above: a soft wash with no hiss at the top (it is played for hours), a fine patter in
+   * it, and now and then a fatter drop off a gutter. It breathes a little, so a long shower is not one flat noise.
+   */
+  rain: (r) => {
+    const D = 8, n = sec(D), N = n + sec(FADE);
+    const x = filt(filt(pink(N, r), "hp", 320, 0.7), "lp", 2600, 0.6);
+    // (the swell's periods divide the loop: it wraps without a seam)
+    shape(x, (t) => 0.82 + 0.1 * Math.sin((TAU * 2 * t) / D) + 0.08 * Math.sin((TAU * 5 * t) / D + 1.3));
+    const pat = new Float32Array(N);
+    for (let k = 0; k < D * 260; k++) {
+      const at = Math.floor(r() * (N - sec(0.02))), f = 1200 + r() * 2200, a = 0.02 + r() * r() * 0.06;
+      tone(pat, at, 0.012, () => f, (t) => a * Math.exp(-t / 0.0018) * Math.min(1, t / 0.0004));
+    }
+    mix(x, filt(pat, "lp", 3800, 0.6), 0, 1);
+    for (let k = 0; k < 7; k++) {
+      const at = Math.floor(r() * (N - sec(0.08))), f = 520 + r() * 480, a = 0.03 + r() * 0.04;
+      tone(x, at, 0.07, (t) => f * (1 + 2.5 * t), (t) => a * Math.exp(-t / 0.012) * Math.min(1, t / 0.002));
+    }
     return level(loopify(x, n), 0.1);
   },
 

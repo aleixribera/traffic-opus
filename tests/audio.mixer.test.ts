@@ -147,6 +147,8 @@ describe("the mixer: what should be heard", () => {
       for (let i = 0; i < NW; i++) s.works[i] = r() < 0.5 ? 0 : r() * 12;
       s.logging = r() * 3; s.dairy = r() * 3; s.farm = r() * 3; s.motor = r() * 3; s.pit = r() * 3; s.sites = r() * 10;
       s.homes = r() * 300; s.shops = r() * 80; s.pop = r() * 20000; s.hall = r(); s.forest = r(); s.water = r();
+      if (r() < 0.5) s.rain = r(); else s.snow = r() * 0.8;
+      s.wet = r();
       const m = mixFor(s);
       for (const [k2, v] of Object.entries(m)) {
         for (const x of Array.isArray(v) ? v : [v]) {
@@ -154,9 +156,30 @@ describe("the mixer: what should be heard", () => {
           expect(x, k2).toBeGreaterThanOrEqual(0);
         }
       }
-      for (const k2 of ["wind", "hum", "crickets", "water", "tyres", "idle", "street", "murmur", "clock", "near", "duck", "birdGain"] as const) expect(m[k2], k2).toBeLessThanOrEqual(1.2);
+      for (const k2 of ["wind", "hum", "crickets", "water", "rain", "tyres", "idle", "street", "murmur", "clock", "near", "duck", "birdGain"] as const) expect(m[k2], k2).toBeLessThanOrEqual(1.2);
       for (const x of [...m.eng, ...m.works]) expect(x).toBeLessThanOrEqual(1.1);
     }
+  });
+
+  it("rain: heard near in and as a far wash, the wind up, the birds and children gone in; dry, nothing", () => {
+    expect(mixFor(street()).rain).toBe(0);
+    const wet = (over: Partial<Scene> = {}) => mixFor(street({ rain: 0.8, wet: 1, ...over }));
+    expect(wet().rain).toBeGreaterThan(0.5);
+    expect(wet({ halfH: 3000 }).rain).toBeGreaterThan(0.1);
+    expect(wet({ halfH: 3000 }).rain).toBeLessThan(wet().rain * 0.6);
+    // (a light shower, quieter than a downpour)
+    expect(wet({ rain: 0.2 }).rain).toBeLessThan(wet().rain * 0.5);
+    expect(wet().wind).toBeGreaterThan(mixFor(street()).wind);
+    expect(wet().birds).toBeLessThan(mixFor(street()).birds * 0.25);
+    expect(wet({ hour: 15 }).children).toBeLessThan(mixFor(street({ hour: 15 })).children * 0.25);
+    expect(wet({ hour: 23.5, homes: 0, shops: 0 }).crickets).toBeLessThan(mixFor(street({ hour: 23.5, homes: 0, shops: 0 })).crickets * 0.25);
+    // the tyres hiss on a wet road
+    expect(wet().tyreHz).toBeGreaterThan(mixFor(street()).tyreHz);
+    // snow falls silently, and hushes the town a little
+    const snow = mixFor(street({ snow: 0.8, season: 3 }));
+    expect(snow.rain).toBe(0);
+    expect(snow.murmur).toBeLessThan(mixFor(street({ season: 3 })).murmur);
+    expect(BEDS.rain).toBeTypeOf("function");
   });
 
   it("the day's shape, and the clock's strokes", () => {
