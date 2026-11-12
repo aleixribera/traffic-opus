@@ -1280,24 +1280,29 @@ export class Game {
 
   /** Where a placed building would go near p, and what it would cost and replace. */
   placedPlan(kind: PlacedKind, p: V2, opts?: PlaceOpts): (Placement & { cost: number; deposit?: { name: string; share: number }; link?: Plan }) | null {
-    const pl0 = this.buildings.placement(kind, p, this.world, (o) => !!o.zone, opts);
+    const D = PLACED[kind], T = BUILDING_TYPES[kind];
+    const dep = isPlantKind(kind) ? PLANTS[kind].deposit : undefined;
+    // the rules for the spot itself: the placement only offers a spot that keeps them
+    const spotWhy = (q: Placement): string | null => {
+      if (this.onTownSquare(q.c, q.rot, T.w / 2, T.d / 2)) return "On a town's square: that's for its hall";
+      if (D.shore && !this.nearWater(q.c, q.rot, T.w / 2, T.d / 2)) return "Has to be on a shore";
+      // (a landmark has its own rules: a tower in a City, the fair beside a town)
+      const why = isMega(kind) ? megaBlock(kind, q.c, this.towns.list, sizeOf, this.buildings.list) : null;
+      if (why) return why;
+      if (dep) {
+        const share = this.industry.depositShare(dep.field, q.c, q.rot, T.w / 2, T.d / 2);
+        if (share < MIN_DEPOSIT) return `Needs ${dep.name.toLowerCase()}: ${Math.round(share * 100)}% here, ${Math.round(MIN_DEPOSIT * 100)}% at least`;
+      }
+      return null;
+    };
+    const pl0 = this.buildings.placement(kind, p, this.world, (o) => !!o.zone, opts, (q) => spotWhy(q) === null);
     if (!pl0) return null;
-    const D = PLACED[kind];
     let pl: Placement & { link?: Plan } = pl0, cost = D.cost;
     if (pl.ok && !this.placedUnlocked(kind)) return { ...pl, ok: false, reason: "Not unlocked yet", cost };
     if (pl.ok && D.unique && this.buildings.list.some((b) => b.kind === kind)) return { ...pl, ok: false, reason: "Only one per city", cost };
-    if (pl.ok && this.onTownSquare(pl.c, pl.rot, BUILDING_TYPES[kind].w / 2, BUILDING_TYPES[kind].d / 2)) return { ...pl, ok: false, reason: "On a town's square: that's for its hall", cost };
-    if (pl.ok && D.shore && !this.nearWater(pl.c, pl.rot, BUILDING_TYPES[kind].w / 2, BUILDING_TYPES[kind].d / 2)) return { ...pl, ok: false, reason: "Has to be on a shore", cost };
-    // (a landmark has its own rules: a tower in a City, the fair beside a town)
-    const why = pl.ok && isMega(kind) ? megaBlock(kind, pl.c, this.towns.list, sizeOf, this.buildings.list) : null;
-    if (why) return { ...pl, ok: false, reason: why, cost };
-    const dep = isPlantKind(kind) ? PLANTS[kind].deposit : undefined;
-    let deposit: { name: string; share: number } | undefined;
-    if (dep) {
-      const T = BUILDING_TYPES[kind];
-      deposit = { name: dep.name, share: this.industry.depositShare(dep.field, pl.c, pl.rot, T.w / 2, T.d / 2) };
-      if (pl.ok && deposit.share < MIN_DEPOSIT) return { ...pl, ok: false, reason: `Needs ${dep.name.toLowerCase()}: ${Math.round(deposit.share * 100)}% here, ${Math.round(MIN_DEPOSIT * 100)}% at least`, cost, deposit };
-    }
+    const deposit = dep ? { name: dep.name, share: this.industry.depositShare(dep.field, pl.c, pl.rot, T.w / 2, T.d / 2) } : undefined;
+    const why = pl.ok ? spotWhy(pl) : null;
+    if (why) return { ...pl, ok: false, reason: why, cost, deposit };
     // a site with no road at its gate gets a street laid from its gate to the nearest road, as part of placing it
     // (planned last: it is the dear part, and a spot refused anyway needs none)
     const link = pl.ok && pl.free ? this.gateLink(kind, pl.c, pl.rot, pl.side) ?? undefined : undefined;

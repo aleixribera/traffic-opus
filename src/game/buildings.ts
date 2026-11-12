@@ -112,6 +112,10 @@ const NEAR_CELL = 32;
 
 /** The first square a placed site looks in for a road to turn its gate toward (m each way; it widens till one is found). */
 const FACE_REACH = 300;
+/** How close (m) a site with a road in the way is placed to the nearest spot clear of it, stepping back from the road its gate faces. */
+const PLACE_STEP = 6;
+/** The most steps back tried (a big site steps in quarters of its half-depth instead of PLACE_STEP). */
+const PLACE_TRIES = 4;
 /** How much farther a town's own street counts than the company's roads, for a site choosing the road to face and join. */
 export const TOWN_STREET = 1.5;
 
@@ -218,7 +222,7 @@ export class Buildings {
    * with none in reach, or turned by the player, it stands free with the cursor at its centre, its gate turned toward
    * the nearest road (else toward the bottom of the screen), and waits for a road to its gate.
    */
-  placement(kind: BuildingKind, p: V2, world: PlaceWorld, soft?: (o: Building) => boolean, opts: PlaceOpts = {}): Placement | null {
+  placement(kind: BuildingKind, p: V2, world: PlaceWorld, soft?: (o: Building) => boolean, opts: PlaceOpts = {}, fits?: (pl: Placement) => boolean): Placement | null {
     const T = BUILDING_TYPES[kind];
     const turned = Math.abs(wrapAngle(opts.turn ?? 0)) > 1e-3 || (opts.rot !== undefined && T.zone === "placed");
     const snap = turned ? null : this.snapPose(kind, p);
@@ -239,25 +243,58 @@ export class Buildings {
         pl.faces = ROAD_TYPES[s.type].name;
         return pl;
       }
-      // a site that can't face the road there may still stand free where the cursor is
+      // a site that can't face the road there may still stand free where the cursor is (and if it can't, it is
+      // refused there: never shown snapped to a road and refused)
       if (T.zone !== "placed") return snapped;
     }
     if (T.zone !== "placed") return null;
     const pose = this.freePose(kind, p, opts);
-    let ga = this.gateAccess(p, pose.rot, 1, T.d / 2, isPlantKind(kind));
-    // (a road running past where its gate would be, inside its front strip: it stands back behind the strip)
-    const short = ga ? this.stripShort({ placed: true, access: ga.access, c: p, rot: pose.rot, side: 1, hd: T.d / 2 } as Building) : 0;
-    if (short > 0.05) {
-      p = add(p, scale(siteFrame(p, pose.rot, 1, T.d / 2).into, short));
-      pose.front = add(pose.front, scale(siteFrame(p, pose.rot, 1, T.d / 2).into, short));
-      ga = this.gateAccess(p, pose.rot, 1, T.d / 2, isPlantKind(kind));
+    const hd = T.d / 2, into = siteFrame(p, pose.rot, 1, hd).into, plant = isPlantKind(kind);
+    /** The site moved `back` metres from the cursor along its depth, away from its gate; `strip`: and behind the front strip of a road running past its gate. */
+    const at = (back: number, strip: boolean) => {
+      let c = add(p, scale(into, back)), front = add(pose.front, scale(into, back));
+      let ga = this.gateAccess(c, pose.rot, 1, hd, plant);
+      const short = strip && ga ? this.stripShort({ placed: true, access: ga.access, c, rot: pose.rot, side: 1, hd } as Building) : 0;
+      if (short > 0.05) {
+        c = add(c, scale(into, short));
+        front = add(front, scale(into, short));
+        ga = this.gateAccess(c, pose.rot, 1, hd, plant);
+      }
+      const pl = this.check(T, c, pose.rot, 1, front, world, soft);
+      pl.free = true;
+      // a road already runs past where its gate would be: it is connected straight away
+      if (pl.ok && ga) Object.assign(pl, { access: ga.access, front: ga.front, side: ga.side, rot: ga.rot, free: false, faces: ga.type });
+      return pl;
+    };
+    // Only a spot it can be built on is offered: standing back behind a road's front strip, else right where the
+    // cursor is, else, with a road in the way, stepped back from the road its gate faces until clear (never more than
+    // half its depth, so the cursor stays on it). None: it stays where the cursor is, refused, not moved or snapped
+    // and then refused (road play log 2026-11-10, item 8: a Dairy Farm by a dead end snapped to it, then "Road in the way").
+    // (`fits`: the caller's own rules for the spot, such as a farm's soil, so a step back never lands it on a refusal)
+    const good = (pl: Placement) => pl.ok && (!fits || fits(pl));
+    const first = at(0, true);
+    if (good(first)) return first;
+    const here = first.c.x === p.x && first.c.y === p.y ? first : at(0, false);
+    if (here !== first && good(here)) return here;
+    if (here.reason === "Road in the way") {
+      // (this runs on every mouse move: at most PLACE_TRIES coarse steps, then halving back toward the road to the
+      // nearest clear spot, the one whose gate meets it. A spot that takes the cursor off the site is never offered,
+      // and ends the search, as every later step lands farther still.)
+      const step = Math.max(PLACE_STEP, hd / PLACE_TRIES);
+      const fine = (pl: Placement) => dist(pl.c, p) <= hd;
+      let lo = 0;
+      for (let back = step; back <= hd + 1e-6; back += step) {
+        let pl = at(back, true);
+        if (!fine(pl)) break;
+        if (!good(pl)) { lo = back; continue; }
+        for (let hi = back; hi - lo > PLACE_STEP; ) {
+          const mid = (lo + hi) / 2, q = at(mid, true);
+          if (good(q) && fine(q)) { hi = mid; pl = q; } else lo = mid;
+        }
+        return pl;
+      }
     }
-    const pl = this.check(T, p, pose.rot, 1, pose.front, world, soft);
-    pl.free = true;
-    if (!pl.ok) return snapped ?? pl;
-    // a road already runs past where its gate would be: it is connected straight away
-    if (ga) Object.assign(pl, { access: ga.access, front: ga.front, side: ga.side, rot: ga.rot, free: false, faces: ga.type });
-    return pl;
+    return here;
   }
 
   /** Facing the closest road that allows driveways, set back from it (null: none in reach). */

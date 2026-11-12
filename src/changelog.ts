@@ -15,6 +15,12 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.114", date: "2026-11-12", title: "Works that land",
+    notes: [
+      "A works you are placing only moves onto a road where it can be built. By a road's dead end it stands back from the end and joins it, instead of showing \"Road in the way\".",
+    ],
+  },
+  {
     v: "v0.0.113", date: "2026-11-12", title: "Fix it from the queue",
     notes: [
       "A queued junction's panel offers its fix as one button at its real price: widen its roads, or build a roundabout. One undo takes it back.",
