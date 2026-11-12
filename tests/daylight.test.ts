@@ -265,6 +265,19 @@ describe("the day cycle", () => {
     for (let i = 0; i < 60; i++) lit = total(c.update(0, 1 / 60, false, true));
     expect(lit).toBeGreaterThan(dark + 0.4);
   });
+  it("the Traffic window's flow keeps the night: it lifts it far less than a data view (review 2026-11-12, C9)", () => {
+    const at = (overlay: boolean | "flow") => {
+      const c = new DayCycle();
+      c.set({ hour: 0.25, season: "spring", mode: "full" });
+      let L = c.update(0, 1 / 60, false, overlay);
+      for (let i = 0; i < 120; i++) L = c.update(0, 1 / 60, false, overlay);
+      return L;
+    };
+    const dark = at(false), flow = at("flow"), view = at(true);
+    expect(total(flow) - total(dark)).toBeLessThan((total(view) - total(dark)) / 3);
+    // (the lamps still read as lit)
+    expect(flow.lamps).toBeGreaterThan(0.7);
+  });
   it("mixLight blends the ends exactly and keeps the direction a unit vector", () => {
     const a = lightAt(2, MID.summer, "full"), b = lightAt(12, MID.summer, "full");
     expect(lightJump(mixLight(a, b, 0), a)).toBeLessThan(1e-12);

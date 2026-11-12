@@ -2334,7 +2334,7 @@ export class App {
   /** The light and the season for this frame, and the lamps that go with them. */
   private dayFrame(dt: number, far: boolean) {
     const g = this.game;
-    const L = this.dayCycle.update(g.time + g.alpha * SIM.dt, dt, this.mode === "menu", this.overlay !== "none", this.mode === "menu" ? 0 : farLift(this.view.halfH), this.mode !== "menu" && this.camView === "map");
+    const L = this.dayCycle.update(g.time + g.alpha * SIM.dt, dt, this.mode === "menu", this.overlay === "flow" ? "flow" : this.overlay !== "none", this.mode === "menu" ? 0 : farLift(this.view.halfH), this.mode !== "menu" && this.camView === "map");
     this.view.setLight(L.amb, L.sun, L.dir);
     this.smoke.setLight(L.amb, L.sun, L.dir);
     this.birds.setLight(L.amb, L.sun, L.dir);

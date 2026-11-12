@@ -83,11 +83,12 @@ export class DayCycle {
 
   /**
    * Once a frame: `simTime` the sim clock, `dt` real seconds, `menu` whether the title menu is up, `overlay` whether
-   * a data overlay is on (it lifts the night so its colours read), `far` how far out the camera is (0 close in, 1
+   * a data overlay is on (it lifts the night so its colours read; "flow", the Traffic window's flow on the roads, only
+   * a little), `far` how far out the camera is (0 close in, 1
    * the whole map: `farLift`), `map` whether the straight-down Map view is up (it is for planning: its night is lifted
    * well towards day so the roads, the works and the land read). Returns the light, which the caller hands on.
    */
-  update(simTime: number, dt: number, menu: boolean, overlay: boolean, far = 0, map = false): Light {
+  update(simTime: number, dt: number, menu: boolean, overlay: boolean | "flow", far = 0, map = false): Light {
     this.simTime = simTime;
     if (menu) this.menu = { t: (this.menu?.t ?? MENU_START) + dt * MENU_SPEED };
     else this.menu = null;
@@ -108,7 +109,9 @@ export class DayCycle {
     // flat grey-green in which the roads and the works were lost (play-test 2026-11-09, D5)
     // ...and the Map view most of all short of an overlay: a plan read at night was a dark green page (review
     // 2026-11-10); its lamps still glow, dimmer
-    this.lift += (Math.max(overlay ? OVERLAY_LIFT : 0, far * FAR_LIFT, map ? MAP_LIFT : 0) - this.lift) * Math.min(1, dt * 6);
+    // ...but the Traffic window's flow only a little: it colours the roads alone, which read under the lamps, and it is
+    // the window a player keeps open, so with it up no night ever fell (review 2026-11-12, C9: "fully lit at 00:14")
+    this.lift += (Math.max(overlay === "flow" ? FLOW_LIFT : overlay ? OVERLAY_LIFT : 0, far * FAR_LIFT, map ? MAP_LIFT : 0) - this.lift) * Math.min(1, dt * 6);
     if (this.lift > 0.002 && mode !== "day") L = mixLight(L, lightAt(hour, yday, "day"), this.lift);
     this.light = L;
     this.look = S;
@@ -118,8 +121,8 @@ export class DayCycle {
   }
 }
 
-/** How far towards day an overlay lifts the night, the far view at its furthest, and the Map view. */
-export const OVERLAY_LIFT = 0.8, FAR_LIFT = 0.3, MAP_LIFT = 0.55;
+/** How far towards day an overlay lifts the night, the Traffic window's flow, the far view at its furthest, and the Map view. */
+export const OVERLAY_LIFT = 0.8, FLOW_LIFT = 0.2, FAR_LIFT = 0.3, MAP_LIFT = 0.55;
 /** The far view's lift starts at this zoom (view half height, m) and is whole by `FAR_FULL`. */
 export const FAR_FROM = 700, FAR_FULL = 2200;
 
