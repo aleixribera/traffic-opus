@@ -2591,6 +2591,9 @@ export class Hud {
     // or a roundabout goes under the advice, and the lights button steps back (the advice just said they don't help)
     const fix = m.status.act;
     const fixOther = !!fix && fix.act.kind !== "lights";
+    // (lights lead only where they are the fix, or where nothing is backing up: a queue whose fix is a second road
+    // isn't helped by them either)
+    const lightsFirst = fix ? !fixOther : m.status.tone !== "bad";
     if (fix && !fixOther && !plan) m = { ...m, status: { ...m.status, act: undefined } };
     let body = "";
     if (!plan) {
@@ -2598,7 +2601,7 @@ export class Hud {
       // (approaches only: not a roundabout's own ring, nor a one-way leading away)
       const stopArms = arms.filter((a) => !g.net.segs.get(a.seg)?.ring && ng.conns.some((c) => c.armIn === a.seg));
       body = `<div class="phase stops" title="Without lights, cars give way by road priority. A stop sign makes an approach stop and give way to all the others. Lights stop traffic in turns and help busy crossings"><span class="ph-name">Stop signs</span><span class="ph-arms">${stopArms.map((a) => `<button class="arm stop-arm ${stops.includes(a.seg) ? "on stop" : ""}" data-seg="${a.seg}" aria-pressed="${stops.includes(a.seg)}" title="Stop sign on this approach">${compass(a.dir)}</button>`).join("")}</span></div>
-        <button class="btn${fixOther ? "" : " primary"} add-sig" ${sigOn ? "" : "disabled"}>${sigOn ? `Add traffic lights · ${formatMoney(g.lightsCost(this.panelNode))}` : `Traffic lights unlock with ${unlockedBy((u) => u.features?.includes("signals"))!.name}`}</button>`;
+        <button class="btn${lightsFirst ? " primary" : ""} add-sig" ${sigOn ? "" : "disabled"}>${sigOn ? `Add traffic lights · ${formatMoney(g.lightsCost(this.panelNode))}` : `Traffic lights unlock with ${unlockedBy((u) => u.features?.includes("signals"))!.name}`}</button>`;
     } else {
       const clock = `A fixed clock: ${GREEN} s of green for each phase, ${LEFT_GREEN} s for a left-turn arrow, then amber and a moment of all red. Cars may turn right on red after stopping`;
       body = plan.phases.map((p, i) => `<div class="phase ${i === this.panelPhase ? "on" : ""}${live?.st === 0 && live.i === i ? " live" : ""}" data-i="${i}"${live?.st === 0 && live.i === i ? ` title="Green now"` : ""}>
@@ -2617,7 +2620,7 @@ export class Hud {
     const waits = ap.length ? `<h3 class="sub-h">Approaches</h3><dl class="facts ip-waits">${ap.map((a) => {
       const w = a.queue ? ` · <span class="${waitTone(a.wait)}">waiting ${a.wait < 90 ? `${Math.round(a.wait)} s` : `${Math.round(a.wait / 60)} min`}</span>` : "";
       const st = said(a.seg);
-      return `<dt>${mark(a.seg)}From the ${compass(a.dir)}${st ? ` <span class="muted">· ${st}</span>` : ""}</dt><dd>${plural(a.cars, "vehicle")}${a.queue ? ` · ${a.queue} queued` : ""}${w}</dd>`;
+      return `<dt>${mark(a.seg)}From the ${compass(a.dir)}${st ? ` <span class="muted">· ${st}</span>` : ""}</dt><dd>${a.queue ? `${a.queue} of ${a.cars} queued` : plural(a.cars, "vehicle")}${w}</dd>`;
     }).join("")}</dl>` : "";
     if (!this.setPanel(this.anatomy(m, { kind: "junction", body: `${waits}<div class="ip-sig">${diagram}${body}</div>` }))) return;
     this.bindFix(m);
