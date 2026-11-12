@@ -2115,7 +2115,7 @@ export class App {
       const plan = this.computeRoundabout();
       if (plan) {
         pv.plan(plan, this.st.level);
-        if (plan.removeSegs?.length) pv.removal(g.net, plan.removeSegs);
+        pv.ringRemoval(g.net, plan);
         if (plan.errors.length) chips.push({ text: plan.errors[0].msg, kind: "error" });
         chips.push({ text: formatMoney(plan.cost), kind: plan.cost > g.money ? "error" : "cost" });
         this.lotWarning(plan, chips);

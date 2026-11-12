@@ -15,6 +15,12 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.120", date: "2026-11-12", title: "Rings that keep their roads",
+    notes: [
+      "A roundabout you are placing marks in red only the road inside the ring, the part that goes. The roads it joins stay as they are, instead of being painted red end to end as if they were coming down.",
+    ],
+  },
+  {
     v: "v0.0.119", date: "2026-11-12", title: "Pairs that pick up again",
     notes: [
       "A parallel pair carries on round a corner even after you stop drawing: start again from the end of the pair and its twin meets the old one at an even gap, instead of being refused or pinching in at the bend.",

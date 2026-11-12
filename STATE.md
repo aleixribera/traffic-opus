@@ -2,10 +2,11 @@
 
 ## Now
 
-Last pass shipped v0.0.119 Pairs that pick up again (roadplay item 4): a parallel pair carries on round a corner after the drawing was broken off. `twinEnd` in `src/roads/planner.ts` finds the twin's dead end (left of the way on, within 2.5 m, running alongside) when a new stroke starts on a pair's end; before, the twin was refused ("Can't start on the road") or bent from the old twin's end and pinched. Drawing in one go was already even. Tests: `tests/roadmodes.test.ts` "fresh stroke"; frames `.scratch/parL.png`, `parR.png`. **Next pass: check CI for v0.0.119** (`gh run list -L 2`); if green, roadplay item 5 (stub left past a new junction), then 7 (ring message).
+Last pass shipped v0.0.120 Rings that keep their roads (roadplay item 7, last half): the roundabout preview washes red only the road inside the ring (and a dead end it drops), not every trimmed road end to end. `ringCut` in `src/render/preview3d.ts`; tests `tests/ringcut.test.ts`; frames `.scratch/rb-before.png`, `rb-after.png`, `rb-after-huge.png`. CI for v0.0.119 was green. Roadplay items 5 and 7's message had already shipped in v0.0.107 (STATE was stale). **Next pass: check CI for v0.0.120** (`gh run list -L 2`); if green, roadplay item 3 (the placement chip by the pointer shows a power warning while the real blocker, e.g. overlap or water, hides in the side card; not in the changelog, check the code first). After that the log is done: weakest review category (traffic, towns, UI, polish, sound all 7.0).
 
 ## What works (latest)
 
+- v0.0.120 roundabout preview marks only what goes (`tests/ringcut.test.ts`).
 - v0.0.119 parallel pairs carry on round a corner from a fresh stroke (`tests/roadmodes.test.ts`).
 - v0.0.118 turning bulbs fit their room (`tests/bulbs.test.ts`).
 - v0.0.117 Transport cards fold on aim (`src/ui/hud.ts` aimed; browser-checked, DOM only).
@@ -16,7 +17,7 @@ Last pass shipped v0.0.119 Pairs that pick up again (roadplay item 4): a paralle
 
 ## Broken / open
 
-- Road play log (`docs/roadplay-log.md` on branch `t3/road-freight-playtesting`): 5 stub past a new junction, 7 ring message (4 done in v0.0.119, 6 in v0.0.118, 9 in v0.0.116, 10 in v0.0.117). A bulb's kerb ring also crosses the road mouth (old look, shows more on small bulbs).
+- Road play log (`docs/roadplay-log.md` on branch `t3/road-freight-playtesting`): open: 3 (placement chip). Done: 1, 2, 5, 7 message, 8 (v0.0.107/114), 4 in v0.0.119, 6 in v0.0.118, 7 preview in v0.0.120, 9 in v0.0.116, 10 in v0.0.117). A bulb's kerb ring also crosses the road mouth (old look, shows more on small bulbs). Ring preview misses two rare cases commit removes: an outside sliver under 7 m, and a road at an inner node that is not in removeSegs (a ramp).
 - Late-save soak: worktree `~/.t3/worktrees/traffic-opus/t3-64b370fb`, branch `t3/late-save-deadlock-test` (f94271f): lategame fixture + 10-day soak, day-5 gridlock not settled. Too long for light tests; needs its own project and a shorter run.
 - Slow tests to shrink: see `.claude/iterate.md`.
 

@@ -8,6 +8,39 @@ import type { V2 as P2 } from "../core/math";
 import { makeRoadMaterial, ribbon, strip } from "./roads3d";
 import { LEVEL_TINT } from "./palette";
 
+/**
+ * The stretches of a road's centreline (points `pts`, heights `hs`) inside a circle, cut exactly where it meets the
+ * circle. `dropA` / `dropB`: that end of the road goes too (a short dead end left outside the ring), so the run
+ * reaching it from the circle is included.
+ */
+export function ringCut(pts: P2[], hs: ArrayLike<number>, c: P2, R: number, dropA = false, dropB = false): { pts: P2[]; hs: number[] }[] {
+  const n = pts.length;
+  const off = (p: P2) => Math.hypot(p.x - c.x, p.y - c.y) - R;
+  const gone = pts.map((p) => off(p) < 0);
+  if (dropA) for (let i = 0; i < n && !gone[i]; i++) gone[i] = true;
+  if (dropB) for (let i = n - 1; i >= 0 && !gone[i]; i--) gone[i] = true;
+  const out: { pts: P2[]; hs: number[] }[] = [];
+  let run: P2[] = [], rh: number[] = [];
+  const flush = () => {
+    if (run.length >= 2) out.push({ pts: run, hs: rh });
+    run = [];
+    rh = [];
+  };
+  for (let i = 0; i < n; i++) {
+    if (i > 0 && gone[i] !== gone[i - 1]) {
+      // (a flip is always one point inside the circle and one outside: the forced ends stop at the first inside point)
+      const d0 = off(pts[i - 1]), d1 = off(pts[i]);
+      const t = clamp(d0 / (d0 - d1), 0, 1);
+      run.push({ x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t });
+      rh.push(hs[i - 1] + (hs[i] - hs[i - 1]) * t);
+      if (!gone[i]) flush();
+    }
+    if (gone[i]) { run.push(pts[i]); rh.push(hs[i]); }
+  }
+  flush();
+  return out;
+}
+
 const OK_ALPHA = 0.88;
 
 /** How far over the ground or a deck the flat marks float (m): clear of the road's paint, still on it at a tilt. */
@@ -175,6 +208,24 @@ export class Preview3D {
   /** Red wash over segments that would be removed. */
   removal(net: RoadNetwork, segs: Iterable<number>) {
     this.washSegs(net, segs, this.delMat);
+  }
+
+  /**
+   * What a roundabout takes away: the stretches of road inside its ring (and a short dead end it drops past the ring),
+   * not the whole roads it trims, which stay as its arms. Washing them end to end read as demolishing them (road play
+   * 2026-11-10).
+   */
+  ringRemoval(net: RoadNetwork, plan: Plan) {
+    const c = plan.ringCenter, st = plan.strokes[0];
+    if (!c || !st) return;
+    const R = Math.hypot(st.chain[0].p0.x - c.x, st.chain[0].p0.y - c.y);
+    const drop = new Set(plan.removeNodes ?? []);
+    for (const id of plan.removeSegs ?? []) {
+      const g = net.segGeom.get(id), s = net.segs.get(id);
+      if (!g || !s) continue;
+      for (const run of ringCut(g.center.pts, g.hs, c, R, drop.has(s.a), drop.has(s.b)))
+        this.add(new THREE.Mesh(strip(run.pts, run.hs.map((h) => h + 1.2), g.width + 1), this.delMat), 8);
+    }
   }
 
   highlight(net: RoadNetwork, segs: Iterable<number>) {
