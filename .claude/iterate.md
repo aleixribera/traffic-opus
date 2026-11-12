@@ -2,14 +2,11 @@
 
 Project specifics for the global `iterate` skill. Where this differs from the skill, this wins.
 
-## Truth file and order of work
+## Vision and plan
 
-- Truth: `docs/direction.md` (wins over `docs/design.md`), plus the user's rules in Claude's project memory (`industry-focus`, `traffic-not-money`, `stable-growth`, `ui-words` rule book `docs/ui-words.md`, PC only, and the rest in MEMORY.md).
-- Goal: every category of the latest review (`docs/review-*.md`, scored against Cities: Skylines and Transport Fever 2) at 9/10. The review is the scorecard.
-- Order of work, after Broken and the owner's complaints:
-  1. Finished-but-unmerged work in worktrees (`git worktree list`): finish, verify, ship, then remove the worktree.
-  2. Open items of `docs/roadplay-log.md` (on branch `t3/road-freight-playtesting`) and the review's bug list.
-  3. The weakest review category. When every category has moved since the last review, a fresh reviewer re-scores (that is a stage gate).
+- Vision: `docs/direction.md` (wins over `docs/design.md`), plus the user's rules in Claude's project memory (`industry-focus`, `traffic-not-money`, `stable-growth`, `ui-words` rule book `docs/ui-words.md`, PC only, and the rest in MEMORY.md).
+- Plan: `PLAN.md` (written by the director chat): the current stage, its items in order and each item's acceptance check, and the scorecard.
+- Backlog: `BACKLOG.md` (written by the loop): work cut, found or deferred, for the director to promote.
 
 ## Notes
 
