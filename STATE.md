@@ -4,10 +4,11 @@
 
 Paused by Aleix, 2026-11-13.
 
-Last pass (after v0.0.120, CI green): roadplay item 3 was already fixed in code (power is a non-blocking warning pushed only when the plot is ok; an overlap leads the chip in amber, water as the refusal), so the road play log is done. Then the late-save soak (review top 5 #5, traffic at scale): branch rebased onto v0.0.120 and parked as `wip/late-save-soak` (supplied late save fixture, `tests/latesave.test.ts` soak project, probe `tools/zsoak.build.ts`). Probe on v0.0.120: 180 game hours (7.5 days) of the late save, 255-278 vehicles, at most 13 standing in any 90 h window, 0 cycle releases, 0 jam breaks, 0 quits: the old day-5 gridlock (+114 h) no longer forms. **Next:** run `npm run test:soak` on that branch in the background (~30 min, its strict checks never ran to the end), and if green merge it to main (no release: no player-visible change) and remove the worktree.
+Last pass: the late-save soak is merged (review top 5 #5 done). `npm run test:soak` (`tests/latesave.test.ts`, not on CI) runs ten days of the supplied late save in ~26 min: peak 316 vehicles, daily standing mean 1.1-2.3, worst single wait 54 s, 0 rings, 0 releases/breaks/quits, no build-up. Its "over 5 standing" bar is 3 game hours, not the review's 1 (a single red of the longest fixed-time plan is longer than 40 s). Worktree and `wip/late-save-soak` removed; no parked work left. **Next:** `PLAN.md` Stage 1 item 1, stage saves for testing (`tools/lategame.build.ts` already builds a supplied late save). A traffic lead from the soak: left turns across a busy unlit avenue junction wait up to 54 s at the peak (late save node 233; town road upgrades never add auto lights, `autoLights` in `src/game/city.ts` only lights new arms).
 
 ## What works (latest)
 
+- Late save holds ten days at ~300 vehicles without a lasting jam (`npm run test:soak`, `tests/latesave.test.ts`).
 - v0.0.120 roundabout preview marks only what goes (`tests/ringcut.test.ts`).
 - v0.0.119 parallel pairs carry on round a corner from a fresh stroke (`tests/roadmodes.test.ts`).
 - v0.0.118 turning bulbs fit their room (`tests/bulbs.test.ts`).
@@ -20,7 +21,6 @@ Last pass (after v0.0.120, CI green): roadplay item 3 was already fixed in code 
 ## Broken / open
 
 - Road play log (`docs/roadplay-log.md` on branch `t3/road-freight-playtesting`): all done (3 found already fixed by 42580ee). Done: 1, 2, 5, 7 message, 8 (v0.0.107/114), 4 in v0.0.119, 6 in v0.0.118, 7 preview in v0.0.120, 9 in v0.0.116, 10 in v0.0.117). A bulb's kerb ring also crosses the road mouth (old look, shows more on small bulbs). Ring preview misses two rare cases commit removes: an outside sliver under 7 m, and a road at an inner node that is not in removeSegs (a ramp).
-- Late-save soak: worktree `~/.t3/worktrees/traffic-opus/t3-64b370fb`, parked as `wip/late-save-soak` (8518f08); see Now.
 - Slow tests to shrink: see `.claude/iterate.md`.
 
 ## Needs Aleix
