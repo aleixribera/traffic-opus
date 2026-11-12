@@ -15,6 +15,19 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.109", date: "2026-11-12", title: "Advice that holds",
+    notes: [
+      "A building site's wait comes from what supplies it, in plain bands (\"about a day\"), and moves one step at a time.",
+      "A site says when the towns are buying most of what it waits for. \"Build another\" only shows when it would open the site sooner.",
+      "Advice on what to build holds for a few hours unless your works change.",
+      "A new town's distance and road are said once, on its card. Town totals agree everywhere.",
+      "An offered road shows its own price, and says why when there is none.",
+      "A road can cross a street along a river bank and bridge the river right after it.",
+      "The Tool Options card stays put while you draw, and the Traffic window stops above it.",
+      "With the Traffic window open, night stays night.",
+    ],
+  },
+  {
     v: "v0.0.108", date: "2026-11-12", title: "Weather",
     notes: [
       "Passing showers in spring and autumn, morning mist on autumn days, and snow showers in winter. The clock shows the weather.",
