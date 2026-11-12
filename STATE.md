@@ -2,8 +2,6 @@
 
 ## Now
 
-Paused by Aleix, 2026-11-12.
-
 Last pass (after v0.0.120, CI green): roadplay item 3 was already fixed in code (power is a non-blocking warning pushed only when the plot is ok; an overlap leads the chip in amber, water as the refusal), so the road play log is done. Then the late-save soak (review top 5 #5, traffic at scale): branch rebased onto v0.0.120 and parked as `wip/late-save-soak` (supplied late save fixture, `tests/latesave.test.ts` soak project, probe `tools/zsoak.build.ts`). Probe on v0.0.120: 180 game hours (7.5 days) of the late save, 255-278 vehicles, at most 13 standing in any 90 h window, 0 cycle releases, 0 jam breaks, 0 quits: the old day-5 gridlock (+114 h) no longer forms. **Next:** run `npm run test:soak` on that branch in the background (~30 min, its strict checks never ran to the end), and if green merge it to main (no release: no player-visible change) and remove the worktree.
 
 ## What works (latest)
