@@ -15,6 +15,12 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.115", date: "2026-11-12", title: "Joined, not stranded",
+    notes: [
+      "A works stepping back from a road in its way only lands where its gate meets a road, never off on its own.",
+    ],
+  },
+  {
     v: "v0.0.114", date: "2026-11-12", title: "Works that land",
     notes: [
       "A works you are placing only moves onto a road where it can be built. By a road's dead end it stands back from the end and joins it, instead of showing \"Road in the way\".",

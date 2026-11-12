@@ -277,21 +277,25 @@ export class Buildings {
     const here = first.c.x === p.x && first.c.y === p.y ? first : at(0, false);
     if (here !== first && good(here)) return here;
     if (here.reason === "Road in the way") {
-      // (this runs on every mouse move: at most PLACE_TRIES coarse steps, then halving back toward the road to the
-      // nearest clear spot, the one whose gate meets it. A spot that takes the cursor off the site is never offered,
-      // and ends the search, as every later step lands farther still.)
+      // A step back is for joining the road it ran into: only a spot whose gate meets a road is offered (one standing
+      // free of every road is not: the cursor moved on a little finds a better one), and never one that takes the
+      // cursor off the site. This runs on every mouse move: at most PLACE_TRIES coarse steps, then halving between the
+      // last spot with the road in the way and the first clear one, to the joined spot nearest the cursor.
       const step = Math.max(PLACE_STEP, hd / PLACE_TRIES);
-      const fine = (pl: Placement) => dist(pl.c, p) <= hd;
+      const joined = (pl: Placement) => good(pl) && !pl.free && dist(pl.c, p) <= hd;
       let lo = 0;
       for (let back = step; back <= hd + 1e-6; back += step) {
-        let pl = at(back, true);
-        if (!fine(pl)) break;
+        const pl = at(back, true);
+        if (dist(pl.c, p) > hd) break;
         if (!good(pl)) { lo = back; continue; }
+        let best = joined(pl) ? pl : null;
         for (let hi = back; hi - lo > PLACE_STEP; ) {
           const mid = (lo + hi) / 2, q = at(mid, true);
-          if (good(q) && fine(q)) { hi = mid; pl = q; } else lo = mid;
+          // (still in the way: farther back; clear, joined or standing free: nearer the road)
+          if (!good(q)) lo = mid;
+          else { hi = mid; if (joined(q)) best = q; }
         }
-        return pl;
+        return best ?? here;
       }
     }
     return here;
