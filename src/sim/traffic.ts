@@ -1,5 +1,6 @@
 import { LANE_W, ROAD_TYPES, SIM, rightOnly } from "../config";
 import { clamp, dot, norm, polyAt, polyClosest, polyDirSmooth, right, sub, type V2 } from "../core/math";
+import { mulberry32 } from "../core/noise";
 import type { ChangeSet, Connector, Edge, Lane, RoadNetwork, SignalPhase, SignalPlan } from "../roads/network";
 import { Router, dkey, dkDir, dkSeg, type Access } from "./router";
 import type { HaulRun } from "../game/industry";
@@ -346,7 +347,7 @@ export class Traffic {
   private keepClear = new Map<Lane, { s: number; b: number; a: number }[]>(); // lane -> driveway spots queues leave free (this step)
   // lane -> cars beside it that need to get into it soon: the car behind each one holds back to make room
   private wishes = new Map<Lane, Vehicle[]>();
-  private crossers = new Map<Lane, number[]>(); // lane -> spots where a car is pulling out across it (this step)
+  private crossers = new Map<Lane, { k: number; v: Vehicle }[]>(); // lane -> spots where a car is pulling out across it, and the car (this step)
   private leavers = new Map<Lane, Vehicle[]>(); // lane -> cars changing out of it that still take up room in it (this step)
   // Where one lane divides in two (a taper into a slip lane, a fork), the two paths run on top of each other for a
   // while: a car on one branch there blocks the other too. Pairs of such branches with how far they overlap, built
@@ -388,6 +389,9 @@ export class Traffic {
   trips: { ff: number; actual: number; t: number }[] = [];
   jams = new Map<number, number>(); // node id -> seconds of blockage recently
 
+  /** The sim's own dice (paint, a way out picked at random): seeded, so the same steps give the same traffic every run. */
+  private rnd = mulberry32(0x6b6d30);
+
   constructor(public net: RoadNetwork, private ev: TrafficEvents) {
     this.router = new Router(net);
   }
@@ -396,7 +400,7 @@ export class Traffic {
 
   request(p: PendingSpawn) {
     p.t0 ??= this.time;
-    p.look ??= (Math.random() * 1e6) | 0;
+    p.look ??= (this.rnd() * 1e6) | 0;
     this.pending.push(p);
   }
 
@@ -453,7 +457,7 @@ export class Traffic {
     // (a queue leaves the mouth clear for the whole of it: room behind for its body, and ahead for it to straighten up)
     p.clear = [{ lane, s: ls, b: len + 2, a: len + 3 }];
     // another vehicle still pulling out across this lane near here: wait till it is clear of it
-    for (const k of this.crossers.get(lane) ?? []) if (k > ls - len - 4 && k < ls + len + 6) { p.why = "crossing"; return "wait"; }
+    for (const { k, v: x } of this.crossers.get(lane) ?? []) if (k > ls - len - 4 && k < ls + len + 6) { p.why = "crossing"; p.blocker = x.id; return "wait"; }
     for (const o of lane.occ as Vehicle[]) {
       if (o.s > ls - 2 && o.s - o.len < ls + len + 3) { p.why = "occupied"; return "wait"; }
       // one still pulling out ahead needs its length on from where it came out to straighten up: not in front of it
@@ -474,7 +478,7 @@ export class Traffic {
       for (const { lane: nl, s: ns } of this.lanesAt(dkey(p.from.seg, best.dir === 1 ? -1 : 1), p.from.p)) {
         p.clear.push({ lane: nl, s: ns, b: CROSS_SWEEP + 2.5, a: 3 });
         // (two pulling out across each other's lanes would each wait for the other's body to clear)
-        for (const k of this.crossers.get(nl) ?? []) if (k > ns - len - 6 && k < ns + len + 6) { p.why = "crossing"; return "wait"; }
+        for (const { k, v: x } of this.crossers.get(nl) ?? []) if (k > ns - len - 6 && k < ns + len + 6) { p.why = "crossing"; p.blocker = x.id; return "wait"; }
         for (const o of nl.occ as Vehicle[]) {
           // we drive on (towards falling s on this far lane) while we cross it: keep that stretch clear too
           // (and the stretch is as long as our turn out sweeps along it, not just the spot we come out at)
@@ -530,7 +534,7 @@ export class Traffic {
       v.crossing = this.lanesAt(dkey(p.from.seg, best.dir === 1 ? -1 : 1), p.from.p);
       v.crossFrom = ls;
       // (at once: another pulling out this same step must see it)
-      for (const c of v.crossing) { const a = this.crossers.get(c.lane); if (a) a.push(c.s - CROSS_SWEEP); else this.crossers.set(c.lane, [c.s - CROSS_SWEEP]); }
+      for (const c of v.crossing) { const x = { k: c.s - CROSS_SWEEP, v }, a = this.crossers.get(c.lane); if (a) a.push(x); else this.crossers.set(c.lane, [x]); }
     }
     insertOcc(lane, v);
     this.vehicles.push(v);
@@ -1011,7 +1015,7 @@ export class Traffic {
           // prefer a way on from which the destination can still be reached
           const viable = lane.outs.filter((c) => this.router.routeFromKey(dkey(c.to.seg, c.to.dir), v.dest));
           const pool = viable.length ? viable : lane.outs;
-          const alt = pool[(Math.random() * pool.length) | 0];
+          const alt = pool[(this.rnd() * pool.length) | 0];
           v.route = [dkey(lane.seg, lane.dir), dkey(alt.to.seg, alt.to.dir)];
           v.ri = 0;
           v.next = alt;
@@ -1480,7 +1484,7 @@ export class Traffic {
       const fwd = v.s - (v.crossFrom ?? v.s);
       if (v.crossOut === undefined && Math.abs(v.lat) < LANE_W * 0.5) v.crossOut = fwd;
       const moved = Math.max(CROSS_SWEEP, v.crossOut ?? fwd);
-      for (const c of v.crossing) { const k = c.s - moved; const a = this.crossers.get(c.lane); if (a) a.push(k); else this.crossers.set(c.lane, [k]); }
+      for (const c of v.crossing) { const x = { k: c.s - moved, v }, a = this.crossers.get(c.lane); if (a) a.push(x); else this.crossers.set(c.lane, [x]); }
     }
     // a car changing lanes stays in the way in the lane it left until it is mostly across
     this.leavers.clear();
@@ -2015,12 +2019,12 @@ export class Traffic {
         con(g2, w.v, w);
       }
     }
-    // brake for a car pulling out across this lane
+    // brake for a car pulling out across this lane (it is what we wait on: a ring of waits can run through it)
     if (e.kind === "lane") {
       const X = this.crossers.get(e as Lane);
-      if (X) for (const k of X) {
-        if (v.s > k - 1.5) continue;
-        con(Math.max(0.1, k - 2 - v.s), 0);
+      if (X) for (const { k, v: x } of X) {
+        if (x === v || v.s > k - 1.5) continue;
+        con(Math.max(0.1, k - 2 - v.s), 0, x);
       }
     }
     // a car on a sibling branch of a taper, still on top of our path
