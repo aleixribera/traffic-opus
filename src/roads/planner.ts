@@ -1215,7 +1215,8 @@ function autoBridge(net: RoadNetwork, world: BuildWorld, st: Stroke, ignore: { s
   }
   // roads it can't meet at grade
   const cx = findCrossings(net, pts, cum, base, ignore);
-  const kept: number[] = []; // (where it meets a road at grade: a junction there, so no deck over it)
+  // (where it meets a road at grade: a junction there, so no deck over it; m: how far from it a ramp may start)
+  const kept: { s: number; m: number }[] = [];
   const all = [...cx.crossings.map((c) => ({ ...c, grade: true })), ...cx.bad.map((b) => ({ ...b, grade: false }))].sort((a, b) => a.sPlan - b.sPlan);
   for (const [k, c] of all.entries()) {
     let lift = !c.grade || !meetsAtGrade(net, c.seg, st.type) || c.angle < MIN_ARM_ANGLE;
@@ -1229,8 +1230,8 @@ function autoBridge(net: RoadNetwork, world: BuildWorld, st: Stroke, ignore: { s
         if (d >= 3 && d < 12) lift = true;
       }
     }
-    if (!lift) { kept.push(c.sPlan); continue; }
     const sg = net.segGeom.get(c.seg);
+    if (!lift) { kept.push({ s: c.sPlan, m: (sg ? sg.width / 2 : 6) / Math.max(0.3, Math.sin(c.angle)) + 1 }); continue; }
     // the length of this road that passes over the other: its width seen at the crossing angle
     const half = (sg ? sg.width / 2 : 6) / Math.max(0.3, Math.sin(c.angle)) + hw / Math.max(0.3, Math.tan(Math.max(c.angle, 0.1)));
     obs.push({ s0: c.sPlan - half - BRIDGE_PAD, s1: c.sPlan + half + BRIDGE_PAD, h: deckOver(c.hSeg), water: false, road: true });
@@ -1246,7 +1247,7 @@ function autoBridge(net: RoadNetwork, world: BuildWorld, st: Stroke, ignore: { s
   const G = MAX_GRADE * 0.97;
   // (a level run to the end only where the stroke meets no road at grade on the way: that road is joined, not
   // passed over)
-  const clear = (a: number, b: number) => !kept.some((k) => k > a && k < b);
+  const clear = (a: number, b: number) => !kept.some((k) => k.s > a && k.s < b);
   const solve = (s: number, h: number, dir: 1 | -1) => {
     let f = s + (dir * Math.max(0, h - baseAt(s))) / G;
     for (let k = 0; k < 200; k++) {
@@ -1274,11 +1275,41 @@ function autoBridge(net: RoadNetwork, world: BuildWorld, st: Stroke, ignore: { s
   }
   const errors: PlanError[] = [];
   const maxH = MAX_LEVEL * LEVEL_H;
+  // Over water only, a ramp that would run back past the stroke's end or across a road it joins at grade (a street
+  // along the bank) starts just after it instead and climbs on over the water: a low deck off the bank, as a river
+  // bridge leaves a quay (road play 2026-11-12, C1). Two ramps that then meet make a humped deck, lower than a level.
+  // (Over a road the deck must clear it, so there the ramps keep their full length.)
+  // (the foot on dry land: the water was found at samples 2 m apart, so it may begin up to 2 m before wet0)
+  const EDGE = 2.5;
+  const offTheBank = (sp: Span): PlanError | null => {
+    const wet0 = sp.s0 + BRIDGE_PAD, wet1 = sp.s1 - BRIDGE_PAD;
+    const before = kept.filter((k) => k.s < wet0).map((k) => k.s + k.m);
+    const after = kept.filter((k) => k.s > wet1).map((k) => k.s - k.m);
+    const lo = Math.max(0, ...before), hi = Math.min(L, ...after);
+    if (sp.f0 < lo - 0.01) {
+      if (lo > wet0 - EDGE) return before.length && lo > 0 ? { msg: "No room to ramp up between the road and the water", p: polyAt(pl, clamp(lo, 0, L)) } : { msg: `Start ${Math.max(1, Math.ceil(EDGE - wet0 + lo))} m further back to ramp up over the water`, p: pts[0] };
+      sp.f0 = lo;
+      sp.s0 = Math.max(sp.s0, lo + Math.max(0, sp.h - baseAt(lo)) / G);
+    }
+    if (sp.f1 > hi + 0.01) {
+      if (hi < wet1 + EDGE) return after.length && hi < L ? { msg: "No room to ramp down between the water and the road", p: polyAt(pl, clamp(hi, 0, L)) } : { msg: `Carry on ${Math.max(1, Math.ceil(wet1 + EDGE - hi))} m to ramp down from the bridge`, p: pts[pts.length - 1] };
+      sp.f1 = hi;
+      sp.s1 = Math.min(sp.s1, hi - Math.max(0, sp.h - baseAt(hi)) / G);
+    }
+    if (sp.s0 > sp.s1) {
+      // the ramps meet: a hump at the height they reach
+      const b0 = baseAt(sp.f0), b1 = baseAt(sp.f1);
+      sp.h = ((sp.f1 - sp.f0) * G + b0 + b1) / 2;
+      sp.s0 = sp.s1 = sp.f0 + Math.max(0, sp.h - b0) / G;
+    }
+    return null;
+  };
   for (const sp of spans) {
     const what = sp.water && !sp.road ? "the water" : sp.road && !sp.water ? "the road" : "the crossing";
     if (sp.h > maxH + 0.1) { errors.push({ msg: `Too high to bridge ${what} here`, p: polyAt(pl, clamp((sp.s0 + sp.s1) / 2, 0, L)) }); continue; }
     if (sp.s0 + BRIDGE_PAD < 0.5 && baseAt(0) < sp.h - 0.3) errors.push({ msg: `Can't start on ${what}`, p: pts[0] });
     else if (sp.s1 - BRIDGE_PAD > L - 0.5 && baseAt(L) < sp.h - 0.3) errors.push({ msg: `Can't end on ${what}`, p: pts[pts.length - 1] });
+    else if (sp.water && !sp.road) { const e = offTheBank(sp); if (e) errors.push(e); }
     else if (sp.f0 < -0.5) errors.push({ msg: `Start ${Math.ceil(-sp.f0)} m further back to ramp up over ${what}`, p: pts[0] });
     else if (sp.f1 > L + 0.5) errors.push({ msg: `Carry on ${Math.ceil(sp.f1 - L)} m to ramp down from the bridge`, p: pts[pts.length - 1] });
     sp.f0 = Math.max(0, sp.f0);
@@ -1906,7 +1937,8 @@ export function validateStrokes(
       const p = pts[i];
       if (!world.inBounds(p)) out = true;
       if (world.isMountain(p)) mountain = true;
-      if (hs[i] < LEVEL_H * 0.5 && world.isWater(p)) water = true;
+      // (on the water at ground level; a ramp leaving the bank climbs on over it, see autoBridge's offTheBank)
+      if (hs[i] < 0.05 && world.isWater(p)) water = true;
     }
     if (out) errors.push({ msg: "Outside the map", p: mid });
     if (mountain) errors.push({ msg: "Mountain in the way", p: mid });

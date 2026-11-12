@@ -219,6 +219,9 @@ const KEYS: [string, string][] = [
   ["N", "Sound on / off"],
 ];
 
+/** Room kept under the tool options card's controls for its notes (px): six lines with the rule above them. */
+const TO_ROOM = 152;
+
 export class Hud {
   root = h("div", "hud");
   // bottom bar
@@ -240,6 +243,8 @@ export class Hud {
   private readEl = h("ul", "to-read");
   /** the tool options card has no options for the tool in hand, only the notes about the click (shown while there are some) */
   private toolNotesOnly = false;
+  /** The tool options card's height without its notes (px), while it is pinned (pinToolOpts); else -1. */
+  private toolH0 = -1;
   private readKey = "";
   /** "Following · Heavy truck · Coal to the Smelter · Stop", above the bar while the camera follows a vehicle */
   private followEl = h("div", "card follow-chip");
@@ -842,9 +847,10 @@ export class Hud {
     // for the notes about the click the pointer's one line leaves out, while there are some)
     const notesOnly = !items.length && (st.tool === "junction" || st.tool === "lane");
     this.toolNotesOnly = notesOnly;
-    if (!items.length && !notesOnly) { el.hidden = true; return; }
+    if (!items.length && !notesOnly) { el.hidden = true; this.pinToolOpts(); return; }
     el.hidden = notesOnly && this.readEl.hidden;
     el.append(h("header", "to-head", "Tool options"), ...items, this.readEl);
+    this.pinToolOpts();
     if (focusKey) [...el.querySelectorAll<HTMLElement>("[aria-label]")].find((e) => e.getAttribute("aria-label") === focusKey)?.focus();
   }
 
@@ -1133,6 +1139,33 @@ export class Hud {
     this.readEl.innerHTML = list.map((c) => `<li class="${c.kind}">${c.icon ? ICON[c.icon] : ""}<span>${c.text}</span></li>`).join("");
     this.readEl.hidden = !list.length;
     if (this.toolNotesOnly) this.toolOpts.hidden = !list.length;
+    this.placeToolOpts();
+  }
+
+  /**
+   * The tool options card keeps its top edge, so its buttons stay under the pointer while the notes at its foot come
+   * and go (road play 2026-11-12, C3: Mode and Elevation jumped by up to 200 px between hovers). It stands as high
+   * as its controls plus room for TO_ROOM of notes, which grow down into that room; and a window in the top left
+   * corner stops short of it instead of running under it (--tool-top).
+   */
+  private pinToolOpts() {
+    const el = this.toolOpts, root = document.documentElement;
+    el.style.bottom = "";
+    this.toolH0 = -1;
+    if (el.hidden || this.toolNotesOnly) { root.style.removeProperty("--tool-top"); return; }
+    const was = this.readEl.hidden;
+    this.readEl.hidden = true;
+    this.toolH0 = el.offsetHeight;
+    this.readEl.hidden = was;
+    root.style.setProperty("--tool-top", `${this.toolH0 + TO_ROOM}px`);
+    this.placeToolOpts();
+  }
+
+  private placeToolOpts() {
+    if (this.toolH0 < 0) return;
+    const el = this.toolOpts;
+    const lift = Math.max(0, this.toolH0 + TO_ROOM - el.offsetHeight);
+    el.style.bottom = lift ? `calc(var(--bar-h) + 12px + ${lift}px)` : "";
   }
 
   private hint(cat: string | null) {
@@ -1192,6 +1225,15 @@ export class Hud {
     // (the order note stays: it is put away by itself)
     for (let ts = this.toastBox.querySelectorAll(".toast:not(.order-note)"), i = 0; i < ts.length - 3; i++) ts[i].remove();
     setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 300); }, error ? 2200 : 2800);
+  }
+
+  /**
+   * A click refused. When the pointer's line already says why, it shakes there (app.ts) and that is all: the same
+   * words again as a toast at the top of the screen were the refusal "in a different place" (review 2026-11-12).
+   */
+  refuse(msg: string) {
+    const said = !this.chipBox.hidden && [...this.chipBox.querySelectorAll(".chip.error")].some((c) => c.textContent === msg);
+    if (!said) this.toast(msg, true);
   }
 
   rect(r: [V2, V2] | null) {

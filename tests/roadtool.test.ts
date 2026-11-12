@@ -295,12 +295,62 @@ describe("automatic bridges", () => {
 
   it("says where to start when there's no room for a ramp", () => {
     const net = new RoadNetwork();
-    const plan = planRoad(net, river, { start: free(v2(0, 110)), end: free(v2(0, 340)), mode: "straight", type: "street", bridges: true });
+    const plan = planRoad(net, river, { start: free(v2(0, 139.5)), end: free(v2(0, 340)), mode: "straight", type: "street", bridges: true });
     expect(plan.errors.some((e) => /^Start \d+ m further back to ramp up over the water$/.test(e.msg))).toBe(true);
     // (and only that: not also the old "raise it with Page Up")
     expect(plan.errors.some((e) => e.msg.includes("Page Up"))).toBe(false);
-    const tooShort = planRoad(net, river, { start: free(v2(0, 0)), end: free(v2(0, 230)), mode: "straight", type: "street", bridges: true });
+    const tooShort = planRoad(net, river, { start: free(v2(0, 0)), end: free(v2(0, 200.5)), mode: "straight", type: "street", bridges: true });
     expect(tooShort.errors.some((e) => /^Carry on \d+ m to ramp down from the bridge$/.test(e.msg))).toBe(true);
+  });
+
+  // road play 2026-11-12, C1: a road along the bank 10 m from the water, and a road drawn across both
+  const slope = (net: RoadNetwork) => {
+    for (const s of net.segs.values()) {
+      const p = net.nodes.get(s.a)!, q = net.nodes.get(s.b)!;
+      expect(Math.abs(p.h - q.h) / net.segGeom.get(s.id)!.center.length).toBeLessThanOrEqual(0.11 * 1.02);
+    }
+  };
+  for (const type of ["street", "avenue"] as const) {
+    it(`a ${type} crosses a bank road at grade and ramps up off the bank behind it`, () => {
+      const net = new RoadNetwork();
+      build(net, river, { start: free(v2(-150, 130)), end: free(v2(150, 130)), mode: "straight", type: "street" });
+      const plan = planRoad(net, river, { start: free(v2(0, 70)), end: free(v2(0, 340)), mode: "straight", type, bridges: true });
+      expect(plan.errors.map((e) => e.msg)).toEqual([]);
+      expect(plan.bridges).toHaveLength(1);
+      expect(plan.bridges![0].over).toBe("water");
+      commit(net, plan);
+      // one junction on the bank road, at ground level
+      const jn = [...net.nodes.values()].filter((n) => net.segsAt(n.id).length >= 3);
+      expect(jn).toHaveLength(1);
+      expect(jn[0].h).toBe(0);
+      expect(dist(jn[0].p, v2(0, 130))).toBeLessThan(1);
+      slope(net);
+      // and from the bank road itself
+      const n2 = new RoadNetwork();
+      build(n2, river, { start: free(v2(-150, 130)), end: free(v2(150, 130)), mode: "straight", type: "street" });
+      const from = planRoad(n2, river, { start: onRoad(n2, v2(40, 130)), end: free(v2(40, 340)), mode: "straight", type, bridges: true });
+      expect(from.errors.map((e) => e.msg)).toEqual([]);
+      commit(n2, from);
+      slope(n2);
+    });
+  }
+
+  it("between two bank roads over a narrow river the deck humps lower; a junction at the water's edge is refused", () => {
+    const canal = world({ isWater: (p) => p.y > 140 && p.y < 160 });
+    const net = new RoadNetwork();
+    build(net, canal, { start: free(v2(-150, 130)), end: free(v2(150, 130)), mode: "straight", type: "street" });
+    build(net, canal, { start: free(v2(-150, 170)), end: free(v2(150, 170)), mode: "straight", type: "street" });
+    const plan = planRoad(net, canal, { start: free(v2(0, 60)), end: free(v2(0, 240)), mode: "straight", type: "street", bridges: true });
+    expect(plan.errors.map((e) => e.msg)).toEqual([]);
+    expect(plan.bridges![0].h).toBeLessThan(LEVEL_H);
+    expect(plan.bridges![0].h).toBeGreaterThan(1);
+    commit(net, plan);
+    expect([...net.nodes.values()].filter((n) => net.segsAt(n.id).length >= 3)).toHaveLength(2);
+    slope(net);
+    const tight = new RoadNetwork();
+    build(tight, river, { start: free(v2(-150, 137)), end: free(v2(150, 137)), mode: "straight", type: "street" });
+    const no = planRoad(tight, river, { start: free(v2(0, 70)), end: free(v2(0, 340)), mode: "straight", type: "street", bridges: true });
+    expect(no.errors.map((e) => e.msg)).toEqual(["No room to ramp up between the road and the water"]);
   });
 });
 

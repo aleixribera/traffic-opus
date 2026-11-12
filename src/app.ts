@@ -1852,7 +1852,7 @@ export class App {
   }
 
   private reject(msg: string) {
-    this.hud?.toast(msg, true);
+    this.hud?.refuse(msg);
     this.hud?.sound("error");
     this.shake = 1;
   }
