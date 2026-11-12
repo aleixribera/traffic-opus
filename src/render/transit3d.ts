@@ -209,10 +209,13 @@ function markTexture(): THREE.Texture {
   c.width = 512;
   c.height = 110;
   const x = c.getContext("2d")!;
+  // (a faint wash inside the box: from the default zoom the outline alone was a hairline, road play log item 9)
+  x.fillStyle = "rgba(242, 194, 48, 0.2)";
+  x.fillRect(6, 6, 500, 98);
   x.strokeStyle = "#f2c230";
-  x.lineWidth = 9;
+  x.lineWidth = 14;
   // zig-zag along the open side, solid line along the kerb, ends closed
-  x.strokeRect(6, 6, 500, 98);
+  x.strokeRect(8, 8, 496, 94);
   x.fillStyle = "#f2c230";
   x.font = "bold 66px system-ui, sans-serif";
   x.textAlign = "center";

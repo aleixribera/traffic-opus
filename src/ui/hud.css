@@ -586,6 +586,15 @@ kbd { font: 600 var(--t-sm)/1 var(--f-text); padding: 3px 6px; border: 1px solid
 .map-works.site { outline-style: dashed; }
 .map-works.bad { background: var(--brick); outline: 2px solid var(--cream); }
 .map-works i { position: absolute; right: -8px; top: -8px; width: 16px; height: 16px; display: grid; place-items: center; background: var(--cream); color: var(--brick); font: 700 12px/1 var(--f-body, inherit); font-style: normal; }
+/* a bus stop from the default zoom out: a small navy plate with the bus on a stem, a tab per line in its colour */
+.map-stops { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+.map-stop { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; will-change: transform; }
+.map-stop > b { width: 20px; height: 20px; display: grid; place-items: center; background: var(--plate); outline: 1px solid var(--cream-2); box-shadow: 0 2px 4px rgba(3, 7, 14, 0.55); }
+.map-stop > b svg { width: 17px; height: 17px; display: block; }
+.map-stop > span { display: flex; width: 20px; height: 4px; outline: 1px solid var(--cream-2); }
+.map-stop > span i { flex: 1; }
+.map-stop::after { content: ""; width: 2px; height: 7px; background: var(--cream-2); }
+.map-stop.down::after { order: -1; }
 .map-icon.urgent { animation: icon-bob 0.9s ease-in-out infinite alternate; }
 @keyframes icon-bob { to { margin-top: -4px; } }
 @media (prefers-reduced-motion: reduce) { .map-icon.urgent { animation: none; } }

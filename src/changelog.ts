@@ -15,6 +15,13 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.116", date: "2026-11-12", title: "Stops you can find",
+    notes: [
+      "Bus stops carry a small plate over the kerb from the usual zoom out, with a tab in each of their lines' colours. Click one to open the stop.",
+      "The yellow bus bay is painted bolder.",
+    ],
+  },
+  {
     v: "v0.0.115", date: "2026-11-12", title: "Joined, not stranded",
     notes: [
       "A works stepping back from a road in its way only lands where its gate meets a road, never off on its own.",

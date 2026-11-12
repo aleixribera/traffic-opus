@@ -83,6 +83,7 @@ import { ZoomRing } from "./ui/zoomRing";
 import { WeatherChip } from "./ui/weatherChip";
 import { edgePush, loadEdgeScroll, panRate } from "./ui/panning";
 import { MapIcons } from "./ui/mapIcons";
+import { StopMarks } from "./ui/stopMarks";
 import { Pops } from "./ui/pops";
 import { Terrain3D } from "./render/terrain3d";
 import { LandMask } from "./render/landmask";
@@ -153,6 +154,8 @@ export class App {
   roadsFar!: RoadsFar;
   labels = new MapLabels();
   icons = new MapIcons();
+  /** the bus stops' plates, from the default zoom out */
+  stopMarks = new StopMarks();
   /** tags over the oversized-load convoys (click one to follow it) */
   convoyTags = new ConvoyTags((id) => { if (id === null) this.stopFollow(); else this.followVehicle(id); });
   /** markers on towns that have just sprung up (click the edge pointer to fly there) */
@@ -873,9 +876,10 @@ export class App {
     // fix. The same reading as its panel's status line, so the map and the panel cannot disagree)
     this.icons.quiet = (b) => worksCalm(g, b);
     this.icons.avoid = () => this.labels.rects();
+    this.stopMarks.avoid = () => this.labels.rects();
     // what is pinned over a building stands over its roof; a jam's pin on its road's deck
     this.icons.topOf = this.pops.topOf = (b) => this.buildings3d.topOf(b);
-    this.stuckAlerts.heightAt = (p) => deckOn(g.net, straightDown(p), 8)?.h ?? 0;
+    this.stuckAlerts.heightAt = this.stopMarks.heightAt = (p) => deckOn(g.net, straightDown(p), 8)?.h ?? 0;
     g.on((e) => {
       // (a delivery or a by-product leaving only pops over the map: nothing else on screen changes)
       if (e.t === "delivery") { this.camera.note(e.d.to.c.x, e.d.to.c.y); if (this.mode !== "menu") this.pops.delivery(e.d, this.view); if (e.d.lost > 0 && this.mode === "play") this.audio.sting("spoil"); return; }
@@ -1695,9 +1699,11 @@ export class App {
     if (t === "inspect") {
       // anything on the map opens its panel; empty ground clears the selection
       // (a works' plate on the far map flies down to the works as it opens it)
-      const ic = this.icons.hit(this.cursorPx.x, this.cursorPx.y);
+      // (a stop's plate is drawn over the works' marks: it wins where they overlap)
+      const sp = this.stopMarks.hit(this.cursorPx.x, this.cursorPx.y);
+      const ic = sp === null ? this.icons.hit(this.cursorPx.x, this.cursorPx.y) : null;
       if (ic?.far) this.glideTo(ic.b.c, Math.max(260, Math.hypot(ic.b.hw, ic.b.hd) * 1.6), 1.1);
-      let s: Sel | null = ic ? { k: "building", id: ic.b.id } : this.pickOn(this.cursorRay);
+      let s: Sel | null = sp !== null ? { k: "stop", id: sp } : ic ? { k: "building", id: ic.b.id } : this.pickOn(this.cursorRay);
       // open ground: a mined deposit always opens; soil, forest, water and hills (which are most of the map) only
       // when nothing else is selected, ground is, or the Resources view is on; otherwise a click there clears
       if (!s) {
@@ -2245,8 +2251,9 @@ export class App {
     } else if (t === "inspect") {
       // what a click would select: a thin cream outline and a pointer (the selection itself is lit by Highlight3D)
       // (a trouble roundel or a works' far plate under the pointer stands for its building, and says what is wrong)
-      const ic = this.icons.hit(this.cursorPx.x, this.cursorPx.y);
-      const h: Sel | null = ic ? { k: "building", id: ic.b.id } : this.pickOn(this.cursorRay);
+      const sp = this.stopMarks.hit(this.cursorPx.x, this.cursorPx.y);
+      const ic = sp === null ? this.icons.hit(this.cursorPx.x, this.cursorPx.y) : null;
+      const h: Sel | null = sp !== null ? { k: "stop", id: sp } : ic ? { k: "building", id: ic.b.id } : this.pickOn(this.cursorRay);
       this.highlight.hoverV = h?.k === "vehicle" ? h.id : null;
       // (the building it is: a town's hall or civic building selects the town)
       const hb = h?.k === "building" ? g.buildings.byId.get(h.id) ?? null : h?.k === "town" ? buildingOn(g, this.cursorRay, this.buildings3d.solidsOf)?.b ?? null : null;
@@ -2616,9 +2623,13 @@ export class App {
     if (this.iconT > 0.4) {
       this.iconT = 0;
       this.icons.set(this.bare ? [] : g.buildings.list, this.view);
+      // (with the line tool in hand every stop is a disc to click: the plates would stand in the way)
+      this.stopMarks.sync(g.transit, this.view, this.bare || this.mode === "menu" || (this.st.tool === "transit" && this.st.transitMode === "line"));
       // (the set is new: a roundel or plate may have come or gone under a still pointer, and the name by the pointer
       // must follow, or it went on naming a works whose mark had moved away: review 2026-11-10, B13)
-      const ih = this.hasCursor ? this.icons.hit(this.cursorPx.x, this.cursorPx.y)?.b.id ?? -1 : -1;
+      // (a stop's plate counts as -2 - its id: it wins over a works' mark, as the click does)
+      const sh = this.hasCursor ? this.stopMarks.hit(this.cursorPx.x, this.cursorPx.y) : null;
+      const ih = sh !== null ? -2 - sh : this.hasCursor ? this.icons.hit(this.cursorPx.x, this.cursorPx.y)?.b.id ?? -1 : -1;
       if (ih !== this.iconHover) { this.iconHover = ih; this.dirtyPreview = true; }
       this.convoyTags.sync(g.traffic.vehicles, g.buildings.byId, this.bare);
       this.townPings.sync(g.towns.list, g.time, served, this.bare);
@@ -2633,7 +2644,7 @@ export class App {
       this.goalPtr.set(!this.bare && this.mode === "play" && !g.progress.done.includes("food10") ? farmSpot(g) : null, farming);
       this.depositMarks.mute = this.goalPtr.pointing;
     }
-    else this.icons.update(this.view);
+    else { this.icons.update(this.view); this.stopMarks.update(this.view); }
     this.pops.update(this.view, this.bare || far ? null : g.traffic, g.alpha);
     this.hud?.cameraPose(this.view.rot, this.view.tilt);
     this.view.render();
