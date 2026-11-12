@@ -46,6 +46,26 @@ describe("the townspeople", () => {
     expect(busy.population).toBeGreaterThan(20);
   });
 
+  it("are busier in a city than a hamlet, and keep the parks' and bus stops' people when the pavements change", () => {
+    const city = new TownLife(models), hamlet = new TownLife(models);
+    city.set([], row(20, 1).map((f) => ({ ...f, band: 1.3 })));
+    hamlet.set([], row(20, 1).map((f) => ({ ...f, band: 0.7 })));
+    expect(city.population).toBeGreaterThan(hamlet.population);
+    const life = new TownLife(models);
+    life.set([], row(4, 1));
+    const base = life.population;
+    life.setExtra("parks", Array.from({ length: 30 }, (_, i) => ({ a: { x: i * 2, y: 30 }, b: { x: i * 2, y: 40 }, rot: 0 })));
+    life.setExtra("stops", [{ a: { x: 0, y: -20 }, rot: 1 }]);
+    expect(life.population).toBe(base + 31);
+    // (the pavements laid out again: the others stay)
+    life.set([], row(4, 1));
+    expect(life.population).toBe(base + 31);
+    life.frame(camera(30, 30, 70), PEOPLE_FULL * 0.5, 100, 13, 20);
+    expect(life.drawn).toBeGreaterThan(base);
+    life.setExtra("parks", []);
+    expect(life.population).toBe(base + 1);
+  });
+
   it("walk along their pavement, and are drawn only close in and in view", () => {
     const life = new TownLife(models);
     life.set([], row(10, 1));

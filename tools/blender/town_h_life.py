@@ -234,6 +234,38 @@ def b_life_planter(M, P):
     return L
 
 
+def b_life_flagbed(M, P):
+    """The middle of a town's green (src/render/greenplan.ts): a round raised flower bed in a stone kerb, rings of
+    flowers round a low clipped hedge, and a white flagpole rising from it with its flag hanging still."""
+    C = _lm()
+    L = Lot(5.6, 5.6)
+    L.bays = []
+    # the kerb and the soil
+    revolve(M, 0, 0, [(0.0, 0.0), (2.8, 0.0), (2.8, 0.34), (2.55, 0.34), (2.55, 0.26), (0.0, 0.26)], C["stone2"], n=16)
+    revolve(M, 0, 0, [(0.0, 0.28), (2.56, 0.28), (2.56, 0.3), (0.0, 0.3)], C["soil"], n=16)
+    # flowers in two rings (red outside, pink within), a ring of clipped box round the pole's foot
+    for ring, r, h, m in ((14, 2.2, 0.5, "red"), (10, 1.55, 0.56, "flowers")):
+        for i in range(ring):
+            a = 2 * math.pi * i / ring + (0.2 if ring == 10 else 0)
+            cyl(M, r * math.cos(a), r * math.sin(a), 0.32, 0.3, h, C[m], n=5)
+    revolve(M, 0, 0, [(0.35, 0.3), (0.95, 0.3), (1.0, 0.62), (0.85, 0.8), (0.35, 0.8)], C["shrub"], n=10)
+    # the pole on its stone foot, a gilt ball on top, the flag hanging from its halyard
+    taper(M, (-0.32, 0.32, -0.32, 0.32), (-0.26, 0.26, -0.26, 0.26), 0.3, 0.9, C["stone"])
+    revolve(M, 0, 0, [(0.09, 0.9), (0.075, 5.0), (0.05, 9.2), (0.0, 9.22)], C["cream"], n=8)
+    revolve(M, 0, 0, [(0.0, 9.18), (0.13, 9.3), (0.13, 9.4), (0.0, 9.52)], C["mustard"], n=8)
+    # (each face both ways round, so it shows from either side)
+    def flag(pts, m):
+        _quad(M, pts, m)
+        _quad(M, pts[::-1], m)
+    for k in range(5):
+        z0 = 8.95 - k * 0.26
+        flag([(0.06, 0.0, z0 - 0.26), (1.75, 0.0, z0 - 0.4), (1.75, 0.0, z0 - 0.14), (0.06, 0.0, z0)],
+             C["red"] if k % 2 == 0 else C["cream"])
+    for y in (-0.012, 0.012):
+        flag([(0.06, y, 8.95), (0.82, y, 8.86), (0.82, y, 8.3), (0.06, y, 8.42)], C["navy"])
+    return L
+
+
 # ------------------------------------------------------------------ the hoarding round a waiting site
 
 def b_con_hoarding(M, P):
@@ -267,6 +299,7 @@ BUILDINGS["life_phonebox"] = (b_life_phonebox, 1.16, 1.16, 0)
 BUILDINGS["life_memorial"] = (b_life_memorial, 3.6, 3.6, 0)
 BUILDINGS["life_fountain"] = (b_life_fountain, 6.0, 6.0, 0)
 BUILDINGS["life_planter"] = (b_life_planter, 1.0, 1.0, 0)
+BUILDINGS["life_flagbed"] = (b_life_flagbed, 5.6, 5.6, 0)
 BUILDINGS["con_hoarding"] = (b_con_hoarding, 4.0, 0.44, 0)
 POST_ORIGIN.update(["life_person_" + k for k in _PEOPLE] + ["life_person_%s_far" % k for k in _PEOPLE]
                    + ["life_bench", "life_stall_a", "life_stall_b", "life_kiosk", "con_hoarding"])

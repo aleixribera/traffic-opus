@@ -264,7 +264,17 @@ interface StripPlan {
   /** the strips' lawns, paving, hedges and fences, made ahead and not yet shown (the hedges' and fences' near or far: userData.lod) */
   meshes: THREE.InstancedMesh[];
   trees: PlantedTree[];
+  /** the cars on the pads beside the homes' driveways (render/parked3d.ts) */
+  pads: ParkSlot[];
 }
+
+/**
+ * A home's parking pad beside its driveway, in the front garden: the share of houses that have one by their town's
+ * size (a hamlet's few, a city's many), and how wide it is (m). The car on it is the household's second, in at night.
+ */
+const PAD_SHARE = [0.12, 0.2, 0.3, 0.4], PAD_W = 2.7;
+/** How busy a town's pavements are by its size (render/townlife.ts LifeFront.band). */
+const FRONT_BAND = [0.7, 0.9, 1, 1.3];
 
 /** A model's pieces, made into meshes ahead and not yet shown: the whole map's, and one by square of the map. */
 interface ModelPlan {
@@ -338,6 +348,9 @@ export class Buildings3D {
     this.group.add(this.piles.group);
     this.life = new TownLife(models.props);
     this.group.add(this.life.group);
+    // (no cars left standing from the game before)
+    setParked([], "lots");
+    setParked([], "pads");
   }
   /** The squares' furniture and the townspeople on them and on the pavements (laid out with the front strips). */
   readonly life: TownLife;
@@ -1325,8 +1338,10 @@ export class Buildings3D {
     const L = new THREE.Matrix4(), T = new THREE.Matrix4(), S = new THREE.Matrix4(), R = new THREE.Matrix4().makeRotationY(Math.PI / 2);
     // the town life: each hall's square, and the pavements in front of the shops and homes, busier near the hall
     const lifeSquares: LifeSquare[] = [], lifeFronts: LifeFront[] = [];
-    const halls = new Map<number, V2>();
-    for (const b of list) if (isHall(b.kind) && b.town !== undefined) halls.set(b.town, b.c);
+    const halls = new Map<number, V2>(), tiers = new Map<number, number>();
+    for (const b of list) if (isHall(b.kind) && b.town !== undefined) { halls.set(b.town, b.c); tiers.set(b.town, HALL_TIER[b.kind] ?? 0); }
+    const pads: ParkSlot[] = [];
+    const jig = new THREE.Matrix4();
     /** A rect in a lot's frame (x along the road, z toward it), at height y (turned rot about its centre). */
     const rect = (b: Building, x0: number, x1: number, z0: number, z1: number, y: number, rot = 0) =>
       lotMatrix(L, b.c, b.rot, b.side, y).clone()
@@ -1353,6 +1368,7 @@ export class Buildings3D {
             base: lotMatrix(new THREE.Matrix4(), b.c, b.rot, b.side, 0), hw: b.hw, z0: kd - pave, z1: kd, kind: shop ? "shop" : "home",
             past: [reach(sides[1]), reach(sides[0])],
             centre: Math.max(0.12, Math.min(1, 1 - (d - 50) / 350)), seed: b.id,
+            band: FRONT_BAND[(b.town !== undefined ? tiers.get(b.town) : undefined) ?? 0],
           });
         }
       }
@@ -1397,10 +1413,27 @@ export class Buildings3D {
       // (most front gardens are fenced or hedged along the pavement; the rest are open lawn)
       const kind = small ? (pick < 4 ? "picket" : pick < 8 ? "hedge" : null) : pick < 7 ? "hedge" : null;
       const dw = b.hw > 14 ? 2.6 : 1.7;
+      // a parking pad beside the driveway, a car on it: on the lot's outer side if there is room, else its inner
+      let pad: number | null = null;
+      const tier = (b.town !== undefined ? tiers.get(b.town) : undefined) ?? 0;
+      if (small && xd !== 0 && garden >= 5.2 && ((h >>> 4) % 100) / 100 < PAD_SHARE[tier]) {
+        const out = Math.sign(xd) * (dw + PAD_W / 2);
+        if (Math.abs(xd + out) + PAD_W / 2 <= H) pad = xd + out;
+        else if (Math.abs(xd - out) + PAD_W / 2 <= H) pad = xd - out;
+      }
+      if (pad !== null) {
+        const z0p = b.hd + 0.2, z1p = kd - pave - 0.15, zc = (z0p + z1p) / 2;
+        paved.push({ m: rect(b, pad - PAD_W / 2, pad + PAD_W / 2, z0p, z1p, 0.075), c: PAL.driveway, pat: PAVE_NONE });
+        // (nose to the house, one in three backed in)
+        const look = (Math.imul(b.id, 2654435761) ^ 0x2c1b3c6d) >>> 3;
+        const m = lotMatrix(L, b.c, b.rot, b.side, 0).clone().multiply(T.makeRotationY(look % 3 === 0 ? 0 : Math.PI).setPosition(pad, 0, zc));
+        pads.push({ m: m.multiply(parkedHow(look, jig)), look, home: true });
+      }
       if (kind && garden > (kind === "hedge" ? 1.0 : 0.6)) {
         const z = kd - pave - (kind === "hedge" ? 0.5 : 0.25);
-        // along the pavement, open where the driveway crosses it
-        const runs = [[-H - 0.2, xd - dw - 0.5], [xd + dw + 0.5, H + 0.2]];
+        // along the pavement, open where the driveway (and its pad) crosses it
+        const lo = Math.min(xd - dw, pad === null ? Infinity : pad - PAD_W / 2), hi = Math.max(xd + dw, pad === null ? -Infinity : pad + PAD_W / 2);
+        const runs = [[-H - 0.2, lo - 0.5], [hi + 0.5, H + 0.2]];
         for (const [a, e] of runs) {
           const len = e - a;
           if (len < 1) continue;
@@ -1417,7 +1450,7 @@ export class Buildings3D {
       const r = Math.min(lawn / 2 - 0.2, 1.7 + ((h >>> 12) % 8) * 0.1);
       const off = dw + r + 0.6;
       const x = Math.abs(xd - off) <= Math.abs(xd + off) ? xd - off : xd + off;
-      if (lawn >= 3.6 && ((h >>> 8) % 10) < 6 && Math.abs(x) <= H - r * 0.5) {
+      if (lawn >= 3.6 && ((h >>> 8) % 10) < 6 && Math.abs(x) <= H - r * 0.5 && (pad === null || Math.abs(x - pad) > r + PAD_W / 2 + 0.3)) {
         const w = this.v3.set(x, 0, b.hd + lawn / 2 - 0.3).applyMatrix4(lotMatrix(L, b.c, b.rot, b.side, 0));
         trees.push({ x: w.x, y: w.z, r, style: "park" });
       }
@@ -1533,7 +1566,7 @@ export class Buildings3D {
         add(flat.geo, 0, n, "flat").boundingSphere = whole;
       }
     }
-    return { meshes, trees };
+    return { meshes, trees, pads };
   }
 
   /** The front strips in (and the old taken out). */
@@ -1543,6 +1576,7 @@ export class Buildings3D {
     this.drop(this.strips);
     this.strips = P.meshes;
     this.stripTrees = P.trees;
+    setParked(P.pads, "pads");
     this.treeVersion++;
     for (const m of this.strips) if (m.userData.lod) m.visible = this.stripShown(m.userData.lod);
     for (const o of this.strips) this.group.add(o);

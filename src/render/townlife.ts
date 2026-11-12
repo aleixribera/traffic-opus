@@ -12,7 +12,7 @@ import { SEASON_DAYS } from "../game/calendar";
 
 /** The six looks of the townspeople (tools/blender/town_h_life.py). */
 export const PEOPLE = ["a", "b", "c", "d", "e", "f"] as const;
-const SQUARE_PROPS = ["life_bench", "life_stall_a", "life_stall_b", "life_kiosk", "life_phonebox", "life_memorial", "life_fountain", "life_planter"] as const;
+const SQUARE_PROPS = ["life_bench", "life_stall_a", "life_stall_b", "life_kiosk", "life_phonebox", "life_memorial", "life_fountain", "life_planter", "life_flagbed"] as const;
 export const LIFE_MODELS: string[] = [...PEOPLE.flatMap((k) => [`life_person_${k}`, `life_person_${k}_far`]), ...SQUARE_PROPS];
 
 /** A town hall's square: its lot to the world (render/buildings3d.ts lotMatrix) and its plan. */
@@ -25,7 +25,12 @@ export interface LifeFront {
   base: THREE.Matrix4; hw: number; z0: number; z1: number; kind: "shop" | "home"; centre: number; seed: number;
   /** how far past the lot's -x and +x ends its walkers may go (short of a side street's kerb; 3 m if none) */
   past?: [number, number];
+  /** how busy its town's pavements are for its size (1 a town's; less in a hamlet, more in a city) */
+  band?: number;
 }
+
+/** Someone in a park (render/greenplan.ts): standing at a, turned to (sin rot, cos rot), or walking a to b and back. */
+export interface ParkFolk { a: { x: number; y: number }; b?: { x: number; y: number }; rot: number }
 
 /** How near the camera must be (m a pixel) for the people to be drawn at all, and in full rather than two boxes. */
 export const PEOPLE_SEE = 0.42, PEOPLE_FULL = 0.2;
@@ -128,7 +133,7 @@ export class TownLife {
     // looking in a shop's window
     for (const fr of fronts) {
       const shop = fr.kind === "shop";
-      const per = shop ? (fr.hw * 2 * fr.centre) / 7 : 0.3 * fr.centre;
+      const per = (shop ? (fr.hw * 2 * fr.centre) / 7 : 0.3 * fr.centre) * (fr.band ?? 1);
       let n = Math.floor(per) + (hash(fr.seed, 1) < per - Math.floor(per) ? 1 : 0);
       for (let i = 0; i < n; i++) {
         const k = fr.seed * 13 + i * 101;
@@ -146,7 +151,7 @@ export class TownLife {
         add({ ax: v.x, az: v.z, bx: v.x, bz: v.z, yaw: yawOf(fr.base, Math.PI + (hash(k, 5) - 0.5) * 0.6), walk: false, v: 0, rest: 0, t0: 0 }, k);
       }
     }
-    this.folk = folk;
+    this.base = folk;
     for (const [model, mats] of byModel) {
       const mm = this.models.get(model);
       if (!mm) continue;
@@ -160,6 +165,34 @@ export class TownLife {
       this.props.push(mesh);
       this.group.add(mesh);
     }
+    this.people();
+  }
+
+  /**
+   * More people from elsewhere, a list a `source`: the parks' (render/greens3d.ts, when the greens change), those
+   * waiting at the bus stops (render/transit3d.ts).
+   */
+  setExtra(source: string, list: ParkFolk[], seed = 0) {
+    const folk: Folk[] = [];
+    list.forEach((p, i) => {
+      const k = seed * 7 + i * 131 + 5;
+      const walk = !!p.b && Math.hypot(p.b.x - p.a.x, p.b.y - p.a.y) > 0.05;
+      const v = walk ? 0.9 + hash(k, 1) * 0.4 : 0, b = p.b ?? p.a;
+      const go = walk ? Math.hypot(b.x - p.a.x, b.y - p.a.y) / v : 0, rest = walk ? 1 + hash(k, 2) * 6 : 0;
+      folk.push({
+        ax: p.a.x, az: p.a.y, bx: b.x, bz: b.y, yaw: p.rot, walk, v, rest, t0: hash(k, 3) * 120,
+        go, cyc: 2 * (go + rest), head: walk ? Math.atan2(b.x - p.a.x, b.y - p.a.y) : p.rot,
+        // (a park's people go home before the shops' do: fewer of them out at the edges of the day)
+        rank: 0.15 + hash(k, 11) * 0.85, look: Math.floor(hash(k, 12) * PEOPLE.length), size: 0.93 + hash(k, 13) * 0.12,
+      });
+    });
+    this.extra.set(source, folk);
+    this.people();
+  }
+
+  /** The squares', the pavements' and the parks' people, a mesh for each look, near and far. */
+  private people() {
+    const folk = (this.folk = [...this.base, ...[...this.extra.values()].flat()]);
     // a mesh for each look, near and far, as big as all of that look
     const counts = PEOPLE.map((_, i) => folk.filter((f) => f.look === i).length);
     for (const m of [...this.near, ...this.far]) { this.group.remove(m); m.dispose(); }
@@ -179,6 +212,8 @@ export class TownLife {
     this.shown = true;
   }
 
+  private base: Folk[] = [];
+  private extra = new Map<string, Folk[]>();
   private n = PEOPLE.map(() => 0);
   private a = new THREE.Vector3();
   private b = new THREE.Vector3();
@@ -259,6 +294,8 @@ export class TownLife {
     this.near = [];
     this.far = [];
     this.folk = [];
+    this.base = [];
+    this.extra.clear();
     this.propMat.dispose();
     this.folkMat.dispose();
     this.empty.dispose();
@@ -268,7 +305,7 @@ export class TownLife {
 const CORNERS: [number, number][] = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
 
 /** Draw the mesh's instances only while a pixel is no more than `maxMpp` metres (the view's own camera says). */
-function zoomCull(mesh: THREE.InstancedMesh, maxMpp: number) {
+export function zoomCull(mesh: THREE.InstancedMesh, maxMpp: number) {
   const all = mesh.count, size = new THREE.Vector2();
   mesh.onBeforeRender = (renderer, _scene, camera) => {
     const c = camera as THREE.OrthographicCamera;

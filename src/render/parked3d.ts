@@ -13,10 +13,16 @@ import type { View } from "./view";
 /** A bay that keeps a car: its pose (the car model's own matrix), the car's number, and whether it is a home's bay. */
 export interface ParkSlot { m: THREE.Matrix4; look: number; home: boolean }
 
-/** The bays that keep a car, set by Buildings3D whenever the buildings change, drawn by Vehicles3D. */
+/**
+ * The bays that keep a car, drawn by Vehicles3D: the lots' (Buildings3D, whenever the buildings change), the pads
+ * beside the homes' driveways (with the driveways) and the lay-bys along the greens (Greens3D).
+ */
 export const PARKED: { slots: ParkSlot[]; version: number; hour: () => number } = { slots: [], version: 0, hour: () => 12 };
-export function setParked(slots: ParkSlot[]) {
-  PARKED.slots = slots;
+const SOURCES = new Map<string, ParkSlot[]>();
+export function setParked(slots: ParkSlot[], source = "lots") {
+  if (!slots.length && !SOURCES.get(source)?.length) return;
+  SOURCES.set(source, slots);
+  PARKED.slots = [...SOURCES.values()].flat();
   PARKED.version++;
 }
 

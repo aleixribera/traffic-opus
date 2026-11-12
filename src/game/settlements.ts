@@ -5,7 +5,7 @@
 // with how well the company supplied its needs. Homes and shops belong to the town whose streets they front
 // (Building.town).
 
-import { BUILDING_TYPES, ROAD_TYPES, SIDEWALK, ZONE_SETBACK, roadWidth, type BuildingKind } from "../config";
+import { BUILDING_TYPES, ROAD_TYPES, SIDEWALK, ZONE_SETBACK, roadGroup, roadWidth, type BuildingKind } from "../config";
 import { angleOf, cubicTangent, dist, dot, fromAngle, norm, polyClosest, right, scale, sub, type V2 } from "../core/math";
 import { chainPoints, cubicClosest, planRoad, snap, type Plan, type Snap } from "../roads/planner";
 import { JUNCTION_GAP, type RSeg } from "../roads/network";
@@ -54,6 +54,42 @@ export interface Green {
   town: number;
   pts: V2[];
   trees: { p: V2; r: number }[];
+  /**
+   * What it is: the open ground of the hall's own block round its square ("square"), the town green across the
+   * main street from the hall ("town"), or one of the town's parks. render/greenplan.ts lays each out its own way.
+   */
+  role: "square" | "town" | "park";
+  /** the town's size (0 hamlet .. 3 city) */
+  size: number;
+  /** its middle */
+  mid: V2;
+  /** the hall's lot and its forecourt out to the kerb (a "square" green's): its lawn runs under it, nothing stands on it */
+  hole?: V2[];
+  /**
+   * Its street sides with a lay-by behind the pavement (the town's cars park there): each a run of points along the
+   * back of the pavement, with the way into the green from each.
+   */
+  laybys: { p: V2; n: V2 }[][];
+  /** the middle of the lawn's edge along each street side, with the way in: where its paths come in from the pavement */
+  gates: { p: V2; n: V2 }[];
+}
+
+/** A lay-by beside a green: how wide (m) behind the pavement, and the share of street sides that have one by the town's size. */
+export const LAYBY_W = 2.4;
+const LAYBY_SHARE: Record<Green["role"], number[]> = { square: [0.5, 1, 1, 1], town: [0.5, 1, 1, 1], park: [0, 0.25, 0.45, 0.6] };
+
+/** A green's shape in a few characters, for TownSystem.greens' key: it changes when a street round it is widened, or a lay-by comes or goes. */
+const SIGS = new WeakMap<Green, string>();
+function sigOf(g: Green): string {
+  let sig = SIGS.get(g);
+  if (sig === undefined) {
+    let s = 0;
+    for (const p of g.pts) s += p.x * 3 + p.y * 7;
+    for (const run of g.laybys) for (const q of run) s += q.p.x * 5 + q.p.y * 11;
+    sig = `${g.pts.length},${g.laybys.map((r) => r.length).join("/")},${Math.round(s * 10)}`;
+    SIGS.set(g, sig);
+  }
+  return sig;
 }
 
 /** A town that has just sprung up: where it is against the nearest town that was there before it. */
@@ -735,7 +771,7 @@ export class TownSystem {
         if (loop) {
           if (!loop.every((e) => t.built.has(edgeKey(e)))) continue;
           const g = this.greenOf(t, P, "L", fi, fj, loop, loop.map(() => false), loop.map((e) => P.pt(e[0], e[1])));
-          if (g) { list.push(g); key += `${t.id}:L${fi},${fj};`; }
+          if (g) { list.push(g); key += `${t.id}:L${fi},${fj}:${t.size}:${sigOf(g)};`; }
           continue;
         }
         if (!P.green(fi, fj) || P.inLoop(fi, fj)) continue;
@@ -749,10 +785,30 @@ export class TownSystem {
         const g = this.greenOf(t, P, "", fi, fj, sides, [false, false, true, true], P.faceCorners(fi, fj));
         if (!g) continue;
         list.push(g);
-        key += `${t.id}:${fi},${fj};`;
+        key += `${t.id}:${fi},${fj}:${t.size}:${sigOf(g)};`;
+      }
+      // the hall's own block: the ground round its square, once its streets are laid (as a green's, above)
+      const hall = t.hall ? this.g.buildings.byId.get(t.hall) : undefined;
+      if (hall && t.layout === PLAN_TOWN) {
+        const si = t.sq[0] > 0 ? 0 : -1, sj = t.sq[1] > 0 ? 0 : -1;
+        const sides = P.sidesOf(si, sj);
+        const live = sides.filter((e) => this.liveSide(t, P, e));
+        if (live.length >= 2 && live.every((e) => t.built.has(edgeKey(e)))) {
+          const g = this.greenOf(t, P, "S", si, sj, sides, [false, false, true, true], P.faceCorners(si, sj), hall);
+          if (g) { list.push(g); key += `${t.id}:S${hall.id},${hall.kind}:${t.size}:${sigOf(g)};`; }
+        }
       }
     }
     return { key, list };
+  }
+
+  /** A hall's lot and the forecourt before it out to its kerb, a metre round (a "square" green keeps it clear). */
+  private hallHole(b: Building): V2[] {
+    const u = fromAngle(b.rot), v = { x: -u.y, y: u.x };
+    const f = dot(sub(b.front, b.c), v);
+    const z0 = f > 0 ? -b.hd - 1 : f - 1, z1 = f > 0 ? f + 1 : b.hd + 1, x = b.hw + 1;
+    const at = (a: number, z: number) => ({ x: b.c.x + u.x * a + v.x * z, y: b.c.y + u.y * a + v.y * z });
+    return [at(-x, z0), at(x, z0), at(x, z1), at(-x, z1)];
   }
 
   private greenCache = new Map<string, Green | null>();
@@ -776,8 +832,8 @@ export class TownSystem {
    * The green inside streets `sides` (in order round it; `order` marks the ones whose lines run against that way),
    * with corners `corners`; `tag` and (fi, fj) name it (and seed its trees).
    */
-  private greenOf(t: Town, P: TownPlan, tag: string, fi: number, fj: number, sides: GridEdge[], order: boolean[], corners: (V2 | null)[] | null): Green | null {
-    const ck = `${t.id}:${tag}${fi},${fj}:${this.g.net.version}:${this.g.buildings.list.length}:${t.failed.size}`;
+  private greenOf(t: Town, P: TownPlan, tag: string, fi: number, fj: number, sides: GridEdge[], order: boolean[], corners: (V2 | null)[] | null, hall?: Building): Green | null {
+    const ck = `${t.id}:${tag}${fi},${fj}:${this.g.net.version}:${this.g.buildings.list.length}:${t.failed.size}:${t.size}:${hall ? `${hall.id}${hall.kind}` : ""}:${this.g.transit.version}`;
     if (this.greenCache.has(ck)) return this.greenCache.get(ck)!;
     if (this.greenCache.size > 4000) this.greenCache.clear();
     let out: Green | null = null;
@@ -788,13 +844,18 @@ export class TownSystem {
       // corners (a lawn cut square at the street corners); as wide as the road along that side now is (one the town
       // has widened takes more of it)
       const net = this.g.net;
+      const walks: number[] = [];
       const half = (e: GridEdge, line: V2[]) => {
         const m = line[Math.floor(line.length / 2)];
-        let w = roadWidth(ROAD_TYPES.street);
+        let w = roadWidth(ROAD_TYPES.street), walk = SIDEWALK.small;
         if (t.built.has(edgeKey(e))) for (const id of net.segsNear(m.x - 8, m.y - 8, m.x + 8, m.y + 8)) {
           const s = net.segs.get(id)!;
-          if (dist(cubicClosest(s.c, m).p, m) < 6) w = Math.max(w, roadWidth(ROAD_TYPES[s.type]));
+          if (dist(cubicClosest(s.c, m).p, m) < 6) {
+            w = Math.max(w, roadWidth(ROAD_TYPES[s.type]));
+            walk = Math.max(walk, SIDEWALK[roadGroup(ROAD_TYPES[s.type])]);
+          }
         }
+        walks.push(walk);
         return w / 2;
       };
       const pts: V2[] = [];
@@ -802,13 +863,31 @@ export class TownSystem {
       const halves = sides.map((e, k) => half(e, lines[k]));
       // (a side of a PLAN_TOWN block no street will be laid on: the lawn runs on to a few metres short of its line)
       const real = sides.map((e) => t.layout !== PLAN_TOWN || this.liveSide(t, P, e));
+      const si = t.sq[0] > 0 ? 0 : -1, sj = t.sq[1] > 0 ? 0 : -1;
+      const role: Green["role"] = hall ? "square" : tag === "" && fi === si && fj === (sj === 0 ? -1 : 0) ? "town" : "park";
+      // (a street side with a lay-by behind its pavement: the lawn starts past it)
+      const lay = sides.map((e, k) => real[k] && t.built.has(edgeKey(e)) && P.hash(fi, fj, k, 9) < LAYBY_SHARE[role][Math.min(3, t.size)]);
+      const hole = hall ? this.hallHole(hall) : undefined;
+      const inHole = (p: V2, m: number) => {
+        if (!hole) return false;
+        const u = sub(hole[1], hole[0]), v = sub(hole[3], hole[0]), lu = Math.hypot(u.x, u.y), lv = Math.hypot(v.x, v.y);
+        const a = dot(sub(p, hole[0]), u) / lu, b = dot(sub(p, hole[0]), v) / lv;
+        return a > -m && a < lu + m && b > -m && b < lv + m;
+      };
+      const laybys: Green["laybys"] = [], gates: Green["gates"] = [];
+      // (the bus stops round it: a lay-by stops short of a stop's shelter)
+      const stops = [...this.g.transit.stops.values()].filter((st) => dist(st.p, mid) < blockOf(t)).map((st) => st.p);
       // (cut square at the street corners; a loop drive's corners are gentle bends, with no cut)
       const CUT = tag === "L" ? 0 : Math.max(...halves) + SIDEWALK.small + 5.5;
       sides.forEach((e, k) => {
         let line = lines[k];
-        const IN = real[k] ? halves[k] + SIDEWALK.small + 1.5 : 3;
+        // (the back of its pavement, as wide as the road's)
+        const back = halves[k] + walks[k];
+        const IN = real[k] ? back + (lay[k] ? LAYBY_W + 0.6 : 1.5) : 3;
         if (order[k]) line = line.slice().reverse();
         const L = line.length;
+        const edge: { p: V2; n: V2 }[] = [];
+        let run: { p: V2; n: V2 }[] = [];
         for (let n = 0; n < L; n++) {
           const a = line[Math.max(0, n - 1)], b = line[Math.min(L - 1, n + 1)];
           const tan = norm(sub(b, a));
@@ -816,8 +895,17 @@ export class TownSystem {
           if (dot(nrm, sub(mid, line[n])) < 0) nrm = { x: -nrm.x, y: -nrm.y };
           // (a side with no street stops short of its corners too: the streets beside it run on past them)
           if (dist(line[n], line[0]) < CUT || dist(line[n], line[L - 1]) < CUT) continue;
-          pts.push({ x: line[n].x + nrm.x * IN, y: line[n].y + nrm.y * IN });
+          const p = { x: line[n].x + nrm.x * IN, y: line[n].y + nrm.y * IN };
+          pts.push(p);
+          if (!real[k]) continue;
+          if (!inHole(p, 1)) edge.push({ p, n: nrm });
+          // (the lay-by stops short of the hall's forecourt)
+          const q = { x: line[n].x + nrm.x * (back + 0.15), y: line[n].y + nrm.y * (back + 0.15) };
+          if (lay[k] && !inHole(q, 3) && !stops.some((sp) => dist(sp, q) < 9)) run.push({ p: q, n: nrm });
+          else if (run.length) { laybys.push(run); run = []; }
         }
+        if (run.length) laybys.push(run);
+        if (edge.length >= 3) gates.push(edge[Math.floor(edge.length / 2)]);
       });
       // (nothing standing in it, and no road of anyone else's through it)
       const inside = (p: V2) => {
@@ -830,7 +918,7 @@ export class TownSystem {
       };
       const R = blockOf(t);
       let clear = pts.length >= 8;
-      if (clear) for (const b of this.g.buildings.list) if (dist(b.c, mid) < R && inside(b.c)) { clear = false; break; }
+      if (clear) for (const b of this.g.buildings.list) if (b !== hall && dist(b.c, mid) < R && inside(b.c)) { clear = false; break; }
       if (clear) {
         for (const id of net.segsNear(mid.x - R, mid.y - R, mid.x + R, mid.y + R)) {
           if (net.segGeom.get(id)!.center.pts.some(inside)) { clear = false; break; }
@@ -842,15 +930,17 @@ export class TownSystem {
         for (let i = 0; i < pts.length; i += 2) {
           const p = pts[i], q = sub(mid, p), d = Math.hypot(q.x, q.y);
           if (d < 12 || P.hash(fi, fj, i, 3) < 0.25) continue;
-          trees.push({ p: { x: p.x + (q.x / d) * 4.5, y: p.y + (q.y / d) * 4.5 }, r: 3.2 + P.hash(fi, fj, i, 4) * 1.4 });
+          const r = 3.2 + P.hash(fi, fj, i, 4) * 1.4, at = { x: p.x + (q.x / d) * 4.5, y: p.y + (q.y / d) * 4.5 };
+          if (!inHole(at, r * 0.8 + 1)) trees.push({ p: at, r });
         }
         for (let a = -3; a <= 3; a++) for (let b = -3; b <= 3; b++) {
           if (P.hash(fi, fj, a, b, 5) > 0.3) continue;
           const p = { x: mid.x + a * 11 + (P.hash(fi, fj, a, b, 6) - 0.5) * 8, y: mid.y + b * 11 + (P.hash(fi, fj, a, b, 7) - 0.5) * 8 };
-          if (!inside(p) || pts.some((q) => dist(p, q) < 9)) continue;
-          trees.push({ p, r: 3.6 + P.hash(fi, fj, a, b, 8) * 2 });
+          const r = 3.6 + P.hash(fi, fj, a, b, 8) * 2;
+          if (!inside(p) || pts.some((q) => dist(p, q) < 9) || inHole(p, r * 0.8 + 1)) continue;
+          trees.push({ p, r });
         }
-        out = { town: t.id, pts, trees };
+        out = { town: t.id, pts, trees, role, size: t.size, mid, hole, laybys, gates };
       }
     }
     this.greenCache.set(ck, out);
