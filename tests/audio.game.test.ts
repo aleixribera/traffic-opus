@@ -3,6 +3,7 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 import { GameAudio } from "../src/audio";
+import { allKeys } from "../src/audio/bank";
 
 /** An audio node (or the context's destination): every parameter can be set and scheduled, every call does nothing. */
 function fakeNode(): unknown {
@@ -68,6 +69,33 @@ describe("the moments' stings", () => {
     // (each sting is a few seconds long: only those that can start within 5 s are kept)
     expect(played()).toBeGreaterThanOrEqual(2);
     expect(played()).toBeLessThan(8);
+  });
+});
+
+describe("a dedication", () => {
+  it("chimes the station's ident, and the next tune is named for the town", () => {
+    const { audio, at, played } = started(["sting:dedication", ...allKeys().filter((k) => k.startsWith("piano:") || k.startsWith("bass:"))]);
+    let t = 1;
+    // (the set's first tune, whatever it is called)
+    for (; t < 6; t += 0.05) { at(t); audio.update(0.05); }
+    const before = played();
+    expect(audio.dedicate("Poplar Creek")).toBe(true);
+    expect(played()).toBe(before + 1);
+    let tune = "";
+    for (const end = t + 8; t < end && !tune.includes("Poplar Creek"); t += 0.05) { at(t); audio.update(0.05); tune = audio.tune; }
+    expect(tune).toContain("Poplar Creek");
+    // (it keeps playing, without a fault)
+    for (const end = t + 4; t < end; t += 0.05) { at(t); audio.update(0.05); }
+    expect(audio.debug().state).not.toBe("off");
+    expect(audio.tune).toBe(tune);
+  });
+
+  it("nothing goes out with the wireless off", () => {
+    const { audio, at, played } = started(["sting:dedication"]);
+    audio.set({ wireless: false });
+    at(3);
+    expect(audio.dedicate("Poplar Creek")).toBe(false);
+    expect(played()).toBe(0);
   });
 });
 

@@ -47,7 +47,7 @@ export function allKeys(): string[] {
   for (const m of [...PIANO_BASE].sort((a, b) => Math.abs(a - 63) - Math.abs(b - 63))) keys.push(`piano:${m}`);
   for (const m of BASS_BASE) keys.push(`bass:${m}`);
   shot("bird0", "bird1", "bird2", "bird3", "bird4");
-  bed("lightBed", "light", "idle", "murmur", "tractor", "saw", "water");
+  bed("lightBed", "light", "idle", "murmur", "tractor", "saw", "water", "rain");
   keys.push("sting:milestone", "sting:money", "sting:orderOpen", "sting:orderDone");
   shot("clock", "hammer", "handsaw", "axe", "dog", "shopbell", "rooster", "cow", "horn", "klaxon", "airbrake", "door");
   bed("heavyBed", "heavy", "trainBed", "train", "crickets", "crusher", "furnace", "lightmach", "pumpjack", "turbine", "hiss", "kiln", "glass", "assembly");

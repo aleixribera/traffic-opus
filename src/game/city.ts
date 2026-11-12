@@ -238,7 +238,7 @@ export class Game {
         this.emit({ t: "convoy", phase: "in", kind, from: -1, to: to.id });
       },
       departed: (kind, from, to) => {
-        this.toast(`A ${BIG_NAME[kind].toLowerCase()} leaves the ${BUILDING_TYPES[from.kind].name} for the ${BUILDING_TYPES[to.kind].name} under escort`);
+        // (its notice, with a Follow button, is the HUD's: ui/convoyNote.ts)
         this.emit({ t: "convoy", phase: "out", kind, from: from.id, to: to.id });
       },
       toast: (msg) => this.toast(msg),

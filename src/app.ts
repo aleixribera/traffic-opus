@@ -16,6 +16,8 @@ import { Greens3D } from "./render/greens3d";
 import { Fireworks } from "./render/fx3d";
 import { GameAudio } from "./audio";
 import { ConvoyTags } from "./ui/convoyTags";
+import { ConvoyNotes } from "./ui/convoyNote";
+import { RadioDedications } from "./ui/radioCard";
 import { GATE_GAP, siteFrame, siteToWorld } from "./game/sites";
 
 /** The title menu's backdrop: its tilt, and how far (radians) and how slowly (s a sweep and back) it sways. */
@@ -77,6 +79,7 @@ import { disposeTree, modelGeometries } from "./render/dispose";
 import { RoadsFar } from "./render/roadsFar";
 import { MapLabels } from "./ui/labels";
 import { ZoomRing } from "./ui/zoomRing";
+import { WeatherChip } from "./ui/weatherChip";
 import { edgePush, loadEdgeScroll, panRate } from "./ui/panning";
 import { MapIcons } from "./ui/mapIcons";
 import { Pops } from "./ui/pops";
@@ -86,6 +89,8 @@ import { clearShapes } from "./render/clearing";
 import { Forest } from "./render/forest";
 import { Trees3D } from "./render/trees3d";
 import { holdWind, setWind } from "./render/wind";
+import { Weather3D } from "./render/weather3d";
+import { ConvoyMarks } from "./render/convoyMarks";
 import { Smoke } from "./render/smoke";
 import { Birds } from "./render/birds";
 import { Vehicles3D } from "./render/vehicles3d";
@@ -183,6 +188,10 @@ export class App {
   private smokeSig = -1;
   /** a few birds wheeling over the woods and the fields by day */
   birds = new Birds();
+  /** the weather over the map: rain or snow falling, the morning mist (render/weather3d.ts) */
+  weather3d = new Weather3D();
+  /** hazard tape round each convoy on the road (render/convoyMarks.ts) */
+  convoyMarks = new ConvoyMarks();
   /** money and moments rising off the map, and the shelf-time rings over refrigerated trucks */
   pops = new Pops();
   /** Shift + wheel scrolling not yet turned into a whole degree (px) */
@@ -280,6 +289,12 @@ export class App {
   private pointerAt: V2 | null = null;
   /** The ring each wheel notch leaves at the cursor. */
   private zoomRing = new ZoomRing(document.body);
+  /** the weather beside the clock */
+  private wxChip = new WeatherChip();
+  /** the wireless dedicating a tune to something big that happened, and its card under the radio (ui/radioCard.ts) */
+  private dedications = new RadioDedications({ audio: this.audio, hour: () => this.dayCycle.hour });
+  /** a convoy's notice with its Follow button (ui/convoyNote.ts) */
+  private convoyNotes = new ConvoyNotes({ follow: (id) => { this.followVehicle(id); }, click: () => this.audio.play("click") });
   /** A tilt key is held (the view settles when it is let go). */
   private pitching = false;
   /** A wheel zoom easing in: the pixel whose ground it holds still, and the zoom it is going to. */
@@ -362,9 +377,11 @@ export class App {
     (window as unknown as { __env: unknown }).__env = {
       set: (o: Parameters<DayCycle["set"]>[0]) => dc.set(o),
       clear: () => dc.clear(),
-      get: () => ({ hour: dc.hour, yday: dc.yday, mode: dc.mode, light: dc.light, look: dc.look }),
+      get: () => ({ hour: dc.hour, yday: dc.yday, mode: dc.mode, light: dc.light, look: dc.look, weather: { ...dc.weather } }),
       // (hold the wind: the bearing it blows toward in degrees, 0 east and 90 south, and its strength 0..1; no arguments lets it go)
       wind: (deg?: number, strength?: number) => holdWind(deg, strength),
+      // (put a dedication's card up now, whatever the desk says: { k: "townSize", town: "Ely", size: "Town" } ...)
+      dedicate: (ev: Parameters<RadioDedications["devShow"]>[0]) => this.dedications.devShow(ev),
     };
     this.view.scene.add(this.preview.group);
     this.view.scene.add(this.offer.group);
@@ -374,6 +391,8 @@ export class App {
 
   attachHud(h: Hud) {
     this.hud = h;
+    this.wxChip.mount(document.querySelector(".cb-clock"));
+    this.dedications.mount(document.querySelector(".hud"));
   }
 
   setMode(m: App["mode"]) {
@@ -760,6 +779,8 @@ export class App {
   private setGame(g: Game) {
     this.offerFor = null;
     this.game = g;
+    this.dedications.setGame(g);
+    this.convoyNotes.setGame(g);
     setYearStart(g.calStart);
     // the view as the player left it: the turn, and the Diorama or the Map view (the Camera setting)
     this.view.rot = loadTurn();
@@ -791,6 +812,7 @@ export class App {
     this.smoke.reset();
     this.smokeSig = -1;
     this.birds.setWorld((x, y) => g.terrain.gen.at(x, y));
+    this.dayCycle.seed = g.seed;
     this.roads = new Roads3D(g.net, {
       props: this.models.props, isWater: (p) => g.terrain.isWater(p),
       // each driveway as a line from where it leaves the road to the lot (a home's middle, a site's gate): no street
@@ -833,7 +855,7 @@ export class App {
     this.highlight.set(null);
     this.highlight.hoverV = null;
     this.glide = null;
-    this.worldRoot.add(this.terrain3d.group, this.terrain3d.land.group, this.trees3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.greens3d.group, this.lamps.group, this.signals.group, this.fireworks.group, this.birds.mesh, this.smoke.mesh);
+    this.worldRoot.add(this.terrain3d.group, this.terrain3d.land.group, this.trees3d.group, this.roads.group, this.roadsFar.group, this.buildings3d.group, this.vehicles.group, this.transit3d.group, this.parks3d.group, this.greens3d.group, this.lamps.group, this.signals.group, this.fireworks.group, this.birds.mesh, this.smoke.mesh, this.weather3d.group, this.convoyMarks.group);
     this.roads.rebuildAll();
     this.buildings3d.rebuild(g.buildings.list);
     { const gr = g.towns.greens(); this.greens3d.update(gr.key, gr.list); }
@@ -874,7 +896,10 @@ export class App {
         if (t) this.camera.note(t.c.x, t.c.y);
         if (this.mode === "play") this.hud?.townGrew(e.town, e.size);
       }
-      else if (e.t === "convoy") { if (this.mode === "play") this.audio.sting(e.phase === "out" ? "convoyOut" : "convoyIn"); }
+      else if (e.t === "convoy") {
+        if (this.mode === "play") this.audio.sting(e.phase === "out" ? "convoyOut" : "convoyIn");
+        if (e.phase === "out" && this.mode !== "menu") this.convoyNotes.show(e.kind, e.from, e.to);
+      }
       else if (e.t === "landmark") { if (this.mode === "play") { this.hud?.landmarkDone(e.b); this.celebrate(e.b); } }
       else if (e.t === "order") {
         // a town's order (game/orders.ts): a note when one opens, its building's moment when one is filled
@@ -887,6 +912,7 @@ export class App {
         }
         this.labelKey = "";
       }
+      if (this.mode === "play") this.dedications.event(e);
       this.hud?.refresh();
     });
     this.cancelStroke();
@@ -2307,6 +2333,7 @@ export class App {
     this.view.setLight(L.amb, L.sun, L.dir);
     this.smoke.setLight(L.amb, L.sun, L.dir);
     this.birds.setLight(L.amb, L.sun, L.dir);
+    this.weather3d.setLight(L.amb, L.sun);
     // (no shadow map far out, where the ground draws its own hill shadows, nor once the direct light is too faint to
     // cast one)
     this.view.shadows(this.view.halfH < 2400 && L.shade >= 0.04);
@@ -2478,6 +2505,9 @@ export class App {
     }
     // (the clock counts every game minute; the rest of the bar every quarter second)
     this.hud?.clock();
+    { const hr = this.dayCycle.hour; this.wxChip.update(this.dayCycle.weather.kind, hr < 6 || hr >= 20.5); }
+    if (this.mode === "play") this.dedications.tick();
+    this.convoyNotes.tick();
     this.buildings3d.frameConstruction();
     this.buildings3d.lod(this.view.mpp);
     this.hudT += dt;
@@ -2525,8 +2555,10 @@ export class App {
     }
     this.smoke.mesh.visible = this.terrain3d.shared.uOverlay.value < 0.5;
     this.smoke.update(this.view.camera, this.view.mpp, g.paused ? 0 : dt, g.time + g.alpha * SIM.dt, far ? null : g.traffic);
-    // and over the woods and the fields a few birds wheel
+    // and over the woods and the fields a few birds wheel (fewer in the rain: the birds' fade)
     this.birds.update(this.view.camera, this.view.mpp, g.paused ? 0 : dt);
+    // the rain or snow falling, the morning mist (not over the data maps)
+    this.weather3d.update(this.view, this.dayCycle.weather, g.paused ? 0 : dt, this.terrain3d.shared.uOverlay.value >= 0.5);
     // the townspeople about the squares and the pavements (walking at their own pace, whatever the game's speed)
     this.buildings3d.life.frame(this.view.camera, this.view.mpp, performance.now() / 1000, this.dayCycle.hour, this.dayCycle.yday);
     if (this.terrain3d.shared.uOverlay.value >= 0.5) this.birds.mesh.visible = false;
@@ -2538,6 +2570,7 @@ export class App {
     this.labels.update(this.view);
     this.labels.pointer(this.hasCursor ? this.cursorPx.x : null, this.cursorPx.y);
     this.convoyTags.update(this.view, g.alpha);
+    this.convoyMarks.update(g.traffic.vehicles, g.alpha, this.view, performance.now() / 1000, this.bare);
     this.townPings.update(this.view);
     this.depositMarks.update(this.view);
     this.goalPtr.update(this.view);

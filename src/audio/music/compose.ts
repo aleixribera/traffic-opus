@@ -129,7 +129,12 @@ export function chordAt(bars: Bar[], t: number): Chord {
 
 // ------------------------------------------------------------------ names
 
-export interface NameSource { towns: string[]; company: string }
+export interface NameSource {
+  towns: string[];
+  company: string;
+  /** a dedication: the tune must carry the (one) town's name */
+  dedicate?: boolean;
+}
 
 const NAMES: Record<"swing" | "blues" | "ballad" | "winter", string[]> = {
   swing: [
@@ -173,6 +178,9 @@ export function tuneName(r: Rnd, mood: Mood, form: FormId, src: NameSource): str
   let tpl = pick(r, NAMES[style]);
   // (a save with no town yet: no line that needs one twice over)
   if (!src.company && tpl.includes("{C}")) tpl = "{T} Special";
+  // (a dedication's tune is named for its town)
+  if (src.dedicate && src.towns.length) for (let k = 0; k < 40 && !tpl.includes("{T}"); k++) tpl = pick(r, NAMES[style]);
+  if (src.dedicate && src.towns.length && !tpl.includes("{T}")) tpl = "{T} Special";
   return tpl.replace("{T}", town).replace("{C}", firmShort(src.company));
 }
 

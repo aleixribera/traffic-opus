@@ -5,12 +5,14 @@
 //   __env.set({ hour: 20, season: "winter", day: 6 })   freeze the look at a moment (any part may be left out)
 //   __env.set({ speed: 40 })                             ...and let it run, 40 game seconds a second
 //   __env.set({ mode: "soft" })                          try a Nights setting (not saved)
+//   __env.set({ weather: "rain" })                       hold a weather (rain, showers, snow, mist, overcast, wet, clear)
 //   __env.clear()                                        back to the sim's own clock
 
 import { DAY, HOUR, START_HOUR } from "../game/society";
 import { SEASONS, SEASON_DAYS, YEAR_DAYS, yearStartDay, type Season } from "../game/calendar";
 import { clockOf, lightAt, loadNightMode, saveNightMode, seasonLook, type Light, type NightMode, type SeasonLook } from "./daylight";
-import { setEnv } from "./envShader";
+import { setEnv, setWeather } from "./envShader";
+import { CLEAR, WEATHER_LOOKS, weatherAt, type Weather } from "../game/weather";
 
 /** The sim time at a day of the year (fractional: the hour is its fraction) in the first year. */
 export const timeAtYday = (yday: number) => (yday - yearStartDay()) * DAY - START_HOUR * HOUR;
@@ -19,7 +21,7 @@ export const timeAtYday = (yday: number) => (yday - yearStartDay()) * DAY - STAR
 const MENU_START = timeAtYday(2 * SEASON_DAYS + 5 + 14.5 / 24);
 const MENU_SPEED = DAY / 120;
 
-export interface EnvSet { hour?: number; season?: Season | number; day?: number; yday?: number; speed?: number; mode?: NightMode }
+export interface EnvSet { hour?: number; season?: Season | number; day?: number; yday?: number; speed?: number; mode?: NightMode; weather?: keyof typeof WEATHER_LOOKS | null }
 
 export class DayCycle {
   /** The player's Nights setting. */
@@ -36,6 +38,11 @@ export class DayCycle {
   yday = 0;
   light!: Light;
   look!: SeasonLook;
+  /** The map's seed (its weather is drawn from it), set when a game is made or loaded. */
+  seed = 7;
+  /** The weather shown now (game/weather.ts), and one held from the console. */
+  readonly weather: Weather = { ...CLEAR };
+  private devWeather: Weather | null = null;
 
   setMode(m: NightMode) {
     this.mode = m;
@@ -49,6 +56,9 @@ export class DayCycle {
 
   /** The console hook's set. */
   set(o: EnvSet) {
+    if (o.weather !== undefined) this.devWeather = o.weather === null ? null : WEATHER_LOOKS[o.weather];
+    // (the weather alone leaves the clock as it is)
+    if (Object.keys(o).every((k) => k === "weather")) return;
     const base = clockOf(this.lookTime(this.simTime));
     let yday = Math.floor(base.yday);
     if (o.yday !== undefined) yday = Math.floor(o.yday);
@@ -66,6 +76,7 @@ export class DayCycle {
   clear() {
     this.dev = null;
     this.devMode = null;
+    this.devWeather = null;
   }
 
   private simTime = 0;
@@ -87,6 +98,9 @@ export class DayCycle {
     const mode = this.devMode ?? this.mode;
     let L = lightAt(hour, yday, mode);
     const S = seasonLook(yday);
+    const W = this.devWeather ? Object.assign(this.weather, this.devWeather) : weatherAt(this.lookTime(simTime), this.seed, this.weather);
+    // (the Always day setting is the map as at a clear noon: no cloud over it, though it may still rain)
+    L = weatherLight(L, W, mode === "day" ? 0.35 : 1);
     // autumn's light is a little warmer
     if (S.warm > 0) L.sun = [L.sun[0] * (1 + 0.06 * S.warm), L.sun[1] * (1 + 0.01 * S.warm), L.sun[2] * (1 - 0.1 * S.warm)];
     // an overlay lifts the night most of the way to day: its colours have to read
@@ -99,6 +113,7 @@ export class DayCycle {
     this.light = L;
     this.look = S;
     setEnv(L, S);
+    setWeather(W);
     return L;
   }
 }
@@ -125,4 +140,26 @@ export function mixLight(a: Light, b: Light, k: number): Light {
     lamps: m(a.lamps, b.lamps), dark: m(a.dark, b.dark), shade: m(a.shade, b.shade), shadowLen: m(a.shadowLen, b.shadowLen),
     height: m(a.height, b.height),
   };
+}
+
+/**
+ * The light under the weather: cloud takes most of the sun's direct light (and with it the drawn shadows), and gives
+ * a little of it back as a flat, cooler skylight, so a rainy noon is darker and shadowless but not a night; a mist
+ * whitens and softens the light. `k` scales it all (the Always day setting keeps the map near its noon).
+ */
+export function weatherLight(L: Light, W: Weather, k = 1): Light {
+  const c = W.cloud * k, m = W.mist * k;
+  if (c < 0.002 && m < 0.002) return L;
+  const lum = (x: readonly number[]) => x[0] * 0.2126 + x[1] * 0.7152 + x[2] * 0.0722;
+  const sunK = (1 - 0.72 * c) * (1 - 0.4 * m);
+  const lost = lum(L.sun) * (1 - sunK);
+  const sun: [number, number, number] = [L.sun[0] * sunK, L.sun[1] * sunK, L.sun[2] * sunK];
+  // (a quarter of what the cloud takes comes back as skylight, a cool grey; the sky itself dims a little under a
+  // heavy cloud, and less of the colour of the hour stays)
+  const back = lost * 0.25, g = lum(L.amb);
+  const grey = 0.5 * c + 0.3 * m, dim = 1 - 0.1 * c;
+  const amb: [number, number, number] = [0, 0, 0];
+  const tint = [0.96 + 0.06 * m, 1.0 + 0.02 * m, 1.07 - 0.02 * m];
+  for (let i = 0; i < 3; i++) amb[i] = (L.amb[i] + (g * tint[i] - L.amb[i]) * grey) * dim + back * tint[i];
+  return { ...L, sun, amb, shade: L.shade * (1 - 0.82 * c) * (1 - 0.55 * m) };
 }

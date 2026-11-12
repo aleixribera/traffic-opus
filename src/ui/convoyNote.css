@@ -1,0 +1,5 @@
+/* A convoy's notice (ui/convoyNote.ts): the order note's slip, with a Follow button under its line. */
+.convoy-note .cn-line { margin: 0; text-align: left; font-weight: 600; line-height: 1.35; color: var(--cream); }
+.convoy-note .cn-act { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.convoy-note .cn-follow { min-height: 30px; }
+.convoy-note .cn-wait { font-size: var(--t-sm); font-weight: 500; color: var(--cream-3); }
