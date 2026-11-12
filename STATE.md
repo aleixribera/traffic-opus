@@ -2,8 +2,6 @@
 
 ## Now
 
-Loop stopped 2026-11-12 after v0.0.118: the app refuses automatic starts from a pass that another session started (twice now). A start card was left in the last pass's session; or start by hand: "Run the iterate skill".
-
 Last pass shipped v0.0.118 Room to turn (roadplay item 6): a dead end's turning bulb shrinks to the room it has (`bulbFit` in `src/roads/network.ts`): twin dead ends share the gap, a road just past the end pulls the circle back, roads above or below don't count, and a neighbour added or removed reshapes untouched dead ends within 25 m. Test `tests/bulbs.test.ts`; frames `.scratch/b2.png`, `b3.png`. CI was green for v0.0.117. **Next pass: check CI for v0.0.118** (`gh run list -L 2`); if green, roadplay item 4 (parallel pinch at a corner, still unmeasured), then item 5 (stub left past a new junction).
 
 ## What works (latest)
