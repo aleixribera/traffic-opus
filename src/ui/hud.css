@@ -417,6 +417,22 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .bl-buses b { text-align: center; font-variant-numeric: tabular-nums; }
 .bl-del { position: static; }
 .bl-del.armed { width: auto; padding: 0 8px; color: var(--cream); background: var(--brick); border-radius: var(--r); font-weight: 600; font-size: var(--t-sm); }
+/* the worst queues: the inspector's status line (diamond, what holds it, where), its numbers, the fix under it */
+.tq-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; }
+.tq-list li + li { border-top: 1px solid var(--rule); }
+.tq { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; column-gap: 8px; row-gap: 2px; align-items: baseline; width: 100%; padding: 7px 4px; text-align: left; background: none; border: 1px solid transparent; border-radius: var(--r); color: var(--cream); touch-action: manipulation; }
+.tq:hover { background: var(--plate-2); }
+.tq:focus-visible { outline-offset: -2px; }
+.tq > i { width: 8px; height: 8px; background: var(--cream-3); transform: translateY(-1px) rotate(45deg); }
+.tq.bad > i { background: var(--bad); }
+.tq.bad .tq-t b { color: var(--bad); }
+.tq-t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tq-t b { font-weight: 600; }
+.tq-at { color: var(--cream-2); }
+.tq-n { color: var(--cream-2); font-variant-numeric: tabular-nums lining-nums; white-space: nowrap; text-align: right; }
+.tq-n b { color: var(--cream); font-weight: 600; margin-right: 2px; }
+.tq-fix { grid-column: 2; color: var(--cream-2); }
+.tq-w { color: var(--cream-2); font-variant-numeric: tabular-nums lining-nums; white-space: nowrap; text-align: right; }
 .ms-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .ms-list li { padding: 8px 10px; border: 1px solid var(--rule); border-radius: var(--r); background: var(--plate-2); }
 .ms-list li.done { background: var(--plate); }

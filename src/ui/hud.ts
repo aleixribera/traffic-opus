@@ -39,6 +39,7 @@ import { landmarkDone, landmarkSite, parkSection, seasonLine, specialRows } from
 import { MEGAS, isMega } from "../game/megaprojects";
 import { TipPrefs, joinedUp, tipFor } from "./tips";
 import { blockWords, buildOrder, shortfalls, shownRate } from "./bottleneck";
+import { worstQueues, type QueueRow } from "./queues";
 import { longProject, type LongProject } from "./longProject";
 import { distText, planLength } from "./distance";
 import { goalNow, goalNowSay, lineOf } from "./goalNow";
@@ -1911,9 +1912,45 @@ export class Hud {
         <dt>Trucks on the road</dt><dd>${fmtNum(trucks)}</dd>
         <dt>Road network</dt><dd>${(len / 1000).toFixed(1)} km</dd>
       </dl>
+      ${this.queuesHtml()}
       ${this.linesHtml()}`;
     if (!this.setWin("Traffic", html)) return;
+    this.bindQueues();
     this.bindLines();
+  }
+
+  /** the queues the Traffic window lists now (its rows' clicks read them) */
+  private queueRows: QueueRow[] = [];
+
+  /**
+   * The worst queues (src/ui/queues.ts): what holds each, where, how many stand in it and for how long, and the fix.
+   * Nothing when nothing queues. A click flies there and opens the junction or road holding it.
+   */
+  private queuesHtml(): string {
+    const rows = (this.queueRows = worstQueues(this.app.game));
+    if (!rows.length) return "";
+    const li = rows.map((r, i) => {
+      const bad = r.worst >= 60 || r.vehicles >= 15;
+      const say = `${r.why} ${r.where}: ${plural(r.vehicles, "vehicle")}, the longest ${dur(r.worst)}.${r.fix ? ` ${r.fix}.` : ""} Show it on the map`;
+      return `<li><button type="button" class="tq${bad ? " bad" : ""}" data-i="${i}" aria-label="${escapeHtml(say)}">
+        <i aria-hidden="true"></i>
+        <span class="tq-t"><b>${escapeHtml(r.why)}</b> <span class="tq-at">${escapeHtml(r.where)}</span></span>
+        <span class="tq-n" title="${escapeHtml(`${plural(r.vehicles, "vehicle")} standing in it${r.trucks ? `, ${r.trucks} of them trucks` : ""}`)}"><b>${r.vehicles}</b> waiting</span>
+        <span class="tq-fix">${r.fix ? escapeHtml(r.fix) : ""}</span><span class="tq-w">longest ${dur(r.worst)}</span></button></li>`;
+    }).join("");
+    return `<h3 class="sub-h">Queues</h3><ul class="tq-list">${li}</ul>`;
+  }
+
+  private bindQueues() {
+    for (const b of this.win.querySelectorAll<HTMLButtonElement>(".tq")) b.onclick = () => {
+      const r = this.queueRows[+b.dataset.i!];
+      if (!r) return;
+      this.sfx.play("click");
+      // (in to where the queue's roads can be read, the junction holding it in the middle)
+      this.app.glideTo(r.at, QUEUE_HALF_H, 1);
+      if (r.node !== undefined) this.openSignal(r.node);
+      else if (r.seg !== undefined) this.openSel({ k: "seg", id: r.seg });
+    };
   }
 
   /** The bus lines list in the Traffic window. */
@@ -2894,6 +2931,10 @@ const km = (m: number) => `${(m / 1000).toFixed(1)} km`;
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 /** Seconds without moving before a vehicle counts as standing still in the Traffic window. */
 const STANDING_S = 15;
+/** How far in (half the view's height, m) a queue's row flies the camera: its roads and their vehicles in view. */
+const QUEUE_HALF_H = 220;
+/** Seconds as the panels say them: "45 s", "3 min". */
+const dur = (s: number) => (s < 90 ? `${Math.round(s)} s` : `${Math.round(s / 60)} min`);
 
 /** Where a works stands, to tell it from the others of its kind: "600 m north-east of Alder Run". */
 function whereIs(g: Game, b: Building): string {
