@@ -108,6 +108,22 @@ describe("advice holds", () => {
     g.time = HOUR / 2;
     expect(holdAdvice(g, "food", "foodplant", sig)).toBe("foodplant");
   });
+
+  it("a works' own trouble is never held past its mending, and a road reaching a works is a change", () => {
+    const works = [{ id: 1, built: 1, plant: { level: 1 }, access: undefined as unknown }];
+    const g = { time: 0, industry: { plants: () => works } } as unknown as Game;
+    const fixable = (x: string) => !x.startsWith("held:");
+    expect(holdAdvice(g, "food", "held:no road", sig, fixable)).toBe("held:no road");
+    g.time = HOUR / 2;
+    // (the road is built: the works now has it, and the advice moves on to what to build next)
+    expect(holdAdvice(g, "food", "full:foodplant", sig, fixable)).toBe("full:foodplant");
+    // what to build does hold
+    g.time = HOUR;
+    expect(holdAdvice(g, "food", "full:farm", sig, fixable)).toBe("full:foodplant");
+    // and a road reaching a works lets it change at once
+    works[0].access = { seg: 1 };
+    expect(holdAdvice(g, "food", "full:farm", sig, fixable)).toBe("full:farm");
+  });
 });
 
 describe("one sawmill feeding two towns and the steel chain's sites, in bursts", () => {

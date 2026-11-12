@@ -43,6 +43,8 @@ export function pointerLine<C extends PointerChip>(list: readonly C[]): PointerL
     const notes = list.filter((c) => c.kind === "info");
     head = warn ?? notes.reduce<C | null>((a, c) => (!a || (c.lead ?? 0) > (a.lead ?? 0) ? c : a), null) ?? price ?? list[0];
   }
-  const cost = stop || price === head || head.priced ? null : price;
+  // (beside a note with its own price, the click's price only when it is a large share of the cash: a warning that
+  // must reach the pointer, and its words say whose it is)
+  const cost = stop || price === head || (head.priced && price?.kind !== "dear") ? null : price;
   return { head, cost, rest: list.filter((c) => c !== head && c !== cost) };
 }

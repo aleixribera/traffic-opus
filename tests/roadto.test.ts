@@ -65,10 +65,10 @@ describe("the road to a far works' gate", () => {
     expect(g.gateLink("sawmill", b.c, b.rot, b.side, { reach: 100, type: "dirt", tries: 3, why })).toBeNull();
     expect(why.say).toBe("no road within 100 m");
     // the planner's refusals, in the works' words
-    expect(gateLinkWhy("Mountain in the way")).toBe("a mountain is in the way");
-    expect(gateLinkWhy("Needs a bridge here: raise it with Page Up")).toBe("water is in the way");
-    expect(gateLinkWhy("Dirt roads stay on the ground")).toBe("water is in the way");
-    expect(gateLinkWhy("Too close to a junction, cross at it or 12 m away")).toBe("the roads there are too crowded to join");
-    expect(gateLinkWhy("Curve too tight: needs a 30 m radius")).toBe("the way to a road is blocked");
+    expect(gateLinkWhy("Mountain in the way")).toBe("a mountain blocks it");
+    expect(gateLinkWhy("Needs a bridge here: raise it with Page Up")).toBe("water blocks it");
+    expect(gateLinkWhy("Dirt roads stay on the ground")).toBe("water blocks it");
+    expect(gateLinkWhy("Too close to a junction, cross at it or 12 m away")).toBe("too many roads there");
+    expect(gateLinkWhy("Curve too tight: needs a 30 m radius")).toBe("the way is blocked");
   });
 });

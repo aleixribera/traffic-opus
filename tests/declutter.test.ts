@@ -130,6 +130,9 @@ describe("one line at the pointer", () => {
     expect(line.head).toBe(road);
     expect(line.cost).toBeNull();
     expect(line.rest).toEqual([cost]);
+    // (a price that is most of the cash still reaches the pointer)
+    const dear: PointerChip = { text: "$14,000 · 62% of your cash", kind: "dear" };
+    expect(pointerLine([dear, road]).cost).toBe(dear);
   });
 
   it("whatever stops the click stands alone: its price is no news", () => {

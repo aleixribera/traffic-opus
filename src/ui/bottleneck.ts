@@ -416,7 +416,8 @@ export function worstCeiling(g: Game): { b: Building; c: Ceiling } | null {
  * the one that is held up. Null when the need is met, or when its makers are simply still getting going.
  */
 export function needHelp(g: Game, t: Town, p: Product): NeedHelp | null {
-  return holdAdvice(g, `${t.id}:${p}`, needHelpNow(g, t, p), (h) => `${h.kind}:${"build" in h ? h.build : ""}:${"works" in h ? h.works : ""}`);
+  // (what is wrong with one works is said as it is now, never held past its mending: only what to build holds)
+  return holdAdvice(g, `${t.id}:${p}`, needHelpNow(g, t, p), (h) => `${h.kind}:${"build" in h ? h.build : ""}:${"works" in h ? h.works : ""}`, (h) => h.kind !== "held");
 }
 
 /** Game hours a piece of advice holds before it may name another works to build or look at (review 2026-11-12, C6). */
@@ -427,7 +428,7 @@ export const ADVICE_HOLD = 3;
  * this does (a works built, lost or grown is a real change); otherwise it holds (holdAdvice).
  */
 export function worksKey(g: Game): string {
-  return g.industry.plants().map((b) => `${b.id}${b.plant!.site ? "s" : b.built < 1 ? "u" : ""}${b.plant!.level}`).join(",");
+  return g.industry.plants().map((b) => `${b.id}${b.plant!.site ? "s" : b.built < 1 ? "u" : ""}${b.access ? "" : "x"}${b.plant!.level}`).join(",");
 }
 
 // (per game, the advice last given under each key: display only, not in the save)
@@ -437,14 +438,15 @@ const advised = new WeakMap<Game, Map<string, { sig: string; at: number; works: 
  * Advice that holds (review 2026-11-12, C6: the food advice went from "build another Farm" to "build another Food
  * Plant" within a game day, as loads landed). Once a piece of advice is given under `key`, a different one (another
  * `sig`) waits ADVICE_HOLD game hours, unless the company's works changed (worksKey); the same advice comes through
- * at once with its figures fresh. No advice (null) passes through and keeps the last one's clock.
+ * at once with its figures fresh. No advice (null) passes through and keeps the last one's clock. `holds` says which
+ * advice may be held at all (a works' own trouble is said as it stands: once mended, the line goes at once).
  */
-export function holdAdvice<T>(g: Game, key: string, v: T | null, sig: (v: T) => string): T | null {
+export function holdAdvice<T>(g: Game, key: string, v: T | null, sig: (v: T) => string, holds: (v: T) => boolean = () => true): T | null {
   if (v === null) return v;
   let m = advised.get(g);
   if (!m) advised.set(g, (m = new Map()));
   const s = sig(v), now = g.time / HOUR, works = worksKey(g), e = m.get(key);
-  if (e && e.sig !== s && e.works === works && now >= e.at && now - e.at < ADVICE_HOLD) return e.v as T;
+  if (e && e.sig !== s && e.works === works && now >= e.at && now - e.at < ADVICE_HOLD && holds(e.v as T)) return e.v as T;
   m.set(key, { sig: s, at: e && e.sig === s && e.works === works && now >= e.at ? e.at : now, works, v });
   return v;
 }
@@ -888,6 +890,9 @@ export function siteForecast(g: Game, b: Building): SiteForecast {
       const os = o.plant!.site;
       if (o.id === b.id || !os || PLANTS[o.kind as PlantKind].mega || !reach(o)) continue;
       const theirs = (os.need[p] ?? 0) - (os.got[p] ?? 0) - on(o, p);
+      // (which sites compete is part of the supply: one finishing is a real change, said at once. Not which of them
+      // is ahead, which swings as loads land)
+      if ((os.need[p] ?? 0) > (os.got[p] ?? 0)) keys.push(`site${o.id}`);
       if (theirs > 0 && (theirs < mine || (theirs === mine && o.id < b.id))) ahead += theirs;
     }
     const near = makers.reduce((a, o) => Math.min(a, g.industry.tripTo(o, b)), Infinity);

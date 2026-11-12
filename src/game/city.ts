@@ -1285,16 +1285,16 @@ export class Game {
     const fail = (say: string) => { why ??= say; };
     for (const cd of cands.slice(0, o.tries ?? 6)) {
       const end = snap(net, cd.p, { mpp: 0.4, level: 0, type });
-      if (end.seg === undefined && end.node === undefined) { fail("the nearest road can't be joined"); continue; }
+      if (end.seg === undefined && end.node === undefined) { fail("can't join the nearest road"); continue; }
       const plan = planRoad(net, world, { start: { p: S, h: 0, guides: [] }, end, mode: "curve", squareEnd: true, type, startTangent: out });
       if (plan.errors.length || !plan.strokes.length) { fail(gateLinkWhy(plan.errors[0]?.msg ?? "")); continue; }
       const pts = plan.strokes.flatMap((st) => chainPoints(st.chain, 3));
-      if (pts.some((q) => rectDistance(q, c, hw, hd, rot) < 6)) { fail("its own fence is in the way"); continue; }
+      if (pts.some((q) => rectDistance(q, c, hw, hd, rot) < 6)) { fail("its own fence blocks it"); continue; }
       // (never through a town's homes and shops: the company's street goes round them, or waits for the player)
-      if (this.lotsUnder(plan).length) { fail("a town's homes are in the way"); continue; }
+      if (this.lotsUnder(plan).length) { fail("homes block it"); continue; }
       if (plan.cost * cd.k < bestCost) { best = plan; bestCost = plan.cost * cd.k; }
     }
-    if (o.why) o.why.say = best ? undefined : cands.length ? why ?? "the way to a road is blocked" : `no road within ${distWords(R)}`;
+    if (o.why) o.why.say = best ? undefined : cands.length ? why ?? "the way is blocked" : `no road within ${distWords(R)}`;
     return best;
   }
 
@@ -1306,7 +1306,7 @@ export class Game {
   roadTo(b: Building): Plan | null {
     return this.roadToOf(b)?.plan ?? null;
   }
-  /** Why no road is offered to a placed works with none at its gate, in a few words ("water is in the way"); null if one is. */
+  /** Why no road is offered to a placed works with none at its gate, in a few words ("water blocks it"); null if one is. */
   roadToWhy(b: Building): string | null {
     const r = this.roadToOf(b);
     return r && !r.plan ? r.why ?? null : null;
@@ -2634,9 +2634,9 @@ const distWords = (m: number): string => (m >= 1000 ? `${Math.round(m / 100) / 1
 
 /** The road planner's refusal for the road offered to a works' gate, as the reason none is offered (gateLink). */
 export function gateLinkWhy(msg: string): string {
-  if (/mountain/i.test(msg)) return "a mountain is in the way";
-  if (/bridge|water|stay on the ground/i.test(msg)) return "water is in the way";
-  if (/outside the map/i.test(msg)) return "the map ends that way";
-  if (/junction|overlap|angle|crossing|roundabout/i.test(msg)) return "the roads there are too crowded to join";
-  return "the way to a road is blocked";
+  if (/mountain/i.test(msg)) return "a mountain blocks it";
+  if (/bridge|water|stay on the ground/i.test(msg)) return "water blocks it";
+  if (/outside the map/i.test(msg)) return "the map ends there";
+  if (/junction|overlap|angle|crossing|roundabout/i.test(msg)) return "too many roads there";
+  return "the way is blocked";
 }
