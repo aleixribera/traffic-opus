@@ -45,8 +45,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # (the balance playthrough takes hours on a runner: it runs locally, before a release)
-      - run: npx vitest run --exclude tests/balance.test.ts
+      # (the balance playthrough takes hours on a runner and the late-save soak test most of one: they run locally, the
+      # one before a release, the other after a change to the traffic sim)
+      - run: npx vitest run --exclude tests/balance.test.ts --exclude tests/latesave.test.ts
 
   deploy:
     needs: build

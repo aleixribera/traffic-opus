@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit -p .",
     "test:full": "vitest run --project quick --project scenarios",
     "test:scenarios": "vitest run --project scenarios",
-    "test:balance": "vitest run --project balance"
+    "test:balance": "vitest run --project balance",
+    "test:soak": "vitest run --project soak"
   },
   "keywords": [],
   "author": "",

@@ -18,6 +18,12 @@ export const SCENARIOS = [
   "city", "transit", "convoy", "townplan", "spawn", "terrain", "economy", "zonecache", "fleet", "lots", "streetwall", "deadlock",
 ].map((n) => `tests/${n}.test.ts`);
 const BALANCE = ["tests/balance.test.ts"];
+/**
+ * The late save run for ten game days, about 250 vehicles all the way (tests/latesave.test.ts): the soak test that
+ * no deadlock lasts. Half an hour to an hour of CPU, so like the balance playthrough it runs on its own
+ * (`npm run test:soak`), after a change to the traffic sim, not in the full suite or on the CI runner.
+ */
+const SOAK = ["tests/latesave.test.ts"];
 
 export default defineConfig({
   // relative base so the build runs from any static host path (e.g. GitHub Pages)
@@ -31,9 +37,10 @@ export default defineConfig({
     testTimeout: 30000,
     hookTimeout: 30000, // many files build a whole game in beforeAll; under load that passes vitest's default 10 s
     projects: [
-      { extends: true, test: { name: "quick", include: ["tests/**/*.test.ts"], exclude: [...SCENARIOS, ...BALANCE] } },
+      { extends: true, test: { name: "quick", include: ["tests/**/*.test.ts"], exclude: [...SCENARIOS, ...BALANCE, ...SOAK] } },
       { extends: true, test: { name: "scenarios", include: SCENARIOS, testTimeout: 300000, hookTimeout: 300000 } },
       { extends: true, test: { name: "balance", include: BALANCE, testTimeout: 3600000, hookTimeout: 3600000 } },
+      { extends: true, test: { name: "soak", include: SOAK, testTimeout: 7200000, hookTimeout: 300000 } },
     ],
   },
 });
