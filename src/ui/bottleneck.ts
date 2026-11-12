@@ -601,9 +601,9 @@ export const blockWords = (why: string | undefined): string => (why && BLOCK_WOR
 /** What to do about each, where there is something to do. */
 const BLOCK_FIX: Record<string, string> = {
   box: "The jam starts further on: follow the queue to its head",
-  yield: "A turn lane, lights or a roundabout here gives it its turn",
-  stop: "A turn lane, lights or a roundabout here gives it its turn",
-  crossing: "A turn lane, lights or a roundabout here gives it its turn",
+  yield: "A roundabout here gives it its turn",
+  stop: "A roundabout here gives it its turn",
+  crossing: "A roundabout here gives it its turn",
 };
 export const blockFix = (why: string | undefined): string => (why && BLOCK_FIX[why]) || "Open the junction to see its queues";
 

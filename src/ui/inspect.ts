@@ -27,6 +27,7 @@ import type { Lane } from "../roads/network";
 import { dkDir, dkSeg } from "../sim/router";
 import { poseOf } from "./pick";
 import { stuckNow, type Vehicle } from "../sim/traffic";
+import { queueAt, roadQueueSay } from "./queues";
 
 /** The one thing selected on the map. */
 export type Sel =
@@ -985,12 +986,21 @@ export function roadModel(g: Game, seg: number): PanelModel | null {
   for (const t of to) if (t.ref?.k === "building") rel.to.push(t.ref.id);
   for (const t of from) if (t.ref?.k === "building") rel.from.push(t.ref.id);
   const ring = s.ring ? "Roundabout" : "";
+  // a queue on it: held at the junction ahead, or by this road itself (src/ui/queues.ts), said as the Traffic window says it
+  const q = queueAt(g, { seg });
+  const held = q && (q.node !== undefined || q.seg === seg) ? q : null;
+  if (held) {
+    rel.segs = [...new Set([seg, ...held.segs])];
+    rel.segTone = Object.fromEntries(held.segs.map((x) => [x, "bad" as const]));
+  }
   const flow: FlowRow[] = [];
   if (from.length) flow.push({ label: "Coming from", chips: from });
   if (to.length) flow.push({ label: "Heading to", chips: to, title: "The map draws the whole route of every vehicle on it now, thicker where more share a road. Ochre is your freight, cream the rest" });
   return {
     title: ring || T.name, sub: ring ? T.name : `${lanes} ${lanes === 1 ? "lane" : "lanes"} · ${Math.round(T.speed * 3.6)} km/h`, icon: ring ? "roundabout" : `road:${s.type}`,
-    status: { text: c.word, tone: c.tone, fix: c.tone === "bad" ? "Try lights or a roundabout at the junction ahead" : undefined },
+    status: held
+      ? { text: held.vehicles >= 15 || held.worst >= 60 ? "Queued" : c.word, tone: "bad", fix: roadQueueSay(held) }
+      : { text: c.word, tone: c.tone, fix: c.tone === "bad" ? "Widen it, or build a roundabout at the junction ahead" : undefined },
     keys: [
       { value: String(all.length), label: all.length === 1 ? "vehicle" : "vehicles", title: `On it now, ${stopped} stopped` },
       { value: `${Math.round(speed * 100)}%`, label: "speed", tone: toneOf(speed, 0.8, 0.45), title: "Its traffic's speed, of the speed limit" },
@@ -1055,9 +1065,19 @@ export function junctionModel(g: Game, node: number, compass: (d: { x: number; y
   for (const a of ap) if (a.queue) {
     for (const l of (g.net.segGeom.get(a.seg)?.lanes ?? []) as Lane[]) if (l.to === node) for (const v of l.occ as Vehicle[]) if (v.v < 0.5 && v.wait >= 20) rel.vehicles.push(v.id);
   }
+  // a queue held here (src/ui/queues.ts): what holds it and the fix that works, as the Traffic window says it; its
+  // roads lit up the whole way back
+  const q = queueAt(g, { node });
+  if (q) {
+    rel.segs = [...new Set([...rel.segs, ...q.segs])];
+    for (const x of q.segs) tones[x] ??= "bad";
+    rel.vehicles = [...new Set([...rel.vehicles, ...q.ids])];
+  }
   return {
     title: "Junction", sub: control, icon: "junction",
-    status: { text: queued === 0 ? "Clear" : tone === "bad" ? "Backing up" : "Busy", tone, tag, fix: tone === "bad" ? (n.signal ? "Give the worst approach a longer green, or add turn pockets" : "Try lights, stop signs on the quiet roads, or a roundabout") : undefined },
+    status: q
+      ? { text: q.why, tone: "bad", tag, fix: q.fix ?? undefined }
+      : { text: queued === 0 ? "Clear" : tone === "bad" ? "Backing up" : "Busy", tone, tag, fix: tone === "bad" ? (n.signal ? "Widen its roads to take more each green" : "A roundabout or wider roads here move more") : undefined },
     keys: [
       { value: String(queued), label: "queued", tone, title: "Vehicles queued on its approaches" },
       worst && worst.queue
