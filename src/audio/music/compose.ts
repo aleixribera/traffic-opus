@@ -176,11 +176,11 @@ export function tuneName(r: Rnd, mood: Mood, form: FormId, src: NameSource): str
   const style = mood.startsWith("winter") && r() < 0.6 ? "winter" : form === "ballad" ? "ballad" : form === "minorBlues" || mood === "night" ? "blues" : "swing";
   const town = src.towns.length ? pick(r, src.towns) : "Kilometre Zero";
   let tpl = pick(r, NAMES[style]);
-  // (a save with no town yet: no line that needs one twice over)
-  if (!src.company && tpl.includes("{C}")) tpl = "{T} Special";
   // (a dedication's tune is named for its town)
   if (src.dedicate && src.towns.length) for (let k = 0; k < 40 && !tpl.includes("{T}"); k++) tpl = pick(r, NAMES[style]);
   if (src.dedicate && src.towns.length && !tpl.includes("{T}")) tpl = "{T} Special";
+  // (a save with no company name yet: no line that needs one)
+  if (!src.company && tpl.includes("{C}")) tpl = "{T} Special";
   return tpl.replace("{T}", town).replace("{C}", firmShort(src.company));
 }
 

@@ -126,7 +126,7 @@ export class Wireless {
     this.on = on;
     this.waitFrom = 0;
     if (on) { this.band.gain.setTargetAtTime(BAND, this.e.now, 0.05); this.startAt = this.e.now + 1.2; }
-    else { this.hush(); this.dropHorn(); }
+    else { this.hush(); this.dropHorn(); this.forced = null; }
     if (!on) this.onTune?.("");
   }
 
@@ -157,7 +157,10 @@ export class Wireless {
   dedicate(town: string, at: number) {
     if (!this.on) return;
     const t = this.e.now;
+    const had = this.tune !== null;
     this.hush(0.45);
+    // (the tune is gone: the radio stops showing its name)
+    if (had) this.onTune?.("");
     this.band.gain.setTargetAtTime(BAND, Math.max(t + 1.6, at - 0.2), 0.05);
     this.forced = town;
     this.startAt = Math.max(t + 1.8, at);
@@ -166,9 +169,11 @@ export class Wireless {
     this.writing = null;
   }
 
-  /** Where the names come from now: the dedication's town, while one waits. */
+  /** Where the names come from now: the dedication's town, while one waits (and only while it is on this map: another
+   * save may have been opened since). */
   private src(): NameSource {
     const s = this.source();
+    if (this.forced && !s.towns.includes(this.forced)) this.forced = null;
     return this.forced ? { towns: [this.forced], company: s.company, dedicate: true } : s;
   }
 

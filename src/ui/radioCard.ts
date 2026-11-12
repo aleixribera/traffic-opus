@@ -1,10 +1,11 @@
 // The wireless's dedications on screen (audio/dedication.ts): when something big happens the station dedicates its
 // next number to it, and its card stands on the radio in the bottom bar for a little while: the radio's glyph and
-// the announcer's line with the name in bold, and the tune once it starts ("Now playing “Poplar Creek Stomp”").
+// the announcer's line with the name in bold. The tune's name is the radio's own (just under the card): the card
+// stays a little while once the tune named for the town has started.
 //
 // Self-contained: it takes the game's events (App's g.on), watches for a long jam clearing itself, picks the biggest
 // of the things that happen together, and asks the audio for the ident and the tune. Nothing goes out while the
-// radio is off or the sound is muted (the card is the station talking: with no station there is nothing to say).
+// radio is off, the sound is muted or not started (the card is the station talking: with no station there is nothing to say).
 
 import "./radioCard.css";
 import { BUILDING_TYPES } from "../config";
@@ -51,7 +52,7 @@ export class RadioDedications {
 
   /** Into the HUD (so it hides with it), once it is built. */
   mount(parent: Element | null) {
-    if (parent && this.el.parentElement !== parent) parent.append(this.el);
+    if (parent && this.el.parentElement !== parent) { parent.append(this.el); window.addEventListener("resize", this.place); }
   }
 
   /** A game was opened (new or loaded): a quiet spell first, and nothing carried over from the last one. */
@@ -79,17 +80,16 @@ export class RadioDedications {
     }
     if (this.shown) {
       const s = this.shown, tune = this.host.audio.tune;
-      if (!s.titled && tune && tune !== s.before && tune.includes(s.d.town)) { s.titled = t; this.title(tune); }
+      if (!s.titled && tune && tune !== s.before && tune.includes(s.d.town)) s.titled = t;
       const until = s.titled ? s.titled + STAY_TUNE : s.at + STAY_MAX;
       // (being read: it waits)
       if (t > until && !this.el.matches(":hover, :focus-within")) this.hide();
       else if (!this.on()) this.hide();
-      else this.place();
     }
     if (t - this.jamCheck >= 1) { this.jamCheck = t; this.watchJam(); }
   }
 
-  private on() { const s = this.host.audio.settings; return s.wireless && !s.muted; }
+  private on() { const s = this.host.audio.settings; return s.wireless && !s.muted && s.master > 0; }
 
   private offer(ev: DedicationEvent) {
     const t = now();
@@ -148,12 +148,12 @@ export class RadioDedications {
   }
 
   /** The station dedicates its next number: the ident, the band fading under it, and the card. */
-  private air(d: Dedication, t: number) {
+  private air(d: Dedication, t: number, force = false) {
     const before = this.host.audio.tune;
-    if (!this.host.audio.dedicate(d.town)) return;
+    if (!this.host.audio.dedicate(d.town) && !force) return;
     this.shown = { d, at: t, titled: 0, before };
     const el = this.el;
-    el.innerHTML = `<p class="rc-line">${RADIO}<span></span></p><p class="rc-tune" hidden></p><button class="rc-x" type="button" aria-label="Put the card away">${CLOSE}</button>`;
+    el.innerHTML = `<p class="rc-line">${RADIO}<span></span></p><button class="rc-x" type="button" aria-label="Put the card away">${CLOSE}</button>`;
     const line = el.querySelector(".rc-line span")!;
     line.append(`${d.lead} `, Object.assign(document.createElement("b"), { textContent: d.to }), `${d.sep}${d.why}.`);
     el.querySelector<HTMLButtonElement>(".rc-x")!.onclick = () => this.hide();
@@ -161,13 +161,6 @@ export class RadioDedications {
     el.hidden = false;
     el.classList.remove("out");
     this.place();
-  }
-
-  private title(tune: string) {
-    const p = this.el.querySelector<HTMLElement>(".rc-tune");
-    if (!p) return;
-    p.textContent = `Now playing “${tune}”`;
-    p.hidden = false;
   }
 
   private hide() {
@@ -179,9 +172,10 @@ export class RadioDedications {
 
   /**
    * Stand it on the radio in the bottom bar (or hang it under the radio, were the bar on top), its right edge with
-   * the radio's: the radio moves as the bar's width changes.
+   * the radio's: the radio moves as the bar's width changes (placed as it goes up, and again on a resize).
    */
-  private place() {
+  private place = () => {
+    if (this.el.hidden) return;
     const r = document.querySelector(".wireless")?.getBoundingClientRect();
     const st = this.el.style;
     if (!r || !r.width) { st.left = st.top = st.bottom = ""; return; }
@@ -189,11 +183,11 @@ export class RadioDedications {
     st.left = `${Math.round(Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w)))}px`;
     if (r.top > window.innerHeight / 2) { st.top = "auto"; st.bottom = `${Math.round(window.innerHeight - r.top + 10)}px`; }
     else { st.bottom = "auto"; st.top = `${Math.round(r.bottom + 10)}px`; }
-  }
+  };
 
-  /** For the look-and-fix pass (dev): air one now, whatever the desk says. */
+  /** For the look-and-fix pass (dev): air one now, whatever the desk says (the card even with no sound started). */
   devShow(ev: DedicationEvent) {
-    this.air(dedicationFor(ev, this.host.hour()), now());
+    this.air(dedicationFor(ev, this.host.hour()), now(), true);
   }
 }
 

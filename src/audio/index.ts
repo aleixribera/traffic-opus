@@ -210,12 +210,14 @@ export class GameAudio {
 
   /**
    * A dedication (audio/dedication.ts): the station's ident chimes (after any moment's sting still sounding), the
-   * tune playing fades under it, and the next one, named for `town`, starts after. False when the wireless is off.
+   * tune playing fades under it, and the next one, named for `town`, starts after. False when nothing would be heard
+   * (the wireless off, the sound muted or not yet started).
    */
   dedicate(town: string): boolean {
-    if (!this.settings.wireless) return false;
+    if (!this.settings.wireless || this.silent) return false;
     const e = this.eng, radio = this.radio;
-    if (!e || !radio || e.ctx.state !== "running") return true;
+    // (no sound started yet, or asleep: nothing would be heard, so nothing is said)
+    if (!e || !radio || e.ctx.state !== "running") return false;
     const at = Math.max(e.now, this.stingFree);
     this.sting("dedication");
     radio.dedicate(town, at + 2.2);
