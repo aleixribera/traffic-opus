@@ -15,6 +15,13 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.112", date: "2026-11-12", title: "Driveways in the queue",
+    notes: [
+      "A car waiting for one pulling out of a driveway now counts in the queue it is part of, so a jam through a driveway is found, explained and broken like any other.",
+      "Traffic plays out the same on every computer, however fast.",
+    ],
+  },
+  {
     v: "v0.0.111", date: "2026-11-12", title: "Queues you can read",
     notes: [
       "The Traffic window lists the worst queues: where, how many wait and how long, what holds them, and the fix that works.",
