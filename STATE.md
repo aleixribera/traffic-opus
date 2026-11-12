@@ -2,10 +2,11 @@
 
 ## Now
 
-Last pass shipped v0.0.116 Stops you can find (roadplay item 9): bus stops carry a plate on a stem from halfH 70 out to the works-plate zoom, tab per line colour, click opens the stop; bolder bay paint. Frames `.scratch/bus-after-175.png`, `bus-after-crop.png`. **Next pass: check CI for v0.0.116** (`gh run list -L 1`); if green, roadplay item 10 (Transport catalog stays fully open with a bus stop in hand).
+Last pass shipped v0.0.117 A clear kerb (roadplay item 10): the Transport cards fold to their strip once the pointer leaves them for the map with its tool in hand (`hud.aimed`, 40 px margin so the gap above the bar doesn't count); a peek stays open on hover and folds again when a stop is placed. Frames `.scratch/stop-before.png`, `stop-after.png`. **Next pass: check CI for v0.0.116 and v0.0.117** (`gh run list -L 3`); if green, roadplay item 6 (twin bulbs), then item 4 (parallel pinch at a corner).
 
 ## What works (latest)
 
+- v0.0.117 Transport cards fold on aim (`src/ui/hud.ts` aimed; browser-checked, DOM only).
 - v0.0.116 bus stop plates (`src/ui/stopMarks.ts`; checked in the browser, no unit test: DOM only).
 - v0.0.114 Works that land: a works by a road's dead end stands back and joins it (`tests/placesnap.test.ts`).
 - v0.0.113 one-click Widen/Roundabout from queue advice (`tests/queuefix*`), v0.0.111 readable queues, v0.0.112 seeded sim (`tests/determinism.test.ts`).
@@ -13,7 +14,7 @@ Last pass shipped v0.0.116 Stops you can find (roadplay item 9): bus stops carry
 
 ## Broken / open
 
-- Road play log (`docs/roadplay-log.md` on branch `t3/road-freight-playtesting`): 4 parallel pinch at a corner (unreproduced), 6 twin bulbs, 10 catalog fold with stop (9 done in v0.0.116).
+- Road play log (`docs/roadplay-log.md` on branch `t3/road-freight-playtesting`): 4 parallel pinch at a corner (unreproduced), 6 twin bulbs (9 done in v0.0.116, 10 in v0.0.117).
 - Late-save soak: worktree `~/.t3/worktrees/traffic-opus/t3-64b370fb`, branch `t3/late-save-deadlock-test` (f94271f): lategame fixture + 10-day soak, day-5 gridlock not settled. Too long for light tests; needs its own project and a shorter run.
 - Slow tests to shrink: see `.claude/iterate.md`.
 

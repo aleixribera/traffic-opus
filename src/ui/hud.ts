@@ -451,9 +451,23 @@ export class Hud {
     if (this.cat) this.refresh();
   }
 
-  /** The catalog's tool used on the map (a stop put down): from now on its cards fold away. */
+  /**
+   * The pointer out on the map with Transport's tool in hand (screen px). A stop goes down on one click, like a works,
+   * so it is aimed before it is used: the cards fold away once the pointer has left them for the map, or they cover
+   * the street it is going on (road play log 10). A margin round the window keeps the gap above the bar, crossed on
+   * the way up from the Transport button, from counting.
+   */
+  aimed(x: number, y: number) {
+    // (a look the player asked for, by a tab or the button, stays open until the tool is used)
+    if (this.handPicked || this.catPeek || this.cat !== "transport" || this.assets.hidden) return;
+    const r = this.assets.getBoundingClientRect(), m = 40;
+    if (x > r.left - m && x < r.right + m && y > r.top - m && y < r.bottom + m) return;
+    this.used();
+  }
+
+  /** The catalog's tool used on the map (a stop put down): from now on its cards fold away, a look at them included. */
   used() {
-    if (this.handPicked) return;
+    if (this.handPicked && !this.catPeek) return;
     this.handPicked = true;
     this.catPeek = false;
     this.refresh();

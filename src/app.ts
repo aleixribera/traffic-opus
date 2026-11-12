@@ -1247,6 +1247,7 @@ export class App {
       if (panning) { this.updateCursor(p); return; }
     }
     if (e.target !== this.view.canvas && !pi) { return; }
+    if (!pi && this.st.tool === "transit") this.hud?.aimed(e.clientX, e.clientY);
     this.updateCursor(p);
     if (this.dragRect) {
       this.dragRect.b = p;

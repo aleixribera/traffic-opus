@@ -15,6 +15,12 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.117", date: "2026-11-12", title: "A clear kerb",
+    notes: [
+      "The Transport cards fold to their one-line strip as soon as you take a bus stop out onto the map, so they no longer cover the street you are aiming at. A tab or the Transport button brings them back.",
+    ],
+  },
+  {
     v: "v0.0.116", date: "2026-11-12", title: "Stops you can find",
     notes: [
       "Bus stops carry a small plate over the kerb from the usual zoom out, with a tab in each of their lines' colours. Click one to open the stop.",
