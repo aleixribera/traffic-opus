@@ -15,6 +15,15 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.113", date: "2026-11-12", title: "Fix it from the queue",
+    notes: [
+      "A queued junction's panel offers its fix as one button at its real price: widen its roads, or build a roundabout. One undo takes it back.",
+      "Hover the button to see the roads it widens. Roads that can't be widened are named, with what stands in the way.",
+      "Traffic lights lead only where they are the fix.",
+      "A junction's approaches read \"6 of 15 queued\".",
+    ],
+  },
+  {
     v: "v0.0.112", date: "2026-11-12", title: "Driveways in the queue",
     notes: [
       "A car waiting for one pulling out of a driveway now counts in the queue it is part of, so a jam through a driveway is found, explained and broken like any other.",
