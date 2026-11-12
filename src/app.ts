@@ -198,6 +198,8 @@ export class App {
   private turnWheel = 0;
   /** when the street trees are due a look (performance.now ms; 0: not due): they make way for new driveways */
   private treesDue = 0;
+  /** the bus stops as the greens were last laid out round them (Transit.version) */
+  private greensTransit = -1;
   /** The sim is stepping (game.update): what it changes is laid out over the next frames, not in the step (B12). */
   private simming = false;
   /** A whole layout of the buildings, laid out in slices, has gone in: its follow-ups are due (afterLayout). */
@@ -839,9 +841,9 @@ export class App {
     this.treesDue = 0;
     this.layoutIn = false;
     this.vehicles.lotOf = (id) => { const b = g.buildings.byId.get(id); return b ? this.buildings3d.lotWay(b) : null; };
-    this.transit3d = new Transit3D(this.models.props.get("busstop"));
+    this.transit3d = new Transit3D(this.models.props.get("busstop"), this.buildings3d.life);
     this.parks3d = new Parks3D(this.models);
-    this.greens3d = new Greens3D();
+    this.greens3d = new Greens3D(this.models.props, this.buildings3d.life);
     this.lamps = new Lamps3D(this.models.props.get("streetlamp"), this.models.props.get("floodmast"));
     this.vehicles.lamps = this.lamps;
     this.buildings3d.seasonClock = () => this.dayCycle.lookTime(this.game.time);
@@ -2499,6 +2501,12 @@ export class App {
       if (this.hasCursor && !this.camera.cinematic) { this.aimCursor(); this.dirtyPreview = true; }
     }
     this.transit3d.update(g.transit, g.net, this.st.tool === "transit" || !!this.hud?.linesShown, this.view.mpp, this.view.rot);
+    // (a bus stop put by a green or taken away: its lay-by makes room for the shelter, or takes the room back)
+    if (g.transit.version !== this.greensTransit) {
+      this.greensTransit = g.transit.version;
+      const gr = g.towns.greens();
+      this.greens3d.update(gr.key, gr.list);
+    }
     this.flowT += dt;
     const flowOn = this.overlay === "flow";
     this.roads.update(g.traffic, flowOn && this.flowT > 0.5);

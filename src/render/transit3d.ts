@@ -6,6 +6,7 @@ import { dkDir, dkSeg, type Access } from "../sim/router";
 import { lotMatrix } from "./buildings3d";
 import type { MergedModel } from "./models";
 import { strip } from "./roads3d";
+import type { ParkFolk, TownLife } from "./townlife";
 
 /** Bus stops (a shelter on the footpath and a yellow box on the kerb lane) and, when asked for, each line's route. */
 export class Transit3D {
@@ -24,7 +25,7 @@ export class Transit3D {
   focus: number | null = null;
   private focusShown: number | null = null;
 
-  constructor(private shelter: MergedModel | undefined) {
+  constructor(private shelter: MergedModel | undefined, private life?: TownLife) {
     this.markMat = new THREE.MeshBasicMaterial({ map: markTexture(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 });
     this.group.add(this.routes);
   }
@@ -53,11 +54,23 @@ export class Transit3D {
     }
   }
 
+  /** The people waiting at the stops, to the town life (only when they change: the stops are redone as the camera turns). */
+  private wait(list: ParkFolk[], seed: number) {
+    let s = 0;
+    for (const f of list) s += f.a.x * 3 + f.a.y * 7;
+    const key = `${list.length}:${Math.round(s * 10)}`;
+    if (key === this.waitKey) return;
+    this.waitKey = key;
+    this.life?.setExtra("stops", list, seed);
+  }
+  private waitKey = "0:0";
+
   private rebuildStops(tr: Transit, net: RoadNetwork) {
     if (this.shelters) { this.group.remove(this.shelters); this.shelters.dispose(); this.shelters = null; }
     if (this.marks) { this.group.remove(this.marks); this.marks.geometry.dispose(); this.marks = null; }
     const stops = [...tr.stops.values()].filter((s) => net.segGeom.has(s.access.seg));
-    if (!stops.length) return;
+    const waiting: ParkFolk[] = [];
+    if (!stops.length) { this.wait(waiting, 0); return; }
     const pos: number[] = [], uv: number[] = [], idx: number[] = [];
     const m = new THREE.Matrix4();
     if (this.shelter) this.shelters = new THREE.InstancedMesh(this.shelter.geo, this.mat, stops.length);
@@ -70,6 +83,13 @@ export class Transit3D {
       // the shelter on the footpath, open to the road
       const c = { x: st.p.x + out.x * 1.5, y: st.p.y + out.y * 1.5 };
       if (this.shelters) { lotMatrix(m, c, angleOf(t), side, 0.02); this.shelters.setMatrixAt(i, m); }
+      // someone or two waiting by it, looking up the road for the bus (render/townlife.ts draws them)
+      const nw = 1 + (Math.imul(i + 7, 2654435761) >>> 30);
+      for (let k = 0; k < nw; k++) {
+        const h = Math.imul(i * 31 + k * 7 + 3, 2246822519) >>> 0, s = 2.6 + (h % 100) / 50 + k * 0.9;
+        const back = (h >>> 8) % 2 ? 1 : -1, look = { x: out.x * -0.7 - t.x * back * 0.7, y: out.y * -0.7 - t.y * back * 0.7 };
+        waiting.push({ a: { x: st.p.x + out.x * 0.85 + t.x * s * back, y: st.p.y + out.y * 0.85 + t.y * s * back }, rot: Math.atan2(look.x, look.y) });
+      }
       // the bay marking: 14 m along the kerb lane, ending at the stop (the bus pulls up to the shelter)
       const along = (side === 1 ? 1 : -1); // which way traffic on this side drives, along the centreline
       const lane = g.lanes.find((l: Lane) => (l.dir === 1 ? 1 : -1) === side && l.idx === 0);
@@ -85,6 +105,7 @@ export class Transit3D {
       else uv.push(1, 1, 0, 1, 0, 0, 1, 0);
       idx.push(k, k + 1, k + 2, k, k + 2, k + 3);
     });
+    this.wait(waiting, stops.length);
     if (this.shelters) {
       this.shelters.instanceMatrix.needsUpdate = true;
       this.shelters.castShadow = true;
