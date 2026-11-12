@@ -1083,6 +1083,40 @@ export class Game {
     return true;
   }
 
+  /**
+   * Several roads widened at once, as one edit (one Undo puts them all back): a queue's fix from its panel. Each is
+   * checked as Game.upgrade checks it; any in the way, or the whole not paid for, and nothing changes. The price is
+   * what upgradePlan quotes for each before any of them changes (what the button said).
+   */
+  upgradeAll(list: { seg: number; to: RoadTypeId }[]): boolean {
+    const todo = list.filter((x) => { const s = this.net.segs.get(x.seg); return !!s && s.type !== x.to; });
+    if (!todo.length) return false;
+    const quotes = todo.map((x) => this.upgradePlan(x.seg, x.to));
+    if (quotes.some((u) => u.errors.some((e) => !e.msg.startsWith("Not enough money")))) return false;
+    const price = quotes.reduce((a, u) => a + u.cost, 0);
+    if (price > this.money + 0.5) return false;
+    const ops: Op[] = [], gone: Building[] = [], moved = new Map<number, BuildingMove>();
+    let paid = 0;
+    todo.forEach((x, i) => {
+      // (as the roads stand after the ones before it: a wider neighbour can have pushed a works back already)
+      const u = i ? this.upgradePlan(x.seg, x.to) : quotes[0];
+      if (!this.net.segs.has(x.seg) || u.errors.some((e) => !e.msg.startsWith("Not enough money"))) return;
+      this.moveBuildings(u.moves, true);
+      // (a works pushed twice: undo takes it back to where it stood first)
+      for (const m of u.moves) { const was = moved.get(m.id); moved.set(m.id, was ? { ...m, c0: was.c0, f0: was.f0 } : m); }
+      const o = this.applyRoads(() => this.net.setType(x.seg, x.to));
+      ops.push(...o);
+      gone.push(...this.clearRoadsOverLots(o));
+      paid += quotes[i].cost;
+    });
+    if (!ops.length) return false;
+    this.money -= paid;
+    this.pushUndo({ label: "upgrade", ops, money: paid, added: [], removed: gone, moved: moved.size ? [...moved.values()] : undefined });
+    this.emit({ t: "money" });
+    if (moved.size || gone.length) this.emit({ t: "buildings" });
+    return true;
+  }
+
   flip(segId: number): boolean {
     const s = this.net.segs.get(segId);
     if (!s || ROAD_TYPES[s.type].bwd > 0) return false;

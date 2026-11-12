@@ -27,7 +27,7 @@ import type { Lane } from "../roads/network";
 import { dkDir, dkSeg } from "../sim/router";
 import { poseOf } from "./pick";
 import { stuckNow, type Vehicle } from "../sim/traffic";
-import { queueAt, roadQueueSay } from "./queues";
+import { fixOffer, queueAt, roadQueueSay, type FixOffer, type QueueRow } from "./queues";
 
 /** The one thing selected on the map. */
 export type Sel =
@@ -79,8 +79,8 @@ export interface FlowChip {
 /** A row of chips; `title`: what its label means, as a tooltip (never a line of its own). */
 export interface FlowRow { label: string; chips: FlowChip[]; title?: string }
 
-/** The one-click fix beside the advice: lights on junction `node` (and the rest of its cluster), at `cost`. */
-export interface StatusAct { kind: "lights"; node: number; label: string; cost: number }
+/** The one-click fix beside the advice (src/ui/queues.ts fixOffer): what it builds, its price, and why it can't now. */
+export type StatusAct = FixOffer;
 
 export interface PanelModel {
   /** the header's name and its small grey sub-name */
@@ -999,7 +999,7 @@ export function roadModel(g: Game, seg: number): PanelModel | null {
   return {
     title: ring || T.name, sub: ring ? T.name : `${lanes} ${lanes === 1 ? "lane" : "lanes"} · ${Math.round(T.speed * 3.6)} km/h`, icon: ring ? "roundabout" : `road:${s.type}`,
     status: held
-      ? { text: held.vehicles >= 15 || held.worst >= 60 ? "Queued" : c.word, tone: "bad", fix: roadQueueSay(held) }
+      ? roadQueued(g, held, held.vehicles >= 15 || held.worst >= 60 ? "Queued" : c.word)
       : { text: c.word, tone: c.tone, fix: c.tone === "bad" ? "Widen it, or build a roundabout at the junction ahead" : undefined },
     keys: [
       { value: String(all.length), label: all.length === 1 ? "vehicle" : "vehicles", title: `On it now, ${stopped} stopped` },
@@ -1009,6 +1009,12 @@ export function roadModel(g: Game, seg: number): PanelModel | null {
     flow,
     related: rel,
   };
+}
+
+/** A road's status with a queue on it: what holds it, and the fix as a button (its words then said once, on the button). */
+function roadQueued(g: Game, q: QueueRow, text: string): PanelModel["status"] {
+  const act = (q.act && fixOffer(g, q.act)) ?? undefined;
+  return { text, tone: "bad", fix: roadQueueSay(act ? { ...q, fix: null } : q), act };
 }
 
 /** An approach to a junction: its road, the way it comes in, the vehicles queued and on it, and the longest wait (s). */
@@ -1076,7 +1082,7 @@ export function junctionModel(g: Game, node: number, compass: (d: { x: number; y
   return {
     title: "Junction", sub: control, icon: "junction",
     status: q
-      ? { text: q.why, tone: "bad", tag, fix: q.fix ?? undefined }
+      ? { text: q.why, tone: "bad", tag, ...junctionFix(g, q) }
       : { text: queued === 0 ? "Clear" : tone === "bad" ? "Backing up" : "Busy", tone, tag, fix: tone === "bad" ? (n.signal ? "Widen its roads to take more each green" : "A roundabout or wider roads here move more") : undefined },
     keys: [
       { value: String(queued), label: "queued", tone, title: "Vehicles queued on its approaches" },
@@ -1088,6 +1094,15 @@ export function junctionModel(g: Game, node: number, compass: (d: { x: number; y
     flow: [],
     related: rel,
   };
+}
+
+/**
+ * A junction queue's fix: the button, its words then said once, on it; lights keep their words, for the junction
+ * panel's own lights button is theirs (hud.ts fillSignal).
+ */
+function junctionFix(g: Game, q: QueueRow): Pick<PanelModel["status"], "fix" | "act"> {
+  const act = (q.act && fixOffer(g, q.act)) ?? undefined;
+  return { fix: act && act.act.kind !== "lights" ? undefined : q.fix ?? undefined, act };
 }
 
 export function stopModel(g: Game, id: number): PanelModel | null {
@@ -1267,7 +1282,7 @@ export function deadlockAt(g: Game, vs: Vehicle[]): Pick<PanelModel["status"], "
   return {
     text,
     fix: `${why} Traffic lights make them take turns.${n > 1 ? ` These ${n} junctions work as one, so they all get lights.` : ""}`,
-    act: { kind: "lights", node, cost, label: `Add traffic lights · ${formatMoney(cost)}` },
+    act: { act: { kind: "lights", node }, cost, label: `Add traffic lights · ${formatMoney(cost)}`, segs: [], blocked: cost > g.money + 0.5 ? "Not enough money" : undefined },
   };
 }
 

@@ -256,13 +256,13 @@ describe("the Traffic stuck panel", () => {
       expect(d.text).toBe("Deadlock");
       expect(d.fix).toMatch(/^3 vehicles each wait for another to move\./);
       // (the crossing 22 m along is so close it works as one with A: lights on both)
-      expect(d.act).toMatchObject({ kind: "lights", node: A, cost: 2 * SIGNAL_COST });
+      expect(d.act).toMatchObject({ act: { kind: "lights", node: A }, cost: 2 * SIGNAL_COST });
       expect(d.fix).toContain("work as one");
       expect(d.text + d.fix + d.act!.label).not.toMatch(/[—–]/); // (no dashes in the player's words)
       // (the fake cars off the road while it changes: they have no real lanes to carry over)
       const vs = g.traffic.vehicles as Vehicle[];
       vs.splice(vs.length - 3, 3);
-      expect(g.setSignal(d.act!.node, g.defaultSignal(d.act!.node))).toBe(true);
+      expect(g.setSignal(A, g.defaultSignal(A))).toBe(true);
       vs.push(...ring);
       // lit already: no button, the advice moves on
       const lit = deadlockAt(g, ring)!;

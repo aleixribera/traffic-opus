@@ -67,6 +67,7 @@ import { served } from "./game/settlements";
 import { joinedUp } from "./ui/tips";
 import type { ModelSet } from "./render/models";
 import { Preview3D } from "./render/preview3d";
+import type { FixOffer } from "./ui/queues";
 import { Highlight3D } from "./render/highlight3d";
 import { buildingOn, deckOn, heightsOn, junctionOn, pickOn, straightDown } from "./ui/pick";
 import { frameFit, rayAt, riseShare, TILT_MAP, TILT_MAX, type GroundRay } from "./render/viewmath";
@@ -233,6 +234,8 @@ export class App {
   private offerKey = "";
   /** a works whose offered road the HUD is pointing at (its tip's button under the pointer) */
   offerFor: number | null = null;
+  /** the queue fix the pointer is on in a panel (its button): the map shows what it would change */
+  fixHover: FixOffer | null = null;
   saves = new Saves();
   hud!: Hud;
   st: ToolState = {
@@ -2295,6 +2298,7 @@ export class App {
   /** The offered road of the works selected (or pointed at), redrawn only when it, the roads or the zoom change. */
   private drawOffer() {
     const g = this.game;
+    if (this.fixHover && this.mode === "play") return this.drawFix(this.fixHover);
     const id = this.offerFor ?? (this.sel?.k === "building" ? this.sel.id : null);
     const b = id !== null && this.mode === "play" ? g.buildings.byId.get(id) : undefined;
     const plan = b && b.placed && !b.access ? g.roadTo(b) : null;
@@ -2303,6 +2307,19 @@ export class App {
     this.offerKey = key;
     this.offer.clear();
     if (plan) this.offerRoad(this.offer, plan);
+  }
+
+  /** A queue fix pointed at in a panel: the roads it widens washed over, or the roundabout's ghost and what it clears. */
+  private drawFix(o: FixOffer) {
+    const g = this.game, key = `fix:${o.label}:${o.segs.join(",")}:${g.net.version}`;
+    if (key === this.offerKey) return;
+    this.offerKey = key;
+    this.offer.clear();
+    if (o.segs.length) this.offer.highlight(g.net, o.segs);
+    if (o.plan && !o.plan.errors.length) {
+      this.offer.plan(o.plan, o.plan.strokes[0] ? Math.round(o.plan.strokes[0].h0 / LEVEL_H) : 0, g.net);
+      for (const b of g.lotsUnder(o.plan)) this.offer.footprint(rectCorners(b.c, b.hw, b.hd, b.rot), 0xe5484d);
+    }
   }
 
   /** A road offered, not built: dashed in ochre along its way, as wide as the zoom needs to see it. */
