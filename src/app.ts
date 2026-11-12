@@ -2193,13 +2193,16 @@ export class App {
           if (far) {
             this.offerRoad(pv, far);
             if (this.gateGhost) this.gateGhost = { ...this.gateGhost, note: "dirt road offered", bad: false };
-            // (its price is in its panel, one click once placed: not a second price beside the works' own)
-            chips.push({ text: `${distText(planLength(far))} dirt road to its gate offered`, kind: "info", lead: 3 });
+            // (with the road's own price: the works' price beside "road offered" read as the road's. Review
+            // 2026-11-12, C4. The road is laid with one click from its panel once placed)
+            chips.push({ text: `${distText(planLength(far))} dirt road offered · ${formatMoney(far.cost)}`, kind: "info", lead: 3, priced: true });
           } else if (far === null) {
             // (a site turns its gate toward the nearest road by itself, so turning it is not the fix. Play-test
             // 2026-11-10: "turn its gate toward one" sent the player turning a farm round and round beside a road its
-            // own fence stood in the way of. Still being worked out, undefined: nothing said yet, not a false "no road")
-            chips.push({ text: "No road in reach of its gate", kind: "info", lead: 3 });
+            // own fence stood in the way of. Still being worked out, undefined: nothing said yet, not a false "no road".
+            // Why none is offered, in a few words: review 2026-11-12, C5)
+            const why = this.farMemo?.why;
+            chips.push({ text: why ? `No road offered: ${why}` : "No road in reach of its gate", kind: "info", lead: 3 });
           } else if (this.gateGhost) this.gateGhost = { ...this.gateGhost, note: undefined, bad: false };
         }
         else if (pl.faces) chips.push({ text: `Gate on a ${pl.faces.toLowerCase()}`, kind: "info", lead: 2 });
@@ -2279,11 +2282,12 @@ export class App {
       return this.farMemo?.k === k ? this.farMemo.plan : undefined;
     }
     this.farAt = now;
-    const plan = g.gateLink(k, pl.c, pl.rot, pl.side, { reach: ROAD_TO_REACH, type: "dirt", tries: 3 });
-    this.farMemo = { key, k, plan };
+    const why: { say?: string } = {};
+    const plan = g.gateLink(k, pl.c, pl.rot, pl.side, { reach: ROAD_TO_REACH, type: "dirt", tries: 3, why });
+    this.farMemo = { key, k, plan, why: why.say };
     return plan;
   }
-  private farMemo: { key: string; k: PlacedKind; plan: Plan | null } | null = null;
+  private farMemo: { key: string; k: PlacedKind; plan: Plan | null; why?: string } | null = null;
   private farAt = 0;
 
   /** The offered road of the works selected (or pointed at), redrawn only when it, the roads or the zoom change. */
@@ -2516,6 +2520,8 @@ export class App {
       this.hudT = 0;
       this.rememberView();
       this.hud?.tick();
+      // (the plaques in the same pass as the town panel and the people total: one figure, never 47 by 51. C8)
+      this.townLabels();
       if (this.buildings3d.updateConstruction()) this.buildings3d.rebuildSoon(this.game.buildings.list);
       if ((this.overlay !== "none" && this.overlay !== "flow") || this.st.tool === "place") this.applyTint();
     }
@@ -2589,7 +2595,6 @@ export class App {
       // must follow, or it went on naming a works whose mark had moved away: review 2026-11-10, B13)
       const ih = this.hasCursor ? this.icons.hit(this.cursorPx.x, this.cursorPx.y)?.b.id ?? -1 : -1;
       if (ih !== this.iconHover) { this.iconHover = ih; this.dirtyPreview = true; }
-      this.townLabels();
       this.convoyTags.sync(g.traffic.vehicles, g.buildings.byId, this.bare);
       this.townPings.sync(g.towns.list, g.time, served, this.bare);
       this.stuckAlerts.sync(g.traffic.stuckCars(STUCK_KEEP), g.time, this.bare);

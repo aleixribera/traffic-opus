@@ -5,7 +5,6 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { Game } from "../src/game/city";
 import { HOUR } from "../src/game/society";
-import { buildTime } from "../src/game/construction";
 import { MILESTONES } from "../src/game/progression";
 import { blockOf, demandPerDay, gridPt } from "../src/game/towns";
 import { HIST_HOURS, Industry, PLANTS } from "../src/game/industry";
@@ -15,7 +14,7 @@ import type { Building } from "../src/game/buildings";
 import type { Town } from "../src/game/settlements";
 import {
   FULL_OUTPUT, START_HOURS, aboutHours, atFullOutput, batchHours, blockFix, blockWords, buildOrder, canPerDay, ceilingFix, ceilingOf, flatOut, hasMade,
-  needHelp, needHelpSay, nextLoad, shortOf, shortfalls, shownRate, siteHours, siteLine, siteStatus, startUp, steadyProblem, tally, townAdvice, townWants,
+  forgetAdvice, needHelpNow, needHelpSay, nextLoad, shortOf, shortfalls, shownRate, siteHours, siteLine, siteStatus, startUp, steadyProblem, tally, townAdvice, townWants,
   powerFix, staffSay, staffing, waitsForSite, worksFor, worstCeiling,
 } from "../src/ui/bottleneck";
 import { noBuyer, powerCeiling, signedMoney, siteModel, takenBy, townModel, worksCalm, worksStatus } from "../src/ui/inspect";
@@ -58,7 +57,14 @@ describe("the sums", () => {
   });
 
   it("a building site's line", () => {
-    expect(siteLine(13, 50, 6.6)).toBe("13 of 50 loads delivered, about 7 hours to go");
+    expect(siteLine(13, 50, 6.6)).toBe("13 of 50 loads delivered, a few hours to go");
+    expect(siteLine(13, 50, 0.5)).toBe("13 of 50 loads delivered, under an hour to go");
+    expect(siteLine(13, 50, 12)).toBe("13 of 50 loads delivered, about half a day to go");
+    expect(siteLine(13, 50, 30)).toBe("13 of 50 loads delivered, about a day to go");
+    expect(siteLine(13, 50, 60)).toBe("13 of 50 loads delivered, 2 to 3 days to go");
+    expect(siteLine(13, 50, 200)).toBe("13 of 50 loads delivered, more than 3 days to go");
+    // (the band the site holds, when it is given, over the hours')
+    expect(siteLine(13, 50, 12, 1)).toBe("13 of 50 loads delivered, a few hours to go");
     expect(siteLine(0, 50, null)).toBe("0 of 50 loads delivered");
     expect(siteLine(50, 50, 2)).toBe("All 50 loads delivered, going up: about 2 hours to go");
     // (a part load on a truck is not a load delivered)
@@ -210,7 +216,7 @@ describe("read off the game", () => {
     expect(m.status.fix).toBe(c.fix);
     expect(worstCeiling(g)!.b).toBe(foodplant);
     // the town's row points at it, with how many more
-    const h = needHelp(g, t, "food")!;
+    const h = needHelpNow(g, t, "food")!;
     expect(h.kind).toBe("full");
     if (h.kind === "full") {
       expect(h.works).toBe(foodplant.id);
@@ -228,7 +234,7 @@ describe("read off the game", () => {
     // come in (play-test 2026-11-10: "build another farm" while the first truck was on the road)
     g.progress.sold.food = 0;
     expect(ceilingOf(g, foodplant)).toBeNull();
-    expect(needHelp(g, t, "food")).toBeNull();
+    expect(needHelpNow(g, t, "food")).toBeNull();
     expect(tipFor(g)?.id).not.toBe("ceiling");
     g.progress.sold.food = 1;
   });
@@ -240,7 +246,7 @@ describe("read off the game", () => {
     const yard = foodplant.plant!.stock.crops;
     foodplant.plant!.stock.crops = 8;
     expect(siteModel(g, foodplant).status.text).toBe("Working normally");
-    expect(needHelp(g, t, "food")).toBeNull();
+    expect(needHelpNow(g, t, "food")).toBeNull();
     foodplant.plant!.stock.crops = yard;
     // (two hours in: still filling its first trucks)
     made(foodplant, "food", 1, 2);
@@ -262,7 +268,7 @@ describe("read off the game", () => {
     made(foodplant, "food", 1);
     foodplant.problem = "Waiting for crops: the loads on their way are stuck in traffic";
     expect(ceilingOf(g, foodplant)).toBeNull();
-    const h = needHelp(g, t, "food")!;
+    const h = needHelpNow(g, t, "food")!;
     expect(h.kind).toBe("held");
     expect(h.say).toBe("Your Food Plant is held up: waiting for crops.");
     // in a jam the panel never says to build more (D3: "building more makes it worse")
@@ -288,7 +294,7 @@ describe("read off the game", () => {
     expect(st.fix!.startsWith(`${n.say}. Its first load of food follows `)).toBe(true);
     expect(st.fix).toMatch(/follows (under an hour|about \d+ hours?) after that\.$/);
     // the town's advice does not call it "held up" either
-    expect(needHelp(g, t, "food")!.say.startsWith("Your Food Plant is starting up. ")).toBe(true);
+    expect(needHelpNow(g, t, "food")!.say.startsWith("Your Food Plant is starting up. ")).toBe(true);
     // once it has made something, the same wait is a problem again, and a Farm flat out is named as the answer
     made(foodplant, "food", 0.3);
     made(farm, "crops", 1);
@@ -300,7 +306,7 @@ describe("read off the game", () => {
     expect(siteModel(g, farm).status.text).toBe("At full output");
     expect(siteModel(g, farm).status.fix).toMatch(/^Your Food Plant is waiting for crops\. Build another Farm/);
     // the town's row goes straight to the Farm: the works to build is a step up the chain
-    const h = needHelp(g, t, "food")!;
+    const h = needHelpNow(g, t, "food")!;
     expect(h).toMatchObject({ kind: "full", build: "farm", works: farm.id });
     expect(h.say).toMatch(/^Your Food Plant is short of crops\. Your Farm is at full output\. Build (another|about \d+ more)\.$/);
     // (how many: crops for what the Food Plant could still make, at what one Farm grows)
@@ -314,7 +320,9 @@ describe("read off the game", () => {
     expect(steadyProblem(g, foodplant)).toBe("Waiting for crops");
     expect(siteModel(g, foodplant).status).toMatchObject({ text: "Waiting for crops", tone: "bad" });
     // nor does the town's row lose its advice, and the tip names the same works: a step up the chain
-    expect(needHelp(g, t, "food")).toMatchObject({ kind: "full", build: "farm", works: farm.id });
+    expect(needHelpNow(g, t, "food")).toMatchObject({ kind: "full", build: "farm", works: farm.id });
+    // (the tip said "another Food Plant" a moment ago in this test's frozen time: advice holds for hours, so start afresh)
+    forgetAdvice(g);
     const tip = tipFor(g)!;
     expect(tip.id).toBe("ceiling");
     expect(tip.html).toContain(`<b>${t.name} needs more food.</b> Your Food Plant is short of crops. Your Farm is at full output.`);
@@ -340,22 +348,22 @@ describe("read off the game", () => {
     expect(nextLoad(g, foodplant, "planks").say).toBe("Nothing of yours makes planks yet. Build a Sawmill");
   });
 
-  it("a building site counts its loads and guesses its hours from the pace the sim counted them at (D4)", () => {
+  it("a building site counts its loads; with nothing of the company's making what it waits for, it guesses no wait (C2)", () => {
     const P = foodplant.plant!;
     P.site = { need: { planks: 50 }, got: { planks: 10 } } as NonNullable<typeof P.site>;
     // no load has landed in an hour it remembers: the count alone
-    expect(siteStatus(foodplant).line).toBe("10 of 50 loads delivered");
-    // two full hours on, eight more loads in: four an hour, thirty-two to go, then the build
+    expect(siteStatus(g, foodplant).line).toBe("10 of 50 loads delivered");
+    // two full hours on, eight more loads in: the sim counts four an hour, thirty-two to go
     P.site!.got.planks = 18;
     P.site!.hours = [4, 4];
     P.site!.hour = 0;
-    // (the figures are the sim's own: the interface keeps no count of its own beside them)
+    // (the count is the sim's own: the interface keeps no count of its own beside it)
     const e = Industry.siteEta(foodplant)!;
     expect(e).toMatchObject({ got: 18, need: 50, perHour: 4, hours: 8 });
-    const s = siteStatus(foodplant);
-    expect(s).toMatchObject({ got: e.got, need: e.need });
-    expect(s.hours!).toBeCloseTo(e.hours! + buildTime("foodplant") / HOUR);
-    expect(s.line).toMatch(/^18 of 50 loads delivered, about \d+ hours to go$/);
+    // but nothing of the company's makes planks: the loads that came were a burst, not a pace, so no wait is said
+    const s = siteStatus(g, foodplant);
+    expect(s).toMatchObject({ got: e.got, need: e.need, hours: null });
+    expect(s.line).toBe("18 of 50 loads delivered");
     expect(s.slow).toBe(false);
     const st = siteModel(g, foodplant).status;
     expect(st.text).toBe("Building site");
@@ -559,6 +567,8 @@ describe("read off the game", () => {
     t.supply = {};
     made(foodplant, "food", 1);
     foodplant.plant!.stock.crops = 8;
+    // (the clock stands still in these tests, and advice holds for hours: start afresh)
+    forgetAdvice(g);
     // food and planks both short: one piece of advice, about the first, and it says which
     const a = townAdvice(g, t, true)!;
     expect(a.p).toBe("food");
@@ -645,7 +655,7 @@ describe("read off the game", () => {
     const pop = t.pop, BIG = 3000;
     t.pop = BIG;
     expect(townWants(t, "food")).toBeGreaterThan(canPerDay(g, second, "food") + canPerDay(g, foodplant, "food"));
-    const h = needHelp(g, t, "food")!;
+    const h = needHelpNow(g, t, "food")!;
     expect(h).toMatchObject({ kind: "full", build: "foodplant", works: foodplant.id });
     if (h.kind === "full") {
       expect(h.n).toBe(worksFor(townWants(t, "food") - canPerDay(g, second, "food"), canPerDay(g, foodplant, "food")));
@@ -653,11 +663,11 @@ describe("read off the game", () => {
     }
     // short of no more than the new one will make: it says when its first load comes
     t.pop = pop;
-    expect(needHelp(g, t, "food")!.say.startsWith("Your Food Plant is starting up. ")).toBe(true);
+    expect(needHelpNow(g, t, "food")!.say.startsWith("Your Food Plant is starting up. ")).toBe(true);
     // nor while the old one still has room: the new one is the news
     t.pop = BIG;
     made(foodplant, "food", 0.2);
-    expect(needHelp(g, t, "food")!.say.startsWith("Your Food Plant is starting up. ")).toBe(true);
+    expect(needHelpNow(g, t, "food")!.say.startsWith("Your Food Plant is starting up. ")).toBe(true);
     t.pop = pop;
     staffed.mockRestore();
   });
@@ -721,7 +731,7 @@ describe("a works short of workers", () => {
     expect(st).toMatchObject({ text: "Short of workers", tone: "" });
     expect(st.fix).toBe(`${fp.cap - 2} of ${fp.cap} jobs filled, so it works at ${pct}%. ${t.name} needs to grow to fill it, or link another town.`);
     // the town's advice, the Goals card's list and the tip say the same, and never to build more
-    const h = needHelp(g, t, "food")!;
+    const h = needHelpNow(g, t, "food")!;
     expect(h).toMatchObject({ kind: "held", works: fp.id });
     expect(h.say).toBe(`Your Food Plant has ${fp.cap - 2} of ${fp.cap} workers. ${t.name} needs to grow to fill it, or link another town.`);
     expect(townAdvice(g, t, true)!.say).toContain("Your Food Plant has ");
@@ -729,7 +739,7 @@ describe("a works short of workers", () => {
     for (const s of [st.fix!, h.say, shortfalls(g)[0].say, tipFor(g)?.html ?? ""]) expect(s).not.toMatch(/full output|Build (another|about)/);
     // a town on other roads is not told about it: this works' staffing says nothing of that town's (review, 2026-11-10)
     const other = { ...t, id: t.id + 999, name: "Elsewhere" } as Town;
-    const ho = needHelp(g, other, "food");
+    const ho = needHelpNow(g, other, "food");
     expect(ho?.say ?? "").not.toContain(`has ${fp.cap - 2} of ${fp.cap} workers`);
     // fully staffed again, it is at full output as before
     fp.cap -= 2;
@@ -744,13 +754,13 @@ describe("a works short of workers", () => {
     fp.problem = "Waiting for crops";
     const yard = fp.plant!.stock.crops;
     fp.plant!.stock.crops = 0;
-    const h = needHelp(g, t, "food")!;
+    const h = needHelpNow(g, t, "food")!;
     expect(h).toMatchObject({ kind: "held", works: farm.id });
     expect(h.say).toMatch(new RegExp(`^Your Food Plant is short of crops\. Your Farm has ${farm.cap - 2} of ${farm.cap} workers\. ${t.name} needs to grow to fill it\.`));
     // (the same before any food has landed: only "at full output, build more" waits for the first load. Review,
     // 2026-11-10: the first-load rule had silenced this too)
     g.progress.sold.food = 0;
-    expect(needHelp(g, t, "food")).toMatchObject({ kind: "held", works: farm.id });
+    expect(needHelpNow(g, t, "food")).toMatchObject({ kind: "held", works: farm.id });
     g.progress.sold.food = 1;
     // the food plant's own panel names it too
     expect(siteModel(g, fp).status.fix).toContain(`It is short of workers: ${farm.cap - 2} of ${farm.cap} jobs filled.`);

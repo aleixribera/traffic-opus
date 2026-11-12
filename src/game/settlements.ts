@@ -1473,6 +1473,11 @@ export class TownSystem {
   /** each town's homes and shops, from the last census */
   private mine = new Map<number, Building[]>();
 
+  /** Everyone in all the towns, as of the last census: the sum of the plaques' figures (review 2026-11-12, C8). */
+  people(): number {
+    return this.list.reduce((a, t) => a + t.pop, 0);
+  }
+
   /** Count each town's people, homes and shops. */
   census() {
     for (const t of this.list) { t.pop = 0; t.households = 0; t.homes = 0; t.shops = 0; }

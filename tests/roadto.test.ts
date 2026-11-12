@@ -2,7 +2,7 @@
 // nearest road, with its price, built with one click (review 2026-11-10, Freight honesty). city.ts roadTo.
 
 import { describe, expect, it } from "vitest";
-import { GATE_LINK_REACH, ROAD_TO_REACH } from "../src/game/city";
+import { GATE_LINK_REACH, ROAD_TO_REACH, gateLinkWhy } from "../src/game/city";
 import { dist } from "../src/core/math";
 import { openLand } from "./gatejam.scenario";
 import { chainPoints } from "../src/roads/planner";
@@ -52,5 +52,23 @@ describe("the road to a far works' gate", () => {
     // (round the works, or not at all: never through it)
     expect(g.buildings.byId.has(farm!.id)).toBe(true);
     if (built) expect(b.access).toBeTruthy();
+  });
+
+  it("when none is offered, says why in a few words (review 2026-11-12, C5)", () => {
+    const { g, at, dir } = openLand();
+    const b = g.place("sawmill", at(1200), { rot: Math.atan2(-dir.x, dir.y) })!;
+    expect(g.roadTo(b)).toBeTruthy();
+    // one is offered: no reason to give
+    expect(g.roadToWhy(b)).toBeNull();
+    // with nothing to join for 6 km, it says so (the roads are taken out of its reach for the asking)
+    const why: { say?: string } = {};
+    expect(g.gateLink("sawmill", b.c, b.rot, b.side, { reach: 100, type: "dirt", tries: 3, why })).toBeNull();
+    expect(why.say).toBe("no road within 100 m");
+    // the planner's refusals, in the works' words
+    expect(gateLinkWhy("Mountain in the way")).toBe("a mountain blocks it");
+    expect(gateLinkWhy("Needs a bridge here: raise it with Page Up")).toBe("water blocks it");
+    expect(gateLinkWhy("Dirt roads stay on the ground")).toBe("water blocks it");
+    expect(gateLinkWhy("Too close to a junction, cross at it or 12 m away")).toBe("too many roads there");
+    expect(gateLinkWhy("Curve too tight: needs a 30 m radius")).toBe("the way is blocked");
   });
 });

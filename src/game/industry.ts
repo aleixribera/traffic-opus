@@ -421,6 +421,11 @@ export interface PlantState {
     need: Partial<Record<Product, number>>; got: Partial<Record<Product, number>>;
     /** loads that landed this game hour, and in each of the last SITE_HOURS full hours, oldest first (see siteEta) */
     hour?: number; hours?: number[];
+    /**
+     * the wait its panel and the goal line say, as a band (src/ui/bottleneck.ts siteStatus): kept so the words move
+     * one band at a time, and only once the new one has held (review 2026-11-12, C2)
+     */
+    band?: { i: number; key: string; at: number; pend?: number; since?: number };
   };
   /**
    * per product, the loads it has sent to works' building sites and to towns short of it since both wanted it at

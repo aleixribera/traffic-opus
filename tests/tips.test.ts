@@ -5,12 +5,15 @@
 import { describe, expect, it } from "vitest";
 import { Game } from "../src/game/city";
 import { v2, type V2 } from "../src/core/math";
+import { DAY } from "../src/game/society";
 import type { PlacedKind } from "../src/game/placed";
 import { DEPOSIT_GOALS, TipPrefs, cutOff, joinedUp, soilInReach, tipFor, wants, type TipId } from "../src/ui/tips";
 import { MILESTONES } from "../src/game/progression";
 import { planRoad, snap } from "../src/roads/planner";
 import { road } from "./helpers";
 import { nextTown } from "../src/ui/nextTown";
+import { distFrom, distText } from "../src/ui/distance";
+import { PLANTS } from "../src/game/industry";
 
 function started(seed = 7) {
   const g = new Game(seed);
@@ -145,6 +148,9 @@ describe("tips follow the map", () => {
     // with that one out of the way (dismissed, or built): the coal mine's ground, the first of the mines to build
     const dep = only("deposits")!;
     expect(dep.html).toMatch(/^<b>The coal mine goes on /);
+    // where it lies, by the same measure as the pointer to it ("3.8 km from a road", review 2026-11-12, C5)
+    const near = g.terrain.gen.depositsNear(PLANTS.coalmine.deposit!.field, g.towns.list[0].c.x, g.towns.list[0].c.y, 24000)[0];
+    expect(dep.html).toContain(`The nearest lies ${distText(distFrom(g, near)!.m)} `);
     // two goals on, those mines are old news: the tip does not nag about them
     const i = MILESTONES.findIndex((m) => m.id === "village");
     g.progress.done = [...upTo("village"), ...MILESTONES.slice(i + 1, i + 1 + DEPOSIT_GOALS).map((m) => m.id)];
@@ -165,6 +171,9 @@ describe("tips follow the map", () => {
     expect(joinedUp(g, t)).toBe(false);
     // (with the earlier steps out of the way)
     const skip = (id: TipId) => id !== "newtown";
+    // in its first game day its card and the pointer to it say where it is: the tip is the reminder after that (C7)
+    expect(tipFor(g, skip)).toBeNull();
+    t.founded -= DAY;
     const tip = tipFor(g, skip)!;
     expect(tip.id).toBe("newtown");
     expect(tip.html).toContain(t.name);

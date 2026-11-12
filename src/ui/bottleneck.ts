@@ -9,7 +9,7 @@ import type { Building } from "../game/buildings";
 import { SEASONAL, seasonMult } from "../game/calendar";
 import type { Game } from "../game/city";
 import { buildTime } from "../game/construction";
-import { HIST_HOURS, Industry, PLANTS, aboutHours, PRODUCTS, powerPace, type PlantKind, type Product } from "../game/industry";
+import { HIST_HOURS, Industry, PLANTS, SITE_SHARE, aboutHours, PRODUCTS, powerPace, type PlantKind, type Product } from "../game/industry";
 import { unlockedBy } from "../game/progression";
 import { served, type Town } from "../game/settlements";
 import { SITE_LEVELS } from "../game/sites";
@@ -41,11 +41,49 @@ export function siteHours(left: number, perHour: number, buildHours: number): nu
   return perHour > 0 ? left / perHour + buildHours : null;
 }
 
-/** A building site's line: "13 of 50 loads delivered, about 6 hours to go". */
-export function siteLine(got: number, need: number, hours: number | null): string {
+/**
+ * The waits a building site's forecast is said in, each up to its top in game hours (review 2026-11-12, C2: the
+ * Smelter site read 2, 3, 4, then 11 days, then 13 hours, and opened a day after "11 days"). A band, not a count:
+ * deliveries come in truckloads, so an hour-exact figure only ever swings.
+ */
+export const SITE_BANDS: readonly { top: number; say: string }[] = [
+  { top: 1, say: "under an hour" },
+  { top: 8, say: "a few hours" },
+  { top: 16, say: "about half a day" },
+  { top: 36, say: "about a day" },
+  { top: 84, say: "2 to 3 days" },
+  { top: Infinity, say: "more than 3 days" },
+];
+/** The band a wait of `h` game hours falls in. */
+export const bandOf = (h: number): number => SITE_BANDS.findIndex((b) => h < b.top);
+/** Game hours a forecast must read a new band before the line moves to it (one band at a time). */
+export const BAND_HOLD = 3;
+
+/** A site's band as its line says it: the band, what supplies it, when last read, and a move it is waiting out. */
+export interface BandState { i: number; key: string; at: number; pend?: number; since?: number }
+
+/**
+ * The band a site's line says next, given the wait forecast now (`hours`), the works that supply it (`key`) and the
+ * game hour (`now`). It moves one band at a time, and only once the forecast has read that way for BAND_HOLD hours
+ * on end; a works built or lost (a new `key`) says the new forecast at once, and so does a line nobody has read for
+ * a while. Mutates and returns `st` (kept on the site, so it saves).
+ */
+export function nextBand(st: BandState | undefined, hours: number, key: string, now: number): BandState {
+  const raw = bandOf(hours);
+  if (!st || st.key !== key || now < st.at || now - st.at > BAND_HOLD) return { i: raw, key, at: now };
+  st.at = now;
+  if (raw === st.i) { delete st.pend; delete st.since; return st; }
+  const step = st.i + Math.sign(raw - st.i);
+  if (st.pend !== step || st.since === undefined) { st.pend = step; st.since = now; return st; }
+  if (now - st.since >= BAND_HOLD) { st.i = step; delete st.pend; delete st.since; }
+  return st;
+}
+
+/** A building site's line: "13 of 50 loads delivered, a few hours to go" (`band`: the band to say, else `hours`'s). */
+export function siteLine(got: number, need: number, hours: number | null, band?: number): string {
   const n = `${Math.floor(got)} of ${need} loads delivered`;
   if (got >= need) return `All ${need} loads delivered, going up: ${aboutHours(hours ?? 0)} to go`;
-  return hours === null ? n : `${n}, ${aboutHours(hours)} to go`;
+  return hours === null ? n : `${n}, ${SITE_BANDS[band ?? bandOf(hours)].say} to go`;
 }
 
 const an = (name: string) => (/^[aeiou]/i.test(name) ? "an" : "a");
@@ -378,6 +416,46 @@ export function worstCeiling(g: Game): { b: Building; c: Ceiling } | null {
  * the one that is held up. Null when the need is met, or when its makers are simply still getting going.
  */
 export function needHelp(g: Game, t: Town, p: Product): NeedHelp | null {
+  // (what is wrong with one works is said as it is now, never held past its mending: only what to build holds)
+  return holdAdvice(g, `${t.id}:${p}`, needHelpNow(g, t, p), (h) => `${h.kind}:${"build" in h ? h.build : ""}:${"works" in h ? h.works : ""}`, (h) => h.kind !== "held");
+}
+
+/** Game hours a piece of advice holds before it may name another works to build or look at (review 2026-11-12, C6). */
+export const ADVICE_HOLD = 3;
+
+/**
+ * The company's works as they stand: which there are, open or not, at what level. Advice may change at once when
+ * this does (a works built, lost or grown is a real change); otherwise it holds (holdAdvice).
+ */
+export function worksKey(g: Game): string {
+  return g.industry.plants().map((b) => `${b.id}${b.plant!.site ? "s" : b.built < 1 ? "u" : ""}${b.access ? "" : "x"}${b.plant!.level}`).join(",");
+}
+
+// (per game, the advice last given under each key: display only, not in the save)
+const advised = new WeakMap<Game, Map<string, { sig: string; at: number; works: string; v: unknown }>>();
+
+/**
+ * Advice that holds (review 2026-11-12, C6: the food advice went from "build another Farm" to "build another Food
+ * Plant" within a game day, as loads landed). Once a piece of advice is given under `key`, a different one (another
+ * `sig`) waits ADVICE_HOLD game hours, unless the company's works changed (worksKey); the same advice comes through
+ * at once with its figures fresh. No advice (null) passes through and keeps the last one's clock. `holds` says which
+ * advice may be held at all (a works' own trouble is said as it stands: once mended, the line goes at once).
+ */
+export function holdAdvice<T>(g: Game, key: string, v: T | null, sig: (v: T) => string, holds: (v: T) => boolean = () => true): T | null {
+  if (v === null) return v;
+  let m = advised.get(g);
+  if (!m) advised.set(g, (m = new Map()));
+  const s = sig(v), now = g.time / HOUR, works = worksKey(g), e = m.get(key);
+  if (e && e.sig !== s && e.works === works && now >= e.at && now - e.at < ADVICE_HOLD && holds(e.v as T)) return e.v as T;
+  m.set(key, { sig: s, at: e && e.sig === s && e.works === works && now >= e.at ? e.at : now, works, v });
+  return v;
+}
+
+/** Forget the advice given so far (a test that changes the map with the clock stopped). */
+export const forgetAdvice = (g: Game): void => void advised.delete(g);
+
+/** What to do about a town's short need now, with no hold (needHelp holds it). */
+export function needHelpNow(g: Game, t: Town, p: Product): NeedHelp | null {
   const more = townWants(t, p);
   if (!more) return null;
   const kind = makerKind(p);
@@ -676,7 +754,7 @@ export function waitsForSite(g: Game, b: Building): { text: string; tone: "bad" 
   const d = (o: Building) => Math.hypot(o.c.x - b.c.x, o.c.y - b.c.y);
   const o = [...mine].sort((x, y) => d(x) - d(y))[0];
   if (o) {
-    const how = o.plant!.site ? `is a building site: ${siteStatus(o).line}` : `is going up: it opens in ${aboutHours(((1 - o.built) * buildTime(o.kind)) / HOUR)}`;
+    const how = o.plant!.site ? `is a building site: ${siteStatus(g, o).line}` : `is going up: it opens in ${aboutHours(((1 - o.built) * buildTime(o.kind)) / HOUR)}`;
     return { text: `Waiting for your ${nameOf(o.kind)} to open`, tone: "", fix: `Your ${where(o, b)} ${how}. It takes ${lower(p)} once it opens. Until then this yard fills.`, show: o.id };
   }
   const ks = (Object.keys(PLANTS) as PlantKind[]).filter((x) => takes(x, p));
@@ -721,7 +799,7 @@ export function powerFix(g: Game, b: Building): { fix: string; show?: number; ba
   }
   const going = makers.find((o) => !working(o) && d(o) <= reach(o));
   if (going) {
-    const how = going.plant!.site ? `is a building site: ${siteStatus(going).line}` : `is going up: it opens in ${aboutHours(((1 - going.built) * buildTime(going.kind)) / HOUR)}`;
+    const how = going.plant!.site ? `is a building site: ${siteStatus(g, going).line}` : `is going up: it opens in ${aboutHours(((1 - going.built) * buildTime(going.kind)) / HOUR)}`;
     return { fix: `Your ${where(going, b)} ${how}. It powers this works once it opens.`, show: going.id };
   }
   const far = makers.find(working);
@@ -739,13 +817,159 @@ export function hasMade(b: Building): boolean {
   return (Object.keys(PLANTS[k].outputs) as Product[]).some((p) => Industry.madeLately(b, p).made > 0) || (b.plant?.last.made ?? 0) > 0 || (b.plant?.now.made ?? 0) > 0;
 }
 
+/** One material a building site still waits for, and the supply the forecast reads for it (siteForecast). */
+export interface SiteSupply {
+  p: Product;
+  /** loads still to land, and of those the ones on the road or waiting at a gate for it now */
+  left: number; onWay: number;
+  /** loads other sites on its roads wait for first: the dispatcher sends to the site nearest done first */
+  ahead: number;
+  /** loads an hour its makers on its roads make, the towns there buy, and this site can count on of that */
+  out: number; towns: number; rate: number;
+  /** game hours from a maker's gate to the site's */
+  drive: number;
+  makers: Building[];
+  /** game hours till its last load lands (null: nothing that makes it reaches the site) */
+  hours: number | null;
+}
+
+/** What a site's forecast is read from, and the wait it comes to. */
+export interface SiteForecast {
+  /** game hours till the last load lands (null: a material nothing on its roads makes) */
+  hours: number | null;
+  /** the works that supply it, as a key: a change here is a real change in supply */
+  key: string;
+  by: SiteSupply[];
+}
+
+/** The loads a works is reckoned to make an hour now: its pace lately, or before it has one, what its staff allow. */
+function makesPerHour(g: Game, o: Building, p: Product): number {
+  const r = shownRate(g, o, p);
+  return r.rate ?? r.can * staffPace(g, o);
+}
+
 /**
- * The whole line for a company building site: loads in, and about how long till it opens. The count and the pace
- * are the sim's own (Industry.siteEta: one source, so the panel, the goal line and the tests read the same figures);
- * the words and the build time added on are the interface's.
+ * How long a works' building site waits for the rest of its materials, from what supplies it (review 2026-11-12,
+ * C2): per material, the output of the company's works on its roads that make it, less what the towns there buy
+ * (towns come first; a site always gets SITE_SHARE of it: industry.ts customers), the loads other sites nearer done
+ * wait for first, and the loads already on the road to it. Its own deliveries only cap the wait once it has had six
+ * hours of them: they come in truckloads, so on their own they cannot say a pace.
  */
-export function siteStatus(b: Building): { line: string; got: number; need: number; hours: number | null; slow: boolean } {
+export function siteForecast(g: Game, b: Building): SiteForecast {
+  const s = b.plant?.site, seg = b.access?.seg;
+  const by: SiteSupply[] = [];
+  if (!s) return { hours: 0, key: "", by };
+  // (the loads on their way to each site, by material: on the road, or waiting in a yard to pull out)
+  const onWay = new Map<string, number>();
+  for (const tr of g.trips()) {
+    const h = tr.haul;
+    if (!h || h.done || h.leg !== "out") continue;
+    const k = `${h.dest}:${h.product}`;
+    onWay.set(k, (onWay.get(k) ?? 0) + h.n);
+  }
+  const on = (o: Building, p: Product) => onWay.get(`${o.id}:${p}`) ?? 0;
+  const reach = (o: Building) => seg !== undefined && !!o.access && g.connected(seg, o.access.seg);
+  const keys: string[] = [];
+  for (const p of Object.keys(s.need) as Product[]) {
+    const left = (s.need[p] ?? 0) - (s.got[p] ?? 0);
+    if (left <= 0) continue;
+    const makers = g.industry.plants().filter((o) => o.id !== b.id && working(o) && (PLANTS[o.kind as PlantKind].outputs[p] ?? 0) > 0 && reach(o));
+    for (const o of makers) keys.push(`${o.id}.${o.plant!.level}`);
+    const out = makers.reduce((a, o) => a + makesPerHour(g, o, p), 0);
+    // (what the towns on its roads buy of it in an hour, a day's use spread over the day)
+    let towns = 0;
+    if (PRODUCTS[p].price > 0) for (const o of g.industry.buyersOf(b, p)) {
+      const t = o.town === undefined ? undefined : g.towns.byId.get(o.town);
+      if (t && needsOf(t.pop).includes(p)) towns += demandPerDay(p, t.pop) / 24;
+    }
+    const rate = Math.max(out * SITE_SHARE, out - towns);
+    const mine = left - on(b, p);
+    // (the other works' sites on its roads nearer done than this one: their loads go first)
+    let ahead = 0;
+    for (const o of g.industry.plants()) {
+      const os = o.plant!.site;
+      if (o.id === b.id || !os || PLANTS[o.kind as PlantKind].mega || !reach(o)) continue;
+      const theirs = (os.need[p] ?? 0) - (os.got[p] ?? 0) - on(o, p);
+      // (which sites compete is part of the supply: one finishing is a real change, said at once. Not which of them
+      // is ahead, which swings as loads land)
+      if ((os.need[p] ?? 0) > (os.got[p] ?? 0)) keys.push(`site${o.id}`);
+      if (theirs > 0 && (theirs < mine || (theirs === mine && o.id < b.id))) ahead += theirs;
+    }
+    const near = makers.reduce((a, o) => Math.min(a, g.industry.tripTo(o, b)), Infinity);
+    const drive = near < Infinity ? near / HOUR : 0;
+    const hours = rate > 0 ? Math.max(0, ahead + mine) / rate + drive : null;
+    by.push({ p, left, onWay: on(b, p), ahead, out, towns, rate, drive, makers, hours });
+  }
+  let hours: number | null = 0;
+  for (const x of by) hours = hours === null || x.hours === null ? null : Math.max(hours, x.hours);
+  // (six hours and more of its own deliveries: never a longer wait than they say)
+  const e = Industry.siteEta(b);
+  if (hours !== null && e?.hours && (s.hours?.length ?? 0) >= 6) hours = Math.min(hours, e.hours);
+  return { hours, key: `${b.access ? "road" : "none"}|${keys.sort().join(",")}`, by };
+}
+
+/**
+ * The whole line for a company building site: loads in, and about how long till it opens. The count is the sim's
+ * own (Industry.siteEta); the wait is forecast from what supplies it (siteForecast) and said as a band that moves one
+ * step at a time (nextBand), so the panel and the goal line, which both read this, say the same steady thing.
+ */
+export function siteStatus(g: Game, b: Building): { line: string; got: number; need: number; hours: number | null; slow: boolean; f: SiteForecast } {
   const e = Industry.siteEta(b) ?? { got: 0, need: 0, perHour: 0, hours: 0 };
-  const hours = siteHours(e.need - e.got, e.perHour, buildTime(b.kind) / HOUR);
-  return { line: siteLine(e.got, e.need, hours), got: e.got, need: e.need, hours, slow: hours !== null && hours > 36 };
+  const s = b.plant?.site, build = buildTime(b.kind) / HOUR;
+  const f = siteForecast(g, b);
+  const hours = e.got >= e.need ? build : f.hours === null || !b.access ? null : f.hours + build;
+  if (!s || hours === null || e.got >= e.need) return { line: siteLine(e.got, e.need, hours), got: e.got, need: e.need, hours, slow: false, f };
+  s.band = nextBand(s.band, hours, f.key, g.time / HOUR);
+  return { line: siteLine(e.got, e.need, hours, s.band.i), got: e.got, need: e.need, hours, slow: s.band.i >= bandOf(36), f };
+}
+
+/**
+ * The material a site waits for that the towns on its roads take most of: they buy over half of what its makers
+ * make, and the site gets under half ("Towns are buying most of your planks"). Null when the site gets most of it.
+ */
+export function townsFirst(f: SiteForecast): Product | null {
+  return f.by.find((y) => y.out > 0 && y.towns >= y.out * 0.5 && y.rate < y.out * 0.5)?.p ?? null;
+}
+
+/**
+ * Whether another of the works that makes a site's slowest material would open the site sooner by enough to say so,
+ * counting the time that works takes to go up and make its first load (review 2026-11-12: "another Sawmill" was
+ * advised, $16,160, for a site that filled before it could have opened). Only for a site days off whose makers are all
+ * at full output, and only with the input the new one would run on to spare. The kind to build, or null.
+ */
+export function siteMoreHelp(g: Game, f: SiteForecast, waitHours: number | null): PlantKind | null {
+  if (waitHours === null || waitHours < 36) return null;
+  const x = f.by.filter((y) => y.hours !== null).sort((a, c) => c.hours! - a.hours!)[0];
+  if (!x || !x.makers.length || x.rate <= 0) return null;
+  const k = makerKind(x.p);
+  if (!k || !g.placedUnlocked(k)) return null;
+  if (!x.makers.every((o) => !o.problem && flatOut(g, o, x.p))) return null;
+  const D = PLANTS[k], add = ((D.outputs[x.p] ?? 0) * HOUR) / D.cycle;
+  // (the input the new one would run on: what its makers make beyond what the works that take it use)
+  for (const q of Object.keys(D.inputs) as Product[]) {
+    const made = g.industry.plants().filter((o) => working(o) && (PLANTS[o.kind as PlantKind].outputs[q] ?? 0) > 0).reduce((a, o) => a + makesPerHour(g, o, q), 0);
+    const used = g.industry.plants().filter((o) => working(o) && takes(o.kind as PlantKind, q)).reduce((a, o) => {
+      const m = mainOf(o.kind as PlantKind), Do = PLANTS[o.kind as PlantKind];
+      return a + (m ? (canPerDay(g, o, m) / 24) * ((Do.inputs[q] ?? 0) / (Do.outputs[m] ?? 1)) : 0);
+    }, 0);
+    if (made - used < add * (D.inputs[q] ?? 0) * 0.5) return null;
+  }
+  const t0 = buildTime(k) / HOUR + D.cycle / HOUR + x.drive;
+  return moreSaves({ loads: Math.max(0, x.ahead + x.left - x.onWay), out: x.out, towns: x.towns, add, opens: t0 }) ? k : null;
+}
+
+/**
+ * Would one more works open a site sooner by enough to be worth saying (at least 6 game hours, and a quarter of the
+ * wait)? `loads`: the site's loads still to come (with those of sites ahead of it); `out`, `towns`: loads an hour its
+ * makers make and the towns buy; `add`: loads an hour the new one makes; `opens`: game hours till its first load is
+ * at the site. Till then the site gets what it gets now; it fills before then, and the new works is no help at all.
+ */
+export function moreSaves(o: { loads: number; out: number; towns: number; add: number; opens: number }): boolean {
+  const rate = Math.max(o.out * SITE_SHARE, o.out - o.towns);
+  if (rate <= 0) return false;
+  const now = o.loads / rate;
+  if (o.loads <= rate * o.opens) return false;
+  const rate2 = Math.max((o.out + o.add) * SITE_SHARE, o.out + o.add - o.towns);
+  const later = o.opens + (o.loads - rate * o.opens) / rate2;
+  return now - later >= Math.max(6, now * 0.25);
 }

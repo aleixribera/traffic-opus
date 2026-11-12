@@ -115,4 +115,20 @@ describe("Towns springing up", () => {
     expect(hudSrc).not.toMatch(/tool: "town"/);
     expect(MILESTONES.filter((m) => m.unlocks.towns).every((m) => !/^Run /.test(m.goal))).toBe(true);
   });
+
+  it("the people in all towns is the towns' own figures, at once: a new hamlet counts while its card pauses the game (review 2026-11-12, C8)", () => {
+    const g = new Game(7);
+    g.start();
+    const before = g.towns.people();
+    expect(before).toBe(g.towns.list[0].pop);
+    // (the game paused on the new town's card: no tick runs between its arrival and the bar's next look)
+    expect(g.towns.spawn()).toBeTruthy();
+    const plaques = g.towns.list.reduce((a, t) => a + t.pop, 0);
+    expect(g.towns.list[1].pop).toBeGreaterThan(0);
+    expect(g.towns.people()).toBe(plaques);
+    // (the society's own head count waits for its next quarter-hour: it is not what the bar says)
+    expect(g.people.stats.population).not.toBe(plaques);
+    expect(hudSrc).toContain("fmtNum(g.towns.people())");
+    expect(hudSrc).not.toContain("st.population");
+  });
 });
