@@ -219,8 +219,8 @@ const KEYS: [string, string][] = [
   ["N", "Sound on / off"],
 ];
 
-/** Room kept under the tool options card's controls for its notes (px): six lines with the rule above them. */
-const TO_ROOM = 152;
+/** Room kept under the tool options card's controls for its notes (px): seven lines with the rule above them. */
+const TO_ROOM = 172;
 
 export class Hud {
   root = h("div", "hud");
@@ -1148,11 +1148,16 @@ export class Hud {
    * as its controls plus room for TO_ROOM of notes, which grow down into that room; and a window in the top left
    * corner stops short of it instead of running under it (--tool-top).
    */
-  private pinToolOpts() {
+  pinToolOpts() {
     const el = this.toolOpts, root = document.documentElement;
     el.style.bottom = "";
+    this.readEl.style.maxHeight = "";
     this.toolH0 = -1;
     if (el.hidden || this.toolNotesOnly) { root.style.removeProperty("--tool-top"); return; }
+    // (with the interface hidden there is nothing to measure: app.ts toggleUi pins it again when it comes back)
+    if (!el.offsetParent) return;
+    // (more notes than the room are cut at its foot rather than pushing the card up past its place)
+    this.readEl.style.maxHeight = `${TO_ROOM - 12}px`;
     const was = this.readEl.hidden;
     this.readEl.hidden = true;
     this.toolH0 = el.offsetHeight;

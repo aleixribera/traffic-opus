@@ -335,22 +335,47 @@ describe("automatic bridges", () => {
     });
   }
 
-  it("between two bank roads over a narrow river the deck humps lower; a junction at the water's edge is refused", () => {
+  it("between two bank roads over a narrow river the deck humps lower; too little room is refused, never a deck in the water", () => {
     const canal = world({ isWater: (p) => p.y > 140 && p.y < 160 });
     const net = new RoadNetwork();
-    build(net, canal, { start: free(v2(-150, 130)), end: free(v2(150, 130)), mode: "straight", type: "street" });
-    build(net, canal, { start: free(v2(-150, 170)), end: free(v2(150, 170)), mode: "straight", type: "street" });
+    build(net, canal, { start: free(v2(-150, 110)), end: free(v2(150, 110)), mode: "straight", type: "street" });
+    build(net, canal, { start: free(v2(-150, 190)), end: free(v2(150, 190)), mode: "straight", type: "street" });
     const plan = planRoad(net, canal, { start: free(v2(0, 60)), end: free(v2(0, 240)), mode: "straight", type: "street", bridges: true });
     expect(plan.errors.map((e) => e.msg)).toEqual([]);
-    expect(plan.bridges![0].h).toBeLessThan(LEVEL_H);
-    expect(plan.bridges![0].h).toBeGreaterThan(1);
+    const sp = plan.bridges![0];
+    expect(sp.h).toBeLessThan(LEVEL_H);
+    expect(sp.h).toBeGreaterThanOrEqual(3);
+    // (the length shown is the water's and its banks', not a hump's zero)
+    expect(sp.length).toBeGreaterThanOrEqual(20);
     commit(net, plan);
     expect([...net.nodes.values()].filter((n) => net.segsAt(n.id).length >= 3)).toHaveLength(2);
     slope(net);
-    const tight = new RoadNetwork();
-    build(tight, river, { start: free(v2(-150, 137)), end: free(v2(150, 137)), mode: "straight", type: "street" });
-    const no = planRoad(tight, river, { start: free(v2(0, 70)), end: free(v2(0, 340)), mode: "straight", type: "street", bridges: true });
-    expect(no.errors.map((e) => e.msg)).toEqual(["No room to ramp up between the road and the water"]);
+    // a stream between two bank roads close by: no room for a hump high enough to stand clear of the water
+    const ditch = world({ isWater: (p) => p.y > 140 && p.y < 145 });
+    const n2 = new RoadNetwork();
+    build(n2, ditch, { start: free(v2(-150, 128)), end: free(v2(150, 128)), mode: "straight", type: "street" });
+    build(n2, ditch, { start: free(v2(-150, 157)), end: free(v2(150, 157)), mode: "straight", type: "street" });
+    const low = planRoad(n2, ditch, { start: free(v2(0, 60)), end: free(v2(0, 240)), mode: "straight", type: "street", bridges: true });
+    expect(low.errors.map((e) => e.msg)).toEqual(["No room either side of the water to ramp up"]);
+  });
+
+  it("a junction too near the water is refused in words, square or at an angle, never with Page Up", () => {
+    for (const [y, ang] of [[134, 90], [137, 90], [128, 30]] as const) {
+      const net = new RoadNetwork();
+      build(net, river, { start: free(v2(-150, y)), end: free(v2(150, y)), mode: "straight", type: "street" });
+      const a = (ang * Math.PI) / 180;
+      const plan = planRoad(net, river, { start: free(v2(-70 * Math.cos(a), y - 70 * Math.sin(a))), end: free(v2(250 * Math.cos(a), y + 250 * Math.sin(a))), mode: "straight", type: "street", bridges: true });
+      expect(plan.errors.map((e) => e.msg)).toEqual(["No room to ramp up between the road and the water"]);
+    }
+    // at an angle with room, the ramp starts past the bank road's edge: the piece from the junction is a real piece
+    const net = new RoadNetwork();
+    build(net, river, { start: free(v2(-200, 90)), end: free(v2(200, 90)), mode: "straight", type: "street" });
+    const a = (30 * Math.PI) / 180;
+    commit(net, planRoad(net, river, { start: free(v2(-70 * Math.cos(a), 90 - 70 * Math.sin(a))), end: free(v2(300 * Math.cos(a), 90 + 300 * Math.sin(a))), mode: "straight", type: "street", bridges: true }));
+    const jn = [...net.nodes.values()].find((n) => net.segsAt(n.id).length >= 3)!;
+    expect(net.segsAt(jn.id)).toHaveLength(4);
+    for (const sg of net.segsAt(jn.id)) expect(net.segGeom.get(sg.id)!.center.length).toBeGreaterThanOrEqual(7);
+    slope(net);
   });
 });
 

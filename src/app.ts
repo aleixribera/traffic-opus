@@ -1405,6 +1405,7 @@ export class App {
   toggleUi() {
     this.uiHidden = !this.uiHidden;
     document.body.classList.toggle("ui-hidden", this.uiHidden);
+    if (!this.uiHidden) this.hud?.pinToolOpts();
   }
 
   quickSave() {
