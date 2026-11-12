@@ -94,6 +94,8 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 
 /* windows that open from the top-left buttons */
 .win { width: 340px; max-height: calc(100vh - var(--bar-h) - 100px); display: flex; flex-direction: column; overflow: hidden; }
+/* (a window in the top left stops short of the pinned tool options card below it: hud.ts pinToolOpts) */
+.corner.tl .win { max-height: min(calc(100vh - var(--bar-h) - 100px), max(180px, calc(100vh - var(--bar-h) - 12px - var(--tool-top, 0px) - 84px))); }
 .win[hidden] { display: none; }
 .win.wide { width: 420px; }
 .win-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 8px 7px 14px; margin-bottom: 4px; }
@@ -262,9 +264,9 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2
 .to-keys { margin: 0; display: flex; align-items: center; gap: 4px; color: var(--cream); line-height: 1.4; }
 .to-keys span { margin-left: 4px; color: var(--cream-2); }
 /* the notes about the click under the pointer that the pointer's one line leaves out: length, climb, bridge, angle */
-.to-read { list-style: none; margin: 12px 14px 0; padding: 7px 0 0; border-top: 1px solid var(--rule); display: flex; flex-direction: column; gap: 3px; color: var(--cream-2); font-size: var(--t-sm); line-height: 1.35; font-variant-numeric: tabular-nums lining-nums; }
+.to-read { list-style: none; margin: 12px 14px 0; padding: 7px 0 0; border-top: 1px solid var(--rule); display: flex; flex-direction: column; gap: 3px; color: var(--cream-2); font-size: var(--t-sm); line-height: 1.35; font-variant-numeric: tabular-nums lining-nums; overflow: hidden; }
 .to-read[hidden] { display: none; }
-.to-read li { display: flex; align-items: baseline; gap: 6px; }
+.to-read li { display: flex; align-items: baseline; gap: 6px; flex: none; }
 .to-read li svg { flex: none; width: 12px; height: 12px; align-self: center; color: var(--cream-3); }
 .to-read li.cost, .to-read li.dear { color: var(--ochre-hi); }
 .to-read li.error { color: var(--bad); }

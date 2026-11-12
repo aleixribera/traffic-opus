@@ -1138,7 +1138,8 @@ export class Roads3D {
     const n = Math.max(1, Math.round(total / every));
     for (let k = 0; k < n; k++) {
       const c = at(s0 + (total * (k + 0.5)) / n);
-      if (c.h < 2.5 || this.roadUnder(id, c.p, 6)) continue;
+      // (lower over water, where a ramp climbs on off the bank: it would hang there with nothing under it)
+      if (c.h < (this.parts.isWater?.(c.p) ? 1.2 : 2.5) || this.roadUnder(id, c.p, 6)) continue;
       const o = this.piece("bridge_pier", c.p, 0, c.dir, sx, Math.max(0.2, (c.h + LIFT - DECK) / PIECE_H), 1);
       if (o) out.push(o);
     }
@@ -1165,6 +1166,8 @@ export class Roads3D {
         }
       }
     }
+    const sg = this.net.segs.get(id);
+    const own = new Set(sg ? [...this.net.segsAt(sg.a), ...this.net.segsAt(sg.b)].map((o) => o.id) : []);
     // a ramp's foot: where it comes down through FOOT_H (lower than that it has no piers), the abutment, turned to
     // face down the ramp: its wing walls step down against the solid approach the ramp runs on from there (approachGeo)
     for (let i = 0; i < pts.length - 1; i++) {
@@ -1173,8 +1176,17 @@ export class Roads3D {
       const t = (FOOT_H - h0) / (h1 - h0), sgn = h1 < h0 ? 1 : -1;
       const c = { x: pts[i].x + (pts[i + 1].x - pts[i].x) * t, y: pts[i].y + (pts[i + 1].y - pts[i].y) * t };
       const fwd = norm(sub(pts[i + 1], pts[i])), dn = { x: fwd.x * sgn, y: fwd.y * sgn };
-      if (this.parts.isWater?.(c) || this.roadUnder(id, c, 6)) continue;
-      const ab = this.piece("bridge_abutment", add(c, scale(dn, ABUT_FACE)), 0, dn, sx, Math.max(0.2, (FOOT_H + LIFT - DECK) / PIECE_H), 1);
+      let at = c, ah = FOOT_H;
+      if (this.parts.isWater?.(c)) {
+        // a ramp that leaves the bank low and climbs on over the water: the abutment stands on the bank, lower
+        let j = sgn > 0 ? i + 1 : i;
+        while (j >= 0 && j < pts.length && this.parts.isWater(pts[j])) j += sgn;
+        if (j < 0 || j >= pts.length || hs[j] < 0.25 || dist(pts[j], c) > 40) continue;
+        at = pts[j]; ah = hs[j];
+      }
+      // (not counting the road it runs on from, whose end is near when the foot is by the bank)
+      if (this.roadUnder(id, at, 6, at === c ? undefined : own)) continue;
+      const ab = this.piece("bridge_abutment", add(at, scale(dn, ABUT_FACE)), 0, dn, sx, Math.max(0.2, (ah + LIFT - DECK) / PIECE_H), 1);
       if (ab) out.push(ab);
     }
     return out;

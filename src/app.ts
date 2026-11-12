@@ -1405,6 +1405,7 @@ export class App {
   toggleUi() {
     this.uiHidden = !this.uiHidden;
     document.body.classList.toggle("ui-hidden", this.uiHidden);
+    if (!this.uiHidden) this.hud?.pinToolOpts();
   }
 
   quickSave() {
@@ -1852,7 +1853,7 @@ export class App {
   }
 
   private reject(msg: string) {
-    this.hud?.toast(msg, true);
+    this.hud?.refuse(msg);
     this.hud?.sound("error");
     this.shake = 1;
   }
