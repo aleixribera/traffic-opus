@@ -39,7 +39,7 @@ import { landmarkDone, landmarkSite, parkSection, seasonLine, specialRows } from
 import { MEGAS, isMega } from "../game/megaprojects";
 import { TipPrefs, joinedUp, tipFor } from "./tips";
 import { blockWords, buildOrder, shortfalls, shownRate } from "./bottleneck";
-import { worstQueues, type QueueRow } from "./queues";
+import { applyFix, worstQueues, type QueueRow } from "./queues";
 import { longProject, type LongProject } from "./longProject";
 import { distText, planLength } from "./distance";
 import { goalNow, goalNowSay, lineOf } from "./goalNow";
@@ -1607,6 +1607,7 @@ export class Hud {
 
   private closeSelection() {
     this.panel.hidden = true;
+    this.app.fixHover = null;
     this.sel = null;
     this.lastPanel = "";
     this.armed = 0;
@@ -2102,6 +2103,8 @@ export class Hud {
     const g = this.app.game;
     const m = modelOf(g, s, this.ledger, compass);
     if (!m) { this.closeSelection(); return; }
+    // (a panel with no fix button now: no fix shown on the map, whatever button the pointer was on before)
+    if (!m.status.act) this.app.fixHover = null;
     this.app.highlight.set(m.related);
     if (s.k === "building") this.fillBuilding(g.buildings.byId.get(s.id)!, m);
     else if (s.k === "town") this.fillTown(m);
@@ -2131,15 +2134,33 @@ export class Hud {
   private fillStuck(m: PanelModel) {
     if (!this.setPanel(this.anatomy(m, { kind: "stuck" }))) return;
     // the one-click fix for a deadlock: lights on the junction it forms at (its whole cluster: Game.setSignal)
+    this.bindFix(m);
+  }
+
+  /**
+   * The one-click fix beside a panel's advice (src/ui/queues.ts fixOffer): widen the roads, build the roundabout or
+   * the lights it names, as one undo step, at the price on the button. Pointing at it shows on the map what it changes.
+   */
+  private bindFix(m: PanelModel) {
     const b = this.panel.querySelector<HTMLButtonElement>(".ip-act-fix");
-    const act = m.status.act;
-    if (b && act) b.onclick = () => {
-      const g = this.app.game, plan = g.defaultSignal(act.node);
-      // (the junction changed since the panel was drawn: it can't take lights now, or has them)
-      if (!plan || g.net.nodes.get(act.node)?.signal) { this.lastPanel = ""; this.fillSel(); return; }
-      if (!g.setSignal(act.node, plan)) { this.toast("Not enough money", true); return; }
-      this.sfx.play("build");
-      this.toast("Traffic lights built");
+    const o = m.status.act;
+    this.app.fixHover = null;
+    if (!b || !o) return;
+    // (lights change nothing the map can show beforehand: no preview)
+    if (o.act.kind !== "lights") {
+      b.onpointerenter = b.onfocus = () => { this.app.fixHover = o; };
+      b.onpointerleave = b.onblur = () => { if (this.app.fixHover === o) this.app.fixHover = null; };
+      // (the panel redrawn with the pointer or keyboard focus still on it: still showing what it changes)
+      if (document.activeElement === b || b.matches(":hover")) this.app.fixHover = o;
+    }
+    b.onclick = () => {
+      this.app.fixHover = null;
+      const why = applyFix(this.app.game, o.act);
+      if (why) this.toast(why, true);
+      else {
+        this.sfx.play(o.act.kind === "widen" ? "upgrade" : "build");
+        this.toast(o.act.kind === "widen" ? (o.act.segs.length === 1 ? "Road widened" : "Roads widened") : o.act.kind === "ring" ? "Roundabout built" : "Traffic lights built");
+      }
       this.lastPanel = "";
       this.fillSel();
     };
@@ -2171,8 +2192,14 @@ export class Hud {
     return `<header class="ip-head"><span class="svc-tag${/^(junction|roundabout|road:)/.test(m.icon) ? " lit" : ""}">${iconFor(m.icon)}</span><span class="ip-t"><span class="ip-tn">${escapeHtml(m.title)}</span>${m.sub ? `<small class="ip-ts">${escapeHtml(m.sub)}</small>` : ""}</span>${m.badge ? `<span class="lv-badge" title="Site level">${m.badge}</span>` : ""}${o.actions ?? ""}</header>
       <p class="ip-st ${st.tone}"${st.title ? ` title="${escapeHtml(st.title)}"` : ""}><i aria-hidden="true"></i><span class="ip-st-t">${escapeHtml(st.text)}</span>${st.tag ? `<span class="ip-tag">${escapeHtml(st.tag)}</span>` : ""}</p>
       ${st.fix ? `<p class="ip-fix${st.show ? " has-show" : ""}"><span>${escapeHtml(st.fix)}</span>${st.show ? `<button class="fchip" data-k="building" data-id="${st.show.id}" title="Select your ${escapeHtml(BUILDING_TYPES[st.show.kind as BuildingKind]?.name ?? "works")} and fly to it">${iconFor(st.show.kind)}<span class="fc-t">Show it</span></button>` : ""}</p>` : ""}
-      ${st.act ? `<p class="ip-fixit"><button type="button" class="btn primary ip-act-fix" data-node="${st.act.node}"${st.act.cost > this.app.game.money ? " disabled" : ""}>${escapeHtml(st.act.label)}</button>${st.act.cost > this.app.game.money ? `<span class="small muted">Not enough money</span>` : ""}</p>` : ""}
+      ${st.act ? this.fixHtml(st.act) : ""}
       ${o.summaryFirst ? `${keys}${lv}${o.lead ?? ""}${flow}` : `${o.lead ?? ""}${keys}${flow}${lv}`}${o.body ?? ""}${details}${o.danger ? `<footer class="ip-foot">${o.danger}</footer>` : ""}`;
+  }
+
+  /** The fix button under the advice, and beside it why it is off, or what it leaves out. */
+  private fixHtml(o: NonNullable<PanelModel["status"]["act"]>): string {
+    const say = o.blocked ?? o.note;
+    return `<p class="ip-fixit"><button type="button" class="btn primary ip-act-fix"${o.blocked ? " disabled" : ""}${say ? ` aria-describedby="ip-fixit-why"` : ""}>${escapeHtml(o.label)}</button>${say ? `<span class="small muted" id="ip-fixit-why">${escapeHtml(say)}</span>` : ""}</p>`;
   }
 
   /** The small icon buttons in a panel's header: follow. */
@@ -2256,6 +2283,7 @@ export class Hud {
     const body = `<button class="btn quiet ip-flowbtn" aria-pressed="${flowOn}" title="Traffic flow on every road">${ICON.layers}${flowOn ? "Hide traffic flow" : "Show traffic flow"}</button>`;
     const html = this.anatomy(m, { kind: "road", details, body });
     if (!this.setPanel(html)) return;
+    this.bindFix(m);
     const fb = this.panel.querySelector<HTMLButtonElement>(".ip-flowbtn");
     if (fb) fb.onclick = () => { this.sfx.play("click"); this.app.setOverlay("flow"); this.lastPanel = ""; this.fillSel(); };
   }
@@ -2559,13 +2587,21 @@ export class Hud {
     }).join("");
     const diagram = `<svg viewBox="-8 -8 116 116" class="diagram" aria-hidden="true">${spokes}<circle cx="50" cy="50" r="9" fill="#f3ead6" stroke="#0c1524" stroke-width="2"/></svg>`;
     const sigOn = g.featureUnlocked("signals");
+    // the queue's fix (src/ui/queues.ts): lights are the button below, which then stays the primary one; a wider road
+    // or a roundabout goes under the advice, and the lights button steps back (the advice just said they don't help)
+    const fix = m.status.act;
+    const fixOther = !!fix && fix.act.kind !== "lights";
+    // (lights lead only where they are the fix, or where nothing is backing up: a queue whose fix is a second road
+    // isn't helped by them either)
+    const lightsFirst = fix ? !fixOther : m.status.tone !== "bad";
+    if (fix && !fixOther && !plan) m = { ...m, status: { ...m.status, act: undefined } };
     let body = "";
     if (!plan) {
       const stops = node.stops ?? [];
       // (approaches only: not a roundabout's own ring, nor a one-way leading away)
       const stopArms = arms.filter((a) => !g.net.segs.get(a.seg)?.ring && ng.conns.some((c) => c.armIn === a.seg));
       body = `<div class="phase stops" title="Without lights, cars give way by road priority. A stop sign makes an approach stop and give way to all the others. Lights stop traffic in turns and help busy crossings"><span class="ph-name">Stop signs</span><span class="ph-arms">${stopArms.map((a) => `<button class="arm stop-arm ${stops.includes(a.seg) ? "on stop" : ""}" data-seg="${a.seg}" aria-pressed="${stops.includes(a.seg)}" title="Stop sign on this approach">${compass(a.dir)}</button>`).join("")}</span></div>
-        <button class="btn primary add-sig" ${sigOn ? "" : "disabled"}>${sigOn ? `Add traffic lights · ${formatMoney(g.lightsCost(this.panelNode))}` : `Traffic lights unlock with ${unlockedBy((u) => u.features?.includes("signals"))!.name}`}</button>`;
+        <button class="btn${lightsFirst ? " primary" : ""} add-sig" ${sigOn ? "" : "disabled"}>${sigOn ? `Add traffic lights · ${formatMoney(g.lightsCost(this.panelNode))}` : `Traffic lights unlock with ${unlockedBy((u) => u.features?.includes("signals"))!.name}`}</button>`;
     } else {
       const clock = `A fixed clock: ${GREEN} s of green for each phase, ${LEFT_GREEN} s for a left-turn arrow, then amber and a moment of all red. Cars may turn right on red after stopping`;
       body = plan.phases.map((p, i) => `<div class="phase ${i === this.panelPhase ? "on" : ""}${live?.st === 0 && live.i === i ? " live" : ""}" data-i="${i}"${live?.st === 0 && live.i === i ? ` title="Green now"` : ""}>
@@ -2584,9 +2620,10 @@ export class Hud {
     const waits = ap.length ? `<h3 class="sub-h">Approaches</h3><dl class="facts ip-waits">${ap.map((a) => {
       const w = a.queue ? ` · <span class="${waitTone(a.wait)}">waiting ${a.wait < 90 ? `${Math.round(a.wait)} s` : `${Math.round(a.wait / 60)} min`}</span>` : "";
       const st = said(a.seg);
-      return `<dt>${mark(a.seg)}From the ${compass(a.dir)}${st ? ` <span class="muted">· ${st}</span>` : ""}</dt><dd>${plural(a.cars, "vehicle")}${a.queue ? ` · ${a.queue} queued` : ""}${w}</dd>`;
+      return `<dt>${mark(a.seg)}From the ${compass(a.dir)}${st ? ` <span class="muted">· ${st}</span>` : ""}</dt><dd>${a.queue ? `${a.queue} of ${a.cars} queued` : plural(a.cars, "vehicle")}${w}</dd>`;
     }).join("")}</dl>` : "";
     if (!this.setPanel(this.anatomy(m, { kind: "junction", body: `${waits}<div class="ip-sig">${diagram}${body}</div>` }))) return;
+    this.bindFix(m);
     const q = <T extends Element>(s: string) => [...this.panel.querySelectorAll<T & HTMLElement>(s)];
     const redraw = () => { this.lastPanel = ""; this.fillSel(); };
     const set = (p: SignalPlan | null) => { if (!g.setSignal(this.panelNode, p)) this.toast("Not enough money", true); redraw(); };

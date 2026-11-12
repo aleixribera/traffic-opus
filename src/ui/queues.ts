@@ -5,12 +5,12 @@
 // changes its mind), unless it clears or its junction or road is rebuilt.
 
 import { BUILDING_TYPES, LEVEL_H, ROAD_TYPES, type RoadTypeId } from "../config";
-import { dist, type V2 } from "../core/math";
+import { dist, formatMoney, type V2 } from "../core/math";
 import type { Game } from "../game/city";
 import type { Feature } from "../game/progression";
 import { HOUR } from "../game/society";
 import type { RoadNetwork, SignalPlan } from "../roads/network";
-import { ROUNDABOUTS, planRoundabout, type BuildWorld, type RoundaboutSize } from "../roads/planner";
+import { ROUNDABOUTS, planRoundabout, type BuildWorld, type Plan, type RoundaboutSize } from "../roads/planner";
 import { findQueues, lanesEachWay, type Queue, type QueueCause } from "../sim/queues";
 import { ADVICE_HOLD } from "./bottleneck";
 
@@ -24,6 +24,8 @@ export interface QueueRow {
   where: string;
   /** what to do, in the imperative; null where nothing the player builds is known to help */
   fix: string | null;
+  /** what a click builds for that fix (fixOffer prices it as the map stands) */
+  act?: FixAct;
   vehicles: number;
   trucks: number;
   /** the longest any has stood (s) */
@@ -123,6 +125,18 @@ export function ringFits(g: FixCtx, node: number): RoundaboutSize | 0 {
   return size;
 }
 
+/** The fix a queue's advice names, as something one click builds (the junction and road panels offer it). */
+export type FixAct =
+  /** these roads, each to its wider type (one undo step: Game.upgradeAll) */
+  | { kind: "widen"; segs: { seg: number; to: RoadTypeId }[] }
+  /** a roundabout of this size on the junction (the Roundabout tool's plan) */
+  | { kind: "ring"; node: number; size: RoundaboutSize }
+  /** lights on the junction and the rest of its cluster (Game.setSignal) */
+  | { kind: "lights"; node: number };
+
+/** A queue's fix: the words, and what a click builds for it (none where it is no one thing: a second road). */
+export interface Fix { say: string; act?: FixAct }
+
 /**
  * The fix that works for a queue, measured (src/sim/queues.ts): more lanes for a full junction or road; a roundabout
  * where one road waits for gaps (Medium measured best at a T and a four-way, Small cured a works' gate in
@@ -130,28 +144,33 @@ export function ringFits(g: FixCtx, node: number): RoundaboutSize | 0 {
  * green of its own); a bigger roundabout for a small one that is full; lights to break a deadlock. Never lights at a
  * junction that is merely busy: there they moved less than giving way did.
  */
-export function queueFix(g: FixCtx, q: Pick<Queue, "cause" | "node" | "seg" | "approaches" | "segs">): string | null {
+export function fixOf(g: FixCtx, q: Pick<Queue, "cause" | "node" | "seg" | "approaches" | "segs">): Fix | null {
   // (a junction's fix is for all its roads, as measured: the words don't follow which approach is queued this minute)
   const arms = q.node !== undefined ? g.net.nodeGeom.get(q.node)?.arms.map((a) => a.seg).filter((x) => !g.net.segs.get(x)?.ring) ?? [] : [];
   const roads = q.cause === "road" || q.cause === "lane" ? (q.seg !== undefined ? [q.seg] : []) : arms.length ? arms : q.segs.slice(0, 2);
-  const wider = roads.map((s) => widerOf(g, s)).filter((t): t is RoadTypeId => !!t);
-  const widen = (it: string) => (wider.length ? `Widen ${it} to ${widerName(wider)}` : roads.some((s) => lanesEachWay(g.net, s) >= 2) ? `Build a second road to share ${q.cause === "road" ? "its" : "the"} traffic` : null);
+  const wider = [...new Set(roads)].map((seg) => ({ seg, to: widerOf(g, seg) })).filter((w): w is { seg: number; to: RoadTypeId } => !!w.to);
+  // (the click takes in the narrow roads something stands in the way of too, so its button can say which stay and why)
+  const narrow = [...new Set(roads)].map((seg) => ({ seg, to: WIDER[g.net.segs.get(seg)?.type as RoadTypeId] })).filter((w): w is { seg: number; to: RoadTypeId } => !!w.to && g.roadsUnlocked.has(w.to));
+  const widen = (it: string): Fix | null =>
+    wider.length ? { say: `Widen ${it} to ${widerName(wider.map((w) => w.to))}`, act: { kind: "widen", segs: narrow } }
+    : roads.some((s) => lanesEachWay(g.net, s) >= 2) ? { say: `Build a second road to share ${q.cause === "road" ? "its" : "the"} traffic` } : null;
   const many = wider.length > 1;
+  const lights = (node: number): Fix => ({ say: "Add traffic lights here", act: { kind: "lights", node } });
   switch (q.cause) {
     case "full":
     case "lights":
       return widen(many ? "its roads" : "the road in");
     case "giveway": {
       const size = q.node !== undefined && g.featureUnlocked("roundabout") ? ringFits(g, q.node) : 0;
-      if (size) return `Build a ${ROUNDABOUTS[size].name} roundabout here`;
+      if (size && q.node !== undefined) return { say: `Build a ${ROUNDABOUTS[size].name} roundabout here`, act: { kind: "ring", node: q.node, size } };
       const gates = new Set(g.industry.plants().map((b) => b.access?.seg));
-      if (q.node !== undefined && g.featureUnlocked("signals") && !g.net.nodes.get(q.node)?.signal && q.approaches.some((s) => gates.has(s)) && g.defaultSignal(q.node)) return "Add traffic lights here";
+      if (q.node !== undefined && g.featureUnlocked("signals") && !g.net.nodes.get(q.node)?.signal && q.approaches.some((s) => gates.has(s)) && g.defaultSignal(q.node)) return lights(q.node);
       return widen("the road in");
     }
     case "ring": {
       const ring = q.node !== undefined ? g.net.nodeGeom.get(q.node)?.arms.map((a) => g.net.segs.get(a.seg)).find((s) => s?.ring) : undefined;
       // (a Small or Medium ring: the next size up; a big one, more roads)
-      return ring && (ring.type === "one1" || ring.type === "one2") ? "Build a bigger roundabout here" : widen("the roads in");
+      return ring && (ring.type === "one1" || ring.type === "one2") ? { say: "Build a bigger roundabout here" } : widen("the roads in");
     }
     case "road":
       return widen("it");
@@ -159,13 +178,16 @@ export function queueFix(g: FixCtx, q: Pick<Queue, "cause" | "node" | "seg" | "a
       const n = q.node;
       // (never at a roundabout: its entries give way to the ring, lights there only stop it)
       const ringed = n !== undefined && g.net.nodeGeom.get(n)?.arms.some((a) => g.net.segs.get(a.seg)?.ring);
-      if (n !== undefined && !ringed && g.featureUnlocked("signals") && !g.net.nodes.get(n)?.signal && g.defaultSignal(n)) return "Add traffic lights here";
-      return "Build a second way round";
+      if (n !== undefined && !ringed && g.featureUnlocked("signals") && !g.net.nodes.get(n)?.signal && g.defaultSignal(n)) return lights(n);
+      return { say: "Build a second way round" };
     }
     default:
       return null;
   }
 }
+
+/** The fix for a queue in words (fixOf without the click). */
+export const queueFix = (g: FixCtx, q: Pick<Queue, "cause" | "node" | "seg" | "approaches" | "segs">): string | null => fixOf(g, q)?.say ?? null;
 
 /** Where a place is, in a few words: by a works of the company's, in a town, near one, or out on the road. */
 export function placeWords(g: Game, p: V2): string {
@@ -186,7 +208,7 @@ export function placeWords(g: Game, p: V2): string {
 }
 
 // (per game, the cause last given per queue: display only, not in the save)
-const held = new WeakMap<object, Map<string, { cause: QueueCause; fix: string | null; at: number; seen: number; place: string }>>();
+const held = new WeakMap<object, Map<string, { cause: QueueCause; fix: string | null; act?: FixAct; at: number; seen: number; place: string }>>();
 
 /** What a queue's junction or road is built as now: rebuilding it (lights, a wider road) is a real change. */
 function placeKey(g: FixCtx, q: Queue): string {
@@ -202,18 +224,18 @@ function placeKey(g: FixCtx, q: Queue): string {
  * wait ADVICE_HOLD game hours, unless the queue cleared meanwhile or its junction or road was rebuilt. A queue whose
  * front shuffles between two classes as its approaches fill and empty keeps the first.
  */
-export function holdAdvice(g: FixCtx & { time: number }, q: Queue): { cause: QueueCause; fix: string | null } {
+export function holdAdvice(g: FixCtx & { time: number }, q: Queue): { cause: QueueCause; fix: string | null; act?: FixAct } {
   let m = held.get(g);
   if (!m) held.set(g, (m = new Map()));
-  const fix = queueFix(g, q);
+  const f = fixOf(g, q), fix = f?.say ?? null, act = f?.act;
   const now = g.time / HOUR, place = placeKey(g, q), e = m.get(q.key);
   const live = e && now >= e.seen && now - e.seen <= CLEARED && e.place === place;
   const same = live && e.cause === q.cause && e.fix === fix;
-  if (live && !same && now - e.at < ADVICE_HOLD) { e.seen = now; return { cause: e.cause, fix: e.fix }; }
-  m.set(q.key, { cause: q.cause, fix, at: same ? e.at : now, seen: now, place });
+  if (live && !same && now - e.at < ADVICE_HOLD) { e.seen = now; return { cause: e.cause, fix: e.fix, act: e.act }; }
+  m.set(q.key, { cause: q.cause, fix, act, at: same ? e.at : now, seen: now, place });
   // (queues long cleared are forgotten, so a long game doesn't pile them up)
   if (m.size > 64) for (const [k, x] of m) if (now - x.seen > CLEARED || now < x.seen) m.delete(k);
-  return { cause: q.cause, fix };
+  return { cause: q.cause, fix, act };
 }
 
 /** Forget the causes given so far (a test that changes the map with the clock stopped). */
@@ -221,9 +243,9 @@ export const forgetQueues = (g: object): void => void held.delete(g);
 
 /** A queue as a row: its held cause, the words for it, and its fix. */
 export function queueRow(g: Game, q: Queue): QueueRow {
-  const { cause, fix } = holdAdvice(g, q);
+  const { cause, fix, act } = holdAdvice(g, q);
   return {
-    key: q.key, cause, why: WHY[cause], where: placeWords(g, q.at), fix,
+    key: q.key, cause, why: WHY[cause], where: placeWords(g, q.at), fix, act,
     vehicles: q.vehicles.length, trucks: q.trucks, worst: q.worst, at: q.at,
     node: q.node, seg: q.node === undefined ? q.seg ?? q.segs[0] : undefined,
     segs: q.segs, ids: q.vehicles.map((v) => v.id),
@@ -258,4 +280,90 @@ export function roadQueueSay(q: QueueRow): string {
   const why = there ? AT_JUNCTION[q.cause] ?? q.why : q.why;
   const fix = q.fix && there ? q.fix.replace(/ here$/, " there") : q.fix;
   return fix ? `${why}. ${fix}` : why;
+}
+
+// ------------------------------------------------------------------------------------------- the fix, one click
+
+/** A queue's fix as a button: its words and price as the map stands now, and why it can't be built, if it can't. */
+export interface FixOffer {
+  act: FixAct;
+  /** "Widen to Avenue · $12,400" */
+  label: string;
+  /** what the click costs, all in (a roundabout's homes paid for too) */
+  cost: number;
+  /** why the click can't build it now, in the game's words (the button is off) */
+  blocked?: string;
+  /** what the click leaves out, said beside the button ("1 road stays: Sawmill in the way") */
+  note?: string;
+  /** for the hover preview: the roads it widens, or the roundabout's plan */
+  segs: number[];
+  plan?: Plan;
+}
+
+/** A queue's fix priced and checked as the map stands now; null where there is nothing left to build (done already). */
+export function fixOffer(g: Game, act: FixAct): FixOffer | null {
+  if (act.kind === "widen") {
+    const ok: { seg: number; to: RoadTypeId }[] = [];
+    let cost = 0, stays = 0, why = "";
+    for (const w of act.segs) {
+      const s = g.net.segs.get(w.seg);
+      // (gone, or widened already: nothing to do there)
+      if (!s || s.type === w.to || !WIDER[s.type]) continue;
+      const u = g.upgradePlan(w.seg, w.to);
+      const err = u.errors.find((e) => !e.msg.startsWith(NO_MONEY));
+      if (err) { stays++; why ||= err.msg; continue; }
+      ok.push(w);
+      cost += u.cost;
+    }
+    if (!ok.length && !stays) return null;
+    const label = `Widen to ${widerName((ok.length ? ok : act.segs).map((w) => w.to))}${ok.length ? ` · ${formatMoney(cost)}` : ""}`;
+    const done: FixAct = { kind: "widen", segs: ok };
+    if (!ok.length) return { act: done, label, cost: 0, blocked: why, segs: [] };
+    return {
+      act: done, label, cost, segs: ok.map((w) => w.seg),
+      blocked: cost > g.money + 0.5 ? NO_MONEY : undefined,
+      note: stays ? `${stays === 1 ? "1 road stays" : `${stays} roads stay`}: ${why}` : undefined,
+    };
+  }
+  if (act.kind === "ring") {
+    const n = g.net.nodes.get(act.node);
+    if (!n || g.net.nodeGeom.get(act.node)?.arms.some((a) => g.net.segs.get(a.seg)?.ring)) return null;
+    // (planned whatever the money: the price below is checked against it with the homes it clears)
+    const plan = planRoundabout(g.net, { ...g.world, money: () => Infinity }, n.p, act.size, Math.round(n.h / LEVEL_H));
+    const lots = plan.errors.length ? [] : g.lotsUnder(plan);
+    const cost = plan.cost + g.demolishCost(lots);
+    // (a ring that takes a works' gate street with no way to lay it again, as a click found out: Game.build refuses it.
+    // Only a click tries it on the roads, which is too dear for every redraw of the panel)
+    const cut = plan.errors.length ? null : g.ringCutsOff(plan, `${act.node}:${act.size}`, true);
+    if (cut) plan.errors.push({ msg: cutWords(cut), p: n.p });
+    const label = `Build a ${ROUNDABOUTS[act.size].name} roundabout${plan.errors.length ? "" : ` · ${formatMoney(cost)}`}`;
+    return {
+      act, label, cost, segs: [], plan,
+      blocked: plan.errors[0]?.msg ?? (cost > g.money + 0.5 ? NO_MONEY : undefined),
+      note: lots.length && !plan.errors.length ? `Clears ${lots.length === 1 ? "1 building" : `${lots.length} buildings`}` : undefined,
+    };
+  }
+  const n = g.net.nodes.get(act.node);
+  if (!n || n.signal || !g.featureUnlocked("signals") || !g.defaultSignal(act.node)) return null;
+  const cost = g.lightsCost(act.node);
+  return { act, label: `Add traffic lights · ${formatMoney(cost)}`, cost, segs: [], blocked: cost > g.money + 0.5 ? NO_MONEY : undefined };
+}
+
+const cutWords = (b: { kind: string }) => `Leaves the ${BUILDING_TYPES[b.kind as keyof typeof BUILDING_TYPES]?.name ?? "works"} with no road`;
+
+/** Build a queue's fix (one undo step), as the offer priced it. Null: built; otherwise why not, in the game's words. */
+export function applyFix(g: Game, act: FixAct): string | null {
+  const o = fixOffer(g, act);
+  if (!o) return "Already built";
+  if (o.blocked) return o.blocked;
+  const a = o.act;
+  if (a.kind === "widen") return g.upgradeAll(a.segs) ? null : "Not built";
+  if (a.kind === "ring") {
+    if (!o.plan) return "Not built";
+    const cut = g.ringCutsOff(o.plan, `${a.node}:${a.size}`);
+    if (cut) return cutWords(cut);
+    return g.build(o.plan) ? null : "Not built";
+  }
+  const plan = g.defaultSignal(a.node);
+  return plan && g.setSignal(a.node, plan) ? null : NO_MONEY;
 }

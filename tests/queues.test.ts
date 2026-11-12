@@ -225,14 +225,14 @@ describe("a queue's advice holds", () => {
   it("for ADVICE_HOLD game hours while the queue lasts, then changes", () => {
     const g = ctx(net, ALL);
     forgetQueues(g);
-    expect(holdAdvice(g, q("giveway"))).toEqual({ cause: "giveway", fix: "Build a Medium roundabout here" });
+    expect(holdAdvice(g, q("giveway"))).toEqual({ cause: "giveway", fix: "Build a Medium roundabout here", act: { kind: "ring", node: C, size: 2 } });
     // (seen again and again, a second approach now queued too: still the first advice)
     for (let h = 0.1; h < ADVICE_HOLD; h += 0.1) {
       g.time = h * HOUR;
       expect(holdAdvice(g, q("full")).cause).toBe("giveway");
     }
     g.time = (ADVICE_HOLD + 0.05) * HOUR;
-    expect(holdAdvice(g, q("full"))).toEqual({ cause: "full", fix: "Widen its roads to Avenue" });
+    expect(holdAdvice(g, q("full"))).toMatchObject({ cause: "full", fix: "Widen its roads to Avenue", act: { kind: "widen" } });
   });
 
   it("but not once the queue has cleared, or its junction is rebuilt", () => {
