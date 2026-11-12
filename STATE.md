@@ -14,11 +14,9 @@ Last pass shipped v0.0.115 (f0943dc): fixed CI red on v0.0.114 (a placement step
 
 - Road play log (`docs/roadplay-log.md` on branch `t3/road-freight-playtesting`): 4 parallel pinch at a corner (unreproduced), 6 twin bulbs, 9 bus stops invisible at normal zoom, 10 catalog fold with stop.
 - Late-save soak: worktree `~/.t3/worktrees/traffic-opus/t3-64b370fb`, branch `t3/late-save-deadlock-test` (f94271f): lategame fixture + 10-day soak, day-5 gridlock not settled. Too long for light tests; needs its own project and a shorter run.
-- Worktree `t3-76f64fe0` (`t3/road-play-fixes`): only item 8 (now on main) and a probe test. Removing it was blocked as destructive: needs Aleix's OK.
 - Slow tests to shrink: see `.claude/iterate.md`.
 
 ## Needs Aleix
 
-- OK to remove worktree `~/.t3/worktrees/traffic-opus/t3-76f64fe0` and branch `t3/road-play-fixes` (nothing in it that isn't on main).
 - Overridable choices made by the loop: the loop file's order of work (worktrees first, then road play log, then weakest review category). Say if you want a different order.
 - Open since 2026-11-10: does any camera control still feel inverted; does the radio music please the ear; are the cheaper tier-2 build bills fine.
