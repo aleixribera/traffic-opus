@@ -2,7 +2,9 @@
 
 ## Now
 
-Last pass shipped v0.0.120 Rings that keep their roads (roadplay item 7, last half): the roundabout preview washes red only the road inside the ring (and a dead end it drops), not every trimmed road end to end. `ringCut` in `src/render/preview3d.ts`; tests `tests/ringcut.test.ts`; frames `.scratch/rb-before.png`, `rb-after.png`, `rb-after-huge.png`. CI for v0.0.119 was green. Roadplay items 5 and 7's message had already shipped in v0.0.107 (STATE was stale). **Next pass: check CI for v0.0.120** (`gh run list -L 2`); if green, roadplay item 3 (the placement chip by the pointer shows a power warning while the real blocker, e.g. overlap or water, hides in the side card; not in the changelog, check the code first). After that the log is done: weakest review category (traffic, towns, UI, polish, sound all 7.0).
+Paused by Aleix, 2026-11-12.
+
+Last pass (after v0.0.120, CI green): roadplay item 3 was already fixed in code (power is a non-blocking warning pushed only when the plot is ok; an overlap leads the chip in amber, water as the refusal), so the road play log is done. Then the late-save soak (review top 5 #5, traffic at scale): branch rebased onto v0.0.120 and parked as `wip/late-save-soak` (supplied late save fixture, `tests/latesave.test.ts` soak project, probe `tools/zsoak.build.ts`). Probe on v0.0.120: 180 game hours (7.5 days) of the late save, 255-278 vehicles, at most 13 standing in any 90 h window, 0 cycle releases, 0 jam breaks, 0 quits: the old day-5 gridlock (+114 h) no longer forms. **Next:** run `npm run test:soak` on that branch in the background (~30 min, its strict checks never ran to the end), and if green merge it to main (no release: no player-visible change) and remove the worktree.
 
 ## What works (latest)
 
@@ -17,8 +19,8 @@ Last pass shipped v0.0.120 Rings that keep their roads (roadplay item 7, last ha
 
 ## Broken / open
 
-- Road play log (`docs/roadplay-log.md` on branch `t3/road-freight-playtesting`): open: 3 (placement chip). Done: 1, 2, 5, 7 message, 8 (v0.0.107/114), 4 in v0.0.119, 6 in v0.0.118, 7 preview in v0.0.120, 9 in v0.0.116, 10 in v0.0.117). A bulb's kerb ring also crosses the road mouth (old look, shows more on small bulbs). Ring preview misses two rare cases commit removes: an outside sliver under 7 m, and a road at an inner node that is not in removeSegs (a ramp).
-- Late-save soak: worktree `~/.t3/worktrees/traffic-opus/t3-64b370fb`, branch `t3/late-save-deadlock-test` (f94271f): lategame fixture + 10-day soak, day-5 gridlock not settled. Too long for light tests; needs its own project and a shorter run.
+- Road play log (`docs/roadplay-log.md` on branch `t3/road-freight-playtesting`): all done (3 found already fixed by 42580ee). Done: 1, 2, 5, 7 message, 8 (v0.0.107/114), 4 in v0.0.119, 6 in v0.0.118, 7 preview in v0.0.120, 9 in v0.0.116, 10 in v0.0.117). A bulb's kerb ring also crosses the road mouth (old look, shows more on small bulbs). Ring preview misses two rare cases commit removes: an outside sliver under 7 m, and a road at an inner node that is not in removeSegs (a ramp).
+- Late-save soak: worktree `~/.t3/worktrees/traffic-opus/t3-64b370fb`, parked as `wip/late-save-soak` (8518f08); see Now.
 - Slow tests to shrink: see `.claude/iterate.md`.
 
 ## Needs Aleix
