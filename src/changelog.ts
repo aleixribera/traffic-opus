@@ -15,6 +15,16 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.107", date: "2026-11-12", title: "Roads that land",
+    notes: [
+      "A raised road drawn up from a street now bridges the roads on its way, instead of a false \"Ramp too short\".",
+      "A raised road that climbs to its end stays level to it, with no dip down and up again.",
+      "A raised road has to start or end on a road, and never ends in mid-air over water.",
+      "Crossing a street just short of its dead end removes the leftover stub, when nothing uses it. Undo brings it back.",
+      "A roundabout refused for roads meeting too close names the size that fits, when one does.",
+    ],
+  },
+  {
     v: "v0.0.106", date: "2026-11-11", title: "Say it once",
     notes: [
       "Every word in the game was gone over: each fact shows once, panels lead with a state and a number, and help moved into tooltips.",

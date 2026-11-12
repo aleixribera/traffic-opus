@@ -22,6 +22,8 @@ export interface BuildWorld {
   money(): number;
   /** Where a building is (to point at one in the way). */
   buildingAt?(id: number): V2 | undefined;
+  /** Where along a road (centreline arc-lengths) buildings and stops have their way in: a stretch with one is used. */
+  servedOn?(seg: number): number[];
 }
 
 /** The point of a polyline where it bends tightest. */
@@ -445,6 +447,8 @@ export interface Plan {
   endAngleDeg?: number;
   /** The start or end was moved by an automatic fix (onto a road it stopped just short of). */
   fixed?: string[];
+  /** Short dead ends a new junction leaves sticking out past it, to remove with the road: the crossing and the end. */
+  stubs?: { at: V2; drop: number }[];
   /** The company site it connects to ("Connects to Food Plant"). */
   connects?: string;
   /** Drawn over a dirt road: the stretches of it paved in place (to `type`), in order, instead of a new road. */
@@ -1211,6 +1215,7 @@ function autoBridge(net: RoadNetwork, world: BuildWorld, st: Stroke, ignore: { s
   }
   // roads it can't meet at grade
   const cx = findCrossings(net, pts, cum, base, ignore);
+  const kept: number[] = []; // (where it meets a road at grade: a junction there, so no deck over it)
   const all = [...cx.crossings.map((c) => ({ ...c, grade: true })), ...cx.bad.map((b) => ({ ...b, grade: false }))].sort((a, b) => a.sPlan - b.sPlan);
   for (const [k, c] of all.entries()) {
     let lift = !c.grade || !meetsAtGrade(net, c.seg, st.type) || c.angle < MIN_ARM_ANGLE;
@@ -1224,7 +1229,7 @@ function autoBridge(net: RoadNetwork, world: BuildWorld, st: Stroke, ignore: { s
         if (d >= 3 && d < 12) lift = true;
       }
     }
-    if (!lift) continue;
+    if (!lift) { kept.push(c.sPlan); continue; }
     const sg = net.segGeom.get(c.seg);
     // the length of this road that passes over the other: its width seen at the crossing angle
     const half = (sg ? sg.width / 2 : 6) / Math.max(0.3, Math.sin(c.angle)) + hw / Math.max(0.3, Math.tan(Math.max(c.angle, 0.1)));
@@ -1234,10 +1239,26 @@ function autoBridge(net: RoadNetwork, world: BuildWorld, st: Stroke, ignore: { s
   obs.sort((a, b) => a.s0 - b.s0);
   // the ramps' feet: from the ground either side up to the deck at the steepest grade allowed
   type Span = Ob & { f0: number; f1: number };
-  const feet = (o: Ob): Span => {
-    const up = Math.max(0, o.h - baseAt(o.s0)), dn = Math.max(0, o.h - baseAt(o.s1));
-    return { ...o, f0: o.s0 - up / MAX_GRADE, f1: o.s1 + dn / MAX_GRADE };
+  // The foot is where a ramp at the steepest grade meets the stroke's own height there, which differs from its
+  // height at the deck's end when the stroke itself climbs or falls (a raised road drawn from a street): solve
+  // (h - baseAt(f)) / (s - f) = grade by iterating. A stroke that reaches the deck's height at its end runs on
+  // level to that end, with no dip down and up again. A hair under the limit so cuts nudged onto joints still pass.
+  const G = MAX_GRADE * 0.97;
+  // (a level run to the end only where the stroke meets no road at grade on the way: that road is joined, not
+  // passed over)
+  const clear = (a: number, b: number) => !kept.some((k) => k > a && k < b);
+  const solve = (s: number, h: number, dir: 1 | -1) => {
+    let f = s + (dir * Math.max(0, h - baseAt(s))) / G;
+    for (let k = 0; k < 200; k++) {
+      const g = s + (dir * Math.max(0, h - baseAt(f))) / G;
+      if (Math.abs(g - f) < 0.01) return g;
+      f = g;
+    }
+    return f;
   };
+  const footBack = (s: number, h: number) => (st.h0 > st.h1 + 0.1 && baseAt(0) >= h - 0.3 && clear(0, s) ? 0 : solve(s, h, -1));
+  const footOn = (s: number, h: number) => (st.h1 > st.h0 + 0.1 && baseAt(L) >= h - 0.3 && clear(s, L) ? L : solve(s, h, 1));
+  const feet = (o: Ob): Span => ({ ...o, f0: footBack(o.s0, o.h), f1: footOn(o.s1, o.h) });
   const join = (a: Span, b: Span): Span => feet({ s0: Math.min(a.s0, b.s0), s1: Math.max(a.s1, b.s1), h: Math.max(a.h, b.h), water: a.water || b.water, road: a.road || b.road });
   let spans: Span[] = obs.map(feet);
   // bridges whose ramps would meet become one deck (merging can push a ramp into the next one: until none overlap)
@@ -1315,6 +1336,7 @@ export function planRoad(net: RoadNetwork, world: BuildWorld, inp: PlanInput): P
   const start = ontoJunction(net, inp.start), end = ontoJunction(net, inp.end);
   if (start !== inp.start || end !== inp.end) fixed.push("Moved onto the junction");
   let plan = planRoadOnce(net, world, { ...inp, start, end });
+  let used = { start, end };
   // a free end that stops just past (or before) a road it crosses: end on that road instead
   const lead = plan.strokes[0];
   if (lead && !inp.parallel && plan.crossings.length) {
@@ -1328,13 +1350,76 @@ export function planRoad(net: RoadNetwork, world: BuildWorld, inp: PlanInput): P
       const alt = planRoadOnce(net, world, { ...inp, start: which === "start" ? on : start, end: which === "end" ? on : end });
       if (alt.errors.length <= plan.errors.length && alt.strokes.length) {
         plan = alt;
+        used = { start: which === "start" ? on : start, end: which === "end" ? on : end };
         fixed.push(which === "end" ? "Ends on the road it crossed" : "Starts on the road it crossed");
         break;
       }
     }
   }
+  // A raised road joins something. Free at both ends it would stand on piers with nothing reaching it, and a raised
+  // free end over water is a pier in the river. (Checked on the ends the fixes above settled on.)
+  const loose = (s: Snap) => s.node === undefined && s.seg === undefined && !s.site;
+  const refuse = (msg: string, p: V2): Plan => ({ strokes: [], cost: 0, length: 0, errors: [{ msg, p }], crossings: [], kind: "road" });
+  if (!ROAD_TYPES[inp.type].unpaved) {
+    if (loose(used.start) && loose(used.end) && Math.max(used.start.h, used.end.h) > RAISED) return refuse("Start or end a raised road on a road", used.end.p);
+    for (const [sn, what] of [[used.start, "start"], [used.end, "end"]] as const) {
+      if (loose(sn) && sn.h > RAISED && world.isWater(sn.p)) return refuse(`Can't ${what} on the water`, sn.p);
+    }
+  }
+  if (!plan.errors.length && !inp.parallel) {
+    const stubs = stubsLeft(net, world, plan);
+    if (stubs.length) {
+      plan.stubs = stubs.map(({ at, drop }) => ({ at, drop }));
+      const m = Math.round(Math.max(...stubs.map((x) => x.len)));
+      fixed.push(stubs.length === 1 ? `Removes the ${m} m dead end past the junction` : `Removes ${stubs.length} dead ends past the junctions`);
+    }
+  }
   if (fixed.length) plan.fixed = fixed;
   return plan;
+}
+
+/** A dead end shorter than this left past a new junction is a stub, not a street (road play 2026-11-10). */
+export const STUB_MAX = 30;
+
+/**
+ * The dead ends a road leaves sticking out past the junctions it makes: where it crosses a street at grade a short
+ * way from that street's dead end, the bit beyond (and its turning circle) serves nothing. Only a single piece with
+ * nothing on it (no building's way in, no stop) and a free end that is no ring's or works' gate.
+ */
+function stubsLeft(net: RoadNetwork, world: BuildWorld, plan: Plan): { at: V2; drop: number; len: number }[] {
+  const out: { at: V2; drop: number; len: number }[] = [];
+  const ends = plan.strokes.flatMap((st) => (st.chain.length ? [st.chain[0].p0, st.chain[st.chain.length - 1].p3] : []));
+  for (const c of plan.crossings) {
+    for (const id of net.segsNear(c.x - 2, c.y - 2, c.x + 2, c.y + 2)) {
+      const s = net.segs.get(id)!;
+      const g = net.segGeom.get(id);
+      if (!g || s.ring || slipLaneEnd(net, id)) continue;
+      const r = cubicClosest(s.c, c);
+      if (r.d > 1) continue;
+      const sAt = polyClosest(g.center, r.p).s;
+      // (a short road cut into two short dead ends is a road the player is still laying, not a stub)
+      if (sAt < STUB_MAX && g.center.length - sAt < STUB_MAX) continue;
+      for (const [end, len, lo, hi] of [[s.a, sAt, 0, sAt], [s.b, g.center.length - sAt, sAt, g.center.length]] as const) {
+        if (len < 3 || len >= STUB_MAX || net.segsAt(end).length !== 1) continue;
+        if (ends.some((q) => dist(q, net.nodes.get(end)!.p) < 1)) continue; // (the new road starts or ends there)
+        if ((world.servedOn?.(id) ?? []).some((x) => x >= lo - 1 && x <= hi + 1)) continue;
+        out.push({ at: r.p, drop: end, len });
+      }
+    }
+  }
+  return out;
+}
+
+/** Remove the stubs a plan named, once its road is built (inside the same transaction, geometry up to date). */
+export function applyStubs(net: RoadNetwork, stubs: { at: V2; drop: number }[]): void {
+  for (const st of stubs) {
+    if (!net.nodes.has(st.drop) || net.segsAt(st.drop).length !== 1) continue;
+    const x = net.segsAt(st.drop)[0];
+    const other = x.a === st.drop ? x.b : x.a;
+    // (only if the piece runs from the dead end to the new junction: nothing else got in between)
+    if (dist(net.nodes.get(other)!.p, st.at) > 1.5 || net.segsAt(other).length < 3) continue;
+    net.removeSeg(x.id, true);
+  }
 }
 
 /** A snap on a road just short of a junction (closer than a junction may be to another): onto the junction. */
@@ -2227,7 +2312,16 @@ export function planRoundabout(net: RoadNetwork, world: BuildWorld, c: V2, size:
     const a = hits[i], b = hits[(i + 1) % hits.length];
     let gap = b.ang - a.ang;
     if (i === hits.length - 1) gap += Math.PI * 2;
-    if (hits.length > 1 && gap * R < 11) errors.push({ msg: "Roads meet the ring too close together", p: a.p });
+    if (hits.length > 1 && gap * R < 11) {
+      // (the fix is the next size up, where the same roads meet a longer rim: say so. Road play 2026-11-10)
+      let bigger: string | null = null;
+      for (let k = size + 1; k <= 4 && !bigger; k++) {
+        const alt = planRoundabout(net, world, c, k as RoundaboutSize, level);
+        if (!alt.errors.some((e) => e.msg.startsWith("Roads meet the ring too close"))) bigger = ROUNDABOUTS[k as RoundaboutSize].name;
+      }
+      errors.push({ msg: bigger ? `Roads meet the ring too close: try ${bigger}` : "Roads meet the ring too close", p: a.p });
+      break;
+    }
   }
   if (hits.length > 6) errors.push({ msg: "Too many roads for one roundabout", p: c });
   // ring nodes: hits + filler so arcs stay <= 80 degrees; traffic runs counter-clockwise on screen

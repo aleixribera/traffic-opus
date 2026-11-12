@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { RoadNetwork } from "../src/roads/network";
 import { LEVEL_H, ROAD_TYPES, roadWidth } from "../src/config";
-import { applyTrim, commitStrokes, cubicClosest, planRoad, type BuildWorld, type Plan, type PlanInput, type Snap } from "../src/roads/planner";
+import { applyStubs, applyTrim, commitStrokes, cubicClosest, planRoad, type BuildWorld, type Plan, type PlanInput, type Snap } from "../src/roads/planner";
 import { toolSnap, type ToolSnap, type ToolSnapOpts } from "../src/roads/snapping";
 import { BLOCK } from "../src/game/towns";
 import { Game } from "../src/game/city";
@@ -259,6 +259,40 @@ describe("automatic bridges", () => {
     for (const n of net.nodes.keys()) expect(net.segsAt(n).length).toBeLessThanOrEqual(2);
   });
 
+  it("a raised road climbing from a street bridges a road on the way without a false 'Ramp too short'", () => {
+    // (the ramps' feet were worked out from the stroke's height at the deck's ends, not at the feet: a rising stroke
+    // came out steeper than the limit and was refused on a 288 m road)
+    for (const ang of [90, 20, 12]) {
+      const net = new RoadNetwork();
+      const w = world();
+      const a = (ang * Math.PI) / 180;
+      build(net, w, { start: free(v2(144 - 150 * Math.cos(a), -150 * Math.sin(a))), end: free(v2(144 + 150 * Math.cos(a), 150 * Math.sin(a))), mode: "straight", type: "street" });
+      build(net, w, { start: free(v2(-60, 0)), end: free(v2(0, 0)), mode: "straight", type: "street" });
+      const plan = planRoad(net, w, { start: nodeAt(net, v2(0, 0)), end: free(v2(288, 0), LEVEL_H), mode: "straight", type: "street", bridges: true });
+      expect(plan.errors.map((e) => e.msg)).toEqual([]);
+      // it climbs to the deck and stays there to its raised end: no dip down and up again
+      const hj = plan.strokes[0].hj!;
+      for (let i = 1; i < hj.length; i++) expect(hj[i]).toBeGreaterThanOrEqual(hj[i - 1] - 1e-6);
+      commit(net, plan);
+      for (const s of net.segs.values()) {
+        const p = net.nodes.get(s.a)!, q = net.nodes.get(s.b)!;
+        expect(Math.abs(p.h - q.h) / net.segGeom.get(s.id)!.center.length).toBeLessThanOrEqual(0.11 * 1.02);
+      }
+    }
+  });
+
+  it("a raised road joins something: never free at both ends, never ending in mid-air over water", () => {
+    const net = new RoadNetwork();
+    const both = planRoad(net, world(), { start: free(v2(0, 0), LEVEL_H), end: free(v2(0, 200), LEVEL_H), mode: "straight", type: "street", bridges: true });
+    expect(both.errors.map((e) => e.msg)).toEqual(["Start or end a raised road on a road"]);
+    build(net, river, { start: free(v2(-60, 0)), end: free(v2(0, 0)), mode: "straight", type: "street" });
+    const wet = planRoad(net, river, { start: nodeAt(net, v2(0, 0)), end: free(v2(0, 170), LEVEL_H), mode: "straight", type: "street", bridges: true });
+    expect(wet.errors.map((e) => e.msg)).toEqual(["Can't end on the water"]);
+    // from a road out to a raised end on dry land is a start of a flyover, and builds
+    const dry = planRoad(net, river, { start: nodeAt(net, v2(0, 0)), end: free(v2(0, 120), LEVEL_H), mode: "straight", type: "street", bridges: true });
+    expect(dry.errors).toEqual([]);
+  });
+
   it("says where to start when there's no room for a ramp", () => {
     const net = new RoadNetwork();
     const plan = planRoad(net, river, { start: free(v2(0, 110)), end: free(v2(0, 340)), mode: "straight", type: "street", bridges: true });
@@ -267,6 +301,43 @@ describe("automatic bridges", () => {
     expect(plan.errors.some((e) => e.msg.includes("Page Up"))).toBe(false);
     const tooShort = planRoad(net, river, { start: free(v2(0, 0)), end: free(v2(0, 230)), mode: "straight", type: "street", bridges: true });
     expect(tooShort.errors.some((e) => /^Carry on \d+ m to ramp down from the bridge$/.test(e.msg))).toBe(true);
+  });
+});
+
+describe("dead ends left past a new junction", () => {
+  // a street with a dead end at x = 100; a road crossing it 20 m short of that end
+  const setup = (w: BuildWorld) => {
+    const net = new RoadNetwork();
+    build(net, w, { start: free(v2(-100, 0)), end: free(v2(100, 0)), mode: "straight", type: "street" });
+    const plan = planRoad(net, w, { start: free(v2(80, -100)), end: free(v2(80, 100)), mode: "straight", type: "street", bridges: true });
+    return { net, plan };
+  };
+  const deadEndAt = (net: RoadNetwork, p: V2) => [...net.nodes.values()].some((n) => dist(n.p, p) < 0.5);
+
+  it("are removed with the road, and the tool says so", () => {
+    const { net, plan } = setup(world());
+    expect(plan.errors).toEqual([]);
+    expect(plan.fixed).toEqual(["Removes the 20 m dead end past the junction"]);
+    commit(net, plan);
+    net.begin(); applyStubs(net, plan.stubs!); net.rebuild(); net.commit();
+    expect(deadEndAt(net, v2(100, 0))).toBe(false);
+    expect(deadEndAt(net, v2(-100, 0))).toBe(true); // (the long side is a street: it stays)
+    expect([...net.nodeGeom.values()].filter((g) => g.kind === "junction").map((g) => g.arms.length)).toEqual([3]);
+  });
+
+  it("leave alone a short road the player is still laying (a dead end at both ends)", () => {
+    const net = new RoadNetwork();
+    build(net, world(), { start: free(v2(-25, 0)), end: free(v2(25, 0)), mode: "straight", type: "street" });
+    const plan = planRoad(net, world(), { start: free(v2(0, -100)), end: free(v2(0, 100)), mode: "straight", type: "street", bridges: true });
+    expect(plan.errors).toEqual([]);
+    expect(plan.stubs).toBeUndefined();
+  });
+
+  it("stay when something has its way in on them", () => {
+    const { plan } = setup(world({ servedOn: () => [190] }));
+    expect(plan.errors).toEqual([]);
+    expect(plan.stubs).toBeUndefined();
+    expect(plan.fixed).toBeUndefined();
   });
 });
 

@@ -7,7 +7,7 @@ import { add, dist, dist2, pointSegDist2, rectCorners, rectDistance, scale, sub,
 import { mulberry32 } from "../core/noise";
 import { RoadNetwork, type ChangeSet, type Op, type SignalPlan } from "../roads/network";
 import {
-  applyPave, applyTrim, chainPoints, cubicClosest, planRoad, snap, strokeProfile, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type LanePlan, type Plan, type PlanError,
+  applyPave, applyStubs, applyTrim, chainPoints, cubicClosest, planRoad, snap, strokeProfile, commitRoundabout, commitStrokes, removalRefund, segCost, upgradeCost, type BuildWorld, type LanePlan, type Plan, type PlanError,
 } from "../roads/planner";
 import { fromLot, Traffic, type TrafficSave, type Trip, type Vehicle } from "../sim/traffic";
 import { SITE_LEVELS, siteFrame } from "./sites";
@@ -254,6 +254,12 @@ export class Game {
       buildingsHit: (pts, hw) => this.buildings.hit(pts, hw).filter((id) => !this.buildings.byId.get(id)?.zone),
       money: () => this.money,
       buildingAt: (id) => this.buildings.byId.get(id)?.c,
+      servedOn: (seg) => {
+        const at: number[] = [];
+        for (const b of this.buildings.byId.values()) if (b.access?.seg === seg) at.push(b.access.s);
+        for (const st of this.transit.stops.values()) if (st.access.seg === seg) at.push(st.access.s);
+        return at;
+      },
     };
     this.zones.rebuildAll();
   }
@@ -851,8 +857,10 @@ export class Game {
         }
         // a slip lane redrawn longer: the old one goes first
         for (const id of plan.removeSegs ?? []) this.net.removeSeg(id, true);
-        for (const st of plan.strokes) {
+        plan.strokes.forEach((st, i) => {
           commitStrokes(this.net, [st]);
+          // (the short dead ends its junctions leave sticking out go with it)
+          if (plan.stubs && i === plan.strokes.length - 1) applyStubs(this.net, plan.stubs);
           // later strokes of a grid must see earlier ones
           if (plan.strokes.length > 1) {
             const cs = this.net.rebuild();
@@ -862,7 +870,7 @@ export class Game {
             this.rezone(cs);
             this.emit({ t: "roads", cs });
           }
-        }
+        });
       }
     });
     // a works whose gate street the ring took, with the ring out of its gate's reach, gets the street laid again to
