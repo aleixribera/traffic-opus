@@ -1,4 +1,11 @@
+import { availableParallelism } from "node:os";
 import { defineConfig } from "vitest/config";
+
+/**
+ * Tests share this PC with games, so they stay small: at most 3 workers (a quarter of a 12-thread CPU), each at idle
+ * priority (tests/setup/lowprio.ts). TEST_WORKERS overrides the count, e.g. TEST_WORKERS=6 when nothing else runs.
+ */
+const WORKERS = Math.max(1, Number(process.env.TEST_WORKERS) || Math.min(3, Math.floor(availableParallelism() / 4)));
 
 /**
  * The long traffic and town scenarios: each simulates minutes to hours of a busy map and takes 20 s to 3 min of CPU
@@ -18,6 +25,8 @@ export default defineConfig({
   server: { port: 5317 },
   build: { chunkSizeWarningLimit: 1200 }, // three.js is most of the bundle; one chunk loads fastest here
   test: {
+    maxWorkers: WORKERS,
+    setupFiles: ["tests/setup/lowprio.ts"],
     // the traffic tests simulate minutes of busy junctions: give them time on a loaded or slower test machine
     testTimeout: 30000,
     hookTimeout: 30000, // many files build a whole game in beforeAll; under load that passes vitest's default 10 s
