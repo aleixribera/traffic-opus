@@ -117,6 +117,39 @@ describe("a queue's fix, one click", () => {
     expect(types(g, arms)).toEqual(["street", "street", "street"]);
   });
 
+  it("takes all of it back when a road gets in the way only once the others are wider", () => {
+    const real = g.upgradePlan.bind(g);
+    // (the third road is clear until the first is an avenue: a works pushed back for one lands in the other's way)
+    vi.spyOn(g, "upgradePlan").mockImplementation((seg, to) => {
+      const u = real(seg, to);
+      return seg === arms[2] && g.net.segs.get(arms[0])?.type === "avenue" ? { ...u, errors: [{ msg: "Sawmill in the way", p: v2(0, 0) }] } : u;
+    });
+    const m0 = g.money, v = g.net.version;
+    expect(g.upgradeAll(arms.map((seg) => ({ seg, to: "avenue" })))).toBe(false);
+    expect(types(g, arms)).toEqual(["street", "street", "street"]);
+    expect(g.money).toBeCloseTo(m0, 6);
+    expect(g.canRedo()).toBe(false);
+    expect(g.net.version).toBeGreaterThan(v);
+    // (the undo stack is as it was: the next undo takes the T's side street away)
+    const before = g.net.segs.size;
+    g.undo();
+    expect(g.net.segs.size).toBeLessThan(before);
+  });
+
+  it("won't build a roundabout that leaves a works with no road, and says so", () => {
+    const act = fixOf(g, queue(node, arms, "giveway"))!.act!;
+    // (as Game.build would find it: the ring takes the Sawmill's gate street and can't lay it again)
+    const cut = vi.spyOn(g, "ringCutsOff").mockImplementation((_p, _k, peek) => (peek && !cut.mock.calls.some((c) => !c[2]) ? null : ({ kind: "sawmill" } as never)));
+    expect(fixOffer(g, act)!.blocked).toBeUndefined();
+    const v = g.net.version, m0 = g.money;
+    expect(applyFix(g, act)).toBe("Leaves the Sawmill with no road");
+    expect(g.net.version).toBe(v);
+    expect(g.money).toBe(m0);
+    expect(g.net.nodes.has(node)).toBe(true);
+    // the click found it out: the button is off from then on, with the reason
+    expect(fixOffer(g, act)!.blocked).toBe("Leaves the Sawmill with no road");
+  });
+
   it("builds the roundabout the advice names, at the tool's price, as one undo step", () => {
     const f = fixOf(g, queue(node, arms, "giveway"))!;
     expect(f.act).toMatchObject({ kind: "ring", node });
@@ -148,7 +181,8 @@ describe("a queue's fix, one click", () => {
     expect(j.fix).toBeUndefined();
     const r = roadModel(g, arms[0])!.status;
     expect(r.act?.label).toMatch(/^Widen to Avenue · /);
-    expect(r.fix).toBe("Queued into a full junction");
+    // (a road's panel names the junction ahead the fix lands on: it keeps the words)
+    expect(r.fix).toBe("Queued into a full junction. Widen its roads to Avenue");
     at.row = row("giveway");
     expect(junctionModel(g, node, compass)!.status.act?.act.kind).toBe("ring");
     at.row = row("deadlock");

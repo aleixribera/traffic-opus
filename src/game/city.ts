@@ -897,6 +897,21 @@ export class Game {
    * what is left of its street, passes in front of it, or if its street can be laid again to the ring. Null: no works
    * is left stranded.
    */
+  /**
+   * The works this roundabout would leave with no road (ringStrands), worked out once per change of the roads; `peek`:
+   * only what was worked out already for these roads (trying it on the roads tells the traffic and the map of it twice).
+   */
+  ringCutsOff(plan: Plan, key: string, peek = false): Building | null {
+    const m = this.cutMemo;
+    if (m && m.key === key && m.ver === this.net.version) return m.b;
+    if (peek) return null;
+    const b = this.ringStrands(plan);
+    // (trying it on the roads moves their version on: the memo keeps the one after)
+    this.cutMemo = { key, ver: this.net.version, b };
+    return b;
+  }
+  private cutMemo: { key: string; ver: number; b: Building | null } | null = null;
+
   private ringStrands(plan: Plan): Building | null {
     const cut = new Set(plan.removeSegs ?? []);
     const at = this.buildings.sites.filter((b) => b.access && cut.has(b.access.seg));
@@ -1085,8 +1100,9 @@ export class Game {
 
   /**
    * Several roads widened at once, as one edit (one Undo puts them all back): a queue's fix from its panel. Each is
-   * checked as Game.upgrade checks it; any in the way, or the whole not paid for, and nothing changes. The price is
-   * what upgradePlan quotes for each before any of them changes (what the button said).
+   * checked as Game.upgrade checks it; any in the way (also once the ones before it are widened), or the whole not paid
+   * for, and nothing changes. The price is what upgradePlan quotes for each before any of them changes (what the
+   * button said).
    */
   upgradeAll(list: { seg: number; to: RoadTypeId }[]): boolean {
     const todo = list.filter((x) => { const s = this.net.segs.get(x.seg); return !!s && s.type !== x.to; });
@@ -1096,11 +1112,12 @@ export class Game {
     const price = quotes.reduce((a, u) => a + u.cost, 0);
     if (price > this.money + 0.5) return false;
     const ops: Op[] = [], gone: Building[] = [], moved = new Map<number, BuildingMove>();
-    let paid = 0;
+    let paid = 0, stuck = false;
     todo.forEach((x, i) => {
+      if (stuck) return;
       // (as the roads stand after the ones before it: a wider neighbour can have pushed a works back already)
       const u = i ? this.upgradePlan(x.seg, x.to) : quotes[0];
-      if (!this.net.segs.has(x.seg) || u.errors.some((e) => !e.msg.startsWith("Not enough money"))) return;
+      if (!this.net.segs.has(x.seg) || u.errors.some((e) => !e.msg.startsWith("Not enough money"))) { stuck = true; return; }
       this.moveBuildings(u.moves, true);
       // (a works pushed twice: undo takes it back to where it stood first)
       for (const m of u.moves) { const was = moved.get(m.id); moved.set(m.id, was ? { ...m, c0: was.c0, f0: was.f0 } : m); }
@@ -1112,6 +1129,8 @@ export class Game {
     if (!ops.length) return false;
     this.money -= paid;
     this.pushUndo({ label: "upgrade", ops, money: paid, added: [], removed: gone, moved: moved.size ? [...moved.values()] : undefined });
+    // one of them stuck once the others were widened: all of it taken back, as if never tried
+    if (stuck) { this.undo(); this.redoStack.pop(); return false; }
     this.emit({ t: "money" });
     if (moved.size || gone.length) this.emit({ t: "buildings" });
     return true;

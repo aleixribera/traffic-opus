@@ -1011,10 +1011,13 @@ export function roadModel(g: Game, seg: number): PanelModel | null {
   };
 }
 
-/** A road's status with a queue on it: what holds it, and the fix as a button (its words then said once, on the button). */
+/**
+ * A road's status with a queue on it: what holds it, and the fix as a button. The words are said once, on the button,
+ * when the fix is this road's own; one for the junction ahead keeps them, so the panel says where it lands.
+ */
 function roadQueued(g: Game, q: QueueRow, text: string): PanelModel["status"] {
   const act = (q.act && fixOffer(g, q.act)) ?? undefined;
-  return { text, tone: "bad", fix: roadQueueSay(act ? { ...q, fix: null } : q), act };
+  return { text, tone: "bad", fix: roadQueueSay(act && q.node === undefined ? { ...q, fix: null } : q), act };
 }
 
 /** An approach to a junction: its road, the way it comes in, the vehicles queued and on it, and the longest wait (s). */

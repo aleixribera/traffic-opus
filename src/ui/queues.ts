@@ -332,6 +332,10 @@ export function fixOffer(g: Game, act: FixAct): FixOffer | null {
     const plan = planRoundabout(g.net, { ...g.world, money: () => Infinity }, n.p, act.size, Math.round(n.h / LEVEL_H));
     const lots = plan.errors.length ? [] : g.lotsUnder(plan);
     const cost = plan.cost + g.demolishCost(lots);
+    // (a ring that takes a works' gate street with no way to lay it again, as a click found out: Game.build refuses it.
+    // Only a click tries it on the roads, which is too dear for every redraw of the panel)
+    const cut = plan.errors.length ? null : g.ringCutsOff(plan, `${act.node}:${act.size}`, true);
+    if (cut) plan.errors.push({ msg: cutWords(cut), p: n.p });
     const label = `Build a ${ROUNDABOUTS[act.size].name} roundabout${plan.errors.length ? "" : ` · ${formatMoney(cost)}`}`;
     return {
       act, label, cost, segs: [], plan,
@@ -345,6 +349,8 @@ export function fixOffer(g: Game, act: FixAct): FixOffer | null {
   return { act, label: `Add traffic lights · ${formatMoney(cost)}`, cost, segs: [], blocked: cost > g.money + 0.5 ? NO_MONEY : undefined };
 }
 
+const cutWords = (b: { kind: string }) => `Leaves the ${BUILDING_TYPES[b.kind as keyof typeof BUILDING_TYPES]?.name ?? "works"} with no road`;
+
 /** Build a queue's fix (one undo step), as the offer priced it. Null: built; otherwise why not, in the game's words. */
 export function applyFix(g: Game, act: FixAct): string | null {
   const o = fixOffer(g, act);
@@ -352,7 +358,12 @@ export function applyFix(g: Game, act: FixAct): string | null {
   if (o.blocked) return o.blocked;
   const a = o.act;
   if (a.kind === "widen") return g.upgradeAll(a.segs) ? null : "Not built";
-  if (a.kind === "ring") return o.plan && g.build(o.plan) ? null : "Not built";
+  if (a.kind === "ring") {
+    if (!o.plan) return "Not built";
+    const cut = g.ringCutsOff(o.plan, `${a.node}:${a.size}`);
+    if (cut) return cutWords(cut);
+    return g.build(o.plan) ? null : "Not built";
+  }
   const plan = g.defaultSignal(a.node);
   return plan && g.setSignal(a.node, plan) ? null : NO_MONEY;
 }

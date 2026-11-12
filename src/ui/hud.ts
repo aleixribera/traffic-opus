@@ -2103,6 +2103,8 @@ export class Hud {
     const g = this.app.game;
     const m = modelOf(g, s, this.ledger, compass);
     if (!m) { this.closeSelection(); return; }
+    // (a panel with no fix button now: no fix shown on the map, whatever button the pointer was on before)
+    if (!m.status.act) this.app.fixHover = null;
     this.app.highlight.set(m.related);
     if (s.k === "building") this.fillBuilding(g.buildings.byId.get(s.id)!, m);
     else if (s.k === "town") this.fillTown(m);
@@ -2144,10 +2146,13 @@ export class Hud {
     const o = m.status.act;
     this.app.fixHover = null;
     if (!b || !o) return;
-    b.onpointerenter = b.onfocus = () => { this.app.fixHover = o; };
-    b.onpointerleave = b.onblur = () => { if (this.app.fixHover === o) this.app.fixHover = null; };
-    // (the panel redrawn with the pointer or keyboard focus still on it: still showing what it changes)
-    if (document.activeElement === b || b.matches(":hover")) this.app.fixHover = o;
+    // (lights change nothing the map can show beforehand: no preview)
+    if (o.act.kind !== "lights") {
+      b.onpointerenter = b.onfocus = () => { this.app.fixHover = o; };
+      b.onpointerleave = b.onblur = () => { if (this.app.fixHover === o) this.app.fixHover = null; };
+      // (the panel redrawn with the pointer or keyboard focus still on it: still showing what it changes)
+      if (document.activeElement === b || b.matches(":hover")) this.app.fixHover = o;
+    }
     b.onclick = () => {
       this.app.fixHover = null;
       const why = applyFix(this.app.game, o.act);
