@@ -1,3 +1,5 @@
+> **History.** Replaced by `VISION.md` on 2026-11-13. The plan is in `PLAN.md`. Kept as the record of the 2026-11-09 redesign.
+
 # Kilometre Zero: direction (2026-11-09)
 
 This page is the north star. `docs/design.md` describes the systems as built; where the two disagree, this page

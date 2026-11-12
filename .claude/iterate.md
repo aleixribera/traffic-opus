@@ -4,7 +4,7 @@ Project specifics for the global `iterate` skill. Where this differs from the sk
 
 ## Vision and plan
 
-- Vision: `docs/direction.md` (wins over `docs/design.md`), plus the user's rules in Claude's project memory (`industry-focus`, `traffic-not-money`, `stable-growth`, `ui-words` rule book `docs/ui-words.md`, PC only, and the rest in MEMORY.md).
+- Vision: `VISION.md` (Aleix's; wins over everything), plus the user's rules in Claude's project memory (`ui-words` rule book `docs/ui-words.md` and the rest in MEMORY.md). `docs/direction.md` is history; `docs/design.md` describes the systems as built.
 - Plan: `PLAN.md` (written by the director chat): the current stage, its items in order and each item's acceptance check, and the scorecard.
 - Backlog: `BACKLOG.md` (written by the loop): work cut, found or deferred, for the director to promote.
 
