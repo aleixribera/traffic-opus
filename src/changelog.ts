@@ -15,6 +15,15 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.110", date: "2026-11-12", title: "Lived-in towns",
+    notes: [
+      "Parks have paths in from every street, benches, and a fountain or planters in the middle.",
+      "The town green has a round walk and a flower bed with a flagpole. The hall stands in a lawn with a walk round it.",
+      "Town cars park in lay-bys beside the greens and on pads by some homes: home cars by night, the rest by day.",
+      "People walk the park paths, sit by the benches and wait at bus stops. Bigger towns have busier pavements.",
+    ],
+  },
+  {
     v: "v0.0.109", date: "2026-11-12", title: "Advice that holds",
     notes: [
       "A building site's wait comes from what supplies it, in plain bands (\"about a day\"), and moves one step at a time.",
