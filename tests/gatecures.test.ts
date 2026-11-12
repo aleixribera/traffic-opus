@@ -69,7 +69,7 @@ describe("lights on a works' gate junction", () => {
     expect(rate(r)).toBeGreaterThan(1.6);
     expect(r.minA).toBeGreaterThan(30);
     expect(r.minB).toBeGreaterThan(30);
-  }, 240000);
+  }, 600000); // (about two minutes alone: room for a PC busy with other runs)
 });
 
 describe("a roundabout on a works' gate junction", () => {
@@ -110,7 +110,7 @@ describe("a roundabout on a works' gate junction", () => {
     expect(r.minA).toBeGreaterThan(35);
     expect(r.minB).toBeGreaterThan(35);
     expect(mill.access).not.toBeNull();
-  }, 240000);
+  }, 600000); // (about two minutes alone: room for a PC busy with other runs)
 
   it("of any size, however far the gate stands from the road: joined after it, and as it was after Undo", () => {
     const { g, at, dir } = openLand({ pop: 60 });
