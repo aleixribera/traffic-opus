@@ -1,4 +1,4 @@
-import { LANE_W, ROAD_TYPES, SIM, roadWidth, type RoadTypeId } from "../config";
+import { LANE_W, ROAD_TYPES, SIDEWALK, SIM, isUnpaved, roadGroup, roadWidth, type RoadTypeId } from "../config";
 import {
   type Cubic, type Polyline, type V2,
   add, angleOf, clamp, cubicTangent, dist, dot, lineIntersect, makePolyline, minRadius, norm, offsetPolyline,
@@ -705,9 +705,12 @@ export class RoadNetwork {
     const oldLanes = new Map<string, Lane>();
     const oldConns = new Map<number, Connector[]>();
 
+    // where roads came, went or moved, the dead ends near them may have a bigger or smaller turning bulb now
+    const touched: { x0: number; y0: number; x1: number; y1: number }[] = [];
     // drop geometry of removed things
     for (const id of removedSegs) {
       const g = this.segGeom.get(id);
+      if (g) touched.push(g.bbox);
       if (g) for (const l of g.lanes) { oldLanes.set(l.key, l); this.lanes.delete(l.key); }
       if (!this.segs.has(id)) this.segGeom.delete(id);
       this.unindexSeg(id);
@@ -819,6 +822,21 @@ export class RoadNetwork {
       const s = this.segs.get(id)!;
       connNodes.add(s.a);
       connNodes.add(s.b);
+      touched.push(this.segGeom.get(id)!.bbox);
+    }
+    // (a bulb looks up to its full size plus a pavement and the widest road's half beyond its end: 25 m covers it)
+    if (dirtyNodes.size < this.nodes.size) {
+      for (const b of touched) {
+        for (const id of this.segsNear(b.x0 - 25, b.y0 - 25, b.x1 + 25, b.y1 + 25)) {
+          const s = this.segs.get(id);
+          if (!s) continue;
+          for (const m of [s.a, s.b]) {
+            if (this.degree.get(m) !== 1 || connNodes.has(m)) continue;
+            const p = this.nodes.get(m)!.p;
+            if (p.x >= b.x0 - 25 && p.x <= b.x1 + 25 && p.y >= b.y0 - 25 && p.y <= b.y1 + 25) connNodes.add(m);
+          }
+        }
+      }
     }
     for (const nid of connNodes) {
       if (!this.nodes.has(nid)) continue;
@@ -882,6 +900,73 @@ export class RoadNetwork {
   }
 
   // ---------------- geometry builders ----------------
+
+  /**
+   * A dead end's turning bulb: radius and centre. The full circle (half the road plus 2.2 m, centred 1.5 m past the
+   * end) shrinks, down to the road's own width, so it and its pavement stay clear of every other road beside it at
+   * the same level and their pavements; a twin dead end beside it shares the room between the two circles. Where
+   * even that doesn't fit (a road just past the end), the circle draws back into the road.
+   */
+  private bulbFit(nid: number, own: RSeg, c: V2, dirIn: V2, halfW: number): { r: number; ctr: V2 } {
+    const dir = norm(dirIn);
+    const T = ROAD_TYPES[own.type], h = this.nodes.get(nid)!.h;
+    const walk = isUnpaved(T) ? 0 : SIDEWALK[roadGroup(T)];
+    const full = halfW + 2.2, GAP = 0.3, REACH = full + walk + 20, far = own.a === nid ? own.b : own.a;
+    // the other roads near, each as how close the circle's centre may come to its centreline (or to the twin bulb's
+    // centre, with the room shared)
+    type Near = { line: Polyline; ha: number; hb: number; clear: number; twins: { p: V2; clear: number }[] };
+    const near: Near[] = [];
+    const ids = [...this.segsNear(c.x - REACH, c.y - REACH, c.x + REACH, c.y + REACH)].filter((id) => this.segs.has(id));
+    // the road it comes from isn't beside it: the roads meeting this one's other end, and the same road on back
+    // through plain run-ons (short pieces) as far as the circle could reach
+    const back = new Set<number>([own.id]);
+    for (let m = far, prev = own.id, i = 0; i < 64; i++) {
+      const at = ids.filter((id) => { const s = this.segs.get(id)!; return s.a === m || s.b === m; });
+      if (m === far) for (const id of at) back.add(id);
+      const on = at.filter((id) => id !== prev);
+      if (this.degree.get(m) !== 2 || on.length !== 1 || back.has(on[0]) && m !== far) break;
+      const s = this.segs.get(on[0])!;
+      back.add(s.id);
+      prev = s.id;
+      m = s.a === m ? s.b : s.a;
+      if (dist(this.nodes.get(m)!.p, c) > REACH) break;
+    }
+    for (const id of ids) {
+      const s = this.segs.get(id), g = this.segGeom.get(id);
+      if (!s || !g || back.has(id) || s.a === nid || s.b === nid) continue;
+      const O = ROAD_TYPES[s.type];
+      const oWalk = isUnpaved(O) ? 0 : SIDEWALK[roadGroup(O)];
+      const clear = g.width / 2 + oWalk + walk + GAP;
+      const twins: { p: V2; clear: number }[] = [];
+      for (const [m, at] of [[s.a, 0], [s.b, 1]] as const) {
+        if (s.a === s.b || this.degree.get(m) !== 1 || O.bwd <= 0) continue;
+        // its own circle sits 1.5 m past its end
+        const into = norm(at === 0 ? cubicTangent(s.c, 0) : scale(cubicTangent(s.c, 1), -1));
+        twins.push({ p: add(this.nodes.get(m)!.p, scale(into, -1.5)), clear: halfW + g.width / 2 + walk + oWalk + GAP });
+      }
+      near.push({ line: g.center, ha: this.nodes.get(s.a)!.h, hb: this.nodes.get(s.b)!.h, clear, twins });
+    }
+    const room = (ctr: V2): number => {
+      let r = full;
+      for (const o of near) {
+        const q = polyClosest(o.line, ctr);
+        const oh = this.heightOnSegRaw(o.ha, o.hb, q.s / (o.line.length || 1));
+        if (Math.abs(oh - h) > 3) continue; // passing over or under: no one meets it
+        r = Math.min(r, q.d - o.clear); // the circle's edge plus pavement up to theirs
+        for (const tw of o.twins) r = Math.min(r, halfW + (dist(ctr, tw.p) - tw.clear) / 2);
+      }
+      return r;
+    };
+    // pull the circle back into the road (from 1.5 m past the end) until it fits, but never so far that the U-turn
+    // runs out past it: that loops about 0.68 of the way across the lanes beyond the end (makeConn, k = 0.9)
+    const uReach = 0.68 * Math.max(0, (T.fwd + T.bwd - 1) * LANE_W + (T.median ?? 0)) + 0.5;
+    const kMin = Math.min(1.5, uReach - halfW);
+    for (let k = 1.5; ; k -= 0.5) {
+      const ctr = add(c, scale(dir, -Math.max(k, kMin)));
+      const r = room(ctr);
+      if (r >= halfW || k <= kMin) return { r: clamp(r, halfW, full), ctr };
+    }
+  }
 
   private computeArms(nid: number, segs: RSeg[], dirty = true): Arm[] {
     const arms: Arm[] = [];
@@ -1293,17 +1378,16 @@ export class RoadNetwork {
       const s = segs[0];
       const T = ROAD_TYPES[s.type];
       if (T.bwd > 0) {
-        // turning bulb so U-turns look plausible
-        const r = A.halfW + 2.2;
+        // turning bulb so U-turns look plausible, as big as the roads around leave room for
+        const { r, ctr } = this.bulbFit(nid, s, c, A.dir, A.halfW);
         const poly: V2[] = [];
-        const ctr = add(c, scale(A.dir, -1.5));
         for (let k = 0; k < 28; k++) {
           const a = (k / 28) * Math.PI * 2;
           poly.push({ x: ctr.x + Math.cos(a) * r, y: ctr.y + Math.sin(a) * r });
         }
         geom.poly = poly;
         geom.kerbs = [[...poly, poly[0]]];
-        geom.radius = r + 1.5;
+        geom.radius = dist(ctr, c) + r;
       }
     }
 

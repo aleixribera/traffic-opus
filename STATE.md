@@ -2,12 +2,11 @@
 
 ## Now
 
-Loop stopped 2026-11-12 after v0.0.117: the app refused to start the next pass twice (a pass started by another session may not start sessions itself). Start it by hand: "Run the iterate skill".
-
-Last pass shipped v0.0.117 A clear kerb (roadplay item 10): the Transport cards fold to their strip once the pointer leaves them for the map with its tool in hand (`hud.aimed`, 40 px margin so the gap above the bar doesn't count); a peek stays open on hover and folds again when a stop is placed. Frames `.scratch/stop-before.png`, `stop-after.png`. **Next pass: check CI for v0.0.116 and v0.0.117** (`gh run list -L 3`); if green, roadplay item 6 (twin bulbs), then item 4 (parallel pinch at a corner).
+Last pass shipped v0.0.118 Room to turn (roadplay item 6): a dead end's turning bulb shrinks to the room it has (`bulbFit` in `src/roads/network.ts`): twin dead ends share the gap, a road just past the end pulls the circle back, roads above or below don't count, and a neighbour added or removed reshapes untouched dead ends within 25 m. Test `tests/bulbs.test.ts`; frames `.scratch/b2.png`, `b3.png`. CI was green for v0.0.117. **Next pass: check CI for v0.0.118** (`gh run list -L 2`); if green, roadplay item 4 (parallel pinch at a corner, still unmeasured), then item 5 (stub left past a new junction).
 
 ## What works (latest)
 
+- v0.0.118 turning bulbs fit their room (`tests/bulbs.test.ts`).
 - v0.0.117 Transport cards fold on aim (`src/ui/hud.ts` aimed; browser-checked, DOM only).
 - v0.0.116 bus stop plates (`src/ui/stopMarks.ts`; checked in the browser, no unit test: DOM only).
 - v0.0.114 Works that land: a works by a road's dead end stands back and joins it (`tests/placesnap.test.ts`).
@@ -16,7 +15,7 @@ Last pass shipped v0.0.117 A clear kerb (roadplay item 10): the Transport cards 
 
 ## Broken / open
 
-- Road play log (`docs/roadplay-log.md` on branch `t3/road-freight-playtesting`): 4 parallel pinch at a corner (unreproduced), 6 twin bulbs (9 done in v0.0.116, 10 in v0.0.117).
+- Road play log (`docs/roadplay-log.md` on branch `t3/road-freight-playtesting`): 4 parallel pinch at a corner (unreproduced), 5 stub past a new junction, 7 ring message (6 done in v0.0.118, 9 in v0.0.116, 10 in v0.0.117). A bulb's kerb ring also crosses the road mouth (old look, shows more on small bulbs).
 - Late-save soak: worktree `~/.t3/worktrees/traffic-opus/t3-64b370fb`, branch `t3/late-save-deadlock-test` (f94271f): lategame fixture + 10-day soak, day-5 gridlock not settled. Too long for light tests; needs its own project and a shorter run.
 - Slow tests to shrink: see `.claude/iterate.md`.
 

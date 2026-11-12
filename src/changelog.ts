@@ -15,6 +15,12 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.118", date: "2026-11-12", title: "Room to turn",
+    notes: [
+      "A dead end's turning circle fits the room it has: two streets ending side by side no longer pave over each other, and a street that stops just short of another road keeps clear of it.",
+    ],
+  },
+  {
     v: "v0.0.117", date: "2026-11-12", title: "A clear kerb",
     notes: [
       "The Transport cards fold to their one-line strip as soon as you take a bus stop out onto the map, so they no longer cover the street you are aiming at. A tab or the Transport button brings them back.",
