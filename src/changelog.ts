@@ -15,6 +15,12 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.119", date: "2026-11-12", title: "Pairs that pick up again",
+    notes: [
+      "A parallel pair carries on round a corner even after you stop drawing: start again from the end of the pair and its twin meets the old one at an even gap, instead of being refused or pinching in at the bend.",
+    ],
+  },
+  {
     v: "v0.0.118", date: "2026-11-12", title: "Room to turn",
     notes: [
       "A dead end's turning circle fits the room it has: two streets ending side by side no longer pave over each other, and a street that stops just short of another road keeps clear of it.",

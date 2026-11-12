@@ -5,7 +5,7 @@ import {
   ROUNDABOUTS, applyTrim, commitRoundabout, commitStrokes, makeChain, offsetChain, parallelSpacing, planRoad, planRoundabout, snap,
   type BuildWorld, type Plan, type PlanInput, type RoundaboutSize, type Snap,
 } from "../src/roads/planner";
-import { cubicAt, cubicTangent, dist, dot, norm, tangentArc, v2, type V2 } from "../src/core/math";
+import { cubicAt, cubicTangent, dist, dot, norm, sub, tangentArc, v2, type V2 } from "../src/core/math";
 
 const world = (over: Partial<BuildWorld> = {}): BuildWorld => ({
   isWater: () => false, isMountain: () => false, inBounds: () => true, buildingsHit: () => [], money: () => 1e9,
@@ -166,6 +166,38 @@ describe("parallel pairs (review fixes)", () => {
       // inside of the turn the old twin is cut back; outside it gets a short extension
       expect(twin).toHaveLength(turn === "left" ? 2 : 3);
       expect(minGap(net, main, twin)).toBeGreaterThan(off - 0.6);
+    });
+  }
+
+  // drawing broken off after the first piece: the next stroke starts on the pair's end with no `from`
+  for (const [turn, deg] of [["left", 50], ["right", -50], ["straight", 0]] as const) {
+    it(`carries a pair on round a ${turn} corner from a fresh stroke, gap even`, () => {
+      const net = new RoadNetwork();
+      const w = world();
+      const off = 12;
+      build(net, w, { start: free(v2(0, 0)), end: free(v2(200, 0)), mode: "straight", type: "street", parallel: { offset: off } });
+      const a = snap(net, v2(200, 0), { mpp: 0.05, level: 0, type: "street" });
+      expect(a.node).toBeDefined();
+      const r = (deg * Math.PI) / 180, E = v2(200 + Math.cos(r) * 200, -Math.sin(r) * 200);
+      const plan = build(net, w, { start: a, end: free(E), mode: "straight", type: "street", parallel: { offset: off } });
+      // (a right turn's short outside extension also cuts the old twin back a little)
+      expect(!!plan.trim).toBe(turn !== "straight");
+      // one pair of dead ends at each end: the twin joined its old end, no road started on top of it
+      expect(deadEnds(net)).toBe(4);
+      const onMain = (p: V2) => {
+        const d = (u: V2, v: V2) => {
+          const t = Math.max(0, Math.min(1, dot(sub(p, u), sub(v, u)) / dot(sub(v, u), sub(v, u))));
+          return dist(p, v2(u.x + (v.x - u.x) * t, u.y + (v.y - u.y) * t));
+        };
+        return Math.min(d(v2(0, 0), v2(200, 0)), d(v2(200, 0), E));
+      };
+      let lo = Infinity;
+      for (const [id] of net.segs) {
+        const pts = net.segGeom.get(id)!.center.pts;
+        if (pts.every((p) => onMain(p) < 0.5)) continue;
+        for (const p of pts) lo = Math.min(lo, onMain(p));
+      }
+      expect(lo).toBeGreaterThan(off - 0.3);
     });
   }
 

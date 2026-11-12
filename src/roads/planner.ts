@@ -1618,7 +1618,8 @@ function planRoadOnce(net: RoadNetwork, world: BuildWorld, inp: PlanInput): Plan
   const extra: PlanError[] = [];
   let noBridge = false;
   if (inp.parallel && chain.length) {
-    const ps = parallelStroke(net, stroke, inp.parallel.offset, start, end, inp.parallel.from);
+    const from = inp.parallel.from ?? twinEnd(net, start, inp.parallel.offset);
+    const ps = parallelStroke(net, stroke, inp.parallel.offset, start, end, from);
     for (const pc of ps.pieces) {
       strokes.push(pc.stroke);
       anchors.push(...pc.anchors);
@@ -1797,6 +1798,32 @@ const reverseCubic = (c: Cubic): Cubic => ({ p0: c.p3, p1: c.p2, p2: c.p1, p3: c
 /** c with its end moved to p, keeping the end direction. */
 const withEnd = (c: Cubic, p: V2): Cubic => ({ ...c, p2: add(c.p2, sub(p, c.p3)), p3: p });
 const withStart = (c: Cubic, p: V2): Cubic => ({ ...c, p0: p, p1: add(c.p1, sub(p, c.p0)) });
+
+/**
+ * A new stroke started on the dead end of one road of a parallel pair: the dead end of its twin, `offset` metres
+ * to the left of the way the road carries on and running alongside it. Lets a pair be carried on round a corner
+ * after the drawing was broken off, as if it had never stopped.
+ */
+export function twinEnd(net: RoadNetwork, start: Snap, offset: number): Snap | undefined {
+  if (start.node === undefined || net.segsAt(start.node).length !== 1) return undefined;
+  const sn = net.nodes.get(start.node)!, s = net.segsAt(start.node)[0];
+  const out = norm(s.b === start.node ? cubicTangent(s.c, 1) : scale(cubicTangent(s.c, 0), -1));
+  const q = add(sn.p, scale({ x: out.y, y: -out.x }, offset)); // left of the way on, the side the twin is built
+  // a fixed small reach: at wide spacings an unrelated dead end must not be taken for the twin
+  let best: Snap | undefined, bd = 2.5;
+  for (const n of net.nodesNear(q, bd)) {
+    const id = n.id;
+    if (id === start.node || Math.abs(n.h - sn.h) > 0.5) continue;
+    const d = dist(n.p, q);
+    if (d >= bd || net.segsAt(id).length !== 1) continue;
+    const t = net.segsAt(id)[0];
+    const o = norm(t.b === id ? cubicTangent(t.c, 1) : scale(cubicTangent(t.c, 0), -1));
+    if (dot(o, out) < Math.cos((10 * Math.PI) / 180)) continue;
+    best = { p: n.p, h: n.h, node: id, guides: [] };
+    bd = d;
+  }
+  return best;
+}
 
 /** Cut the previous parallel piece back to `at` (its dead end `drop` goes), when a pair turns a corner. */
 export interface ParallelTrim { seg: number; drop: number; at: V2 }
