@@ -15,6 +15,15 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.111", date: "2026-11-12", title: "Queues you can read",
+    notes: [
+      "The Traffic window lists the worst queues: where, how many wait and how long, what holds them, and the fix that works.",
+      "Click a queue to fly there: its roads light up and its vehicles are ringed. The junction and road panels say the same.",
+      "A full junction is told to widen its roads, a side road starved of gaps to take a roundabout. Lights are no longer offered where they don't help.",
+      "A queue's advice holds for a few hours while it lasts.",
+    ],
+  },
+  {
     v: "v0.0.110", date: "2026-11-12", title: "Lived-in towns",
     notes: [
       "Parks have paths in from every street, benches, and a fountain or planters in the middle.",
