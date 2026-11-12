@@ -21,7 +21,7 @@ import { TRUCK_CLASSES } from "../game/trucks";
 import { served, type Town } from "../game/settlements";
 import { growthOf, townNeeds } from "./needs";
 import { joinedUp } from "./tips";
-import { aboutHours, afterOpening, blockFix, blockWords, ceilingOf, jobsFilled, makersFlatOut, needHelpSay, nextLoad, powerFix, shortOf, shownRate, siteStatus, staffPace, staffSay, staffing, startUp, townAdvice, understaffed, waitsForSite } from "./bottleneck";
+import { aboutHours, afterOpening, blockFix, blockWords, ceilingOf, jobsFilled, makersFlatOut, needHelpSay, nextLoad, powerFix, shortOf, shownRate, siteMoreHelp, siteStatus, staffPace, staffSay, staffing, startUp, townAdvice, townsFirst, understaffed, waitsForSite } from "./bottleneck";
 import { buildTime } from "../game/construction";
 import type { Lane } from "../roads/network";
 import { dkDir, dkSeg } from "../sim/router";
@@ -327,13 +327,17 @@ export function worksStatus(g: Game, b: Building): PanelModel["status"] {
   if (P.site) {
     // how far along, how long to go at the pace the loads have been coming, and where the next ones come from
     const left = (Object.keys(P.site.need) as Product[]).filter((p) => (P.site!.got[p] ?? 0) < P.site!.need[p]!);
-    const s = siteStatus(b);
+    const s = siteStatus(g, b);
     const next = left.length ? nextLoad(g, b, left[0]) : null;
-    const slow = s.slow && next?.from ? ` At this pace that is days: another ${BUILDING_TYPES[next.from.kind].name} would bring ${lower(left[0])} faster.` : "";
+    // (the towns on its roads buying most of what it waits for: the reason it is slow, said plainly; another works
+    // only where that would open it sooner, its own build counted: review 2026-11-12, C2)
+    const tf = townsFirst(s.f), more = siteMoreHelp(g, s.f, s.hours);
+    const why = tf ? ` Towns are buying most of your ${lower(tf)}.` : "";
+    const help = more ? ` Another ${BUILDING_TYPES[more].name} would open it sooner.` : "";
     // (a site with no road gets nothing: that comes first, the rest after)
     status = !b.access
       ? { text: "Building site", tone: "bad", fix: `No road reaches its gate, so no loads can come. Draw a road to the gate marker. ${s.line}.` }
-      : { text: "Building site", tone: "", fix: `${s.line}.${next ? ` ${next.say}.` : ""}${slow}`, show: ref(next?.from?.id) };
+      : { text: "Building site", tone: "", fix: `${s.line}.${next ? ` ${next.say}.` : ""}${why}${help}`, show: ref(next?.from?.id) };
   } else if (b.built < 1) status = { text: `Under construction · ${Math.round(b.built * 100)}%`, tone: "", fix: `Opens in ${aboutHours(((1 - b.built) * buildTime(b.kind)) / HOUR)}.${b.access ? afterOpening(g, b) : " It has no road to its gate yet: draw one to the gate marker before it opens."}` };
   else {
     // (open and nothing made yet: starting up, with when its first truck leaves; its yard filling for a works that is

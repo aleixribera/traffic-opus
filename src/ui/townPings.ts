@@ -26,6 +26,13 @@ export class TownPings {
   private pings = new Map<number, Ping>();
   /** the HUD's corner panels on screen (read a few times a second, not every frame): the pointer keeps clear of them */
   private walls: DOMRect[] = [];
+  /**
+   * a new town's card is up: it says where the town is and that no road reaches it, so the pointer waits till it
+   * closes (one place per fact: docs/ui-words.md; review 2026-11-12, C7)
+   */
+  held = false;
+  /** a pointer at the screen's edge was drawn last frame (the new-town tip stands down while one is) */
+  pointing = false;
 
   constructor(private on: { fly(id: number): void; open(id: number): void }) {
     this.el.className = "town-pings";
@@ -77,6 +84,7 @@ export class TownPings {
     const W = view.w, H = view.h;
     // (the pointer keeps inside the corners' panels and the bottom bar)
     const L = 24, R = W - 24, T = 84, B = H - 128;
+    this.pointing = false;
     for (const p of this.pings.values()) {
       const s = view.worldToScreen(p.t.c.x, p.t.c.y);
       const onScreen = s.x > 0 && s.y > 0 && s.x < W && s.y < H;
@@ -84,9 +92,10 @@ export class TownPings {
       if (onScreen && view.halfH < 6000) p.seen = true;
       p.ring.style.display = onScreen ? "" : "none";
       if (onScreen) p.ring.style.transform = `translate(${s.x.toFixed(1)}px, ${s.y.toFixed(1)}px) translate(-50%, -50%)`;
-      const showEdge = !onScreen && !p.seen;
+      const showEdge = !onScreen && !p.seen && !this.held;
       p.edge.style.display = showEdge ? "" : "none";
       if (!showEdge) continue;
+      this.pointing = true;
       // from the middle of the screen toward the town, stopped at the inset frame
       const cx = W / 2, cy = (T + B) / 2, dx = s.x - cx, dy = s.y - cy;
       const k = Math.min(dx > 0 ? (R - 110 - cx) / dx : dx < 0 ? (L + 110 - cx) / dx : Infinity, dy > 0 ? (B - cy) / dy : dy < 0 ? (T - cy) / dy : Infinity);

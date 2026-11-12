@@ -5,7 +5,7 @@
 
 import type { V2 } from "../core/math";
 import type { Game } from "../game/city";
-import type { Town } from "../game/settlements";
+import { compassWords, type Town } from "../game/settlements";
 import { cubicClosest, type Plan } from "../roads/planner";
 
 /** How long a planned road is (m), along its curves' chords. */
@@ -58,4 +58,17 @@ export function distFrom(g: Game, p: V2, not?: number): { m: number; from: strin
 export function distFromText(g: Game, p: V2, not?: number): string {
   const d = distFrom(g, p, not);
   return d ? `${distText(d.m)} from ${d.from}` : "";
+}
+
+/**
+ * Where a place lies, by the same measure as its pointer (distFrom) and the way from the nearest town: "4.0 km west
+ * of Alder Run", or with a road nearer, "3.8 km from a road, west of Alder Run". The deposit tip said "4.0 km west of
+ * Alder Run" beside a pointer reading "3.8 km from a road" (review 2026-11-12, C5).
+ */
+export function whereText(g: Game, p: V2): string {
+  const d = distFrom(g, p), t = nearestTown(g, p);
+  if (!d) return "";
+  if (!t) return `${distText(d.m)} from ${d.from}`;
+  const way = `${compassWords(t.t.c, p)} of ${t.t.name}`;
+  return d.from === t.t.name ? `${distText(d.m)} ${way}` : `${distText(d.m)} from ${d.from}, ${way}`;
 }

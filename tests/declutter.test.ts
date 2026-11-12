@@ -124,6 +124,14 @@ describe("one line at the pointer", () => {
     expect(pointerLine([info("80 m"), cost, joins, connects]).head).toBe(connects);
   });
 
+  it("a note with its own price leads alone: the works' price beside the road offered read as the road's (C4)", () => {
+    const road: PointerChip = { text: "650 m dirt road offered · $1,000", kind: "info", lead: 3, priced: true };
+    const line = pointerLine([cost, road]);
+    expect(line.head).toBe(road);
+    expect(line.cost).toBeNull();
+    expect(line.rest).toEqual([cost]);
+  });
+
   it("whatever stops the click stands alone: its price is no news", () => {
     const err: PointerChip = { text: "Too steep here", kind: "error" };
     const line = pointerLine([err, info("240 m"), cost, info("Joins the street", 2)]);

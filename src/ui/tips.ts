@@ -13,9 +13,10 @@ import { needFrom, needsOf } from "../game/towns";
 import { ENOUGH } from "../game/supply";
 import { F } from "../world/gen";
 import { MILESTONES } from "../game/progression";
-import { buildOrder, needHelp, shortfalls, worstCeiling } from "./bottleneck";
+import { DAY } from "../game/society";
+import { buildOrder, holdAdvice, needHelp, shortfalls, worstCeiling } from "./bottleneck";
 import { STUCK_RAISE, stuckSpots } from "./stuckAlerts";
-import { distText, planLength } from "./distance";
+import { distText, planLength, whereText } from "./distance";
 
 export interface Tip {
   /** which tip it is (what a dismissal remembers) */
@@ -133,6 +134,16 @@ export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false, sign
   // is reached (owner, 2026-11-10: the oil well tip at 20 of 20)
   const lately = (): PlantKind[] => (g.progress.done.length >= MILESTONES.length ? [] : g.progress.done.slice(-DEPOSIT_GOALS).reverse()
     .flatMap((id) => buildOrder((MILESTONES.find((m) => m.id === id)?.unlocks.buildings ?? []).filter((x): x is PlantKind => x in PLANTS))));
+  // a works flat out with a town still asking for more (B1: "nothing said build a second Food Plant"), and the kind
+  // of works it says to build
+  const ceilingTip = (): { tip: Tip; build: string } | null => {
+    const w = worstCeiling(g);
+    if (w?.c.town) return { build: w.b.kind, tip: { id: "ceiling", cat: "industry", html: `<b>Your ${esc(BUILDING_TYPES[w.b.kind].name)} is at full output.</b> ${esc(w.c.fix)}` } };
+    // (or a step up the chain: the food plant waits for crops with the one farm flat out)
+    const s = shortfalls(g, 1)[0];
+    const h = s ? needHelp(g, s.worst, s.p) : null;
+    return s && h?.kind === "full" ? { build: h.build, tip: { id: "ceiling", cat: "industry", p: s.p, html: `<b>${esc(s.worst.name)} needs more ${PRODUCTS[s.p].name.toLowerCase()}.</b> ${esc(h.say)}` } } : null;
+  };
   const tips:(() => Tip | null)[] = [
     // a food chain: a farm on fertile soil (it lays its own street to a road within reach), then a food plant
     () => {
@@ -173,15 +184,8 @@ export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false, sign
       const n = signed ?? spots.length;
       return { id: "jam", cat: "roads", html: `<b>Traffic is stuck in ${n === 1 ? "one place" : `${n} places`}.</b> Give the junction a turn lane or lights, or lay a second road past it.` };
     },
-    // a works flat out with a town still asking for more (B1: "nothing said build a second Food Plant")
-    () => {
-      const w = worstCeiling(g);
-      if (w?.c.town) return { id: "ceiling", cat: "industry", html: `<b>Your ${esc(BUILDING_TYPES[w.b.kind].name)} is at full output.</b> ${esc(w.c.fix)}` };
-      // (or a step up the chain: the food plant waits for crops with the one farm flat out)
-      const s = shortfalls(g, 1)[0];
-      const h = s ? needHelp(g, s.worst, s.p) : null;
-      return s && h?.kind === "full" ? { id: "ceiling", cat: "industry", p: s.p, html: `<b>${esc(s.worst.name)} needs more ${PRODUCTS[s.p].name.toLowerCase()}.</b> ${esc(h.say)}` } : null;
-    },
+    // (held: it named the Farm, then the Food Plant, then the Farm again as loads landed. Review 2026-11-12, C6)
+    () => holdAdvice(g, "tip:ceiling", ceilingTip(), (x) => x.build)?.tip ?? null,
     // timber, before the hamlet wants planks. Not before the first food has landed: one chain at a time (owner,
     // 2026-11-10: the tip jumped to planks while the first goal still stood at 0 of 1)
     () => {
@@ -195,7 +199,8 @@ export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false, sign
     },
     // a town that sprang up and has no road to anything yet
     () => {
-      const t = g.towns.list.find((x) => x.spawned && !joinedUp(g, x));
+      // (not in its first game day: its card and the pointer to it say where it is; the tip is the reminder after)
+      const t = g.towns.list.find((x) => x.spawned && !joinedUp(g, x) && g.time - x.founded >= DAY);
       if (!t) return null;
       let from: Town | null = null;
       const d = (a: Town) => Math.hypot(a.c.x - t.c.x, a.c.y - t.c.y);
@@ -234,7 +239,8 @@ export function tipFor(g: Game, skip: (id: TipId) => boolean = () => false, sign
       if (!k) return null;
       const dep = PLANTS[k].deposit!, home = g.towns.list[0];
       const near = home ? g.terrain.gen.depositsNear(dep.field, home.c.x, home.c.y, 24000)[0] : undefined;
-      const where = near && home ? ` The nearest lies ${km(Math.hypot(near.x - home.c.x, near.y - home.c.y))} ${compassWords(home.c, near)} of ${esc(home.name)}, and` : "";
+      // (by the same measure as the pointer to it: distance.ts)
+      const where = near && home ? ` The nearest lies ${esc(whereText(g, near))}, and` : "";
       return { id: "deposits", cat: "industry", html: `<b>The ${lower(k)} goes on ${dep.name.toLowerCase()}.</b>${where} <b>Views › Resources</b> shows every deposit.` };
     },
     // towns' new blocks waiting for construction parts

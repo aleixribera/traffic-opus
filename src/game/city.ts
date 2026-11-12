@@ -1258,7 +1258,7 @@ export class Game {
    * fence, then curving round to meet the road at a right angle. Never through the site's own fence, and never
    * through other buildings. Null: no road within reach can be joined that way (the site waits for one).
    */
-  gateLink(kind: PlacedKind, c: V2, rot: number, side: 1 | -1, o: { reach?: number; type?: RoadTypeId; tries?: number } = {}): Plan | null {
+  gateLink(kind: PlacedKind, c: V2, rot: number, side: 1 | -1, o: { reach?: number; type?: RoadTypeId; tries?: number; why?: { say?: string } } = {}): Plan | null {
     const T = BUILDING_TYPES[kind], hw = T.w / 2, hd = T.d / 2;
     const f = siteFrame(c, rot, side, hd);
     const out = scale(f.into, -1);
@@ -1279,17 +1279,22 @@ export class Game {
     cands.sort((a, b) => a.d - b.d);
     const world: BuildWorld = { ...this.world, money: () => Infinity };
     let best: Plan | null = null, bestCost = Infinity;
+    // (why none would do, in a few words, for the one nearest: the place tool and the works' panel say it. Review
+    // 2026-11-12, C5: a Smelter 200 m from roads read "No road in reach of its gate", and nothing said why)
+    let why: string | undefined;
+    const fail = (say: string) => { why ??= say; };
     for (const cd of cands.slice(0, o.tries ?? 6)) {
       const end = snap(net, cd.p, { mpp: 0.4, level: 0, type });
-      if (end.seg === undefined && end.node === undefined) continue;
+      if (end.seg === undefined && end.node === undefined) { fail("the nearest road can't be joined"); continue; }
       const plan = planRoad(net, world, { start: { p: S, h: 0, guides: [] }, end, mode: "curve", squareEnd: true, type, startTangent: out });
-      if (plan.errors.length || !plan.strokes.length) continue;
+      if (plan.errors.length || !plan.strokes.length) { fail(gateLinkWhy(plan.errors[0]?.msg ?? "")); continue; }
       const pts = plan.strokes.flatMap((st) => chainPoints(st.chain, 3));
-      if (pts.some((q) => rectDistance(q, c, hw, hd, rot) < 6)) continue;
+      if (pts.some((q) => rectDistance(q, c, hw, hd, rot) < 6)) { fail("its own fence is in the way"); continue; }
       // (never through a town's homes and shops: the company's street goes round them, or waits for the player)
-      if (this.lotsUnder(plan).length) continue;
+      if (this.lotsUnder(plan).length) { fail("a town's homes are in the way"); continue; }
       if (plan.cost * cd.k < bestCost) { best = plan; bestCost = plan.cost * cd.k; }
     }
+    if (o.why) o.why.say = best ? undefined : cands.length ? why ?? "the way to a road is blocked" : `no road within ${distWords(R)}`;
     return best;
   }
 
@@ -1299,15 +1304,25 @@ export class Game {
    * works change (a works placed on its way); a town's new homes are checked when it is built (buildRoadTo).
    */
   roadTo(b: Building): Plan | null {
+    return this.roadToOf(b)?.plan ?? null;
+  }
+  /** Why no road is offered to a placed works with none at its gate, in a few words ("water is in the way"); null if one is. */
+  roadToWhy(b: Building): string | null {
+    const r = this.roadToOf(b);
+    return r && !r.plan ? r.why ?? null : null;
+  }
+  private roadToOf(b: Building): { plan: Plan | null; why?: string } | null {
     if (b.access || !b.placed || !this.buildings.byId.has(b.id)) return null;
     const s = this.buildings.sites, v = `${this.net.version}|${s.length}|${s[s.length - 1]?.id ?? 0}`;
     const m = this.roadToMemo.get(b.id);
-    if (m && m.v === v) return m.plan;
-    const plan = this.gateLink(b.kind as PlacedKind, b.c, b.rot, b.side, { reach: ROAD_TO_REACH, type: "dirt", tries: 3 });
-    this.roadToMemo.set(b.id, { v, plan });
-    return plan;
+    if (m && m.v === v) return m;
+    const why: { say?: string } = {};
+    const plan = this.gateLink(b.kind as PlacedKind, b.c, b.rot, b.side, { reach: ROAD_TO_REACH, type: "dirt", tries: 3, why });
+    const e = { v, plan, why: why.say };
+    this.roadToMemo.set(b.id, e);
+    return e;
   }
-  private roadToMemo = new Map<number, { v: string; plan: Plan | null }>();
+  private roadToMemo = new Map<number, { v: string; plan: Plan | null; why?: string }>();
 
   /**
    * Lay the offered road (one Undo takes it away), worked out afresh so it goes round whatever stands on its way
@@ -2612,4 +2627,16 @@ const lotFor = (model: BuildingKind): LotTemplate =>
 export function siteWaiting(s: NonNullable<Building["site"]>): string {
   const left = (Object.entries(s.need) as [Product, number][]).map(([p, n]) => [p, n - (s.got[p] ?? 0)] as [Product, number]).filter(([, n]) => n > 0);
   return `Building site: waiting for ${left.map(([p, n]) => `${n} load${n === 1 ? "" : "s"} of ${PRODUCTS[p].name.toLowerCase()}`).join(" and ")}`;
+}
+
+/** A distance in a few words, for the reasons the game gives: "6 km", "400 m". */
+const distWords = (m: number): string => (m >= 1000 ? `${Math.round(m / 100) / 10} km` : `${Math.round(m)} m`);
+
+/** The road planner's refusal for the road offered to a works' gate, as the reason none is offered (gateLink). */
+export function gateLinkWhy(msg: string): string {
+  if (/mountain/i.test(msg)) return "a mountain is in the way";
+  if (/bridge|water|stay on the ground/i.test(msg)) return "water is in the way";
+  if (/outside the map/i.test(msg)) return "the map ends that way";
+  if (/junction|overlap|angle|crossing|roundabout/i.test(msg)) return "the roads there are too crowded to join";
+  return "the way to a road is blocked";
 }

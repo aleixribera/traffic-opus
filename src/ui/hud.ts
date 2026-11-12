@@ -937,8 +937,8 @@ export class Hud {
   tick(force = false) {
     const g = this.app.game;
     if (!g) return;
-    const st = g.people.stats;
-    const pop = `${ICON.people}<span class="cb-pop-n"><b>${fmtNum(st.population)}</b><small>${g.towns.list.length === 1 ? "people" : "in all towns"}</small></span>`;
+    // (the towns' own figures, summed: what their plaques and panels say, at the same moment. Review 2026-11-12, C8)
+    const pop = `${ICON.people}<span class="cb-pop-n"><b>${fmtNum(g.towns.people())}</b><small>${g.towns.list.length === 1 ? "people" : "in all towns"}</small></span>`;
     if (this.popEl.dataset.k !== pop) { this.popEl.dataset.k = pop; this.popEl.innerHTML = pop; }
     const net = g.netIncome;
     this.moneyBtn.innerHTML = `<b class="${g.money < 0 ? "bad" : ""}">${formatMoney(Math.round(g.money))}</b><span class="${moneyTone(net)}">${signed(net)}/h</span>`;
@@ -972,7 +972,9 @@ export class Hud {
     // (with every goal reached the card lists the towns' shortfalls itself: the tip that says the same stands down)
     // (and a tip that says to take in hand the works already in hand: the tool options say how to place it)
     const st = this.app.st, inHand = (id: string) => st.tool === "place" && st.placed === id;
-    const tip = prefs.off ? null : tipFor(g, (id) => prefs.dismissed.has(id) || (id === "ceiling" && !open.length) || ((id === "farm" || id === "foodplant") && inHand(id)), this.app.stuckAlerts.count);
+    // (a new town's card, or its pointer at the screen's edge, already says where it is and that no road reaches it)
+    const newTownSaid = (!this.banner.hidden && this.banner.classList.contains("nt")) || this.app.townPings.pointing;
+    const tip = prefs.off ? null : tipFor(g, (id) => prefs.dismissed.has(id) || (id === "ceiling" && !open.length) || ((id === "farm" || id === "foodplant") && inHand(id)) || (id === "newtown" && newTownSaid), this.app.stuckAlerts.count);
     this.tut.hidden = false;
     const v = g.progressView();
     const folded = this.tutHidden;
@@ -1315,6 +1317,7 @@ export class Hud {
     this.bannerQ = [];
     this.bannerHeld = false;
     this.banner.hidden = true;
+    this.app.townPings.held = false;
     this.orderNoteAway(0);
     this.seasons.clear();
   }
@@ -1336,6 +1339,7 @@ export class Hud {
       this.bannerHeld = false;
       if (g.paused) { g.paused = false; this.refresh(); }
     }
+    this.app.townPings.held = false;
     if (!X) { this.banner.hidden = true; return; }
     const t = "town" in X ? g.towns.byId.get(X.town) : "spawned" in X ? g.towns.byId.get(X.spawned) : "order" in X ? g.towns.byId.get(X.order) : undefined;
     if (("town" in X || "spawned" in X || "order" in X) && !t) { this.nextBanner(); return; }
@@ -1347,6 +1351,7 @@ export class Hud {
     if ("order" in X && X.grant > 0) this.sfx.sting("money");
     this.banner.classList.toggle("lm", !!lm || "spawned" in X);
     this.banner.classList.toggle("nt", "spawned" in X);
+    this.app.townPings.held = "spawned" in X;
     this.banner.classList.toggle("ord", "order" in X);
     if (lm && isMega(lm.kind)) {
       this.banner.innerHTML = `<header>The ${BUILDING_TYPES[lm.kind].name} is open</header>
@@ -2375,7 +2380,9 @@ export class Hud {
   private roadOffer(b: Building): string {
     if (!b.placed || b.access) return "";
     const g = this.app.game, plan = g.roadTo(b);
-    if (!plan) return `<p class="ip-road small">No road reaches its gate. Draw one with Roads</p>`;
+    // (its status line already says no road reaches its gate: this says why none is offered, once. Review 2026-11-12,
+    // C5 and C7: the Smelter's panel said "No road reaches its gate" twice, and never why)
+    if (!plan) { const why = g.roadToWhy(b); return why ? `<p class="ip-road small">No road offered: ${escapeHtml(why)}</p>` : ""; }
     const short = g.money < plan.cost;
     return `<div class="ip-road"><p class="small" title="A dirt road from its gate to your roads, dashed on the map">Road to its gate: <b>${distText(planLength(plan))}</b>, <b class="num">${formatMoney(plan.cost)}</b></p><button type="button" class="btn ip-roadbtn" data-id="${b.id}"${short ? " disabled" : ""}>${short ? "Not enough money" : "Build this road"}</button></div>`;
   }
