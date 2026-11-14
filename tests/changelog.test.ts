@@ -23,3 +23,13 @@ describe("changelog", () => {
     }
   });
 });
+
+describe("changelog.json", () => {
+  it("is written beside index.html by the build, for the Arcade page", async () => {
+    const { changelogFile } = await import("../tools/changelog-file");
+    const emitted: { fileName?: string; source?: unknown }[] = [];
+    (changelogFile().generateBundle as (this: unknown) => void).call({ emitFile: (file: { fileName?: string; source?: unknown }) => emitted.push(file) });
+    expect(emitted.map((f) => f.fileName)).toEqual(["changelog.json"]);
+    expect(JSON.parse(String(emitted[0].source))).toEqual(CHANGELOG);
+  });
+});

@@ -1,5 +1,6 @@
 import { availableParallelism } from "node:os";
 import { defineConfig } from "vitest/config";
+import { changelogFile } from "./tools/changelog-file";
 
 /**
  * Tests share this PC with games, so they stay small: at most 3 workers (a quarter of a 12-thread CPU), each at idle
@@ -28,6 +29,8 @@ const SOAK = ["tests/latesave.test.ts"];
 export default defineConfig({
   // relative base so the build runs from any static host path (e.g. GitHub Pages)
   base: "./",
+  // changelog.json beside index.html, for the home server's Arcade page
+  plugins: [changelogFile()],
   server: { port: 5317 },
   build: { chunkSizeWarningLimit: 1200 }, // three.js is most of the bundle; one chunk loads fastest here
   test: {
