@@ -1,5 +1,7 @@
 # Loop file: Kilometre Zero (traffic-opus)
 
+Model: opus, effort medium
+
 Project specifics for the global `iterate` skill. Where this differs from the skill, this wins.
 
 ## Vision and plan
