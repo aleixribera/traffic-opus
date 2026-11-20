@@ -1,8 +1,7 @@
-name: Deploy to GitHub Pages
+name: CI
 
-# Every push to main type-checks, builds the game with Vite and publishes dist/ to
-# (the tests run in their own job alongside, without holding the deploy back)
-# https://aleixribera.github.io/traffic-opus/
+# Every push to main type-checks, builds the game with Vite, and runs the test suite.
+# Hosting lives on the home server (https://aleix.tailfef0f7.ts.net/kilometre-zero/).
 on:
   push:
     branches: [main]
@@ -10,12 +9,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: true
 
 jobs:
   build:
@@ -29,13 +22,7 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm run build
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
 
-  # The tests run beside the deploy, not before it, so a push is live in a minute or two;
-  # a failing test shows red here a few minutes after.
   test:
     runs-on: ubuntu-latest
     steps:
@@ -48,13 +35,3 @@ jobs:
       # (the balance playthrough takes hours on a runner and the late-save soak test most of one: they run locally, the
       # one before a release, the other after a change to the traffic sim)
       - run: npx vitest run --exclude tests/balance.test.ts --exclude tests/latesave.test.ts
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
