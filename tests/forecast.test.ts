@@ -157,5 +157,5 @@ describe("one sawmill feeding two towns and the steel chain's sites, in bursts",
         last = k; dir = d;
       }
     }
-  }, 240000);
+  }, 600000); // (about 40 s on CI: room for a test machine busy with other runs)
 });

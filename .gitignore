@@ -8,3 +8,4 @@ docs/design-audit/*/captures/
 docs/design-audit/*/after/
 tools/out/
 tools/blender/__pycache__/
+test-report.json

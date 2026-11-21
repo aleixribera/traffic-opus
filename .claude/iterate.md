@@ -22,11 +22,18 @@ Project specifics for the global `iterate` skill. Where this differs from the sk
 
 ## Test (light and fast)
 
-- One run of the files that cover the change: `npx vitest run --project quick tests/a.test.ts tests/b.test.ts` (scenarios: `--project scenarios`; their list is `SCENARIOS` in `vite.config.ts`). Tests run at idle priority with at most 3 workers.
+- Long or browser runs go to the test laptop (`remote-test <cmd>`); a small targeted run may go here. E.g. `npx vitest run --project quick tests/a.test.ts tests/b.test.ts` (scenarios: `--project scenarios`; their list is `SCENARIOS` in `vite.config.ts`). Name filter: `-t "roundabout"`; changed files only: `--changed`.
 - To find the files: grep `tests/` for the changed functions **and for the helpers that call them** (e.g. `placeAlong` in `tests/helpers.ts` calls `placedPlan`; `tests/*.scenario.ts` build shared worlds). Missing these turned CI red on v0.0.114.
-- No full suite on this PC. GitHub Actions (`.github/workflows/pages.yml`, job `test`) runs every test except balance on each push to main: that is the full run. Check it with `gh run list -L 2` on the next pass; red is the next pass's Broken pick. The balance playthrough runs only at a stage gate, in the background.
+- CI (`.github/workflows/ci.yml`, job `test`, eight time-balanced shards) runs quick + scenarios on each push to main: that is the full run. Check it with `gh run list -L 2` on the next pass; red is the next pass's Broken pick. The balance playthrough runs only at a stage gate, in the background.
 - Traffic sim changes: also `npm run test:soak` (`tests/latesave.test.ts`, ten days of the late save, ~300 vehicles, ~21-26 min) in the background, once on the final change; not on CI. Its fixture comes from `tools/lategame.build.ts`.
-- Known slow files (shrink when touched): density, forecast, growth (quick); gatecures, trailers, gatejam, rhythm, junctionflow, deadlock (scenarios).
+- Known slow files (shrink when touched): gatecures, gatering, trailers, gatejam, rhythm, forecast, density, junctionflow, deadlock (scenarios).
+
+## Test time budget
+
+- `npm test` (quick): about 20 s on a free 12-thread machine, budget 30 s; each test a few seconds (30 s `testTimeout` is a hard fail). `npm run test:full`: budget 300 s (about 3x that on a laptop busy with other runs). Past either, the run prints `!! TEST TIME BUDGET EXCEEDED` (`tools/test-budget.ts`): speed up the file that grew or move it to `SCENARIOS`.
+- CI: eight test shards of about a minute (budget 90 s each), `timeout-minutes: 3` fails a job. The floor is the longest file (gatecures, ~60 s on CI): split a file's tests across files rather than grow past it.
+- After adding or moving slow files, refresh `tests/durations.json` from a CI run's `report-*` artifacts (`gh run download <id>`, then `node tools/durations.mjs report-*/test-report.json`): it orders files and balances the CI shards.
+- Balance (`npm run test:balance`) and soak (`npm run test:soak`) run only on the laptop, in the background, when this file says.
 
 ## See it working
 
@@ -47,4 +54,4 @@ Project specifics for the global `iterate` skill. Where this differs from the sk
 ## Machine rules
 
 - This PC runs out of CPU and memory with web games: one headless browser at a time, opened only for a round of checks, game paused unless it must run. At most two agents with a browser.
-- Tests never slow the PC while the owner games: idle priority, 3 workers max (already in `vite.config.ts`).
+- Tests run at idle priority; long suites go to the laptop with `remote-test`.

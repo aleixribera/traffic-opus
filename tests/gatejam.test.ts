@@ -60,5 +60,5 @@ describe("one sawmill, two towns and eight building sites on one road", () => {
     // planks, nearest first: at any one hour there may be none part-way)
     expect(partBuilt).toBeGreaterThan(5);
     expect(timed).toBeGreaterThan(partBuilt / 2);
-  }, 240000);
+  }, 600000); // (about 35 s on CI: room for a test machine busy with other runs)
 });
