@@ -30,8 +30,8 @@ Project specifics for the global `iterate` skill. Where this differs from the sk
 
 ## Test time budget
 
-- `npm test` (quick): under 20 s wall on the laptop, each test under 15 s (`testTimeout`, a hard fail). `npm run test:full`: under 120 s. Past either, the run prints `!! TEST TIME BUDGET EXCEEDED` (`tools/test-budget.ts`): speed up the file that grew or move it to `SCENARIOS`.
-- CI: each of the eight test shards about a minute, `timeout-minutes: 3` fails it. A new scenario longer than ~45 s on CI is the floor: split its tests across files.
+- `npm test` (quick): about 20 s on a free 12-thread machine, budget 30 s; each test a few seconds (30 s `testTimeout` is a hard fail). `npm run test:full`: budget 300 s (about 3x that on a laptop busy with other runs). Past either, the run prints `!! TEST TIME BUDGET EXCEEDED` (`tools/test-budget.ts`): speed up the file that grew or move it to `SCENARIOS`.
+- CI: eight test shards of about a minute (budget 90 s each), `timeout-minutes: 3` fails a job. The floor is the longest file (gatecures, ~60 s on CI): split a file's tests across files rather than grow past it.
 - After adding or moving slow files, refresh `tests/durations.json` from a CI run's `report-*` artifacts (`gh run download <id>`, then `node tools/durations.mjs report-*/test-report.json`): it orders files and balances the CI shards.
 - Balance (`npm run test:balance`) and soak (`npm run test:soak`) run only on the laptop, in the background, when this file says.
 

@@ -2,10 +2,10 @@ import type { Reporter, TestSpecification } from "vitest/node";
 
 /**
  * The test time budget (CLAUDE.md, "Test time budget"): after a run, a loud line when the run took longer than its
- * budget, the quick suite (`npm test`) 20 s and anything with the scenarios 120 s, wall time. Over it, find the file
+ * budget, wall time: the quick suite (`npm test`) 30 s; with the scenarios 300 s, or 90 s for one CI shard. Over it, find the file
  * that grew (`--reporter=verbose` lists each file's time) and make it faster or move it to SCENARIOS in vite.config.ts.
  */
-export const BUDGET_S = { quick: 20, scenarios: 120 } as const;
+export const BUDGET_S = { quick: 30, scenarios: process.env.CI ? 90 : 300 } as const;
 
 export default class BudgetReporter implements Reporter {
   private t0 = 0;

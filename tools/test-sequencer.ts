@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { relative } from "node:path";
 import { BaseSequencer, type TestSpecification } from "vitest/node";
 
 /**
@@ -10,7 +11,7 @@ import { BaseSequencer, type TestSpecification } from "vitest/node";
 const DURATIONS: Record<string, number> = JSON.parse(readFileSync(new URL("../tests/durations.json", import.meta.url), "utf8"));
 const UNKNOWN = 3000;
 
-const rel = (spec: TestSpecification) => spec.moduleId.replace(/\\/g, "/").replace(/^.*?\/tests\//, "tests/");
+const rel = (spec: TestSpecification) => relative(spec.project.config.root, spec.moduleId).replace(/\\/g, "/");
 const cost = (spec: TestSpecification) => DURATIONS[rel(spec)] ?? UNKNOWN;
 const byCost = (a: TestSpecification, b: TestSpecification) => cost(b) - cost(a) || (rel(a) < rel(b) ? -1 : 1);
 
