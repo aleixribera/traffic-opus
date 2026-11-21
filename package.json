@@ -1,7 +1,7 @@
 {
   "name": "kilometre-zero",
   "version": "1.0.0",
-  "description": "",
+  "description": "Run a 1920s freight company: draw the roads, place farms, mills and works, and keep your trucks moving through the traffic so the towns they supply grow into cities.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p . && vite build",

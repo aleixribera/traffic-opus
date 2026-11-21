@@ -1,0 +1,69 @@
+/* The game on a controller (ui/gamepad.ts): the map cursor, the focus frame, the button glyphs, and the interface
+   a third larger for the TV. Everything here shows only while the pad is in hand (body.pad-on). */
+
+/* the pad's cursor on the map: a ring with an ink rim, readable on grass, road and roof */
+.pad-cursor { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 6; pointer-events: none; }
+.pad-cursor[hidden] { display: none; }
+.pad-cursor i { position: absolute; left: -17px; top: -17px; width: 34px; height: 34px; border-radius: 50%;
+  border: 3px solid var(--ochre); box-shadow: 0 0 0 2px var(--edge), inset 0 0 0 2px var(--edge); }
+.pad-cursor i::before, .pad-cursor i::after { content: ""; position: absolute; background: var(--cream); box-shadow: 0 0 0 1.5px var(--edge); }
+.pad-cursor i::before { left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; }
+.pad-cursor.down i { transform: scale(0.82); border-color: var(--cream); }
+
+/* the mouse's arrow has nothing to say while the pad drives */
+body.pad-on, body.pad-on * { cursor: none !important; }
+
+/* the focus frame: thick, ochre, with a dark rim so it reads on the navy plates and on the light cards */
+.pad-focus { outline: 4px solid var(--ochre) !important; outline-offset: 2px !important; box-shadow: 0 0 0 8px rgba(5, 10, 18, 0.75) !important; position: relative; z-index: 1; }
+
+/* what the buttons do now: a legend at the right edge, above the bar and the version (the catalog and the tool's
+   card keep the middle and the left) */
+.pad-hints { position: fixed; right: 12px; bottom: calc(var(--bar-h) + 40px); z-index: 4; display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 14px; background: var(--bar); border: 1px solid var(--edge);
+  box-shadow: var(--shadow), inset 0 0 0 1px var(--rule); pointer-events: none; }
+.pad-hints[hidden] { display: none; }
+.ph { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.ph b { font: 600 var(--t-sm)/1.1 var(--f-text); color: var(--cream); }
+/* (the legend's glyphs stand in a column of their own width, so the words line up) */
+.pad-hints:not(.at-foot) .ph { display: grid; grid-template-columns: 64px auto; gap: 10px; }
+.ph-g { display: inline-flex; align-items: center; }
+.pad-hints:not(.at-foot) .ph-g { justify-self: end; }
+body.ui-hidden .pad-hints { display: none; }
+.pad-hints.at-foot { right: auto; left: 50%; bottom: 16px; transform: translateX(-50%); flex-direction: row; gap: 16px; }
+
+/* a button's picture */
+.pg { display: inline-grid; place-items: center; flex: none; color: var(--cream); background: var(--ink); border: 1px solid #3a4c6c; }
+.pg + .pg { margin-left: 3px; }
+.pg-face { width: 26px; height: 26px; border-radius: 50%; }
+.pg-face svg { width: 20px; height: 20px; }
+.pg-stick { width: 26px; height: 26px; border-radius: 50%; font: 700 13px/1 var(--f-text); box-shadow: inset 0 0 0 3px #22324d; }
+.pg-dpad { width: 26px; height: 26px; border-radius: 4px; }
+.pg-dpad svg { width: 20px; height: 20px; }
+.pg-cap { height: 24px; min-width: 30px; padding: 0 6px; border-radius: 4px; font: 700 12px/1 var(--f-text); letter-spacing: 0.04em; }
+
+/* the Controls dialog with the pad in hand */
+.pad-keys { align-items: center; padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--rule); }
+.pad-keys dt { display: flex; align-items: center; }
+
+/* The TV: at 1080p from three metres the interface's 15 px is too small. With the pad in hand the panels, bars and
+   dialogs are drawn a third larger (--pad-z, set by ui/gamepad.ts from the window's width). The pointer's line is
+   placed by script and is not zoomed: its letters grow instead. */
+body.pad-tv .hud > .corner, body.pad-tv .hud > .bottom, body.pad-tv .hud > .banner, body.pad-tv .hud > .modal > .dialog,
+body.pad-tv .hud > .toasts, body.pad-tv .hud > .season-card, body.pad-tv .mm, body.pad-tv .ver-tag, body.pad-tv .pad-hints { zoom: var(--pad-z, 1); }
+body.pad-tv .hud > .chips .chip { font-size: 20px; padding: 6px 10px; }
+
+/* the keys' hints give way to the pad's while it is in hand, and the pad's stay out of sight otherwise */
+body:not(.pad-on) .pad-only { display: none !important; }
+body.pad-on .key-only, body.pad-on .cam-key, body.pad-on .fc-stop kbd { display: none !important; }
+
+/* (a zoomed box's 100vh is zoomed too: the window's height is divided back out, so a tall dialog or panel still fits
+   the screen and scrolls inside it; the widths never reach the window's edge at these sizes) */
+body.pad-tv { --zvh: calc(100vh / var(--pad-z, 1)); }
+body.pad-tv .dialog { max-height: calc(var(--zvh) - 40px); }
+body.pad-tv .dialog.news { max-height: min(660px, calc(var(--zvh) - 40px)); }
+body.pad-tv .win { max-height: calc(var(--zvh) - var(--bar-h) - 100px); }
+body.pad-tv .corner.tl .win { max-height: min(calc(var(--zvh) - var(--bar-h) - 100px), max(180px, calc(var(--zvh) - var(--bar-h) - 12px - var(--tool-top, 0px) / var(--pad-z, 1) - 84px))); }
+body.pad-tv .as-cards { max-height: min(340px, calc(var(--zvh) * 0.42)); }
+body.pad-tv .panel { max-height: calc(var(--zvh) - var(--bar-h) - 40px); }
+body.pad-tv .tr:has(.gl-strip) .panel { max-height: calc(var(--zvh) - var(--bar-h) - 46px - var(--strip-h, 60px)); }
+body.pad-tv:has(> .sa-chip:not([hidden])) .panel { max-height: calc(var(--zvh) - var(--bar-h) - 82px); }

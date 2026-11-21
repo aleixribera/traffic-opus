@@ -289,6 +289,8 @@ export class App {
   private tiltAnim: { from: number; to: number; t: number } | null = null;
   /** The keys' pull on the camera, eased: across and down the screen, the turn, the zoom (each -1 to 1). */
   private keyCam = { x: 0, y: 0, turn: 0, zoom: 0 };
+  /** The pad's camera (ui/gamepad.ts): along and down the screen, the turn, the zoom (each -1 to 1), read like the keys. */
+  padCam = { x: 0, y: 0, turn: 0, zoom: 0 };
   /** How long the map has been moving under the keys (or the window's edge) without a stop (s): it speeds up. */
   private panT = 0;
   /** Edge scrolling (pause menu): the pointer against an edge of the window moves the map. Off by default. */
@@ -1135,6 +1137,43 @@ export class App {
       if (Math.abs(r.width - this.view.w) > 0.5 || Math.abs(r.height - this.view.h) > 0.5) { this.view.resize(); this.dirtyPreview = true; }
     }).observe(el);
     window.addEventListener("blur", () => { this.keys.clear(); this.setSpace(false); });
+  }
+
+  /**
+   * The pad's cursor as a mouse (ui/gamepad.ts): a move, or the left button down or up, at a point on the canvas (px).
+   * It goes through the mouse's own handlers, so every tool answers the pad exactly as it answers the mouse.
+   */
+  padPointer(kind: "down" | "move" | "up" | "cancel", x: number, y: number) {
+    // (the mouse took over in the middle of a pad's drag: the drag is dropped, nothing is built)
+    if (kind === "cancel") {
+      if (!this.pointers.delete(-7)) return;
+      this.dragRect = null;
+      this.hud?.rect(null);
+      return;
+    }
+    const r = this.view.canvas.getBoundingClientRect();
+    const e = { pointerId: -7, clientX: r.left + x, clientY: r.top + y, button: 0, pointerType: "mouse", target: this.view.canvas, shiftKey: false } as unknown as PointerEvent;
+    if (kind === "down") this.onDown(e);
+    else if (kind === "move") this.onMove(e);
+    else this.onUp(e);
+  }
+
+  /** The pad left the map for a menu or a panel: the tool's line at the cursor goes, as when the mouse leaves. */
+  padAway() { this.hasCursor = false; this.dirtyPreview = true; this.hud?.chips(null); }
+
+  /** Is there a cursor on the map (the pad puts its own there the first time). */
+  get padHasCursor(): boolean { return this.hasCursor; }
+
+  /** Where the pad's cursor starts: where the mouse last was on the map, else the middle of the screen. */
+  padCursorStart(): V2 {
+    const c = this.cursorPx;
+    return this.hasCursor && c.x > 0 && c.y > 0 && c.x < this.view.w && c.y < this.view.h ? v2(c.x, c.y) : v2(this.view.w / 2, this.view.h / 2);
+  }
+
+  /** The pad's Circle on the map: a road's last point back, else what Esc puts away (the tool, a panel, a window). */
+  padBack() {
+    if (this.hasDraft && this.stepBack()) { this.audio.play("undo"); return; }
+    this.hud?.back();
   }
 
   private local(e: PointerEvent): V2 {
@@ -2434,13 +2473,19 @@ export class App {
       mx = clamp(mx + e.x, -1, 1);
       my = clamp(my + e.y, -1, 1);
     }
-    const turn = free ? (held("e") ? 1 : 0) - (held("q") ? 1 : 0) : 0;
-    const zoom = free ? (held("-", "_") ? 1 : 0) - (held("+", "=") ? 1 : 0) : 0;
+    let turn = free ? (held("e") ? 1 : 0) - (held("q") ? 1 : 0) : 0;
+    let zoom = free ? (held("-", "_") ? 1 : 0) - (held("+", "=") ? 1 : 0) : 0;
     // Y up toward the Map view, H down toward the horizon
     const pitch = free ? (held("h") ? 1 : 0) - (held("y") ? 1 : 0) : 0;
-    if ((mx || my) && (this.camera.following !== null || this.glide)) { this.camera.stopFollow(); this.glide = null; }
     // (a diagonal is no faster than a straight run)
     if (mx && my) { mx *= Math.SQRT1_2; my *= Math.SQRT1_2; }
+    // and the pad's sticks and shoulders (ui/gamepad.ts), already analog
+    const P = this.padCam;
+    if (free && this.mode !== "menu") {
+      mx = clamp(mx + P.x, -1, 1); my = clamp(my + P.y, -1, 1);
+      turn = clamp(turn + P.turn, -1, 1); zoom = clamp(zoom + P.zoom, -1, 1);
+    }
+    if ((mx || my) && (this.camera.following !== null || this.glide)) { this.camera.stopFollow(); this.glide = null; }
     // each eases in and out over a few frames, so the camera starts and stops softly instead of at full speed
     const K = this.keyCam, ease = reducedMotion() ? 1 : 1 - Math.exp(-dt * KEY_EASE);
     const toward = (v: number, to: number) => { const n = v + (to - v) * ease; return Math.abs(n - to) < 0.01 ? to : n; };

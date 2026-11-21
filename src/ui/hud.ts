@@ -53,6 +53,8 @@ import { escLayer, type EscState } from "./escape";
 import { pointerLine, type PointerChip } from "./pointer";
 import { catalogLayout } from "./catalog";
 import { lockShort } from "./lockText";
+import { glyph, padKeysHtml } from "./gamepad";
+import { padWords } from "./padRead";
 
 /** Something a tool says about a click: the pointer shows the one that matters, the tool options the rest (pointer.ts). */
 export interface Chip extends PointerChip {
@@ -222,6 +224,9 @@ const KEYS: [string, string][] = [
 
 /** Room kept under the tool options card's controls for its notes (px): seven lines with the rule above them. */
 const TO_ROOM = 172;
+
+/** The words as the player's hands have them: "Press ✕" with the pad in hand, else as written. */
+const padSays = (t: string): string => (document.body.classList.contains("pad-on") ? padWords(t) : t);
 
 export class Hud {
   root = h("div", "hud");
@@ -430,6 +435,12 @@ export class Hud {
 
   /** R and I, and the bar's buttons. */
   catKey(c: CatId) { this.toggleCat(c); }
+
+  /** The build catalog open now (the pad's build menu), and whether its cards show (not folded or hidden under the tool). */
+  get catOpen(): CatId | null { return this.cat; }
+  get catCards(): boolean { return !!this.cat && !this.assets.hidden && !this.folded(); }
+  /** Is anything open that Esc (the pad's Circle) would put away. */
+  get anythingOpen(): boolean { return escLayer(this.escState()) !== null; }
 
   /**
    * Every catalog folds to its one-line strip (what is in hand, the tabs) while its tool is held and in use, so the
@@ -849,7 +860,7 @@ export class Hud {
       const D = PLANTS[st.placed];
       // (the keys to turn it, and the ground it needs: the rest is at the pointer as it moves, and in the catalog's
       // line. Its own street to the road is said at the pointer, with its length)
-      items.push(sec("Turn", h("p", "to-keys", `<kbd>,</kbd><kbd>.</kbd><span>or Shift + wheel</span>`)));
+      items.push(sec("Turn", h("p", "to-keys", `<kbd class="key-only">,</kbd><kbd class="key-only">.</kbd><span class="key-only">or Shift + wheel</span><span class="pad-only">${glyph("l1")}${glyph("r1")}</span>`)));
       if (D.deposit) items.push(sec("Needs", h("p", "to-keys", `${cap(D.deposit.name)} on ${Math.round(MIN_DEPOSIT * 100)}% of its plot or more`)));
     } else if (st.tool === "roundabout") {
       items.push(elevation());
@@ -1207,14 +1218,15 @@ export class Hud {
     this.notes(line.rest);
     if (!pos || !line.head) { box.hidden = true; return; }
     box.hidden = false;
-    const chip = (c: Chip) => `<span class="chip ${c.kind}">${c.icon ? ICON[c.icon] : ""}${c.text}</span>`;
+    // (with the pad in hand the line says "Press ✕" for "Click", here where it is written: ui/gamepad.ts)
+    const chip = (c: Chip) => `<span class="chip ${c.kind}">${c.icon ? ICON[c.icon] : ""}${padSays(c.text)}</span>`;
     box.innerHTML = chip(line.head) + (line.cost ? chip(line.cost) : "");
     const r = this.root.getBoundingClientRect();
     const w = box.offsetWidth || 200, hh = box.offsetHeight || 24;
     // keep clear of the HUD's panels (the road drawer's tabs, tool options, goals, the bars): below and right of the
     // cursor if that is clear, else above it, else to its left; failing all, lifted above whatever it would cover
     const walls: DOMRect[] = [];
-    for (const el of this.root.querySelectorAll<HTMLElement>(".card, .bbar, .corner")) {
+    for (const el of this.root.querySelectorAll<HTMLElement>(".card, .bbar, .corner, .pad-hints")) {
       if (el === box || el.hidden || !el.offsetParent) continue;
       const q = el.getBoundingClientRect();
       if (q.width > 0 && q.height > 0) walls.push(new DOMRect(q.left - r.left, q.top - r.top, q.width, q.height));
@@ -1254,7 +1266,7 @@ export class Hud {
    * words again as a toast at the top of the screen were the refusal "in a different place" (review 2026-11-12).
    */
   refuse(msg: string) {
-    const said = !this.chipBox.hidden && [...this.chipBox.querySelectorAll(".chip.error")].some((c) => c.textContent === msg);
+    const said = !this.chipBox.hidden && [...this.chipBox.querySelectorAll(".chip.error")].some((c) => c.textContent === padSays(msg));
     if (!said) this.toast(msg, true);
   }
 
@@ -2787,7 +2799,10 @@ export class Hud {
   }
 
   openKeys() {
-    const dlg = this.showModal(`<header>Controls</header><dl class="keys">${KEYS.map(([k, v]) => `<dt><kbd>${k}</kbd></dt><dd>${v}</dd>`).join("")}</dl>`, "Controls");
+    // (with the pad in hand, its buttons; the keys and the mouse below them)
+    const keys = `<dl class="keys">${KEYS.map(([k, v]) => `<dt><kbd>${k}</kbd></dt><dd>${v}</dd>`).join("")}</dl>`;
+    const pad = document.body.classList.contains("pad-on");
+    const dlg = this.showModal(`<header>Controls</header>${pad ? padKeysHtml() : ""}${keys}`, "Controls");
     this.backButton(dlg);
   }
 

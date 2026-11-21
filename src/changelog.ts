@@ -15,6 +15,13 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.121", date: "2026-11-21", title: "Play from the sofa",
+    notes: [
+      "The whole game plays on a controller. The left stick moves a cursor over the map, the right stick and the triggers move and zoom the camera, Triangle opens the build menu, Square the bulldozer, Options the pause menu, and every menu and window can be walked with the d-pad.",
+      "With the pad in hand the button hints show the pad's buttons, and on a big screen the panels and dialogs are drawn larger so they read from the sofa. Touch the mouse or the keyboard and everything is as before.",
+    ],
+  },
+  {
     v: "v0.0.120", date: "2026-11-12", title: "Rings that keep their roads",
     notes: [
       "A roundabout you are placing marks in red only the road inside the ring, the part that goes. The roads it joins stay as they are, instead of being painted red end to end as if they were coming down.",

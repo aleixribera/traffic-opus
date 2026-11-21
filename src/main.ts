@@ -3,6 +3,7 @@ import { App } from "./app";
 import { loadModels } from "./render/models";
 import { Hud } from "./ui/hud";
 import { MainMenu } from "./ui/menu";
+import { PadControl } from "./ui/gamepad";
 import { TILT_MIN } from "./ui/cameraSetting";
 
 async function boot() {
@@ -35,6 +36,8 @@ async function boot() {
   app.saves.menuPaused = () => hud.menuPaused;
   const menu = new MainMenu(app, hud);
   app.openMenu = () => void menu.open();
+  // a game controller: the whole game with no mouse or keyboard (the living-room TV)
+  new PadControl(app, hud);
   const q = new URLSearchParams(location.search);
   // ?new (a fresh city, ?seed=N), ?play (the last city): straight into a game, no title menu
   const direct = q.has("new") || q.has("play") || q.has("seed");
