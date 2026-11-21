@@ -24,15 +24,15 @@ Project specifics for the global `iterate` skill. Where this differs from the sk
 
 - Long or browser runs go to the test laptop (`remote-test <cmd>`); a small targeted run may go here. E.g. `npx vitest run --project quick tests/a.test.ts tests/b.test.ts` (scenarios: `--project scenarios`; their list is `SCENARIOS` in `vite.config.ts`). Name filter: `-t "roundabout"`; changed files only: `--changed`.
 - To find the files: grep `tests/` for the changed functions **and for the helpers that call them** (e.g. `placeAlong` in `tests/helpers.ts` calls `placedPlan`; `tests/*.scenario.ts` build shared worlds). Missing these turned CI red on v0.0.114.
-- CI (`.github/workflows/ci.yml`, job `test`, four time-balanced shards) runs quick + scenarios on each push to main: that is the full run. Check it with `gh run list -L 2` on the next pass; red is the next pass's Broken pick. The balance playthrough runs only at a stage gate, in the background.
+- CI (`.github/workflows/ci.yml`, job `test`, eight time-balanced shards) runs quick + scenarios on each push to main: that is the full run. Check it with `gh run list -L 2` on the next pass; red is the next pass's Broken pick. The balance playthrough runs only at a stage gate, in the background.
 - Traffic sim changes: also `npm run test:soak` (`tests/latesave.test.ts`, ten days of the late save, ~300 vehicles, ~21-26 min) in the background, once on the final change; not on CI. Its fixture comes from `tools/lategame.build.ts`.
 - Known slow files (shrink when touched): gatecures, gatering, trailers, gatejam, rhythm, forecast, density, junctionflow, deadlock (scenarios).
 
 ## Test time budget
 
 - `npm test` (quick): under 20 s wall on the laptop, each test under 15 s (`testTimeout`, a hard fail). `npm run test:full`: under 120 s. Past either, the run prints `!! TEST TIME BUDGET EXCEEDED` (`tools/test-budget.ts`): speed up the file that grew or move it to `SCENARIOS`.
-- CI: each of the four test shards about a minute, `timeout-minutes: 3` fails it. A new scenario longer than ~45 s on CI is the floor: split its tests across files.
-- After adding or moving slow files, refresh `tests/durations.json` (`node tools/durations.mjs <vitest json report>`): it orders files and balances the CI shards.
+- CI: each of the eight test shards about a minute, `timeout-minutes: 3` fails it. A new scenario longer than ~45 s on CI is the floor: split its tests across files.
+- After adding or moving slow files, refresh `tests/durations.json` from a CI run's `report-*` artifacts (`gh run download <id>`, then `node tools/durations.mjs report-*/test-report.json`): it orders files and balances the CI shards.
 - Balance (`npm run test:balance`) and soak (`npm run test:soak`) run only on the laptop, in the background, when this file says.
 
 ## See it working

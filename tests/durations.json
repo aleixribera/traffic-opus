@@ -1,5 +1,6 @@
 {
- "tests/gatecures.test.ts": 92627,
+ "tests/gatecures.test.ts": 47068,
+ "tests/gatering.test.ts": 45559,
  "tests/trailers.test.ts": 38519,
  "tests/gatejam.test.ts": 36338,
  "tests/rhythm.test.ts": 33676,

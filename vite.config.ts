@@ -5,11 +5,11 @@ import BudgetReporter from "./tools/test-budget";
 import DurationSequencer from "./tools/test-sequencer";
 
 /**
- * All but one of the cores, at most 12 (CI: all four), each at idle priority (tests/setup/lowprio.ts) so a game on
+ * All but one of the cores, at most 12 (CI: two, one per physical core of the 4-vCPU runner), each at idle priority (tests/setup/lowprio.ts) so a game on
  * the same machine keeps its CPU. TEST_WORKERS overrides the count.
  */
 const CORES = availableParallelism();
-const WORKERS = Math.max(1, Number(process.env.TEST_WORKERS) || (process.env.CI ? CORES : Math.min(12, CORES - 1)));
+const WORKERS = Math.max(1, Number(process.env.TEST_WORKERS) || (process.env.CI ? 2 : Math.min(12, CORES - 1)));
 
 /**
  * The long traffic and town scenarios: each simulates minutes to hours of a busy map and takes 20 s to 3 min of CPU
@@ -43,7 +43,8 @@ export default defineConfig({
     // longest file first, and `--shard` split by time not file count (CI): tests/durations.json
     sequence: { sequencer: DurationSequencer },
     // dots and failures only, plus a loud line past the time budget; `--reporter=verbose` lists each file's time
-    reporters: ["dot", new BudgetReporter()],
+    // (CI also writes each file's time to test-report.json, uploaded per shard to refresh tests/durations.json)
+    reporters: ["dot", new BudgetReporter(), ...(process.env.CI ? [["json", { outputFile: "test-report.json" }] as const] : [])],
     // a quick test is a few seconds at most: past 15 s it fails, so a slow one is moved or fixed, not lived with
     // (many files build a whole game in beforeAll, hence the hook time)
     testTimeout: 15000,
