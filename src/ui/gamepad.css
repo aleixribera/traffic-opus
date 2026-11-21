@@ -56,9 +56,16 @@ body.pad-tv .hud > .chips .chip { font-size: 20px; padding: 6px 10px; }
 body:not(.pad-on) .pad-only { display: none !important; }
 body.pad-on .key-only, body.pad-on .cam-key, body.pad-on .fc-stop kbd { display: none !important; }
 
+/* The TV's safe area: a television fed over HDMI may crop a few percent off each edge (overscan), so with the pad on
+   a TV the HUD stands 2.5% in from every edge. The map still fills the screen. */
+body.pad-tv { --safe-x: 2.5vw; --safe-y: 2.5vh; --zvh: calc((100vh - 2 * var(--safe-y)) / var(--pad-z, 1)); }
+body.pad-tv .hud { inset: var(--safe-y) var(--safe-x); }
+body.pad-tv .pad-hints { right: calc((var(--safe-x) + 12px) / var(--pad-z, 1)); bottom: calc(var(--bar-h) + 40px + var(--safe-y) / var(--pad-z, 1)); }
+body.pad-tv .ver-tag { right: calc(var(--safe-x) / var(--pad-z, 1)); bottom: calc(var(--safe-y) / var(--pad-z, 1)); }
+body.pad-tv:not(.in-menu) .ver-tag { bottom: calc(var(--bar-h) + var(--safe-y) / var(--pad-z, 1)); }
+body.pad-tv .mm { inset: calc(var(--safe-y) / var(--pad-z, 1)) calc(var(--safe-x) / var(--pad-z, 1)); }
 /* (a zoomed box's 100vh is zoomed too: the window's height is divided back out, so a tall dialog or panel still fits
    the screen and scrolls inside it; the widths never reach the window's edge at these sizes) */
-body.pad-tv { --zvh: calc(100vh / var(--pad-z, 1)); }
 body.pad-tv .dialog { max-height: calc(var(--zvh) - 40px); }
 body.pad-tv .dialog.news { max-height: min(660px, calc(var(--zvh) - 40px)); }
 body.pad-tv .win { max-height: calc(var(--zvh) - var(--bar-h) - 100px); }

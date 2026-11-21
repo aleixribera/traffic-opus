@@ -92,6 +92,18 @@ function scroller(el: HTMLElement | null): HTMLElement | null {
   return null;
 }
 
+/**
+ * Scrolls a block that scrolls by most of its height, `dir` 1 down or -1 up. False when it does not scroll, or is
+ * already at that end (so the focus may leave it).
+ */
+function scrollStep(el: HTMLElement, dir: 1 | -1): boolean {
+  if (el.scrollHeight <= el.clientHeight + 2 || !/(auto|scroll)/.test(getComputedStyle(el).overflowY)) return false;
+  const max = el.scrollHeight - el.clientHeight;
+  if ((dir > 0 && el.scrollTop >= max - 1) || (dir < 0 && el.scrollTop <= 1)) return false;
+  el.scrollTop = Math.max(0, Math.min(max, el.scrollTop + dir * Math.max(40, el.clientHeight * 0.6)));
+  return true;
+}
+
 export class PadControl {
   private reader = new PadReader();
   /** the pad was the last thing used (else the mouse and keys) */
@@ -115,6 +127,8 @@ export class PadControl {
   private saidNodes = new Set<Text>();
 
   constructor(private app: App, private hud: Hud) {
+    // (the dev build lets a script reach it: tools/pad-audit.mjs walks every screen with it)
+    if (import.meta.env.DEV) (window as unknown as { __padctl?: PadControl }).__padctl = this;
     this.cursorEl.className = "pad-cursor";
     this.cursorEl.hidden = true;
     this.cursorEl.innerHTML = `<i></i>`;
@@ -325,12 +339,16 @@ export class PadControl {
       el.value = String(Math.max(Number(el.min || 0), Math.min(Number(el.max || 100), v)));
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
+    } else if (f.nav && el && (f.nav === "up" || f.nav === "down") && scrollStep(el, f.nav === "down" ? 1 : -1)) {
+      // (a list that is one block, What's new: up and down read through it first, then leave it at its ends)
     } else if (f.nav) {
       const c = all().filter((x) => x !== el);
       const from = el ? boxOf(el) : this.focusBox;
       if (from) {
         const i = pickDir(from, c.map(boxOf), f.nav);
         if (i >= 0) this.setFocus(c[i]);
+        // (nothing more that way: the list the focus is in shows its last lines)
+        else if (el && (f.nav === "up" || f.nav === "down")) { const s = scroller(el); if (s) scrollStep(s, f.nav === "down" ? 1 : -1); }
       } else this.setFocus(this.firstOf(all(), roots));
     }
     // the right stick scrolls the list the focus is in (or the dialog)
@@ -412,12 +430,14 @@ export class PadControl {
     if (m > 0) {
       const speed = h * (0.12 + 1.0 * m * m) / m;
       const nx = this.cx + f.lx * speed * dt, ny = this.cy + f.ly * speed * dt;
-      const pad = 6;
-      this.cx = Math.max(pad, Math.min(w - pad, nx));
-      this.cy = Math.max(pad, Math.min(h - pad, ny));
+      // (on a TV the cursor keeps to the safe area, as the HUD does: gamepad.css)
+      const tv = document.body.classList.contains("pad-tv");
+      const px = tv ? Math.round(w * 0.025) : 6, py = tv ? Math.round(h * 0.025) : 6;
+      this.cx = Math.max(px, Math.min(w - px, nx));
+      this.cy = Math.max(py, Math.min(h - py, ny));
       // (pushed against an edge of the screen, the map moves under it)
-      if (nx <= pad && f.lx < 0) ex = f.lx; else if (nx >= w - pad && f.lx > 0) ex = f.lx;
-      if (ny <= pad && f.ly < 0) ey = f.ly; else if (ny >= h - pad && f.ly > 0) ey = f.ly;
+      if (nx <= px && f.lx < 0) ex = f.lx; else if (nx >= w - px && f.lx > 0) ex = f.lx;
+      if (ny <= py && f.ly < 0) ey = f.ly; else if (ny >= h - py && f.ly > 0) ey = f.ly;
     }
     const placing = app.st.tool === "place";
     const pc = app.padCam;

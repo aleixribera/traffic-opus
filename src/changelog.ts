@@ -15,6 +15,14 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    v: "v0.0.122", date: "2026-11-21", title: "Quit, and nothing lost",
+    notes: [
+      "The title menu and the pause menu have a Quit button. It saves the company first, then closes the game.",
+      "Every road you build, every demolition and every undo is saved within about ten seconds, so a closed window or a crashed browser loses next to nothing.",
+      "On the controller, the d-pad scrolls a long list or window before it moves on, and on a big screen the panels keep clear of the screen's edges, where a TV can cut them off.",
+    ],
+  },
+  {
     v: "v0.0.121", date: "2026-11-21", title: "Play from the sofa",
     notes: [
       "The whole game plays on a controller. The left stick moves a cursor over the map, the right stick and the triggers move and zoom the camera, Triangle opens the build menu, Square the bulldozer, Options the pause menu, and every menu and window can be walked with the d-pad.",

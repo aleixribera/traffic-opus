@@ -7,6 +7,7 @@ import { cubicTangent, formatMoney, norm, scale, sub, v2, type V2 } from "../cor
 import { ROAD_TYPES } from "../config";
 import { SAVE_V, START_MONEY } from "../game/city";
 import { CHANGELOG, VERSION } from "../changelog";
+import { quitGame } from "./quit";
 
 type SaveData = ReturnType<Game["serialize"]>;
 
@@ -176,6 +177,7 @@ export class MainMenu {
           <button class="mm-item" data-a="load"><span class="mm-l">Load game</span></button>
           <button class="mm-item" data-a="explore" title="The company behind this menu. Try the tools, nothing is saved"><span class="mm-l">Explore ${esc(name)}</span></button>
           <button class="mm-item" data-a="keys"><span class="mm-l">Controls</span></button>
+          <button class="mm-item" data-a="quit"><span class="mm-l">Quit</span></button>
         </div>
         <button class="mm-news" data-a="news"><span class="mm-news-k">New in ${VERSION}</span><span class="mm-news-t">${esc(CHANGELOG[0].title)}</span></button>
       </nav>`;
@@ -214,5 +216,7 @@ export class MainMenu {
     else if (a === "explore") app.setMode("explore");
     else if (a === "keys") this.hud.openKeys();
     else if (a === "news") this.hud.openNews();
+    // (on the title menu there is nothing unsaved: Explore keeps nothing, and a company was saved on its way here)
+    else if (a === "quit") quitGame(() => {});
   }
 }

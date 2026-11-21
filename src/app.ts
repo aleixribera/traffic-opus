@@ -358,6 +358,8 @@ export class App {
   private hudT = 0;
   private flowT = 0;
   private saveT = 0;
+  /** The game's edit count as last noted (a newer one brings the next autosave forward). */
+  private editsSaved = 0;
   private dirtyPreview = true;
   private shake = 0;
 
@@ -2604,6 +2606,9 @@ export class App {
       if ((this.overlay !== "none" && this.overlay !== "flow") || this.st.tool === "place") this.applyTint();
     }
     this.saveT += dt;
+    // a build, a demolition or an undo is saved within about ten seconds (the minute's save covers the rest), so a
+    // browser killed outright (the TV's PS-button hold, a crash) loses next to nothing; at most one save every 10 s
+    if (g.edits !== this.editsSaved) { this.editsSaved = g.edits; this.saveT = Math.max(this.saveT, 50); }
     // (in a frame of its own: no layout or rebuild lands with it)
     if (this.saveT > 60 && (this.spend() || this.saveT > 75)) { this.saveT = 0; if (this.mode === "play") void this.saves.autosaveSoon(g); }
     if (this.shake > 0) {

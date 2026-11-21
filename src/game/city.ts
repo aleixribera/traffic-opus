@@ -132,6 +132,8 @@ export class Game {
   rng: () => number;
   private acc = 0;
   private undoStack: UndoEntry[] = [];
+  /** Counts the player's edits (a build, a demolition, an undo or a redo): the app saves soon after one changes. */
+  edits = 0;
   private redoStack: UndoEntry[] = [];
   private listeners: ((e: GameEvent) => void)[] = [];
   private tickT = 0;
@@ -719,6 +721,7 @@ export class Game {
   }
 
   private pushUndo(e: UndoEntry) {
+    this.edits++;
     this.undoStack.push(e);
     if (this.undoStack.length > 200) this.undoStack.shift();
     this.redoStack = [];
@@ -1233,6 +1236,7 @@ export class Game {
   undo() {
     const e = this.undoStack.pop();
     if (!e) return;
+    this.edits++;
     if (e.moved) this.moveBuildings(e.moved, false);
     if (e.ops.length) {
       this.net.undo(e.ops);
@@ -1250,6 +1254,7 @@ export class Game {
   redo() {
     const e = this.redoStack.pop();
     if (!e) return;
+    this.edits++;
     if (e.moved) this.moveBuildings(e.moved, true);
     if (e.ops.length) {
       this.net.redo(e.ops);

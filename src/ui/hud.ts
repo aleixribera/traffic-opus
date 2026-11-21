@@ -55,6 +55,7 @@ import { catalogLayout } from "./catalog";
 import { lockShort } from "./lockText";
 import { glyph, padKeysHtml } from "./gamepad";
 import { padWords } from "./padRead";
+import { quitGame } from "./quit";
 
 /** Something a tool says about a click: the pointer shows the one that matters, the tool options the rest (pointer.ts). */
 export interface Chip extends PointerChip {
@@ -2710,6 +2711,7 @@ export class Hud {
         <button class="pm wheel"></button>
         <button class="pm edge"></button>
         <button class="pm home">Main menu</button>
+        <button class="pm quit">Quit</button>
         <button class="pm new">New company</button>
       </div>`, "Pause menu");
     dlg.classList.add("pause");
@@ -2757,6 +2759,7 @@ export class Hud {
       this.closeModal();
       app.openMenu?.();
     });
+    on(".quit", () => quitGame(() => { if (app.mode === "play") app.saves.autosave(app.game); }));
     on(".new", () => {
       const b = dlg.querySelector(".new") as HTMLButtonElement;
       if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Start a new company? This one is autosaved"; b.classList.add("danger"); return; }
